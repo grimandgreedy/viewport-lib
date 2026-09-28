@@ -1959,7 +1959,9 @@ pub(crate) struct InstanceData {
     pub(crate) unlit: u32,           //   4 bytes, offset 100
     /// Bit 0: 1 = sample the shadow atlas, 0 = treat the fragment as
     /// unshadowed. Bit 1: the mesh is a closed surface (`GpuMesh::closed`),
-    /// so its back faces shade as inside the solid's own shadow.
+    /// so its back faces shade as inside the solid's own shadow. Bit 2: the
+    /// instance is a two-sided receiver (a styled back-face policy on an open
+    /// mesh), which takes the cull-none path's receiver bias.
     pub(crate) receive_shadows: u32, //   4 bytes, offset 104
     /// Index into `material_gpu_buf` (group 0 binding 21): this instance's
     /// transforms and scalar shading params. 0 is the default-material block.

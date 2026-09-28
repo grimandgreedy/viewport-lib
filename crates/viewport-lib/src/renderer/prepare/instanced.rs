@@ -500,10 +500,14 @@ impl ViewportRenderer {
                                 has_normal_map: cm.has_normal_map,
                                 has_ao_map: cm.has_ao_map,
                                 unlit: cm.unlit,
-                                // Bit 1 carries `GpuMesh::closed` (see the
-                                // field doc).
+                                // Bit 1 carries `GpuMesh::closed`, bit 2 the
+                                // two-sided receiver flag (see the field doc).
                                 receive_shadows: cm.receive_shadows
-                                    | ((batch_mesh.is_some_and(|m| m.closed) as u32) << 1),
+                                    | ((batch_mesh.is_some_and(|m| m.closed) as u32) << 1)
+                                    | ((item.material.is_two_sided()
+                                        && !batch_mesh.is_some_and(|m| m.closed))
+                                        as u32)
+                                        << 2,
                                 // Shading scalars (PBR terms, ranges, emissive,
                                 // use_pbr/use_flat) live in material_gpu_buf, read
                                 // via material_id; alpha stays per-instance for the

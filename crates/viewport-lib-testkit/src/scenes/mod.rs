@@ -18,6 +18,7 @@ pub mod overlays;
 #[cfg(feature = "real_models")]
 pub mod real_models;
 pub mod rigs;
+pub mod shadows;
 pub mod textures;
 
 use glam::{Mat4, Quat, Vec3};
@@ -130,6 +131,10 @@ pub struct BuiltScene {
     pub lighting: LightingSettings,
     /// Optional background clear colour (linear RGBA).
     pub background: Option<[f32; 4]>,
+    /// Clip objects applied to the frame, for scenes that open a solid to
+    /// show its interior, with the cap-fill flag. `None` leaves the frame's
+    /// defaults alone.
+    pub clip: Option<(Vec<viewport_lib::ClipObject>, bool)>,
 }
 
 /// A catalogue entry: a name, the cameras to view it from, and a function that
@@ -222,6 +227,10 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     }
     if let Some(post) = scene.post_process.clone() {
         fd.effects.post_process = post;
+    }
+    if let Some((objects, cap_fill)) = scene.clip.clone() {
+        fd.effects.clip.objects = objects;
+        fd.effects.clip.cap_fill_enabled = cap_fill;
     }
     fd.overlays = scene.overlays.clone();
     fd.viewport.background_colour = Some(scene.background.unwrap_or(TEST_BACKGROUND).into());
@@ -788,6 +797,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     ];
     scenes.extend(item_types::scenes());
     scenes.extend(overlays::scenes());
+    scenes.extend(shadows::scenes());
     scenes
 }
 

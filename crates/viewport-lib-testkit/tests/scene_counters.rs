@@ -117,6 +117,13 @@ fn expected(name: &str) -> Option<Expected> {
         // view-direction check currently removes the decal outright.
         "decal_from_below" => e(1, 1, 1, 0, 0, 960),
         // The overlay scenes: one sphere backdrop each, so the scene-side
+        "room_point_light" => e(13, 13, 13, 13, 0, 1104),
+        "room_point_light_two_sided" => e(13, 13, 13, 13, 0, 1104),
+        "room_doorway_sun" => e(14, 14, 14, 14, 0, 1116),
+        "room_cut_solids" => e(11, 11, 10, 10, 0, 3040),
+        "slab_stack_sun" => e(10, 10, 10, 10, 0, 120),
+        "slab_stack_point" => e(10, 10, 10, 10, 0, 120),
+        "long_hall" => e(26, 26, 5, 5, 0, 312),
         // counters are identical across all of them. They exist to gate overlay
         // pixels, not scene structure; a change here means the backdrop moved.
         "overlay_shapes" => e(1, 1, 1, 0, 0, 960),

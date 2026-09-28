@@ -60,7 +60,7 @@ struct InstanceData {
     has_normal_map: u32,                  // offset 92
     has_ao_map: u32,                      // offset 96
     unlit: u32,                           // offset 100
-    receive_shadows: u32,                 // offset 104 : bit 0 receive, bit 1 closed surface
+    receive_shadows: u32,                 // offset 104 : bit 0 receive, bit 1 closed surface, bit 2 two-sided receiver
     material_id: u32,                     // offset 108
     alpha_cutoff: f32,                    // offset 112
     alpha_flag: u32,                      // offset 116
@@ -637,6 +637,9 @@ fn compute_lit(
     // point-shadow receiver bias reasons about the surface as the shadow
     // pass rasterised it.
     let geo_normal = normalize(in.world_normal);
+    // Bit 2 of receive_shadows: a styled policy on an open mesh, the cull-none
+    // caster path, which takes the two-sided receiver bias.
+    let receiver_two_sided = select(0u, 1u, (inst.receive_shadows & 4u) != 0u);
 
     let V = normalize(camera.eye_pos - in.world_pos);
 
@@ -712,7 +715,7 @@ fn compute_lit(
                     // plane: in the solid's own shadow. See mesh.wgsl.
                     shadow_factor = 0.0;
                 } else if i == 0u && lights_storage[0].light_type != 1u {
-                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L, 0u);
+                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L, receiver_two_sided);
                     shadow_factor = last_shadow_sample.factor;
                 } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
                     shadow_factor = sample_point_shadow(l, in.world_pos, geo_normal);
@@ -781,7 +784,7 @@ fn compute_lit(
                     // Inside a closed solid: see the loop above.
                     shadow = 0.0;
                 } else if i == 0u && lights_storage[0].light_type != 1u {
-                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir, 0u);
+                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir, receiver_two_sided);
                     shadow = last_shadow_sample.factor;
                 } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
                     shadow = sample_point_shadow(l, in.world_pos, geo_normal);
