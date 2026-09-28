@@ -3085,8 +3085,14 @@ impl DeviceResources {
                     // binding 1: tet geometry storage buffer (read-only)
                     crate::gpu::BindGroupLayoutEntry {
                         binding: 1,
-                        visibility: crate::gpu::ShaderStages::VERTEX
-                            | crate::gpu::ShaderStages::FRAGMENT,
+                        // Vertex stage only: `projected_tet.wgsl` reads this in
+                        // vs_main and never in fs_main. wgpu sums the per-stage
+                        // storage-buffer count across every group in a pipeline
+                        // layout, and the camera group already spends 7 of the
+                        // default 8 in the fragment stage, so a fragment
+                        // visibility here that nothing uses fails the layout on
+                        // a device with default limits.
+                        visibility: crate::gpu::ShaderStages::VERTEX,
                         ty: crate::gpu::BindingType::Buffer {
                             ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
@@ -3097,8 +3103,14 @@ impl DeviceResources {
                     // binding 2: per-tet scalar storage buffer (read-only)
                     crate::gpu::BindGroupLayoutEntry {
                         binding: 2,
-                        visibility: crate::gpu::ShaderStages::VERTEX
-                            | crate::gpu::ShaderStages::FRAGMENT,
+                        // Vertex stage only: `projected_tet.wgsl` reads this in
+                        // vs_main and never in fs_main. wgpu sums the per-stage
+                        // storage-buffer count across every group in a pipeline
+                        // layout, and the camera group already spends 7 of the
+                        // default 8 in the fragment stage, so a fragment
+                        // visibility here that nothing uses fails the layout on
+                        // a device with default limits.
+                        visibility: crate::gpu::ShaderStages::VERTEX,
                         ty: crate::gpu::BindingType::Buffer {
                             ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,

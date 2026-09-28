@@ -1,15 +1,18 @@
 use super::*;
 use crate::gpu::util::DeviceExt;
 
-/// Count the storage buffers a set of bind group layout entries costs in the
-/// vertex stage. Used to check the layouts built here against the constants
+/// Count the storage buffers a set of bind group layout entries costs in one
+/// shader stage. Used to check the layouts built here against the constants
 /// that describe them.
 #[cfg(debug_assertions)]
-fn vertex_storage_buffers(entries: &[crate::gpu::BindGroupLayoutEntry]) -> u32 {
+fn stage_storage_buffers(
+    entries: &[crate::gpu::BindGroupLayoutEntry],
+    stage: crate::gpu::ShaderStages,
+) -> u32 {
     entries
         .iter()
         .filter(|e| {
-            e.visibility.contains(crate::gpu::ShaderStages::VERTEX)
+            e.visibility.contains(stage)
                 && matches!(
                     e.ty,
                     crate::gpu::BindingType::Buffer {
@@ -685,8 +688,8 @@ impl DeviceResources {
         // entries just used rather than trusting the constants.
         #[cfg(debug_assertions)]
         {
-            let base = vertex_storage_buffers(&camera_bgl_entries)
-                + vertex_storage_buffers(&object_bgl_entries);
+            let base = stage_storage_buffers(&camera_bgl_entries, crate::gpu::ShaderStages::VERTEX)
+                + stage_storage_buffers(&object_bgl_entries, crate::gpu::ShaderStages::VERTEX);
             let default_limit = crate::gpu::Limits::default().max_storage_buffers_per_shader_stage;
             debug_assert!(
                 base <= default_limit,
@@ -694,8 +697,28 @@ impl DeviceResources {
                  default limit of {default_limit}; a consumer creating a device with default \
                  limits could no longer render at all"
             );
-            let with_deform =
-                base + vertex_storage_buffers(&crate::resources::mesh_sidecar::deform::BGL_ENTRIES);
+            // The same sum in the fragment stage. wgpu totals a stage's
+            // storage buffers across every group a pipeline layout binds, so a
+            // group added on top of these two (the projected-tet volume path
+            // binds a third) only has the difference to spend. The base path
+            // sits on the limit exactly, so a new fragment-visible storage
+            // binding here costs some later pipeline its layout rather than
+            // this one.
+            let base_fragment =
+                stage_storage_buffers(&camera_bgl_entries, crate::gpu::ShaderStages::FRAGMENT)
+                    + stage_storage_buffers(
+                        &object_bgl_entries,
+                        crate::gpu::ShaderStages::FRAGMENT,
+                    );
+            debug_assert!(
+                base_fragment <= default_limit,
+                "the base mesh path binds {base_fragment} fragment-stage storage buffers, over                  wgpu's default limit of {default_limit}; a consumer creating a device with                  default limits could no longer render at all"
+            );
+            let with_deform = base
+                + stage_storage_buffers(
+                    &crate::resources::mesh_sidecar::deform::BGL_ENTRIES,
+                    crate::gpu::ShaderStages::VERTEX,
+                );
             debug_assert_eq!(
                 with_deform,
                 crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE,

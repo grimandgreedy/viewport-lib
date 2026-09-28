@@ -991,6 +991,25 @@ pub const PICK_PRIM_ENABLE_WGSL: &str = "";
 #[cfg(any(wgpu29, wgpu30))]
 pub const PICK_PRIM_ENABLE_WGSL: &str = "enable primitive_index;\n";
 
+/// Module directive a shader declaring a `binding_array` needs, per wgpu leg.
+///
+/// naga 30 only accepts `binding_array<...>` in a module that starts with
+/// `enable wgpu_binding_array;`; naga 27 and 29 have no such extension and
+/// reject the directive. Prepend this constant at the very top of the shader
+/// source, before any declaration, and it resolves to the right text for the
+/// active leg.
+#[cfg(any(wgpu27, wgpu29))]
+pub const BINDING_ARRAY_ENABLE_WGSL: &str = "";
+/// Module directive a shader declaring a `binding_array` needs, per wgpu leg.
+///
+/// naga 30 only accepts `binding_array<...>` in a module that starts with
+/// `enable wgpu_binding_array;`; naga 27 and 29 have no such extension and
+/// reject the directive. Prepend this constant at the very top of the shader
+/// source, before any declaration, and it resolves to the right text for the
+/// active leg.
+#[cfg(wgpu30)]
+pub const BINDING_ARRAY_ENABLE_WGSL: &str = "enable wgpu_binding_array;\n";
+
 /// Fragment helper for the pick-id pass that reports the hit triangle.
 ///
 /// Same contract as [`SHARED_PICK_WGSL`]'s `viewport_pick_fs`, except the

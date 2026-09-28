@@ -107,7 +107,12 @@ pub(crate) fn bindlessify(src: &str) -> String {
         );
         out = out.replace(from, to);
     }
-    out
+    // The array declaration needs its module directive ahead of everything
+    // else, so it goes on here rather than at each call site.
+    format!(
+        "{}{out}",
+        crate::plugin_api::shared_wgsl::BINDING_ARRAY_ENABLE_WGSL
+    )
 }
 
 /// Fixed size of the bindless texture array binding. A material's texture index
