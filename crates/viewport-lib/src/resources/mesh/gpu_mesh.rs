@@ -17,6 +17,15 @@ pub struct GpuMesh {
     pub(crate) index_span: SlabSpan,
     /// Number of indices in the triangle index buffer.
     pub index_count: u32,
+    /// Whether the triangle mesh is a closed, consistently wound surface:
+    /// every edge is shared by exactly two triangles that traverse it in
+    /// opposite directions, with vertices welded by position so a UV or
+    /// normal seam does not split an edge. Computed at upload. A closed mesh
+    /// casts shadows through the cull-front pipeline whatever its
+    /// `BackfacePolicy`, and its back faces (the inside, seen through a clip
+    /// plane) shade as inside the solid's own shadow. The cull-none caster
+    /// path is for surfaces that are genuinely open.
+    pub closed: bool,
     /// Material ranges partitioning the index buffer, from
     /// `MeshData::submeshes`. Empty for single-material meshes, which draw
     /// the full `0..index_count` range.

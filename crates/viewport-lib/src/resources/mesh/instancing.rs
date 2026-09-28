@@ -1863,7 +1863,11 @@ pub(crate) struct ObjectUniform {
     /// global index into the whole-chunk uv1 buffer (binding 19). 0 for meshes
     /// without a second UV set (they bind the one-entry zero fallback).
     pub(crate) uv1_base: u32, //   4 bytes, offset 260
-    pub(crate) _pad_uv: [u32; 2],    //   8 bytes, offset 264
+    /// 1 when the mesh is a closed surface (`GpuMesh::closed`). Its back
+    /// faces then shade as inside the solid's own shadow instead of sampling
+    /// the shadow map, and its receiver bias is the one-sided one.
+    pub(crate) mesh_closed: u32, //   4 bytes, offset 264
+    pub(crate) _pad_uv: u32,         //   4 bytes, offset 268
     /// Bit `i` set when deformer slot `i` is active for this draw. Zero when
     /// no deformer registry has attached data for this mesh.
     pub(crate) deform_flags: u32, //   4 bytes, offset 272
@@ -1953,7 +1957,9 @@ pub(crate) struct InstanceData {
     pub(crate) has_normal_map: u32,  //   4 bytes, offset  92
     pub(crate) has_ao_map: u32,      //   4 bytes, offset  96
     pub(crate) unlit: u32,           //   4 bytes, offset 100
-    /// 1 = sample the shadow atlas, 0 = treat the fragment as unshadowed.
+    /// Bit 0: 1 = sample the shadow atlas, 0 = treat the fragment as
+    /// unshadowed. Bit 1: the mesh is a closed surface (`GpuMesh::closed`),
+    /// so its back faces shade as inside the solid's own shadow.
     pub(crate) receive_shadows: u32, //   4 bytes, offset 104
     /// Index into `material_gpu_buf` (group 0 binding 21): this instance's
     /// transforms and scalar shading params. 0 is the default-material block.

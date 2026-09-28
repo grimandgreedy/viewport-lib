@@ -159,7 +159,7 @@ fn patch_for_ios(source: &str) -> String {
     // The textureSampleCompare call for point shadows takes a vec3 direction and
     // an array index -- neither is valid for texture_depth_2d_array. Stub it out.
     s.replace(
-        "    return textureSampleCompare(\n        point_shadow_cube_tex,\n        shadow_sampler,\n        dir,\n        light.point_shadow_slot,\n        normalised - bias,\n    );",
+        "    return textureSampleCompareLevel(\n        point_shadow_cube_tex,\n        shadow_sampler,\n        dir,\n        light.point_shadow_slot,\n        normalised,\n    );",
         "    return 1.0;",
     )
 }

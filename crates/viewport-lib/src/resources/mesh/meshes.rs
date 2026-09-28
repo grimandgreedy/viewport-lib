@@ -516,6 +516,8 @@ impl DeviceResources {
                                 aabb,
                                 data.uvs1.is_some(),
                             );
+                            mesh.closed =
+                                mesh_is_closed(data.positions.iter().copied(), &data.indices);
                             mesh.cpu_positions = cpu_positions;
                             mesh.cpu_normals = cpu_normals;
                             mesh.cpu_indices = cpu_indices;
@@ -2622,6 +2624,7 @@ impl DeviceResources {
             mesh.normal_line_buffer = Some(buf);
         }
         mesh.cpu_indices = Some(indices.to_vec());
+        mesh.closed = mesh_is_closed(vertices.iter().map(|v| v.position), indices);
         mesh
     }
 
@@ -2702,7 +2705,8 @@ impl DeviceResources {
             has_emissive_tex: 0,
             material_id: 0,
             uv1_base: 0,
-            _pad_uv: [0; 2],
+            mesh_closed: 0,
+            _pad_uv: 0,
             deform_flags: 0,
             normal_strength: 1.0,
             ao_range: [0.0, 1.0],
@@ -2873,7 +2877,8 @@ impl DeviceResources {
             has_emissive_tex: 0,
             material_id: 0,
             uv1_base: 0,
-            _pad_uv: [0; 2],
+            mesh_closed: 0,
+            _pad_uv: 0,
             deform_flags: 0,
             normal_strength: 1.0,
             ao_range: [0.0, 1.0],
@@ -3002,6 +3007,7 @@ impl DeviceResources {
             vertex_span,
             index_span,
             index_count,
+            closed: false,
             submeshes: Vec::new(),
             // Wireframe edges are built lazily on first use; the indices are
             // retained so any mesh can materialise them.
@@ -3685,6 +3691,122 @@ impl DeviceResources {
         uniform_buffer.unmap();
 
         (pending, scalar_range, uniform_buffer)
+    }
+}
+
+/// Whether a triangle list is a closed, consistently wound surface. Vertices
+/// are welded by position within a tolerance of the mesh extent, so a seam
+/// that duplicates a vertex for its UV or normal, or recomputes it through
+/// `cos` and `sin` a few ulps apart, does not open the surface. Each
+/// undirected edge counts +1 for one traversal direction and -1 for the
+/// other; a closed manifold sums to zero on every edge. Degenerate triangles
+/// (a repeated position) open the surface, as do inconsistent windings,
+/// which is the conservative answer.
+pub(crate) fn mesh_is_closed(positions: impl Iterator<Item = [f32; 3]>, indices: &[u32]) -> bool {
+    use std::collections::HashMap;
+    if indices.len() < 12 || indices.len() % 3 != 0 {
+        return false;
+    }
+    let pos: Vec<[f32; 3]> = positions.collect();
+    if pos.is_empty() {
+        return false;
+    }
+    let mut lo = pos[0];
+    let mut hi = pos[0];
+    for p in &pos {
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    let extent = (0..3).map(|k| hi[k] - lo[k]).fold(0.0f32, f32::max);
+    let eps = (extent * 1e-5).max(1e-7);
+    // Weld: sort by x, then merge every vertex with the unwelded ones within
+    // eps along x that are also within eps on y and z.
+    let mut order: Vec<u32> = (0..pos.len() as u32).collect();
+    order.sort_by(|&a, &b| pos[a as usize][0].total_cmp(&pos[b as usize][0]));
+    let mut remap = vec![u32::MAX; pos.len()];
+    let mut next = 0u32;
+    for (oi, &i) in order.iter().enumerate() {
+        if remap[i as usize] != u32::MAX {
+            continue;
+        }
+        remap[i as usize] = next;
+        let pi = pos[i as usize];
+        for &j in &order[oi + 1..] {
+            let pj = pos[j as usize];
+            if pj[0] - pi[0] > eps {
+                break;
+            }
+            if remap[j as usize] == u32::MAX
+                && (pj[1] - pi[1]).abs() <= eps
+                && (pj[2] - pi[2]).abs() <= eps
+            {
+                remap[j as usize] = next;
+            }
+        }
+        next += 1;
+    }
+    let mut edges: HashMap<(u32, u32), i32> = HashMap::with_capacity(indices.len());
+    for tri in indices.chunks_exact(3) {
+        let Some(a) = remap.get(tri[0] as usize) else {
+            return false;
+        };
+        let Some(b) = remap.get(tri[1] as usize) else {
+            return false;
+        };
+        let Some(c) = remap.get(tri[2] as usize) else {
+            return false;
+        };
+        if a == b || b == c || a == c {
+            return false;
+        }
+        for (u, v) in [(*a, *b), (*b, *c), (*c, *a)] {
+            let (key, sign) = if u < v { ((u, v), 1) } else { ((v, u), -1) };
+            *edges.entry(key).or_insert(0) += sign;
+        }
+    }
+    edges.values().all(|&n| n == 0)
+}
+
+#[cfg(test)]
+mod closed_mesh_tests {
+    use super::mesh_is_closed;
+    use crate::geometry::primitives;
+
+    fn closed(data: &crate::MeshData) -> bool {
+        mesh_is_closed(data.positions.iter().copied(), &data.indices)
+    }
+
+    #[test]
+    fn closed_primitives_are_closed_despite_seams() {
+        assert!(closed(&primitives::cube(1.0)), "cube");
+        assert!(closed(&primitives::sphere(1.0, 16, 8)), "sphere");
+        assert!(closed(&primitives::cone(1.0, 2.0, 16)), "cone");
+        assert!(closed(&primitives::cylinder(0.5, 2.0, 16)), "cylinder");
+        assert!(closed(&primitives::torus(1.0, 0.3, 24, 12)), "torus");
+    }
+
+    #[test]
+    fn open_surfaces_are_open() {
+        let mut quad = primitives::cube(1.0);
+        // Drop the last two triangles: one face missing.
+        quad.indices.truncate(quad.indices.len() - 6);
+        assert!(!closed(&quad));
+        let sheet = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ];
+        assert!(!mesh_is_closed(sheet.iter().copied(), &[0, 1, 2, 0, 2, 3]));
+    }
+
+    #[test]
+    fn inconsistent_winding_is_open() {
+        let mut cube = primitives::cube(1.0);
+        cube.indices.swap(0, 1);
+        assert!(!closed(&cube));
     }
 }
 

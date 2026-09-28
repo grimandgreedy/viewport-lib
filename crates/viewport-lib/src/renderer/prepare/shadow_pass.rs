@@ -463,6 +463,8 @@ impl ViewportRenderer {
                                     let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                         continue;
                                     };
+                                    // See the per-item pipeline key: closed meshes cast cull-front.
+                                    let two_sided = batch.two_sided && !mesh.closed;
                                     // Resolve the cutout bind group; fall back to the opaque
                                     // path if the cutout pipeline or bind group is missing.
                                     let cutout_bg = if batch.is_cutout {
@@ -483,15 +485,15 @@ impl ViewportRenderer {
                                         && cutout_pipeline.is_some()
                                         && cutout_pipeline_two_sided.is_some();
 
-                                    if cur_pipe != Some((batch.two_sided, use_cutout)) {
-                                        let pipe = match (use_cutout, batch.two_sided) {
+                                    if cur_pipe != Some((two_sided, use_cutout)) {
+                                        let pipe = match (use_cutout, two_sided) {
                                             (true, true) => cutout_pipeline_two_sided.unwrap(),
                                             (true, false) => cutout_pipeline.unwrap(),
                                             (false, true) => pipeline_two_sided,
                                             (false, false) => pipeline,
                                         };
                                         bundle_enc.set_pipeline(pipe);
-                                        cur_pipe = Some((batch.two_sided, use_cutout));
+                                        cur_pipe = Some((two_sided, use_cutout));
                                     }
                                     if use_cutout {
                                         bundle_enc.set_bind_group(1, cutout_bg.unwrap(), &[]);
@@ -667,6 +669,8 @@ impl ViewportRenderer {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
+                                // See the per-item pipeline key: closed meshes cast cull-front.
+                                let two_sided = batch.two_sided && !mesh.closed;
                                 let cutout_bg = if batch.is_cutout {
                                     let key = (
                                         cascade,
@@ -682,15 +686,15 @@ impl ViewportRenderer {
                                     && cutout_pipeline.is_some()
                                     && cutout_pipeline_two_sided.is_some();
 
-                                if cur_pipe != Some((batch.two_sided, use_cutout)) {
-                                    let pipe = match (use_cutout, batch.two_sided) {
+                                if cur_pipe != Some((two_sided, use_cutout)) {
+                                    let pipe = match (use_cutout, two_sided) {
                                         (true, true) => cutout_pipeline_two_sided.unwrap(),
                                         (true, false) => cutout_pipeline.unwrap(),
                                         (false, true) => pipeline_two_sided,
                                         (false, false) => pipeline,
                                     };
                                     shadow_pass.set_pipeline(pipe);
-                                    cur_pipe = Some((batch.two_sided, use_cutout));
+                                    cur_pipe = Some((two_sided, use_cutout));
                                 }
                                 if use_cutout {
                                     shadow_pass.set_bind_group(1, cutout_bg.unwrap(), &[]);
@@ -796,6 +800,8 @@ impl ViewportRenderer {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
+                                // See the per-item pipeline key: closed meshes cast cull-front.
+                                let two_sided = batch.two_sided && !mesh.closed;
                                 // Cutout batches sample the albedo alpha, so they need the
                                 // batch's own texture bind group (not the shared first-batch
                                 // one) at group 1.
@@ -818,15 +824,15 @@ impl ViewportRenderer {
                                     && cutout_pipeline.is_some()
                                     && cutout_pipeline_two_sided.is_some();
 
-                                if cur_pipe != Some((batch.two_sided, use_cutout)) {
-                                    let pipe = match (use_cutout, batch.two_sided) {
+                                if cur_pipe != Some((two_sided, use_cutout)) {
+                                    let pipe = match (use_cutout, two_sided) {
                                         (true, true) => cutout_pipeline_two_sided.unwrap(),
                                         (true, false) => cutout_pipeline.unwrap(),
                                         (false, true) => pipeline_two_sided,
                                         (false, false) => pipeline,
                                     };
                                     shadow_pass.set_pipeline(pipe);
-                                    cur_pipe = Some((batch.two_sided, use_cutout));
+                                    cur_pipe = Some((two_sided, use_cutout));
                                 }
                                 if use_cutout {
                                     shadow_pass.set_bind_group(1, cutout_bg.unwrap(), &[]);
@@ -935,15 +941,19 @@ impl ViewportRenderer {
                                 continue;
                             }
 
-                            // Two-sided materials cast through the cull-none
-                            // pipeline so both faces rasterise; its larger
-                            // caster-side bias keeps the surface from
-                            // self-shadowing where it is its own receiver. A
-                            // masked material casts through the cutout
+                            // Two-sided materials on open surfaces cast
+                            // through the cull-none pipeline so both faces
+                            // rasterise; its larger caster-side bias keeps the
+                            // surface from self-shadowing where it is its own
+                            // receiver. A closed mesh keeps the cull-front
+                            // pipeline whatever its policy: its back faces are
+                            // the casters, so it never compares against itself
+                            // and the cull-none slope bias cannot leak through
+                            // it. A masked material casts through the cutout
                             // pipeline, punching holes instead of a solid
                             // silhouette.
                             let key = PipelineKey {
-                                two_sided: item.material.is_two_sided(),
+                                two_sided: item.material.is_two_sided() && !mesh.closed,
                                 cutout: matches!(
                                     item.material.alpha_mode,
                                     crate::scene::material::AlphaMode::Mask(_)
@@ -1026,7 +1036,7 @@ impl ViewportRenderer {
                             // Two-sided and cutout selection as the instanced
                             // path above.
                             let key = PipelineKey {
-                                two_sided: item.material.is_two_sided(),
+                                two_sided: item.material.is_two_sided() && !mesh.closed,
                                 cutout: matches!(
                                     item.material.alpha_mode,
                                     crate::scene::material::AlphaMode::Mask(_)
@@ -1454,6 +1464,8 @@ fn draw_shadow_cascades_multi_draw(
             let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                 continue;
             };
+            // See the per-item pipeline key: closed meshes cast cull-front.
+            let two_sided = batch.two_sided && !mesh.closed;
             let cutout_bg = if batch.is_cutout {
                 let key = (
                     cascade,
@@ -1473,7 +1485,7 @@ fn draw_shadow_cascades_multi_draw(
             } else {
                 inst_cull_bg
             };
-            let pipe_key = (batch.two_sided, use_cutout);
+            let pipe_key = (two_sided, use_cutout);
             let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
             let g1_ptr = group1 as *const crate::gpu::BindGroup;
             let g = bi as u64;
@@ -1498,7 +1510,7 @@ fn draw_shadow_cascades_multi_draw(
                 );
             }
             if cur_pipe != Some(pipe_key) {
-                let pipe = match (use_cutout, batch.two_sided) {
+                let pipe = match (use_cutout, two_sided) {
                     (true, true) => cutout_pipeline_two_sided.unwrap(),
                     (true, false) => cutout_pipeline.unwrap(),
                     (false, true) => pipeline_two_sided,

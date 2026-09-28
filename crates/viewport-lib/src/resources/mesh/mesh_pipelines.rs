@@ -314,24 +314,32 @@ pub(crate) const CSM_SHADOW_BIAS: crate::gpu::DepthBiasState = crate::gpu::Depth
 /// default cull-front caster bias this surface reads as a broad dark patch.
 ///
 /// `constant: 1000` in Depth32Float is ~1e-4 NDC, comfortably above the
-/// perpendicular-receiver bias floor. `slope_scale: 8.0` pushes each caster
+/// perpendicular-receiver bias floor. `slope_scale: 2.0` pushes each caster
 /// polygon's recorded depth away from the light in proportion to its slope in
 /// light space. A wavy two-sided surface (a cloth sheet, a scalar-field graph)
 /// has steep polygons that vary a lot in depth within one shadow texel, so
-/// without a strong slope term the surface reads its own quantized depth as an
+/// without a slope term the surface reads its own quantized depth as an
 /// occluder and self-shadows in blocky, triangle-aligned patches (shadow acne)
-/// that stay visible even zoomed in. Scaling the caster depth by the slope
-/// clears that on the steep folds while leaving flat parts untouched.
+/// that stay visible even zoomed in. Two texel-depths per unit slope clears
+/// that on coarse, steep folds under a low sun; one does not.
+///
+/// The slope term is also a leak: every receiver behind a steep two-sided
+/// caster polygon reads it as that much further away. At 8.0 the ground
+/// under a draped sheet showed lit holes where the sheet's steepest polygons
+/// were pushed past it, and a closed solid routed here by a styled backface
+/// policy showed its exterior's depth pushed past its own interior wall.
+/// Closed meshes no longer come through this pipeline (`GpuMesh::closed`
+/// routes them cull-front), and 2.0 keeps the open-surface leak to a texel
+/// or two.
 ///
 /// This lives on the caster side of the two-sided (cull-none) pipeline only, so
 /// one-sided receivers (ground planes, solids) are not touched at all: their
 /// cast shadows stay pinned to their casters with no peter-panning. The cost is
 /// confined to two-sided surfaces resting on something else, whose contact
-/// shadow can lift by roughly `slope_scale` shadow texels; drop the factor if a
-/// draped two-sided surface ever needs a tighter contact.
+/// shadow can lift by roughly `slope_scale` shadow texels.
 pub const CSM_SHADOW_BIAS_TWO_SIDED: crate::gpu::DepthBiasState = crate::gpu::DepthBiasState {
     constant: 1000,
-    slope_scale: 8.0,
+    slope_scale: 2.0,
     clamp: 0.0,
 };
 
@@ -341,11 +349,13 @@ pub const CSM_SHADOW_BIAS_TWO_SIDED: crate::gpu::DepthBiasState = crate::gpu::De
 /// - `Some(Face::Front)` for closed solids (`BackfacePolicy::Cull`). Back
 ///   faces become the casters, so a solid's own front face is never compared
 ///   against itself in the shadow map.
-/// - `None` for two-sided surfaces (`BackfacePolicy::Identical` and friends,
-///   typically single-quad planes, cloth, foliage). Both sides rasterise so
-///   the surface can still cast a shadow regardless of which side faces the
-///   light. The receiver-side normal bias is what keeps the self-shadow
-///   class quiet on this path.
+/// - `None` for two-sided surfaces (`BackfacePolicy::Identical` and friends
+///   on an open mesh: single-quad planes, cloth, foliage). Both sides
+///   rasterise so the surface can still cast a shadow regardless of which
+///   side faces the light. A closed mesh takes the cull-front pipeline
+///   whatever its policy (`GpuMesh::closed`): its back faces cast, so it
+///   never compares against itself, and the cull-none slope bias cannot leak
+///   through its wall.
 ///
 /// `cutout` selects `vs_cutout`/`fs_cutout` instead of the plain `vs_main`:
 /// the fragment stage samples the caster's albedo alpha and discards below
@@ -421,9 +431,10 @@ pub(crate) fn build_shadow_pipeline(
 /// the cubemap stores the near-side distance of each occluder. With linear
 /// distance and front-face culling, the stored depth is the object's far
 /// side, which bakes in an implicit "bias = object thickness" and causes
-/// peter-panning on objects sitting flush against receivers. A small slope-
-/// scale bias offsets shadow acne on the lit side without re-introducing the
-/// gap.
+/// peter-panning on objects sitting flush against receivers. No pipeline
+/// depth bias: the fragment stage writes `frag_depth`, and the receiver side
+/// (`sample_point_shadow` in the mesh shaders) carries the normal-offset and
+/// constant terms that keep the lit side free of acne.
 pub(crate) fn build_shadow_point_pipeline(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
