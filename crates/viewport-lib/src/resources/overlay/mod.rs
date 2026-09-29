@@ -7,6 +7,8 @@ pub(crate) mod geometry;
 /// Scene-overlay scaffolding: floor grid, axes indicator, base overlay, constraint lines.
 pub(crate) mod guides;
 pub(crate) mod highlight;
+/// Outline coverage rasterization for glyph ids fontdue does not load.
+pub(crate) mod outline_glyph;
 pub(crate) mod overlay_shape;
 pub(crate) mod overlay_text;
 pub(crate) mod overlays;

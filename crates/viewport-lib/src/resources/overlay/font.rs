@@ -3,6 +3,9 @@
 //! This module is the text back-end for [`LabelItem`](crate::LabelItem) and
 //! [`GlyphRunItem`](crate::GlyphRunItem).  It uses [`fontdue`] for glyph
 //! rasterization and packs glyphs into a single GPU texture atlas on demand.
+//! fontdue only parses the glyphs it can reach from `cmap` and `GSUB`, so glyph
+//! ids it leaves empty are filled from their outline instead (see
+//! [`outline_glyph`](super::outline_glyph)).
 //!
 //! Public surface: [`FontHandle`] (opaque font identifier) and
 //! [`super::DeviceResources::upload_font`].  Everything else is `pub(crate)`.
@@ -615,15 +618,10 @@ impl GlyphAtlas {
 
         let mut quads = Vec::new();
         for (glyph_id, x, y, payload) in glyphs {
-            // Skip glyphs with no visible bitmap (whitespace), as `layout_text`
-            // does, so zero-area entries never reach the packer. Color-font glyphs
-            // go through even when fontdue reports zero area (emoji have no
-            // outline).
-            let m = self.fonts[font_index].metrics_indexed(glyph_id, px);
-            if (m.width == 0 || m.height == 0) && !self.font_has_color[font_index] {
-                continue;
-            }
-
+            // Glyphs with no visible bitmap (whitespace) are skipped, as in
+            // `layout_text`. That is decided by `ensure_glyph` rather than by
+            // fontdue's metrics here, because a glyph fontdue reports as empty may
+            // still rasterize from its outline, and an emoji has no outline at all.
             let entry = self.ensure_glyph(device, font_index, glyph_id, size_tenths, px, style);
             if entry.width == 0 {
                 continue;
@@ -911,11 +909,27 @@ impl GlyphAtlas {
         }
 
         // Coverage rasterization (fontdue): store `[255, 255, 255, coverage]`.
-        let (metrics, bitmap) = self.fonts[font_index].rasterize_indexed(glyph_index, px);
-        let w = metrics.width as u32;
-        let h = metrics.height as u32;
-        let offset_x = metrics.xmin as f32;
-        let offset_y = -(metrics.ymin as f32 + h as f32);
+        let (metrics, mut bitmap) = self.fonts[font_index].rasterize_indexed(glyph_index, px);
+        let mut w = metrics.width as u32;
+        let mut h = metrics.height as u32;
+        let mut offset_x = metrics.xmin as f32;
+        let mut offset_y = -(metrics.ymin as f32 + h as f32);
+
+        // fontdue only parses the glyphs it can reach from `cmap` and `GSUB`, so a
+        // glyph id a shaper took from another table (the OpenType `MATH` size
+        // variants, say) rasterizes to nothing here even though the font outlines
+        // it. Fill the outline directly for those rather than drawing a gap.
+        if w == 0 || h == 0 {
+            if let Some(cov) =
+                super::outline_glyph::rasterise(&self.font_bytes[font_index], glyph_index, px)
+            {
+                w = cov.width;
+                h = cov.height;
+                offset_x = cov.offset_x;
+                offset_y = cov.offset_y;
+                bitmap = cov.coverage;
+            }
+        }
 
         if !style.is_plain() && w > 0 && h > 0 {
             let (cell, sw, sh, pad) = style_coverage(&bitmap, w, h, style);
