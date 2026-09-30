@@ -3,7 +3,7 @@
 //! re-tessellating them.
 
 use super::*;
-use crate::resources::overlay::font::GlyphStyle;
+use crate::resources::overlay::glyph_style::GlyphStyle;
 
 /// Bake an item's own `clip.rect` onto the vertices it just emitted, from
 /// `start` to the end of `verts`.
