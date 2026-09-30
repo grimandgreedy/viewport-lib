@@ -66,15 +66,12 @@ impl ApplicationHandler for App {
 
         // Android ships both a Vulkan and a GLES driver and wgpu will take
         // either. Ask for Vulkan so the backend does not change between
-        // devices.
+        // devices. Both go through the library's instance helpers rather than an
+        // `InstanceDescriptor` literal, which only compiles against wgpu 27.
         #[cfg(target_os = "android")]
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN,
-            flags: wgpu::InstanceFlags::empty(),
-            ..Default::default()
-        });
+        let instance = viewport_lib::wgpu::instance_with_backends(wgpu::Backends::VULKAN);
         #[cfg(not(target_os = "android"))]
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = viewport_lib::wgpu::default_instance();
 
         let surface = instance.create_surface(window.clone()).expect("surface");
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
