@@ -155,3 +155,38 @@ fn per_glyph_tints_apply() {
         "expected both red and blue glyphs, got red {red} blue {blue}"
     );
 }
+
+/// Glyph ids with no codepoint draw. These are outlined in the font but
+/// unreachable from `cmap`, which is the shape of an OpenType MATH size variant:
+/// the id a shaper hands over for a grown delimiter or large operator.
+#[test]
+fn glyph_run_draws_ids_with_no_codepoint() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // Outlined in Inter and unreachable from its cmap.
+    let no_codepoint: [u16; 6] = [646, 888, 892, 2880, 2881, 2891];
+    let glyphs: Vec<PositionedGlyph> = no_codepoint
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| PositionedGlyph::new(id, 6.0 + i as f32 * 20.0, 60.0))
+        .collect();
+
+    let size = 160u32;
+    let mut frame = overlay_frame(size);
+    frame.overlays.glyph_runs = vec![
+        GlyphRunItem::new(glyphs)
+            .with_font_size(40.0)
+            .with_colour([1.0, 1.0, 1.0, 1.0]),
+    ];
+
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    let bright = bright_pixels(&px);
+    assert!(
+        bright > 20,
+        "expected the codepoint-less glyph ids to draw, got {bright} bright pixels"
+    );
+}
