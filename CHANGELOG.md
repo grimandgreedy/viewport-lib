@@ -4,9 +4,13 @@
 
 ### Changed
 
+- **`LabelItem` shapes its text, so `measure_overlay_text` returns different widths** - label layout was one glyph per codepoint with `kern` pairs and is now a shaped run, which brings GPOS kerning, ligatures and mark attachment. Widths move by under 1% for ordinary prose, not at all for text with no kern pairs, and up to 7.6% for all-caps; one measured string came out slightly *wider*, so the new value is not always smaller. Font metrics are unchanged to the last decimal, so nothing moved vertically. `GlyphRunItem` is untouched: a caller that shapes its own text gets exactly what it did before. Re-check any layout tuned against the old widths, particularly fixed boxes around all-caps text and anything whose line count depends on wrapping.
+
 - **Every example drives the camera through a host-owned `ViewportInput`** - the examples used the deprecated `OrbitCameraController::push_event` / `apply_to_camera` pair, so the code a new consumer reads first taught the path that lets a session and a controller disagree about the control scheme. Each example now owns a `ViewportInput` (one per viewport where there are several), constructs the controller with `new_stateless()`, and applies the resolved frame with `apply(&mut camera, &frame)`. Nothing in the library changed: this is the examples, the testkit's catalogue viewer, and the doc examples on `ViewportApp::with_input` and `ManipulationController::is_active` catching up to the surface that replaced them.
 
 ### Fixed
+
+- **COLR fonts draw their colour glyphs** - layered colour outlines render through the same atlas as everything else, using the font's default CPAL palette. Previously only bitmap strikes (sbix, CBDT) drew in colour and a COLR font fell through to monochrome coverage, which is what Segoe UI Emoji, Twemoji-COLR and the Noto COLR builds ship.
 
 - **A glyph run drew nothing for glyph ids fontdue does not load** - fontdue only parses the glyphs it can reach from `cmap` and `GSUB`, so any other id came back as an empty bitmap and `GlyphRunItem` skipped it, leaving a gap the width of the advance the caller laid out with. Those ids are now rasterised from their outline, which covers the OpenType `MATH` size variants and assembly pieces (a delimiter or large operator used to vanish as soon as it had to grow). Glyphs fontdue already rasterises are untouched, so existing text is unchanged.
 

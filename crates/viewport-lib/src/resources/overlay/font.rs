@@ -878,6 +878,15 @@ impl GlyphAtlas {
         // then a colour bitmap strike, then the outline. Everything is addressed by
         // glyph id, so an id that reached us from a table this crate does not read
         // (the OpenType `MATH` size variants, say) rasterizes like any other.
+        //
+        // COLR outranks a bitmap strike because it is vector: a font carrying both
+        // scales cleanly from the outlines rather than resampling a fixed strike.
+        // The palette is the font's default (index 0). Alternate CPAL palettes are
+        // mostly light/dark emoji variants, and exposing a choice would mean a new
+        // field on every text item plus a palette in `GlyphKey`, which is not
+        // earned. Adding one later means widening that key: two palettes of one
+        // glyph at one size are different pixels, and the cache cannot tell them
+        // apart as it stands.
         let image = {
             let Self {
                 scale,
@@ -1361,6 +1370,139 @@ fn box_blur(src: &[u8], w: u32, h: u32, radius: u32) -> Vec<u8> {
 mod tests {
     use super::*;
     use viewport_lib_testkit::headless_device;
+
+    /// Build a COLR v0 / CPAL v0 font by appending those two tables to the
+    /// bundled one, so the colour-outline path can be tested without shipping a
+    /// COLR font or depending on one being installed. The base glyph is `A`,
+    /// drawn as two layers: `A` in palette colour 0 and `O` in palette colour 1.
+    fn synth_colr_font(base: u16, layer: u16) -> Vec<u8> {
+        fn u16b(v: u16) -> [u8; 2] {
+            v.to_be_bytes()
+        }
+        fn u32b(v: u32) -> [u8; 4] {
+            v.to_be_bytes()
+        }
+
+        // COLR v0: two layers on one base glyph.
+        let mut colr = Vec::new();
+        colr.extend(u16b(0)); // version
+        colr.extend(u16b(1)); // numBaseGlyphRecords
+        colr.extend(u32b(14)); // baseGlyphRecordsOffset (header is 14 bytes)
+        colr.extend(u32b(14 + 6)); // layerRecordsOffset
+        colr.extend(u16b(2)); // numLayerRecords
+        colr.extend(u16b(base)); // base glyph id
+        colr.extend(u16b(0)); // firstLayerIndex
+        colr.extend(u16b(2)); // numLayers
+        colr.extend(u16b(base)); // layer 0 glyph
+        colr.extend(u16b(0)); // layer 0 palette entry
+        colr.extend(u16b(layer)); // layer 1 glyph
+        colr.extend(u16b(1)); // layer 1 palette entry
+
+        // CPAL v0: one palette, two entries. Colour records are BGRA.
+        let mut cpal = Vec::new();
+        cpal.extend(u16b(0)); // version
+        cpal.extend(u16b(2)); // numPaletteEntries
+        cpal.extend(u16b(1)); // numPalettes
+        cpal.extend(u16b(2)); // numColorRecords
+        cpal.extend(u32b(14)); // colorRecordsArrayOffset
+        cpal.extend(u16b(0)); // colorRecordIndices[0]
+        cpal.extend([0, 0, 255, 255]); // entry 0: red
+        cpal.extend([255, 0, 0, 255]); // entry 1: blue
+
+        // Rebuild the table directory with the two new tables spliced in. Tag
+        // order matters: readers binary-search the directory.
+        let src = DEFAULT_FONT_BYTES;
+        let num = u16::from_be_bytes([src[4], src[5]]) as usize;
+        let mut tables: Vec<([u8; 4], Vec<u8>)> = Vec::with_capacity(num + 2);
+        for i in 0..num {
+            let rec = 12 + i * 16;
+            let tag = [src[rec], src[rec + 1], src[rec + 2], src[rec + 3]];
+            let off = u32::from_be_bytes(src[rec + 8..rec + 12].try_into().unwrap()) as usize;
+            let len = u32::from_be_bytes(src[rec + 12..rec + 16].try_into().unwrap()) as usize;
+            tables.push((tag, src[off..off + len].to_vec()));
+        }
+        tables.push((*b"COLR", colr));
+        tables.push((*b"CPAL", cpal));
+        tables.sort_by_key(|(tag, _)| *tag);
+
+        let count = tables.len();
+        let mut out = Vec::new();
+        out.extend(&src[0..4]); // sfnt version
+        out.extend(u16b(count as u16));
+        // searchRange / entrySelector / rangeShift are not read by the parsers
+        // here, and a wrong value is not a parse failure.
+        out.extend(u16b(0));
+        out.extend(u16b(0));
+        out.extend(u16b(0));
+
+        let mut offset = 12 + count * 16;
+        let mut directory = Vec::new();
+        let mut body = Vec::new();
+        for (tag, data) in &tables {
+            directory.extend(tag);
+            directory.extend(u32b(0)); // checksum: not verified by these readers
+            directory.extend(u32b(offset as u32));
+            directory.extend(u32b(data.len() as u32));
+            body.extend(data);
+            let pad = (4 - data.len() % 4) % 4;
+            body.extend(std::iter::repeat_n(0u8, pad));
+            offset += data.len() + pad;
+        }
+        out.extend(directory);
+        out.extend(body);
+        out
+    }
+
+    /// A COLR base glyph renders as a colour image, and its palette colours come
+    /// through. The base glyph is also an ordinary outline, so this doubles as a
+    /// check that `Source::ColorOutline` is reached before `Source::Outline`.
+    #[test]
+    fn colr_glyph_renders_with_its_palette() {
+        let plain = FontRef::from_index(DEFAULT_FONT_BYTES, 0).unwrap();
+        let base = plain.charmap().map('A');
+        let layer = plain.charmap().map('O');
+        assert!(base != 0 && layer != 0);
+
+        let bytes = synth_colr_font(base, layer);
+        let font = FontRef::from_index(&bytes, 0).expect("synthesised font parses");
+
+        let mut ctx = ScaleContext::new();
+        let mut scaler = ctx.builder(font).size(64.0).hint(HINT_GLYPHS).build();
+        let image = Render::new(&[
+            Source::ColorOutline(0),
+            Source::ColorBitmap(StrikeWith::BestFit),
+            Source::Outline,
+        ])
+        .render(&mut scaler, base)
+        .expect("the base glyph renders");
+
+        assert_eq!(
+            image.content,
+            Content::Color,
+            "a COLR base glyph must take the colour-outline path, not the outline one"
+        );
+        assert_eq!(
+            image.data.len(),
+            (image.placement.width * image.placement.height * 4) as usize
+        );
+
+        // Both palette entries are present: red from layer 0, blue from layer 1.
+        let mut red = 0usize;
+        let mut blue = 0usize;
+        for p in image.data.chunks_exact(4) {
+            if p[3] < 128 {
+                continue;
+            }
+            if p[0] > 180 && p[1] < 80 && p[2] < 80 {
+                red += 1;
+            }
+            if p[2] > 180 && p[0] < 80 && p[1] < 80 {
+                blue += 1;
+            }
+        }
+        assert!(red > 0, "expected the first palette colour in the output");
+        assert!(blue > 0, "expected the second palette colour in the output");
+    }
 
     /// Glyph 646 of the bundled font has no codepoint: nothing in the font's
     /// `cmap` reaches it. That is the shape of an OpenType MATH size variant, and
