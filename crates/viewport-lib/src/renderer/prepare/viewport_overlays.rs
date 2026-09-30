@@ -2,7 +2,7 @@
 //! shapes.
 
 use super::*;
-use crate::resources::overlay::font::GlyphStyle;
+use crate::resources::overlay::glyph_style::GlyphStyle;
 
 /// Encode an overlay shape into `(shape_type, radii)` for the SDF, matching the
 /// draw path's packing. `hw`/`hh` are the half-extents used to clamp corner radii.

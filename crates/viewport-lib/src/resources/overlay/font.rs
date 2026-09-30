@@ -46,125 +46,11 @@ fn swash_key(font_bytes: &[u8]) -> Option<(u32, CacheKey)> {
 // `crate::resources::overlay::font::FontHandle` path keeps resolving.
 pub use viewport_lib_types::overlay::font::FontHandle;
 
+use super::glyph_style::{GlyphStyle, style_coverage};
+
 // ---------------------------------------------------------------------------
 // GlyphKey / GlyphEntry : atlas bookkeeping
 // ---------------------------------------------------------------------------
-
-/// How a glyph cell is post-processed after rasterization.
-///
-/// The plain style is the glyph itself. A shadow style grows the coverage by
-/// `spread`, fades it over `blur`, and shapes that fade by `falloff`, producing
-/// a cell that is drawn behind the glyph in the shadow colour. Baking it here
-/// rather than at draw time means the work happens once per distinct style and
-/// size, not per frame, and the result is exact rather than an approximation
-/// built from offset copies.
-///
-/// All three are quantised for the same reason the font size is: to keep the
-/// number of distinct atlas cells bounded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub(crate) struct GlyphStyle {
-    /// Dilation in tenths of a physical pixel.
-    spread_tenths: u32,
-    /// Fade distance in tenths of a physical pixel.
-    blur_tenths: u32,
-    /// Falloff exponent in tenths. `0` marks the plain (unstyled) glyph.
-    falloff_tenths: u32,
-    /// Erode inward from the glyph edge instead of dilating outward, for an
-    /// inset layer. The cell is the glyph's own coverage with its interior
-    /// eaten away, so it draws over the glyph rather than behind it.
-    inner: bool,
-    /// Where the glyph sits relative to this cell once the layer offset has
-    /// moved it, in whole physical pixels. An outer cell is cut back to outside
-    /// the letterform, and the cut has to land where the letterform actually
-    /// is, so the offset is part of what makes a cell distinct.
-    clip_dx: i32,
-    clip_dy: i32,
-}
-
-/// Largest dilation or blur honoured on a glyph cell, in physical pixels.
-/// Past this the cell dwarfs the glyph and the atlas cost stops being worth it.
-const MAX_GLYPH_STYLE_PX: f32 = 32.0;
-
-impl GlyphStyle {
-    /// The glyph as rasterized, with no shadow processing.
-    pub(crate) const PLAIN: Self = Self {
-        spread_tenths: 0,
-        blur_tenths: 0,
-        falloff_tenths: 0,
-        inner: false,
-        clip_dx: 0,
-        clip_dy: 0,
-    };
-
-    /// Build a style from a shadow layer's physical-pixel spread, blur and
-    /// offset. Returns [`GlyphStyle::PLAIN`] when the layer would not change
-    /// the cell.
-    pub(crate) fn from_shadow(
-        spread_px: f32,
-        blur_px: f32,
-        falloff: f32,
-        offset_px: [f32; 2],
-    ) -> Self {
-        let mut s = Self::from_layer(spread_px, blur_px, falloff, false);
-        if !s.is_plain() {
-            let clamp = |v: f32| v.clamp(-MAX_GLYPH_STYLE_PX, MAX_GLYPH_STYLE_PX).round() as i32;
-            s.clip_dx = clamp(offset_px[0]);
-            s.clip_dy = clamp(offset_px[1]);
-        }
-        s
-    }
-
-    /// The inset counterpart: the cell is the glyph with a band eaten inward
-    /// from its edge, drawn over the glyph in the layer colour.
-    pub(crate) fn from_inner_shadow(spread_px: f32, blur_px: f32, falloff: f32) -> Self {
-        Self::from_layer(spread_px, blur_px, falloff, true)
-    }
-
-    fn from_layer(spread_px: f32, blur_px: f32, falloff: f32, inner: bool) -> Self {
-        let spread = spread_px.clamp(0.0, MAX_GLYPH_STYLE_PX);
-        let blur = blur_px.clamp(0.0, MAX_GLYPH_STYLE_PX);
-        if spread <= 0.0 && blur <= 0.0 {
-            return Self::PLAIN;
-        }
-        Self {
-            spread_tenths: (spread * 10.0).round() as u32,
-            blur_tenths: (blur * 10.0).round() as u32,
-            falloff_tenths: ((falloff.clamp(0.05, 16.0)) * 10.0).round().max(1.0) as u32,
-            inner,
-            clip_dx: 0,
-            clip_dy: 0,
-        }
-    }
-
-    fn is_plain(&self) -> bool {
-        self.falloff_tenths == 0
-    }
-
-    fn spread(&self) -> f32 {
-        self.spread_tenths as f32 * 0.1
-    }
-
-    fn blur(&self) -> f32 {
-        self.blur_tenths as f32 * 0.1
-    }
-
-    fn falloff(&self) -> f32 {
-        self.falloff_tenths as f32 * 0.1
-    }
-
-    /// Physical pixels the styled cell grows on every side.
-    fn pad(&self) -> u32 {
-        if self.is_plain() {
-            return 0;
-        }
-        if self.inner {
-            // An inset cell never grows past the glyph; one pixel of margin
-            // keeps the blur off the cell border.
-            return 1;
-        }
-        (self.spread() + self.blur()).ceil() as u32 + 1
-    }
-}
 
 /// Unique key for a rasterized glyph in the atlas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -504,6 +390,45 @@ impl GlyphAtlas {
         }
     }
 
+    /// Shape one word and rasterize its glyphs, returning the quads positioned
+    /// against a pen at the origin plus the word's total advance. The caller
+    /// translates them once the wrap has decided where the word sits.
+    fn word_quads(
+        &mut self,
+        device: &crate::gpu::Device,
+        font_index: usize,
+        word: &str,
+        px: f32,
+        size_tenths: u32,
+        style: GlyphStyle,
+    ) -> (Vec<GlyphQuad>, f32) {
+        // One word is one run. Shaping stops at the word boundary the wrapper
+        // already chose, which is where a line may break anyway.
+        let mut shaped = Vec::new();
+        self.shape_run(font_index, word, px, &mut shaped);
+
+        let mut quads = Vec::new();
+        let mut pen_x: f32 = 0.0;
+        for g in shaped {
+            let entry = self.ensure_glyph(device, font_index, g.id, size_tenths, px, style);
+            if entry.width > 0 {
+                let atlas_size = self.size as f32;
+                quads.push(GlyphQuad {
+                    pos: [pen_x + g.x + entry.offset_x, -g.y + entry.offset_y],
+                    size: [entry.width as f32, entry.height as f32],
+                    uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
+                    uv_max: [
+                        (entry.x + entry.width) as f32 / atlas_size,
+                        (entry.y + entry.height) as f32 / atlas_size,
+                    ],
+                    color: entry.color,
+                });
+            }
+            pen_x += g.advance;
+        }
+        (quads, pen_x)
+    }
+
     /// Lay out text with word wrapping at a maximum width.
     ///
     /// Words that exceed `max_width` on their own are not broken: they extend
@@ -531,87 +456,33 @@ impl GlyphAtlas {
         let size_tenths = (px * 10.0).round() as u32;
         let space_advance = self.advance_of(font_index, " ", px);
 
-        let mut quads = Vec::new();
-        let mut shaped = Vec::new();
-        let mut line_x: f32 = 0.0;
-        let mut line_y: f32 = 0.0;
-        let mut max_line_width: f32 = 0.0;
-
-        // Process each hard line (\n-delimited) independently, then word-wrap within it.
-        for (logical_line_idx, logical_line) in text.split('\n').enumerate() {
-            if logical_line_idx > 0 {
-                max_line_width = max_line_width.max(line_x);
-                line_x = 0.0;
-                line_y += line_height;
+        // Shape and rasterize each word at its own origin, then let the shared
+        // rule decide where the words land. Quads are built first because a word's
+        // width is not known until it is shaped, and the wrap depends on it.
+        let mut word_quads: Vec<Vec<GlyphQuad>> = Vec::new();
+        let mut lines: Vec<Vec<f32>> = Vec::new();
+        for logical_line in text.split('\n') {
+            let mut widths = Vec::new();
+            for word in logical_line.split_whitespace() {
+                let (quads, width) =
+                    self.word_quads(device, font_index, word, px, size_tenths, style);
+                word_quads.push(quads);
+                widths.push(width);
             }
-
-            let words: Vec<&str> = logical_line.split_whitespace().collect();
-            if words.is_empty() {
-                continue;
-            }
-
-            let mut first_on_line = true;
-
-            for word in &words {
-                let mut word_quads: Vec<GlyphQuad> = Vec::new();
-                let mut pen_x: f32 = 0.0;
-
-                // One word is one run. Shaping stops at the word boundary the
-                // wrapper already chose, which is where a line may break anyway.
-                self.shape_run(font_index, word, px, &mut shaped);
-                for g in std::mem::take(&mut shaped) {
-                    let entry = self.ensure_glyph(device, font_index, g.id, size_tenths, px, style);
-                    if entry.width > 0 {
-                        let atlas_size = self.size as f32;
-                        word_quads.push(GlyphQuad {
-                            pos: [pen_x + g.x + entry.offset_x, -g.y + entry.offset_y],
-                            size: [entry.width as f32, entry.height as f32],
-                            uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
-                            uv_max: [
-                                (entry.x + entry.width) as f32 / atlas_size,
-                                (entry.y + entry.height) as f32 / atlas_size,
-                            ],
-                            color: entry.color,
-                        });
-                    }
-                    pen_x += g.advance;
-                }
-                let word_width = pen_x;
-
-                // Soft-wrap if the word doesn't fit on the current line.
-                let test_x = if first_on_line {
-                    line_x
-                } else {
-                    line_x + space_advance
-                };
-                if !first_on_line && test_x + word_width > max_width {
-                    max_line_width = max_line_width.max(line_x);
-                    line_x = 0.0;
-                    line_y += line_height;
-                    first_on_line = true;
-                }
-
-                let start_x = if first_on_line {
-                    line_x
-                } else {
-                    line_x + space_advance
-                };
-                for mut gq in word_quads {
-                    gq.pos[0] += start_x;
-                    gq.pos[1] += line_y;
-                    quads.push(gq);
-                }
-                line_x = start_x + word_width;
-                first_on_line = false;
-            }
+            lines.push(widths);
         }
 
-        max_line_width = max_line_width.max(line_x);
-        let total_height = if quads.is_empty() && text.is_empty() {
-            line_height
-        } else {
-            line_y + line_height
-        };
+        let (origins, max_line_width, total_height) =
+            wrap_words(&lines, space_advance, max_width, line_height);
+
+        let mut quads = Vec::new();
+        for (word, origin) in word_quads.into_iter().zip(origins) {
+            for mut q in word {
+                q.pos[0] += origin[0];
+                q.pos[1] += origin[1];
+                quads.push(q);
+            }
+        }
 
         // Physical -> logical, matching `layout_text`.
         let inv = 1.0 / ppp;
@@ -667,9 +538,8 @@ impl GlyphAtlas {
         let mut quads = Vec::new();
         for (glyph_id, x, y, payload) in glyphs {
             // Glyphs with no visible bitmap (whitespace) are skipped, as in
-            // `layout_text`. That is decided by `ensure_glyph` rather than by
-            // fontdue's metrics here, because a glyph fontdue reports as empty may
-            // still rasterize from its outline, and an emoji has no outline at all.
+            // `layout_text`. `ensure_glyph` decides that: a glyph may draw from an
+            // outline, from a colour strike, or not at all.
             let entry = self.ensure_glyph(device, font_index, glyph_id, size_tenths, px, style);
             if entry.width == 0 {
                 continue;
@@ -771,50 +641,23 @@ impl GlyphAtlas {
         let (_, line_height) = self.line_metrics(font_index, font_size);
         let space_advance = self.advance_of(font_index, " ", font_size);
 
-        // Mirror the word packing in `layout_text_wrapped`, skipping only the
-        // glyph rasterization. Each word shapes on its own, matching the per-word
-        // pen that path uses.
-        let mut line_x: f32 = 0.0;
-        let mut line_y: f32 = 0.0;
-        let mut max_line_width: f32 = 0.0;
+        // The same rule `layout_text_wrapped` packs with, over the same per-word
+        // widths, so the two cannot disagree about where a line breaks.
+        let lines: Vec<Vec<f32>> = text
+            .split('\n')
+            .map(|line| {
+                line.split_whitespace()
+                    .map(|word| self.advance_of(font_index, word, font_size))
+                    .collect()
+            })
+            .collect();
 
-        for (logical_line_idx, logical_line) in text.split('\n').enumerate() {
-            if logical_line_idx > 0 {
-                max_line_width = max_line_width.max(line_x);
-                line_x = 0.0;
-                line_y += line_height;
-            }
-
-            let mut first_on_line = true;
-            for word in logical_line.split_whitespace() {
-                let word_width = self.advance_of(font_index, word, font_size);
-
-                let test_x = if first_on_line {
-                    line_x
-                } else {
-                    line_x + space_advance
-                };
-                if !first_on_line && test_x + word_width > max_width {
-                    max_line_width = max_line_width.max(line_x);
-                    line_x = 0.0;
-                    line_y += line_height;
-                    first_on_line = true;
-                }
-
-                let start_x = if first_on_line {
-                    line_x
-                } else {
-                    line_x + space_advance
-                };
-                line_x = start_x + word_width;
-                first_on_line = false;
-            }
-        }
-        max_line_width = max_line_width.max(line_x);
+        let (_, max_line_width, total_height) =
+            wrap_words(&lines, space_advance, max_width, line_height);
 
         TextMetrics {
             width: max_line_width,
-            height: line_y + line_height,
+            height: total_height,
             ascent: self.font_ascent(font_index, font_size),
         }
     }
@@ -1166,204 +1009,60 @@ impl crate::resources::DeviceResources {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Shadow cell baking
-// ---------------------------------------------------------------------------
-
-/// Turn a glyph coverage bitmap into a shadow cell: dilate by the style's
-/// spread, fade over its blur, then shape that fade by its falloff.
+/// Where each word lands when the words of each hard line are packed into lines
+/// no wider than `max_width`. `lines` holds one width per word, grouped by
+/// `\n`-delimited line, and the returned origins are flat in the same order.
+/// Also returns the widest line and the total height.
 ///
-/// Returns the new cell, its dimensions, and the padding added on each side
-/// (the caller shifts the glyph's bearing by this so the cell stays registered
-/// with the glyph it backs).
-///
-/// Dilation is a max over a disc, which keeps round letterforms round; a square
-/// window would square off the contour on curves. The fade is two box passes,
-/// whose triangle kernel is a closer match to the smoothstep the SDF shape path
-/// uses than a single box would be.
-fn style_coverage(
-    coverage: &[u8],
-    w: u32,
-    h: u32,
-    style: GlyphStyle,
-) -> (Vec<[u8; 4]>, u32, u32, u32) {
-    let pad = style.pad();
-    let ow = w + pad * 2;
-    let oh = h + pad * 2;
+/// This is the whole of the wrapping rule, in one place because laying text out
+/// and measuring it must agree: they differ only in whether glyphs are
+/// rasterized, and a second copy of this loop is a second chance to drift. A
+/// word wider than `max_width` on its own is not broken, and words sharing a
+/// line are separated by one space advance.
+fn wrap_words(
+    lines: &[Vec<f32>],
+    space_advance: f32,
+    max_width: f32,
+    line_height: f32,
+) -> (Vec<[f32; 2]>, f32, f32) {
+    let mut origins = Vec::new();
+    let mut line_x: f32 = 0.0;
+    let mut line_y: f32 = 0.0;
+    let mut max_line_width: f32 = 0.0;
 
-    // Place the source in the padded cell.
-    let mut a = vec![0u8; (ow * oh) as usize];
-    for y in 0..h {
-        for x in 0..w {
-            a[((y + pad) * ow + (x + pad)) as usize] = coverage[(y * w + x) as usize];
+    for (line_idx, widths) in lines.iter().enumerate() {
+        // A hard line break lands even when the line it opens has no words, so an
+        // empty line still takes up its height.
+        if line_idx > 0 {
+            max_line_width = max_line_width.max(line_x);
+            line_x = 0.0;
+            line_y += line_height;
         }
-    }
 
-    // Kept for the cases that need the glyph's own coverage back: the inset
-    // band is what an erosion ate, and an outer layer is cut back to outside
-    // the letterform.
-    let src = a.clone();
-
-    let spread = style.spread();
-    if spread > 0.0 {
-        a = if style.inner {
-            erode_disc(&a, ow, oh, spread)
-        } else {
-            dilate_disc(&a, ow, oh, spread)
-        };
-    }
-
-    let blur = style.blur();
-    if blur > 0.0 {
-        // Two box passes of radius blur/4 give a ramp about `blur` wide.
-        let r = (blur * 0.25).round().max(1.0) as u32;
-        a = box_blur(&a, ow, oh, r);
-        a = box_blur(&a, ow, oh, r);
-    }
-
-    if style.inner {
-        // The band is what the erosion ate: the glyph's own coverage minus
-        // what survived. Multiplying by the source keeps the outer edge as
-        // clean as the glyph's, which is what an inset layer needs, since it
-        // draws over the letterform rather than behind it.
-        for (v, &s) in a.iter_mut().zip(src.iter()) {
-            *v = 255 - *v;
-            *v = ((*v as u32 * s as u32) / 255) as u8;
-        }
-    } else {
-        // Cut the cell back to outside the letterform, the way an outer
-        // box-shadow is clipped to outside the border box. The layer offset
-        // moves the cell, so the letterform is sampled at that offset: the
-        // hole then lands on the glyph once the cell is drawn. Each glyph is
-        // cut against its own coverage, so a neighbour's shadow can still show
-        // through a translucent letterform where the two overlap.
-        for y in 0..oh as i32 {
-            for x in 0..ow as i32 {
-                let (sx, sy) = (x + style.clip_dx, y + style.clip_dy);
-                if sx < 0 || sy < 0 || sx >= ow as i32 || sy >= oh as i32 {
-                    continue;
-                }
-                let g = src[(sy * ow as i32 + sx) as usize] as u32;
-                let i = (y * ow as i32 + x) as usize;
-                a[i] = ((a[i] as u32 * (255 - g)) / 255) as u8;
+        let mut first_on_line = true;
+        for &width in widths {
+            // Soft-wrap when the word does not fit after the space that would
+            // precede it. The first word on a line always stays, however wide.
+            if !first_on_line && line_x + space_advance + width > max_width {
+                max_line_width = max_line_width.max(line_x);
+                line_x = 0.0;
+                line_y += line_height;
+                first_on_line = true;
             }
+
+            let start_x = if first_on_line {
+                line_x
+            } else {
+                line_x + space_advance
+            };
+            origins.push([start_x, line_y]);
+            line_x = start_x + width;
+            first_on_line = false;
         }
     }
 
-    let falloff = style.falloff();
-    if (falloff - 1.0).abs() > f32::EPSILON {
-        for v in a.iter_mut() {
-            let t = (*v as f32 / 255.0).powf(falloff);
-            *v = (t * 255.0).round().clamp(0.0, 255.0) as u8;
-        }
-    }
-
-    let cell: Vec<[u8; 4]> = a.iter().map(|&v| [255, 255, 255, v]).collect();
-    (cell, ow, oh, pad)
-}
-
-/// Grow coverage by taking the maximum over a disc of `radius` pixels.
-fn dilate_disc(src: &[u8], w: u32, h: u32, radius: f32) -> Vec<u8> {
-    let r = radius.ceil() as i32;
-    let r2 = radius * radius;
-    // Offsets inside the disc, computed once rather than per pixel.
-    let mut disc: Vec<(i32, i32)> = Vec::new();
-    for dy in -r..=r {
-        for dx in -r..=r {
-            if (dx * dx + dy * dy) as f32 <= r2 {
-                disc.push((dx, dy));
-            }
-        }
-    }
-
-    let mut out = vec![0u8; src.len()];
-    for y in 0..h as i32 {
-        for x in 0..w as i32 {
-            let mut m = 0u8;
-            for &(dx, dy) in &disc {
-                let (sx, sy) = (x + dx, y + dy);
-                if sx < 0 || sy < 0 || sx >= w as i32 || sy >= h as i32 {
-                    continue;
-                }
-                let v = src[(sy * w as i32 + sx) as usize];
-                if v > m {
-                    m = v;
-                    if m == 255 {
-                        break;
-                    }
-                }
-            }
-            out[(y * w as i32 + x) as usize] = m;
-        }
-    }
-    out
-}
-
-/// Shrink coverage by taking the minimum over a disc of `radius` pixels.
-/// Outside the cell counts as empty, so the glyph erodes in from its edge.
-fn erode_disc(src: &[u8], w: u32, h: u32, radius: f32) -> Vec<u8> {
-    let r = radius.ceil() as i32;
-    let r2 = radius * radius;
-    let mut disc: Vec<(i32, i32)> = Vec::new();
-    for dy in -r..=r {
-        for dx in -r..=r {
-            if (dx * dx + dy * dy) as f32 <= r2 {
-                disc.push((dx, dy));
-            }
-        }
-    }
-
-    let mut out = vec![0u8; src.len()];
-    for y in 0..h as i32 {
-        for x in 0..w as i32 {
-            let mut m = 255u8;
-            for &(dx, dy) in &disc {
-                let (sx, sy) = (x + dx, y + dy);
-                let v = if sx < 0 || sy < 0 || sx >= w as i32 || sy >= h as i32 {
-                    0
-                } else {
-                    src[(sy * w as i32 + sx) as usize]
-                };
-                if v < m {
-                    m = v;
-                    if m == 0 {
-                        break;
-                    }
-                }
-            }
-            out[(y * w as i32 + x) as usize] = m;
-        }
-    }
-    out
-}
-
-/// Separable box blur of the given radius, run horizontally then vertically.
-fn box_blur(src: &[u8], w: u32, h: u32, radius: u32) -> Vec<u8> {
-    let r = radius as i32;
-    let n = (r * 2 + 1) as u32;
-    let mut tmp = vec![0u8; src.len()];
-    for y in 0..h as i32 {
-        for x in 0..w as i32 {
-            let mut sum = 0u32;
-            for d in -r..=r {
-                let sx = (x + d).clamp(0, w as i32 - 1);
-                sum += src[(y * w as i32 + sx) as usize] as u32;
-            }
-            tmp[(y * w as i32 + x) as usize] = (sum / n) as u8;
-        }
-    }
-    let mut out = vec![0u8; src.len()];
-    for y in 0..h as i32 {
-        for x in 0..w as i32 {
-            let mut sum = 0u32;
-            for d in -r..=r {
-                let sy = (y + d).clamp(0, h as i32 - 1);
-                sum += tmp[(sy * w as i32 + x) as usize] as u32;
-            }
-            out[(y * w as i32 + x) as usize] = (sum / n) as u8;
-        }
-    }
-    out
+    max_line_width = max_line_width.max(line_x);
+    (origins, max_line_width, line_y + line_height)
 }
 
 #[cfg(test)]
@@ -1567,6 +1266,11 @@ mod tests {
     /// `measure_text_wrapped` reports what `layout_text_wrapped` draws, for the
     /// same text and limit. This is the property the measurement exists for: a
     /// consumer sizing a backing gets the renderer's box, not an approximation.
+    ///
+    /// Both pack through `wrap_words`, so this no longer guards two copies of the
+    /// wrapping rule. What it still guards is that they feed it the same widths:
+    /// one measures a word with `advance_of`, the other sums the advances of the
+    /// glyphs it shaped, and those must agree.
     #[test]
     fn wrapped_measure_matches_wrapped_layout() {
         let Some((device, _queue)) = headless_device() else {
