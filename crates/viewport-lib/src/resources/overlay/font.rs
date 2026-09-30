@@ -1,9 +1,14 @@
 //! Font atlas and single-line text layout for overlay rendering.
 //!
 //! This module is the text back-end for [`LabelItem`](crate::LabelItem) and
-//! [`GlyphRunItem`](crate::GlyphRunItem).  It rasterizes glyphs with [`swash`]
-//! and packs them into a single GPU texture atlas on demand. Text metrics and
-//! kerning still come from [`fontdue`].
+//! [`GlyphRunItem`](crate::GlyphRunItem).  It shapes, measures and rasterizes
+//! with [`swash`], packing glyphs into a single GPU texture atlas on demand.
+//!
+//! [`LabelItem`](crate::LabelItem) shapes one run per line (or per word when
+//! wrapping), which gives it kerning, ligatures and mark attachment for a single
+//! font and direction. Bidi, script itemisation and font fallback are not done
+//! here: a caller that needs them runs its own shaper and submits the positioned
+//! glyphs through [`GlyphRunItem`](crate::GlyphRunItem).
 //!
 //! Public surface: [`FontHandle`] (opaque font identifier) and
 //! [`super::DeviceResources::upload_font`].  Everything else is `pub(crate)`.
@@ -12,6 +17,8 @@ use std::collections::HashMap;
 
 use swash::scale::image::Content;
 use swash::scale::{Render, ScaleContext, Source, StrikeWith};
+use swash::shape::ShapeContext;
+use swash::text::Script;
 use swash::{CacheKey, FontRef};
 
 /// Default font embedded in the library binary (Inter Regular, SIL OFL 1.1).
@@ -239,6 +246,16 @@ pub(crate) struct TextLayout {
     pub height: f32,
 }
 
+/// One glyph as the shaper placed it: the id it chose, its advance, and the
+/// offsets positioning it against the pen.
+#[derive(Clone, Copy)]
+struct ShapedGlyph {
+    id: u16,
+    advance: f32,
+    x: f32,
+    y: f32,
+}
+
 // ---------------------------------------------------------------------------
 // GlyphAtlas
 // ---------------------------------------------------------------------------
@@ -247,9 +264,6 @@ pub(crate) struct TextLayout {
 ///
 /// Owned by [`DeviceResources`]; never exposed in the public API.
 pub(crate) struct GlyphAtlas {
-    /// Parsed fontdue fonts.  Index 0 is always the built-in default.
-    fonts: Vec<fontdue::Font>,
-
     /// Raw font bytes, parallel to `fonts`, kept so a swash `FontRef` can be
     /// rebuilt on demand: it borrows the bytes rather than owning them.
     font_bytes: Vec<Vec<u8>>,
@@ -262,6 +276,12 @@ pub(crate) struct GlyphAtlas {
     /// swash scaler caches and scratch buffers. Holds the hinting and outline
     /// caches, so it is kept for the atlas's lifetime rather than per glyph.
     scale: ScaleContext,
+
+    /// swash shaper caches. Behind a lock because `measure_text` takes `&self`:
+    /// measuring is a read as far as a caller is concerned, and the public
+    /// `DeviceResources::measure_overlay_text` must stay on `&self`. A `RefCell`
+    /// would cost `DeviceResources` its `Sync`.
+    shape: std::sync::Mutex<ShapeContext>,
 
     /// Cached rasterized glyphs.
     entries: HashMap<GlyphKey, GlyphEntry>,
@@ -302,10 +322,6 @@ impl GlyphAtlas {
 
     /// Create a new atlas with the built-in default font pre-loaded.
     pub fn new(device: &crate::gpu::Device) -> Self {
-        let default_font =
-            fontdue::Font::from_bytes(DEFAULT_FONT_BYTES, fontdue::FontSettings::default())
-                .expect("built-in default font must parse");
-
         let size = Self::INITIAL_SIZE;
         let pixel_count = (size * size) as usize;
         let pixels = vec![[255, 255, 255, 0]; pixel_count];
@@ -315,10 +331,10 @@ impl GlyphAtlas {
         let default_key = swash_key(DEFAULT_FONT_BYTES).expect("built-in default font must parse");
 
         Self {
-            fonts: vec![default_font],
             font_bytes: vec![DEFAULT_FONT_BYTES.to_vec()],
             font_keys: vec![default_key],
             scale: ScaleContext::new(),
+            shape: std::sync::Mutex::new(ShapeContext::new()),
             entries: HashMap::new(),
             pixels,
             size,
@@ -341,12 +357,9 @@ impl GlyphAtlas {
     /// Register a user-supplied TTF font.  Returns a [`FontHandle`] that can be
     /// passed to overlay items.
     pub fn upload_font(&mut self, ttf_bytes: &[u8]) -> Result<FontHandle, FontError> {
-        let font = fontdue::Font::from_bytes(ttf_bytes, fontdue::FontSettings::default())
-            .map_err(|e| FontError::ParseFailed(e.to_string()))?;
         let key = swash_key(ttf_bytes)
-            .ok_or_else(|| FontError::ParseFailed("not a font swash can read".into()))?;
-        let index = self.fonts.len();
-        self.fonts.push(font);
+            .ok_or_else(|| FontError::ParseFailed("not a readable font".into()))?;
+        let index = self.font_bytes.len();
         self.font_keys.push(key);
         self.font_bytes.push(ttf_bytes.to_vec());
         Ok(FontHandle(index))
@@ -356,6 +369,60 @@ impl GlyphAtlas {
     /// been uploaded. Index 0 is the built-in default font.
     pub(crate) fn font_bytes(&self, index: usize) -> Option<&[u8]> {
         self.font_bytes.get(index).map(Vec::as_slice)
+    }
+
+    /// A swash font handle for `font_index`. Cheap: it borrows the stored bytes
+    /// and reuses the cache key minted at upload.
+    fn font_ref(&self, font_index: usize) -> FontRef<'_> {
+        let (offset, key) = self.font_keys[font_index];
+        FontRef {
+            data: &self.font_bytes[font_index],
+            offset,
+            key,
+        }
+    }
+
+    /// Ascent and line height at `px`, both in pixels.
+    fn line_metrics(&self, font_index: usize, px: f32) -> (f32, f32) {
+        let m = self.font_ref(font_index).metrics(&[]).scale(px);
+        // swash reports descent as a positive distance below the baseline, so the
+        // three sum rather than subtracting the middle one.
+        (m.ascent, m.ascent + m.descent + m.leading)
+    }
+
+    /// The total advance of `text` shaped as one run at `px`.
+    fn advance_of(&self, font_index: usize, text: &str, px: f32) -> f32 {
+        let mut shaped = Vec::new();
+        self.shape_run(font_index, text, px, &mut shaped);
+        shaped.iter().map(|g| g.advance).sum()
+    }
+
+    /// Shape one run of text into positioned glyphs at `px`, appending to `out`.
+    ///
+    /// One font, one direction, no line breaking: the caller splits lines and
+    /// words first, so this is the single-run case a label needs. A caller that
+    /// wants bidi, script itemisation or font fallback runs its own shaper and
+    /// submits a [`GlyphRunItem`](crate::GlyphRunItem), which does not come
+    /// through here.
+    fn shape_run(&self, font_index: usize, text: &str, px: f32, out: &mut Vec<ShapedGlyph>) {
+        out.clear();
+        if text.is_empty() {
+            return;
+        }
+        let font = self.font_ref(font_index);
+        let mut ctx = self.shape.lock().expect("shaper lock");
+        let mut shaper = ctx.builder(font).script(Script::Latin).size(px).build();
+        shaper.add_str(text);
+        shaper.shape_with(|cluster| {
+            for g in cluster.glyphs {
+                out.push(ShapedGlyph {
+                    id: g.id,
+                    advance: g.advance,
+                    x: g.x,
+                    y: g.y,
+                });
+            }
+        });
     }
 
     /// Lay out a single-line string and return positioned glyph quads.
@@ -383,50 +450,30 @@ impl GlyphAtlas {
         let px = font_size * ppp;
         let size_tenths = (px * 10.0).round() as u32;
 
-        let metrics = self.fonts[font_index].horizontal_line_metrics(px);
-        let line_height = metrics
-            .map(|m| m.ascent - m.descent + m.line_gap)
-            .unwrap_or(px * 1.2);
+        let (_, line_height) = self.line_metrics(font_index, px);
 
         let mut quads = Vec::new();
-        let mut pen_x: f32 = 0.0;
         let mut pen_y: f32 = 0.0;
         let mut max_width: f32 = 0.0;
 
-        let mut prev_glyph: Option<u16> = None;
-        for ch in text.chars() {
-            if ch == '\n' {
-                max_width = max_width.max(pen_x);
-                pen_x = 0.0;
+        // Each hard line shapes as its own run: a newline is a break, not a
+        // character the shaper should see.
+        let mut shaped = Vec::new();
+        for (line_idx, line) in text.split('\n').enumerate() {
+            if line_idx > 0 {
                 pen_y += line_height;
-                prev_glyph = None;
-                continue;
             }
+            self.shape_run(font_index, line, px, &mut shaped);
 
-            let glyph_index = self.fonts[font_index].lookup_glyph_index(ch);
-
-            // Kerning.
-            if let Some(prev) = prev_glyph {
-                if let Some(kern) =
-                    self.fonts[font_index].horizontal_kern_indexed(prev, glyph_index, px)
-                {
-                    pen_x += kern;
-                }
-            }
-            prev_glyph = Some(glyph_index);
-
-            // Get metrics for advance, even for whitespace.
-            let m = self.fonts[font_index].metrics_indexed(glyph_index, px);
-
-            // Whether a glyph draws is `ensure_glyph`'s call: fontdue's metrics
-            // describe an outline, and a glyph may instead have a colour strike.
-            {
-                let entry =
-                    self.ensure_glyph(device, font_index, glyph_index, size_tenths, px, style);
+            let mut pen_x: f32 = 0.0;
+            for g in std::mem::take(&mut shaped) {
+                // Whether a glyph draws is `ensure_glyph`'s call: it may have an
+                // outline, a colour strike, or nothing at all.
+                let entry = self.ensure_glyph(device, font_index, g.id, size_tenths, px, style);
                 if entry.width > 0 {
                     let atlas_size = self.size as f32;
                     quads.push(GlyphQuad {
-                        pos: [pen_x + entry.offset_x, pen_y + entry.offset_y],
+                        pos: [pen_x + g.x + entry.offset_x, pen_y - g.y + entry.offset_y],
                         size: [entry.width as f32, entry.height as f32],
                         uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
                         uv_max: [
@@ -436,11 +483,10 @@ impl GlyphAtlas {
                         color: entry.color,
                     });
                 }
+                pen_x += g.advance;
             }
-
-            pen_x += m.advance_width;
+            max_width = max_width.max(pen_x);
         }
-        max_width = max_width.max(pen_x);
 
         // Physical -> logical. UVs are untouched: they index the physical atlas
         // cell, which is what keeps the text crisp when the logical quad is
@@ -480,18 +526,13 @@ impl GlyphAtlas {
         let px = font_size * ppp;
         let max_width = max_width * ppp;
 
-        let metrics = self.fonts[font_index].horizontal_line_metrics(px);
-        let line_height = metrics
-            .map(|m| m.ascent - m.descent + m.line_gap)
-            .unwrap_or(px * 1.2);
+        let (_, line_height) = self.line_metrics(font_index, px);
 
         let size_tenths = (px * 10.0).round() as u32;
-        let space_advance = {
-            let gi = self.fonts[font_index].lookup_glyph_index(' ');
-            self.fonts[font_index].metrics_indexed(gi, px).advance_width
-        };
+        let space_advance = self.advance_of(font_index, " ", px);
 
         let mut quads = Vec::new();
+        let mut shaped = Vec::new();
         let mut line_x: f32 = 0.0;
         let mut line_y: f32 = 0.0;
         let mut max_line_width: f32 = 0.0;
@@ -514,43 +555,26 @@ impl GlyphAtlas {
             for word in &words {
                 let mut word_quads: Vec<GlyphQuad> = Vec::new();
                 let mut pen_x: f32 = 0.0;
-                let mut prev_glyph: Option<u16> = None;
 
-                for ch in word.chars() {
-                    let glyph_index = self.fonts[font_index].lookup_glyph_index(ch);
-                    if let Some(prev) = prev_glyph {
-                        if let Some(kern) =
-                            self.fonts[font_index].horizontal_kern_indexed(prev, glyph_index, px)
-                        {
-                            pen_x += kern;
-                        }
+                // One word is one run. Shaping stops at the word boundary the
+                // wrapper already chose, which is where a line may break anyway.
+                self.shape_run(font_index, word, px, &mut shaped);
+                for g in std::mem::take(&mut shaped) {
+                    let entry = self.ensure_glyph(device, font_index, g.id, size_tenths, px, style);
+                    if entry.width > 0 {
+                        let atlas_size = self.size as f32;
+                        word_quads.push(GlyphQuad {
+                            pos: [pen_x + g.x + entry.offset_x, -g.y + entry.offset_y],
+                            size: [entry.width as f32, entry.height as f32],
+                            uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
+                            uv_max: [
+                                (entry.x + entry.width) as f32 / atlas_size,
+                                (entry.y + entry.height) as f32 / atlas_size,
+                            ],
+                            color: entry.color,
+                        });
                     }
-                    prev_glyph = Some(glyph_index);
-                    let m = self.fonts[font_index].metrics_indexed(glyph_index, px);
-                    {
-                        let entry = self.ensure_glyph(
-                            device,
-                            font_index,
-                            glyph_index,
-                            size_tenths,
-                            px,
-                            style,
-                        );
-                        if entry.width > 0 {
-                            let atlas_size = self.size as f32;
-                            word_quads.push(GlyphQuad {
-                                pos: [pen_x + entry.offset_x, entry.offset_y],
-                                size: [entry.width as f32, entry.height as f32],
-                                uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
-                                uv_max: [
-                                    (entry.x + entry.width) as f32 / atlas_size,
-                                    (entry.y + entry.height) as f32 / atlas_size,
-                                ],
-                                color: entry.color,
-                            });
-                        }
-                    }
-                    pen_x += m.advance_width;
+                    pen_x += g.advance;
                 }
                 let word_width = pen_x;
 
@@ -676,10 +700,7 @@ impl GlyphAtlas {
     /// glyph.  Used to position glyph quads relative to a text origin at the
     /// top-left corner of the bounding box.
     pub fn font_ascent(&self, font_index: usize, font_size: f32) -> f32 {
-        self.fonts[font_index]
-            .horizontal_line_metrics(font_size)
-            .map(|m| m.ascent)
-            .unwrap_or(font_size * 0.8)
+        self.line_metrics(font_index, font_size).0
     }
 
     /// Measure a text run without rasterizing or uploading any glyphs.
@@ -703,38 +724,18 @@ impl GlyphAtlas {
         font: Option<FontHandle>,
     ) -> TextMetrics {
         let font_index = font.map_or(0, |h| h.0);
-        let fd = &self.fonts[font_index];
+        let (_, line_height) = self.line_metrics(font_index, font_size);
 
-        let line_height = fd
-            .horizontal_line_metrics(font_size)
-            .map(|m| m.ascent - m.descent + m.line_gap)
-            .unwrap_or(font_size * 1.2);
-
-        // Mirror the advance/kern accumulation in `layout_text`, skipping only
+        // Mirror the line splitting and shaping in `layout_text`, skipping only
         // the glyph rasterization (which is all that path needs a device for).
-        let mut pen_x: f32 = 0.0;
         let mut pen_y: f32 = 0.0;
         let mut max_width: f32 = 0.0;
-        let mut prev_glyph: Option<u16> = None;
-        for ch in text.chars() {
-            if ch == '\n' {
-                max_width = max_width.max(pen_x);
-                pen_x = 0.0;
+        for (line_idx, line) in text.split('\n').enumerate() {
+            if line_idx > 0 {
                 pen_y += line_height;
-                prev_glyph = None;
-                continue;
             }
-
-            let glyph_index = fd.lookup_glyph_index(ch);
-            if let Some(prev) = prev_glyph {
-                if let Some(kern) = fd.horizontal_kern_indexed(prev, glyph_index, font_size) {
-                    pen_x += kern;
-                }
-            }
-            prev_glyph = Some(glyph_index);
-            pen_x += fd.metrics_indexed(glyph_index, font_size).advance_width;
+            max_width = max_width.max(self.advance_of(font_index, line, font_size));
         }
-        max_width = max_width.max(pen_x);
 
         TextMetrics {
             width: max_width,
@@ -767,21 +768,12 @@ impl GlyphAtlas {
         max_width: f32,
     ) -> TextMetrics {
         let font_index = font.map_or(0, |h| h.0);
-        let fd = &self.fonts[font_index];
-
-        let line_height = fd
-            .horizontal_line_metrics(font_size)
-            .map(|m| m.ascent - m.descent + m.line_gap)
-            .unwrap_or(font_size * 1.2);
-
-        let space_advance = {
-            let gi = fd.lookup_glyph_index(' ');
-            fd.metrics_indexed(gi, font_size).advance_width
-        };
+        let (_, line_height) = self.line_metrics(font_index, font_size);
+        let space_advance = self.advance_of(font_index, " ", font_size);
 
         // Mirror the word packing in `layout_text_wrapped`, skipping only the
-        // glyph rasterization. Kerning is accumulated within a word and reset
-        // between words, matching the per-word pen that path uses.
+        // glyph rasterization. Each word shapes on its own, matching the per-word
+        // pen that path uses.
         let mut line_x: f32 = 0.0;
         let mut line_y: f32 = 0.0;
         let mut max_line_width: f32 = 0.0;
@@ -795,19 +787,7 @@ impl GlyphAtlas {
 
             let mut first_on_line = true;
             for word in logical_line.split_whitespace() {
-                let mut word_width: f32 = 0.0;
-                let mut prev_glyph: Option<u16> = None;
-                for ch in word.chars() {
-                    let glyph_index = fd.lookup_glyph_index(ch);
-                    if let Some(prev) = prev_glyph {
-                        if let Some(kern) = fd.horizontal_kern_indexed(prev, glyph_index, font_size)
-                        {
-                            word_width += kern;
-                        }
-                    }
-                    prev_glyph = Some(glyph_index);
-                    word_width += fd.metrics_indexed(glyph_index, font_size).advance_width;
-                }
+                let word_width = self.advance_of(font_index, word, font_size);
 
                 let test_x = if first_on_line {
                     line_x
@@ -1382,27 +1362,30 @@ mod tests {
     use super::*;
     use viewport_lib_testkit::headless_device;
 
-    /// Glyph 646 of the bundled font is outlined but unreachable from `cmap`. That
-    /// is the shape of an OpenType MATH size variant, and the reason the atlas
-    /// rasterizes by glyph id rather than through a `cmap`-driven cache: fontdue
-    /// reports the id as empty, and a glyph run built by a shaper would draw a gap.
+    /// Glyph 646 of the bundled font has no codepoint: nothing in the font's
+    /// `cmap` reaches it. That is the shape of an OpenType MATH size variant, and
+    /// the reason the atlas rasterizes by glyph id rather than through a
+    /// `cmap`-driven cache, since a shaper hands over ids of exactly this kind.
     #[test]
     fn rasterises_a_glyph_with_no_codepoint() {
-        let fd = fontdue::Font::from_bytes(DEFAULT_FONT_BYTES, fontdue::FontSettings::default())
-            .unwrap();
-        let m = fd.metrics_indexed(646, 48.0);
-        assert_eq!(
-            (m.width, m.height),
-            (0, 0),
-            "glyph 646 is the test case because fontdue reports it empty"
-        );
-
         let (offset, key) = swash_key(DEFAULT_FONT_BYTES).unwrap();
         let font = FontRef {
             data: DEFAULT_FONT_BYTES,
             offset,
             key,
         };
+
+        let mut mapped = false;
+        font.charmap().enumerate(|_, id| {
+            if id == 646 {
+                mapped = true;
+            }
+        });
+        assert!(
+            !mapped,
+            "glyph 646 is the test case because it has no codepoint"
+        );
+
         let mut ctx = ScaleContext::new();
         let mut scaler = ctx.builder(font).size(48.0).hint(HINT_GLYPHS).build();
         let image = Render::new(&[
@@ -1529,3 +1512,15 @@ mod tests {
         assert_eq!(plain.ascent, wrapped.ascent);
     }
 }
+
+// The atlas shapes behind a `Mutex` rather than a `RefCell` so that
+// `DeviceResources` stays `Sync` for a consumer holding it across threads.
+// Swapping in a cell would compile here and break them, so it is asserted.
+const _: () = {
+    fn assert_sync<T: Sync>() {}
+    fn probe() {
+        assert_sync::<GlyphAtlas>();
+        assert_sync::<crate::resources::DeviceResources>();
+    }
+    let _ = probe;
+};
