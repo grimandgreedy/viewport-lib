@@ -156,23 +156,20 @@ fn per_glyph_tints_apply() {
     );
 }
 
-/// Glyph ids the font outlines but fontdue does not load (it only parses what it
-/// can reach from `cmap` and `GSUB`) still draw: the atlas falls back to filling
-/// the outline. Without that fallback these ids leave a gap the size of the
-/// advance the caller laid out with, which is how OpenType MATH size variants
-/// used to disappear.
+/// Glyph ids with no codepoint draw. These are outlined in the font but
+/// unreachable from `cmap`, which is the shape of an OpenType MATH size variant:
+/// the id a shaper hands over for a grown delimiter or large operator.
 #[test]
-fn glyph_run_draws_ids_fontdue_does_not_load() {
+fn glyph_run_draws_ids_with_no_codepoint() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    // Outlined in Inter, unreachable from its cmap, so fontdue reports each as a
-    // zero-area bitmap.
-    let unloaded: [u16; 6] = [646, 888, 892, 2880, 2881, 2891];
-    let glyphs: Vec<PositionedGlyph> = unloaded
+    // Outlined in Inter and unreachable from its cmap.
+    let no_codepoint: [u16; 6] = [646, 888, 892, 2880, 2881, 2891];
+    let glyphs: Vec<PositionedGlyph> = no_codepoint
         .iter()
         .enumerate()
         .map(|(i, &id)| PositionedGlyph::new(id, 6.0 + i as f32 * 20.0, 60.0))
@@ -190,6 +187,6 @@ fn glyph_run_draws_ids_fontdue_does_not_load() {
     let bright = bright_pixels(&px);
     assert!(
         bright > 20,
-        "expected the unloaded glyph ids to draw from their outlines, got {bright} bright pixels"
+        "expected the codepoint-less glyph ids to draw, got {bright} bright pixels"
     );
 }

@@ -1,19 +1,34 @@
 //! Font atlas and single-line text layout for overlay rendering.
 //!
 //! This module is the text back-end for [`LabelItem`](crate::LabelItem) and
-//! [`GlyphRunItem`](crate::GlyphRunItem).  It uses [`fontdue`] for glyph
-//! rasterization and packs glyphs into a single GPU texture atlas on demand.
-//! fontdue only parses the glyphs it can reach from `cmap` and `GSUB`, so glyph
-//! ids it leaves empty are filled from their outline instead (see
-//! [`outline_glyph`](super::outline_glyph)).
+//! [`GlyphRunItem`](crate::GlyphRunItem).  It rasterizes glyphs with [`swash`]
+//! and packs them into a single GPU texture atlas on demand. Text metrics and
+//! kerning still come from [`fontdue`].
 //!
 //! Public surface: [`FontHandle`] (opaque font identifier) and
 //! [`super::DeviceResources::upload_font`].  Everything else is `pub(crate)`.
 
 use std::collections::HashMap;
 
+use swash::scale::image::Content;
+use swash::scale::{Render, ScaleContext, Source, StrikeWith};
+use swash::{CacheKey, FontRef};
+
 /// Default font embedded in the library binary (Inter Regular, SIL OFL 1.1).
 const DEFAULT_FONT_BYTES: &[u8] = include_bytes!("../../fonts/Inter-Regular.ttf");
+
+/// Whether glyph outlines are hinted before filling. Off: hinting snaps stems to
+/// the pixel grid, which is sharper at small sizes but distorts the shapes a font
+/// designer drew, and the call belongs with a side-by-side rather than a default.
+const HINT_GLYPHS: bool = false;
+
+/// The table-directory offset and a cache key for `font_bytes`, or `None` if swash
+/// cannot read it. The key is minted once per font and reused for every scaler
+/// built from it, which is what lets `ScaleContext` cache per font.
+fn swash_key(font_bytes: &[u8]) -> Option<(u32, CacheKey)> {
+    let font = FontRef::from_index(font_bytes, 0)?;
+    Some((font.offset, font.key))
+}
 
 // ---------------------------------------------------------------------------
 // FontHandle : public opaque identifier
@@ -235,13 +250,18 @@ pub(crate) struct GlyphAtlas {
     /// Parsed fontdue fonts.  Index 0 is always the built-in default.
     fonts: Vec<fontdue::Font>,
 
-    /// Raw font bytes, parallel to `fonts`, kept so a `ttf_parser::Face` can be
-    /// built on demand to read color bitmap strikes that fontdue does not.
+    /// Raw font bytes, parallel to `fonts`, kept so a swash `FontRef` can be
+    /// rebuilt on demand: it borrows the bytes rather than owning them.
     font_bytes: Vec<Vec<u8>>,
 
-    /// Whether each font has a readable color bitmap table, computed once at
-    /// upload. When `false`, glyphs skip the color path entirely.
-    font_has_color: Vec<bool>,
+    /// Table-directory offset and cache key per font, parallel to `fonts`. The key
+    /// is minted once at upload and reused, because `ScaleContext` caches per font
+    /// by it: minting a fresh one per glyph would defeat that cache.
+    font_keys: Vec<(u32, CacheKey)>,
+
+    /// swash scaler caches and scratch buffers. Holds the hinting and outline
+    /// caches, so it is kept for the atlas's lifetime rather than per glyph.
+    scale: ScaleContext,
 
     /// Cached rasterized glyphs.
     entries: HashMap<GlyphKey, GlyphEntry>,
@@ -292,10 +312,13 @@ impl GlyphAtlas {
 
         let (texture, view) = Self::create_texture(device, size);
 
+        let default_key = swash_key(DEFAULT_FONT_BYTES).expect("built-in default font must parse");
+
         Self {
             fonts: vec![default_font],
             font_bytes: vec![DEFAULT_FONT_BYTES.to_vec()],
-            font_has_color: vec![super::color_glyph::has_color_bitmaps(DEFAULT_FONT_BYTES)],
+            font_keys: vec![default_key],
+            scale: ScaleContext::new(),
             entries: HashMap::new(),
             pixels,
             size,
@@ -320,10 +343,11 @@ impl GlyphAtlas {
     pub fn upload_font(&mut self, ttf_bytes: &[u8]) -> Result<FontHandle, FontError> {
         let font = fontdue::Font::from_bytes(ttf_bytes, fontdue::FontSettings::default())
             .map_err(|e| FontError::ParseFailed(e.to_string()))?;
+        let key = swash_key(ttf_bytes)
+            .ok_or_else(|| FontError::ParseFailed("not a font swash can read".into()))?;
         let index = self.fonts.len();
         self.fonts.push(font);
-        self.font_has_color
-            .push(super::color_glyph::has_color_bitmaps(ttf_bytes));
+        self.font_keys.push(key);
         self.font_bytes.push(ttf_bytes.to_vec());
         Ok(FontHandle(index))
     }
@@ -394,9 +418,9 @@ impl GlyphAtlas {
             // Get metrics for advance, even for whitespace.
             let m = self.fonts[font_index].metrics_indexed(glyph_index, px);
 
-            // Emit a quad for glyphs with a visible outline, or any glyph in a
-            // color font (emoji have no outline, so fontdue reports zero area).
-            if (m.width > 0 && m.height > 0) || self.font_has_color[font_index] {
+            // Whether a glyph draws is `ensure_glyph`'s call: fontdue's metrics
+            // describe an outline, and a glyph may instead have a colour strike.
+            {
                 let entry =
                     self.ensure_glyph(device, font_index, glyph_index, size_tenths, px, style);
                 if entry.width > 0 {
@@ -503,7 +527,7 @@ impl GlyphAtlas {
                     }
                     prev_glyph = Some(glyph_index);
                     let m = self.fonts[font_index].metrics_indexed(glyph_index, px);
-                    if (m.width > 0 && m.height > 0) || self.font_has_color[font_index] {
+                    {
                         let entry = self.ensure_glyph(
                             device,
                             font_index,
@@ -870,69 +894,65 @@ impl GlyphAtlas {
             return entry;
         }
 
-        // Color bitmap glyphs (emoji) first, for fonts that carry a strike table.
-        // fontdue would rasterize these to nothing, so this is the only path that
-        // draws them.
-        if self.font_has_color[font_index] {
-            if let Some(color) =
-                super::color_glyph::rasterize(&self.font_bytes[font_index], glyph_index, px)
-            {
-                if !style.is_plain() {
-                    // A shadow cast by an emoji is its silhouette, not a second
-                    // copy of the emoji. The decoded RGBA is straight (not
-                    // premultiplied), so its alpha is exactly that silhouette.
-                    let coverage: Vec<u8> = color.rgba.iter().map(|p| p[3]).collect();
-                    let (cell, w, h, pad) =
-                        style_coverage(&coverage, color.width, color.height, style);
-                    return self.pack_rgba(
-                        device,
-                        key,
-                        &cell,
-                        w,
-                        h,
-                        color.offset_x - pad as f32,
-                        color.offset_y - pad as f32,
-                        false,
-                    );
-                }
-                return self.pack_rgba(
-                    device,
-                    key,
-                    &color.rgba,
-                    color.width,
-                    color.height,
-                    color.offset_x,
-                    color.offset_y,
-                    true,
-                );
-            }
-        }
+        // One cascade for every glyph, in priority order: layered colour outlines,
+        // then a colour bitmap strike, then the outline. Everything is addressed by
+        // glyph id, so an id that reached us from a table this crate does not read
+        // (the OpenType `MATH` size variants, say) rasterizes like any other.
+        let image = {
+            let Self {
+                scale,
+                font_bytes,
+                font_keys,
+                ..
+            } = self;
+            let (offset, key) = font_keys[font_index];
+            let font = FontRef {
+                data: &font_bytes[font_index],
+                offset,
+                key,
+            };
+            let mut scaler = scale.builder(font).size(px).hint(HINT_GLYPHS).build();
+            Render::new(&[
+                Source::ColorOutline(0),
+                Source::ColorBitmap(StrikeWith::BestFit),
+                Source::Outline,
+            ])
+            .render(&mut scaler, glyph_index)
+        };
 
-        // Coverage rasterization (fontdue): store `[255, 255, 255, coverage]`.
-        let (metrics, mut bitmap) = self.fonts[font_index].rasterize_indexed(glyph_index, px);
-        let mut w = metrics.width as u32;
-        let mut h = metrics.height as u32;
-        let mut offset_x = metrics.xmin as f32;
-        let mut offset_y = -(metrics.ymin as f32 + h as f32);
+        // No outline and no strike: whitespace, or an id past the end of the font.
+        // Cache a zero-area entry so the miss is paid once.
+        let Some(image) = image.filter(|i| i.placement.width > 0 && i.placement.height > 0) else {
+            let entry = GlyphEntry {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                offset_x: 0.0,
+                offset_y: 0.0,
+                color: false,
+            };
+            self.entries.insert(key, entry);
+            return entry;
+        };
 
-        // fontdue only parses the glyphs it can reach from `cmap` and `GSUB`, so a
-        // glyph id a shaper took from another table (the OpenType `MATH` size
-        // variants, say) rasterizes to nothing here even though the font outlines
-        // it. Fill the outline directly for those rather than drawing a gap.
-        if w == 0 || h == 0 {
-            if let Some(cov) =
-                super::outline_glyph::rasterise(&self.font_bytes[font_index], glyph_index, px)
-            {
-                w = cov.width;
-                h = cov.height;
-                offset_x = cov.offset_x;
-                offset_y = cov.offset_y;
-                bitmap = cov.coverage;
-            }
-        }
+        let w = image.placement.width;
+        let h = image.placement.height;
+        let offset_x = image.placement.left as f32;
+        // `placement.top` is the baseline-to-top distance measured upwards; the
+        // atlas wants the pen-to-top offset measured downwards.
+        let offset_y = -(image.placement.top as f32);
+        let is_colour = image.content == Content::Color;
 
-        if !style.is_plain() && w > 0 && h > 0 {
-            let (cell, sw, sh, pad) = style_coverage(&bitmap, w, h, style);
+        if !style.is_plain() {
+            // A shadow cast by an emoji is its silhouette, not a second copy of the
+            // emoji, so a colour glyph contributes its alpha channel here.
+            let coverage: Vec<u8> = if is_colour {
+                image.data.chunks_exact(4).map(|p| p[3]).collect()
+            } else {
+                image.data
+            };
+            let (cell, sw, sh, pad) = style_coverage(&coverage, w, h, style);
             return self.pack_rgba(
                 device,
                 key,
@@ -945,23 +965,18 @@ impl GlyphAtlas {
             );
         }
 
-        if w == 0 || h == 0 {
-            // Whitespace glyph: insert a zero-area entry.
-            let entry = GlyphEntry {
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-                offset_x,
-                offset_y,
-                color: false,
-            };
-            self.entries.insert(key, entry);
-            return entry;
-        }
-
-        let cell: Vec<[u8; 4]> = bitmap.iter().map(|&a| [255, 255, 255, a]).collect();
-        self.pack_rgba(device, key, &cell, w, h, offset_x, offset_y, false)
+        // Coverage is stored as `[255, 255, 255, alpha]`; a colour glyph's RGBA goes
+        // in as it comes out, straight (non-premultiplied).
+        let cell: Vec<[u8; 4]> = if is_colour {
+            image
+                .data
+                .chunks_exact(4)
+                .map(|p| [p[0], p[1], p[2], p[3]])
+                .collect()
+        } else {
+            image.data.iter().map(|&a| [255, 255, 255, a]).collect()
+        };
+        self.pack_rgba(device, key, &cell, w, h, offset_x, offset_y, is_colour)
     }
 
     /// Pack a `w * h` RGBA cell into the atlas, growing if needed, and record the
@@ -1366,6 +1381,51 @@ fn box_blur(src: &[u8], w: u32, h: u32, radius: u32) -> Vec<u8> {
 mod tests {
     use super::*;
     use viewport_lib_testkit::headless_device;
+
+    /// Glyph 646 of the bundled font is outlined but unreachable from `cmap`. That
+    /// is the shape of an OpenType MATH size variant, and the reason the atlas
+    /// rasterizes by glyph id rather than through a `cmap`-driven cache: fontdue
+    /// reports the id as empty, and a glyph run built by a shaper would draw a gap.
+    #[test]
+    fn rasterises_a_glyph_with_no_codepoint() {
+        let fd = fontdue::Font::from_bytes(DEFAULT_FONT_BYTES, fontdue::FontSettings::default())
+            .unwrap();
+        let m = fd.metrics_indexed(646, 48.0);
+        assert_eq!(
+            (m.width, m.height),
+            (0, 0),
+            "glyph 646 is the test case because fontdue reports it empty"
+        );
+
+        let (offset, key) = swash_key(DEFAULT_FONT_BYTES).unwrap();
+        let font = FontRef {
+            data: DEFAULT_FONT_BYTES,
+            offset,
+            key,
+        };
+        let mut ctx = ScaleContext::new();
+        let mut scaler = ctx.builder(font).size(48.0).hint(HINT_GLYPHS).build();
+        let image = Render::new(&[
+            Source::ColorOutline(0),
+            Source::ColorBitmap(StrikeWith::BestFit),
+            Source::Outline,
+        ])
+        .render(&mut scaler, 646)
+        .expect("the font outlines glyph 646");
+
+        assert!(image.placement.width > 0 && image.placement.height > 0);
+        assert_eq!(image.content, Content::Mask);
+        assert_eq!(
+            image.data.len(),
+            (image.placement.width * image.placement.height) as usize
+        );
+        assert!(
+            image.data.iter().any(|&a| a > 128),
+            "expected solid coverage, not a sliver"
+        );
+        // Sits above the baseline, so the atlas offset is negative.
+        assert!(-(image.placement.top as f32) < 0.0);
+    }
 
     /// The strings and widths the wrap tests share: a run that breaks in several
     /// places, one that fits on a line untouched, one with a word wider than the
