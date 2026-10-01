@@ -5,6 +5,11 @@
 use super::*;
 
 impl ViewportRenderer {
+    /// `bg_colour` is the background as premultiplied linear RGBA, so the clear
+    /// below is the whole of what the background means on this path: at alpha 1
+    /// an opaque colour, at alpha 0 nothing, and in between a translucent plate
+    /// the scene composites over. The scene pipelines blend straight source over
+    /// a premultiplied destination, which is what keeps that consistent.
     pub(crate) fn render_frame_ldr(
         &mut self,
         device: &crate::gpu::Device,

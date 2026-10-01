@@ -224,3 +224,52 @@ fn transparent_background_is_ignored_wherever_anything_is_drawn() {
         );
     }
 }
+
+/// The `Direct` path honours the background's alpha all the way through,
+/// including under transparent content.
+///
+/// The LDR path has no composite: the background is the render pass's clear, so
+/// premultiplying it there is the whole of the contract. At alpha 0 the clear is
+/// nothing, so a covered pixel carries only what was drawn and an empty one
+/// stays empty.
+#[test]
+fn direct_path_honours_background_alpha() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let (mut renderer, mesh) = renderer_and_quad(&device);
+
+    let mut frame = probe_frame(mesh, 0.0, 0.5);
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+    let px = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+    let corner = block(&px, 4, 4);
+    let centre = block(&px, SIZE / 2, SIZE / 2);
+    eprintln!("Direct, bg alpha 0: corner {corner:?}, centre {centre:?}");
+
+    assert!(
+        corner[3] < 8.0 && corner[0] < 8.0,
+        "a zero-alpha background should clear to nothing, read {corner:?}"
+    );
+    // The quad is pure green, so a transparent background must leave no red
+    // behind: premultiplying the clear is what removes it.
+    assert!(
+        centre[0] < 8.0,
+        "the background colour survived a zero-alpha clear, read {centre:?}"
+    );
+    assert!(
+        centre[1] > 32.0,
+        "the quad should still be drawn over a transparent background, read {centre:?}"
+    );
+
+    // At alpha 1 the premultiplied clear is the straight colour unchanged, so
+    // an opaque background is exactly what it was.
+    let mut opaque = probe_frame(mesh, 1.0, 0.0);
+    opaque.effects.display.mode = viewport_lib::PipelineMode::Direct;
+    let px = renderer.render_offscreen(&device, &queue, &opaque, SIZE, SIZE);
+    let corner = block(&px, 4, 4);
+    assert!(
+        (to_linear(corner[0]) - BG).abs() < 0.02 && corner[3] > 250.0,
+        "an opaque background should be unchanged, read {corner:?}"
+    );
+}

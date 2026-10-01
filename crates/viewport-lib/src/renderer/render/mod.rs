@@ -1,6 +1,39 @@
 use super::*;
 use crate::gpu::util::DeviceExt;
 
+/// Default background #3b3b40, in linear light: the renderer outputs linear and
+/// the sRGB target encodes on write.
+const DEFAULT_BACKGROUND: [f32; 4] = [0.0437, 0.0437, 0.0513, 1.0];
+
+/// The frame's background as straight (not premultiplied) linear RGBA.
+///
+/// `Colour` stores alpha straight, as its own contract says, so this is the
+/// value as the consumer gave it with only the sRGB decode applied. Use
+/// [`background_premultiplied`] for anything that clears or composites with it.
+fn background_linear(frame: &FrameData) -> [f32; 4] {
+    frame
+        .viewport
+        .background_colour
+        .map(|c| c.to_linear_rgba())
+        .unwrap_or(DEFAULT_BACKGROUND)
+}
+
+/// Premultiply straight linear RGBA by its own alpha.
+fn premultiply(c: [f32; 4]) -> [f32; 4] {
+    [c[0] * c[3], c[1] * c[3], c[2] * c[3], c[3]]
+}
+
+/// The frame's background as premultiplied linear RGBA.
+///
+/// The background is a colour the scene composites over, so a clear or a
+/// composite wants it premultiplied: at alpha 1 this is the straight value
+/// unchanged, and at alpha 0 it is nothing rather than a colour with no
+/// coverage. Premultiplication belongs here at the pipeline boundary rather
+/// than in `Colour`, whose straight-alpha storage is relied on elsewhere.
+fn background_premultiplied(frame: &FrameData) -> [f32; 4] {
+    premultiply(background_linear(frame))
+}
+
 /// Emit one indirect draw run against the shared args buffer. `start` is the
 /// run's first global batch index and `len` the number of consecutive batches
 /// in it (all sharing pipeline, bind group, and geometry chunk). Each
@@ -251,15 +284,7 @@ impl ViewportRenderer {
         self.ensure_dyn_res_target(device, vp_idx, [sw, sh], [w, h]);
         self.resources.ensure_dyn_res_ds_pipeline(device);
 
-        let bg_colour = frame
-            .viewport
-            .background_colour
-            .map(|c| c.to_linear_rgba())
-            .unwrap_or([
-                // Default background #3b3b40, expressed in linear light (the renderer
-                // outputs linear and the sRGB target encodes on write).
-                0.0437, 0.0437, 0.0513, 1.0,
-            ]);
+        let bg_colour = background_premultiplied(frame);
 
         {
             let slot = &self.viewport_slots[vp_idx];
@@ -757,15 +782,8 @@ impl ViewportRenderer {
         };
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
-        let bg_colour = frame
-            .viewport
-            .background_colour
-            .map(|c| c.to_linear_rgba())
-            .unwrap_or([
-                // Default background #3b3b40, expressed in linear light (the renderer
-                // outputs linear and the sRGB target encodes on write).
-                0.0437, 0.0437, 0.0513, 1.0,
-            ]);
+        let bg_straight = background_linear(frame);
+        let bg_colour = premultiply(bg_straight);
         let ppp = frame.camera.pixels_per_point;
         let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
         let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
@@ -846,7 +864,7 @@ impl ViewportRenderer {
                 vp_idx,
                 frame,
                 scene_items,
-                bg_colour,
+                bg_straight,
                 w,
                 h,
                 ssaa_factor,
