@@ -121,9 +121,11 @@ impl ViewportRenderer {
 
         // Mark this an auxiliary render for its duration: it reads the resident
         // scene and must not advance shared per-frame state. `render_mode`
-        // suppresses the upload pump, the frame-counter bump, the HiZ prev-depth
-        // store, and item-type plugins' prepare / cull; `last_stats` is a
-        // multi-site value, so snapshot and restore it so the caller's
+        // suppresses the upload pump, the frame-counter bump and the HiZ
+        // prev-depth store. Item-type plugin prepare / cull still runs: it
+        // prepares against the capture camera so the matching paint draws
+        // right-camera geometry (see `dispatch_plugin_prepare`). `last_stats` is
+        // a multi-site value, so snapshot and restore it so the caller's
         // `last_frame_stats()` keeps reflecting their presented frame.
         let saved_render_mode = self.render_mode;
         let saved_last_stats = self.last_stats;

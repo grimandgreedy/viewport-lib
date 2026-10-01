@@ -2798,6 +2798,16 @@ impl ViewportRenderer {
     }
 
     /// Current state of an in-flight upload job.
+    ///
+    /// A progress probe. `Pending { progress }` is what this is for; a terminal
+    /// status is retained for a bounded run of drain cycles and then dropped
+    /// whether or not anyone read it, so gating a deferred bind on `Ready` here
+    /// is a race against your own poll cadence. Take the typed result
+    /// (`upload_result_*`) or register
+    /// [`on_upload_complete`](crate::resources::DeviceResources::on_upload_complete)
+    /// at submit time instead; both are independent of the window. See
+    /// [`UploadStatus::Unknown`](crate::resources::UploadStatus::Unknown), which
+    /// is terminal rather than transient.
     pub fn upload_status(&self, id: crate::resources::JobId) -> crate::resources::UploadStatus {
         self.resources.upload_status(id)
     }
