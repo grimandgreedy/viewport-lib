@@ -59,6 +59,12 @@ pub(crate) struct PostProcessResources {
     pub(crate) ssaa_depth_resolve_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) dyn_res_upscale_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) dyn_res_upscale_ds_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// The two above with `PREMULTIPLIED_BLEND` instead of no blend, so a
+    /// viewport rendered over a transparent background composites into its
+    /// destination rather than replacing it. Built only when something asks to
+    /// composite rather than blit.
+    pub(crate) blit_composite_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) blit_composite_ds_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) dyn_res_upscale_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) dyn_res_linear_sampler: Option<crate::gpu::Sampler>,
 }

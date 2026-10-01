@@ -21,7 +21,7 @@
 //!
 //! | example | legs |
 //! | --- | --- |
-//! | `winit-minimal`, `winit-basic-interaction`, `app-multi-window`, `app-in-window-viewports` | 27, 29, 30 |
+//! | `winit-minimal`, `winit-basic-interaction`, `app-multi-window`, `app-in-window-viewports`, `viewport-in-viewport` | 27, 29, 30 |
 //! | `winit-viewport`, `winit-multi-viewport`, `winit-hdr`, `winit-web`, `raytrace-interactive`, `raytrace-backends` | 27 only (own the surface loop) |
 //!
 //! Check the portable set on another leg with:
