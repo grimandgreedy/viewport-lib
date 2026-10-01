@@ -1,13 +1,10 @@
 //! What the background colour contributes to a partially covered pixel, and
 //! what alpha the composite returns.
 //!
-//! Part of the headless integration suite. These tests characterise the HDR
-//! composite's treatment of `ViewportFrame::background_colour` as it stands:
-//! the background is added twice to a partially covered background pixel, and
-//! its alpha is honoured only on a wholly empty one. They are written to the
-//! measured behaviour on purpose, so the suite is green now and a change to the
-//! composite shows up as these assertions being inverted rather than as a test
-//! appearing from nowhere.
+//! Part of the headless integration suite. The background is a premultiplied
+//! RGBA the scene composites over, so these tests pin the three things that
+//! makes true: it is applied exactly once, its alpha survives whatever is drawn
+//! over it, and the HDR and `Direct` paths agree on the result.
 //!
 //! The probe is a green quad of varying opacity over a dim red background: the
 //! green channel reads the quad's own contribution and the red channel reads
@@ -111,19 +108,17 @@ fn renderer_and_quad(device: &wgpu::Device) -> (ViewportRenderer, MeshId) {
     (renderer, mesh)
 }
 
-/// The background is added twice to a partially covered background pixel.
+/// The background is applied exactly once to a partially covered pixel.
 ///
-/// The HDR scene target is cleared to the background colour, so transparent
-/// content composites over it and `hdr.rgb` already carries
-/// `bg * (1 - coverage)`. The tone-map composite then adds
-/// `bg * (1 - clamp(hdr.a))` on top of that. The residue measures at exactly
-/// twice what one application would leave, at every partial coverage.
-///
-/// A wholly empty pixel escapes it, because the composite's early-out returns
-/// the background directly without the second addition. That is why the factor
-/// stays invisible until something transparent is drawn over the background.
+/// The HDR scene target is cleared to nothing, so the background enters only at
+/// the tone-map composite, which adds `bg * (1 - coverage)` in display space.
+/// The residue left under a half-transparent quad is therefore exactly that,
+/// and the regression this guards is the background arriving twice: the clear
+/// used to supply it as well, which measured at a ratio of 2.00 at every
+/// partial coverage and was invisible on a wholly empty pixel because the
+/// early-out skips the second addition.
 #[test]
-fn background_is_added_twice_under_transparent_content() {
+fn background_is_added_once_under_transparent_content() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -148,24 +143,23 @@ fn background_is_added_twice_under_transparent_content() {
         let ratio = residue / once;
         eprintln!(
             "opacity {opacity}: background residue {residue:.4} linear, one \
-             application would be {once:.4}, ratio {ratio:.2}"
+             application is {once:.4}, ratio {ratio:.2}"
         );
         assert!(
-            (1.8..2.2).contains(&ratio),
-            "expected the background counted twice (ratio about 2.0) at opacity \
+            (0.9..1.1).contains(&ratio),
+            "expected the background applied once (ratio about 1.0) at opacity \
              {opacity}, measured {ratio:.2} ({residue:.4} against {once:.4})"
         );
     }
 }
 
-/// A transparent background survives only on a wholly empty pixel, and even
-/// there the result is not premultiplied.
+/// An empty pixel under a transparent background is nothing in every channel.
 ///
-/// The early-out returns `display_finish(bg.rgb)` with `bg.a`, so an empty pixel
-/// carries the background's colour at zero alpha: straight, not premultiplied,
-/// and so not compositable consistently with any pixel that is not empty.
+/// Premultiplied, so zero coverage means zero colour. It used to return the
+/// background's full straight colour at zero alpha, which no compositor can
+/// use and which is not consistent with any pixel that is not empty.
 #[test]
-fn empty_pixel_keeps_background_alpha_but_is_not_premultiplied() {
+fn empty_pixel_under_a_transparent_background_is_nothing() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -175,52 +169,94 @@ fn empty_pixel_keeps_background_alpha_but_is_not_premultiplied() {
     let px = renderer.render_offscreen(&device, &queue, &probe_frame(mesh, 0.0, 0.5), SIZE, SIZE);
     let corner = block(&px, 4, 4);
     eprintln!("empty pixel under a zero-alpha background: {corner:?}");
+    for c in 0..4 {
+        assert!(
+            corner[c] < 8.0,
+            "expected premultiplied nothing, read {corner:?}"
+        );
+    }
 
+    // An opaque background is unchanged: the compatibility claim this whole
+    // change rests on.
+    let px = renderer.render_offscreen(&device, &queue, &probe_frame(mesh, 1.0, 0.5), SIZE, SIZE);
+    let corner = block(&px, 4, 4);
     assert!(
-        corner[3] < 8.0,
-        "an empty pixel should carry the background's alpha, read {}",
-        corner[3]
-    );
-    // Premultiplied by zero would be zero. It is the background's full colour.
-    assert!(
-        (to_linear(corner[0]) - BG).abs() < 0.02,
-        "expected the background's straight colour at zero alpha, read {corner:?}"
+        (to_linear(corner[0]) - BG).abs() < 0.02 && corner[3] > 250.0,
+        "an opaque background should be unchanged, read {corner:?}"
     );
 }
 
-/// Once anything is drawn over the background, its alpha is ignored and the
-/// composite returns an opaque pixel with the background mixed into RGB.
+/// A transparent background returns coverage, not an opaque pixel, wherever
+/// something is drawn over it.
 ///
-/// This is the gap the request is about: a consumer asking for a transparent
-/// background to composite elsewhere gets a transparent field, an opaque
-/// subject, and an opaque patch of background colour everywhere the two meet.
+/// This is the request the change serves: render a viewport so only its content
+/// is there, and composite it over something the renderer knows nothing about.
 #[test]
-fn transparent_background_is_ignored_wherever_anything_is_drawn() {
+fn transparent_background_returns_coverage() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
     let (mut renderer, mesh) = renderer_and_quad(&device);
 
-    let transparent =
-        renderer.render_offscreen(&device, &queue, &probe_frame(mesh, 0.0, 0.5), SIZE, SIZE);
-    let opaque =
-        renderer.render_offscreen(&device, &queue, &probe_frame(mesh, 1.0, 0.5), SIZE, SIZE);
-    let t = block(&transparent, SIZE / 2, SIZE / 2);
-    let o = block(&opaque, SIZE / 2, SIZE / 2);
-    eprintln!("half-covered pixel: bg alpha 0 -> {t:?}, bg alpha 1 -> {o:?}");
+    let px = renderer.render_offscreen(&device, &queue, &probe_frame(mesh, 0.0, 0.5), SIZE, SIZE);
+    let centre = block(&px, SIZE / 2, SIZE / 2);
+    eprintln!("half-covered pixel, bg alpha 0: {centre:?}");
 
+    // Half coverage of the quad, so about half alpha: neither 0 (content lost)
+    // nor 255 (forced opaque, which is what it used to be).
     assert!(
-        t[3] > 250.0,
-        "a half-covered pixel came back opaque, read alpha {}",
-        t[3]
+        (64.0..192.0).contains(&centre[3]),
+        "expected about half coverage, read alpha {}",
+        centre[3]
     );
-    // Asking for no background changes nothing at all about the pixel.
-    for c in 0..4 {
+    // The quad is pure green, so asking for no background must leave no red.
+    assert!(
+        centre[0] < 8.0,
+        "the background colour was left in premultiplied RGB, read {centre:?}"
+    );
+    assert!(
+        centre[1] > 32.0,
+        "the quad itself should still be there, read {centre:?}"
+    );
+}
+
+/// The HDR and `Direct` paths agree on what the background means.
+///
+/// One rule, two implementations: `Direct` premultiplies its clear, HDR
+/// composites the same premultiplied value in its tone map. A consumer choosing
+/// between them for reasons of their own should not be choosing a different
+/// background model as well.
+#[test]
+fn hdr_and_direct_paths_agree_on_the_background() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let (mut renderer, mesh) = renderer_and_quad(&device);
+
+    for bg_alpha in [0.0f32, 1.0] {
+        let hdr = renderer.render_offscreen(
+            &device,
+            &queue,
+            &probe_frame(mesh, bg_alpha, 0.5),
+            SIZE,
+            SIZE,
+        );
+        let mut direct_frame = probe_frame(mesh, bg_alpha, 0.5);
+        direct_frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        let direct = renderer.render_offscreen(&device, &queue, &direct_frame, SIZE, SIZE);
+
+        let h = block(&hdr, SIZE / 2, SIZE / 2);
+        let d = block(&direct, SIZE / 2, SIZE / 2);
+        eprintln!("bg alpha {bg_alpha}: hdr {h:?}, direct {d:?}");
+
+        // Coverage is the one quantity both paths must produce identically:
+        // the colour differs because HDR tone maps and `Direct` does not.
         assert!(
-            (t[c] - o[c]).abs() < 2.0,
-            "the background's alpha made no difference to a half-covered pixel: \
-             {t:?} against {o:?}"
+            (h[3] - d[3]).abs() < 4.0,
+            "the two paths disagree on coverage at bg alpha {bg_alpha}: hdr \
+             {h:?} against direct {d:?}"
         );
     }
 }

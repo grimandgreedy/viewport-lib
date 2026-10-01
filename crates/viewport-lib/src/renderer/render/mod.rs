@@ -5,33 +5,20 @@ use crate::gpu::util::DeviceExt;
 /// the sRGB target encodes on write.
 const DEFAULT_BACKGROUND: [f32; 4] = [0.0437, 0.0437, 0.0513, 1.0];
 
-/// The frame's background as straight (not premultiplied) linear RGBA.
+/// The frame's background as premultiplied linear RGBA.
 ///
-/// `Colour` stores alpha straight, as its own contract says, so this is the
-/// value as the consumer gave it with only the sRGB decode applied. Use
-/// [`background_premultiplied`] for anything that clears or composites with it.
-fn background_linear(frame: &FrameData) -> [f32; 4] {
-    frame
+/// The background is a colour the scene composites over, so every consumer of
+/// it wants it premultiplied: at alpha 1 the straight value unchanged, at alpha
+/// 0 nothing rather than a colour with no coverage, and in between a translucent
+/// plate. `Colour` keeps storing alpha straight, as its own contract says;
+/// premultiplication belongs here at the pipeline boundary.
+fn background_premultiplied(frame: &FrameData) -> [f32; 4] {
+    let c = frame
         .viewport
         .background_colour
         .map(|c| c.to_linear_rgba())
-        .unwrap_or(DEFAULT_BACKGROUND)
-}
-
-/// Premultiply straight linear RGBA by its own alpha.
-fn premultiply(c: [f32; 4]) -> [f32; 4] {
+        .unwrap_or(DEFAULT_BACKGROUND);
     [c[0] * c[3], c[1] * c[3], c[2] * c[3], c[3]]
-}
-
-/// The frame's background as premultiplied linear RGBA.
-///
-/// The background is a colour the scene composites over, so a clear or a
-/// composite wants it premultiplied: at alpha 1 this is the straight value
-/// unchanged, and at alpha 0 it is nothing rather than a colour with no
-/// coverage. Premultiplication belongs here at the pipeline boundary rather
-/// than in `Colour`, whose straight-alpha storage is relied on elsewhere.
-fn background_premultiplied(frame: &FrameData) -> [f32; 4] {
-    premultiply(background_linear(frame))
 }
 
 /// Emit one indirect draw run against the shared args buffer. `start` is the
@@ -782,8 +769,7 @@ impl ViewportRenderer {
         };
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
-        let bg_straight = background_linear(frame);
-        let bg_colour = premultiply(bg_straight);
+        let bg_colour = background_premultiplied(frame);
         let ppp = frame.camera.pixels_per_point;
         let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
         let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
@@ -864,7 +850,7 @@ impl ViewportRenderer {
                 vp_idx,
                 frame,
                 scene_items,
-                bg_straight,
+                bg_colour,
                 w,
                 h,
                 ssaa_factor,

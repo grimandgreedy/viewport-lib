@@ -87,21 +87,17 @@ pub(crate) fn build_ldr_mesh_pipelines(
             crate::gpu::PrimitiveTopology::TriangleList,
             true,
         ),
+        // `ALPHA_BLENDING` rather than a hand-written state: its alpha component
+        // is `OVER`, so a transparent draw composes with the destination's
+        // coverage instead of replacing it. This used to write `src.a` straight
+        // through (`One` / `Zero`), which punched a hole in an opaque
+        // background's alpha and left an LDR render of a transparent surface
+        // partly see-through when composited. The HDR and instanced transparent
+        // pipelines already name this constant.
         transparent: make(
             "transparent_pipeline",
             None,
-            Some(crate::gpu::BlendState {
-                color: crate::gpu::BlendComponent {
-                    src_factor: crate::gpu::BlendFactor::SrcAlpha,
-                    dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
-                    operation: crate::gpu::BlendOperation::Add,
-                },
-                alpha: crate::gpu::BlendComponent {
-                    src_factor: crate::gpu::BlendFactor::One,
-                    dst_factor: crate::gpu::BlendFactor::Zero,
-                    operation: crate::gpu::BlendOperation::Add,
-                },
-            }),
+            Some(crate::gpu::BlendState::ALPHA_BLENDING),
             crate::gpu::PrimitiveTopology::TriangleList,
             false,
         ),

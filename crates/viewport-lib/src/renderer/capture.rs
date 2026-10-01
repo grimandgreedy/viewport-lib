@@ -22,9 +22,16 @@ pub struct CapturedHdr {
     pub width: u32,
     /// Capture height in pixels.
     pub height: u32,
-    /// Linear RGBA radiance, `width * height * 4` floats in row-major order. The
-    /// alpha channel is scene coverage: 0.0 on background pixels (matching the
-    /// HDR scene clear), > 0.0 where geometry or the skybox was drawn.
+    /// Linear RGBA radiance, `width * height * 4` floats in row-major order,
+    /// premultiplied by coverage.
+    ///
+    /// The alpha channel is scene coverage: 0.0 on background pixels, > 0.0
+    /// where geometry or the skybox was drawn. A background pixel is zero in
+    /// all four channels, because the HDR scene target is cleared to nothing.
+    /// `ViewportFrame::background_colour` does not reach a capture: it is
+    /// composited by the tone map, which a capture does not run. Bake a
+    /// backdrop into a probe with a skybox, which draws and carries coverage,
+    /// or composite one under the result.
     pub rgba: Vec<f32>,
 }
 
