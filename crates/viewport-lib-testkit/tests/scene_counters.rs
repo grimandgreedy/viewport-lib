@@ -46,6 +46,10 @@ fn expected(name: &str) -> Option<Expected> {
         "textured_checker" => e(1, 1, 1, 0, 0, 2208),
         "textured_normalmap" => e(1, 1, 1, 0, 0, 3968),
         "transparent" => e(3, 3, 1, 1, 0, 2880),
+        // One opaque instanced batch and one OIT instanced batch, which is why
+        // this is the only scene whose `main_buffer_binds` reaches four: both
+        // instanced loops run, and each binds the slab's two chunks.
+        "transparent_background" => e(2, 2, 2, 2, 0, 972),
         "materials_pbr" => e(25, 25, 1, 1, 0, 55200),
         "many_objects" => e(144, 144, 2, 2, 0, 16992),
         "lights_eight" => e(4, 4, 2, 2, 0, 2892),
