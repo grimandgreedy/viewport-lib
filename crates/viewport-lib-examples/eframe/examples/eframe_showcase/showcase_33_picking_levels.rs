@@ -19,6 +19,7 @@ use crate::eframe;
 use std::collections::HashMap;
 use viewport_lib as vpl;
 use viewport_lib::plugin_api::Uploads;
+use viewport_lib_item_types::DecalItem;
 use viewport_lib_item_types::PointCloudItem;
 use viewport_lib_item_types::{
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
@@ -32,11 +33,11 @@ use viewport_lib_item_types::{
 
 use crate::eframe::egui;
 use vpl::{
-    BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourSource, ColourmapId, DecalItem,
-    FrameData, ItemSettings, LightingSettings, Material, MeshId, NodeId, PickBackend, PickId,
-    PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame, SceneRenderItem,
-    SizeSource, SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer, VolumeData,
-    VolumeMeshData, VolumeMeshItem,
+    BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourSource, ColourmapId, FrameData,
+    ItemSettings, LightingSettings, Material, MeshId, NodeId, PickBackend, PickId, PickMask,
+    PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame, SceneRenderItem, SizeSource,
+    SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer, VolumeData, VolumeMeshData,
+    VolumeMeshItem,
 };
 
 use crate::App;
@@ -2252,7 +2253,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             d.texture_id = tex;
             d.settings.pick_id = PickId(pick);
             d.settings.selected = app.pl_state.selection.contains(pick);
-            fd.scene.items_mut::<viewport_lib::DecalItem>().push(d);
+            fd.scene.items_mut::<DecalItem>().push(d);
         }
     }
 }

@@ -190,3 +190,37 @@ fn gpu_pick_hits_sprite_set() {
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(777)));
 }
+
+// ---------------------------------------------------------------------------
+// GPU pick: decals
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gpu_pick_hits_decal_box() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    let mut frame = sub_object_pick_frame();
+
+    // A decal is the unit box [-0.5, 0.5]^3 mapped by `transform`; the default
+    // transform places it at the origin. The decal item type rasterises that
+    // box in the pick pass and reads back its pick_id.
+    let mut decal = DecalItem::default();
+    decal.settings.pick_id = PickId(77);
+    frame.scene.items_mut::<DecalItem>().push(decal);
+
+    // The decal's pick binding is built during prepare, like every other item
+    // type that answers the id pass with geometry of its own.
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert_eq!(hit.map(|h| h.id), Some(77));
+}

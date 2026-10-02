@@ -32,8 +32,9 @@ pub(super) fn build_frame(
     gpu: &CurveMeshGpu,
     gpu_data: StreamtubeGpuData,
     outlined: bool,
+    settings: viewport_lib::ItemSettings,
 ) -> CurveFrame {
-    build_frame_with(device, queue, &gpu.pick, gpu_data, outlined)
+    build_frame_with(device, queue, &gpu.pick, gpu_data, outlined, settings)
 }
 
 /// The `build_frame` body, taking the pick state directly so the ribbon plugin
@@ -44,8 +45,13 @@ pub(super) fn build_frame_with(
     pick: &CurvePickGpu,
     gpu_data: StreamtubeGpuData,
     outlined: bool,
+    settings: viewport_lib::ItemSettings,
 ) -> CurveFrame {
-    let wants_bind_group = gpu_data.pick_id != PickId::NONE || outlined;
+    // An item off some surface mask layer may need stamping, which draws
+    // through the same bind group.
+    let layers = viewport_lib::plugin_api::SURFACE_MASK_LAYERS;
+    let may_stamp = settings.visibility_mask & layers != layers;
+    let wants_bind_group = gpu_data.pick_id != PickId::NONE || outlined || may_stamp;
     let instance_bind_group = wants_bind_group.then(|| {
         pick.instance_bind_group(
             device,
@@ -65,6 +71,7 @@ pub(super) fn build_frame_with(
         instance_bind_group,
         node_bind_group,
         outlined,
+        settings,
     }
 }
 
@@ -113,6 +120,38 @@ pub(super) fn outline_mask_curve_mesh(
             pass.set_pipeline(&pick.mask_pipeline);
             bound = true;
         }
+        pass.set_bind_group(1, bg, &[]);
+        draw_solid_indexed(pass, &entry.gpu);
+    }
+}
+
+/// The `surface_mask` body: stamp every item that needs it with its solid
+/// triangle mesh. Items that did not write depth as a solid are skipped, since
+/// the stamp would land on whatever shows through them.
+pub(super) fn surface_mask_curve_mesh(
+    pass: &mut viewport_lib::gpu::RenderPass<'_>,
+    ctx: &viewport_lib::plugin_api::SurfaceMaskContext<'_>,
+    pick: Option<&CurvePickGpu>,
+    frame: &[CurveFrame],
+) {
+    let Some(pick) = pick else { return };
+    let mut bound = false;
+    for entry in frame {
+        let gd = &entry.gpu;
+        if gd.index_count == 0 || gd.wireframe || !gd.depth_write || gd.oit_eligible {
+            continue;
+        }
+        let Some(value) = ctx.stamp_for(&entry.settings) else {
+            continue;
+        };
+        let Some(bg) = &entry.instance_bind_group else {
+            continue;
+        };
+        if !bound {
+            pass.set_pipeline(&pick.surface_mask_pipeline);
+            bound = true;
+        }
+        pass.set_stencil_reference(value);
         pass.set_bind_group(1, bg, &[]);
         draw_solid_indexed(pass, &entry.gpu);
     }

@@ -4,6 +4,14 @@
 
 ### Added
 
+- **`SHARED_BRDF_WGSL` and `SHARED_OUTLINE_EDGE_WGSL`** - the direct Cook-Torrance BRDF the lit mesh shaders use, and the fullscreen edge trace behind the selection outline (with its `OutlineEdgeUniform`), published for item types that light a surface themselves or draw a selection ring of their own.
+
+- **Every depth-writing item type can decline a decal** - point clouds, vector and tensor fields, tubes, streamtubes, ribbons, opaque sprites, volume surface slices, GPU implicit surfaces and GPU marching-cubes surfaces now stamp the surface mask, so `visibility_mask` decides which decals land on them as it does for meshes. Before, only a mesh could refuse one.
+
+- **`DecalItem::channel_mask`: a decal can target some surfaces and not others** - a decal lands on an item when its `channel_mask` shares a layer with the item's `ItemSettings::visibility_mask`, the test a light's `channel_mask` already makes. The default is every layer, so existing decals are unchanged. Only layers 0 to 7 count for decals.
+
+- **`ItemTypePlugin::surface_mask`: a per-pixel layer mask screen-space effects can read** - a new pass stamps each opaque pixel's layers into the scene stencil, and an item type takes part by drawing its items from `surface_mask` with a pipeline from `build_surface_mask_pipeline`. A type that reads the mask names its masks in `surface_mask_readers`; the pass only runs when something reads it and some item needs a stamp. Decals read it in place of their own exclude pass, so nothing changes for a consumer.
+
 - **`snap_query_begin` / `snap_query_poll`: non-blocking snap query** - `snap_query` is split into a submit and a poll the way `pick_object_begin` / `pick_object_poll` are, so the nearest-feature pick works on the web, where nothing can block on the GPU. `SnapHit` and `SnapPoll` are now exported from the crate root.
 
 - **`blit_composite`: draw a viewport over what is already in a render pass** - `create_blit_composite` prepares a source the same way `create_blit` does but compiles a premultiplied-blend pipeline pair, and `blit_composite` / `blit_composite_with_depth` draw with it. `blit` has no blend state and replaces its destination, which is what upscaling a frame into a surface wants and no use for drawing one viewport inside another. `PaintCtxV2::blit_composite_rect` is the runner-side wrapper. The pipelines are built by `create_blit_composite`, so a consumer that only ever blits pays nothing. New `viewport-in-viewport` winit example: three embedded viewports whose background opacity sweeps between 0 and 1 while they drift over the parent's scene.
@@ -13,6 +21,14 @@
 - **`build_log` can be switched on at runtime** - `resources::build_log::enable` and `disable` turn the pipeline, shader module and render target record on without `VPL_BUILD_LOG`, which a web build cannot set because `std::env::var` always reports a variable missing under `wasm32`. `drain` and `drain_textures` return what was recorded since the last call, and the phase marks on the `viewport_lib::init` tracing target now cover the whole of `ViewportRenderer::new` (internal item plugin registration, the fallback and colourmap textures, the geometry slab, the glyph atlas and the polyline resources) rather than the pipeline phases alone.
 
 ### Changed
+
+- **Decals moved to `viewport-lib-item-types`** - `DecalItem`, `DecalBlendMode`, `DecalProjection`, `CylindricalFacing` and `DecalAnimation` are imported from `viewport_lib_item_types` now, and the type registers with that crate's `install`. A renderer that does not call `install` (or register `DecalPlugin` itself) draws no decals.
+
+- **Live decals are a standalone `LiveDecals`, not part of `Scene`** - `Scene::add_decal`, `add_decal_with_lifetime`, `add_decal_animated`, `remove_decal`, `update_decals` and `collect_decal_items` are gone. Keep a `viewport_lib_item_types::LiveDecals` beside the scene and call `add`, `add_with_lifetime`, `add_animated`, `remove`, `update` and `collect` on it.
+
+- **`FrameStats::decal_uploads` and `decal_reused` are gone** - read the same two counts from `DecalPlugin::cache_stats`, reached with `renderer.item_type_plugin`.
+
+- **`receives_decals` is gone; a surface declines decals through its layers** - `SceneRenderItem::receives_decals`, `Scene::set_receives_decals` and the `SceneNode` accessors are removed. To keep every decal off an item, take it off the layers a decal can see: `item.settings.visibility_mask &= !SURFACE_MASK_LAYERS` (layers 0 to 7). The item stays on layers 8 and up, so cameras and lights left at their default masks still draw and light it.
 
 - **`ViewportFrame::background_colour` is premultiplied, and its alpha now means something everywhere** - the output is `scene over background`, so alpha 1 is an opaque background (unchanged for every consumer passing an opaque colour), `Colour::TRANSPARENT` is no background at all, and in between is a translucent plate. Previously the alpha was honoured only on a wholly empty pixel: anything partially covered came back opaque with the background mixed into its RGB, so a render could not be composited over anything but the background colour it already had. Both paths honour it now, `Direct` by premultiplying its clear and HDR by compositing in the tone map, and both return premultiplied pixels with alpha as coverage. **Composite the result with `One` / `OneMinusSrcAlpha`, not `SrcAlpha` / `OneMinusSrcAlpha`.** Two things in this crate deliberately take straight alpha instead and so will not accept a premultiplied viewport directly: the overlay image path (`register_overlay_texture_view`), and `blit`, which has no blend state and replaces its destination.
 

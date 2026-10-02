@@ -760,10 +760,6 @@ impl ViewportRenderer {
                 .filter(|(item, inst)| !item.settings.hidden && !**inst)
                 .count() as u32;
 
-            let decal_cache_stats = self
-                .decal_cache_stats
-                .load(std::sync::atomic::Ordering::Relaxed);
-
             // Items drawn instanced whose mesh carries per-mesh deform slot
             // data. The instanced draws bind the empty deform group and the
             // instanced shader passes no flags, so that data does not reach the
@@ -810,8 +806,6 @@ impl ViewportRenderer {
                 per_object_bind_groups_built,
                 batches_reuploaded,
                 batches_skipped,
-                decal_uploads: (decal_cache_stats >> 32) as u32,
-                decal_reused: decal_cache_stats as u32,
                 plugin_draw_calls,
                 plugin_upload_bytes,
                 deform_slots_ignored,
@@ -1048,20 +1042,6 @@ impl ViewportRenderer {
     ) -> crate::renderer::stats::FrameStats {
         let prepare_start = web_time::Instant::now();
         self.prepare_breakdown = crate::renderer::stats::PrepareBreakdown::default();
-
-        // Resolve which surfaces opted out of decal projection before any
-        // plugin prepare runs: the flag lives on mesh items, so a projection
-        // item type can only get it from here.
-        self.decal_excluded_surfaces.clear();
-        {
-            let crate::SurfaceSubmission::Flat(ref surfaces) = frame.scene.surfaces;
-            self.decal_excluded_surfaces.extend(
-                surfaces
-                    .iter()
-                    .filter(|item| !item.receives_decals && !item.settings.hidden)
-                    .map(|item| (item.mesh_id, item.model)),
-            );
-        }
 
         let plugin_start = web_time::Instant::now();
 

@@ -330,18 +330,6 @@ pub struct ItemFrameContext<'a> {
     /// the previous frame's measurement, since this frame's has not been
     /// taken yet.
     pub quality_reduced: bool,
-    /// The opaque surfaces that opted out of decal projection this frame, as
-    /// `(mesh_id, model)` pairs, with hidden items already dropped.
-    ///
-    /// Crate-internal, unlike [`collections`](Self::collections), and for a
-    /// reason: the opt-out is `SceneRenderItem::receives_decals`, a field on
-    /// the mesh family that nothing outside this crate can populate for an
-    /// item type of its own. Exposing it would be public surface no external
-    /// plugin could use. The built-in decal type reads it to build its stencil
-    /// mask; if a second projection effect ever needs the same thing, the
-    /// question to settle first is what the general opt-out looks like on
-    /// `SceneRenderItem`, not how to widen this field.
-    pub(crate) decal_excluded_surfaces: &'a [(crate::MeshId, [[f32; 4]; 4])],
     /// Every collection submitted under this item type's name this frame.
     ///
     /// One item type may submit several: an inline form carrying its data, a
@@ -567,11 +555,15 @@ pub struct EncoderScopeContext<'a> {
     /// with quality or mode knobs that live on the frame rather than on its
     /// items reads them here; the built-in volumetric settings are the reason
     /// this is on the context at all.
-    /// The stencil aspect of the scene depth buffer, sampleable.
+    /// The stencil aspect of the scene depth buffer, sampleable as a
+    /// `texture_2d<u32>`. It holds the surface mask: for each pixel, the
+    /// layers of the item that owns it.
     ///
-    /// A projection effect that masks itself against surfaces it must not
-    /// touch writes the mask into the stencil in a pass of its own, then
-    /// samples it here while compositing. Paired with
+    /// A projection effect that lands only on some surfaces loads this at the
+    /// pixel and skips it when the value shares no bit with the effect's own
+    /// mask, cut down with [`surface_mask_bits`]. The type has to name that mask
+    /// in [`surface_mask_readers`](ItemTypePlugin::surface_mask_readers), or
+    /// the items it would refuse are never stamped. Paired with
     /// [`scene_depth_only`](Self::scene_depth_only), which reconstructs the
     /// receiving surface's position.
     pub scene_stencil_only: &'a crate::gpu::TextureView,
@@ -592,9 +584,7 @@ pub struct EncoderScopeContext<'a> {
     /// See [`outline_colour`](Self::outline_colour).
     pub outline_width_px: f32,
     /// Draw handle for consumer-uploaded meshes, for a pass that rasterises
-    /// scene geometry rather than geometry of its own: the decal exclude pass
-    /// stamps the surfaces named by
-    /// [`ItemFrameContext::decal_excluded_surfaces`] into the stencil buffer.
+    /// geometry the consumer uploaded rather than buffers of its own.
     pub meshes: crate::resources::MeshDraw<'a>,
     /// `true` when the frame budget asked for reduced quality this frame, the
     /// same signal [`ItemFrameContext::quality_reduced`] carries.
@@ -662,6 +652,70 @@ pub struct OutlineMaskContext<'a> {
     /// An item type whose geometry is a `MeshId` binds and draws it through
     /// this; one that owns its buffers ignores it.
     pub meshes: crate::resources::MeshDraw<'a>,
+}
+
+/// The layers the surface mask holds, 0 to 7. Also the value every pixel
+/// holds until an item stamps over it: a member of all eight.
+pub const SURFACE_MASK_LAYERS: u32 = 0xFF;
+
+/// The part of a 32-bit layer mask the surface mask holds: layers 0 to 7.
+///
+/// Layers 8 and up are dropped. An item with none of the low eight owns its
+/// pixels with no layer at all, so nothing that reads the mask lands on it,
+/// and a reader with none of them lands nowhere.
+pub fn surface_mask_bits(mask: u32) -> u32 {
+    mask & SURFACE_MASK_LAYERS
+}
+
+/// Information forwarded to a plugin's
+/// [`surface_mask`](ItemTypePlugin::surface_mask).
+///
+/// The lib's surface-mask pass is already begun on entry and has the shared
+/// group-0 camera bind group bound. The pass has no colour target; it attaches
+/// the scene depth-stencil buffer, and a pipeline from
+/// [`build_surface_mask_pipeline`](crate::plugin_api::builders::build_surface_mask_pipeline)
+/// writes the stencil reference wherever the item's geometry passes the depth
+/// test.
+#[non_exhaustive]
+pub struct SurfaceMaskContext<'a> {
+    /// Active render-camera snapshot.
+    pub camera: &'a crate::RenderCamera,
+    /// Multi-viewport slot index.
+    pub viewport_index: usize,
+    /// Monotonically increasing frame counter.
+    pub frame_index: u64,
+    /// Draw handle for meshes the consumer uploaded through
+    /// [`upload_mesh_data`](crate::resources::DeviceResources::upload_mesh_data).
+    pub meshes: crate::resources::MeshDraw<'a>,
+    pub(crate) readers: &'a [u32],
+}
+
+impl SurfaceMaskContext<'_> {
+    /// The stencil reference to draw `settings`' item with, or `None` when the
+    /// item needs no stamp this frame.
+    ///
+    /// An item is stamped only when its value would make some reader skip it.
+    /// With every reader at the default mask that is no item at all, so a type
+    /// can call this for each item and draw the few that answer `Some`:
+    ///
+    /// ```ignore
+    /// if let Some(value) = ctx.stamp_for(settings) {
+    ///     pass.set_stencil_reference(value);
+    ///     // draw the item
+    /// }
+    /// ```
+    pub fn stamp_for(&self, settings: &ItemSettings) -> Option<u32> {
+        if settings.hidden {
+            return None;
+        }
+        let value = surface_mask_bits(settings.visibility_mask);
+        surface_mask_needs_stamp(value, self.readers).then_some(value)
+    }
+}
+
+/// Whether a pixel holding `value` would be skipped by any of `readers`.
+pub(crate) fn surface_mask_needs_stamp(value: u32, readers: &[u32]) -> bool {
+    readers.iter().any(|reader| value & reader == 0)
 }
 
 /// Information forwarded to a plugin's `render_pick`.
@@ -1116,6 +1170,47 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     ) {
     }
 
+    /// Draw items into the surface mask, so a screen-space effect can tell
+    /// whose surface a pixel belongs to.
+    ///
+    /// The surface mask holds, for each pixel of the opaque image, the layers
+    /// (`ItemSettings::visibility_mask`, cut down by [`surface_mask_bits`]) of
+    /// the item that owns it. A decal reads it to land on some surfaces and
+    /// not others. Every pixel starts as a member of every layer; this hook is
+    /// where an item type overwrites that for the items that say otherwise.
+    ///
+    /// Called inside the lib's surface-mask pass, after the opaque scene and
+    /// its supersample resolve and before
+    /// [`EncoderScope::OnOpaqueSurfaces`], with group 0 bound. The pass runs
+    /// only on frames where some type reads the mask and some item needs a
+    /// stamp. For each item, ask
+    /// [`SurfaceMaskContext::stamp_for`]; when it answers, set that as the
+    /// stencil reference and draw the item's geometry with a pipeline from
+    /// [`build_surface_mask_pipeline`](crate::plugin_api::builders::build_surface_mask_pipeline).
+    ///
+    /// Draw the same geometry the opaque pass drew. The stamp is depth-tested
+    /// against the scene, so a vertex stage that lands somewhere else stamps
+    /// the wrong pixels or none.
+    ///
+    /// A type that writes depth and leaves this empty is treated as a member
+    /// of every layer: every decal lands on it.
+    fn surface_mask(
+        &self,
+        _pass: &mut crate::gpu::RenderPass<'_>,
+        _ctx: &SurfaceMaskContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+    }
+
+    /// Name the masks this type will test the surface mask against this
+    /// frame, one per distinct mask, cut down by [`surface_mask_bits`].
+    ///
+    /// Push nothing when the type does not read the mask, which is the
+    /// default. The lib uses the list to decide which items need stamping, so
+    /// a type that reads the mask without naming its masks here sees every
+    /// pixel as a member of every layer.
+    fn surface_mask_readers(&self, _items: &ItemCollections<'_>, _out: &mut Vec<u32>) {}
+
     /// The points in the HDR frame where this plugin wants an
     /// [`encode`](Self::encode) call.
     ///
@@ -1393,4 +1488,37 @@ pub struct ItemTypeHost<'a, T> {
     /// textures, 3D volumes and colourmaps, through the accessors on
     /// [`DeviceResources`](crate::resources::DeviceResources).
     pub resources: &'a crate::resources::DeviceResources,
+}
+
+#[cfg(test)]
+mod surface_mask_tests {
+    use super::*;
+
+    #[test]
+    fn the_mask_holds_the_low_eight_layers() {
+        assert_eq!(surface_mask_bits(!0), SURFACE_MASK_LAYERS);
+        assert_eq!(surface_mask_bits(0), 0);
+        // Clearing one low layer clears it in the mask.
+        assert_eq!(surface_mask_bits(!0b1), 0xFE);
+        // An item on high layers only owns its pixels with no layer.
+        assert_eq!(surface_mask_bits(!SURFACE_MASK_LAYERS), 0);
+    }
+
+    #[test]
+    fn only_items_a_reader_would_refuse_are_stamped() {
+        // Every reader at the default: nothing but a zero value needs a stamp.
+        assert!(!surface_mask_needs_stamp(
+            0b0000_0010,
+            &[SURFACE_MASK_LAYERS]
+        ));
+        assert!(surface_mask_needs_stamp(0, &[SURFACE_MASK_LAYERS]));
+        // A narrowed reader makes an item on another layer need one.
+        assert!(surface_mask_needs_stamp(
+            0b0000_0010,
+            &[SURFACE_MASK_LAYERS, 0b0000_0001]
+        ));
+        assert!(!surface_mask_needs_stamp(0b0000_0011, &[0b0000_0001]));
+        // Nothing reads the mask: nothing is stamped.
+        assert!(!surface_mask_needs_stamp(0, &[]));
+    }
 }

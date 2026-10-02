@@ -487,6 +487,9 @@ impl ViewportRenderer {
         self.hdr_scene_pass(&ctx, &mut encoder);
         self.hdr_store_hiz_depth(&ctx, &mut encoder);
         self.hdr_ssaa_refraction(&ctx, &mut encoder);
+        // Stamp the surface mask before anything reads it. After the resolve,
+        // so the stencil written is the one the passes below attach.
+        self.encode_surface_mask(&mut encoder, frame, vp_idx);
         // Item-type plugins that composite onto the finished opaque surfaces:
         // decals stamp here, underneath the selection affordances and the
         // depth-read transparency that follow.
@@ -653,8 +656,10 @@ impl ViewportRenderer {
                         load: crate::gpu::LoadOp::Clear(1.0),
                         store: crate::gpu::StoreOp::Store,
                     }),
+                    // Every pixel starts as a member of every layer; the
+                    // surface mask pass overwrites the ones that are not.
                     stencil_ops: Some(crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(1),
+                        load: crate::gpu::LoadOp::Clear(crate::plugin_api::SURFACE_MASK_LAYERS),
                         store: crate::gpu::StoreOp::Store,
                     }),
                 }),
@@ -1644,11 +1649,11 @@ impl ViewportRenderer {
                             load: crate::gpu::LoadOp::Clear(1.0),
                             store: crate::gpu::StoreOp::Store,
                         }),
-                        // 1, the value the scene pass clears stencil to when
-                        // it owns this attachment. The decal exclude pass then
-                        // stamps 0 on non-receivers as usual.
+                        // The value the scene pass clears stencil to when it
+                        // owns this attachment. The surface mask pass then
+                        // stamps over it as usual.
                         stencil_ops: Some(crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(1),
+                            load: crate::gpu::LoadOp::Clear(crate::plugin_api::SURFACE_MASK_LAYERS),
                             store: crate::gpu::StoreOp::Store,
                         }),
                     }),

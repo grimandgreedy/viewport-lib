@@ -180,40 +180,6 @@ fn gpu_pick_async_begin_on_empty_space_reports_no_hit() {
 }
 
 #[test]
-fn gpu_pick_hits_decal_box() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-
-    let cam = Camera::default();
-    let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
-    frame.camera.viewport_size = [64.0, 64.0];
-    frame.viewport.show_grid = false;
-    frame.viewport.show_axes_indicator = false;
-    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
-
-    // A decal is the unit box [-0.5, 0.5]^3 mapped by `transform`; the default
-    // transform places it at the origin. The decal item type rasterises that
-    // box in the pick pass and reads back its pick_id.
-    let mut decal = DecalItem::default();
-    decal.settings.pick_id = PickId(77);
-    *frame.scene.items_mut::<viewport_lib::DecalItem>() = vec![decal];
-
-    // The decal's pick binding is built during prepare, like every other item
-    // type that answers the id pass with geometry of its own.
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
-    assert_eq!(hit.map(|h| h.object_id), Some(PickId(77)));
-}
-
-#[test]
 fn gpu_pick_hits_volume_mesh_boundary() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");

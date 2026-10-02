@@ -269,6 +269,25 @@ pub const SHARED_CSM_WGSL: &str = include_str!("../shaders/helpers/csm.wgsl");
 /// the body declares at binding 6, and declares nothing itself.
 pub const SHARED_CLIP_VOLUME_WGSL: &str = include_str!("../shaders/helpers/clip_volume_test.wgsl");
 
+/// The direct Cook-Torrance BRDF the renderer's lit mesh shaders evaluate.
+///
+/// Provides `D_GGX`, `G1_Smith` and the functions built on them, for a body
+/// that shades with the scene's lights itself and wants its highlights to
+/// match the surface it sits on. It declares no bindings and reads none, so
+/// it composes after either set of group-0 declarations.
+pub const SHARED_BRDF_WGSL: &str = include_str!("../shaders/helpers/brdf.wgsl");
+
+/// The fullscreen edge trace the selection outline uses: a complete shader,
+/// vertex and fragment stage, that reads a single-channel coverage mask and
+/// draws a ring around it.
+///
+/// For an item type that draws its own selection ring from a mask of its own,
+/// so the ring matches the one the renderer draws for everything else. Group 0
+/// is the mask texture at binding 0, a filtering sampler at binding 1 and an
+/// [`OutlineEdgeUniform`](crate::resources::OutlineEdgeUniform) at binding 2;
+/// the entry points are `vs_main` and `fs_main`.
+pub const SHARED_OUTLINE_EDGE_WGSL: &str = include_str!("../shaders/outline_edge.wgsl");
+
 /// Shared PBR shading helper.
 ///
 /// Provides:

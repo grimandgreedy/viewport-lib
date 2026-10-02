@@ -142,6 +142,7 @@ impl ItemTypePlugin for PointCloudPlugin {
             self.frame.push(pipeline::PointCloudFrame {
                 draw,
                 pick_bind_group,
+                settings: item.settings,
             });
         }
 
@@ -165,6 +166,7 @@ impl ItemTypePlugin for PointCloudPlugin {
             self.frame.push(pipeline::PointCloudFrame {
                 draw,
                 pick_bind_group,
+                settings: ref_item.settings,
             });
         }
 
@@ -216,6 +218,29 @@ impl ItemTypePlugin for PointCloudPlugin {
             pass.set_vertex_buffer(0, entry.position_buf.slice(..));
             pass.set_vertex_buffer(1, entry.size_buf.slice(..));
             pass.draw(0..6, 0..entry.instance_count);
+        }
+    }
+
+    fn surface_mask(
+        &self,
+        pass: &mut gpu::RenderPass<'_>,
+        ctx: &viewport_lib::plugin_api::SurfaceMaskContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        let mut bound = false;
+        for entry in &self.frame {
+            let Some(value) = ctx.stamp_for(&entry.settings) else {
+                continue;
+            };
+            if !bound {
+                pass.set_pipeline(&gpu.surface_mask_pipeline);
+                bound = true;
+            }
+            pass.set_stencil_reference(value);
+            pass.set_bind_group(1, &entry.draw.bind_group, &[]);
+            pass.set_vertex_buffer(0, entry.draw.vertex_buffer.slice(..));
+            pass.draw(0..6, 0..entry.draw.point_count);
         }
     }
 

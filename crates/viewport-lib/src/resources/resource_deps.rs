@@ -39,14 +39,6 @@ pub(crate) struct ResourceDeps {
 }
 
 impl ResourceDeps {
-    /// Deps for a binding that names textures only.
-    pub(crate) fn textures(ids: [Option<TextureId>; 5]) -> Self {
-        Self {
-            mesh_id: None,
-            texture_ids: ids,
-        }
-    }
-
     /// Whether every resource this binding names is still resident.
     ///
     /// `true` means the cached binding still describes exactly what it did

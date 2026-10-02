@@ -239,6 +239,35 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         }
     }
 
+    fn surface_mask(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        ctx: &viewport_lib::plugin_api::SurfaceMaskContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        let mut bound = false;
+        for entry in &self.frame {
+            // A wireframe item drew lines, not the surface the stamp covers:
+            // stamping the solid would mark whatever shows between them.
+            if entry.wireframe || self.wireframe_mode {
+                continue;
+            }
+            let Some(value) = ctx.stamp_for(&entry.settings) else {
+                continue;
+            };
+            if !bound {
+                pass.set_pipeline(&gpu.surface_mask_pipeline);
+                bound = true;
+            }
+            pass.set_stencil_reference(value);
+            for slab in &entry.slabs {
+                pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
+                pass.draw_indirect(&slab.indirect_buf, 0);
+            }
+        }
+    }
+
     fn pick(&self, ray: &PickRay, ctx: &PickContext<'_>) -> Option<(f32, PickHit)> {
         if !ctx.mask.intersects(PickMask::OBJECT) {
             return None;

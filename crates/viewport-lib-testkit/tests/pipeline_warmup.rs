@@ -5,7 +5,8 @@
 //! prepare, so a frame that hits a cold pipeline reads non-zero.
 
 use viewport_lib::plugin_api::Uploads;
-use viewport_lib::{CameraFrame, DecalItem, FrameData, Material, SceneFrame, SceneRenderItem};
+use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
+use viewport_lib_item_types::DecalItem;
 use viewport_lib_item_types::VolumeItem;
 use viewport_lib_item_types::{PointCloudItem, PointCloudRefItem};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
@@ -64,10 +65,7 @@ fn first_decal_frame_builds_no_pipelines() {
     decal.texture_id = tex_id;
     decal.transform = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
     let mut with_decal = mesh_frame(item, [200.0, 150.0]);
-    with_decal
-        .scene
-        .items_mut::<viewport_lib::DecalItem>()
-        .push(decal);
+    with_decal.scene.items_mut::<DecalItem>().push(decal);
     let _ = h.render(&with_decal, 200, 150);
     assert_eq!(
         h.stats().pipelines_built_this_frame,

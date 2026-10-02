@@ -150,6 +150,7 @@ impl ItemTypePlugin for VectorFieldPlugin {
                 draw,
                 pick_bind_group,
                 outline,
+                settings: item.settings,
             });
         }
 
@@ -174,6 +175,7 @@ impl ItemTypePlugin for VectorFieldPlugin {
                 draw,
                 pick_bind_group,
                 outline: None,
+                settings: ref_item.settings,
             });
         }
         Vec::new()
@@ -240,6 +242,30 @@ impl ItemTypePlugin for VectorFieldPlugin {
                     }
                 }
             }
+        }
+    }
+
+    fn surface_mask(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        ctx: &viewport_lib::plugin_api::SurfaceMaskContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        let mut bound = false;
+        for entry in &self.frame {
+            let Some(value) = ctx.stamp_for(&entry.settings) else {
+                continue;
+            };
+            if !bound {
+                pass.set_pipeline(&gpu.surface_mask_pipeline);
+                bound = true;
+            }
+            pass.set_stencil_reference(value);
+            pass.set_bind_group(1, &entry.draw.uniform_bind_group, &[]);
+            pass.set_bind_group(2, &entry.draw.instance_bind_group, &[]);
+            ctx.meshes
+                .draw_indexed_instanced(pass, entry.draw.shape, entry.draw.instance_count);
         }
     }
 

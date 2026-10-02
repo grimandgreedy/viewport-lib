@@ -44,6 +44,7 @@ mod point_shadow_pool;
 mod prepare;
 mod render;
 mod submit;
+mod surface_mask;
 pub use submit::SubmitSink;
 pub mod shader_hashes;
 mod shadow_debug_stats;
@@ -75,24 +76,24 @@ pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 pub use self::types::{
     Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
     BloomSettings, CameraFrame, Candela, ClipObject, ClipShape, ComputeFilterItem,
-    ComputeFilterKind, ContactShadowSettings, CylindricalFacing, DebugOutputMode, DebugQuantity,
-    DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, DisplaySettings,
-    DofSettings, EdlSettings, EffectsFrame, EnvironmentSettings, ExposureMode, ExposureSettings,
-    FillRule, FilterMode, ForegroundPass, ForegroundProjection, FrameData, GlyphRunItem,
-    GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource, InteractionFrame, LabelAnchor,
-    LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource, LightingPosture,
-    LightingSettings, LineCap, LineJoin, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem,
-    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OutlineMode,
-    OverlayAnchoring, OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill, OverlayFrame,
-    OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
-    OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform,
-    POINT_SHADOW_FACE_SIZE, PathSegment, PathTrack, PipelineMode, PointShadowMode, PolylineCap,
-    PolylineItem, PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
-    RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem,
-    ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath,
-    SurfaceLICConfig, SurfaceSubmission, TextureTransform, TileMode, ToneMapping,
-    TriangleDirection, ViewportEffects, ViewportFrame, VignetteSettings, VolumeMeshItem,
-    VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
+    ComputeFilterKind, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis,
+    DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentSettings, ExposureMode,
+    ExposureSettings, FillRule, FilterMode, ForegroundPass, ForegroundProjection, FrameData,
+    GlyphRunItem, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
+    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind,
+    LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux,
+    MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
+    OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
+    OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
+    OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment,
+    PathTrack, PipelineMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem,
+    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
+    ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
+    ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceLICConfig,
+    SurfaceSubmission, TextureTransform, TileMode, ToneMapping, TriangleDirection, ViewportEffects,
+    ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline,
+    obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -379,14 +380,9 @@ pub struct ViewportRenderer {
     /// Per-frame general tube GPU data, rebuilt in prepare(), consumed in paint().
     /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint().
     lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
-    /// This frame's decal resource-cache tallies, packed `(uploads << 32) |
-    /// reused`. Shared with the decal item type, which is where the cache
-    /// lives; the renderer only reads it back into `FrameStats`.
-    decal_cache_stats: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    /// Opaque surfaces that opted out of decal projection, resolved at the top
-    /// of prepare() and handed to item-type plugins on their frame context.
-    /// `receives_decals` lives on mesh items, which no plugin can see.
-    decal_excluded_surfaces: Vec<(crate::MeshId, [[f32; 4]; 4])>,
+    /// Which items need stamping into the surface mask this frame, and the
+    /// mesh family's pipeline and buffer for doing it.
+    surface_mask: surface_mask::SurfaceMaskState,
     /// Per-frame mesh-instance batches, rebuilt in prepare(), consumed in paint().
     mesh_instance_gpu_data: Vec<crate::resources::MeshInstanceGpuData>,
     /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
@@ -521,7 +517,6 @@ pub struct ViewportRenderer {
     pick_volume_mesh_items: Vec<VolumeMeshItem>,
     /// Polyline items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Volume surface slice items from the last `prepare()` call, retained for `pick()` dispatch.
-    /// Decal items from the last `prepare()` call, retained for `pick()` dispatch.
     /// When `false`, `prepare()` skips populating the CPU pick caches above, so
     /// scenes that never call `pick()`/`pick_rect()` avoid a per-frame deep copy
     /// of all inline geometry. Enable with `set_cpu_pick_cache(true)`.
@@ -934,8 +929,7 @@ impl ViewportRenderer {
             polyline_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
             lic_gpu_data: Vec::new(),
-            decal_cache_stats: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            decal_excluded_surfaces: Vec::new(),
+            surface_mask: surface_mask::SurfaceMaskState::new(),
             label_gpu_data: None,
             overlay_shape_gpu_data: None,
             overlay_text_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_label_vbuf"),
@@ -2047,6 +2041,7 @@ impl ViewportRenderer {
         // written; the call is a no-op after the first frame.
         self.resources.ensure_colourmaps_initialized(device, queue);
         self.plugin_frame_index = self.plugin_frame_index.wrapping_add(1);
+        self.collect_surface_mask(device, queue, frame);
         let mut bufs: Vec<crate::gpu::CommandBuffer> = Vec::new();
         let mut timings: Vec<(&'static str, f32)> = Vec::new();
         for (name, plugin) in self.item_type_plugins.iter_mut() {
@@ -2070,7 +2065,6 @@ impl ViewportRenderer {
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                     clip_objects: &frame.effects.clip.objects,
                     quality_reduced: self.degradation_volume_quality_reduced,
-                    decal_excluded_surfaces: &self.decal_excluded_surfaces,
                     collections: crate::renderer::item_plugins::plugin_collections_slice(
                         frame, name,
                     ),
@@ -2128,7 +2122,6 @@ impl ViewportRenderer {
                 sub_selection: frame.interaction.sub_selection.as_ref(),
                 clip_objects: &frame.effects.clip.objects,
                 quality_reduced: self.degradation_volume_quality_reduced,
-                decal_excluded_surfaces: &self.decal_excluded_surfaces,
                 collections: crate::renderer::item_plugins::plugin_collections_slice(frame, name),
             };
             polylines.extend(plugin.wireframe_polylines(&items, &ctx));
@@ -2514,7 +2507,6 @@ impl ViewportRenderer {
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                     clip_objects: &frame.effects.clip.objects,
                     quality_reduced: self.degradation_volume_quality_reduced,
-                    decal_excluded_surfaces: &self.decal_excluded_surfaces,
                     collections: crate::renderer::item_plugins::plugin_collections_slice(
                         frame, name,
                     ),

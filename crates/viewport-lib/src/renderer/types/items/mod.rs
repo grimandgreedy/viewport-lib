@@ -22,5 +22,4 @@ pub use self::blend::SpriteBlend;
 pub use self::mesh::*;
 pub use self::mesh_instance::*;
 pub use self::volume_mesh::*;
-pub use crate::renderer::item_plugins::decal::types::*;
 pub use crate::renderer::item_plugins::polyline::types::*;

@@ -162,6 +162,28 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         }
     }
 
+    fn surface_mask(
+        &self,
+        pass: &mut gpu::RenderPass<'_>,
+        ctx: &viewport_lib::plugin_api::SurfaceMaskContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        let mut bound = false;
+        for entry in &self.frame {
+            let Some(value) = ctx.stamp_for(&entry.settings) else {
+                continue;
+            };
+            if !bound {
+                pass.set_pipeline(&gpu.surface_mask_pipeline);
+                bound = true;
+            }
+            pass.set_stencil_reference(value);
+            pass.set_bind_group(1, &entry.bind_group, &[]);
+            pass.draw(0..6, 0..1);
+        }
+    }
+
     fn pick(&self, ray: &PickRay, ctx: &PickContext) -> Option<(f32, PickHit)> {
         if !ctx.mask.intersects(PickMask::OBJECT) {
             return None;

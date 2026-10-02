@@ -662,6 +662,82 @@ pub fn build_outline_mask_pipeline(
     )
 }
 
+/// Build a surface-mask pipeline: the item's geometry drawn into the scene
+/// stencil, depth-tested against the scene so only its visible pixels are
+/// stamped with the pass's stencil reference. Used from
+/// [`ItemTypePlugin::surface_mask`](crate::plugin_api::ItemTypePlugin::surface_mask).
+///
+/// The vertex layout and cull mode vary per item and are passed in; the rest is
+/// fixed: triangle list, `Depth24PlusStencil8`, no colour target, no depth
+/// write, single sample, both stages `vs_main` / `fs_main`. The fragment stage
+/// has nothing to output: leave it empty, or have it `discard` where the item's
+/// own fragment stage would, so a cut-out stamps only what it drew.
+///
+/// The depth test is `LessEqual` with a small bias towards the camera. This is
+/// a second draw of geometry the opaque pass already drew, and without the
+/// bias rounding differences between the two passes leave holes in the stamp.
+pub fn build_surface_mask_pipeline(
+    device: &crate::gpu::Device,
+    label: &str,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+    vertex_buffers: &[crate::gpu::VertexBufferLayout],
+    cull: Option<crate::gpu::Face>,
+) -> crate::gpu::RenderPipeline {
+    render_pipeline(
+        device,
+        RenderPipelineDesc {
+            label,
+            layout,
+            vertex_module: shader,
+            vertex_entry: "vs_main",
+            vertex_buffers,
+            fragment: Some(crate::gpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[],
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: crate::gpu::PrimitiveState {
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: cull,
+                ..Default::default()
+            },
+            depth_stencil: Some(surface_mask_depth_stencil()),
+            multisample: crate::gpu::MultisampleState::default(),
+            cache: None,
+        },
+    )
+}
+
+/// The depth-stencil state of a surface-mask pipeline: test against the scene
+/// depth without writing it, and replace the stencil with the pass's reference
+/// where the test passes.
+pub(crate) fn surface_mask_depth_stencil() -> crate::gpu::DepthStencilState {
+    let stamp = crate::gpu::StencilFaceState {
+        compare: crate::gpu::CompareFunction::Always,
+        fail_op: crate::gpu::StencilOperation::Keep,
+        depth_fail_op: crate::gpu::StencilOperation::Keep,
+        pass_op: crate::gpu::StencilOperation::Replace,
+    };
+    crate::gpu::DepthStencilState {
+        format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+        depth_write_enabled: dwrite(false),
+        depth_compare: dcompare(crate::gpu::CompareFunction::LessEqual),
+        stencil: crate::gpu::StencilState {
+            front: stamp,
+            back: stamp,
+            read_mask: 0xff,
+            write_mask: 0xff,
+        },
+        bias: crate::gpu::DepthBiasState {
+            constant: -2,
+            slope_scale: 0.0,
+            clamp: 0.0,
+        },
+    }
+}
+
 /// Create a compute pipeline. Every compute pipeline in the crate has the same
 /// shape: a shader, its layout, and an entry point, with default compilation
 /// options and no cache. This is the one place the crate calls
