@@ -301,8 +301,8 @@ pub use renderer::{
     ExposureMode, ExposureReadback, ExposureSettings, FillRule, FilterMode, ForegroundPass,
     ForegroundProjection, FrameData, GlyphRunItem, GpuContext, GpuPickHit, GradientStop,
     GroundPlane, GroundPlaneMode, IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY,
-    LabelItem, LerpAnim, LicOverlay, LightKind, LightSource, LightingPosture, LightingSettings,
-    LineCap, LineJoin, Lumen, Lux, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
+    LabelItem, LerpAnim, LightKind, LightSource, LightingPosture, LightingSettings, LineCap,
+    LineJoin, Lumen, Lux, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
     OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
     OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
     OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
@@ -312,9 +312,9 @@ pub use renderer::{
     PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
     ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
     ShadowLayer, ShadowSettings, SnapHit, SnapPoll, SpriteBlend, StrokePattern, SubObjectRef,
-    SubPath, SubSelection, SubSelectionRef, SurfaceLICConfig, SurfaceSubmission, TextureTransform,
-    TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, ViewportId,
-    ViewportRenderer, VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
+    SubPath, SubSelection, SubSelectionRef, SurfaceSubmission, TextureTransform, TileMode,
+    ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer,
+    VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
     aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};

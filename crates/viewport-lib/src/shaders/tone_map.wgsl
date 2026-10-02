@@ -13,8 +13,8 @@ struct ToneMapUniform {
     background_colour:        vec4<f32>,
     near_plane:              f32,
     far_plane:               f32,
-    lic_enabled:             u32,
-    _pad_lic:                f32,
+    _spare0:                 u32,
+    _spare1:                 f32,
     foreground_enabled:      u32,
     vignette_amount:         f32,
     vignette_radius:         f32,
@@ -32,9 +32,8 @@ struct ToneMapUniform {
 @group(0) @binding(4) var ao_texture:    texture_2d<f32>;
 @group(0) @binding(5) var cs_texture:    texture_2d<f32>;
 @group(0) @binding(6) var depth_texture: texture_depth_2d;
-@group(0) @binding(7) var lic_texture:   texture_2d<f32>;
 // Foreground pass coverage mask: depth < 1.0 where foreground geometry was
-// drawn. The screen-space terms below (AO, contact shadows, EDL, LIC) are
+// drawn. The screen-space terms below (AO, contact shadows, EDL) are
 // computed from scene depth, which is unrelated to what a covered pixel
 // shows, so they are skipped there.
 @group(0) @binding(8) var foreground_depth: texture_depth_2d;
@@ -243,15 +242,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // gives moderate edge darkening and strength=5 gives near-complete darkening.
         let edl_factor = 1.0 - exp(-params.edl_strength * edl_sum / 8.0);
         colour = colour * (1.0 - edl_factor);
-    }
-
-    // Surface LIC: modulate colour by LIC intensity (0.5 = neutral, no
-    // change). Per-item strength is baked into the advect output, so the
-    // composite applies a fixed 2x mapping. A surface effect, so it only
-    // applies where geometry was shaded.
-    if !is_background && !covered && params.lic_enabled != 0u {
-        let lic_val = textureSampleLevel(lic_texture, hdr_sampler, in.uv, 0.0).r;
-        colour = colour * max(0.0, lic_val * 2.0);
     }
 
     // Pre-tone-mapping exposure (from the exposure state buffer).

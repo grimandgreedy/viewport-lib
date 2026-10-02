@@ -323,9 +323,6 @@ impl ViewportRenderer {
             bloom: pp.bloom.enabled,
             ssao: pp.ssao,
             contact_shadows: pp.contact_shadows.enabled,
-            lic: scene_items
-                .iter()
-                .any(|i| i.lic.is_some() && !i.settings.hidden),
             dof: pp.dof.enabled,
             foreground: self.foreground_active(frame),
             grade_lut,
@@ -352,8 +349,8 @@ impl ViewportRenderer {
             background_colour: bg_colour,
             near_plane: frame.camera.render_camera.near,
             far_plane: frame.camera.render_camera.far,
-            lic_enabled: composite_inputs.lic as u32,
-            _pad_lic: 0.0,
+            _spare0: 0,
+            _spare1: 0.0,
             foreground_enabled: composite_inputs.foreground as u32,
             vignette_amount: if pp.vignette.enabled {
                 pp.vignette.amount.clamp(0.0, 1.0)
@@ -391,9 +388,6 @@ impl ViewportRenderer {
             }
             if pp.fxaa {
                 res.ensure_fxaa_pipeline(device, format);
-            }
-            if composite_inputs.lic {
-                res.ensure_lic_pipelines(device);
             }
             if composite_inputs.foreground {
                 res.ensure_foreground_stamp_pipeline(device);
@@ -604,7 +598,6 @@ impl ViewportRenderer {
             queue,
             vp_idx,
         );
-        self.hdr_lic(&ctx, &mut encoder);
         self.hdr_outline_composite(&ctx, &mut encoder);
         self.hdr_foreground(&ctx, &mut encoder);
         self.hdr_post_effects(&ctx, &mut encoder);
@@ -2721,108 +2714,6 @@ impl ViewportRenderer {
         }
     }
 
-    fn hdr_lic(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
-        let resources = &self.resources;
-        let vp_idx = ctx.vp_idx;
-        let slot = &self.viewport_slots[vp_idx];
-        let slot_hdr = slot.hdr.as_ref().unwrap();
-        // -----------------------------------------------------------------------
-        // Surface LIC passes.
-        // Pass 1: render each LIC mesh into lic_vector_texture (Rgba8Unorm).
-        // Pass 2: advect fullscreen triangle into lic_output_texture (R8Unorm).
-        // -----------------------------------------------------------------------
-        if !self.lic_gpu_data.is_empty() {
-            if let Some((steps, step_size)) = self.lic_advect_params {
-                let [vw, vh] = slot_hdr.scene_size;
-                let u = crate::resources::LicAdvectUniform {
-                    steps,
-                    step_size,
-                    vp_width: vw as f32,
-                    vp_height: vh as f32,
-                };
-                ctx.queue
-                    .write_buffer(&slot_hdr.lic_uniform_buf, 0, bytemuck::cast_slice(&[u]));
-            }
-            if let (Some(surface_pipeline), Some(advect_pipeline)) = (
-                self.resources.lic.surface_pipeline.as_ref(),
-                self.resources.lic.advect_pipeline.as_ref(),
-            ) {
-                let camera_bg = &slot.camera_bind_group;
-                // Pass 1: surface vector pass (clears lic_vector_texture first).
-                {
-                    let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(any(wgpu29, wgpu30))]
-                        multiview_mask: None,
-                        label: Some("lic_surface_pass"),
-                        color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                            view: &slot_hdr.lic_vector_view,
-                            resolve_target: None,
-                            ops: crate::gpu::Operations {
-                                load: crate::gpu::LoadOp::Clear(crate::gpu::Color::TRANSPARENT),
-                                store: crate::gpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-                    pass.set_pipeline(surface_pipeline);
-                    pass.set_bind_group(0, camera_bg, &[]);
-                    for gpu in &self.lic_gpu_data {
-                        let Some(mesh) = self.resources.mesh_store.get(gpu.mesh_id) else {
-                            continue;
-                        };
-                        let Some(vec_buf) =
-                            mesh.vector_attribute_buffers.get(&gpu.vector_attribute)
-                        else {
-                            continue;
-                        };
-                        pass.set_bind_group(1, &gpu.bind_group, &[]);
-                        pass.set_vertex_buffer(
-                            0,
-                            resources.geometry.vertex_slice(mesh.vertex_span),
-                        );
-                        pass.set_vertex_buffer(1, vec_buf.slice(..));
-                        pass.set_index_buffer(
-                            resources.geometry.index_slice(mesh.index_span),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                    }
-                }
-                // Pass 2: advect pass (fullscreen, writes LIC intensity to lic_output_texture).
-                {
-                    let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(any(wgpu29, wgpu30))]
-                        multiview_mask: None,
-                        label: Some("lic_advect_pass"),
-                        color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                            view: &slot_hdr.lic_output_view,
-                            resolve_target: None,
-                            ops: crate::gpu::Operations {
-                                load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
-                                    r: 0.5,
-                                    g: 0.0,
-                                    b: 0.0,
-                                    a: 1.0,
-                                }),
-                                store: crate::gpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-                    pass.set_pipeline(advect_pipeline);
-                    pass.set_bind_group(0, &slot_hdr.lic_advect_bind_group, &[]);
-                    pass.draw(0..3, 0..1);
-                }
-            }
-        }
-    }
-
     fn hdr_outline_composite(
         &mut self,
         ctx: &HdrFrameCtx,
@@ -3075,7 +2966,6 @@ impl ViewportRenderer {
                     crate::plugin_api::PostEffectSlot::Bloom => (ci.bloom, 1u8),
                     crate::plugin_api::PostEffectSlot::AmbientOcclusion => (ci.ssao, 2),
                     crate::plugin_api::PostEffectSlot::ContactShadow => (ci.contact_shadows, 4),
-                    crate::plugin_api::PostEffectSlot::SurfaceLic => (ci.lic, 8),
                 };
                 if builtin_on && self.post_effect_slot_warned & slot_bit == 0 {
                     self.post_effect_slot_warned |= slot_bit;
@@ -3118,10 +3008,6 @@ impl ViewportRenderer {
                     crate::plugin_api::PostEffectSlot::ContactShadow => {
                         inputs.contact_shadows = true;
                         uniform.contact_shadows_enabled = 1;
-                    }
-                    crate::plugin_api::PostEffectSlot::SurfaceLic => {
-                        inputs.lic = true;
-                        uniform.lic_enabled = 1;
                     }
                 }
             }

@@ -72,7 +72,8 @@ pub struct GpuMesh {
     /// Named face colour buffers: 3N `[f32; 4]` entries (colour replicated for all 3 vertices of each tri).
     pub face_colour_buffers: std::collections::HashMap<String, crate::gpu::Buffer>,
     /// Per-vertex vector attribute buffers: flat `array<f32>` with 3 values per vertex.
-    /// Uploaded from `AttributeData::VertexVector`; used by the Surface LIC surface pass.
+    /// Uploaded from `AttributeData::VertexVector`. Read by the material warp, and bound as a
+    /// vertex buffer through `MeshDraw::bind_vector_attribute`.
     pub vector_attribute_buffers: std::collections::HashMap<String, crate::gpu::Buffer>,
     /// Optional per-vertex position override buffer.
     ///

@@ -49,8 +49,6 @@ impl TargetGroups {
     pub(crate) const CONTACT_SHADOW: Self = Self(1 << 6);
     /// The FXAA input.
     pub(crate) const FXAA: Self = Self(1 << 7);
-    /// Surface LIC vector, output and noise.
-    pub(crate) const LIC: Self = Self(1 << 8);
 
     pub(crate) const fn empty() -> Self {
         Self(0)

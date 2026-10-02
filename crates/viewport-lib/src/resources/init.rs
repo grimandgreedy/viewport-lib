@@ -393,7 +393,7 @@ impl DeviceResources {
             // Every per-object mesh draw binds the same buffer here and
             // selects its element with @builtin(instance_index), so group 1
             // stops changing per draw. Single-item paths (shadow casters,
-            // normal lines, LIC) bind a one-element buffer and draw at
+            // normal lines) bind a one-element buffer and draw at
             // instance 0.
             crate::gpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -2154,7 +2154,6 @@ impl DeviceResources {
             },
             instancing: crate::resources::mesh::instancing::InstancingResources::default(),
             cull: crate::resources::mesh::instancing::CullResources::default(),
-            lic: crate::resources::postprocess::LicResources::default(),
             polyline,
             compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources {
                 pipeline: None,
