@@ -7,7 +7,7 @@
 //! HDR pass and the tone map in the same submission, so a single dirty render is
 //! correctly exposed on its own frame with no CPU readback.
 
-use crate::gpu::util::DeviceExt;
+use crate::resources::builders::LoggedAlloc;
 
 /// Number of log-luminance histogram bins. Must match `HISTOGRAM_BINS` in
 /// `exposure.wgsl`.
@@ -197,7 +197,7 @@ impl ExposureResources {
     pub fn create_viewport_buffers(
         device: &crate::gpu::Device,
     ) -> (crate::gpu::Buffer, crate::gpu::Buffer, crate::gpu::Buffer) {
-        let histogram_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let histogram_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("exposure_histogram_buf"),
             size: (HISTOGRAM_BINS as u64) * 4,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -212,14 +212,14 @@ impl ExposureResources {
             target_ev: 0.0,
             adapting: 0.0,
         };
-        let state_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+        let state_buf = device.logged_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("exposure_state_buf"),
             contents: bytemuck::cast_slice(&[state_seed]),
             usage: crate::gpu::BufferUsages::STORAGE
                 | crate::gpu::BufferUsages::COPY_DST
                 | crate::gpu::BufferUsages::COPY_SRC,
         });
-        let params_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let params_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("exposure_params_buf"),
             size: std::mem::size_of::<ExposureParams>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,

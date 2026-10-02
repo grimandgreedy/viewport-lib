@@ -740,6 +740,8 @@ struct WindowState {
     /// callback once, then cleared.
     close_requested: bool,
     last_frame: Instant,
+    /// Startup timing, held until the window's first frame is presented.
+    startup_marks: Option<super::InitMarks>,
 }
 
 struct AppHandlerV2 {
@@ -776,6 +778,7 @@ impl AppHandlerV2 {
             callback,
             paint,
         } = builder;
+        let mut marks = super::InitMarks::new();
 
         let window = Arc::new(
             event_loop
@@ -789,6 +792,7 @@ impl AppHandlerV2 {
                 )
                 .expect("window"),
         );
+        marks.mark("window");
 
         // Reuse the shared instance if the device is already up; otherwise this is
         // the first window and it seeds the shared device from its own surface.
@@ -799,6 +803,7 @@ impl AppHandlerV2 {
         } else {
             let instance = crate::gpu::default_instance();
             let surface = instance.create_surface(window.clone()).expect("surface");
+            marks.mark("instance_and_surface");
             let adapter = pollster::block_on(instance.request_adapter(
                 &crate::gpu::RequestAdapterOptions {
                     power_preference: crate::gpu::PowerPreference::HighPerformance,
@@ -807,6 +812,7 @@ impl AppHandlerV2 {
                 },
             ))
             .expect("adapter");
+            marks.mark("request_adapter");
             let required_features = crate::ViewportRenderer::recommended_device_features(&adapter);
             let (device, queue) =
                 pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
@@ -815,6 +821,7 @@ impl AppHandlerV2 {
                     ..Default::default()
                 }))
                 .expect("device");
+            marks.mark("request_device");
             self.gpu = Some(Gpu {
                 instance,
                 adapter,
@@ -841,9 +848,12 @@ impl AppHandlerV2 {
             caps.alpha_modes[0],
         );
         surface.configure(&gpu.device, &surface_config);
+        marks.mark("surface_configure");
 
         let mut session = ViewportInstance::new(&gpu.device, format);
+        marks.mark("renderer");
         factory(&mut session, &gpu.device);
+        marks.mark("setup");
 
         let focused = true;
         let hovered = false;
@@ -878,6 +888,7 @@ impl AppHandlerV2 {
                 hovered,
                 close_requested: false,
                 last_frame: Instant::now(),
+                startup_marks: Some(marks),
             },
         );
     }
@@ -1040,6 +1051,9 @@ impl AppHandlerV2 {
             }
 
             crate::gpu::present(&gpu.queue, frame);
+            if let Some(marks) = state.startup_marks.take() {
+                marks.finish("first_frame");
+            }
 
             // begin_frame_at rather than begin_frame: the runner already owns a clock,
             // and double tap and long press need one.

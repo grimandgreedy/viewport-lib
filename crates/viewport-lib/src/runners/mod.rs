@@ -777,3 +777,46 @@ mod tests {
         );
     }
 }
+
+/// Startup timing for the runners, reported on the `viewport_lib::init` tracing
+/// target alongside the renderer's own construction phases. Each mark carries
+/// the time since the previous one, so a subscriber sees where the time between
+/// `resumed` and the first presented frame went.
+#[cfg(feature = "app")]
+pub(crate) struct InitMarks {
+    start: web_time::Instant,
+    last: web_time::Instant,
+}
+
+#[cfg(feature = "app")]
+impl InitMarks {
+    pub(crate) fn new() -> Self {
+        let now = web_time::Instant::now();
+        Self {
+            start: now,
+            last: now,
+        }
+    }
+
+    pub(crate) fn mark(&mut self, section: &str) {
+        let now = web_time::Instant::now();
+        tracing::info!(
+            target: "viewport_lib::init",
+            section,
+            ms = now.duration_since(self.last).as_secs_f32() * 1000.0,
+            "runner startup phase"
+        );
+        self.last = now;
+    }
+
+    /// Report the last phase and the total since `new`.
+    pub(crate) fn finish(mut self, section: &str) {
+        self.mark(section);
+        tracing::info!(
+            target: "viewport_lib::init",
+            section = "runner_startup_total",
+            ms = self.last.duration_since(self.start).as_secs_f32() * 1000.0,
+            "runner startup phase"
+        );
+    }
+}

@@ -13,6 +13,7 @@
 //! Public surface: [`FontHandle`] (opaque font identifier) and
 //! [`super::DeviceResources::upload_font`].  Everything else is `pub(crate)`.
 
+use crate::resources::builders::LoggedAlloc;
 use std::collections::HashMap;
 
 use swash::scale::image::Content;
@@ -901,7 +902,7 @@ impl GlyphAtlas {
         device: &crate::gpu::Device,
         size: u32,
     ) -> (crate::gpu::Texture, crate::gpu::TextureView) {
-        let texture = device.create_texture(&crate::gpu::TextureDescriptor {
+        let texture = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("glyph_atlas"),
             size: crate::gpu::Extent3d {
                 width: size,

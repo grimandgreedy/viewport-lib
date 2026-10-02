@@ -808,20 +808,92 @@ pub fn render_pipeline(
     pipeline
 }
 
-/// Optional record of what each pipeline, shader module, and render target cost
-/// to create.
+/// `create_buffer` and `create_texture` with the allocation reported to
+/// [`build_log`]. For what the renderer allocates for itself, so a startup
+/// breakdown can list it.
+pub(crate) trait LoggedAlloc {
+    fn logged_buffer(&self, desc: &crate::gpu::BufferDescriptor) -> crate::gpu::Buffer;
+    fn logged_buffer_init(
+        &self,
+        desc: &crate::gpu::util::BufferInitDescriptor,
+    ) -> crate::gpu::Buffer;
+    fn logged_texture(&self, desc: &crate::gpu::TextureDescriptor) -> crate::gpu::Texture;
+}
+
+impl LoggedAlloc for crate::gpu::Device {
+    fn logged_buffer(&self, desc: &crate::gpu::BufferDescriptor) -> crate::gpu::Buffer {
+        let buffer = self.create_buffer(desc);
+        if build_log::enabled() {
+            build_log::record_allocation(desc.label.unwrap_or("buffer"), desc.size);
+        }
+        buffer
+    }
+
+    fn logged_buffer_init(
+        &self,
+        desc: &crate::gpu::util::BufferInitDescriptor,
+    ) -> crate::gpu::Buffer {
+        use crate::gpu::util::DeviceExt;
+        let buffer = self.create_buffer_init(desc);
+        if build_log::enabled() {
+            build_log::record_allocation(desc.label.unwrap_or("buffer"), buffer.size());
+        }
+        buffer
+    }
+
+    fn logged_texture(&self, desc: &crate::gpu::TextureDescriptor) -> crate::gpu::Texture {
+        let texture = self.create_texture(desc);
+        if build_log::enabled() {
+            build_log::record_allocation(desc.label.unwrap_or("texture"), texture_bytes(desc));
+        }
+        texture
+    }
+}
+
+/// Bytes a texture descriptor asks for, summed over its mip chain. Depth and
+/// stencil formats have no copy size and are counted at 4 bytes per texel.
+pub(crate) fn texture_bytes(desc: &crate::gpu::TextureDescriptor) -> u64 {
+    let texel = desc.format.block_copy_size(None).unwrap_or(4) as u64;
+    let (bw, bh) = desc.format.block_dimensions();
+    let layers = match desc.dimension {
+        crate::gpu::TextureDimension::D3 => 1,
+        _ => desc.size.depth_or_array_layers as u64,
+    };
+    let mut total = 0u64;
+    for mip in 0..desc.mip_level_count {
+        let w = (desc.size.width >> mip).max(1) as u64;
+        let h = (desc.size.height >> mip).max(1) as u64;
+        let d = match desc.dimension {
+            crate::gpu::TextureDimension::D3 => {
+                (desc.size.depth_or_array_layers >> mip).max(1) as u64
+            }
+            _ => 1,
+        };
+        total += w.div_ceil(bw as u64) * h.div_ceil(bh as u64) * d * texel;
+    }
+    total * layers * desc.sample_count as u64
+}
+
+/// Optional record of what each pipeline, shader module, render target, and
+/// other GPU allocation cost to create.
 ///
 /// Off by default. Switch it on with [`enable`](build_log::enable), or by setting
 /// `VPL_BUILD_LOG` in the environment on a platform that has one. Every
 /// [`render_pipeline`], [`compute_pipeline`], and [`wgsl_module`] call then
-/// appends its label and wall-clock cost, and every per-viewport render target
-/// appends its label and size.
+/// appends its label and wall-clock cost, every per-viewport render target
+/// appends its label and size, and so does every buffer and texture the renderer
+/// allocates for itself (uniform and storage buffers, the geometry slab, the
+/// shadow maps, the glyph atlas). Mesh and texture uploads the application asks
+/// for are not recorded here; [`resident_bytes`] accounts for those.
+///
+/// [`resident_bytes`]: crate::ViewportRenderer::resident_bytes
 ///
 /// Startup on a GPU backend is dominated by shader compilation, and a phase
 /// breakdown cannot say which pipeline is expensive. This attributes it per
-/// object. Read it back with [`drain`](build_log::drain) and
-/// [`drain_textures`](build_log::drain_textures), which both return what was
-/// recorded since the last call.
+/// object. Read it back with [`drain`](build_log::drain),
+/// [`drain_textures`](build_log::drain_textures) and
+/// [`drain_allocations`](build_log::drain_allocations), which each return what
+/// was recorded since the last call.
 pub mod build_log {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Mutex, OnceLock};
@@ -856,6 +928,7 @@ pub mod build_log {
 
     static PIPELINES: OnceLock<Mutex<Vec<(String, f32)>>> = OnceLock::new();
     static TEXTURES: OnceLock<Mutex<Vec<(String, u64)>>> = OnceLock::new();
+    static ALLOCATIONS: OnceLock<Mutex<Vec<(String, u64)>>> = OnceLock::new();
 
     pub(super) fn record(label: &str, ms: f32) {
         if enabled() {
@@ -879,6 +952,18 @@ pub mod build_log {
         }
     }
 
+    /// Record a buffer or texture the renderer allocated for itself, other than
+    /// a per-viewport render target.
+    pub(crate) fn record_allocation(label: &str, bytes: u64) {
+        if enabled() {
+            ALLOCATIONS
+                .get_or_init(|| Mutex::new(Vec::new()))
+                .lock()
+                .unwrap()
+                .push((label.to_string(), bytes));
+        }
+    }
+
     /// Take every pipeline and shader module recorded since the last call, in
     /// creation order, with each one's wall-clock cost in milliseconds.
     pub fn drain() -> Vec<(String, f32)> {
@@ -892,6 +977,15 @@ pub mod build_log {
     /// order, with each one's size in bytes.
     pub fn drain_textures() -> Vec<(String, u64)> {
         match TEXTURES.get() {
+            Some(l) => std::mem::take(&mut *l.lock().unwrap()),
+            None => Vec::new(),
+        }
+    }
+
+    /// Take every buffer and non-target texture recorded since the last call,
+    /// in allocation order, with each one's size in bytes.
+    pub fn drain_allocations() -> Vec<(String, u64)> {
+        match ALLOCATIONS.get() {
             Some(l) => std::mem::take(&mut *l.lock().unwrap()),
             None => Vec::new(),
         }

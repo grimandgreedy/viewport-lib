@@ -129,6 +129,8 @@ fn main() {
     println!("{}", "-".repeat(90));
 
     let mut rows: Vec<(&str, u64, u64)> = Vec::new();
+    // Target bytes per effect group, one column per swept size.
+    let mut by_group: Vec<[u64; GROUPS.len()]> = Vec::new();
 
     for (label, w, h) in SIZES {
         let (w, h) = (*w, *h);
@@ -193,6 +195,11 @@ fn main() {
                     .map(|(_, b)| b)
                     .sum();
                 alloc_ms = ms;
+                let mut groups = [0u64; GROUPS.len()];
+                for (l, b) in &targets {
+                    groups[group_of(l)] += b;
+                }
+                by_group.push(groups);
             } else {
                 cpu.push(ms);
                 if let Some(g) = renderer.last_frame_stats().gpu_frame_ms {
@@ -233,9 +240,75 @@ fn main() {
         );
     }
 
+    // The same bytes cut by the effect that owns each target, at three sizes.
+    println!();
+    println!("targets by effect group (MiB):");
+    let picks: Vec<usize> = ["1280x720", "1920x1080", "3840x2160 (4K)"]
+        .iter()
+        .filter_map(|want| SIZES.iter().position(|(l, _, _)| l == want))
+        .collect();
+    print!("  {:<16}", "group");
+    for &i in &picks {
+        print!(" {:>16}", SIZES[i].0);
+    }
+    println!();
+    for (g, name) in GROUPS.iter().enumerate() {
+        if picks.iter().all(|&i| by_group[i][g] == 0) {
+            continue;
+        }
+        print!("  {name:<16}");
+        for &i in &picks {
+            print!(" {:>16.2}", mib(by_group[i][g]));
+        }
+        println!();
+    }
+
     println!();
     println!(
         "shadow depth textures across the whole sweep: {:.1} MiB (empty scene casts nothing)",
         mib(renderer.shadow_allocation_bytes())
     );
+}
+
+/// Effect groups a per-viewport target can belong to. `scene` is the HDR
+/// colour and depth pair; `other` catches a label this list does not know.
+const GROUPS: [&str; 11] = [
+    "scene",
+    "bloom",
+    "ssao",
+    "dof",
+    "contact shadow",
+    "fxaa",
+    "outline",
+    "lic",
+    "ssaa",
+    "render scale",
+    "other",
+];
+
+fn group_of(label: &str) -> usize {
+    let name = if label == "hdr_texture" || label == "hdr_depth_texture" {
+        "scene"
+    } else if label.starts_with("bloom") {
+        "bloom"
+    } else if label.starts_with("ssao") {
+        "ssao"
+    } else if label.starts_with("dof") {
+        "dof"
+    } else if label.starts_with("contact_shadow") {
+        "contact shadow"
+    } else if label.starts_with("fxaa") {
+        "fxaa"
+    } else if label.starts_with("outline") {
+        "outline"
+    } else if label.starts_with("lic") {
+        "lic"
+    } else if label.starts_with("ssaa") {
+        "ssaa"
+    } else if label.starts_with("upscale") || label.starts_with("output_depth") {
+        "render scale"
+    } else {
+        "other"
+    };
+    GROUPS.iter().position(|g| *g == name).unwrap()
 }

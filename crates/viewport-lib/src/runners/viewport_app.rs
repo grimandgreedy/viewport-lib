@@ -473,6 +473,8 @@ struct RunState {
     /// Cursor is over the window. Tracked from `CursorEntered`/`CursorLeft`; the
     /// input resolver gates hover-based gestures on this.
     hovered: bool,
+    /// Startup timing, held until the first frame is presented.
+    startup_marks: Option<super::InitMarks>,
 }
 
 struct AppHandler<F> {
@@ -496,6 +498,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
         if self.state.is_some() {
             return;
         }
+        let mut marks = super::InitMarks::new();
 
         let window = Arc::new(
             event_loop
@@ -509,9 +512,11 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                 )
                 .expect("window"),
         );
+        marks.mark("window");
 
         let instance = crate::gpu::default_instance();
         let surface = instance.create_surface(window.clone()).expect("surface");
+        marks.mark("instance_and_surface");
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::HighPerformance,
@@ -520,6 +525,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
             },
         ))
         .expect("adapter");
+        marks.mark("request_adapter");
         let required_features = crate::ViewportRenderer::recommended_device_features(&adapter);
         let (device, queue) =
             pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
@@ -528,6 +534,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                 ..Default::default()
             }))
             .expect("device");
+        marks.mark("request_device");
 
         let size = window.inner_size();
         let caps = surface.get_capabilities(&adapter);
@@ -545,10 +552,13 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
             caps.alpha_modes[0],
         );
         surface.configure(&device, &surface_config);
+        marks.mark("surface_configure");
 
         let mut session = ViewportInstance::new(&device, format);
+        marks.mark("renderer");
         if let Some(setup) = self.setup.take() {
             setup(&mut session, &device);
+            marks.mark("setup");
         }
         // Focus/hover start conservative: the window is focused on creation, but
         // the cursor is only "over" it once a CursorEntered arrives.
@@ -579,6 +589,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
             session,
             focused,
             hovered,
+            startup_marks: Some(marks),
         });
     }
 
@@ -735,6 +746,9 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                 let cmd = state.session.render(&state.device, &state.queue, &view);
                 state.queue.submit(std::iter::once(cmd));
                 crate::gpu::present(&state.queue, frame);
+                if let Some(marks) = state.startup_marks.take() {
+                    marks.finish("first_frame");
+                }
 
                 if request_exit {
                     event_loop.exit();

@@ -13,6 +13,7 @@
 //! compute-filter and GPU-picking paths read geometry that way).
 
 use crate::gpu;
+use crate::resources::builders::LoggedAlloc;
 
 /// Fallback storage-offset alignment when the device reports 0 (never expected;
 /// the spec minimum is 256).
@@ -187,7 +188,7 @@ impl ByteSlab {
         }
         // No chunk fits; grow a new one.
         let capacity = self.next_chunk_capacity(align_up(bytes, self.align));
-        let buffer = device.create_buffer(&gpu::BufferDescriptor {
+        let buffer = device.logged_buffer(&gpu::BufferDescriptor {
             label: Some(self.label),
             size: capacity,
             usage: self.usage,
@@ -435,7 +436,7 @@ impl GeometrySlab {
         if self.uv1_chunks[ci].is_none() {
             let vertex_bytes = self.vertex.buffer(chunk).size();
             let size = vertex_bytes / (VERTEX_STRIDE / UV1_STRIDE);
-            let buffer = device.create_buffer(&gpu::BufferDescriptor {
+            let buffer = device.logged_buffer(&gpu::BufferDescriptor {
                 label: Some("mesh_uv1_slab"),
                 size,
                 usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,

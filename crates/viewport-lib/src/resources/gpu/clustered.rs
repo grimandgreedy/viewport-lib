@@ -14,7 +14,7 @@
 //! the per-cell offsets, and the global index list to every lit pipeline. The
 //! build pass uses a separate compute bind group with read-write access.
 
-use crate::gpu::util::DeviceExt;
+use crate::resources::builders::LoggedAlloc;
 
 /// X (screen-tile) count of the cluster grid. Aligns with 16:9 aspect framing.
 pub const CLUSTER_X_TILES: u32 = 16;
@@ -229,14 +229,14 @@ impl ClusteredResources {
     /// Allocate the cluster grid uniform, the cluster-cell storage, the global
     /// light index list, and the clear / build compute pipelines.
     pub fn new(device: &crate::gpu::Device) -> Self {
-        let grid_uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+        let grid_uniform_buf = device.logged_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("cluster_grid_uniform_buf"),
             contents: bytemuck::cast_slice(&[ClusterGridUniform::default()]),
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
         });
 
         let cluster_grid_bytes = (CLUSTER_COUNT as u64) * std::mem::size_of::<ClusterCell>() as u64;
-        let cluster_grid_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let cluster_grid_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cluster_grid_buf"),
             size: cluster_grid_bytes,
             usage: crate::gpu::BufferUsages::STORAGE
@@ -246,7 +246,7 @@ impl ClusteredResources {
         });
 
         let light_index_bytes = (MAX_LIGHT_INDICES as u64) * 4;
-        let light_index_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let light_index_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cluster_light_index_buf"),
             size: light_index_bytes,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -255,28 +255,28 @@ impl ClusteredResources {
 
         let active_lights_bytes = (crate::resources::MAX_SCENE_LIGHTS as u64)
             * std::mem::size_of::<ActiveLightView>() as u64;
-        let active_lights_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let active_lights_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cluster_active_lights_buf"),
             size: active_lights_bytes,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let global_offset_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let global_offset_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cluster_global_offset_buf"),
             size: 4,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let stats_staging_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let stats_staging_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cluster_stats_staging_buf"),
             size: cluster_grid_bytes,
             usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
 
-        let clear_params_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+        let clear_params_buf = device.logged_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("cluster_clear_params_buf"),
             contents: bytemuck::cast_slice(&[ClearParams {
                 cluster_count: CLUSTER_COUNT,
