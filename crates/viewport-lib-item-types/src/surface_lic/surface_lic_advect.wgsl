@@ -1,6 +1,6 @@
 // Surface LIC advect and composite: one fullscreen draw into the scene colour.
 //
-// Reads the vector target (RG = packed screen direction, B = strength, A =
+// Reads the vector target (RG = packed NDC direction, B = strength, A =
 // coverage) and a scene-sized white noise texture. Each covered pixel averages
 // the noise along its streamline, re-reading the direction at every step, and
 // outputs a modulation m. The pipeline blends with src * dst + dst * src, so
@@ -45,9 +45,21 @@ fn sample_noise(pos: vec2<f32>) -> f32 {
     return textureLoad(noise_tex, px, 0).r;
 }
 
+// A packed NDC direction as a unit direction in pixels, or zero when the
+// vector is too short to have one. NDC y points up and pixel rows run down,
+// and an NDC unit is half the target wide or tall.
+fn pixel_dir(packed: vec2<f32>, dims: vec2<f32>) -> vec2<f32> {
+    let ndc = packed * 2.0 - vec2<f32>(1.0);
+    if length(ndc) < 1e-5 {
+        return vec2<f32>(0.0);
+    }
+    return normalize(ndc * vec2<f32>(dims.x, -dims.y));
+}
+
 // Sum of the noise along the streamline leaving `start` in direction `sign`,
 // in x, and the number of samples taken, in y.
-fn advect(start: vec2<f32>, dir: vec2<f32>, sign: f32, step_uv: vec2<f32>) -> vec2<f32> {
+fn advect(start: vec2<f32>, dir: vec2<f32>, sign: f32, dims: vec2<f32>) -> vec2<f32> {
+    let step_uv = params.step_size / dims;
     var sum = 0.0;
     var count = 0.0;
     var pos = start;
@@ -59,9 +71,9 @@ fn advect(start: vec2<f32>, dir: vec2<f32>, sign: f32, step_uv: vec2<f32>) -> ve
         if v.a < 0.5 { break; }
         sum += sample_noise(pos);
         count += 1.0;
-        let local_dir = v.xy * 2.0 - vec2<f32>(1.0);
-        if length(local_dir) > 1e-5 {
-            delta = sign * normalize(local_dir) * step_uv;
+        let local_dir = pixel_dir(v.xy, dims);
+        if dot(local_dir, local_dir) > 0.0 {
+            delta = sign * local_dir * step_uv;
         }
     }
     return vec2<f32>(sum, count);
@@ -76,11 +88,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     var intensity = 0.5;
-    let screen_dir = centre.xy * 2.0 - vec2<f32>(1.0);
-    if length(screen_dir) >= 1e-5 {
-        let dir = normalize(screen_dir);
-        let step_uv = params.step_size / vec2<f32>(textureDimensions(vector_tex));
-        let total = advect(in.uv, dir, 1.0, step_uv) + advect(in.uv, dir, -1.0, step_uv);
+    let dims = vec2<f32>(textureDimensions(vector_tex));
+    let dir = pixel_dir(centre.xy, dims);
+    if dot(dir, dir) > 0.0 {
+        let total = advect(in.uv, dir, 1.0, dims) + advect(in.uv, dir, -1.0, dims);
         if total.y > 0.0 {
             intensity = total.x / total.y;
         }

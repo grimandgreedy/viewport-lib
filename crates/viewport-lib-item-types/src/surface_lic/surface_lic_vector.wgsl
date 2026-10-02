@@ -1,7 +1,9 @@
 // Surface LIC vector pass: draws each flow surface into the vector target.
 //
 // Output Rgba8Unorm: (dir_x, dir_y, strength, 1). The direction is the flow
-// vector projected to the screen and packed into [0, 1] per channel. Alpha is
+// vector's direction on screen at the surface point, in NDC (y up, both axes
+// spanning -1 to 1), packed into [0, 1] per channel. The advect pass turns it
+// into pixels, since only it knows the target size. Alpha is
 // 0 wherever no flow surface is the visible one, because the target is cleared
 // to transparent and the pass is depth-tested against the scene.
 
@@ -9,6 +11,7 @@ struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
     @location(0) world_vec: vec3<f32>,
     @location(1) strength: f32,
+    @location(2) clip_pos: vec4<f32>,
 }
 
 @vertex
@@ -29,6 +32,7 @@ fn vs_main(
 
     var out: VertexOutput;
     out.pos = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    out.clip_pos = out.pos;
     out.world_vec = (model * vec4<f32>(flow, 0.0)).xyz;
     out.strength = params.x;
     return out;
@@ -36,9 +40,12 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Which way the point moves on screen when it moves along the flow: the
+    // derivative of clip.xy / clip.w, less its positive 1 / w^2 factor.
     let clip_vec = camera.view_proj * vec4<f32>(in.world_vec, 0.0);
+    let ndc_dir = clip_vec.xy * in.clip_pos.w - in.clip_pos.xy * clip_vec.w;
     // The offset keeps a zero vector from normalising to NaN.
-    let screen_dir = normalize(clip_vec.xy + vec2<f32>(0.0001));
+    let screen_dir = normalize(ndc_dir + vec2<f32>(0.0001));
     let encoded = screen_dir * 0.5 + vec2<f32>(0.5);
     return vec4<f32>(encoded.x, encoded.y, in.strength, 1.0);
 }
