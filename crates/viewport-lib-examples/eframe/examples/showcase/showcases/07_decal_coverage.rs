@@ -8,9 +8,9 @@
 //! depth before the decal pass runs, not on meshes specifically. Ray-marched
 //! and blended item types that never write depth take no decal at all.
 //!
-//! The opt-out is asymmetric and that is the point of the scene: only
-//! `SceneRenderItem` carries `receives_decals`, so a mesh can decline a decal
-//! and an implicit surface or a marching-cubes surface cannot.
+//! The opt-out is asymmetric and that is the point of the scene: only mesh
+//! surfaces honour `ItemSettings::receives_decals`, so a mesh can decline a
+//! decal and an implicit surface or a marching-cubes surface cannot.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -135,7 +135,7 @@ pub struct DecalCoverageShowcase {
 
     /// Master switch for the per-item decals.
     decals_on: bool,
-    /// `receives_decals` on the two mesh items, the only type that can opt out.
+    /// `receives_decals` on the two mesh items, the only type that honours it.
     meshes_receive: bool,
     /// Decal box half-height in Z. Small values sit above a receiver and miss
     /// it; the default encloses every item in the scene.
@@ -773,7 +773,7 @@ impl Showcase for DecalCoverageShowcase {
         // through the session selection), so clear it here to keep the gizmo out.
         session.frame_data_mut().interaction.gizmo_model = None;
 
-        // The only opt-out in the library: `receives_decals` on mesh items.
+        // The only opt-out honoured today: `receives_decals` on mesh items.
         // Every other type in this scene takes a decal whenever it wrote depth,
         // with no way to decline.
         for node in &self.mesh_nodes {

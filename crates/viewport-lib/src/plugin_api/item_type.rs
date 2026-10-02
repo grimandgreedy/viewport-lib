@@ -709,12 +709,18 @@ impl SurfaceMaskContext<'_> {
         if settings.hidden {
             return None;
         }
-        self.stamp_value(surface_mask_bits(settings.visibility_mask))
-    }
-
-    /// `value` when some reader would skip a pixel holding it.
-    pub(crate) fn stamp_value(&self, value: u32) -> Option<u32> {
+        let value = surface_mask_value(settings);
         surface_mask_needs_stamp(value, self.readers).then_some(value)
+    }
+}
+
+/// The surface mask value an item with `settings` owns its pixels with: its
+/// layers, or nothing at all when it takes no decals.
+pub(crate) fn surface_mask_value(settings: &ItemSettings) -> u32 {
+    if settings.receives_decals {
+        surface_mask_bits(settings.visibility_mask)
+    } else {
+        0
     }
 }
 
@@ -1180,7 +1186,8 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     ///
     /// The surface mask holds, for each pixel of the opaque image, the layers
     /// (`ItemSettings::visibility_mask`, folded by [`surface_mask_bits`]) of
-    /// the item that owns it. A decal reads it to land on some surfaces and
+    /// the item that owns it, or no layers at all for an item with
+    /// `ItemSettings::receives_decals` cleared. A decal reads it to land on some surfaces and
     /// not others. Every pixel starts as a member of every layer; this hook is
     /// where an item type overwrites that for the items that say otherwise.
     ///

@@ -8,7 +8,10 @@
 //! [`ItemTypePlugin::surface_mask`](crate::plugin_api::ItemTypePlugin::surface_mask).
 
 use super::ViewportRenderer;
-use crate::plugin_api::{SURFACE_MASK_DEFAULT, item_type::surface_mask_needs_stamp};
+use crate::plugin_api::{
+    SURFACE_MASK_DEFAULT,
+    item_type::{surface_mask_needs_stamp, surface_mask_value},
+};
 use crate::renderer::types::FrameData;
 
 /// One mesh surface to stamp. Its model matrix is the instance at `instance`
@@ -95,11 +98,7 @@ impl ViewportRenderer {
             if item.settings.hidden {
                 continue;
             }
-            let value = if item.receives_decals {
-                crate::plugin_api::surface_mask_bits(item.settings.visibility_mask)
-            } else {
-                0
-            };
+            let value = surface_mask_value(&item.settings);
             if surface_mask_needs_stamp(value, &state.readers) {
                 state.mesh_stamps.push(MeshStamp {
                     mesh_id: item.mesh_id,
@@ -118,10 +117,7 @@ impl ViewportRenderer {
             let needs = (0..items.len()).any(|i| {
                 let settings = items.item_settings(i);
                 !settings.hidden
-                    && surface_mask_needs_stamp(
-                        crate::plugin_api::surface_mask_bits(settings.visibility_mask),
-                        &state.readers,
-                    )
+                    && surface_mask_needs_stamp(surface_mask_value(settings), &state.readers)
             });
             if needs {
                 state.plugin_stamps = true;

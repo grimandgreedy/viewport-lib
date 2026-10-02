@@ -114,6 +114,9 @@ fn expected(name: &str) -> Option<Expected> {
         // A mesh that opted out of decals beside a GPU implicit surface that
         // cannot: pins that decals land on any depth writer, not just meshes.
         "decal_on_non_mesh" => e(1, 1, 1, 0, 0, 960),
+        // Three spheres on different layers under two decals that each target
+        // one. The spheres share a mesh and a material, so they batch.
+        "decal_layers" => e(3, 3, 1, 1, 0, 2880),
         // Tube, streamtube and ribbon under one decal. No mesh geometry: the
         // curve types are the whole scene.
         "decal_on_curves" => e(0, 0, 0, 0, 0, 0),

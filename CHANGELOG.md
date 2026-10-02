@@ -4,6 +4,8 @@
 
 ### Added
 
+- **`DecalItem::channel_mask`: a decal can target some surfaces and not others** - a decal lands on an item when its `channel_mask` shares a layer with the item's `ItemSettings::visibility_mask`, the test a light's `channel_mask` already makes. The default is every layer, so existing decals are unchanged. For decals layer `n` counts as layer `n % 8`.
+
 - **`ItemTypePlugin::surface_mask`: a per-pixel layer mask screen-space effects can read** - a new pass stamps each opaque pixel's layers into the scene stencil, and an item type takes part by drawing its items from `surface_mask` with a pipeline from `build_surface_mask_pipeline`. A type that reads the mask names its masks in `surface_mask_readers`; the pass only runs when something reads it and some item needs a stamp. Decals read it in place of their own exclude pass, so nothing changes for a consumer.
 
 - **`snap_query_begin` / `snap_query_poll`: non-blocking snap query** - `snap_query` is split into a submit and a poll the way `pick_object_begin` / `pick_object_poll` are, so the nearest-feature pick works on the web, where nothing can block on the GPU. `SnapHit` and `SnapPoll` are now exported from the crate root.
@@ -15,6 +17,8 @@
 - **`build_log` can be switched on at runtime** - `resources::build_log::enable` and `disable` turn the pipeline, shader module and render target record on without `VPL_BUILD_LOG`, which a web build cannot set because `std::env::var` always reports a variable missing under `wasm32`. `drain` and `drain_textures` return what was recorded since the last call, and the phase marks on the `viewport_lib::init` tracing target now cover the whole of `ViewportRenderer::new` (internal item plugin registration, the fallback and colourmap textures, the geometry slab, the glyph atlas and the polyline resources) rather than the pipeline phases alone.
 
 ### Changed
+
+- **`receives_decals` moved from `SceneRenderItem` to `ItemSettings`** - write `item.settings.receives_decals = false` where you wrote `item.receives_decals = false`. `Scene::set_receives_decals` and the `SceneNode` accessors are unchanged. Mesh surfaces are still the only items that honour it.
 
 - **`ViewportFrame::background_colour` is premultiplied, and its alpha now means something everywhere** - the output is `scene over background`, so alpha 1 is an opaque background (unchanged for every consumer passing an opaque colour), `Colour::TRANSPARENT` is no background at all, and in between is a translucent plate. Previously the alpha was honoured only on a wholly empty pixel: anything partially covered came back opaque with the background mixed into its RGB, so a render could not be composited over anything but the background colour it already had. Both paths honour it now, `Direct` by premultiplying its clear and HDR by compositing in the tone map, and both return premultiplied pixels with alpha as coverage. **Composite the result with `One` / `OneMinusSrcAlpha`, not `SrcAlpha` / `OneMinusSrcAlpha`.** Two things in this crate deliberately take straight alpha instead and so will not accept a premultiplied viewport directly: the overlay image path (`register_overlay_texture_view`), and `blit`, which has no blend state and replaces its destination.
 

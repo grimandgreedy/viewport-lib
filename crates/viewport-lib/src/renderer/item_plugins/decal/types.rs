@@ -228,6 +228,19 @@ pub struct DecalItem {
     /// avoiding UV stretching on corners. It costs three texture samples per pixel instead of one;
     /// use it only when the decal spans a non-planar or multi-face surface.
     pub projection: DecalProjection,
+    /// Which surfaces this decal lands on, as a layer mask. Default `!0`
+    /// (every surface that receives decals).
+    ///
+    /// The decal lands on an item when this shares a layer with the item's
+    /// [`ItemSettings::visibility_mask`], the same test a light's
+    /// `channel_mask` makes. Give a selection ring the floor's layer and it
+    /// stays off the character standing in it. For decals layer `n` counts as
+    /// layer `n % 8`, so keep the layers you tell apart within eight of each
+    /// other. A mask of `0` lands nowhere.
+    ///
+    /// An item with `ItemSettings::receives_decals` cleared takes no decal
+    /// whatever this is.
+    pub channel_mask: u32,
     /// Visibility and opacity overrides. `hidden` skips the decal entirely; `opacity`
     /// multiplies the final alpha. `unlit` and `wireframe` are accepted but have no
     /// effect on decals. Set `pick_id` to make the decal pickable: `pick()` ray-tests
@@ -258,6 +271,7 @@ impl Default for DecalItem {
             edge_fade: 0.0,
             ambient: 0.15,
             projection: DecalProjection::Planar,
+            channel_mask: !0,
             settings: ItemSettings::default(),
         }
     }

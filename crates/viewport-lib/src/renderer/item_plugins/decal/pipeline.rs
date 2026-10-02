@@ -132,10 +132,6 @@ pub(crate) struct DecalProxyUniform {
     pub _pad: [u32; 3],
 }
 
-/// The mask every decal tests the surface mask against: it lands on any
-/// surface that is a member of some layer.
-pub(crate) const DECAL_SURFACE_MASK: u32 = crate::plugin_api::SURFACE_MASK_DEFAULT;
-
 /// Build the flat uniform for a decal. Pure: no GPU access, so it can also feed
 /// the content hash used to cache GPU resources across frames.
 pub(crate) fn decal_uniform_raw(
@@ -200,7 +196,7 @@ pub(crate) fn decal_uniform_raw(
         ambient: item.ambient.max(0.0),
         projection: projection_u32,
         tri_blend_sharpness,
-        surface_mask: DECAL_SURFACE_MASK,
+        surface_mask: crate::plugin_api::surface_mask_bits(item.channel_mask),
         _pad3: 0,
     }
 }

@@ -238,12 +238,14 @@ impl ItemTypePlugin for DecalPlugin {
     }
 
     fn surface_mask_readers(&self, items: &ItemCollections<'_>, out: &mut Vec<u32>) {
-        let drawn = items
-            .of::<DecalItem>()
-            .iter()
-            .any(|d| !d.settings.hidden && d.settings.opacity > 0.0);
-        if drawn {
-            out.push(pipeline::DECAL_SURFACE_MASK);
+        for decal in items.of::<DecalItem>() {
+            if decal.settings.hidden || decal.settings.opacity <= 0.0 {
+                continue;
+            }
+            let mask = crate::plugin_api::surface_mask_bits(decal.channel_mask);
+            if !out.contains(&mask) {
+                out.push(mask);
+            }
         }
     }
 

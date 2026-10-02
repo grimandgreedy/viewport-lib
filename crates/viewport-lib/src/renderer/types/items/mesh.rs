@@ -90,8 +90,6 @@ pub struct SceneRenderItem {
     /// undeformed with no error. The single-instance convention is
     /// `deform_instance = Some(0)` alongside `attach_deform_slot_instance(.., 0, ..)`.
     pub deform_instance: Option<u32>,
-    /// Whether this surface receives projected decals. Default: `true`.
-    pub receives_decals: bool,
     /// LIC flow overlay for this surface. `None` disables LIC for this item.
     ///
     /// The mesh must have a `VertexVector` attribute matching
@@ -145,7 +143,6 @@ impl Default for SceneRenderItem {
             warp_attribute: None,
             warp_scale: 1.0,
             deform_instance: None,
-            receives_decals: true,
             lic: None,
             lod_group: None,
             indirect_light: IndirectLightSource::default(),

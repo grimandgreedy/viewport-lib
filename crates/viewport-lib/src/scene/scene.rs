@@ -107,8 +107,6 @@ pub struct SceneNode {
     /// Per-node deformer instance ID. See
     /// [`SceneRenderItem::deform_instance`](crate::renderer::SceneRenderItem::deform_instance).
     deform_instance: Option<u32>,
-    /// Whether projected decals land on this surface. Default: `true`.
-    receives_decals: bool,
     /// LOD group this node draws through, if any. When set, the renderer
     /// picks a level each frame from the node's on-screen size and overwrites
     /// the drawn mesh; `mesh_id` should hold the full-detail (level 0) mesh so
@@ -209,12 +207,12 @@ impl SceneNode {
 
     /// Whether projected decals land on this surface.
     pub fn receives_decals(&self) -> bool {
-        self.receives_decals
+        self.appearance.receives_decals
     }
 
     /// Set whether projected decals land on this surface.
     pub fn set_receives_decals(&mut self, v: bool) {
-        self.receives_decals = v;
+        self.appearance.receives_decals = v;
     }
 }
 
@@ -441,7 +439,6 @@ impl Scene {
             layer: DEFAULT_LAYER,
             dirty: true,
             deform_instance: None,
-            receives_decals: true,
             lod_group: None,
             light: None,
             indirect_light: crate::renderer::IndirectLightSource::default(),
@@ -744,7 +741,7 @@ impl Scene {
     /// Set whether projected decals land on this node's surface.
     pub fn set_receives_decals(&mut self, id: NodeId, v: bool) {
         if let Some(node) = self.nodes.get_mut(&id) {
-            node.receives_decals = v;
+            node.appearance.receives_decals = v;
         }
         self.version = self.version.wrapping_add(1);
     }
@@ -1091,7 +1088,6 @@ impl Scene {
                 warp_attribute: None,
                 warp_scale: 1.0,
                 deform_instance: node.deform_instance,
-                receives_decals: node.receives_decals,
                 lic: None,
                 lod_group: node.lod_group,
                 indirect_light: node.indirect_light,
@@ -1181,7 +1177,6 @@ impl Scene {
                     warp_attribute: None,
                     warp_scale: 1.0,
                     deform_instance: node.deform_instance,
-                    receives_decals: node.receives_decals,
                     lic: None,
                     lod_group: node.lod_group,
                     indirect_light: node.indirect_light,
@@ -1241,7 +1236,6 @@ impl Scene {
                     warp_attribute: None,
                     warp_scale: 1.0,
                     deform_instance: node.deform_instance,
-                    receives_decals: node.receives_decals,
                     lic: None,
                     lod_group: node.lod_group,
                     indirect_light: node.indirect_light,
@@ -1281,7 +1275,11 @@ impl Scene {
             mesh_id: None,
             material: crate::scene::material::Material::default(),
             submesh_materials: None,
-            appearance: crate::scene::material::ItemSettings::default(),
+            appearance: {
+                let mut appearance = crate::scene::material::ItemSettings::default();
+                appearance.receives_decals = false;
+                appearance
+            },
             visible: true,
             show_normals: false,
             local_transform: glam::Mat4::IDENTITY,
@@ -1291,7 +1289,6 @@ impl Scene {
             layer: DEFAULT_LAYER,
             dirty: true,
             deform_instance: None,
-            receives_decals: false,
             lod_group: None,
             light: Some(light),
             indirect_light: crate::renderer::IndirectLightSource::default(),
