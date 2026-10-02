@@ -40,14 +40,6 @@ pub(super) struct PointShadowFace {
 /// per-face dynamic-offset uniform buffer.
 pub(super) const POINT_FACE_STRIDE: u64 = 256;
 
-/// How many cold material-plugin pipeline sets one `prepare()` will build.
-/// Each set is roughly nine render pipelines plus two shader-module
-/// compilations, so an uncapped frame that references many cold plugins
-/// stalls for their combined compile time. Plugins past the cap draw
-/// built-in shading until a later frame (or an explicit
-/// `warm_material_plugin_pipelines` call) builds them.
-const MATERIAL_PLUGIN_BUILDS_PER_PREPARE: usize = 4;
-
 /// Transient per-frame lighting results produced by the lighting phase and
 /// consumed by the shadow depth pass: the directional cascade matrices and the
 /// point-light cube-map faces to render this frame.
@@ -311,63 +303,34 @@ impl ViewportRenderer {
         }
 
         let per_object_start = web_time::Instant::now();
-        // Build material-plugin pipeline sets the frame references before
-        // draw time (paint has no mutable access), capped per frame so a
-        // scene that suddenly references many cold plugins pays a bounded
-        // cost instead of one long stall. Items whose plugin is still cold
-        // draw with built-in shading until its set is built on a later
-        // frame; `warm_material_plugin_pipelines` builds ahead of time for
-        // consumers that want to avoid the pop-in entirely. Unknown ids are
-        // ignored and those items fall back to built-in shading.
-        let mut plugin_builds = 0usize;
-        let mut plugin_builds_deferred = 0usize;
-        let mut cold_seen: Vec<u32> = Vec::new();
-        // The instanced plugin set is built for the active texture-binding mode
-        // (per-batch five textures, or one bindless array) and drawn by both the
-        // LDR (`emit_draw_calls`) and HDR scene / OIT passes, so it is built on any
-        // frame type and either binding mode.
+        // Set up the pipeline sets of the material plugins the frame references
+        // before draw time (paint has no mutable access). This compiles
+        // nothing: each pipeline is built by the first draw that selects it.
+        // Unknown ids are ignored and those items fall back to built-in
+        // shading.
+        let mut seen: Vec<u32> = Vec::new();
         for item in scene_items.iter() {
             let Some(pid) = item.material.shading_plugin else {
                 continue;
             };
-            if cold_seen.contains(&pid.plugin_index()) {
+            if seen.contains(&pid.plugin_index()) {
                 continue;
             }
-            // The per-object set is the built-in-shading fallback; the instanced
-            // set lets plugin items join instanced batches (see `is_instanceable`).
-            // Build both so a plugin material reaches full parity.
-            let need_object = resources.material_plugin_needs_build(pid);
-            let need_instanced = !resources.material_plugin_instanced_ready(pid);
-            if !need_object && !need_instanced {
-                continue;
-            }
-            cold_seen.push(pid.plugin_index());
-            if plugin_builds >= MATERIAL_PLUGIN_BUILDS_PER_PREPARE {
-                plugin_builds_deferred += 1;
-                continue;
-            }
-            if need_object {
+            seen.push(pid.plugin_index());
+            // The per-object set draws the items that cannot join a batch; the
+            // instanced set lets the rest draw one call per batch (see
+            // `is_instanceable`).
+            if resources.material_plugin_needs_build(pid) {
                 resources.ensure_material_plugin_pipelines(device, pid);
             }
-            if need_instanced {
-                // The instanced set reuses the built-in instanced group-1 layout;
-                // ensure it exists (idempotent) before composing on top of it. Also
-                // ensure the cull layout so the plugin set can build its
-                // `vs_main_cull` twins and plugin batches ride GPU culling; the cull
-                // pipelines are valid on any device and are only drawn when culling
-                // actually runs. Both calls are idempotent.
+            if !resources.material_plugin_instanced_ready(pid) {
+                // The instanced set sits on the built-in instanced group-1
+                // layout, and its GPU-culled twins on the cull layout, so both
+                // come first. Both calls are idempotent.
                 resources.ensure_instanced_pipelines(device);
                 resources.ensure_cull_instance_pipelines(device);
                 resources.ensure_material_plugin_instanced_pipelines(device, pid);
             }
-            plugin_builds += 1;
-        }
-        if plugin_builds_deferred > 0 {
-            tracing::debug!(
-                built = plugin_builds,
-                deferred = plugin_builds_deferred,
-                "material plugin pipeline builds hit the per-frame cap; deferred plugins draw built-in shading this frame"
-            );
         }
         // Evaluate instanceability once per frame and share the result. Each
         // `is_instanceable` call does several mesh-store and deform lookups plus

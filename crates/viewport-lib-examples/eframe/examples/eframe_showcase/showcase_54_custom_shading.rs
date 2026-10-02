@@ -25,7 +25,6 @@
 //! terminator bands the shadow edge because `light.shadow` arrives as its own
 //! factor.
 
-use crate::eframe;
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
@@ -121,37 +120,6 @@ impl Default for CustomShadingState {
 }
 
 // ---------------------------------------------------------------------------
-// Prewarm
-// ---------------------------------------------------------------------------
-
-/// Register the five shading plugins and build their pipeline sets up front.
-///
-/// Each plugin set is roughly nine render pipelines plus two shader-module
-/// compilations, all built synchronously. `build_custom_shading_scene` runs on
-/// the frame the showcase is opened, so compiling the sets there stalls that
-/// frame. Doing it here at startup, where the cost hides behind window
-/// creation, keeps opening the showcase smooth. Registration is idempotent per
-/// plugin name, so `build_custom_shading_scene` reuses these same plugins and
-/// their already-warm pipelines.
-pub(crate) fn prewarm_custom_shading_plugins(
-    device: &eframe::wgpu::Device,
-    renderer: &mut ViewportRenderer,
-) {
-    let resources = renderer.resources_mut();
-    let ids = [
-        resources.register_material_plugin(device, &ToonPlugin),
-        resources.register_material_plugin(device, &RimPlugin),
-        resources.register_material_plugin(device, &DetailLayerPlugin),
-        resources.register_material_plugin(device, &ParallaxPlugin),
-        resources.register_material_plugin(device, &DissolvePlugin),
-    ]
-    .into_iter()
-    .filter_map(Result::ok)
-    .collect::<Vec<_>>();
-    resources.warm_material_plugin_pipelines(device, &ids);
-}
-
-// ---------------------------------------------------------------------------
 // Build
 // ---------------------------------------------------------------------------
 
@@ -202,16 +170,9 @@ impl App {
             .register_material_plugin(&self.device, &DissolvePlugin)
             .expect("register dissolve plugin");
 
-        // Normally these sets are already built by the startup call to
-        // prewarm_custom_shading_plugins, so this is a cheap idempotent
-        // check. It still matters if the showcase is reached without that
-        // prewarm: building the sets here (rather than letting the first
-        // rendered frame pay for them a few at a time) avoids the cold
-        // plugins drawing built-in shading until their set is ready.
-        resources.warm_material_plugin_pipelines(
-            &self.device,
-            &[toon_a, rim, detail, parallax_default, dissolve],
-        );
+        // No warm-up: each plugin's pipelines are built by the first draw that
+        // selects them, so opening this page compiles the one or two variants
+        // each sphere uses and not the whole set.
 
         if self.cs_state.toon_b.is_none() {
             let s = &self.cs_state;

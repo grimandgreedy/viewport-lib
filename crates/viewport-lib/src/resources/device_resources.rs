@@ -1393,21 +1393,24 @@ impl DeviceResources {
         // cull-none for two-sided materials, `BackfacePolicy::Identical`, with a
         // larger caster-side bias) and cutout (a fragment stage that discards
         // below the caster's albedo alpha cutoff, for `AlphaMode::Mask`).
-        let set = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-            let cull_mode = if key.two_sided {
-                None
-            } else {
-                Some(crate::gpu::Face::Front)
-            };
-            crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
-                device,
-                &layout,
-                &shader,
-                cull_mode,
-                key.cutout,
-                self.pipeline_cache.as_ref(),
-            )
-        });
+        let set = crate::renderer::pipeline_key::PipelineVariantSet::build_distinct(
+            |key| (key.two_sided, key.cutout),
+            |(two_sided, cutout)| {
+                let cull_mode = if two_sided {
+                    None
+                } else {
+                    Some(crate::gpu::Face::Front)
+                };
+                crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
+                    device,
+                    &layout,
+                    &shader,
+                    cull_mode,
+                    cutout,
+                    self.pipeline_cache.as_ref(),
+                )
+            },
+        );
         self.shadow.pipeline = Some(set);
     }
 

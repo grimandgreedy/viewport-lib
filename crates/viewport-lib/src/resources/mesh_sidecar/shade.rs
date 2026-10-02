@@ -543,29 +543,199 @@ impl crate::resources::DeviceResources {
     }
 }
 
-/// The lit pipelines composed for one material plugin: LDR + HDR families
-/// from `mesh.wgsl` and the OIT accumulate pipeline from `mesh_oit.wgsl`,
-/// all on the 4-group layout (camera, object, deform, plugin params).
+/// A shader module compiled the first time a pipeline needs it.
+struct LazyModule {
+    label: String,
+    source: String,
+    module: std::sync::OnceLock<crate::gpu::ShaderModule>,
+}
+
+impl LazyModule {
+    fn new(label: String, source: String) -> Self {
+        Self {
+            label,
+            source,
+            module: std::sync::OnceLock::new(),
+        }
+    }
+
+    fn get(&self, device: &crate::gpu::Device) -> &crate::gpu::ShaderModule {
+        self.module.get_or_init(|| {
+            crate::resources::builders::wgsl_module(device, &self.label, self.source.as_str())
+        })
+    }
+
+    /// This module's source with every `discard;` removed, compiled into
+    /// `twin` the first time it is asked for. The twin is valid only for
+    /// draws that would not have discarded.
+    fn nodiscard<'a>(
+        &self,
+        device: &crate::gpu::Device,
+        twin: &'a std::sync::OnceLock<crate::gpu::ShaderModule>,
+    ) -> &'a crate::gpu::ShaderModule {
+        twin.get_or_init(|| {
+            crate::resources::builders::wgsl_module(
+                device,
+                &format!("{}_nodiscard", self.label),
+                crate::resources::builders::strip_discards(&self.source),
+            )
+        })
+    }
+}
+
+/// The lit pipelines composed for one material plugin: the LDR and HDR
+/// families from `mesh.wgsl` and the OIT accumulate pipelines from
+/// `mesh_oit.wgsl`, all on the 4-group layout (camera, object, deform, plugin
+/// params).
+///
+/// Each pipeline, and each of the three shader modules behind them, is built
+/// by the first draw that selects it. A frame that draws opaque plugin
+/// materials on the HDR path compiles one or two pipelines, not the set.
 pub(crate) struct MaterialPluginPipelines {
-    pub ldr: crate::resources::mesh::mesh_pipelines::LdrMeshPipelines,
-    /// HDR opaque pipelines, keyed by facedness and discard-free early-Z
-    /// eligibility (mirrors `SceneCorePipelines::hdr_opaque`; `cutout` is not
-    /// a real axis here, same as the main family).
-    pub hdr_opaque: crate::renderer::pipeline_key::PipelineVariantSet,
-    pub hdr_transparent: crate::gpu::RenderPipeline,
-    /// OIT accumulate pipelines, keyed by facedness (the only axis this
-    /// family varies on).
-    pub oit: crate::renderer::pipeline_key::PipelineVariantSet,
+    device: crate::gpu::Device,
+    name: &'static str,
+    layout: crate::gpu::PipelineLayout,
+    target_format: crate::gpu::TextureFormat,
+    sample_count: u32,
+    mesh: LazyModule,
+    /// `mesh` with every `discard;` removed, for the early-Z fast path.
+    mesh_nodiscard: std::sync::OnceLock<crate::gpu::ShaderModule>,
+    oit_module: LazyModule,
+    slots: [std::sync::OnceLock<crate::gpu::RenderPipeline>; Self::COUNT as usize],
 }
 
 impl MaterialPluginPipelines {
-    /// Pipelines in one plugin's set: 4 LDR (solid, two-sided, transparent,
-    /// wireframe), 4 HDR opaque (discarding and discard-free, each
-    /// facedness), 1 HDR transparent, and 2 OIT accumulate (culled and
-    /// two-sided). This is the whole per-plugin pipeline cost; shadow /
-    /// outline / pick passes reuse the shared depth-only pipelines. HDR
-    /// wireframe is not built for plugin materials; nothing draws it.
-    pub(crate) const COUNT: u32 = 11;
+    /// Pipelines in one plugin's set: 3 LDR (solid, two-sided, transparent),
+    /// 4 HDR opaque (discarding and discard-free, each facedness), 1 HDR
+    /// transparent, and 2 OIT accumulate (culled and two-sided). Shadow,
+    /// outline and pick passes reuse the shared depth-only pipelines, and
+    /// nothing draws a plugin material in wireframe.
+    pub(crate) const COUNT: u32 = 10;
+
+    const LDR_SOLID: usize = 0;
+    const LDR_SOLID_TWO_SIDED: usize = 1;
+    const LDR_TRANSPARENT: usize = 2;
+    const HDR_TRANSPARENT: usize = 3;
+    /// Four slots: bit 0 is two-sided, bit 1 is discard-free.
+    const HDR_OPAQUE: usize = 4;
+    /// Two slots: bit 0 is two-sided.
+    const OIT: usize = 8;
+
+    fn slot(&self, i: usize) -> &crate::gpu::RenderPipeline {
+        self.slots[i].get_or_init(|| self.build_slot(i))
+    }
+
+    fn build_slot(&self, i: usize) -> crate::gpu::RenderPipeline {
+        use crate::gpu::{BlendState, Face, PrimitiveTopology::TriangleList};
+        use crate::resources::mesh::mesh_pipelines as mp;
+        let device = &self.device;
+        let name = self.name;
+        let ldr = |label: &str, cull, blend, depth_write| {
+            mp::ldr_mesh_pipeline(
+                device,
+                &self.layout,
+                self.mesh.get(device),
+                self.target_format,
+                self.sample_count,
+                None,
+                &format!("material_plugin_{name}_{label}"),
+                cull,
+                blend,
+                TriangleList,
+                depth_write,
+            )
+        };
+        match i {
+            Self::LDR_SOLID => ldr("solid", Some(Face::Back), None, true),
+            Self::LDR_SOLID_TWO_SIDED => ldr("solid_two_sided", None, None, true),
+            Self::LDR_TRANSPARENT => {
+                ldr("transparent", None, Some(BlendState::ALPHA_BLENDING), false)
+            }
+            Self::HDR_TRANSPARENT => mp::hdr_mesh_pipeline(
+                device,
+                &self.layout,
+                self.mesh.get(device),
+                &format!("material_plugin_{name}_hdr_transparent"),
+                None,
+                Some(BlendState::ALPHA_BLENDING),
+                TriangleList,
+                false,
+            ),
+            4..=7 => {
+                let two_sided = (i - Self::HDR_OPAQUE) & 1 != 0;
+                let nodiscard = (i - Self::HDR_OPAQUE) & 2 != 0;
+                let module = if nodiscard {
+                    self.mesh.nodiscard(device, &self.mesh_nodiscard)
+                } else {
+                    self.mesh.get(device)
+                };
+                mp::hdr_mesh_pipeline(
+                    device,
+                    &self.layout,
+                    module,
+                    &format!(
+                        "material_plugin_{name}_hdr_solid{}{}",
+                        if two_sided { "_two_sided" } else { "" },
+                        if nodiscard { "_nodiscard" } else { "" },
+                    ),
+                    (!two_sided).then_some(Face::Back),
+                    None,
+                    TriangleList,
+                    true,
+                )
+            }
+            _ => mp::build_oit_pipeline(
+                device,
+                &self.layout,
+                self.oit_module.get(device),
+                (i - Self::OIT) & 1 != 0,
+            ),
+        }
+    }
+
+    pub(crate) fn ldr_solid(&self) -> &crate::gpu::RenderPipeline {
+        self.slot(Self::LDR_SOLID)
+    }
+
+    pub(crate) fn ldr_solid_two_sided(&self) -> &crate::gpu::RenderPipeline {
+        self.slot(Self::LDR_SOLID_TWO_SIDED)
+    }
+
+    pub(crate) fn ldr_transparent(&self) -> &crate::gpu::RenderPipeline {
+        self.slot(Self::LDR_TRANSPARENT)
+    }
+
+    pub(crate) fn hdr_transparent(&self) -> &crate::gpu::RenderPipeline {
+        self.slot(Self::HDR_TRANSPARENT)
+    }
+
+    /// The HDR opaque pipeline for `key`: facedness and discard-free
+    /// eligibility. `cutout` is not a real axis here, as in the main family.
+    pub(crate) fn hdr_opaque(
+        &self,
+        key: crate::renderer::pipeline_key::PipelineKey,
+    ) -> &crate::gpu::RenderPipeline {
+        self.slot(Self::HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize)
+    }
+
+    /// The OIT accumulate pipeline for `key`, which varies on facedness only.
+    pub(crate) fn oit(
+        &self,
+        key: crate::renderer::pipeline_key::PipelineKey,
+    ) -> &crate::gpu::RenderPipeline {
+        self.slot(Self::OIT + key.two_sided as usize)
+    }
+
+    /// Build every pipeline in the set now.
+    fn build_all(&self) {
+        for i in 0..self.slots.len() {
+            self.slot(i);
+        }
+    }
+
+    fn built_count(&self) -> u32 {
+        self.slots.iter().filter(|s| s.get().is_some()).count() as u32
+    }
 }
 
 /// Pipeline and resource counts for one registered material plugin, from
@@ -582,11 +752,12 @@ pub struct MaterialPluginStats {
     pub variants: u32,
     /// Declared texture slots per variant.
     pub texture_count: u32,
-    /// Render pipelines currently built for this plugin. `0` until the first
-    /// `prepare` that sees a material referencing the plugin (pipelines build
-    /// lazily), then 9: 4 LDR + 4 HDR + 1 OIT. Drops back to `0` when a
-    /// deformer registration or debug-vis toggle invalidates the set, until
-    /// the next referencing `prepare` rebuilds it.
+    /// Per-object render pipelines currently built for this plugin. Each is
+    /// built by the first draw that selects it, so this counts what the
+    /// frames so far have used: `0` before the plugin is drawn, up to 10
+    /// (3 LDR, 5 HDR, 2 OIT) after `warm_material_plugin_pipelines`. Drops
+    /// back to `0` when a deformer registration or debug-vis toggle
+    /// invalidates the set.
     pub pipelines_built: u32,
 }
 
@@ -605,27 +776,188 @@ pub(crate) struct MaterialPluginVariantGpu {
 /// to match, like the built-in instanced shader). Lets a plugin material draw one
 /// instanced call per batch instead of one call per object, on both the LDR
 /// (`emit_draw_calls`) and HDR scene / OIT passes.
+///
+/// As with the per-object set, each pipeline and module is built by the first
+/// draw that selects it.
 pub(crate) struct MaterialPluginInstancedPipelines {
-    /// LDR instanced pipelines drawn into the swapchain by the `emit_draw_calls`
-    /// path: solid, two-sided, and alpha-blend transparent, all `vs_main`. Built
-    /// with the renderer's target format and sample count (both fixed at
-    /// construction), mirroring the built-in `instancing.solid_pipeline` set.
-    pub ldr: crate::resources::mesh::mesh_pipelines::LdrInstancedMeshPipelines,
-    /// HDR opaque instanced pipelines, keyed by facedness and discard-free
-    /// early-Z eligibility (mirrors `instancing.hdr_solid*`).
-    pub hdr_opaque: crate::renderer::pipeline_key::PipelineVariantSet,
-    /// OIT accumulate instanced pipelines, keyed by facedness (mirrors
-    /// `oit.instanced_pipeline` / `_two_sided`).
-    pub oit: crate::renderer::pipeline_key::PipelineVariantSet,
-    /// GPU-culled twins of `hdr_opaque` / `oit` (the `vs_main_cull` entry reading
-    /// `visibility_indices`), built against the cull group-1 layout so a plugin
-    /// batch can draw its frustum/occlusion-culled instances from the cull-written
-    /// indirect args. Keyed by facedness only (the cull pipelines use the
-    /// discarding shader, so there is no discard-free axis). `None` when the device
-    /// cannot GPU-cull (no cull layout built), in which case plugin batches draw
-    /// every instance directly.
-    pub cull: Option<crate::renderer::pipeline_key::PipelineVariantSet>,
-    pub oit_cull: Option<crate::renderer::pipeline_key::PipelineVariantSet>,
+    device: crate::gpu::Device,
+    name: &'static str,
+    layout: crate::gpu::PipelineLayout,
+    /// The layout for the GPU-culled twins (the `vs_main_cull` entry reading
+    /// `visibility_indices`), on the cull group-1 layout. `None` when the
+    /// device cannot GPU-cull, in which case plugin batches draw every
+    /// instance directly.
+    cull_layout: Option<crate::gpu::PipelineLayout>,
+    target_format: crate::gpu::TextureFormat,
+    sample_count: u32,
+    mesh: LazyModule,
+    mesh_nodiscard: std::sync::OnceLock<crate::gpu::ShaderModule>,
+    oit_module: LazyModule,
+    slots: [std::sync::OnceLock<crate::gpu::RenderPipeline>; 13],
+}
+
+impl MaterialPluginInstancedPipelines {
+    /// LDR pipelines drawn into the swapchain by the `emit_draw_calls` path,
+    /// built with the renderer's target format and sample count.
+    const LDR_SOLID: usize = 0;
+    const LDR_SOLID_TWO_SIDED: usize = 1;
+    const LDR_TRANSPARENT: usize = 2;
+    /// Four slots: bit 0 is two-sided, bit 1 is discard-free.
+    const HDR_OPAQUE: usize = 3;
+    /// Two slots each, bit 0 two-sided. The cull pipelines use the discarding
+    /// shader, so they have no discard-free axis.
+    const OIT: usize = 7;
+    const CULL: usize = 9;
+    const OIT_CULL: usize = 11;
+
+    fn slot(&self, i: usize) -> &crate::gpu::RenderPipeline {
+        self.slots[i].get_or_init(|| self.build_slot(i))
+    }
+
+    fn build_slot(&self, i: usize) -> crate::gpu::RenderPipeline {
+        use crate::gpu::{BlendState, Face, TextureFormat};
+        use crate::resources::mesh::mesh_pipelines as mp;
+        let device = &self.device;
+        let name = self.name;
+        let ldr = |label: &str, cull, blend, depth_write| {
+            mp::instanced_mesh_pipeline(
+                device,
+                &self.layout,
+                self.mesh.get(device),
+                self.target_format,
+                self.sample_count,
+                &format!("material_plugin_{name}_{label}"),
+                cull,
+                blend,
+                depth_write,
+            )
+        };
+        let cull_layout = || {
+            self.cull_layout
+                .as_ref()
+                .expect("the cull pipelines are only selected when the cull layout exists")
+        };
+        match i {
+            Self::LDR_SOLID => ldr("instanced_solid", Some(Face::Back), None, true),
+            Self::LDR_SOLID_TWO_SIDED => ldr("instanced_solid_two_sided", None, None, true),
+            Self::LDR_TRANSPARENT => ldr(
+                "instanced_transparent",
+                None,
+                Some(BlendState::ALPHA_BLENDING),
+                false,
+            ),
+            3..=6 => {
+                let two_sided = (i - Self::HDR_OPAQUE) & 1 != 0;
+                let nodiscard = (i - Self::HDR_OPAQUE) & 2 != 0;
+                let module = if nodiscard {
+                    self.mesh.nodiscard(device, &self.mesh_nodiscard)
+                } else {
+                    self.mesh.get(device)
+                };
+                mp::instanced_mesh_pipeline(
+                    device,
+                    &self.layout,
+                    module,
+                    TextureFormat::Rgba16Float,
+                    1,
+                    &format!(
+                        "material_plugin_{name}_instanced_hdr_solid{}{}",
+                        if two_sided { "_two_sided" } else { "" },
+                        if nodiscard { "_nodiscard" } else { "" },
+                    ),
+                    (!two_sided).then_some(Face::Back),
+                    None,
+                    true,
+                )
+            }
+            7 | 8 => mp::build_oit_instanced_pipeline(
+                device,
+                &self.layout,
+                self.oit_module.get(device),
+                &format!("material_plugin_{name}_oit_instanced"),
+                "vs_main",
+                (i - Self::OIT) & 1 != 0,
+            ),
+            9 | 10 => mp::build_hdr_instanced_cull_pipeline_with(
+                device,
+                cull_layout(),
+                self.mesh.get(device),
+                &format!("material_plugin_{name}_instanced_cull"),
+                ((i - Self::CULL) & 1 == 0).then_some(Face::Back),
+            ),
+            _ => mp::build_oit_instanced_pipeline(
+                device,
+                cull_layout(),
+                self.oit_module.get(device),
+                &format!("material_plugin_{name}_oit_instanced_cull"),
+                "vs_main_cull",
+                (i - Self::OIT_CULL) & 1 != 0,
+            ),
+        }
+    }
+
+    pub(crate) fn ldr_solid(&self) -> &crate::gpu::RenderPipeline {
+        self.slot(Self::LDR_SOLID)
+    }
+
+    pub(crate) fn ldr_solid_two_sided(&self) -> &crate::gpu::RenderPipeline {
+        self.slot(Self::LDR_SOLID_TWO_SIDED)
+    }
+
+    pub(crate) fn ldr_transparent(&self) -> &crate::gpu::RenderPipeline {
+        self.slot(Self::LDR_TRANSPARENT)
+    }
+
+    /// The HDR opaque instanced pipeline for `key`: facedness and
+    /// discard-free eligibility.
+    pub(crate) fn hdr_opaque(
+        &self,
+        key: crate::renderer::pipeline_key::PipelineKey,
+    ) -> &crate::gpu::RenderPipeline {
+        self.slot(Self::HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize)
+    }
+
+    /// The OIT accumulate instanced pipeline for `key` (facedness only).
+    pub(crate) fn oit(
+        &self,
+        key: crate::renderer::pipeline_key::PipelineKey,
+    ) -> &crate::gpu::RenderPipeline {
+        self.slot(Self::OIT + key.two_sided as usize)
+    }
+
+    /// Whether the GPU-culled twins can be built. Check before [`cull`](Self::cull)
+    /// or [`oit_cull`](Self::oit_cull).
+    pub(crate) fn has_cull(&self) -> bool {
+        self.cull_layout.is_some()
+    }
+
+    /// The GPU-culled twin of [`hdr_opaque`](Self::hdr_opaque) (facedness only).
+    pub(crate) fn cull(
+        &self,
+        key: crate::renderer::pipeline_key::PipelineKey,
+    ) -> &crate::gpu::RenderPipeline {
+        self.slot(Self::CULL + key.two_sided as usize)
+    }
+
+    /// The GPU-culled twin of [`oit`](Self::oit).
+    pub(crate) fn oit_cull(
+        &self,
+        key: crate::renderer::pipeline_key::PipelineKey,
+    ) -> &crate::gpu::RenderPipeline {
+        self.slot(Self::OIT_CULL + key.two_sided as usize)
+    }
+
+    /// Build every pipeline in the set now.
+    fn build_all(&self) {
+        let end = if self.has_cull() {
+            self.slots.len()
+        } else {
+            Self::CULL
+        };
+        for i in 0..end {
+            self.slot(i);
+        }
+    }
 }
 
 /// GPU state per registered material plugin: the shared bind group layout and
@@ -924,26 +1256,28 @@ impl crate::resources::DeviceResources {
                     name: self.shade_hooks[id as usize].desc.name,
                     variants: gpu.variants.len() as u32,
                     texture_count: gpu.texture_count,
-                    pipelines_built: if gpu.pipelines.is_some() {
-                        MaterialPluginPipelines::COUNT
-                    } else {
-                        0
-                    },
+                    pipelines_built: gpu
+                        .pipelines
+                        .as_ref()
+                        .map_or(0, MaterialPluginPipelines::built_count),
                 }
             })
             .collect()
     }
 
-    /// Build the lit pipeline sets for the given plugins now instead of on
-    /// the first frame that draws them.
+    /// Build every pipeline the given plugins can draw with, now.
     ///
-    /// Each cold plugin costs roughly nine render pipelines plus two shader
-    /// module compilations, built synchronously in this call. Without
-    /// warm-up that cost lands inside `prepare()` on the first frame that
-    /// references the plugin, rate-limited to a few plugins per frame with
-    /// affected materials drawing built-in shading until their set is
-    /// ready. Call this behind a load screen (or whenever a hitch is
-    /// acceptable) with the plugins the upcoming scene uses.
+    /// Without this call a plugin's pipelines are built one at a time, each
+    /// by the first draw that selects it, so a frame compiles only the
+    /// variants it uses: typically one or two pipelines and one or two shader
+    /// modules per plugin. That is the cheaper route for most applications.
+    ///
+    /// This call builds all of them instead: about twenty render pipelines
+    /// and six shader modules per plugin, across the per-object and instanced
+    /// sets, the LDR and HDR families, and the transparent and two-sided
+    /// variants, synchronously. Use it behind a load screen when no draw
+    /// should compile anything later, whatever the scene does with the
+    /// plugin.
     ///
     /// Already-built plugins and unknown ids are skipped, so the call is
     /// idempotent and safe with any id set. The variant field is ignored:
@@ -957,7 +1291,26 @@ impl crate::resources::DeviceResources {
         // it flushes; run it first so the warm-up is not thrown away.
         self.flush_mesh_pipeline_rebuild(device);
         for id in ids {
-            self.ensure_material_plugin_pipelines(device, *id);
+            self.warm_material_plugin(device, *id);
+        }
+    }
+
+    /// Build everything a frame can bind for one plugin: the per-object set,
+    /// and the instanced set that plugin items in a batch draw with.
+    fn warm_material_plugin(&mut self, device: &crate::gpu::Device, id: MaterialPluginId) {
+        self.ensure_material_plugin_pipelines(device, id);
+        // The instanced set is composed on the built-in instanced and cull
+        // layouts, so those come first.
+        self.ensure_instanced_pipelines(device);
+        self.ensure_cull_instance_pipelines(device);
+        self.ensure_material_plugin_instanced_pipelines(device, id);
+        if let Some(gpu) = self.material_plugins.get(&id.plugin_index()) {
+            if let Some(set) = &gpu.pipelines {
+                set.build_all();
+            }
+            if let Some(set) = &gpu.instanced_pipelines {
+                set.build_all();
+            }
         }
     }
 
@@ -969,28 +1322,26 @@ impl crate::resources::DeviceResources {
         self.flush_mesh_pipeline_rebuild(device);
         let ids: Vec<u32> = self.material_plugins.keys().copied().collect();
         for plugin in ids {
-            self.ensure_material_plugin_pipelines(
+            self.warm_material_plugin(
                 device,
                 crate::scene::material::MaterialPluginId::from_parts(plugin, 0),
             );
         }
     }
 
-    /// True once the plugin's pipeline set is built, i.e. materials
-    /// selecting it draw plugin shading rather than the built-in fallback.
+    /// True once the plugin's pipeline set exists, i.e. materials selecting
+    /// it draw plugin shading rather than the built-in fallback.
     ///
-    /// `false` while the set is cold: before the first referencing
-    /// `prepare()` (or `warm_material_plugin_pipelines` call) builds it, and
-    /// again after a deformer registration or debug-vis toggle invalidates
-    /// it until the next build. Also `false` for ids this registry did not
-    /// issue, which never build. The variant field is ignored: variants
-    /// share the plugin's pipeline set.
+    /// `false` before the first `prepare()` that references the plugin (or a
+    /// `warm_material_plugin_pipelines` call), and again after a deformer
+    /// registration or debug-vis toggle invalidates the set, until the next
+    /// referencing `prepare()`. Also `false` for ids this registry did not
+    /// issue. The variant field is ignored: variants share the plugin's
+    /// pipeline set.
     ///
-    /// Cold sets referenced by a frame build within a few frames (see the
-    /// per-frame cap in prepare), so polling this per frame is cheap and
-    /// converges quickly; use it to gate work that should wait for plugin
-    /// shading to be live, e.g. revealing an object only once it stops
-    /// drawing fallback shading.
+    /// A frame that references the plugin sets it up in its own `prepare()`,
+    /// so the frame draws plugin shading; this does not say whether a given
+    /// pipeline has been compiled yet.
     pub fn material_plugin_pipelines_ready(
         &self,
         id: crate::scene::material::MaterialPluginId,
@@ -1000,9 +1351,8 @@ impl crate::resources::DeviceResources {
             .is_some_and(|gpu| gpu.pipelines.is_some())
     }
 
-    /// True when the plugin is registered and its pipeline set is cold: the
-    /// budget-relevant question for prepare, where an unknown id must not
-    /// consume a build slot (it would no-op in the builder every frame).
+    /// True when the plugin is registered and its pipeline set does not
+    /// exist yet.
     pub(crate) fn material_plugin_needs_build(
         &self,
         id: crate::scene::material::MaterialPluginId,
@@ -1040,25 +1390,9 @@ impl crate::resources::DeviceResources {
         let mesh_final_src =
             crate::resources::builders::strip_debug_vis(mesh_src, self.debug_vis_shaders)
                 .into_owned();
-        let mesh_module = crate::resources::builders::wgsl_module(
-            device,
-            &format!("material_plugin_{name}_mesh"),
-            mesh_final_src.clone(),
-        );
-        // Discard-free twin for the early-Z fast path, mirroring the main
-        // opaque family's own nodiscard twin (`ensure_hdr_pipelines`): identical
-        // shading with every `discard;` removed, valid only for draws that
-        // would not have discarded (the per-object gate in hdr_path.rs).
-        let mesh_module_nodiscard = crate::resources::builders::wgsl_module(
-            device,
-            &format!("material_plugin_{name}_mesh_nodiscard"),
-            crate::resources::builders::strip_discards(&mesh_final_src),
-        );
-        let oit_module = crate::resources::builders::wgsl_module(
-            device,
-            &format!("material_plugin_{name}_oit"),
-            crate::resources::builders::strip_debug_vis(oit_src, self.debug_vis_shaders),
-        );
+        let oit_final_src =
+            crate::resources::builders::strip_debug_vis(oit_src, self.debug_vis_shaders)
+                .into_owned();
 
         let gpu = self
             .material_plugins
@@ -1075,56 +1409,21 @@ impl crate::resources::DeviceResources {
                 &gpu.bind_group_layout,
             ],
         );
-        let ldr = crate::resources::mesh::mesh_pipelines::build_ldr_mesh_pipelines(
-            device,
-            &layout,
-            &mesh_module,
-            self.target_format,
-            self.sample_count,
-            None,
-        );
-        let hdr = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
-            device,
-            &layout,
-            &mesh_module,
-        );
-        let hdr_nd = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
-            device,
-            &layout,
-            &mesh_module_nodiscard,
-        );
-        let hdr_opaque = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-            let (solid, solid_two_sided) = if key.no_discard_eligible {
-                (&hdr_nd.solid, &hdr_nd.solid_two_sided)
-            } else {
-                (&hdr.solid, &hdr.solid_two_sided)
-            };
-            if key.two_sided {
-                solid_two_sided.clone()
-            } else {
-                solid.clone()
-            }
-        });
-        // Culled + two-sided OIT twins, selected per draw on the material's
-        // two-sidedness (the shader is composed from mesh_oit.wgsl, which flips
-        // the normal and applies the back-face colour via front_facing).
-        let oit = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-            crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
-                device,
-                &layout,
-                &oit_module,
-                key.two_sided,
-            )
-        });
+        let pipelines = MaterialPluginPipelines {
+            device: device.clone(),
+            name,
+            layout,
+            target_format: self.target_format,
+            sample_count: self.sample_count,
+            mesh_nodiscard: std::sync::OnceLock::new(),
+            mesh: LazyModule::new(format!("material_plugin_{name}_mesh"), mesh_final_src),
+            oit_module: LazyModule::new(format!("material_plugin_{name}_oit"), oit_final_src),
+            slots: Default::default(),
+        };
         self.material_plugins
             .get_mut(&id.plugin_index())
             .expect("checked above")
-            .pipelines = Some(MaterialPluginPipelines {
-            ldr,
-            hdr_opaque,
-            hdr_transparent: hdr.transparent,
-            oit,
-        });
+            .pipelines = Some(pipelines);
     }
 
     /// Build the plugin's instanced pipeline set (its shading composed onto
@@ -1185,21 +1484,9 @@ impl crate::resources::DeviceResources {
         let mesh_final_src =
             crate::resources::builders::strip_debug_vis(mesh_src, self.debug_vis_shaders)
                 .into_owned();
-        let mesh_module = crate::resources::builders::wgsl_module(
-            device,
-            &format!("material_plugin_{name}_mesh_instanced"),
-            mesh_final_src.clone(),
-        );
-        let mesh_module_nodiscard = crate::resources::builders::wgsl_module(
-            device,
-            &format!("material_plugin_{name}_mesh_instanced_nodiscard"),
-            crate::resources::builders::strip_discards(&mesh_final_src),
-        );
-        let oit_module = crate::resources::builders::wgsl_module(
-            device,
-            &format!("material_plugin_{name}_oit_instanced"),
-            crate::resources::builders::strip_debug_vis(oit_src, self.debug_vis_shaders),
-        );
+        let oit_final_src =
+            crate::resources::builders::strip_debug_vis(oit_src, self.debug_vis_shaders)
+                .into_owned();
 
         let gpu = self
             .material_plugins
@@ -1233,64 +1520,18 @@ impl crate::resources::DeviceResources {
                 &gpu.bind_group_layout,
             ],
         );
-        let ldr = crate::resources::mesh::mesh_pipelines::build_ldr_instanced_mesh_pipelines(
-            device,
-            &layout,
-            &mesh_module,
-            self.target_format,
-            self.sample_count,
-        );
-        let hdr = crate::resources::mesh::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
-            device,
-            &layout,
-            &mesh_module,
-        );
-        let (nd_solid, nd_two_sided) =
-            crate::resources::mesh::mesh_pipelines::build_instanced_solid_pipelines(
-                device,
-                &layout,
-                &mesh_module_nodiscard,
-                crate::gpu::TextureFormat::Rgba16Float,
-                1,
-                &format!("material_plugin_{name}_instanced_solid_nodiscard"),
-                &format!("material_plugin_{name}_instanced_two_sided_nodiscard"),
-            );
-        let hdr_opaque = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-            let (solid, solid_two_sided) = if key.no_discard_eligible {
-                (&nd_solid, &nd_two_sided)
-            } else {
-                (&hdr.solid, &hdr.solid_two_sided)
-            };
-            if key.two_sided {
-                solid_two_sided.clone()
-            } else {
-                solid.clone()
-            }
-        });
-        let oit = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-            crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-                device,
-                &layout,
-                &oit_module,
-                &format!("material_plugin_{name}_oit_instanced"),
-                "vs_main",
-                key.two_sided,
-            )
-        });
-        // GPU-culled twins, built against the cull group-1 layout (per-batch
+        // The GPU-culled twins sit on the cull group-1 layout (per-batch
         // `cull_bgl` or the bindless cull array) when it exists. The mesh / OIT
         // modules already carry the `vs_main_cull` entry (composed from the
-        // instanced shaders), so this reuses them with that entry and the cull
-        // layout, letting a plugin batch draw its culled instances from the
-        // cull-written indirect args. Absent when the device cannot GPU-cull.
+        // instanced shaders), so they are reused with that entry.
         let cull_group1 = if bindless {
             self.instancing.bindless_cull_bind_group_layout.as_ref()
         } else {
             self.cull.bind_group_layout.as_ref()
         };
-        let (cull, oit_cull) = if let Some(cull_bgl) = cull_group1 {
+        let cull_layout = cull_group1.map(|cull_bgl| {
             let cull_layout_label = format!("material_plugin_{name}_instanced_cull_layout");
-            let cull_layout = crate::resources::builders::pipeline_layout(
+            crate::resources::builders::pipeline_layout(
                 device,
                 cull_layout_label.as_str(),
                 &[
@@ -1299,44 +1540,30 @@ impl crate::resources::DeviceResources {
                     &self.deform.bind_group_layout,
                     &gpu.bind_group_layout,
                 ],
-            );
-            let cull_set = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-                crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline_with(
-                    device,
-                    &cull_layout,
-                    &mesh_module,
-                    &format!("material_plugin_{name}_instanced_cull"),
-                    if key.two_sided {
-                        None
-                    } else {
-                        Some(crate::gpu::Face::Back)
-                    },
-                )
-            });
-            let oit_cull_set = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-                crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-                    device,
-                    &cull_layout,
-                    &oit_module,
-                    &format!("material_plugin_{name}_oit_instanced_cull"),
-                    "vs_main_cull",
-                    key.two_sided,
-                )
-            });
-            (Some(cull_set), Some(oit_cull_set))
-        } else {
-            (None, None)
+            )
+        });
+        let pipelines = MaterialPluginInstancedPipelines {
+            device: device.clone(),
+            name,
+            layout,
+            cull_layout,
+            target_format: self.target_format,
+            sample_count: self.sample_count,
+            mesh_nodiscard: std::sync::OnceLock::new(),
+            mesh: LazyModule::new(
+                format!("material_plugin_{name}_mesh_instanced"),
+                mesh_final_src,
+            ),
+            oit_module: LazyModule::new(
+                format!("material_plugin_{name}_oit_instanced"),
+                oit_final_src,
+            ),
+            slots: Default::default(),
         };
         self.material_plugins
             .get_mut(&id.plugin_index())
             .expect("checked above")
-            .instanced_pipelines = Some(MaterialPluginInstancedPipelines {
-            ldr,
-            hdr_opaque,
-            oit,
-            cull,
-            oit_cull,
-        });
+            .instanced_pipelines = Some(pipelines);
     }
 
     /// Resolve a material's plugin selection to its pipeline set and the
@@ -1526,8 +1753,8 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
             .material_plugin_draw(Some(id))
             .expect("pipelines built");
         for key in crate::renderer::pipeline_key::PipelineKey::all() {
-            let _ = pp.hdr_opaque.get(key);
-            let _ = pp.oit.get(key);
+            let _ = pp.hdr_opaque(key);
+            let _ = pp.oit(key);
         }
     }
 
@@ -1579,8 +1806,8 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
             .material_plugin_instanced_draw(Some(id))
             .expect("instanced set built");
         for key in crate::renderer::pipeline_key::PipelineKey::all() {
-            let _ = pp.hdr_opaque.get(key);
-            let _ = pp.oit.get(key);
+            let _ = pp.hdr_opaque(key);
+            let _ = pp.oit(key);
         }
     }
 

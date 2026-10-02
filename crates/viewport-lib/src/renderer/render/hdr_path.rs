@@ -121,14 +121,14 @@ pub(super) fn draw_mesh_item(
             let pl = if let Some((pp, _)) = plug {
                 if item.settings.opacity < 1.0 {
                     if hdr {
-                        &pp.hdr_transparent
+                        pp.hdr_transparent()
                     } else {
-                        &pp.ldr.transparent
+                        pp.ldr_transparent()
                     }
                 } else if hdr {
-                    pp.hdr_opaque.get(key)
+                    pp.hdr_opaque(key)
                 } else {
-                    select_two_sided(key, &pp.ldr.solid, &pp.ldr.solid_two_sided)
+                    select_two_sided(key, pp.ldr_solid(), pp.ldr_solid_two_sided())
                 }
             } else if item.settings.opacity < 1.0 {
                 trans_pl
@@ -171,14 +171,14 @@ pub(super) fn draw_mesh_item(
                 let pl = if let Some((pp, _)) = plug_r {
                     if is_trans {
                         if hdr {
-                            &pp.hdr_transparent
+                            pp.hdr_transparent()
                         } else {
-                            &pp.ldr.transparent
+                            pp.ldr_transparent()
                         }
                     } else if hdr {
-                        pp.hdr_opaque.get(range_key)
+                        pp.hdr_opaque(range_key)
                     } else {
-                        select_two_sided(range_key, &pp.ldr.solid, &pp.ldr.solid_two_sided)
+                        select_two_sided(range_key, pp.ldr_solid(), pp.ldr_solid_two_sided())
                     }
                 } else if is_trans {
                     trans_pl
@@ -209,10 +209,9 @@ pub(super) fn draw_mesh_item(
         } else {
             let pl = if let Some((pp, _)) = plug {
                 if item.settings.opacity < 1.0 {
-                    &pp.hdr_transparent
+                    pp.hdr_transparent()
                 } else {
-                    pp.hdr_opaque
-                        .get(PipelineKey::two_sided(item.material.is_two_sided()))
+                    pp.hdr_opaque(PipelineKey::two_sided(item.material.is_two_sided()))
                 }
             } else if item.settings.opacity < 1.0 {
                 trans_pl
@@ -1186,14 +1185,14 @@ impl ViewportRenderer {
                                     cur_chunks = Some(chunks);
                                 }
                                 let culled = plugin_indirect
-                                    .zip(plug_pipes.cull.as_ref())
-                                    .and_then(|(indirect_buf, cull_set)| {
+                                    .filter(|_| plug_pipes.has_cull())
+                                    .and_then(|indirect_buf| {
                                         resources
                                             .instanced_cull_colour_bind_group(cull0, mat_key)
-                                            .map(|bg| (indirect_buf, cull_set, bg))
+                                            .map(|bg| (indirect_buf, bg))
                                     });
-                                if let Some((indirect_buf, cull_set, cull_bg)) = culled {
-                                    render_pass.set_pipeline(cull_set.get(key));
+                                if let Some((indirect_buf, cull_bg)) = culled {
+                                    render_pass.set_pipeline(plug_pipes.cull(key));
                                     render_pass.set_bind_group(1, cull_bg, &[]);
                                     bind_material_group!(render_pass, mat_bg);
                                     render_pass.draw_indexed_indirect(
@@ -1206,7 +1205,7 @@ impl ViewportRenderer {
                                     else {
                                         continue;
                                     };
-                                    render_pass.set_pipeline(plug_pipes.hdr_opaque.get(key));
+                                    render_pass.set_pipeline(plug_pipes.hdr_opaque(key));
                                     render_pass.set_bind_group(1, inst_tex_bg, &[]);
                                     bind_material_group!(render_pass, mat_bg);
                                     let base_vertex =
@@ -1315,7 +1314,7 @@ impl ViewportRenderer {
                                 ..PipelineKey::default()
                             };
                             let pipeline = if let Some((pp, _)) = plug {
-                                pp.hdr_opaque.get(key)
+                                pp.hdr_opaque(key)
                             } else {
                                 hdr_opaque.get(key)
                             };
@@ -1383,7 +1382,7 @@ impl ViewportRenderer {
                                     let plug_r = resources.material_plugin_draw(mat.shading_plugin);
                                     let range_key = PipelineKey::two_sided(mat.is_two_sided());
                                     let pl = if let Some((pp, _)) = plug_r {
-                                        pp.hdr_opaque.get(range_key)
+                                        pp.hdr_opaque(range_key)
                                     } else {
                                         hdr_opaque.get(range_key)
                                     };
@@ -2352,14 +2351,14 @@ impl ViewportRenderer {
                                 cur_chunks = Some(chunks);
                             }
                             let culled = plugin_indirect
-                                .zip(plug_pipes.oit_cull.as_ref())
-                                .and_then(|(indirect_buf, cull_set)| {
+                                .filter(|_| plug_pipes.has_cull())
+                                .and_then(|indirect_buf| {
                                     resources
                                         .instanced_cull_colour_bind_group(cull0, mat_key)
-                                        .map(|bg| (indirect_buf, cull_set, bg))
+                                        .map(|bg| (indirect_buf, bg))
                                 });
-                            if let Some((indirect_buf, cull_set, cull_bg)) = culled {
-                                oit_pass.set_pipeline(cull_set.get(key));
+                            if let Some((indirect_buf, cull_bg)) = culled {
+                                oit_pass.set_pipeline(plug_pipes.oit_cull(key));
                                 oit_pass.set_bind_group(1, cull_bg, &[]);
                                 bind_material_group!(oit_pass, mat_bg);
                                 oit_pass.draw_indexed_indirect(
@@ -2372,7 +2371,7 @@ impl ViewportRenderer {
                                 else {
                                     continue;
                                 };
-                                oit_pass.set_pipeline(plug_pipes.oit.get(key));
+                                oit_pass.set_pipeline(plug_pipes.oit(key));
                                 oit_pass.set_bind_group(1, inst_tex_bg, &[]);
                                 bind_material_group!(oit_pass, mat_bg);
                                 let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
@@ -2452,7 +2451,7 @@ impl ViewportRenderer {
                                     let range_key = PipelineKey::two_sided(mat.is_two_sided());
                                     match self.resources.material_plugin_draw(mat.shading_plugin) {
                                         Some((pp, mat_bg)) => {
-                                            oit_pass.set_pipeline(pp.oit.get(range_key));
+                                            oit_pass.set_pipeline(pp.oit(range_key));
                                             bind_material_group!(oit_pass, mat_bg);
                                         }
                                         // Two-sided per-range material draws back
@@ -2488,7 +2487,7 @@ impl ViewportRenderer {
                                 .material_plugin_draw(item.material.shading_plugin)
                             {
                                 Some((pp, mat_bg)) => {
-                                    oit_pass.set_pipeline(pp.oit.get(item_key));
+                                    oit_pass.set_pipeline(pp.oit(item_key));
                                     bind_material_group!(oit_pass, mat_bg);
                                 }
                                 // Select the two-sided OIT pipeline for a
@@ -2550,7 +2549,7 @@ impl ViewportRenderer {
                                 let range_key = PipelineKey::two_sided(mat.is_two_sided());
                                 match self.resources.material_plugin_draw(mat.shading_plugin) {
                                     Some((pp, mat_bg)) => {
-                                        oit_pass.set_pipeline(pp.oit.get(range_key));
+                                        oit_pass.set_pipeline(pp.oit(range_key));
                                         bind_material_group!(oit_pass, mat_bg);
                                     }
                                     // Two-sided per-range material draws back
@@ -2586,7 +2585,7 @@ impl ViewportRenderer {
                             .material_plugin_draw(item.material.shading_plugin)
                         {
                             Some((pp, mat_bg)) => {
-                                oit_pass.set_pipeline(pp.oit.get(item_key));
+                                oit_pass.set_pipeline(pp.oit(item_key));
                                 bind_material_group!(oit_pass, mat_bg);
                             }
                             // Select the two-sided OIT pipeline for a non-`Cull`

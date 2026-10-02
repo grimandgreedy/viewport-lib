@@ -126,6 +126,26 @@ impl PipelineVariantSet {
         }
     }
 
+    /// Like [`build`](Self::build) for a family that varies on only some of
+    /// the key's axes: `axes` picks out what the family distinguishes, and
+    /// `build` runs once per distinct value. Keys that agree on it share the
+    /// one pipeline, so a family with two real variants compiles two.
+    pub fn build_distinct<K: PartialEq + Copy>(
+        axes: impl Fn(PipelineKey) -> K,
+        mut build: impl FnMut(K) -> crate::gpu::RenderPipeline,
+    ) -> Self {
+        let mut built: Vec<(K, crate::gpu::RenderPipeline)> = Vec::new();
+        Self::build(|key| {
+            let k = axes(key);
+            if let Some((_, pipeline)) = built.iter().find(|(seen, _)| *seen == k) {
+                return pipeline.clone();
+            }
+            let pipeline = build(k);
+            built.push((k, pipeline.clone()));
+            pipeline
+        })
+    }
+
     pub fn get(&self, key: PipelineKey) -> &crate::gpu::RenderPipeline {
         &self.variants[key.slot()]
     }

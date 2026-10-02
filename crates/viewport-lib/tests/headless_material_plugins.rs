@@ -94,11 +94,10 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
         "selecting the plugin must change the LDR output"
     );
 
-    // Drawing through the plugin lazily built its full pipeline set: 4 LDR +
-    // 4 HDR opaque (discarding + discard-free, each facedness) + 1 HDR
-    // transparent + 2 OIT accumulate.
+    // Drawing through the plugin built the one pipeline that draw selected,
+    // the back-face-culled LDR solid, and none of the other nine in the set.
     let stats = renderer.resources().material_plugin_stats();
-    assert_eq!(stats[0].pipelines_built, 11);
+    assert_eq!(stats[0].pipelines_built, 1);
 
     // Live params: raising the band count and ambient changes the image.
     let params = renderer
@@ -123,7 +122,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     // Variants share the plugin's pipeline set; only the variant count grows.
     let stats = renderer.resources().material_plugin_stats();
     assert_eq!(stats[0].variants, 2);
-    assert_eq!(stats[0].pipelines_built, 11);
+    assert_eq!(stats[0].pipelines_built, 1);
     item.material.shading_plugin = Some(variant_b);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let toon_variant_b = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
@@ -837,4 +836,118 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         one, two,
         "a vertex-attribute plugin must render the same at one or two items"
     );
+}
+
+/// A plugin's pipelines are built by the first draw that selects each one.
+/// Every route a plugin material can take has to find its pipeline that way,
+/// so each is drawn on a fresh renderer and compared with the same frame on a
+/// renderer whose whole set was built up front.
+#[test]
+fn a_plugin_draws_the_same_built_on_demand_as_built_up_front() {
+    struct Banded;
+    impl viewport_lib::MaterialPlugin for Banded {
+        fn name(&self) -> &'static str {
+            "banded_on_demand"
+        }
+        fn wgsl_body(&self) -> String {
+            "fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {\n\
+             \x20   let ndl = max(dot(surf.normal, light.l), 0.0);\n\
+             \x20   return surf.base_colour * ceil(ndl * 2.0) / 2.0 * light.radiance * light.shadow;\n\
+             }\n"
+            .to_string()
+        }
+    }
+
+    let Some((device, queue)) = headless_device_recommended_limits() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+
+    type Case = (
+        &'static str,
+        usize,
+        fn(&mut FrameData, &mut SceneRenderItem),
+    );
+    let cases: [Case; 7] = [
+        ("direct, one item", 1, |frame, _| {
+            frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        }),
+        ("direct, a batch", 3, |frame, _| {
+            frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        }),
+        ("hdr, one item", 1, |_, _| {}),
+        ("hdr, a batch", 3, |_, _| {}),
+        ("hdr, a transparent batch", 3, |_, item| {
+            item.settings.opacity = 0.5;
+        }),
+        ("hdr, one transparent item", 1, |_, item| {
+            item.settings.opacity = 0.5;
+        }),
+        ("hdr, a two-sided cutout batch", 3, |_, item| {
+            item.material.alpha_mode = viewport_lib::material::AlphaMode::Mask(0.5);
+            item.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+        }),
+    ];
+
+    for (name, count, configure) in cases {
+        let render = |warm: bool, with_plugin: bool| {
+            let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+            let mesh_id = renderer
+                .resources_mut()
+                .upload_mesh_data(&device, &box_mesh())
+                .unwrap();
+            let plugin = renderer
+                .resources_mut()
+                .register_material_plugin(&device, &Banded)
+                .expect("register material plugin");
+            if warm {
+                renderer
+                    .resources_mut()
+                    .warm_material_plugin_pipelines(&device, &[plugin]);
+            }
+            let mut frame = FrameData::default();
+            frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
+            frame.camera.viewport_size = [64.0, 64.0];
+            frame.viewport.show_grid = false;
+            frame.viewport.show_axes_indicator = false;
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = mesh_id;
+            configure(&mut frame, &mut item);
+            if with_plugin {
+                item.material.shading_plugin = Some(plugin);
+            }
+            let items: Vec<SceneRenderItem> = (0..count)
+                .map(|i| {
+                    let mut item = item.clone();
+                    item.model = glam::Mat4::from_translation(glam::Vec3::new(
+                        (i as f32 - (count - 1) as f32 * 0.5) * 1.5,
+                        0.0,
+                        0.0,
+                    ))
+                    .to_cols_array_2d();
+                    item
+                })
+                .collect();
+            frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+            // Two frames: an item joins a batch once its plugin's instanced
+            // set exists, which the first frame's prepare sees to.
+            let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+            renderer.render_offscreen(&device, &queue, &frame, 64, 64)
+        };
+        let on_demand = render(false, true);
+        let up_front = render(true, true);
+        let builtin = render(false, false);
+        assert!(
+            on_demand == up_front,
+            "{name}: the plugin drew differently when its pipelines were built on demand"
+        );
+        // A transparent batch draws the built-in shading whether or not the
+        // set was built up front, so it has nothing to tell apart here.
+        if !name.contains("transparent batch") {
+            assert!(
+                on_demand != builtin,
+                "{name}: the plugin drew the built-in shading"
+            );
+        }
+    }
 }

@@ -15,6 +15,64 @@ pub(crate) struct LdrMeshPipelines {
     pub wireframe: crate::gpu::RenderPipeline,
 }
 
+/// One LDR `mesh.wgsl` pipeline, drawing into the swapchain format.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn ldr_mesh_pipeline(
+    device: &crate::gpu::Device,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+    target_format: crate::gpu::TextureFormat,
+    sample_count: u32,
+    cache: Option<&crate::gpu::PipelineCache>,
+    label: &str,
+    cull: Option<crate::gpu::Face>,
+    blend: Option<crate::gpu::BlendState>,
+    topo: crate::gpu::PrimitiveTopology,
+    depth_write: bool,
+) -> crate::gpu::RenderPipeline {
+    let depth_stencil =
+        crate::resources::builders::scene_depth_stencil(true, crate::gpu::CompareFunction::Less);
+    crate::resources::builders::render_pipeline(
+        device,
+        crate::resources::builders::RenderPipelineDesc {
+            label,
+            layout,
+            vertex_module: shader,
+            vertex_entry: "vs_main",
+            vertex_buffers: &[Vertex::buffer_layout()],
+            fragment: Some(crate::gpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(crate::gpu::ColorTargetState {
+                    format: target_format,
+                    blend,
+                    write_mask: crate::gpu::ColorWrites::ALL,
+                })],
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: crate::gpu::PrimitiveState {
+                topology: topo,
+                strip_index_format: None,
+                front_face: crate::gpu::FrontFace::Ccw,
+                cull_mode: cull,
+                unclipped_depth: false,
+                polygon_mode: crate::gpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: Some(crate::gpu::DepthStencilState {
+                depth_write_enabled: crate::resources::builders::dwrite(depth_write),
+                ..depth_stencil
+            }),
+            multisample: crate::gpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            cache,
+        },
+    )
+}
+
 pub(crate) fn build_ldr_mesh_pipelines(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
@@ -23,52 +81,23 @@ pub(crate) fn build_ldr_mesh_pipelines(
     sample_count: u32,
     cache: Option<&crate::gpu::PipelineCache>,
 ) -> LdrMeshPipelines {
-    let depth_stencil =
-        crate::resources::builders::scene_depth_stencil(true, crate::gpu::CompareFunction::Less);
-
     let make = |label: &str,
                 cull: Option<crate::gpu::Face>,
                 blend: Option<crate::gpu::BlendState>,
                 topo: crate::gpu::PrimitiveTopology,
                 depth_write: bool| {
-        crate::resources::builders::render_pipeline(
+        ldr_mesh_pipeline(
             device,
-            crate::resources::builders::RenderPipelineDesc {
-                label,
-                layout,
-                vertex_module: shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[Vertex::buffer_layout()],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: topo,
-                    strip_index_format: None,
-                    front_face: crate::gpu::FrontFace::Ccw,
-                    cull_mode: cull,
-                    unclipped_depth: false,
-                    polygon_mode: crate::gpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(crate::gpu::DepthStencilState {
-                    depth_write_enabled: crate::resources::builders::dwrite(depth_write),
-                    ..depth_stencil.clone()
-                }),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache,
-            },
+            layout,
+            shader,
+            target_format,
+            sample_count,
+            cache,
+            label,
+            cull,
+            blend,
+            topo,
+            depth_write,
         )
     };
 
@@ -121,7 +150,8 @@ pub(crate) struct HdrMeshPipelines {
 }
 
 /// One HDR `mesh.wgsl` pipeline, drawing into the Rgba16Float intermediate.
-fn hdr_mesh_pipeline(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn hdr_mesh_pipeline(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
@@ -597,6 +627,56 @@ pub(crate) struct LdrInstancedMeshPipelines {
     pub transparent: crate::gpu::RenderPipeline,
 }
 
+/// One `mesh_instanced.wgsl` pipeline through `vs_main`, with the instance
+/// storage buffer at group 1.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn instanced_mesh_pipeline(
+    device: &crate::gpu::Device,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+    format: crate::gpu::TextureFormat,
+    sample_count: u32,
+    label: &str,
+    cull: Option<crate::gpu::Face>,
+    blend: Option<crate::gpu::BlendState>,
+    depth_write: bool,
+) -> crate::gpu::RenderPipeline {
+    crate::resources::builders::render_pipeline(
+        device,
+        crate::resources::builders::RenderPipelineDesc {
+            label,
+            layout,
+            vertex_module: shader,
+            vertex_entry: "vs_main",
+            vertex_buffers: &[Vertex::buffer_layout()],
+            fragment: Some(crate::gpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(crate::gpu::ColorTargetState {
+                    format,
+                    blend,
+                    write_mask: crate::gpu::ColorWrites::ALL,
+                })],
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: crate::gpu::PrimitiveState {
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: cull,
+                ..Default::default()
+            },
+            depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                depth_write,
+                crate::gpu::CompareFunction::Less,
+            )),
+            multisample: crate::gpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
+            cache: None,
+        },
+    )
+}
+
 pub(crate) fn build_ldr_instanced_mesh_pipelines(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
@@ -608,39 +688,16 @@ pub(crate) fn build_ldr_instanced_mesh_pipelines(
                 cull: Option<crate::gpu::Face>,
                 blend: Option<crate::gpu::BlendState>,
                 depth_write: bool| {
-        crate::resources::builders::render_pipeline(
+        instanced_mesh_pipeline(
             device,
-            crate::resources::builders::RenderPipelineDesc {
-                label,
-                layout,
-                vertex_module: shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[Vertex::buffer_layout()],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: cull,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    depth_write,
-                    crate::gpu::CompareFunction::Less,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                cache: None,
-            },
+            layout,
+            shader,
+            target_format,
+            sample_count,
+            label,
+            cull,
+            blend,
+            depth_write,
         )
     };
     LdrInstancedMeshPipelines {
@@ -795,39 +852,16 @@ pub(crate) fn build_instanced_solid_pipelines(
     label_two_sided: &str,
 ) -> (crate::gpu::RenderPipeline, crate::gpu::RenderPipeline) {
     let make = |label: &str, cull: Option<crate::gpu::Face>| {
-        crate::resources::builders::render_pipeline(
+        instanced_mesh_pipeline(
             device,
-            crate::resources::builders::RenderPipelineDesc {
-                label,
-                layout,
-                vertex_module: shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[Vertex::buffer_layout()],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: cull,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    true,
-                    crate::gpu::CompareFunction::Less,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                cache: None,
-            },
+            layout,
+            shader,
+            format,
+            sample_count,
+            label,
+            cull,
+            None,
+            true,
         )
     };
     (

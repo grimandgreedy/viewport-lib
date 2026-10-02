@@ -1360,16 +1360,16 @@ impl DeviceResources {
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
-        self.oit.pipeline = Some(crate::renderer::pipeline_key::PipelineVariantSet::build(
-            |key| {
-                crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
-                    device,
-                    &layout,
-                    &shader,
-                    key.two_sided,
-                )
-            },
-        ));
+        self.oit.pipeline = Some(
+            crate::renderer::pipeline_key::PipelineVariantSet::build_distinct(
+                |key| key.two_sided,
+                |two_sided| {
+                    crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
+                        device, &layout, &shader, two_sided,
+                    )
+                },
+            ),
+        );
     }
 
     /// The HDR mesh family: opaque (with its discard-free twin), transparent,
