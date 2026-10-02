@@ -1,12 +1,12 @@
 //! The screen-space decal item type as an [`ItemTypePlugin`]: textures
-//! projected onto opaque surfaces along a box, with a stencil mask that keeps
-//! them off surfaces which opted out. Consumers submit [`DecalItem`]s on
-//! `SceneFrame::decals`; the renderer routes that field to this plugin.
+//! projected onto opaque surfaces along a box. A decal reads the surface mask
+//! to stay off surfaces which opted out. Consumers submit [`DecalItem`]s with
+//! `SceneFrame::items_mut`.
 //!
-//! All four passes are encoded from [`ItemTypePlugin::encode`] at
+//! All three passes are encoded from [`ItemTypePlugin::encode`] at
 //! [`EncoderScope::OnOpaqueSurfaces`], in the order they have to run: the
-//! stencil exclude pass, the colour projection, then the outline mask and
-//! edge trace when a decal is selected.
+//! colour projection, then the outline mask and edge trace when a decal is
+//! selected.
 
 mod pipeline;
 pub(crate) mod types;
@@ -70,8 +70,6 @@ pub(crate) struct DecalPlugin {
     >,
     /// Resource epochs the cache was last validated against.
     deps_gate: crate::resources::resource_deps::ResourceGate,
-    /// This frame's stencil-exclude draws, one per surface that opted out.
-    exclude_draws: Vec<pipeline::DecalExcludeGpuItem>,
     /// Items retained from `prepare` for the out-of-band CPU pick answers.
     pick_items: Vec<DecalItem>,
     /// Cache hit / miss counts for this frame, read back into `FrameStats`.
@@ -91,7 +89,6 @@ impl DecalPlugin {
             draws: Vec::new(),
             cache: std::collections::HashMap::new(),
             deps_gate: crate::resources::resource_deps::ResourceGate::default(),
-            exclude_draws: Vec::new(),
             pick_items: Vec::new(),
             stats,
             outline_targets: std::sync::Mutex::new(None),
@@ -107,9 +104,8 @@ impl ItemTypePlugin for DecalPlugin {
     /// Build the projection pipelines at registration rather than on the first
     /// frame that submits a decal. Decals tend to appear mid-session (impact
     /// marks, scorches), so a lazy build would stall that frame by the compile
-    /// cost (~8 ms measured on a desktop GPU). The exclude and outline
-    /// pipelines stay lazy: they are only needed by scenes that opt a surface
-    /// out or select a decal.
+    /// cost (~8 ms measured on a desktop GPU). The outline pipelines stay
+    /// lazy: they are only needed by scenes that select a decal.
     fn init_gpu(
         &mut self,
         device: &crate::gpu::Device,
@@ -230,19 +226,6 @@ impl ItemTypePlugin for DecalPlugin {
             std::sync::atomic::Ordering::Relaxed,
         );
 
-        // The surfaces that opted out of decal projection. `receives_decals`
-        // lives on mesh items, so the lib resolves it and hands the result
-        // over; turning it into stencil draws is this type's business.
-        self.exclude_draws.clear();
-        if !ctx.decal_excluded_surfaces.is_empty() {
-            self.gpu
-                .ensure_exclude_pipeline(device, res.shared_bindings().group0_layout);
-            for &(mesh_id, model) in ctx.decal_excluded_surfaces {
-                self.exclude_draws
-                    .push(self.gpu.upload_exclude_item(device, mesh_id, model));
-            }
-        }
-
         // The outline pipelines are cheap to hold and the outline pass runs
         // from a shared borrow, so build them here the first frame a decal is
         // selected rather than inside `encode`.
@@ -252,6 +235,16 @@ impl ItemTypePlugin for DecalPlugin {
         }
 
         Vec::new()
+    }
+
+    fn surface_mask_readers(&self, items: &ItemCollections<'_>, out: &mut Vec<u32>) {
+        let drawn = items
+            .of::<DecalItem>()
+            .iter()
+            .any(|d| !d.settings.hidden && d.settings.opacity > 0.0);
+        if drawn {
+            out.push(pipeline::DECAL_SURFACE_MASK);
+        }
     }
 
     fn encoder_scopes(&self) -> &[EncoderScope] {
@@ -267,20 +260,19 @@ impl ItemTypePlugin for DecalPlugin {
         ctx: &EncoderScopeContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        if self.draws.is_empty() && self.exclude_draws.is_empty() {
+        if self.draws.is_empty() {
             return;
         }
 
         // Group 1 of both the colour and outline-mask passes: the depth aspect
-        // to reconstruct the receiving surface, and the stencil aspect to skip
-        // the surfaces the exclude pass marked. Rebuilt per frame because the
+        // to reconstruct the receiving surface, and the stencil aspect, which
+        // holds the surface mask. Rebuilt per frame because the
         // HDR attachments can be reallocated at the same size, which would
         // leave a cached bind group pointing at a dead view.
         let depth_bg =
             self.gpu
                 .create_depth_bg(ctx.device, ctx.scene_depth_only, ctx.scene_stencil_only);
 
-        self.encode_exclude(encoder, ctx);
         self.encode_colour(encoder, ctx, &depth_bg);
         self.encode_outline(encoder, ctx, &depth_bg);
     }
@@ -409,47 +401,6 @@ impl ItemTypePlugin for DecalPlugin {
 }
 
 impl DecalPlugin {
-    /// Stamp stencil = 0 on the surfaces that opted out, so the colour pass
-    /// skips those pixels. Depth-only pass, no colour attachment.
-    fn encode_exclude(
-        &self,
-        encoder: &mut crate::gpu::CommandEncoder,
-        ctx: &EncoderScopeContext<'_>,
-    ) {
-        if self.exclude_draws.is_empty() {
-            return;
-        }
-        let Some(exclude_pl) = self.gpu.exclude_pipeline.as_ref() else {
-            return;
-        };
-        let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-            #[cfg(any(wgpu29, wgpu30))]
-            multiview_mask: None,
-            label: Some("decal_exclude_pass"),
-            color_attachments: &[],
-            depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
-                view: ctx.scene_depth,
-                depth_ops: Some(crate::gpu::Operations {
-                    load: crate::gpu::LoadOp::Load,
-                    store: crate::gpu::StoreOp::Store,
-                }),
-                stencil_ops: Some(crate::gpu::Operations {
-                    load: crate::gpu::LoadOp::Load,
-                    store: crate::gpu::StoreOp::Store,
-                }),
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-        pass.set_pipeline(exclude_pl);
-        pass.set_stencil_reference(0);
-        pass.set_bind_group(0, ctx.camera_bind_group, &[]);
-        for item in &self.exclude_draws {
-            pass.set_bind_group(1, &item.bind_group, &[]);
-            ctx.meshes.draw_indexed(&mut pass, item.mesh_id);
-        }
-    }
-
     /// Project each decal texture onto opaque surfaces. Reads scene depth as a
     /// texture, so the pass has no depth attachment of its own.
     fn encode_colour(

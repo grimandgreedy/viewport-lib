@@ -4,6 +4,8 @@
 
 ### Added
 
+- **`ItemTypePlugin::surface_mask`: a per-pixel layer mask screen-space effects can read** - a new pass stamps each opaque pixel's layers into the scene stencil, and an item type takes part by drawing its items from `surface_mask` with a pipeline from `build_surface_mask_pipeline`. A type that reads the mask names its masks in `surface_mask_readers`; the pass only runs when something reads it and some item needs a stamp. Decals read it in place of their own exclude pass, so nothing changes for a consumer.
+
 - **`snap_query_begin` / `snap_query_poll`: non-blocking snap query** - `snap_query` is split into a submit and a poll the way `pick_object_begin` / `pick_object_poll` are, so the nearest-feature pick works on the web, where nothing can block on the GPU. `SnapHit` and `SnapPoll` are now exported from the crate root.
 
 - **`blit_composite`: draw a viewport over what is already in a render pass** - `create_blit_composite` prepares a source the same way `create_blit` does but compiles a premultiplied-blend pipeline pair, and `blit_composite` / `blit_composite_with_depth` draw with it. `blit` has no blend state and replaces its destination, which is what upscaling a frame into a surface wants and no use for drawing one viewport inside another. `PaintCtxV2::blit_composite_rect` is the runner-side wrapper. The pipelines are built by `create_blit_composite`, so a consumer that only ever blits pays nothing. New `viewport-in-viewport` winit example: three embedded viewports whose background opacity sweeps between 0 and 1 while they drift over the parent's scene.

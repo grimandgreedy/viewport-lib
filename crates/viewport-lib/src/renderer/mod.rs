@@ -44,6 +44,7 @@ mod point_shadow_pool;
 mod prepare;
 mod render;
 mod submit;
+mod surface_mask;
 pub use submit::SubmitSink;
 pub mod shader_hashes;
 mod shadow_debug_stats;
@@ -383,10 +384,9 @@ pub struct ViewportRenderer {
     /// reused`. Shared with the decal item type, which is where the cache
     /// lives; the renderer only reads it back into `FrameStats`.
     decal_cache_stats: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    /// Opaque surfaces that opted out of decal projection, resolved at the top
-    /// of prepare() and handed to item-type plugins on their frame context.
-    /// `receives_decals` lives on mesh items, which no plugin can see.
-    decal_excluded_surfaces: Vec<(crate::MeshId, [[f32; 4]; 4])>,
+    /// Which items need stamping into the surface mask this frame, and the
+    /// mesh family's pipeline and buffer for doing it.
+    surface_mask: surface_mask::SurfaceMaskState,
     /// Per-frame mesh-instance batches, rebuilt in prepare(), consumed in paint().
     mesh_instance_gpu_data: Vec<crate::resources::MeshInstanceGpuData>,
     /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
@@ -935,7 +935,7 @@ impl ViewportRenderer {
             mesh_instance_gpu_data: Vec::new(),
             lic_gpu_data: Vec::new(),
             decal_cache_stats: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            decal_excluded_surfaces: Vec::new(),
+            surface_mask: surface_mask::SurfaceMaskState::new(),
             label_gpu_data: None,
             overlay_shape_gpu_data: None,
             overlay_text_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_label_vbuf"),
@@ -2047,6 +2047,7 @@ impl ViewportRenderer {
         // written; the call is a no-op after the first frame.
         self.resources.ensure_colourmaps_initialized(device, queue);
         self.plugin_frame_index = self.plugin_frame_index.wrapping_add(1);
+        self.collect_surface_mask(device, queue, frame);
         let mut bufs: Vec<crate::gpu::CommandBuffer> = Vec::new();
         let mut timings: Vec<(&'static str, f32)> = Vec::new();
         for (name, plugin) in self.item_type_plugins.iter_mut() {
@@ -2070,7 +2071,6 @@ impl ViewportRenderer {
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                     clip_objects: &frame.effects.clip.objects,
                     quality_reduced: self.degradation_volume_quality_reduced,
-                    decal_excluded_surfaces: &self.decal_excluded_surfaces,
                     collections: crate::renderer::item_plugins::plugin_collections_slice(
                         frame, name,
                     ),
@@ -2128,7 +2128,6 @@ impl ViewportRenderer {
                 sub_selection: frame.interaction.sub_selection.as_ref(),
                 clip_objects: &frame.effects.clip.objects,
                 quality_reduced: self.degradation_volume_quality_reduced,
-                decal_excluded_surfaces: &self.decal_excluded_surfaces,
                 collections: crate::renderer::item_plugins::plugin_collections_slice(frame, name),
             };
             polylines.extend(plugin.wireframe_polylines(&items, &ctx));
@@ -2514,7 +2513,6 @@ impl ViewportRenderer {
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                     clip_objects: &frame.effects.clip.objects,
                     quality_reduced: self.degradation_volume_quality_reduced,
-                    decal_excluded_surfaces: &self.decal_excluded_surfaces,
                     collections: crate::renderer::item_plugins::plugin_collections_slice(
                         frame, name,
                     ),

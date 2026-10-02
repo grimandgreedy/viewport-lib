@@ -45,8 +45,8 @@ struct ShadowAtlas {
 
 // Scene depth written by the opaque pass (depth-only aspect, Depth24PlusStencil8).
 @group(1) @binding(0) var scene_depth:   texture_depth_2d;
-// Scene stencil written by the opaque pass (stencil-only aspect, Depth24PlusStencil8).
-// Value 1 = receives decals, 0 = excluded.
+// Scene stencil (stencil-only aspect, Depth24PlusStencil8). Holds the surface
+// mask: the layers of the item that owns each pixel.
 @group(1) @binding(1) var scene_stencil: texture_2d<u32>;
 
 struct DecalUniform {
@@ -73,7 +73,7 @@ struct DecalUniform {
     // Projection mode.
     projection:            u32,   // 0 = Planar, 1 = TriPlanar
     tri_blend_sharpness:   f32,
-    _pad2:                 u32,
+    surface_mask:          u32,   // lands where this shares a bit with the surface mask
     _pad3:                 u32,
 };
 
@@ -120,9 +120,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let pix   = vec2<i32>(i32(in.clip_pos.x), i32(in.clip_pos.y));
     let depth = textureLoad(scene_depth, pix, 0);
 
-    // Stencil 0 means this surface is marked non-receiver -- skip it.
+    // The surface under this pixel shares no layer with the decal: skip it.
     let stencil = textureLoad(scene_stencil, pix, 0).r;
-    if stencil == 0u { discard; }
+    if (stencil & u.surface_mask) == 0u { discard; }
 
     // depth == 1.0 means background -- no surface.
     if depth >= 1.0 {

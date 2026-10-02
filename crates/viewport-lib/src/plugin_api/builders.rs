@@ -19,7 +19,7 @@ pub use crate::resources::builders::{
     wgsl_module, write_mapped,
 };
 pub use crate::resources::builders::{
-    DualPipelineDesc, build_dual_pipeline, build_fullscreen_pipeline,
+    DualPipelineDesc, build_dual_pipeline, build_fullscreen_pipeline, build_surface_mask_pipeline,
 };
 
 pub use crate::resources::device_resources::DualPipeline;

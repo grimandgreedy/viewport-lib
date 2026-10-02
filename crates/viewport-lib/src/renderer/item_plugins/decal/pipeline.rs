@@ -1,9 +1,7 @@
-//! Screen-space decal pipeline: the projection pass, its normal mapping, and
-//! the stencil pass that marks surfaces the decals must not land on.
+//! Screen-space decal pipeline: the projection pass and its normal mapping.
 
 use crate::gpu::util::DeviceExt as _;
 use crate::resources::DeviceResources;
-use crate::resources::mesh::mesh_store::MeshId;
 
 // ---------------------------------------------------------------------------
 // GPU-internal types
@@ -88,9 +86,10 @@ pub(crate) struct DecalUniformRaw {
     // Projection mode.
     pub projection: u32,          //  4  (0 = Planar, 1 = TriPlanar)
     pub tri_blend_sharpness: f32, //  4
-    pub _pad2: u32,               //  4  (pad to 144-byte struct size)
-    pub _pad3: u32,               //  4
-                                  // total: 144 bytes
+    // The decal lands where this shares a bit with the surface mask.
+    pub surface_mask: u32, //  4
+    pub _pad3: u32,        //  4
+                           // total: 144 bytes
 }
 
 /// Per-draw GPU data for one [`DecalItem`](crate::renderer::DecalItem).
@@ -133,12 +132,9 @@ pub(crate) struct DecalProxyUniform {
     pub _pad: [u32; 3],
 }
 
-/// Per-draw GPU data for one non-receiver surface in the decal exclude pass.
-pub(crate) struct DecalExcludeGpuItem {
-    pub mesh_id: MeshId,
-    pub _uniform_buf: crate::gpu::Buffer,
-    pub bind_group: crate::gpu::BindGroup,
-}
+/// The mask every decal tests the surface mask against: it lands on any
+/// surface that is a member of some layer.
+pub(crate) const DECAL_SURFACE_MASK: u32 = crate::plugin_api::SURFACE_MASK_DEFAULT;
 
 /// Build the flat uniform for a decal. Pure: no GPU access, so it can also feed
 /// the content hash used to cache GPU resources across frames.
@@ -204,7 +200,7 @@ pub(crate) fn decal_uniform_raw(
         ambient: item.ambient.max(0.0),
         projection: projection_u32,
         tri_blend_sharpness,
-        _pad2: 0,
+        surface_mask: DECAL_SURFACE_MASK,
         _pad3: 0,
     }
 }
@@ -252,8 +248,7 @@ pub(crate) fn hash_decal_item(
 /// Screen-space decal pipelines and their bind group layouts.
 ///
 /// All fields are lazily built: the render pipelines and item BGL by
-/// `ensure_decal_pipeline`, the exclude pipeline by `ensure_decal_exclude_pipeline`,
-/// and `depth_bgl` / `sampler` by `ensure_hdr_pipelines`.
+/// `ensure_pipeline`, and `depth_bgl` / `sampler` by `ensure_shared`.
 #[derive(Default)]
 pub(crate) struct DecalGpu {
     /// Replace-blend decal pipeline (LDR + HDR). None until first decal is submitted.
@@ -268,10 +263,6 @@ pub(crate) struct DecalGpu {
     pub(crate) item_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Linear-clamp sampler used by the decal fragment shader.
     pub(crate) sampler: Option<crate::gpu::Sampler>,
-    /// Pipeline that writes stencil = 0 for non-receiver surfaces.
-    pub(crate) exclude_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// BGL for group 1 of the decal exclude pass: one model matrix uniform buffer.
-    pub(crate) exclude_obj_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Pipeline that stamps a selected decal's footprint into the R8 outline
     /// mask. Reuses the decal colour pass's bind groups (camera, depth+stencil,
     /// per-decal uniform). None until first selected decal is submitted.
@@ -864,146 +855,6 @@ impl DecalGpu {
         self.pick_bgl = Some(bgl);
         self.pick_pipeline = Some(pipeline);
         self.pick_cube = Some((vbuf, ibuf));
-    }
-
-    /// Lazily create the decal exclude pipeline and its object BGL.
-    ///
-    /// No-op if already created. Must be called after `camera_bind_group_layout` exists.
-    pub(crate) fn ensure_exclude_pipeline(
-        &mut self,
-        device: &crate::gpu::Device,
-        camera_bgl: &crate::gpu::BindGroupLayout,
-    ) {
-        if self.exclude_pipeline.is_some() {
-            return;
-        }
-
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "decal_exclude_shader",
-            crate::resources::builders::wgsl_source!("decal_exclude"),
-        );
-
-        let obj_bgl = crate::resources::builders::uniform_bgl(
-            device,
-            "decal_exclude_obj_bgl",
-            crate::gpu::ShaderStages::VERTEX,
-        );
-
-        let layout = crate::resources::builders::standard_scene_layout(
-            device,
-            "decal_exclude_pipeline_layout",
-            camera_bgl,
-            &obj_bgl,
-        );
-
-        // Vertex layout: position only (location 0, Float32x3).
-        // Stride matches the full Vertex struct (64 bytes) but we only read pos.
-        let vertex_layout = crate::gpu::VertexBufferLayout {
-            array_stride: 64,
-            step_mode: crate::gpu::VertexStepMode::Vertex,
-            attributes: &[crate::gpu::VertexAttribute {
-                format: crate::gpu::VertexFormat::Float32x3,
-                offset: 0,
-                shader_location: 0,
-            }],
-        };
-
-        let pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "decal_exclude_pipeline",
-                layout: &layout,
-                vertex_module: &shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[vertex_layout],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::gpu::DepthStencilState {
-                    format: crate::gpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: crate::resources::builders::dwrite(false),
-                    depth_compare: crate::resources::builders::dcompare(
-                        crate::gpu::CompareFunction::LessEqual,
-                    ),
-                    stencil: crate::gpu::StencilState {
-                        front: crate::gpu::StencilFaceState {
-                            compare: crate::gpu::CompareFunction::Always,
-                            fail_op: crate::gpu::StencilOperation::Keep,
-                            depth_fail_op: crate::gpu::StencilOperation::Keep,
-                            pass_op: crate::gpu::StencilOperation::Replace,
-                        },
-                        back: crate::gpu::StencilFaceState {
-                            compare: crate::gpu::CompareFunction::Always,
-                            fail_op: crate::gpu::StencilOperation::Keep,
-                            depth_fail_op: crate::gpu::StencilOperation::Keep,
-                            pass_op: crate::gpu::StencilOperation::Replace,
-                        },
-                        read_mask: 0xff,
-                        write_mask: 0xff,
-                    },
-                    // Slight negative bias so the re-projected geometry reliably passes
-                    // the LessEqual depth test against values written by the opaque pass.
-                    // Without this, floating-point rounding differences between two
-                    // separate render passes of the same geometry can cause the depth
-                    // test to fail intermittently, leaving stencil un-written.
-                    bias: crate::gpu::DepthBiasState {
-                        constant: -2,
-                        slope_scale: 0.0,
-                        clamp: 0.0,
-                    },
-                }),
-                multisample: crate::gpu::MultisampleState::default(),
-                cache: None,
-            },
-        );
-
-        self.exclude_obj_bgl = Some(obj_bgl);
-        self.exclude_pipeline = Some(pipeline);
-    }
-
-    /// Upload one non-receiver surface for the decal exclude pass and return per-draw data.
-    ///
-    /// Panics if called before `ensure_decal_exclude_pipeline`.
-    pub(crate) fn upload_exclude_item(
-        &self,
-        device: &crate::gpu::Device,
-        mesh_id: MeshId,
-        model: [[f32; 4]; 4],
-    ) -> DecalExcludeGpuItem {
-        let uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-            label: Some("decal_exclude_uniform_buf"),
-            contents: bytemuck::cast_slice(&model),
-            usage: crate::gpu::BufferUsages::UNIFORM,
-        });
-
-        let bgl = self
-            .exclude_obj_bgl
-            .as_ref()
-            .expect("ensure_decal_exclude_pipeline not called");
-
-        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("decal_exclude_obj_bg"),
-            layout: bgl,
-            entries: &[crate::gpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buf.as_entire_binding(),
-            }],
-        });
-
-        DecalExcludeGpuItem {
-            mesh_id,
-            _uniform_buf: uniform_buf,
-            bind_group,
-        }
     }
 }
 

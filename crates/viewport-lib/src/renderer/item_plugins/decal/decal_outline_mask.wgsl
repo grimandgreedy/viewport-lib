@@ -46,7 +46,7 @@ struct DecalUniform {
     _pad:                  u32,
     projection:            u32,
     tri_blend_sharpness:   f32,
-    _pad2:                 u32,
+    surface_mask:          u32,   // lands where this shares a bit with the surface mask
     _pad3:                 u32,
 };
 
@@ -83,7 +83,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let depth = textureLoad(scene_depth, pix, 0);
 
     let stencil = textureLoad(scene_stencil, pix, 0).r;
-    if stencil == 0u { discard; }
+    if (stencil & u.surface_mask) == 0u { discard; }
 
     if depth >= 1.0 {
         discard;

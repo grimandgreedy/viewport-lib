@@ -1049,20 +1049,6 @@ impl ViewportRenderer {
         let prepare_start = web_time::Instant::now();
         self.prepare_breakdown = crate::renderer::stats::PrepareBreakdown::default();
 
-        // Resolve which surfaces opted out of decal projection before any
-        // plugin prepare runs: the flag lives on mesh items, so a projection
-        // item type can only get it from here.
-        self.decal_excluded_surfaces.clear();
-        {
-            let crate::SurfaceSubmission::Flat(ref surfaces) = frame.scene.surfaces;
-            self.decal_excluded_surfaces.extend(
-                surfaces
-                    .iter()
-                    .filter(|item| !item.receives_decals && !item.settings.hidden)
-                    .map(|item| (item.mesh_id, item.model)),
-            );
-        }
-
         let plugin_start = web_time::Instant::now();
 
         // Dispatch item-type plugin prepare work first so any GPU outputs
