@@ -20,8 +20,9 @@
 //! Slot convention read by the built-in instanced shading:
 //! - slots 0..3 (`data[0..3]`): added to the material's emissive (nits). Zero is
 //!   a no-op, so leaving custom data unset changes nothing.
-//! - slots 3..8: reserved as a raw channel for material plugins to consume. The
-//!   built-in shading does not read them.
+//! - slot 3: padding, not read.
+//! - slots 4..8: a raw channel for material plugins, handed to the plugin hook
+//!   as `surf.attr`. The built-in shading does not read them.
 
 use std::collections::HashMap;
 

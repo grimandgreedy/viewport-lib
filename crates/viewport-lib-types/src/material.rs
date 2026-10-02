@@ -60,10 +60,11 @@ pub struct ItemSettings {
     /// shared across a batch) and of the per-instance `colour` tint.
     ///
     /// Built-in mesh shading reads slots `0..3` as an emissive addition in nits
-    /// (zero is a no-op, so unset custom data changes nothing); slots `3..8` are
-    /// a raw channel reserved for material plugins to interpret. Honoured on the
-    /// scene-graph instanced mesh path; item types that do not sample it treat it
-    /// as a no-op.
+    /// (zero is a no-op, so unset custom data changes nothing). Slot `3` is
+    /// padding and is not read. Slots `4..8` are a raw channel for material
+    /// plugins to interpret, handed to the plugin hook as `surf.attr`. Honoured
+    /// on the scene-graph instanced mesh path; item types that do not sample it
+    /// treat it as a no-op.
     pub custom_data: [f32; 8],
     /// Layer membership for this item, as a 32-bit mask. Default `!0` (member
     /// of every layer). Two things read it, both AND-tests against another
