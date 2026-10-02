@@ -72,6 +72,9 @@ pub struct AppConfig {
     /// When the runner schedules the next frame. Default:
     /// [`RedrawMode::Continuous`].
     pub redraw_mode: RedrawMode,
+    /// File the runner keeps the GPU pipeline cache in. Default: `None`, no
+    /// cache. See [`with_pipeline_cache`](Self::with_pipeline_cache).
+    pub pipeline_cache_path: Option<std::path::PathBuf>,
 }
 
 impl Default for AppConfig {
@@ -82,6 +85,7 @@ impl Default for AppConfig {
             height: 720,
             present_mode: crate::gpu::PresentMode::AutoVsync,
             redraw_mode: RedrawMode::Continuous,
+            pipeline_cache_path: None,
         }
     }
 }
@@ -97,6 +101,20 @@ impl AppConfig {
     pub fn with_window_size(mut self, width: u32, height: u32) -> Self {
         self.width = width;
         self.height = height;
+        self
+    }
+
+    /// Keep the GPU pipeline cache in `path` between runs.
+    ///
+    /// The runner loads the file before it builds the renderer and writes it
+    /// back after the first frame and again on exit, so a later launch skips
+    /// the shader compilation the first one paid for. It only has an effect on
+    /// a backend with a pipeline cache (Vulkan); elsewhere nothing is read or
+    /// written. The file is specific to the GPU and driver, and data that no
+    /// longer matches is discarded, so a per-user cache directory is the place
+    /// for it.
+    pub fn with_pipeline_cache(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.pipeline_cache_path = Some(path.into());
         self
     }
 
@@ -568,7 +586,9 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
         surface.configure(&device, &surface_config);
         marks.mark("surface_configure");
 
-        let mut session = ViewportInstance::new(&device, format);
+        let cache_data = super::load_pipeline_cache(self.config.pipeline_cache_path.as_deref());
+        let mut session =
+            ViewportInstance::new_with_pipeline_cache(&device, format, cache_data.as_deref());
         marks.mark("renderer");
         if let Some(setup) = self.setup.take() {
             setup(&mut session, &device);
@@ -605,6 +625,15 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
             hovered,
             startup_marks: Some(marks),
         });
+    }
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let (Some(path), Some(state)) = (
+            self.config.pipeline_cache_path.as_deref(),
+            self.state.as_ref(),
+        ) {
+            super::save_pipeline_cache(path, &state.session);
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -758,6 +787,13 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                         crate::gpu::present(&state.queue, frame);
                         if let Some(marks) = state.startup_marks.take() {
                             marks.finish("first_frame");
+                            // The first frame has compiled most of what the
+                            // session will use, so save now as well as on
+                            // exit: a process that is killed still leaves a
+                            // cache behind.
+                            if let Some(path) = self.config.pipeline_cache_path.as_deref() {
+                                super::save_pipeline_cache(path, &state.session);
+                            }
                         }
                     }
                     crate::gpu::SurfaceFrame::Recreate => {

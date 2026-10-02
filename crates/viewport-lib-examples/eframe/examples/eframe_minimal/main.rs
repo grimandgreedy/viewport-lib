@@ -35,8 +35,16 @@ fn main() -> eframe::Result {
             // Render into the sRGB variant of egui's surface format so the
             // renderer's linear tonemap output gets the linear->sRGB encode; the
             // offscreen target (below) carries the matching dual-view wiring.
-            let mut session =
-                ViewportInstance::new(&rs.device, OffscreenViewportTarget::render_format(rs.target_format));
+            //
+            // Seeded with the pipeline cache the last run saved, so its shader
+            // compilation is not paid again. The data is only used on a device
+            // with a pipeline cache, and anything stale is discarded.
+            let cache = std::fs::read(pipeline_cache_path()).ok();
+            let mut session = ViewportInstance::new_with_pipeline_cache(
+                &rs.device,
+                OffscreenViewportTarget::render_format(rs.target_format),
+                cache.as_deref(),
+            );
 
             let sphere = session
                 .resources_mut()
@@ -74,6 +82,7 @@ fn main() -> eframe::Result {
                 orbit: OrbitCameraController::new_stateless(),
                 cube_id,
                 target: None,
+                cache_saved: false,
             }))
         }),
     )
@@ -90,6 +99,14 @@ struct App {
     orbit: OrbitCameraController,
     cube_id: NodeId,
     target: Option<Target>,
+    /// Whether this run has written its pipeline cache back yet.
+    cache_saved: bool,
+}
+
+/// Where the example keeps its pipeline cache. An application would use its
+/// per-user cache directory.
+fn pipeline_cache_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("viewport-lib-eframe-minimal.pipeline_cache")
 }
 
 // eframe 0.35 replaced `App::update(&Context, ..)` with `App::ui(&mut Ui, ..)`,
@@ -180,6 +197,14 @@ impl App {
                     .session
                     .render(&rs.device, &rs.queue, target.inner.render_view());
                 rs.queue.submit(std::iter::once(cmd));
+                // The first frame has compiled what this scene draws with, so
+                // this is the point to write the pipeline cache back.
+                if !self.cache_saved {
+                    self.cache_saved = true;
+                    if let Some(data) = self.session.pipeline_cache_data() {
+                        let _ = std::fs::write(pipeline_cache_path(), data);
+                    }
+                }
                 ui.painter().image(
                     target.id,
                     rect,

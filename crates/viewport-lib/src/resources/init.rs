@@ -60,16 +60,25 @@ impl DeviceResources {
             .features()
             .contains(crate::gpu::Features::PIPELINE_CACHE)
         {
-            Some(unsafe {
-                device.create_pipeline_cache(&crate::gpu::PipelineCacheDescriptor {
-                    label: Some("viewport_pipeline_cache"),
-                    data: pipeline_cache_data,
-                    fallback: true,
-                })
-            })
+            // One cache per device, shared by every renderer on it and found
+            // by every pipeline build through the registry. A second renderer
+            // on the device joins the existing cache and its data is ignored.
+            Some(crate::resources::builders::device_pipeline_cache::acquire(
+                device,
+                || unsafe {
+                    device.create_pipeline_cache(&crate::gpu::PipelineCacheDescriptor {
+                        label: Some("viewport_pipeline_cache"),
+                        data: pipeline_cache_data,
+                        fallback: true,
+                    })
+                },
+            ))
         } else {
             None
         };
+        let pipeline_cache_lease = pipeline_cache
+            .as_ref()
+            .map(|_| crate::resources::builders::device_pipeline_cache::Lease(device.clone()));
 
         // Cold-start instrumentation. Pipeline compilation and large depth-texture
         // allocation can dominate construction on some backends (notably Adreno
@@ -1991,6 +2000,7 @@ impl DeviceResources {
             force_debug_vis_shaders: false,
             mesh_pipelines_dirty: false,
             pipeline_cache,
+            pipeline_cache_lease,
             shader_modules: Default::default(),
             scene: crate::resources::scene_pipelines::SceneCorePipelines {
                 solid: None,

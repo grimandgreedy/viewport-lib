@@ -442,11 +442,17 @@ pub struct DeviceResources {
     /// `flush_mesh_pipeline_rebuild`, which prepare runs at the start of
     /// every frame.
     pub(crate) mesh_pipelines_dirty: bool,
-    /// Optional pipeline cache shared by every pipeline built here. `Some` only
+    /// The device's pipeline cache, which every pipeline built on the device is
+    /// created against, the renderer's own and any plugin's. `Some` only
     /// when the device enables `Features::PIPELINE_CACHE`. Persist its contents
     /// across runs with `ViewportRenderer::pipeline_cache_data` to skip shader
     /// recompilation on later launches.
     pub(crate) pipeline_cache: Option<crate::gpu::PipelineCache>,
+    /// This renderer's claim on the device's registered pipeline cache,
+    /// released when the renderer is dropped.
+    #[allow(dead_code)]
+    pub(crate) pipeline_cache_lease:
+        Option<crate::resources::builders::device_pipeline_cache::Lease>,
     /// Shader modules shared between the pipeline families compiled from the
     /// same source, keyed by the source text. The LDR and HDR mesh families
     /// compile one `mesh.wgsl`, and the LDR, HDR and culled instanced families

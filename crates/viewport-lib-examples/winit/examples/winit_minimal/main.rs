@@ -20,7 +20,13 @@ fn main() {
     ViewportApp::new(
         AppConfig::default()
             .with_title("viewport-lib : minimal")
-            .with_window_size(1280, 720),
+            .with_window_size(1280, 720)
+            // Keep compiled pipelines between runs, so a second launch skips
+            // the shader compilation of the first. An application would put
+            // this in its per-user cache directory.
+            .with_pipeline_cache(
+                std::env::temp_dir().join("viewport-lib-winit-minimal.pipeline_cache"),
+            ),
     )
     .setup(move |session, device| {
         // Upload the meshes once, with the device in hand.

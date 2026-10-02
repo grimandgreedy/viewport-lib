@@ -664,7 +664,8 @@ pub fn build_outline_mask_pipeline(
 
 /// Create a compute pipeline. Every compute pipeline in the crate has the same
 /// shape: a shader, its layout, and an entry point, with default compilation
-/// options and no cache. This is the one place the crate calls
+/// options, created against the device's pipeline cache when it has one (see
+/// [`device_pipeline_cache`]). This is the one place the crate calls
 /// `create_compute_pipeline`, so a wgpu upgrade only has to be audited here.
 pub fn compute_pipeline(
     device: &crate::gpu::Device,
@@ -674,13 +675,14 @@ pub fn compute_pipeline(
     entry: &str,
 ) -> crate::gpu::ComputePipeline {
     let build_start = web_time::Instant::now();
+    let cache = device_pipeline_cache::get(device);
     let pipeline = device.create_compute_pipeline(&crate::gpu::ComputePipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
         module: shader,
         entry_point: Some(entry),
         compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-        cache: None,
+        cache: cache.as_ref(),
     });
     if build_log::enabled() {
         build_log::record(
@@ -759,7 +761,9 @@ pub struct RenderPipelineDesc<'a> {
     pub depth_stencil: Option<crate::gpu::DepthStencilState>,
     /// Multisample (MSAA) state.
     pub multisample: crate::gpu::MultisampleState,
-    /// Optional pipeline cache to speed up creation.
+    /// Pipeline cache to create against. `None` uses the cache the renderer
+    /// registered for the device, when the device has one, so a site does not
+    /// have to name it.
     pub cache: Option<&'a crate::gpu::PipelineCache>,
 }
 
@@ -789,6 +793,11 @@ pub fn render_pipeline(
     };
     let build_start = web_time::Instant::now();
     let build_label = desc.label;
+    let device_cache = match desc.cache {
+        Some(_) => None,
+        None => device_pipeline_cache::get(device),
+    };
+    let cache = desc.cache.or(device_cache.as_ref());
     let pipeline = device.create_render_pipeline(&crate::gpu::RenderPipelineDescriptor {
         label: Some(desc.label),
         layout: Some(desc.layout),
@@ -802,10 +811,151 @@ pub fn render_pipeline(
         multiview: None,
         #[cfg(any(wgpu29, wgpu30))]
         multiview_mask: None,
-        cache: desc.cache,
+        cache,
     });
     build_log::record(build_label, build_start.elapsed().as_secs_f32() * 1000.0);
     pipeline
+}
+
+/// The pipeline cache each device's pipelines are created against.
+///
+/// wgpu takes the cache per pipeline descriptor, and pipelines are created all
+/// over the crate and by item-type plugins. Naming the cache at every site is
+/// how sites get missed, so the renderer registers one cache per device here
+/// and [`render_pipeline`] and [`compute_pipeline`] look it up. Every renderer
+/// on the same device shares the one cache, so the data any of them returns
+/// covers them all.
+///
+/// Only a device with `Features::PIPELINE_CACHE` has an entry; on any other the
+/// lookup finds nothing and pipelines are created uncached.
+pub(crate) mod device_pipeline_cache {
+    use std::sync::Mutex;
+
+    struct Entry {
+        device: crate::gpu::Device,
+        cache: crate::gpu::PipelineCache,
+        users: usize,
+    }
+
+    static CACHES: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
+
+    /// The cache for `device`, made with `create` if this is its first user.
+    /// Pair with [`release`].
+    pub(crate) fn acquire(
+        device: &crate::gpu::Device,
+        create: impl FnOnce() -> crate::gpu::PipelineCache,
+    ) -> crate::gpu::PipelineCache {
+        let mut caches = CACHES.lock().unwrap();
+        if let Some(entry) = caches.iter_mut().find(|e| e.device == *device) {
+            entry.users += 1;
+            return entry.cache.clone();
+        }
+        let cache = create();
+        caches.push(Entry {
+            device: device.clone(),
+            cache: cache.clone(),
+            users: 1,
+        });
+        cache
+    }
+
+    /// Drop one user of `device`'s cache, and the entry with the last.
+    pub(crate) fn release(device: &crate::gpu::Device) {
+        let mut caches = CACHES.lock().unwrap();
+        if let Some(i) = caches.iter().position(|e| e.device == *device) {
+            caches[i].users -= 1;
+            if caches[i].users == 0 {
+                caches.swap_remove(i);
+            }
+        }
+    }
+
+    /// The cache registered for `device`, if any.
+    pub(crate) fn get(device: &crate::gpu::Device) -> Option<crate::gpu::PipelineCache> {
+        let caches = CACHES.lock().unwrap();
+        caches
+            .iter()
+            .find(|e| e.device == *device)
+            .map(|e| e.cache.clone())
+    }
+
+    /// Holds one user's claim on a device's cache and gives it up when dropped.
+    pub(crate) struct Lease(pub(crate) crate::gpu::Device);
+
+    impl Drop for Lease {
+        fn drop(&mut self) {
+            release(&self.0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod device_pipeline_cache_tests {
+    use super::device_pipeline_cache;
+
+    fn device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::default_instance();
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+                #[cfg(wgpu30)]
+                apply_limit_buckets: false,
+            },
+        ))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
+            required_features: crate::ViewportRenderer::recommended_device_features(&adapter),
+            required_limits: crate::ViewportRenderer::recommended_device_limits(&adapter),
+            ..Default::default()
+        }))
+        .ok()
+    }
+
+    /// A device with a pipeline cache registers it for as long as a renderer
+    /// on the device is alive, two renderers share the one cache, and the
+    /// lazily built pipelines land in it. A device without the feature
+    /// registers nothing.
+    #[test]
+    fn a_device_has_one_cache_for_as_long_as_a_renderer_uses_it() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let format = crate::gpu::TextureFormat::Rgba8UnormSrgb;
+        let has_cache = device
+            .features()
+            .contains(crate::gpu::Features::PIPELINE_CACHE);
+        assert!(device_pipeline_cache::get(&device).is_none());
+
+        let mut first = crate::DeviceResources::new(&device, format, 1);
+        let second = crate::DeviceResources::new(&device, format, 1);
+        assert_eq!(first.pipeline_cache.is_some(), has_cache);
+        assert_eq!(device_pipeline_cache::get(&device).is_some(), has_cache);
+        if !has_cache {
+            eprintln!("this backend has no pipeline cache; checked that nothing is registered");
+            return;
+        }
+        assert!(
+            first.pipeline_cache == second.pipeline_cache,
+            "two renderers on one device share its cache"
+        );
+
+        // The post chain is built lazily and names no cache at its call sites.
+        let before = first.pipeline_cache.as_ref().unwrap().get_data();
+        first.ensure_hdr_pipelines(&device, &queue, format);
+        let after = first.pipeline_cache.as_ref().unwrap().get_data();
+        assert!(
+            after.map_or(0, |d| d.len()) > before.map_or(0, |d| d.len()),
+            "the lazily built pipelines were not added to the cache"
+        );
+
+        drop(first);
+        assert!(device_pipeline_cache::get(&device).is_some());
+        drop(second);
+        assert!(device_pipeline_cache::get(&device).is_none());
+    }
 }
 
 /// `create_buffer` and `create_texture` with the allocation reported to
