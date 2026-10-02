@@ -17,6 +17,7 @@ use std::sync::Arc;
 use viewport_lib as vpl;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{ColourSource, SizeSource};
+use viewport_lib_item_types::DecalItem;
 use viewport_lib_item_types::PointCloudItem;
 use viewport_lib_item_types::VolumeItem;
 use viewport_lib_item_types::{
@@ -32,8 +33,8 @@ use viewport_lib_item_types::{
 use crate::eframe::egui;
 use glam::{Mat4, Vec2, Vec3};
 use vpl::{
-    BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, ItemSettings, Material, MeshId,
-    NodeId, OverlayFill, OverlayShape, OverlayShapeItem, PickId, PickMask, PolylineItem,
+    BuiltinColourmap, CellSelectionInfo, ColourmapId, ItemSettings, Material, MeshId, NodeId,
+    OverlayFill, OverlayShape, OverlayShapeItem, PickId, PickMask, PolylineItem,
     PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, TextureId, VolumeData,
     VolumeId, VolumeMeshData, VolumeMeshItem, VolumeSelectionInfo, primitives,
 };
@@ -385,7 +386,7 @@ impl PickingShowcase {
             d.texture_id = tex;
             d.settings.pick_id = PickId(DECAL);
             d.settings.selected = sel(DECAL);
-            fd.scene.items_mut::<viewport_lib::DecalItem>().push(d);
+            fd.scene.items_mut::<DecalItem>().push(d);
         }
     }
 }

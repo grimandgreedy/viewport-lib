@@ -115,6 +115,10 @@ pub(super) struct SpriteGpu {
     pub(super) soft_fallback_tex: viewport_lib::gpu::Texture,
     pub(super) lit_fallback_bg: viewport_lib::gpu::BindGroup,
     pub(super) outline_mask_pipeline: viewport_lib::gpu::RenderPipeline,
+    /// The unlit colour shader again, stamping the scene stencil. It discards
+    /// where the colour pass did, so a cut-out sprite stamps only what it
+    /// drew.
+    pub(super) surface_mask_pipeline: viewport_lib::gpu::RenderPipeline,
     pub(super) oit_pipeline: viewport_lib::gpu::RenderPipeline,
     pub(super) oit_pipeline_premultiplied: viewport_lib::gpu::RenderPipeline,
     pub(super) oit_lit_pipeline: viewport_lib::gpu::RenderPipeline,
@@ -225,6 +229,15 @@ impl SpriteGpu {
                 },
             )
         };
+
+        let surface_mask_pipeline = viewport_lib::plugin_api::builders::build_surface_mask_pipeline(
+            device,
+            "sprite_surface_mask_pipeline",
+            &layout,
+            &shader,
+            &vertex_buffers,
+            None,
+        );
 
         let lit_bgl = &layouts.lit_bgl;
 
@@ -656,6 +669,7 @@ impl SpriteGpu {
             soft_fallback_tex: fallback_tex,
             lit_fallback_bg,
             outline_mask_pipeline,
+            surface_mask_pipeline,
             oit_pipeline,
             oit_pipeline_premultiplied,
             oit_lit_pipeline,

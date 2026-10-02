@@ -86,6 +86,7 @@ pub use self::plugin_builders::{
 };
 pub use self::resource_deps::{ResourceGate, Revalidate};
 pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
+pub use self::types::OutlineEdgeUniform;
 pub use crate::renderer::item_plugins::polyline::types::PolylineId;
 // BatchMeta is published to plugins through `plugin_api::cull`; keep the
 // `resources` path crate-internal so there is a single public home for it.
@@ -103,10 +104,10 @@ pub(crate) use self::types::{
     ContactShadowUniform, DofUniform, DualPipeline, FrustumPlane, FrustumUniform,
     GpuProjectedTetMesh, GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData,
     LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, MeshInstanceGpuData, ObjectUniform,
-    OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
-    OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex,
-    OverlayTextVertex, ProjectedTetUniform, SHADOW_ATLAS_SIZE, ShadowAtlasUniform, ShadowCullState,
-    SsaoUniform, SubHighlightGpuData, ToneMapUniform, ViewportCullState, ViewportHdrState,
+    OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu, OverlayShapeGpuData,
+    OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex, OverlayTextVertex,
+    ProjectedTetUniform, SHADOW_ATLAS_SIZE, ShadowAtlasUniform, ShadowCullState, SsaoUniform,
+    SubHighlightGpuData, ToneMapUniform, ViewportCullState, ViewportHdrState,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,

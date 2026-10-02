@@ -16,7 +16,7 @@ pub use types::VolumeSurfaceSliceItem;
 use viewport_lib::gpu;
 use viewport_lib::plugin_api::{
     ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
-    PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
+    PickContext, PickPassContext, PickRay, PluginItem, RectPickContext, SurfaceMaskContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask};
 use viewport_lib::resources::HDR_COLOR_FORMAT;
@@ -146,6 +146,28 @@ impl ItemTypePlugin for VolumeSurfaceSlicePlugin {
                 pass.set_pipeline(&gpu.mask_pipeline);
                 bound = true;
             }
+            pass.set_bind_group(1, &entry.bind_group, &[]);
+            ctx.meshes.draw_indexed(pass, entry.mesh_id);
+        }
+    }
+
+    fn surface_mask(
+        &self,
+        pass: &mut gpu::RenderPass<'_>,
+        ctx: &SurfaceMaskContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        let mut bound = false;
+        for entry in &self.frame {
+            let Some(value) = ctx.stamp_for(&entry.settings) else {
+                continue;
+            };
+            if !bound {
+                pass.set_pipeline(&gpu.surface_mask_pipeline);
+                bound = true;
+            }
+            pass.set_stencil_reference(value);
             pass.set_bind_group(1, &entry.bind_group, &[]);
             ctx.meshes.draw_indexed(pass, entry.mesh_id);
         }

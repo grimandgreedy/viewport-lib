@@ -8,13 +8,14 @@
 //! settings that make a still frame repeatable (see the scatter scene).
 
 use glam::{Mat4, Vec3};
-use viewport_lib::plugin_api::Uploads;
+use viewport_lib::plugin_api::{SURFACE_MASK_LAYERS, Uploads};
 use viewport_lib::{
-    Aabb, ColourmapId, DecalBlendMode, DecalItem, Material, MeshInstanceItem, PickId,
-    ScatterQuality, ScatterSettings, SpriteBlend, TextureData, VolumeData, primitives,
+    Aabb, ColourmapId, Material, MeshInstanceItem, PickId, ScatterQuality, ScatterSettings,
+    SpriteBlend, TextureData, VolumeData, primitives,
 };
 use viewport_lib_item_types::GpuParticleSystems;
 use viewport_lib_item_types::VolumeItem;
+use viewport_lib_item_types::{DecalBlendMode, DecalItem};
 use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumes};
 use viewport_lib_item_types::{
     RibbonItem, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorFieldItem, TensorSource,
@@ -165,6 +166,11 @@ pub fn scenes() -> Vec<NamedScene> {
             name: "decal_on_non_mesh",
             cameras: standard_cameras(Vec3::ZERO, 7.0),
             build: build_decal_on_non_mesh,
+        },
+        NamedScene {
+            name: "decal_layers",
+            cameras: standard_cameras(Vec3::ZERO, 8.0),
+            build: build_decal_layers,
         },
         NamedScene {
             name: "decal_on_curves",
@@ -1465,8 +1471,7 @@ fn build_decal_on_curves(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 fn build_decal_on_non_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // A decal box enclosing both a mesh and a GPU implicit surface. The decal
     // pass reconstructs its receiver from the depth buffer, so it lands on
-    // anything that wrote depth; the implicit surface does, and unlike the mesh
-    // it has no `receives_decals` to decline with.
+    // anything that wrote depth, which the implicit surface does.
     let ball = ctx
         .renderer
         .resources_mut()
@@ -1476,10 +1481,9 @@ fn build_decal_on_non_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     mesh.mesh_id = ball;
     mesh.model = Mat4::from_translation(Vec3::new(-1.6, 0.0, 0.0)).to_cols_array_2d();
     mesh.material = Material::pbr([0.55, 0.55, 0.58], 0.1, 0.6);
-    // The mesh declines the decal. Nothing else in the library can: the flag
-    // lives on `SceneRenderItem` alone, so the implicit surface beside it takes
-    // the projection whether it wants to or not.
-    mesh.receives_decals = false;
+    // The mesh declines the decal by leaving the layers the surface mask
+    // holds. The implicit surface beside it stays on them and takes it.
+    mesh.settings.visibility_mask &= !SURFACE_MASK_LAYERS;
 
     let mut sphere = ImplicitPrimitive::zeroed();
     sphere.kind = 1;
@@ -1504,6 +1508,49 @@ fn build_decal_on_non_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![mesh],
         gpu_implicit: vec![implicit],
         decals: vec![decal],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+fn build_decal_layers(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // Three spheres under two decal boxes that each enclose all of them. The
+    // left sphere is on layer 0 and the middle one on layer 1; the red decal
+    // targets layer 0 and the blue one layer 1, so each sphere takes one
+    // decal. The right sphere is on neither layer and takes no decal.
+    let ball = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(ctx.device, &primitives::sphere(1.0, 32, 16))
+        .expect("sphere upload");
+    let sphere = |x: f32| {
+        let mut item = viewport_lib::SceneRenderItem::default();
+        item.mesh_id = ball;
+        item.model = Mat4::from_translation(Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        item.material = Material::pbr([0.55, 0.55, 0.58], 0.1, 0.6);
+        item
+    };
+    let mut left = sphere(-2.4);
+    left.settings.visibility_mask = 0b01;
+    let mut middle = sphere(0.0);
+    middle.settings.visibility_mask = 0b10;
+    let mut right = sphere(2.4);
+    right.settings.visibility_mask &= !SURFACE_MASK_LAYERS;
+
+    let red = checker_texture(ctx, [220, 70, 40], [240, 220, 200]);
+    let blue = checker_texture(ctx, [40, 90, 220], [200, 220, 240]);
+    let decal = |texture, channel_mask| {
+        let mut decal = DecalItem::default();
+        decal.transform = Mat4::from_scale(Vec3::new(8.0, 6.0, 4.0)).to_cols_array_2d();
+        decal.texture_id = texture;
+        decal.blend_mode = DecalBlendMode::Replace;
+        decal.channel_mask = channel_mask;
+        decal
+    };
+
+    BuiltScene {
+        items: vec![left, middle, right],
+        decals: vec![decal(red, 0b01), decal(blue, 0b10)],
         lighting: rigs::from_above(),
         ..Default::default()
     }

@@ -24,7 +24,10 @@ struct SliceUniform {
 
 @vertex
 fn vs_main(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {
-    return camera.view_proj * slice.model * vec4<f32>(position, 1.0);
+    // World position first, then the projection, as the colour shader does:
+    // this draw is depth-tested against what that one wrote.
+    let world_pos = (slice.model * vec4<f32>(position, 1.0)).xyz;
+    return camera.view_proj * vec4<f32>(world_pos, 1.0);
 }
 
 @fragment

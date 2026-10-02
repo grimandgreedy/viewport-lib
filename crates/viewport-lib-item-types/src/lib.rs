@@ -50,6 +50,7 @@ const _: () = assert!(
 );
 
 mod curves;
+mod decal;
 mod external_instances;
 mod gaussian_splat;
 mod gpu_implicit;
@@ -70,6 +71,10 @@ mod volume_surface_slice;
 pub use curves::{
     RibbonId, RibbonItem, RibbonPlugin, RibbonRefItem, StreamtubeId, StreamtubeItem,
     StreamtubePlugin, StreamtubeRefItem, TubeId, TubeItem, TubePlugin, TubeRefItem,
+};
+pub use decal::{
+    CylindricalFacing, DecalAnimation, DecalBlendMode, DecalHandle, DecalItem, DecalPlugin,
+    DecalProjection, LiveDecal, LiveDecals,
 };
 pub use external_instances::{
     ExternalInstanceSetConfig, ExternalInstancesItem, ExternalInstancesPlugin,
@@ -131,6 +136,8 @@ pub use viewport_lib_types::ids::{ExternalInstanceSetId, GpuParticleSystemId};
 /// The name each item type registers and submits under.
 pub const EXTERNAL_INSTANCES_TYPE_NAME: &str = external_instances::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
+pub const DECAL_TYPE_NAME: &str = decal::TYPE_NAME;
+/// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const GPU_PARTICLES_TYPE_NAME: &str = gpu_particles::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const RIBBON_TYPE_NAME: &str = curves::RIBBON_TYPE_NAME;
@@ -170,6 +177,7 @@ pub const VOLUME_SURFACE_SLICE_TYPE_NAME: &str = volume_surface_slice::TYPE_NAME
 pub fn shader_sources() -> Vec<(&'static str, String)> {
     let mut all = Vec::new();
     all.extend(curves::shader_sources());
+    all.extend(decal::shader_sources());
     all.extend(external_instances::shader_sources());
     all.extend(gaussian_splat::shader_sources());
     all.extend(gpu_implicit::shader_sources());
@@ -198,6 +206,7 @@ use viewport_lib::renderer::ViewportRenderer;
 pub fn install(renderer: &mut ViewportRenderer, device: &gpu::Device) {
     // Registration order is draw order, and it is the order the renderer used
     // when these types were built into it. Keep it.
+    renderer.with_item_type_plugin(device, Box::new(DecalPlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(ImageSlicePlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(VolumeSurfaceSlicePlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(PointCloudPlugin::default()));

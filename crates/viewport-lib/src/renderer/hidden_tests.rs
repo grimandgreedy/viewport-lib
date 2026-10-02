@@ -114,7 +114,6 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
-            decal_excluded_surfaces: &[],
             collections: &collections,
         };
         let mut plugin = PolylinePlugin::default();

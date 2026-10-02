@@ -224,9 +224,7 @@ pub use scene::material::{
     ParamVisMode, PatternConfig, SamplerKey, ShadingModel, TextureFilter, TextureSlot, UvTransform,
     WrapMode,
 };
-pub use scene::scene::{
-    DecalHandle, Group, GroupId, Layer, LayerId, LiveDecal, Scene, SceneNode, SceneStats,
-};
+pub use scene::scene::{Group, GroupId, Layer, LayerId, Scene, SceneNode, SceneStats};
 pub use scene::traits::{RenderMode, ViewportObject};
 /// How an item maps its per-sample data to colour and size. See
 /// [`ColourSource`] and [`SizeSource`].
@@ -298,9 +296,8 @@ pub use renderer::tuning::{RenderDiagnostics, RenderTuning};
 pub use renderer::{
     Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
     BloomSettings, CameraFrame, Candela, CellSelectionInfo, ClipObject, ClipShape,
-    ComputeFilterItem, ComputeFilterKind, ContactShadowSettings, CylindricalFacing,
-    DebugOutputMode, DebugQuantity, DebugVis, DecalAnimation, DecalBlendMode, DecalItem,
-    DecalProjection, DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentSettings,
+    ComputeFilterItem, ComputeFilterKind, ContactShadowSettings, DebugOutputMode, DebugQuantity,
+    DebugVis, DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentSettings,
     ExposureMode, ExposureReadback, ExposureSettings, FillRule, FilterMode, ForegroundPass,
     ForegroundProjection, FrameData, GlyphRunItem, GpuContext, GpuPickHit, GradientStop,
     GroundPlane, GroundPlaneMode, IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY,

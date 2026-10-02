@@ -1,8 +1,6 @@
 /// Scene graph with parent-child hierarchy and layers.
 pub mod scene;
-pub use scene::{
-    DecalHandle, Group, GroupId, Layer, LayerId, LiveDecal, Scene, SceneNode, SceneStats,
-};
+pub use scene::{Group, GroupId, Layer, LayerId, Scene, SceneNode, SceneStats};
 /// Axis-aligned bounding box.
 pub mod aabb;
 /// Built-in light glyph + influence-volume wireframe emission for scene-graph lights.

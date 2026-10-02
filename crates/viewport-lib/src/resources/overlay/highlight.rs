@@ -665,15 +665,22 @@ pub(crate) struct OutlineObjectBuffers {
     pub mask_bind_group: crate::gpu::BindGroup,
 }
 
-/// Uniform for the fullscreen outline edge-detection pass (32 bytes).
+/// Uniform for the fullscreen outline edge-detection pass (32 bytes), the
+/// one [`SHARED_OUTLINE_EDGE_WGSL`](crate::plugin_api::shared_wgsl::SHARED_OUTLINE_EDGE_WGSL)
+/// reads.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct OutlineEdgeUniform {
-    pub(crate) colour: [f32; 4], // 16 bytes
-    pub(crate) radius: f32,      //  4 bytes
-    pub(crate) viewport_w: f32,  //  4 bytes
-    pub(crate) viewport_h: f32,  //  4 bytes
-    pub(crate) _pad: f32,        //  4 bytes
+pub struct OutlineEdgeUniform {
+    /// Ring colour, linear RGBA.
+    pub colour: [f32; 4],
+    /// Ring width in pixels.
+    pub radius: f32,
+    /// Width of the target in pixels.
+    pub viewport_w: f32,
+    /// Height of the target in pixels.
+    pub viewport_h: f32,
+    #[doc(hidden)]
+    pub _pad: f32,
 }
 
 /// Per-frame uniform for the sub-object highlight pass (48 bytes).

@@ -33,7 +33,7 @@ pub(crate) use crate::resources::mesh::instancing::InstanceData;
 pub(crate) use crate::resources::mesh::instancing::ObjectUniform;
 pub use crate::resources::mesh::instancing::PickInstance;
 pub use crate::resources::mesh::meshes::{MeshData, SubmeshRange};
-pub(crate) use crate::resources::overlay::highlight::OutlineEdgeUniform;
+pub use crate::resources::overlay::highlight::OutlineEdgeUniform;
 pub(crate) use crate::resources::overlay::highlight::OutlineObjectBuffers;
 pub(crate) use crate::resources::overlay::highlight::OutlineUniform;
 pub(crate) use crate::resources::overlay::highlight::SubHighlightGpuData;
