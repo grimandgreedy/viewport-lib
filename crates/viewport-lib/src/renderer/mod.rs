@@ -379,6 +379,9 @@ pub struct ViewportRenderer {
     /// Per-frame general tube GPU data, rebuilt in prepare(), consumed in paint().
     /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint().
     lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
+    /// Step count and step size for this frame's LIC advect pass, when any
+    /// LIC item was prepared.
+    lic_advect_params: Option<(u32, f32)>,
     /// This frame's decal resource-cache tallies, packed `(uploads << 32) |
     /// reused`. Shared with the decal item type, which is where the cache
     /// lives; the renderer only reads it back into `FrameStats`.
@@ -934,6 +937,7 @@ impl ViewportRenderer {
             polyline_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
             lic_gpu_data: Vec::new(),
+            lic_advect_params: None,
             decal_cache_stats: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             decal_excluded_surfaces: Vec::new(),
             label_gpu_data: None,

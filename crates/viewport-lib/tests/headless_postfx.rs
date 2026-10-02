@@ -858,10 +858,8 @@ fn lic_strength_is_per_item() {
     frame.scene.surfaces =
         SurfaceSubmission::Flat(vec![make_item(-0.5, 0.0), make_item(0.5, 2.0)].into());
 
-    // Two renders: the first creates the viewport's HDR slot (the LIC advect
-    // uniform is written at prepare time only once the slot exists), the
-    // second carries the live LIC parameters.
-    let _warm = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    // One render, on a fresh renderer: the first frame an item asks for LIC
+    // has to draw it.
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
     // Per-row luma spread inside each quad's horizontal band: LIC streaks
     // give neighbouring pixels along a row visibly different values, a flat

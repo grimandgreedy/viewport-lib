@@ -42,6 +42,16 @@ pub enum RedrawMode {
     OnDemand,
 }
 
+/// Whether to ask for another frame once this one is done.
+///
+/// A frame whose surface had to be reconfigured was never shown, so it is
+/// retried whatever the mode: under [`RedrawMode::OnDemand`] nothing else would
+/// ask for it. A frame skipped for a transient reason (a timeout, an occluded
+/// window) follows the mode, so an occluded on-demand window does not spin.
+pub(crate) fn wants_redraw(mode: RedrawMode, requested: bool, reconfigured: bool) -> bool {
+    mode == RedrawMode::Continuous || requested || reconfigured
+}
+
 /// Window configuration for a [`ViewportApp`].
 ///
 /// Non-exhaustive: build with [`AppConfig::default`] and the `with_*` methods so
@@ -543,13 +553,17 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
             .iter()
             .find(|f| f.is_srgb())
             .copied()
-            .unwrap_or(caps.formats[0]);
+            .or_else(|| caps.formats.first().copied())
+            .expect("the adapter cannot present to this surface");
         let surface_config = crate::gpu::runner_surface_config(
             format,
             size.width.max(1),
             size.height.max(1),
             self.config.present_mode,
-            caps.alpha_modes[0],
+            caps.alpha_modes
+                .first()
+                .copied()
+                .unwrap_or(crate::gpu::CompositeAlphaMode::Auto),
         );
         surface.configure(&device, &surface_config);
         marks.mark("surface_configure");
@@ -730,24 +744,29 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                         });
                 }
 
-                let frame = match crate::gpu::acquire_surface(&state.surface) {
-                    crate::gpu::SurfaceFrame::Acquired(f) => f,
+                // A frame that cannot be acquired is not drawn, but the rest of
+                // the turn still runs: the callback's exit request, the next
+                // frame's input window, and the redraw request all depend on it.
+                let mut reconfigured = false;
+                match crate::gpu::acquire_surface(&state.surface) {
+                    crate::gpu::SurfaceFrame::Acquired(frame) => {
+                        let view = frame
+                            .texture
+                            .create_view(&crate::gpu::TextureViewDescriptor::default());
+                        let cmd = state.session.render(&state.device, &state.queue, &view);
+                        state.queue.submit(std::iter::once(cmd));
+                        crate::gpu::present(&state.queue, frame);
+                        if let Some(marks) = state.startup_marks.take() {
+                            marks.finish("first_frame");
+                        }
+                    }
                     crate::gpu::SurfaceFrame::Recreate => {
                         state
                             .surface
                             .configure(&state.device, &state.surface_config);
-                        return;
+                        reconfigured = true;
                     }
-                    crate::gpu::SurfaceFrame::Skip => return,
-                };
-                let view = frame
-                    .texture
-                    .create_view(&crate::gpu::TextureViewDescriptor::default());
-                let cmd = state.session.render(&state.device, &state.queue, &view);
-                state.queue.submit(std::iter::once(cmd));
-                crate::gpu::present(&state.queue, frame);
-                if let Some(marks) = state.startup_marks.take() {
-                    marks.finish("first_frame");
+                    crate::gpu::SurfaceFrame::Skip => {}
                 }
 
                 if request_exit {
@@ -768,7 +787,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                 // Continuous keeps the loop spinning; OnDemand only redraws when
                 // the callback asked to (an animating callback calls
                 // request_redraw each frame).
-                if self.config.redraw_mode == RedrawMode::Continuous || request_redraw {
+                if wants_redraw(self.config.redraw_mode, request_redraw, reconfigured) {
                     state.window.request_redraw();
                 }
             }
@@ -962,5 +981,15 @@ mod tests {
         let action = session.resolve();
         assert!(!action.pointer.clicked, "no forwarded click");
         assert_eq!(action.navigation.zoom, 0.0, "no forwarded scroll");
+    }
+
+    /// A frame lost to a surface reconfigure is asked for again in every mode;
+    /// a transient skip follows the mode.
+    #[test]
+    fn a_reconfigured_frame_is_retried_on_demand() {
+        assert!(wants_redraw(RedrawMode::OnDemand, false, true));
+        assert!(!wants_redraw(RedrawMode::OnDemand, false, false));
+        assert!(wants_redraw(RedrawMode::OnDemand, true, false));
+        assert!(wants_redraw(RedrawMode::Continuous, false, false));
     }
 }

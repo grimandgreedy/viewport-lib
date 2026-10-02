@@ -165,31 +165,8 @@ impl ViewportRenderer {
             .ts_written_mask
             .swap(0, std::sync::atomic::Ordering::Relaxed);
 
-        // The base LDR mesh pipelines draw plain `Material` surfaces and nothing
-        // else, so they are built on the first frame that carries any rather than
-        // at construction. An overlay-only frame never reaches this.
-        let has_mesh_content = match &frame.scene.surfaces {
-            crate::renderer::SurfaceSubmission::Flat(items) => !items.is_empty(),
-        } || !frame.scene.volume_meshes.is_empty()
-            || !frame.scene.mesh_instances.is_empty()
-            || !frame.scene.foreground_items.is_empty();
-        if has_mesh_content {
-            self.resources.ensure_ldr_mesh_pipelines(device);
-        }
-        // Same for the effects with their own pass: each is built by the first
-        // frame that asks for it.
-        if !matches!(
-            frame.effects.ground_plane.mode,
-            crate::renderer::types::GroundPlaneMode::None
-        ) {
-            self.resources.ensure_ground_plane_pipeline(device);
-        }
-        if frame
-            .effects
-            .environment
-            .as_ref()
-            .is_some_and(|e| e.show_skybox)
-        {
+        self.ensure_frame_pipelines(device, frame);
+        if scene_fx.environment.as_ref().is_some_and(|e| e.show_skybox) {
             self.resources.ensure_skybox_pipeline(device);
         }
 
@@ -462,6 +439,7 @@ impl ViewportRenderer {
         // Surface LIC GPU data upload.
         // ------------------------------------------------------------------
         self.lic_gpu_data.clear();
+        self.lic_advect_params = None;
         {
             let lic_scene_items: Vec<(&SceneRenderItem, &LicOverlay)> = scene_items
                 .iter()
@@ -469,8 +447,10 @@ impl ViewportRenderer {
                 .filter_map(|i| i.lic.as_ref().map(|l| (i, l)))
                 .collect();
             if !lic_scene_items.is_empty() {
-                // The LIC surface pipeline is created inside ensure_hdr_pipelines (already called
-                // before prepare_scene_internal runs), so no separate ensure call is needed here.
+                // The layout is created here and not with the rest of the post
+                // chain, which is only built at render time: the first frame's
+                // items need it now.
+                resources.ensure_lic_surface_bgl(device);
                 for (item, lic) in &lic_scene_items {
                     if lic.vector_attribute.is_empty() {
                         continue;
@@ -523,26 +503,12 @@ impl ViewportRenderer {
                         }
                     }
                 }
-                // Write LicAdvectUniform to the per-viewport buffer. The slot
-                // may not exist yet on the very first frame (it is created at
-                // render time); the advect uniform is then written next frame
-                // and the advect output stays neutral meanwhile.
-                if let Some(hdr) = self
-                    .viewport_slots
-                    .get(frame.camera.viewport_index)
-                    .and_then(|s| s.hdr.as_ref())
-                {
-                    if let Some((_, first_lic)) = lic_scene_items.first() {
-                        let [vw, vh] = hdr.scene_size;
-                        let u = crate::resources::LicAdvectUniform {
-                            steps: first_lic.config.steps,
-                            step_size: first_lic.config.step_size,
-                            vp_width: vw as f32,
-                            vp_height: vh as f32,
-                        };
-                        queue.write_buffer(&hdr.lic_uniform_buf, 0, bytemuck::cast_slice(&[u]));
-                    }
-                }
+                // The advect pass is driven by the first item's step settings.
+                // Written to each viewport's uniform at render time, where the
+                // viewport's scene size is known.
+                self.lic_advect_params = lic_scene_items
+                    .first()
+                    .map(|(_, lic)| (lic.config.steps, lic.config.step_size));
             }
         }
 
@@ -916,6 +882,38 @@ impl ViewportRenderer {
         }
     }
 
+    /// Build the pipelines `frame`'s own passes draw with, if this is the first
+    /// frame to ask for them.
+    ///
+    /// The base LDR mesh pipelines, the ground plane and the skybox are not built
+    /// at construction. The draw sites test the frame they are handed, so this
+    /// runs for the scene frame and again for each viewport's frame: under the
+    /// split API those can differ, and a viewport may be the only one asking.
+    fn ensure_frame_pipelines(&mut self, device: &crate::gpu::Device, frame: &FrameData) {
+        let has_mesh_content = match &frame.scene.surfaces {
+            crate::renderer::SurfaceSubmission::Flat(items) => !items.is_empty(),
+        } || !frame.scene.volume_meshes.is_empty()
+            || !frame.scene.mesh_instances.is_empty()
+            || !frame.scene.foreground_items.is_empty();
+        if has_mesh_content {
+            self.resources.ensure_ldr_mesh_pipelines(device);
+        }
+        if !matches!(
+            frame.effects.ground_plane.mode,
+            crate::renderer::types::GroundPlaneMode::None
+        ) {
+            self.resources.ensure_ground_plane_pipeline(device);
+        }
+        if frame
+            .effects
+            .environment
+            .as_ref()
+            .is_some_and(|e| e.show_skybox)
+        {
+            self.resources.ensure_skybox_pipeline(device);
+        }
+    }
+
     /// Per-viewport prepare stage: camera, clip planes, clip volume, grid, overlays, cap geometry, axes.
     ///
     /// Call once per viewport per frame, after `prepare_scene_internal`.
@@ -930,6 +928,7 @@ impl ViewportRenderer {
     ) {
         // Ensure a per-viewport camera slot exists for this viewport index.
         self.ensure_viewport_slot(device, frame.camera.viewport_index);
+        self.ensure_frame_pipelines(device, frame);
 
         // Run the main-camera GPU cull for this viewport against its own camera,
         // writing this slot's visibility list and indirect args.

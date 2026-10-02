@@ -2648,6 +2648,17 @@ impl ViewportRenderer {
         // Pass 2: advect fullscreen triangle into lic_output_texture (R8Unorm).
         // -----------------------------------------------------------------------
         if !self.lic_gpu_data.is_empty() {
+            if let Some((steps, step_size)) = self.lic_advect_params {
+                let [vw, vh] = slot_hdr.scene_size;
+                let u = crate::resources::LicAdvectUniform {
+                    steps,
+                    step_size,
+                    vp_width: vw as f32,
+                    vp_height: vh as f32,
+                };
+                ctx.queue
+                    .write_buffer(&slot_hdr.lic_uniform_buf, 0, bytemuck::cast_slice(&[u]));
+            }
             if let (Some(surface_pipeline), Some(advect_pipeline)) = (
                 self.resources.lic.surface_pipeline.as_ref(),
                 self.resources.lic.advect_pipeline.as_ref(),

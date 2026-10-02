@@ -285,6 +285,19 @@ impl DeviceResources {
     // Per-viewport HDR state : shared infrastructure
     // -----------------------------------------------------------------------
 
+    /// Create the LIC surface bind group layout (group 1): the object uniform
+    /// only. Flow vectors are passed as vertex buffer 1, not a storage binding.
+    pub(crate) fn ensure_lic_surface_bgl(&mut self, device: &crate::gpu::Device) {
+        if self.lic.surface_bgl.is_none() {
+            let bgl = crate::resources::builders::uniform_bgl(
+                device,
+                "lic_surface_bgl",
+                crate::gpu::ShaderStages::VERTEX_FRAGMENT,
+            );
+            self.lic.surface_bgl = Some(bgl);
+        }
+    }
+
     /// Create the shared post-process infrastructure that per-viewport HDR state
     /// is built against: samplers, bind group layouts, placeholder textures, the
     /// SSAO noise texture and its kernel buffer. Builds no pipelines and compiles
@@ -819,16 +832,7 @@ impl DeviceResources {
             self.lic.noise_sampler = Some(samp);
         }
 
-        // LIC surface BGL (group 1): object uniform only.
-        // Flow vectors are passed as vertex buffer 1 (not a storage binding).
-        if self.lic.surface_bgl.is_none() {
-            let bgl = crate::resources::builders::uniform_bgl(
-                device,
-                "lic_surface_bgl",
-                crate::gpu::ShaderStages::VERTEX_FRAGMENT,
-            );
-            self.lic.surface_bgl = Some(bgl);
-        }
+        self.ensure_lic_surface_bgl(device);
 
         // LIC advect BGL (fullscreen): params uniform, vector tex, noise tex, sampler x2.
         if self.lic.advect_bgl.is_none() {
