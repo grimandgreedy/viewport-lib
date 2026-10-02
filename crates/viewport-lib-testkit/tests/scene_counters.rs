@@ -117,6 +117,10 @@ fn expected(name: &str) -> Option<Expected> {
         // Three spheres on different layers under two decals that each target
         // one. The spheres share a mesh and a material, so they batch.
         "decal_layers" => e(3, 3, 1, 1, 0, 2880),
+        // One flow sphere.
+        "surface_lic" => e(1, 1, 1, 0, 0, 2208),
+        // A flow sphere, a flow torus and a plain box.
+        "surface_lic_occluded" => e(3, 3, 3, 3, 0, 4524),
         // Tube, streamtube and ribbon under one decal. No mesh geometry: the
         // curve types are the whole scene.
         "decal_on_curves" => e(0, 0, 0, 0, 0, 0),
