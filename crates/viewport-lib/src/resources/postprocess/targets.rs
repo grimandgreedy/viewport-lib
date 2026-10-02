@@ -90,6 +90,16 @@ impl<'a> ViewportTargetAllocator<'a> {
             view_formats: &[],
         });
         let view = tex.create_view(&crate::gpu::TextureViewDescriptor::default());
+        if crate::resources::build_log::enabled() {
+            let extent = self.extent(size);
+            // `block_copy_size` is None for the depth-stencil formats, which are
+            // not copyable; they are 4 bytes per texel here.
+            let texel = format.block_copy_size(None).unwrap_or(4) as u64;
+            crate::resources::build_log::record_texture(
+                label,
+                extent.width as u64 * extent.height as u64 * texel,
+            );
+        }
         (tex, view)
     }
 

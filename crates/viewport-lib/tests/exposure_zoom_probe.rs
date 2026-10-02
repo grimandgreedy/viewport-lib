@@ -4,7 +4,6 @@
 //! frame (zoom in -> dark, zoom out -> bright). Metering now skips far-plane
 //! (background) texels, so the metered EV barely moves with framing.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;

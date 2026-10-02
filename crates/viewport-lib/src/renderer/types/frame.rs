@@ -517,7 +517,25 @@ impl SceneFrame {
 /// independent of world-space content.
 #[non_exhaustive]
 pub struct ViewportFrame {
-    /// Optional background/clear colour [r, g, b, a]. None = adapter default.
+    /// The background the scene is composited over. `None` = renderer default.
+    ///
+    /// Treated as premultiplied: the output is `scene over background`, so the
+    /// alpha decides what the background *is* rather than only tinting it.
+    ///
+    /// - Alpha 1 (including [`Colour::BLACK`](crate::Colour::BLACK) and any
+    ///   `Colour::srgb_rgb` value) is an opaque background, which is what a
+    ///   viewport drawn into a window wants.
+    /// - [`Colour::TRANSPARENT`](crate::Colour::TRANSPARENT) is no background at
+    ///   all. The render carries only what was drawn, with alpha as coverage, so
+    ///   it can be composited over something this renderer knows nothing about:
+    ///   a UI plate, a document, another render.
+    /// - In between is a translucent plate the scene sits on.
+    ///
+    /// The output is **premultiplied**, on both the HDR and `Direct` paths, so
+    /// composite it with `One` / `OneMinusSrcAlpha` rather than
+    /// `SrcAlpha` / `OneMinusSrcAlpha`. Bloom and other glow deliberately carry
+    /// no coverage of their own, which under that blend reads as the additive
+    /// glow it is instead of occluding whatever is behind the viewport.
     pub background_colour: Option<crate::Colour>,
     /// Whether to render the scene in wireframe mode. Default: false.
     pub wireframe_mode: bool,

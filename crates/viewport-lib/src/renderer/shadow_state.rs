@@ -26,6 +26,10 @@ pub(crate) struct ShadowState {
     pub(crate) last_logged_cascade_splits: [f32; 4],
     /// Shadow atlas uniform from the last prepare.
     pub(crate) last_shadow_atlas_uniform: crate::resources::ShadowAtlasUniform,
+    /// Whether the directional atlas currently holds nothing but the cleared
+    /// depth value, so a frame that draws no casters can skip re-clearing it.
+    /// Cleared by the branch that renders casters into the atlas.
+    pub(crate) atlas_cleared: bool,
     /// Per-slot content hash of the cubemap rendered into each point-shadow
     /// pool slot (light position/range plus every in-range caster's mesh
     /// identity, content revision, and model matrix). A slot whose hash is
@@ -47,6 +51,7 @@ impl ShadowState {
             last_contact_shadow_active: false,
             last_logged_cascade_splits: [f32::MAX; 4],
             last_shadow_atlas_uniform: bytemuck::Zeroable::zeroed(),
+            atlas_cleared: false,
             point_shadow_slot_hashes: vec![
                 None;
                 crate::renderer::types::MAX_POINT_SHADOW_LIGHTS as usize

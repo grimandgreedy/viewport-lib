@@ -28,8 +28,8 @@ pub(crate) mod picking;
 pub use picking::sub_object;
 pub use picking::{
     CellSelectionInfo, GpuPickHit, PickBackend, PickHit, PickId, PickMask, PickPoll,
-    PickRectResult, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef,
-    VolumeSelectionInfo,
+    PickRectResult, PolylineSelectionInfo, SnapHit, SnapPoll, SubObjectRef, SubSelection,
+    SubSelectionRef, VolumeSelectionInfo,
 };
 mod capture;
 mod overlay_buffers;
@@ -52,6 +52,8 @@ pub mod stats;
 pub mod tuning;
 pub use shadow_debug_stats::ShadowDebugStats;
 
+#[cfg(test)]
+mod deform_shadow_tests;
 #[cfg(test)]
 mod deform_stats_tests;
 #[cfg(test)]
@@ -529,6 +531,9 @@ pub struct ViewportRenderer {
     /// and parks the staging buffers here; `pick_object_poll` reads them back
     /// without blocking on the GPU queue. `None` when no async pick is pending.
     pending_pick: Option<picking::PendingPick>,
+    /// In-flight async snap query, the windowed twin of `pending_pick`:
+    /// `snap_query_begin` parks it, `snap_query_poll` reads it back.
+    pending_snap: Option<picking::PendingSnap>,
 
     // --- GPU timestamp queries ---
     /// Timestamp query set with `2 * GPU_TS_SLOTS` entries: a begin/end pair per
@@ -969,6 +974,7 @@ impl ViewportRenderer {
             pick_volume_mesh_items: Vec::new(),
             cpu_pick_cache_enabled: false,
             pending_pick: None,
+            pending_snap: None,
             ts_query_set: None,
             ts_query_set_prev: None,
             ts_prev_mask: 0,
@@ -999,6 +1005,32 @@ impl ViewportRenderer {
     /// Access the underlying GPU resources (e.g. for mesh uploads).
     pub fn resources(&self) -> &DeviceResources {
         &self.resources
+    }
+
+    /// Device memory held by the two shadow depth textures: the directional
+    /// cascade atlas and the point-light cube array.
+    ///
+    /// Separate from [`resident_bytes`](Self::resident_bytes), which covers the
+    /// content a consumer uploaded. This is fixed renderer overhead, but it is
+    /// not paid until a frame needs it: both textures start as placeholders a
+    /// few bytes wide, so this reads near zero for a viewport that has not cast
+    /// a shadow yet and steps up as each is allocated. At full size the atlas is
+    /// 64 MiB and the cube array 192 MiB, so a consumer budgeting device memory
+    /// wants to know which of the two it has actually taken.
+    ///
+    /// The cascade atlas is allocated by the first frame that rasterises
+    /// cascades (shadows enabled, a casting primary light, and something to
+    /// cast), and the cube array by the first frame that queues point-shadow
+    /// faces. Neither is released afterwards.
+    pub fn shadow_allocation_bytes(&self) -> u64 {
+        let shadow = &self.resources.shadow;
+        let texel = 4; // Depth32Float
+        let atlas = shadow.map_texture.width() as u64 * shadow.map_texture.height() as u64 * texel;
+        let cube = shadow.point_cube_texture.width() as u64
+            * shadow.point_cube_texture.height() as u64
+            * shadow.point_cube_texture.depth_or_array_layers() as u64
+            * texel;
+        atlas + cube
     }
 
     /// Resident GPU bytes for the user-uploaded working set, including whatever
@@ -2770,6 +2802,16 @@ impl ViewportRenderer {
     }
 
     /// Current state of an in-flight upload job.
+    ///
+    /// A progress probe. `Pending { progress }` is what this is for; a terminal
+    /// status is retained for a bounded run of drain cycles and then dropped
+    /// whether or not anyone read it, so gating a deferred bind on `Ready` here
+    /// is a race against your own poll cadence. Take the typed result
+    /// (`upload_result_*`) or register
+    /// [`on_upload_complete`](crate::resources::DeviceResources::on_upload_complete)
+    /// at submit time instead; both are independent of the window. See
+    /// [`UploadStatus::Unknown`](crate::resources::UploadStatus::Unknown), which
+    /// is terminal rather than transient.
     pub fn upload_status(&self, id: crate::resources::JobId) -> crate::resources::UploadStatus {
         self.resources.upload_status(id)
     }
@@ -3431,7 +3473,7 @@ impl ViewportRenderer {
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
                     if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
-                        render_pass.set_pipeline(&self.resources.scene.wireframe);
+                        render_pass.set_pipeline(self.resources.scene.wireframe());
                         bind_deform_group!(
                             render_pass,
                             self.resources,
@@ -3512,7 +3554,7 @@ impl ViewportRenderer {
 
     /// Ensure per-viewport HDR state exists for `viewport_index` at dimensions `w`x`h`.
     ///
-    /// Calls `ensure_hdr_shared` once to initialise shared pipelines/BGLs/samplers, then
+    /// Calls `ensure_hdr_infra` once to initialise the shared BGLs and samplers, then
     /// lazily creates or resizes the `ViewportHdrState` inside the slot. Idempotent: if the
     /// slot already has HDR state at the correct size nothing is recreated.
     pub(crate) fn ensure_viewport_hdr(
@@ -3526,8 +3568,10 @@ impl ViewportRenderer {
         render_scale: f32,
     ) {
         let format = self.resources.target_format;
-        // Ensure shared infrastructure (pipelines, BGLs, samplers) exists.
-        self.resources.ensure_hdr_shared(device, queue, format);
+        // Ensure shared infrastructure (BGLs, samplers, placeholders) exists. The
+        // post pipelines are not built here: only the HDR path needs them, so it
+        // calls `ensure_hdr_pipelines` itself.
+        self.resources.ensure_hdr_infra(device, queue);
         // When render_scale < 1.0, the HDR upscale path needs the dyn_res
         // pipeline and sampler for the final upscale-blit to output resolution.
         if render_scale < 1.0 - 0.001 {

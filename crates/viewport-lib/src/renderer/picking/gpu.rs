@@ -1284,6 +1284,31 @@ impl ViewportRenderer {
         frame: &FrameData,
         mask: PickMask,
     ) -> Option<crate::renderer::picking::SnapHit> {
+        let pending = self.snap_query_submit(device, queue, cursor, radius_px, frame, mask)?;
+        device
+            .poll(crate::gpu::PollType::Wait {
+                submission_index: Some(pending.submission.clone()),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
+        self.snap_read(&pending, frame)
+    }
+
+    /// Encode and submit the windowed snap pass and start its read-back,
+    /// returning the in-flight state, or `None` when the window is empty or
+    /// nothing pickable would draw. Shared by the blocking
+    /// [`snap_query`](Self::snap_query), which then waits, and the
+    /// non-blocking [`snap_query_begin`](Self::snap_query_begin), which parks
+    /// it for a later poll.
+    fn snap_query_submit(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        cursor: glam::Vec2,
+        radius_px: f32,
+        frame: &FrameData,
+        mask: PickMask,
+    ) -> Option<PendingSnap> {
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
         };
@@ -1395,27 +1420,75 @@ impl ViewportRenderer {
         copy_region(&mut encoder, &targets.depth_colour_texture, &depth_staging);
 
         let submission = queue.submit(std::iter::once(encoder.finish()));
+        // Start the maps now but do not wait: the callbacks flip `ready` to 3
+        // once the device has processed the submission, which the blocking
+        // caller forces and the polling caller waits a frame or two for.
+        let ready = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         for staging in [&id_staging, &prim_staging, &depth_staging] {
+            let ready = ready.clone();
             staging
                 .slice(..)
-                .map_async(crate::gpu::MapMode::Read, |_| {});
+                .map_async(crate::gpu::MapMode::Read, move |r| {
+                    if r.is_ok() {
+                        ready.fetch_add(1, std::sync::atomic::Ordering::Release);
+                    }
+                });
         }
-        device
-            .poll(crate::gpu::PollType::Wait {
-                submission_index: Some(submission),
-                timeout: Some(std::time::Duration::from_secs(5)),
-            })
-            .unwrap();
 
-        let view_proj_inv = frame.camera.render_camera.view_proj().inverse();
-        // Best candidate: higher feature priority wins, ties broken by the
-        // pixel's screen-space distance to the cursor. Held as plain data so the
-        // exact feature coordinate is resolved after the staging maps are freed.
+        Some(PendingSnap {
+            id_staging,
+            prim_staging,
+            depth_staging,
+            ready,
+            submission,
+            cursor,
+            radius,
+            ppp,
+            vp_w,
+            vp_h,
+            rx,
+            ry,
+            rw,
+            rh,
+            bytes_per_row,
+            view_proj_inv: frame.camera.render_camera.view_proj().inverse(),
+            mask,
+            kinds,
+            surface_meta: draw_set.surface_meta,
+            primitive_index_supported,
+        })
+    }
+
+    /// Read a completed snap window and pick its best feature: higher feature
+    /// priority wins, ties broken by screen distance to the cursor. Unmaps the
+    /// staging buffers. Only valid once all three maps have landed.
+    fn snap_read(
+        &self,
+        pending: &PendingSnap,
+        frame: &FrameData,
+    ) -> Option<crate::renderer::picking::SnapHit> {
+        let PendingSnap {
+            cursor,
+            radius,
+            ppp,
+            vp_w,
+            vp_h,
+            rx,
+            ry,
+            rw,
+            rh,
+            bytes_per_row,
+            view_proj_inv,
+            mask,
+            ..
+        } = *pending;
+        // Held as plain data so the exact feature coordinate is resolved after
+        // the staging maps are freed.
         let mut best: Option<(i32, f32, u64, Option<SubObjectRef>, glam::Vec3)> = None;
         {
-            let id_data = crate::gpu::mapped_range(id_staging.slice(..));
-            let prim_data = crate::gpu::mapped_range(prim_staging.slice(..));
-            let depth_data = crate::gpu::mapped_range(depth_staging.slice(..));
+            let id_data = crate::gpu::mapped_range(pending.id_staging.slice(..));
+            let prim_data = crate::gpu::mapped_range(pending.prim_staging.slice(..));
+            let depth_data = crate::gpu::mapped_range(pending.depth_staging.slice(..));
             for row in 0..rh as usize {
                 let row_start = row * bytes_per_row as usize;
                 for col in 0..rw as usize {
@@ -1462,9 +1535,9 @@ impl ViewportRenderer {
                         id as u64,
                         prim,
                         mask,
-                        &kinds,
-                        &draw_set.surface_meta,
-                        primitive_index_supported,
+                        &pending.kinds,
+                        &pending.surface_meta,
+                        pending.primitive_index_supported,
                         Some(world),
                     );
                     let priority = snap_priority(sub);
@@ -1480,9 +1553,9 @@ impl ViewportRenderer {
                 }
             }
         }
-        id_staging.unmap();
-        prim_staging.unmap();
-        depth_staging.unmap();
+        pending.id_staging.unmap();
+        pending.prim_staging.unmap();
+        pending.depth_staging.unmap();
 
         let (_, _, object_id, sub_object, pixel_world) = best?;
         // Snap to the exact feature coordinate when it is known; otherwise the
@@ -1566,6 +1639,53 @@ impl ViewportRenderer {
             .read_hit()
             .map(|h| self.resolve_pending_hit(&pending, h));
         PickPoll::Ready(hit)
+    }
+
+    /// Begin a non-blocking [`snap_query`](Self::snap_query): submit the
+    /// windowed pass and park the in-flight staging buffers on the renderer,
+    /// to be read on a later [`snap_query_poll`](Self::snap_query_poll). The
+    /// calling thread never blocks on the GPU queue, which is what makes the
+    /// nearest-feature pick usable on the web, where nothing can wait.
+    ///
+    /// Any snap query already in flight is dropped and replaced. Returns
+    /// `true` when a pass was submitted, `false` when the window is empty or
+    /// nothing pickable would draw (in which case the poll reports no hit).
+    pub fn snap_query_begin(
+        &mut self,
+        cursor: glam::Vec2,
+        radius_px: f32,
+        frame: &FrameData,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        mask: PickMask,
+    ) -> bool {
+        self.pending_snap = self.snap_query_submit(device, queue, cursor, radius_px, frame, mask);
+        self.pending_snap.is_some()
+    }
+
+    /// Poll the query started by [`snap_query_begin`](Self::snap_query_begin).
+    ///
+    /// Non-blocking, like [`pick_object_poll`](Self::pick_object_poll): it
+    /// drives the device's map callbacks without waiting and returns
+    /// [`SnapPoll::Pending`] until the window has landed. `frame` is the
+    /// current frame, read to snap the hit to its exact feature coordinate;
+    /// the pass itself was drawn from the frame the query began with.
+    pub fn snap_query_poll(
+        &mut self,
+        device: &crate::gpu::Device,
+        frame: &FrameData,
+    ) -> crate::renderer::picking::SnapPoll {
+        use crate::renderer::picking::SnapPoll;
+        if self.pending_snap.is_none() {
+            return SnapPoll::Idle;
+        }
+        let _ = device.poll(crate::gpu::PollType::Poll);
+        let pending = self.pending_snap.as_ref().expect("pending checked above");
+        if pending.ready.load(std::sync::atomic::Ordering::Acquire) < 3 {
+            return SnapPoll::Pending;
+        }
+        let pending = self.pending_snap.take().expect("pending checked above");
+        SnapPoll::Ready(self.snap_read(&pending, frame))
     }
 
     /// Build the object-level [`PickHit`] from a raw GPU hit, then fill its
@@ -1827,6 +1947,37 @@ impl ViewportRenderer {
 enum PickBegin {
     Miss,
     Pending(PendingPick),
+}
+
+/// An in-flight windowed snap query: the submitted staging buffers over the
+/// window plus what turning the read-back into a [`SnapHit`] needs. Held on
+/// the renderer between [`ViewportRenderer::snap_query_begin`] and
+/// [`ViewportRenderer::snap_query_poll`], and used in place by the blocking
+/// [`ViewportRenderer::snap_query`].
+pub(crate) struct PendingSnap {
+    id_staging: crate::gpu::Buffer,
+    prim_staging: crate::gpu::Buffer,
+    depth_staging: crate::gpu::Buffer,
+    /// Reaches 3 when all three `map_async` callbacks have signalled success.
+    ready: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    submission: crate::gpu::SubmissionIndex,
+    cursor: glam::Vec2,
+    /// The logical tolerance the window was cut for.
+    radius: f32,
+    ppp: f32,
+    vp_w: u32,
+    vp_h: u32,
+    /// The window's physical origin and extent, and the staging row pitch.
+    rx: u32,
+    ry: u32,
+    rw: u32,
+    rh: u32,
+    bytes_per_row: u32,
+    view_proj_inv: glam::Mat4,
+    mask: PickMask,
+    kinds: std::collections::HashMap<u64, PickSubKind>,
+    surface_meta: SurfacePickMeta,
+    primitive_index_supported: bool,
 }
 
 /// An in-flight GPU object pick: the submitted staging buffers plus the cursor

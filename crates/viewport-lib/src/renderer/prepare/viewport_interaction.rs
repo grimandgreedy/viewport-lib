@@ -539,6 +539,9 @@ impl ViewportRenderer {
         // Assign all interaction state to the per-viewport slot.
         // ------------------------------------------------------------------
         {
+            if !xray_object_buffers.is_empty() {
+                self.resources.ensure_xray_pipeline(device);
+            }
             let slot = &mut self.viewport_slots[vp_idx];
             slot.selection_outlines.outline_object_buffers = outline_object_buffers;
             slot.xray_object_buffers = xray_object_buffers;
@@ -565,6 +568,18 @@ impl ViewportRenderer {
             .selection_outlines
             .plugin_outline_present = plugin_outline;
 
+        // The composite that blits the outline onto the main target runs whenever
+        // there is outline coverage, in either the LDR or the HDR path, so build
+        // its pipelines on that same condition rather than at construction.
+        if !self.viewport_slots[vp_idx]
+            .selection_outlines
+            .outline_object_buffers
+            .is_empty()
+            || plugin_outline
+        {
+            self.resources.ensure_outline_composite_pipelines(device);
+        }
+
         // ------------------------------------------------------------------
         // Outline offscreen pass : screen-space edge detection.
         //
@@ -586,6 +601,7 @@ impl ViewportRenderer {
             let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
             let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
 
+            self.resources.ensure_outline_pipelines(device);
             // Ensure per-viewport HDR state exists (provides outline textures).
             self.ensure_viewport_hdr(
                 device,
@@ -685,9 +701,9 @@ impl ViewportRenderer {
                         continue;
                     };
                     let pipeline: &crate::gpu::RenderPipeline = if outlined.two_sided {
-                        &self.resources.outline.mask_two_sided_pipeline
+                        self.resources.outline.mask_two_sided_pipeline()
                     } else {
-                        &self.resources.outline.mask_pipeline
+                        self.resources.outline.mask_pipeline()
                     };
                     pass.set_pipeline(pipeline);
                     pass.set_bind_group(1, &outlined.mask_bind_group, &[]);
@@ -744,7 +760,7 @@ impl ViewportRenderer {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                pass.set_pipeline(&self.resources.outline.edge_pipeline);
+                pass.set_pipeline(self.resources.outline.edge_pipeline());
                 pass.set_bind_group(0, edge_bg, &[]);
                 pass.draw(0..3, 0..1);
             }

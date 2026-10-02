@@ -67,6 +67,7 @@ impl crate::renderer::ViewportRenderer {
     /// external registration through
     /// [`with_item_type_plugin`](Self::with_item_type_plugin) is unaffected.
     pub(crate) fn register_internal_item_plugins(&mut self, device: &crate::gpu::Device) {
+        let start = web_time::Instant::now();
         // Registration order is draw order. The scivis types keep the order the
         // shared draw loop gave them, so a migrated type keeps blending against
         // its neighbours the way it always has.
@@ -76,6 +77,15 @@ impl crate::renderer::ViewportRenderer {
         self.install_item_type_plugin(
             device,
             Box::new(decal::DecalPlugin::new(self.decal_cache_stats.clone())),
+        );
+        // Reported on the same target as the resource phases so a startup
+        // breakdown accounts for the whole of `ViewportRenderer::new`, not just
+        // the part inside `DeviceResources`.
+        tracing::info!(
+            target: "viewport_lib::init",
+            section = "internal_item_plugins",
+            ms = start.elapsed().as_secs_f32() * 1000.0,
+            "gpu resources init phase"
         );
     }
 }

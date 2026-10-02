@@ -41,12 +41,12 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        res.ensure_hdr_shared(&device, &queue, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+        res.ensure_hdr_pipelines(&device, &queue, crate::gpu::TextureFormat::Rgba8UnormSrgb);
         let oit = res
             .oit
             .pipeline
             .as_ref()
-            .expect("ensure_hdr_shared must build the OIT pipeline");
+            .expect("ensure_hdr_pipelines must build the OIT pipeline");
         for key in crate::renderer::pipeline_key::PipelineKey::all() {
             let _ = oit.get(key);
         }

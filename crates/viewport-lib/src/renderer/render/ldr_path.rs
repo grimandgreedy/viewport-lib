@@ -5,6 +5,11 @@
 use super::*;
 
 impl ViewportRenderer {
+    /// `bg_colour` is the background as premultiplied linear RGBA, so the clear
+    /// below is the whole of what the background means on this path: at alpha 1
+    /// an opaque colour, at alpha 0 nothing, and in between a translucent plate
+    /// the scene composites over. The scene pipelines blend straight source over
+    /// a premultiplied destination, which is what keeps that consistent.
     pub(crate) fn render_frame_ldr(
         &mut self,
         device: &crate::gpu::Device,
@@ -176,7 +181,7 @@ impl ViewportRenderer {
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
                         if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
-                            render_pass.set_pipeline(&self.resources.scene.wireframe);
+                            render_pass.set_pipeline(self.resources.scene.wireframe());
                             bind_deform_group!(
                                 render_pass,
                                 self.resources,
@@ -317,8 +322,8 @@ impl ViewportRenderer {
                 for (idx, item) in opaque.iter().chain(transparent.iter()) {
                     let solid_pl = select_two_sided(
                         PipelineKey::two_sided(item.material.is_two_sided()),
-                        &resources.scene.solid,
-                        &resources.scene.solid_two_sided,
+                        resources.scene.solid(),
+                        resources.scene.solid_two_sided(),
                     );
                     let obj_bg = slot
                         .foreground_objects
@@ -335,9 +340,9 @@ impl ViewportRenderer {
                         false,
                         false,
                         solid_pl,
-                        &resources.scene.solid_two_sided,
-                        &resources.scene.transparent,
-                        &resources.scene.wireframe,
+                        resources.scene.solid_two_sided(),
+                        resources.scene.transparent(),
+                        resources.scene.wireframe(),
                         // Foreground items draw through the positional
                         // foreground_objects cache, which has no per-range
                         // entries; they render with the single item material.

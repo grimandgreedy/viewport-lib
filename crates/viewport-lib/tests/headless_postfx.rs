@@ -3,7 +3,6 @@
 //! Part of the headless integration suite (split from the former single
 //! headless.rs). Shared device and mesh helpers live in tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;
@@ -1060,8 +1059,9 @@ fn post_effect_producer_fills_slot() {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
+                // The rest defaults: the tail fields differ between the
+                // wgpu legs (29 added multiview_mask).
+                ..Default::default()
             });
             Some(view)
         }
@@ -1189,8 +1189,9 @@ fn post_effect_stage_inverts_output() {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
+                // The rest defaults: the tail fields differ between the
+                // wgpu legs (29 added multiview_mask).
+                ..Default::default()
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, bg, &[]);

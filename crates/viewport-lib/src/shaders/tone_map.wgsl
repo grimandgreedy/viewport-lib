@@ -154,10 +154,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let depth = textureLoad(depth_texture, depth_coord, 0);
     // With no opaque geometry at this pixel (depth at the far plane), the HDR
     // buffer holds only premultiplied *transparent* contributions (additive /
-    // OIT particles) blended over a transparent-black clear; the flat background
-    // colour is composited under them after tone mapping, below. The buffer is
-    // cleared with alpha=0 and transparent draws raise alpha, so alpha ~ 0 means
-    // nothing was drawn here and this is a pure background pixel.
+    // OIT particles) over a transparent-black clear; the background is
+    // composited under them after tone mapping, below, and nowhere else. The
+    // buffer is cleared to zero in both colour and alpha and transparent draws
+    // raise alpha, so alpha ~ 0 means nothing was drawn here and this is a pure
+    // background pixel.
     var covered = false;
     if params.foreground_enabled != 0u {
         let fg_dims = textureDimensions(foreground_depth);
@@ -177,6 +178,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         bloom = textureSample(bloom_texture, hdr_sampler, in.uv).rgb;
     }
     if is_background && hdr.a < 0.001 && dot(bloom, vec3<f32>(1.0)) < 0.0003 {
+        // The uniform is premultiplied, so this is already the right pair: an
+        // opaque background unchanged, a transparent one zero in every channel
+        // rather than a colour at zero coverage (which no compositor can use).
         return vec4<f32>(
             display_finish(params.background_colour.rgb, in.uv),
             params.background_colour.a,
@@ -262,17 +266,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour = khronos_neutral(colour);
     }
 
-    // Composite transparent HDR content over the flat background colour. Without
-    // this, a faint particle over empty scene replaces the background with its
-    // own dim premultiplied value (reading as near-black) instead of adding to
-    // it. Skipped when opaque geometry is present (it already supplied the base
+    // Composite transparent HDR content over the background. Without this, a
+    // faint particle over empty scene replaces the background with its own dim
+    // premultiplied value (reading as near-black) instead of adding to it.
+    // Skipped when opaque geometry is present (it already supplied the base
     // colour tone-mapped above). Done in display space, after tone mapping, so
-    // pure-background pixels match the early-out above exactly. Alpha is the
-    // transparent coverage (>1 possible from stacked additive draws), clamped so
-    // saturated regions fully replace the background.
+    // pure-background pixels match the early-out above exactly. This is the only
+    // place the background enters: the HDR buffer is cleared to zero, so the
+    // quantity added here is added once. Coverage is the transparent alpha (>1
+    // possible from stacked additive draws), clamped so saturated regions fully
+    // replace the background.
+    var coverage = 1.0;
     if is_background {
-        colour = colour + params.background_colour.rgb * (1.0 - clamp(hdr.a, 0.0, 1.0));
+        let scene = clamp(hdr.a, 0.0, 1.0);
+        colour = colour + params.background_colour.rgb * (1.0 - scene);
+        // Scene over background, so the two coverages compose. An opaque
+        // background still gives 1 here, which is what every consumer that
+        // renders to a window wants and what the alpha-1 case has always been.
+        // Bloom deliberately contributes none of this: it rides in RGB with no
+        // coverage of its own, which composites as the additive glow it is
+        // rather than occluding whatever is behind the viewport.
+        coverage = scene + params.background_colour.a * (1.0 - scene);
     }
 
-    return vec4<f32>(display_finish(colour, in.uv), 1.0);
+    return vec4<f32>(display_finish(colour, in.uv), coverage);
 }

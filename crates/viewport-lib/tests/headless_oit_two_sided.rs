@@ -7,7 +7,6 @@
 //! `Identical` (two-sided) must render it, and at opacity 0.75 that has to hold
 //! through the OIT pass, not just when opaque.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;

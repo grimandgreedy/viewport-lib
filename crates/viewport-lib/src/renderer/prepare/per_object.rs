@@ -186,7 +186,11 @@ pub(super) fn build_object_uniform(
                     resources.geometry.base_vertex(mesh.vertex_span) as u32
                 })
         },
-        _pad_uv: [0; 2],
+        mesh_closed: resources
+            .mesh_store
+            .get(item.mesh_id)
+            .is_some_and(|m| m.closed) as u32,
+        _pad_uv: 0,
         deform_flags: resources.deform.flag_bits(item.mesh_id),
         normal_strength: cm.normal_strength,
         ao_range: cm.ao_range,
@@ -496,7 +500,8 @@ impl ViewportRenderer {
                         has_emissive_tex: 0,
                         material_id: 0,
                         uv1_base: 0,
-                        _pad_uv: [0; 2],
+                        mesh_closed: 0,
+                        _pad_uv: 0,
                         deform_flags: 0,
                         normal_strength: 1.0,
                         ao_range: [0.0, 1.0],
@@ -1207,7 +1212,7 @@ impl ViewportRenderer {
                 }),
             )
         } else {
-            (&resources.scene.solid, &resources.scene.solid_two_sided)
+            (resources.scene.solid(), resources.scene.solid_two_sided())
         };
         let mut enc = crate::resources::builders::render_bundle_encoder(
             device,

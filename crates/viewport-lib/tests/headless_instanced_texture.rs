@@ -7,7 +7,6 @@
 //! colour, renders again, and checks the framebuffer changed. A byte-identical
 //! pair of renders means the update was dropped somewhere in the path.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;
@@ -1280,17 +1279,22 @@ fn a_free_racing_an_in_flight_upload_does_not_resurrect_the_texture() {
         .expect("begin upload");
     assert!(renderer.resources_mut().free_texture(doomed));
     // The job queue is pumped by `process_uploads`, which `prepare` calls; nothing
-    // advances it on its own, so a bare spin here never finishes.
+    // advances it on its own, so a bare spin here never finishes. The read half
+    // of the job runs on a worker thread whose time is independent of this loop,
+    // so bound the wait in wall-clock time: a fixed pump count can run out in
+    // under a millisecond when the rest of the suite is competing for the
+    // machine, which fails the test for being busy rather than for being wrong.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut arrived = None;
-    for _ in 0..1000 {
+    while std::time::Instant::now() < deadline {
         renderer.resources_mut().process_uploads(&device, &queue);
         if let Ok(id) = renderer.resources_mut().upload_result_texture(job) {
             arrived = Some(id);
             break;
         }
-        std::thread::yield_now();
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
-    let arrived = arrived.expect("the queued texture upload should land within 1000 pumps");
+    let arrived = arrived.expect("the queued texture upload should land within 10 seconds");
 
     let after = checksum(&renderer.render_offscreen(&device, &queue, &frame_gen(items, 3), W, H));
     assert_eq!(

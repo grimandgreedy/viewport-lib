@@ -102,7 +102,19 @@ pub enum UploadStatus {
     /// without sending. The job is not retried.
     Failed(ViewportError),
     /// The id has never been issued, has already been reaped, or its result
-    /// was already taken. Treat as "nothing in flight under that id".
+    /// was already taken.
+    ///
+    /// **Terminal, not transient.** It means the id is no longer known, so a
+    /// poll cannot recover from it by waiting: folding this in with `Pending`
+    /// in a catch-all match arm turns a missed window into a silent permanent
+    /// stall. Match it explicitly.
+    ///
+    /// Seeing it does not mean the upload failed or that its payload is gone.
+    /// Terminal statuses are retained for a bounded run of drain cycles, while
+    /// the typed result is held in its own store until taken, so the reliable
+    /// route to a completed upload is `upload_result_*` (or the resident-state
+    /// query for an upload that applies as a side effect, such as
+    /// `SkinningPlugin::is_skinned_mesh`) rather than gating on `Ready` here.
     Unknown,
 }
 
@@ -208,6 +220,29 @@ struct DeferredGpuJob {
 /// a single `process` does not stall the main thread uploading everything at
 /// once.
 const MAX_GPU_JOBS_PER_PROCESS: usize = 16;
+
+/// How many drain cycles a terminal job status stays visible to `status`.
+///
+/// One cycle is not enough. The number of pumps per frame is a property of how
+/// the consumer drives the renderer, not of the runner: a second render path on
+/// the same renderer pumps again in the same frame, and an internal blocking
+/// drain pumps many times. A consumer polling at a lower cadence than the
+/// renderer prepares (a panel that only polls while visible, a tab redrawing at
+/// 10Hz over a 60Hz renderer) also misses a one-cycle window. Retaining for a
+/// run of cycles covers both without the runner needing to know who is polling.
+///
+/// A consumer that needs completion delivered rather than observed should
+/// register `on_upload_complete` at submit time, which does not depend on this
+/// window at all.
+const FINISHED_RETAIN_CYCLES: u64 = 64;
+
+/// Hard ceiling on retained terminal statuses, oldest evicted first.
+///
+/// Bounds the table when a consumer completes jobs faster than it polls them.
+/// Past this many within the retention window the oldest statuses go early;
+/// the typed results are held in their own store until taken and are not
+/// affected, so `upload_result_*` stays reliable either way.
+const MAX_FINISHED_ENTRIES: usize = 8192;
 
 /// Per-job result holder shared between a worker's apply closure and the
 /// matching `upload_result_*` accessor.
@@ -422,9 +457,16 @@ pub struct JobRunner {
     /// the apply runs, so the typed result is never reported as `Ready`
     /// before it is materialized in the resource state.
     pending_apply: VecDeque<PendingApply>,
-    /// Recently finished jobs, kept for one drain cycle so callers can still
-    /// see `Ready` or `Failed` after the completion frame.
+    /// Recently finished jobs, kept for [`FINISHED_RETAIN_CYCLES`] drain cycles
+    /// so callers can still see `Ready` or `Failed` after the completion frame.
+    /// Bounded by [`MAX_FINISHED_ENTRIES`], oldest first.
     finished: HashMap<u64, UploadStatus>,
+    /// Insertion order and stamp for `finished`, so ageing and the cap can both
+    /// evict oldest-first without scanning the map.
+    finished_order: VecDeque<(u64, u64)>,
+    /// Count of drain cycles that have advanced the retention clock. Stamped
+    /// onto each `finished` entry so ageing is a comparison, not a sweep.
+    retain_cycle: u64,
     /// Time the actual work took. Worker thread time is recorded when the
     /// worker reports back; apply-step time is added by the caller via
     /// `add_apply_duration` after running the apply closure. Retained
@@ -473,6 +515,8 @@ impl JobRunner {
             slots: HashMap::new(),
             pending_apply: VecDeque::new(),
             finished: HashMap::new(),
+            finished_order: VecDeque::new(),
+            retain_cycle: 0,
             durations: HashMap::new(),
             deferred_gpu: VecDeque::new(),
         }
@@ -702,8 +746,12 @@ impl JobRunner {
 
     /// Attach a callback to fire on completion. The callback runs on the
     /// main thread during the same `process_uploads` call that marks the job
-    /// done. If the job has already completed and is still in the
-    /// short-retention window, the callback fires immediately.
+    /// done. If the job has already completed and is still inside the
+    /// retention window, the callback fires immediately.
+    ///
+    /// Register at submit time to be sure of delivery. Registering against an
+    /// id that is neither in flight nor still retained cannot fire, and is
+    /// reported in debug builds rather than dropped quietly.
     pub fn on_complete<F>(&mut self, id: JobId, cb: F)
     where
         F: FnOnce(&UploadStatus) + Send + 'static,
@@ -714,11 +762,23 @@ impl JobRunner {
         }
         if let Some(status) = self.finished.get(&id.0) {
             cb(status);
+            return;
         }
+        #[cfg(debug_assertions)]
+        tracing::warn!(
+            job = id.0,
+            "on_complete for a job that is neither in flight nor retained: the callback cannot              fire. Register it at submit time."
+        );
     }
 
     /// Look up current state. Returns `Unknown` for ids that have never been
     /// issued or have been reaped past the retention window.
+    ///
+    /// This is a progress probe, not a delivery mechanism: a terminal status is
+    /// retained for [`FINISHED_RETAIN_CYCLES`] drain cycles and then dropped
+    /// whether or not anyone looked. Build a readiness check on the typed
+    /// result (`take` / `upload_result_*`) or on `on_complete`, both of which
+    /// are independent of this window.
     pub fn status(&self, id: JobId) -> UploadStatus {
         if let Some(slot) = self.slots.get(&id.0) {
             return UploadStatus::Pending {
@@ -766,10 +826,38 @@ impl JobRunner {
     }
 
     /// Record that a pending-apply entry's closure has finished running.
-    /// Moves the job into the short-retention `finished` table so the
-    /// next `status` query reports `Ready`.
+    /// Moves the job into the `finished` table so the next `status` query
+    /// reports `Ready`.
     pub fn mark_applied(&mut self, id: JobId, status: UploadStatus) {
-        self.finished.insert(id.0, status);
+        self.record_finished(id.0, status);
+    }
+
+    /// Put a terminal status in the retention table, stamped with the current
+    /// cycle, and hold the table under its cap.
+    fn record_finished(&mut self, id: u64, status: UploadStatus) {
+        if self.finished.insert(id, status).is_none() {
+            self.finished_order.push_back((id, self.retain_cycle));
+        }
+        while self.finished_order.len() > MAX_FINISHED_ENTRIES {
+            let Some((old_id, _)) = self.finished_order.pop_front() else {
+                break;
+            };
+            self.finished.remove(&old_id);
+        }
+    }
+
+    /// Advance the retention clock and drop statuses that have outlived the
+    /// window. Entries are stamped in insertion order, so this stops at the
+    /// first one still inside it.
+    fn age_finished(&mut self) {
+        self.retain_cycle = self.retain_cycle.wrapping_add(1);
+        while let Some(&(id, stamped)) = self.finished_order.front() {
+            if self.retain_cycle.wrapping_sub(stamped) < FINISHED_RETAIN_CYCLES {
+                break;
+            }
+            self.finished_order.pop_front();
+            self.finished.remove(&id);
+        }
     }
 
     /// Count of jobs sitting on the apply queue. Exposed for tests and
@@ -807,14 +895,16 @@ impl JobRunner {
         budget: &FrameBudget,
         clear_finished: bool,
     ) -> Vec<Completion> {
-        // Drop the previous frame's retention window unless the caller asked to
-        // preserve it. Callers that needed those results have already taken
-        // them. An internal blocking drain (an environment upload during a
-        // reflection bake) pumps the runner many times in one frame; clearing
-        // here would reap another job's `Ready` before the consumer's next poll
-        // observes it, stranding a deferred bind. Such drains pass `false`.
+        // Age the retention window unless the caller asked to leave the clock
+        // alone. A terminal status survives `FINISHED_RETAIN_CYCLES` of these,
+        // so it does not matter how many times the runner is pumped in one
+        // frame, nor which path pumps: a second render path on the same
+        // renderer, or an internal blocking drain (an environment upload during
+        // a reflection bake), can no longer reap a `Ready` before the consumer
+        // that submitted it polls. Such drains still pass `false` so they do
+        // not spend the window either.
         if clear_finished {
-            self.finished.clear();
+            self.age_finished();
         }
 
         // Run deferred GPU jobs on this (the device-owning) thread, bounded
@@ -1031,7 +1121,7 @@ impl JobRunner {
                     apply: None,
                     callback,
                 });
-                self.finished.insert(id, status);
+                self.record_finished(id, status);
                 return;
             }
         }
@@ -1077,14 +1167,14 @@ impl super::DeviceResources {
         self.process_uploads_inner(device, queue, budget, true);
     }
 
-    /// Advance the runner without clearing the promotion retention window.
+    /// Advance the runner without ageing the status retention window.
     ///
     /// Used by internal blocking drains (an environment upload during a
-    /// reflection bake) that pump the runner many times in one frame. Preserving
-    /// the window means such a drain does not reap another job's `Ready` before
-    /// the consumer observes it, so it cannot strand a deferred bind. The next
-    /// ordinary `process_uploads` (from the presented prepare) clears the window
-    /// as usual, so retention stays bounded.
+    /// reflection bake) that pump the runner many times in one frame, so such a
+    /// drain does not spend the window a consumer polls. The window is retained
+    /// for a run of cycles rather than one, so this no longer carries the
+    /// difference between a consumer seeing its `Ready` and not; it keeps the
+    /// clock honest, which is one pump per frame rather than one per drain.
     pub(crate) fn process_uploads_retaining(
         &mut self,
         device: &crate::gpu::Device,
@@ -1205,8 +1295,14 @@ impl super::DeviceResources {
 
     /// Register a callback to fire when a job finishes. The callback runs on
     /// the caller's thread during the next `process_uploads` call. If the
-    /// job has already finished and is still in the short retention window,
+    /// job has already finished and is still inside the retention window,
     /// the callback fires immediately on the calling thread.
+    ///
+    /// This is the delivery route for an upload with no typed result to take
+    /// (one that applies as a side effect, such as skin weights). Register it
+    /// at submit time: unlike polling `upload_status`, a callback registered
+    /// while the job is in flight cannot be missed, however many times the
+    /// runner is pumped before it completes.
     pub fn on_upload_complete<F>(&mut self, id: JobId, cb: F)
     where
         F: FnOnce(&UploadStatus) + Send + 'static,
@@ -1549,6 +1645,49 @@ mod tests {
         assert!(matches!(runner.status(id), UploadStatus::Ready));
         assert_eq!(runner.pending(), 0);
         assert!(runner.all_complete());
+    }
+
+    // The failure this retention window was widened for: a second render path
+    // on the same renderer pumps again in the same frame, and used to clear the
+    // window before the consumer that submitted the job polled it. The job then
+    // read as `Unknown`, which a consumer folding it in with `Pending` waits on
+    // for ever. Extra pumps must not cost a submitter its terminal status.
+    #[test]
+    fn extra_pumps_do_not_reap_a_terminal_status() {
+        let mut runner = JobRunner::new();
+        let id = runner.submit_cpu(|_p| Ok(JobProduct::empty()));
+
+        with_test_gpu(|device, queue| {
+            drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
+            assert!(
+                matches!(runner.status(id), UploadStatus::Ready),
+                "job did not complete, so the rest of this test proves nothing"
+            );
+
+            // Stand in for a second presented path plus a blocking internal
+            // drain: a handful more pumps than the one the consumer's own frame
+            // caused. One of these used to be enough to lose the status. The
+            // count is absolute rather than derived from the window, so this
+            // still fails if the window shrinks back towards one.
+            const EXTRA_PUMPS: usize = 8;
+            assert!(
+                (EXTRA_PUMPS as u64) < FINISHED_RETAIN_CYCLES,
+                "retention window is too small for this test to mean anything"
+            );
+            for _ in 0..EXTRA_PUMPS {
+                let _ = runner.process(device, queue);
+            }
+            assert!(
+                matches!(runner.status(id), UploadStatus::Ready),
+                "a terminal status was reaped before its retention window ran out"
+            );
+
+            // The window is bounded, not permanent: past it the status goes.
+            for _ in 0..=FINISHED_RETAIN_CYCLES {
+                let _ = runner.process(device, queue);
+            }
+            assert!(matches!(runner.status(id), UploadStatus::Unknown));
+        });
     }
 
     #[test]

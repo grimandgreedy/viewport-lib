@@ -221,11 +221,9 @@ fn parse_args() -> Args {
 
 fn init_device() -> Option<(wgpu::Device, wgpu::Queue, String, bool)> {
     let instance = wgpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
+    let adapter = pollster::block_on(instance.request_adapter(
+        &viewport_lib::gpu::headless_adapter_options(wgpu::PowerPreference::HighPerformance),
+    ))
     .ok()?;
     let name = adapter.get_info().name;
     let has_ts = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);

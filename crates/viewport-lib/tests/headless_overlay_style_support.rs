@@ -10,7 +10,6 @@
 //! means the same thing on every family, so the check for them is that setting
 //! one always moves the pixels, whichever family it lands on.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;

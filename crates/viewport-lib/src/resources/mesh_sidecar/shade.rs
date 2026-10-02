@@ -1046,7 +1046,7 @@ impl crate::resources::DeviceResources {
             mesh_final_src.clone(),
         );
         // Discard-free twin for the early-Z fast path, mirroring the main
-        // opaque family's own nodiscard twin (`ensure_hdr_shared`): identical
+        // opaque family's own nodiscard twin (`ensure_hdr_pipelines`): identical
         // shading with every `discard;` removed, valid only for draws that
         // would not have discarded (the per-object gate in hdr_path.rs).
         let mesh_module_nodiscard = crate::resources::builders::wgsl_module(

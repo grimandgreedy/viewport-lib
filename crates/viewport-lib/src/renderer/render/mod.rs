@@ -1,6 +1,26 @@
 use super::*;
 use crate::gpu::util::DeviceExt;
 
+/// Default background #3b3b40, in linear light: the renderer outputs linear and
+/// the sRGB target encodes on write.
+const DEFAULT_BACKGROUND: [f32; 4] = [0.0437, 0.0437, 0.0513, 1.0];
+
+/// The frame's background as premultiplied linear RGBA.
+///
+/// The background is a colour the scene composites over, so every consumer of
+/// it wants it premultiplied: at alpha 1 the straight value unchanged, at alpha
+/// 0 nothing rather than a colour with no coverage, and in between a translucent
+/// plate. `Colour` keeps storing alpha straight, as its own contract says;
+/// premultiplication belongs here at the pipeline boundary.
+fn background_premultiplied(frame: &FrameData) -> [f32; 4] {
+    let c = frame
+        .viewport
+        .background_colour
+        .map(|c| c.to_linear_rgba())
+        .unwrap_or(DEFAULT_BACKGROUND);
+    [c[0] * c[3], c[1] * c[3], c[2] * c[3], c[3]]
+}
+
 /// Emit one indirect draw run against the shared args buffer. `start` is the
 /// run's first global batch index and `len` the number of consecutive batches
 /// in it (all sharing pipeline, bind group, and geometry chunk). Each
@@ -251,15 +271,7 @@ impl ViewportRenderer {
         self.ensure_dyn_res_target(device, vp_idx, [sw, sh], [w, h]);
         self.resources.ensure_dyn_res_ds_pipeline(device);
 
-        let bg_colour = frame
-            .viewport
-            .background_colour
-            .map(|c| c.to_linear_rgba())
-            .unwrap_or([
-                // Default background #3b3b40, expressed in linear light (the renderer
-                // outputs linear and the sRGB target encodes on write).
-                0.0437, 0.0437, 0.0513, 1.0,
-            ]);
+        let bg_colour = background_premultiplied(frame);
 
         {
             let slot = &self.viewport_slots[vp_idx];
@@ -323,7 +335,7 @@ impl ViewportRenderer {
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
                         if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
-                            render_pass.set_pipeline(&self.resources.scene.wireframe);
+                            render_pass.set_pipeline(self.resources.scene.wireframe());
                             bind_deform_group!(
                                 render_pass,
                                 self.resources,
@@ -757,15 +769,7 @@ impl ViewportRenderer {
         };
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
-        let bg_colour = frame
-            .viewport
-            .background_colour
-            .map(|c| c.to_linear_rgba())
-            .unwrap_or([
-                // Default background #3b3b40, expressed in linear light (the renderer
-                // outputs linear and the sRGB target encodes on write).
-                0.0437, 0.0437, 0.0513, 1.0,
-            ]);
+        let bg_colour = background_premultiplied(frame);
         let ppp = frame.camera.pixels_per_point;
         let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
         let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
@@ -835,6 +839,10 @@ impl ViewportRenderer {
                 h,
             )
         } else {
+            // The HDR path is the only thing that binds the post chain, so its
+            // pipelines are compiled here rather than in `new()`.
+            let format = self.resources.target_format;
+            self.resources.ensure_hdr_pipelines(device, queue, format);
             self.render_frame_hdr(
                 device,
                 queue,

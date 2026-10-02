@@ -287,16 +287,19 @@ impl ViewportRenderer {
         h: u32,
         ssaa_factor: u32,
     ) -> crate::gpu::CommandBuffer {
-        // HDR path.
+        // HDR path. `bg_colour` is premultiplied linear RGBA; it reaches the
+        // tone-map uniform below and is composited under transparent content
+        // there, in display space, exactly once.
         let pp = &frame.effects.post_process;
 
-        // The background colour is linear at the pipeline boundary. Clear the
-        // linear HDR scene texture with it directly, matching the tone-map
-        // uniform below (which composites the same linear value) and the LDR
-        // path's clear. An earlier powf(2.2) here treated the value as sRGB and
-        // decoded it a second time, so the HDR and LDR paths disagreed on the
-        // background for the same scene.
-        let hdr_clear_rgb = [bg_colour[0], bg_colour[1], bg_colour[2]];
+        // Clear the linear HDR scene texture to nothing, not to the background.
+        // The buffer is a premultiplied accumulation whose alpha is scene
+        // coverage, so the background cannot live in it: clearing to the
+        // background put `bg * (1 - coverage)` into every partially covered
+        // pixel, which the composite then added a second time, measuring at
+        // exactly twice what one application leaves. The background is the
+        // composite's job alone.
+        let hdr_clear_rgb = [0.0f32; 3];
 
         // Which effect inputs feed the tone-map composite this frame. Built
         // once here so the uniform's enable lanes below and the bind group's
@@ -1524,7 +1527,7 @@ impl ViewportRenderer {
             // composites over the sky instead of being painted over by it.
             if show_skybox {
                 render_pass.set_bind_group(0, camera_bg, &[]);
-                render_pass.set_pipeline(&resources.ibl.skybox_pipeline);
+                render_pass.set_pipeline(resources.ibl.skybox_pipeline());
                 render_pass.draw(0..3, 0..1);
             }
 
@@ -3336,7 +3339,7 @@ impl ViewportRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            gp_pass.set_pipeline(&self.resources.ground.pipeline);
+            gp_pass.set_pipeline(self.resources.ground.pipeline());
             gp_pass.set_bind_group(0, &self.resources.ground.bind_group, &[]);
             gp_pass.draw(0..3, 0..1);
         }
@@ -3392,8 +3395,16 @@ impl ViewportRenderer {
                 }
 
                 if !slot.xray_object_buffers.is_empty() {
-                    overlay_pass.set_pipeline(&self.resources.outline.xray_pipeline);
+                    overlay_pass.set_pipeline(self.resources.outline.xray_pipeline());
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
+                    // The x-ray pipeline shares the outline layout, so group 2 is
+                    // part of it whenever deformers are enabled. X-ray draws the
+                    // undeformed mesh, so the dummy group is what it wants.
+                    bind_deform_group!(
+                        overlay_pass,
+                        self.resources,
+                        &self.resources.deform.dummy_bind_group
+                    );
                     for (mesh_id, _buf, bg) in &slot.xray_object_buffers {
                         let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
                             continue;

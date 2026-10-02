@@ -8,7 +8,6 @@
 //! touches; what these tests pin is the visible half, that the same compiled
 //! handle draws differently at different times.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;

@@ -46,6 +46,10 @@ fn expected(name: &str) -> Option<Expected> {
         "textured_checker" => e(1, 1, 1, 0, 0, 2208),
         "textured_normalmap" => e(1, 1, 1, 0, 0, 3968),
         "transparent" => e(3, 3, 1, 1, 0, 2880),
+        // One opaque instanced batch and one OIT instanced batch, which is why
+        // this is the only scene whose `main_buffer_binds` reaches four: both
+        // instanced loops run, and each binds the slab's two chunks.
+        "transparent_background" => e(2, 2, 2, 2, 0, 972),
         "materials_pbr" => e(25, 25, 1, 1, 0, 55200),
         "many_objects" => e(144, 144, 2, 2, 0, 16992),
         "lights_eight" => e(4, 4, 2, 2, 0, 2892),
@@ -117,6 +121,13 @@ fn expected(name: &str) -> Option<Expected> {
         // view-direction check currently removes the decal outright.
         "decal_from_below" => e(1, 1, 1, 0, 0, 960),
         // The overlay scenes: one sphere backdrop each, so the scene-side
+        "room_point_light" => e(13, 13, 13, 13, 0, 1104),
+        "room_point_light_two_sided" => e(13, 13, 13, 13, 0, 1104),
+        "room_doorway_sun" => e(14, 14, 14, 14, 0, 1116),
+        "room_cut_solids" => e(11, 11, 10, 10, 0, 3040),
+        "slab_stack_sun" => e(10, 10, 10, 10, 0, 120),
+        "slab_stack_point" => e(10, 10, 10, 10, 0, 120),
+        "long_hall" => e(26, 26, 5, 5, 0, 312),
         // counters are identical across all of them. They exist to gate overlay
         // pixels, not scene structure; a change here means the backdrop moved.
         "overlay_shapes" => e(1, 1, 1, 0, 0, 960),

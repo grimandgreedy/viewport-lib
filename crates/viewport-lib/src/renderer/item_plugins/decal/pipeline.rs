@@ -253,7 +253,7 @@ pub(crate) fn hash_decal_item(
 ///
 /// All fields are lazily built: the render pipelines and item BGL by
 /// `ensure_decal_pipeline`, the exclude pipeline by `ensure_decal_exclude_pipeline`,
-/// and `depth_bgl` / `sampler` by `ensure_hdr_shared`.
+/// and `depth_bgl` / `sampler` by `ensure_hdr_pipelines`.
 #[derive(Default)]
 pub(crate) struct DecalGpu {
     /// Replace-blend decal pipeline (LDR + HDR). None until first decal is submitted.
@@ -493,7 +493,7 @@ impl DecalGpu {
     ///
     /// No-op if already created. Requires `ensure_decal_pipeline` to have run
     /// first (it creates `item_bgl`) and `depth_bgl` to exist (created by
-    /// `ensure_hdr_shared`). The mask pipeline reuses the decal colour pass's
+    /// `ensure_hdr_pipelines`). The mask pipeline reuses the decal colour pass's
     /// three bind groups, so no new per-decal resources are needed.
     pub(crate) fn ensure_outline_pipelines(
         &mut self,

@@ -19,7 +19,6 @@
 //! `mesh_sidecar::shade::tests::material_plugin_pipelines_resolve_every_key_once_built`
 //! is the completeness check that covers it instead.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;

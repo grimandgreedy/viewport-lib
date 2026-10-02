@@ -79,8 +79,21 @@ pub(crate) struct IblResources {
     /// Uploaded skybox equirect texture (owned).
     #[allow(dead_code)]
     pub(crate) skybox_texture: Option<crate::gpu::Texture>,
-    /// Skybox fullscreen render pipeline (renders equirect environment as background).
-    pub(crate) skybox_pipeline: crate::gpu::RenderPipeline,
+    /// Skybox fullscreen render pipeline (renders equirect environment as
+    /// background). `None` until a frame draws a skybox; see
+    /// [`DeviceResources::ensure_skybox_pipeline`](crate::resources::DeviceResources::ensure_skybox_pipeline).
+    pub(crate) skybox_pipeline: Option<crate::gpu::RenderPipeline>,
+}
+
+impl IblResources {
+    /// The skybox pipeline, built by
+    /// [`DeviceResources::ensure_skybox_pipeline`](crate::resources::DeviceResources::ensure_skybox_pipeline)
+    /// by the prepare of any frame that shows a skybox.
+    pub(crate) fn skybox_pipeline(&self) -> &crate::gpu::RenderPipeline {
+        self.skybox_pipeline
+            .as_ref()
+            .expect("skybox pipeline missing; the scene prepare builds it")
+    }
 }
 
 pub use viewport_lib_types::ids::EnvironmentMapId;

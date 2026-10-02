@@ -7,7 +7,6 @@
 //! full GPU path: histogram compute over `Rgba16Float` -> resolve/adapt compute
 //! -> exposure buffer -> tone map, all in one submission.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;

@@ -165,6 +165,34 @@ impl ViewportRenderer {
             .ts_written_mask
             .swap(0, std::sync::atomic::Ordering::Relaxed);
 
+        // The base LDR mesh pipelines draw plain `Material` surfaces and nothing
+        // else, so they are built on the first frame that carries any rather than
+        // at construction. An overlay-only frame never reaches this.
+        let has_mesh_content = match &frame.scene.surfaces {
+            crate::renderer::SurfaceSubmission::Flat(items) => !items.is_empty(),
+        } || !frame.scene.volume_meshes.is_empty()
+            || !frame.scene.mesh_instances.is_empty()
+            || !frame.scene.foreground_items.is_empty();
+        if has_mesh_content {
+            self.resources.ensure_ldr_mesh_pipelines(device);
+        }
+        // Same for the effects with their own pass: each is built by the first
+        // frame that asks for it.
+        if !matches!(
+            frame.effects.ground_plane.mode,
+            crate::renderer::types::GroundPlaneMode::None
+        ) {
+            self.resources.ensure_ground_plane_pipeline(device);
+        }
+        if frame
+            .effects
+            .environment
+            .as_ref()
+            .is_some_and(|e| e.show_skybox)
+        {
+            self.resources.ensure_skybox_pipeline(device);
+        }
+
         // Reset the per-material transform interner for this frame. The per-object
         // and instanced passes below intern each item's material into it; the
         // buffer is uploaded at the end of this function (and again after
@@ -441,7 +469,7 @@ impl ViewportRenderer {
                 .filter_map(|i| i.lic.as_ref().map(|l| (i, l)))
                 .collect();
             if !lic_scene_items.is_empty() {
-                // The LIC surface pipeline is created inside ensure_hdr_shared (already called
+                // The LIC surface pipeline is created inside ensure_hdr_pipelines (already called
                 // before prepare_scene_internal runs), so no separate ensure call is needed here.
                 for (item, lic) in &lic_scene_items {
                     if lic.vector_attribute.is_empty() {
@@ -877,6 +905,15 @@ impl ViewportRenderer {
         // Placed at the end of scene prepare because the plugin context borrows
         // `resources` shared while the upload above holds it mutably.
         self.dispatch_plugin_wireframes(device, queue, frame);
+
+        // A shadow texture was promoted out of its placeholder above, so the
+        // per-viewport camera bind groups still name the texture it replaced.
+        // Rebuilt here, before the viewport phase and before any render pass,
+        // so the promoting frame is already correct rather than one frame late.
+        if self.resources.camera_bind_groups_dirty {
+            self.resources.camera_bind_groups_dirty = false;
+            self.rebuild_camera_bind_groups(device);
+        }
     }
 
     /// Per-viewport prepare stage: camera, clip planes, clip volume, grid, overlays, cap geometry, axes.

@@ -147,6 +147,25 @@ and exposes it via `ViewportRuntime::last_stats()`, keyed by the plugin's
 real app registers wind / terrain / Hamilton and gets the same per-plugin rows
 with no change to the bench, because nothing plugin-specific is linked.
 
+Startup and per-viewport cost (no scene submitted):
+
+```bash
+VPL_BUILD_LOG=1 cargo run --release --example overlay-only-cost
+VPL_BUILD_LOG=1 cargo run --release --example viewport-registration-cost
+VPL_BUILD_LOG=1 cargo run --release --example viewport-size-sweep            # and `-- direct`
+```
+
+These answer what a viewport costs before it draws any 3D content, which is the
+question a consumer drawing only overlays asks. `overlay-only-cost` splits
+`ViewportRenderer::new` by init phase and per pipeline, then measures an
+overlay-only frame; `viewport-registration-cost` separates `create_viewport` from
+the first frame that allocates a viewport's render targets;
+`viewport-size-sweep` runs one viewport through a range of sizes and reports
+target bytes and frame cost for each. `VPL_BUILD_LOG=1` switches on
+`viewport_lib::resources::build_log`, which records every pipeline, shader module
+and render target as it is created; without it the examples still run but cannot
+attribute anything.
+
 ## Features
 
 - `real_models` (off by default): pull real models (STL today; more formats route

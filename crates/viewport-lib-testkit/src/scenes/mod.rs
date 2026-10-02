@@ -18,6 +18,7 @@ pub mod overlays;
 #[cfg(feature = "real_models")]
 pub mod real_models;
 pub mod rigs;
+pub mod shadows;
 pub mod textures;
 
 use glam::{Mat4, Quat, Vec3};
@@ -130,6 +131,10 @@ pub struct BuiltScene {
     pub lighting: LightingSettings,
     /// Optional background clear colour (linear RGBA).
     pub background: Option<[f32; 4]>,
+    /// Clip objects applied to the frame, for scenes that open a solid to
+    /// show its interior, with the cap-fill flag. `None` leaves the frame's
+    /// defaults alone.
+    pub clip: Option<(Vec<viewport_lib::ClipObject>, bool)>,
 }
 
 /// A catalogue entry: a name, the cameras to view it from, and a function that
@@ -222,6 +227,10 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     }
     if let Some(post) = scene.post_process.clone() {
         fd.effects.post_process = post;
+    }
+    if let Some((objects, cap_fill)) = scene.clip.clone() {
+        fd.effects.clip.objects = objects;
+        fd.effects.clip.cap_fill_enabled = cap_fill;
     }
     fd.overlays = scene.overlays.clone();
     fd.viewport.background_colour = Some(scene.background.unwrap_or(TEST_BACKGROUND).into());
@@ -501,6 +510,81 @@ fn build_transparent(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
 }
 
+/// Transparent background: the three kinds of pixel a compositing consumer gets.
+///
+/// `background: Some([0, 0, 0, 0])` is `Colour::TRANSPARENT`, so the render
+/// carries only what was drawn with alpha as coverage. The reference PNG keeps
+/// its alpha channel, which is what gates this: coverage is a channel of the
+/// comparison rather than something a visual check has to infer.
+///
+/// Three regions on purpose, because they take three different paths through
+/// the composite and only one of them was ever right:
+///
+/// - the opaque sphere, which reaches the main return with geometry at the pixel
+///   and must come back fully covered,
+/// - the half-transparent slab in front of it, which reaches the same return as
+///   a background pixel with transparent coverage: this is the region that used
+///   to come back opaque with the background mixed into it,
+/// - the empty corners, which take the early-out and must be zero in all four
+///   channels rather than a colour at zero coverage.
+///
+/// The emissive bar drives bloom, which spreads past its own silhouette over
+/// nothing. Bloom carries no coverage of its own, so those pixels are expected
+/// to hold colour at low alpha: under a premultiplied blend that reads as the
+/// additive glow it is, and folding bloom into coverage would make the glow
+/// occlude whatever the viewport is composited over.
+fn build_transparent_background(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // Two meshes and two items, which is the most this can hold and still keep
+    // the geometry slab's invariant that the main pass binds geometry at most
+    // once per resident chunk. Three primitives bind four times. One shared mesh
+    // batches the transparent item in with the opaque one, which costs it its
+    // blending and leaves the frame with no partial coverage at all, which is
+    // the region this scene exists to gate.
+    let s = upload(ctx, &primitives::sphere(1.0, 32, 16));
+    let slab = upload(ctx, &primitives::cuboid(2.6, 0.14, 2.0));
+
+    // Emissive, so the opaque subject also drives the bloom that spreads past
+    // its own silhouette over nothing.
+    let mut glow = Material::pbr([0.95, 0.62, 0.30], 0.0, 0.4);
+    glow.emissive = [0.95, 0.62, 0.30, 1.0].into();
+    glow.emissive_strength = 18.0;
+
+    let items = vec![
+        item(s, Vec3::new(-0.9, 0.9, 0.0), glow),
+        // Half transparent and nearer the camera, so it covers part of the
+        // sphere and part of nothing. `alpha_mode` has to be set as well as the
+        // opacity: opacity alone leaves the item on the opaque pipeline, which
+        // writes depth and comes back fully covered.
+        with_opacity(
+            {
+                let mut it = item(
+                    slab,
+                    Vec3::new(-0.3, -1.1, 0.3),
+                    Material::pbr([0.35, 0.65, 0.90], 0.0, 0.25),
+                );
+                it.material.alpha_mode = viewport_lib::AlphaMode::Blend;
+                it
+            },
+            0.45,
+        ),
+    ];
+
+    // `PostProcessSettings` is non-exhaustive, so mutate the default rather than
+    // naming fields in a literal.
+    let mut post = viewport_lib::PostProcessSettings::default();
+    post.bloom.enabled = true;
+    post.bloom.threshold = 1.0;
+    post.bloom.intensity = 0.9;
+
+    BuiltScene {
+        items,
+        lighting: rigs::three_point(),
+        background: Some([0.0, 0.0, 0.0, 0.0]),
+        post_process: Some(post),
+        ..Default::default()
+    }
+}
+
 fn build_materials_pbr(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let s = upload(ctx, &primitives::sphere(0.7, 48, 24));
     let mut items = Vec::new();
@@ -756,6 +840,11 @@ pub fn catalogue() -> Vec<NamedScene> {
             build: build_transparent,
         },
         NamedScene {
+            name: "transparent_background",
+            cameras: standard_cameras(Vec3::ZERO, 7.0),
+            build: build_transparent_background,
+        },
+        NamedScene {
             name: "materials_pbr",
             cameras: standard_cameras(Vec3::ZERO, 14.0),
             build: build_materials_pbr,
@@ -788,6 +877,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     ];
     scenes.extend(item_types::scenes());
     scenes.extend(overlays::scenes());
+    scenes.extend(shadows::scenes());
     scenes
 }
 

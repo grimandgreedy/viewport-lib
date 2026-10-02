@@ -1866,10 +1866,10 @@ impl DeviceResources {
                 self.sample_count,
                 None,
             );
-            self.scene.solid = ldr.solid;
-            self.scene.solid_two_sided = ldr.solid_two_sided;
-            self.scene.transparent = ldr.transparent;
-            self.scene.wireframe = ldr.wireframe;
+            self.scene.solid = Some(ldr.solid);
+            self.scene.solid_two_sided = Some(ldr.solid_two_sided);
+            self.scene.transparent = Some(ldr.transparent);
+            self.scene.wireframe = Some(ldr.wireframe);
 
             if self.scene.hdr_opaque.is_some() {
                 let hdr_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
@@ -1921,7 +1921,7 @@ impl DeviceResources {
             }
         }
 
-        // mesh_oit.wgsl: only present after ensure_hdr_shared has been
+        // mesh_oit.wgsl: only present after ensure_hdr_pipelines has been
         // called.
         if self.oit.pipeline.is_some() {
             if let Some(base) = lookup_source("mesh_oit.wgsl") {
@@ -1970,8 +1970,8 @@ impl DeviceResources {
                     &self.deform.bind_group_layout,
                 ],
             );
-            self.shadow.pipeline =
-                crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
+            self.shadow.pipeline = Some(crate::renderer::pipeline_key::PipelineVariantSet::build(
+                |key| {
                     let cull_mode = if key.two_sided {
                         None
                     } else {
@@ -1980,7 +1980,41 @@ impl DeviceResources {
                     crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
                         device, &layout, &shader, cull_mode, key.cutout, None,
                     )
-                });
+                },
+            ));
+        }
+
+        // shadow_point.wgsl: depth-only cube-face pass for point lights. Rebuilt here for the
+        // same reason as the cascade pass above: a caster skinned on the GPU keeps the bind pose
+        // in its vertex buffer, so a shadow pass that does not run the deformer rasterises the
+        // bind pose into the cube face and the character's shadow never moves a limb.
+        if let Some(base) = lookup_source("shadow_point.wgsl") {
+            let composed = compose_shader(base, &registrations);
+            let shader = crate::resources::builders::wgsl_module(
+                device,
+                "shadow_point_shader_composed",
+                composed,
+            );
+            let layout = crate::resources::builders::pipeline_layout(
+                device,
+                "shadow_point_pipeline_layout",
+                &[
+                    &self.shadow.point_face_bgl,
+                    &self.binds.object_bgl,
+                    &self.deform.bind_group_layout,
+                ],
+            );
+            // Unconditional, like the cascade assignment: `ensure_point_shadow_pipeline` returns
+            // early once the slot is filled, so overwriting here is what makes build order
+            // irrelevant between the two.
+            self.shadow.point_pipeline = Some(
+                crate::resources::mesh::mesh_pipelines::build_shadow_point_pipeline(
+                    device,
+                    &layout,
+                    &shader,
+                    self.pipeline_cache.as_ref(),
+                ),
+            );
         }
 
         // outline_mask.wgsl: mask-write pass for the selection silhouette.
@@ -2007,8 +2041,8 @@ impl DeviceResources {
                 crate::gpu::TextureFormat::R8Unorm,
                 None,
             );
-            self.outline.mask_pipeline = masks.mask;
-            self.outline.mask_two_sided_pipeline = masks.mask_two_sided;
+            self.outline.mask_pipeline = Some(masks.mask);
+            self.outline.mask_two_sided_pipeline = Some(masks.mask_two_sided);
         }
 
         // Instanced families (LDR / HDR / OIT / cull) rebuild through the
@@ -2199,8 +2233,7 @@ mod tests {
     /// broken, `register_deformer` would fail at validation; if the rebuild
     /// path were broken (e.g. shader module created from stale source),
     /// this test would still pass because no draw is issued. So we also
-    /// re-fetch the LDR pipelines and confirm they are not the originals
-    /// that the renderer was constructed with.
+    /// re-fetch the LDR pipelines and confirm the rebuild populated them.
     #[test]
     fn register_deformer_rebuilds_ldr_mesh_pipelines() {
         use crate::renderer::ViewportRenderer;
@@ -2210,8 +2243,8 @@ mod tests {
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
 
-        let solid_before: *const crate::gpu::RenderPipeline = &renderer.resources().scene.solid;
-        let wf_before: *const crate::gpu::RenderPipeline = &renderer.resources().scene.wireframe;
+        // Nothing has been drawn, so the base family is not built yet.
+        assert!(renderer.resources().scene.solid.is_none());
 
         let body = "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    if (deform_slot_stride(0u) > 0u) {\n        o.position.z = o.position.z + deform_read_f32(0u, v.vertex_index, 0u);\n    }\n    return o;\n}\n";
         let desc = DeformerDesc {
@@ -2230,16 +2263,10 @@ mod tests {
             .resources_mut()
             .flush_mesh_pipeline_rebuild(&device);
 
-        let solid_after: *const crate::gpu::RenderPipeline = &renderer.resources().scene.solid;
-        let wf_after: *const crate::gpu::RenderPipeline = &renderer.resources().scene.wireframe;
-        // The fields themselves moved during the swap, so the addresses
-        // stay the same. Instead, confirm that `solid_pipeline` and
-        // `wireframe_pipeline` are still live wgpu handles by hashing
-        // their global_id, which is unique per device-created pipeline.
-        assert_ne!(solid_before, std::ptr::null());
-        assert_ne!(solid_after, std::ptr::null());
-        assert_ne!(wf_before, std::ptr::null());
-        assert_ne!(wf_after, std::ptr::null());
+        // The rebuild composes the deformer into the LDR family, which also
+        // builds it: live handles rather than the empty slots from before.
+        assert!(renderer.resources().scene.solid.is_some());
+        assert!(renderer.resources().scene.wireframe.is_some());
     }
 
     #[test]

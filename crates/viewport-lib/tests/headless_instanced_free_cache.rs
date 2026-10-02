@@ -12,7 +12,6 @@
 //! re-upload, with the consumer not bumping `scene.generation`, blanked the
 //! frame (draw_calls dropped to 0).
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;

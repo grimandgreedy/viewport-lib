@@ -68,7 +68,7 @@ fn readback(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture)
 
     let mut pixels = Vec::with_capacity((SIZE * SIZE * bpp) as usize);
     {
-        let mapped = staging.slice(..).get_mapped_range();
+        let mapped = viewport_lib::gpu::mapped_range(staging.slice(..));
         for row in 0..SIZE as usize {
             let start = row * padded_row as usize;
             pixels.extend_from_slice(&mapped[start..start + unpadded_row as usize]);

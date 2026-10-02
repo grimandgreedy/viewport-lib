@@ -93,18 +93,27 @@ pub enum OverlayShape {
     /// vector art (paths). Subpath coordinates are path-local logical pixels,
     /// placed at the item's `position`.
     ///
-    /// A vector shape honours the coverage- and box-relative fields of
-    /// [`OverlayShapeItem`]: `fill` (solid and gradients), both shadow lists,
-    /// `opacity`, `z_order`, the clip, and `rotation` /
-    /// `rotation_pivot`. `position` places the path origin and `size` sets the
+    /// A vector shape honours most of [`OverlayShapeItem`]: `style.fill` as a
+    /// solid or a gradient, `style.shadows` and `style.inner_shadows` (drawn as
+    /// geometry running alongside the contour rather than from a distance
+    /// field, so the curve differs slightly from an analytic shape's),
+    /// `style.opacity`, `style.tint`, `z_order`, `clip`, `animations`, and the
+    /// whole `transform`. `position` places the path origin and `size` sets the
     /// rotation centre; the fill and gradient bounds come from the path's own
     /// extent, not `size`.
     ///
-    /// Fields that depend on the distance field or the bounding quad have no
-    /// effect on a vector shape and are ignored: `shadows` / `inner_shadows` /
-    /// the legacy `shadow_*` (no distance field to fall off), `backdrop_blur`
-    /// and its filters, and an `OverlayFill::Texture` fill (a colour or
-    /// gradient fill still draws).
+    /// Two things need the distance field this variant does not have, and are
+    /// ignored: `style.backdrop` and its filters, and an `OverlayFill::Texture`
+    /// fill (a solid or gradient fill still draws). Ask
+    /// [`OverlayStyleSupport::for_shape`] rather than hard-coding that list.
+    ///
+    /// A vector shape also cannot serve as a clip mask. Setting `provides_mask`
+    /// on one registers no mask, so items naming that id draw unclipped, the
+    /// same as naming an id that was never provided. Masks are evaluated per
+    /// fragment from a distance field, and clipping to the bounding box instead
+    /// would silently clip the wrong region.
+    ///
+    /// [`OverlayStyleSupport::for_shape`]: crate::overlay::OverlayStyleSupport::for_shape
     Vector {
         /// The contours that make up the shape.
         subpaths: Vec<SubPath>,

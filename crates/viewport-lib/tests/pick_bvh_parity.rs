@@ -7,7 +7,6 @@
 //! coarse cursor grid and requires high agreement at the unambiguous interior pixels
 //! rather than an exact match at every cursor.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;

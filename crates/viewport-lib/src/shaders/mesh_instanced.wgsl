@@ -60,7 +60,7 @@ struct InstanceData {
     has_normal_map: u32,                  // offset 92
     has_ao_map: u32,                      // offset 96
     unlit: u32,                           // offset 100
-    receive_shadows: u32,                 // offset 104
+    receive_shadows: u32,                 // offset 104 : bit 0 receive, bit 1 closed surface, bit 2 two-sided receiver
     material_id: u32,                     // offset 108
     alpha_cutoff: f32,                    // offset 112
     alpha_flag: u32,                      // offset 116
@@ -297,21 +297,50 @@ fn vs_main_cull(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
 // ---------------------------------------------------------------------------
 
 
-fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>) -> f32 {
+fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec3<f32>) -> f32 {
     if light.point_shadow_slot < 0 {
         return 1.0;
     }
-    let to_frag = world_pos - light.pos_or_dir;
-    let dist = length(to_frag);
-    let dir = to_frag / max(dist, 1e-5);
-    let normalised = clamp(dist / max(light.range, 1e-5), 0.0, 1.0);
-    let bias = 0.0015;
+    // The cube stores linear distance-to-light over range, one value per
+    // texel, so across one texel a receiver's own distance changes by
+    // texel_world * tan(theta) (theta between the normal and the light ray).
+    // A flat receiver near the light and nearly parallel to it (a ceiling
+    // slab over a room light) sees that exceed any fixed constant and reads
+    // its own recorded distance as an occluder, in bands aligned with the
+    // cube-face texel rows. Two receiver-side terms clear it:
+    //   - normal offset: the sample point is lifted off the surface along the
+    //     normal by a couple of texels, scaled by sin(theta) so perpendicular
+    //     receivers stay put. Lifting by e buys a distance margin of e /
+    //     cos(theta), the same growth as a slope-scaled bias, but the world
+    //     displacement stays bounded at grazing angles;
+    //   - a constant distance bias of one texel, plus the consumer knob.
+    // Both scale with the cube-face texel footprint at the receiver, so the
+    // bias is a fixed number of texels at any distance and face resolution.
+    let to_light = light.pos_or_dir - world_pos;
+    let dist = length(to_light);
+    let l = to_light / max(dist, 1e-5);
+    // A cube face spans two units at unit distance over face_size texels.
+    let face_size = f32(textureDimensions(point_shadow_cube_tex).x);
+    let texel_world = dist * 2.0 / max(face_size, 1.0);
+    // Whichever side of the surface faces the light: two-sided receivers are
+    // shaded from either side and the offset must always lift toward the
+    // light.
+    let n = geo_normal * select(-1.0, 1.0, dot(geo_normal, l) >= 0.0);
+    let n_dot_l = clamp(dot(n, l), 0.0, 1.0);
+    let sin_t = sqrt(max(1.0 - n_dot_l * n_dot_l, 0.0));
+    let offset_pos = world_pos + n * (texel_world * 2.0 * sin_t);
+    let to_frag = offset_pos - light.pos_or_dir;
+    let offset_dist = length(to_frag);
+    let dir = to_frag / max(offset_dist, 1e-5);
+    let range = max(light.range, 1e-5);
+    let normalised = clamp((offset_dist - texel_world) / range, 0.0, 1.0)
+        - lights_uniform.shadow_bias;
     return textureSampleCompareLevel(
         point_shadow_cube_tex,
         shadow_sampler,
         dir,
         light.point_shadow_slot,
-        normalised - bias,
+        normalised,
     );
 }
 
@@ -604,6 +633,13 @@ fn compute_lit(
 
     // Use the smooth vertex normal for shadow bias (see mesh.wgsl for rationale).
     let shadow_normal = N;
+    // Interpolated vertex normal, unflipped and without normal mapping: the
+    // point-shadow receiver bias reasons about the surface as the shadow
+    // pass rasterised it.
+    let geo_normal = normalize(in.world_normal);
+    // Bit 2 of receive_shadows: a styled policy on an open mesh, the cull-none
+    // caster path, which takes the two-sided receiver bias.
+    let receiver_two_sided = select(0u, 1u, (inst.receive_shadows & 4u) != 0u);
 
     let V = normalize(camera.eye_pos - in.world_pos);
 
@@ -673,12 +709,16 @@ fn compute_lit(
             // </viewport-shade-slot:backface-cull>
             // <viewport-shade-slot:shadow>
             var shadow_factor = 1.0;
-            if lights_uniform.shadows_enabled != 0u && inst.receive_shadows != 0u {
-                if i == 0u && lights_storage[0].light_type != 1u {
-                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L, 0u);
+            if lights_uniform.shadows_enabled != 0u && (inst.receive_shadows & 1u) != 0u {
+                if (inst.receive_shadows & 2u) != 0u && surface.front_facing == 0u {
+                    // The inside of a closed solid, seen through a clip
+                    // plane: in the solid's own shadow. See mesh.wgsl.
+                    shadow_factor = 0.0;
+                } else if i == 0u && lights_storage[0].light_type != 1u {
+                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L, receiver_two_sided);
                     shadow_factor = last_shadow_sample.factor;
                 } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
-                    shadow_factor = sample_point_shadow(l, in.world_pos);
+                    shadow_factor = sample_point_shadow(l, in.world_pos, geo_normal);
                 }
             }
             // </viewport-shade-slot:shadow>
@@ -739,12 +779,15 @@ fn compute_lit(
             if !ev.in_range { continue; }
             let light_dir = ev.l;
             var shadow = 1.0;
-            if lights_uniform.shadows_enabled != 0u && inst.receive_shadows != 0u {
-                if i == 0u && lights_storage[0].light_type != 1u {
-                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir, 0u);
+            if lights_uniform.shadows_enabled != 0u && (inst.receive_shadows & 1u) != 0u {
+                if (inst.receive_shadows & 2u) != 0u && surface.front_facing == 0u {
+                    // Inside a closed solid: see the loop above.
+                    shadow = 0.0;
+                } else if i == 0u && lights_storage[0].light_type != 1u {
+                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir, receiver_two_sided);
                     shadow = last_shadow_sample.factor;
                 } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
-                    shadow = sample_point_shadow(l, in.world_pos);
+                    shadow = sample_point_shadow(l, in.world_pos, geo_normal);
                 }
             }
             let H = normalize(light_dir + V);

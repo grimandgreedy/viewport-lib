@@ -22,10 +22,18 @@ pub fn wgsl_module<'a>(
     label: &str,
     source: impl Into<std::borrow::Cow<'a, str>>,
 ) -> crate::gpu::ShaderModule {
-    device.create_shader_module(crate::gpu::ShaderModuleDescriptor {
+    let build_start = web_time::Instant::now();
+    let module = device.create_shader_module(crate::gpu::ShaderModuleDescriptor {
         label: Some(label),
         source: crate::gpu::ShaderSource::Wgsl(source.into()),
-    })
+    });
+    if build_log::enabled() {
+        build_log::record(
+            &format!("module {label}"),
+            build_start.elapsed().as_secs_f32() * 1000.0,
+        );
+    }
+    module
 }
 
 /// Prepend the module directive `@builtin(primitive_index)` needs on the
@@ -665,14 +673,22 @@ pub fn compute_pipeline(
     shader: &crate::gpu::ShaderModule,
     entry: &str,
 ) -> crate::gpu::ComputePipeline {
-    device.create_compute_pipeline(&crate::gpu::ComputePipelineDescriptor {
+    let build_start = web_time::Instant::now();
+    let pipeline = device.create_compute_pipeline(&crate::gpu::ComputePipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
         module: shader,
         entry_point: Some(entry),
         compilation_options: crate::gpu::PipelineCompilationOptions::default(),
         cache: None,
-    })
+    });
+    if build_log::enabled() {
+        build_log::record(
+            &format!("compute {label}"),
+            build_start.elapsed().as_secs_f32() * 1000.0,
+        );
+    }
+    pipeline
 }
 
 /// Pipeline layout from a list of bind group layouts, with no push-constant
@@ -771,7 +787,9 @@ pub fn render_pipeline(
         buffers: &vbufs,
         compilation_options: crate::gpu::PipelineCompilationOptions::default(),
     };
-    device.create_render_pipeline(&crate::gpu::RenderPipelineDescriptor {
+    let build_start = web_time::Instant::now();
+    let build_label = desc.label;
+    let pipeline = device.create_render_pipeline(&crate::gpu::RenderPipelineDescriptor {
         label: Some(desc.label),
         layout: Some(desc.layout),
         vertex,
@@ -785,7 +803,123 @@ pub fn render_pipeline(
         #[cfg(any(wgpu29, wgpu30))]
         multiview_mask: None,
         cache: desc.cache,
-    })
+    });
+    build_log::record(build_label, build_start.elapsed().as_secs_f32() * 1000.0);
+    pipeline
+}
+
+/// Optional record of what each pipeline, shader module, and render target cost
+/// to create.
+///
+/// Off by default. Switch it on with [`enable`](build_log::enable), or by setting
+/// `VPL_BUILD_LOG` in the environment on a platform that has one. Every
+/// [`render_pipeline`], [`compute_pipeline`], and [`wgsl_module`] call then
+/// appends its label and wall-clock cost, and every per-viewport render target
+/// appends its label and size.
+///
+/// Startup on a GPU backend is dominated by shader compilation, and a phase
+/// breakdown cannot say which pipeline is expensive. This attributes it per
+/// object. Read it back with [`drain`](build_log::drain) and
+/// [`drain_textures`](build_log::drain_textures), which both return what was
+/// recorded since the last call.
+pub mod build_log {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Mutex, OnceLock};
+
+    /// Seeded from the environment on first use, then settable at runtime.
+    ///
+    /// A web build has no environment: under `wasm32` `std::env::var` always
+    /// reports the variable missing, so `VPL_BUILD_LOG` can never be set there
+    /// and [`enable`] is the only way in. That is the platform where startup
+    /// attribution is most wanted, so the flag is not env-only.
+    static ENABLED: OnceLock<AtomicBool> = OnceLock::new();
+
+    fn flag() -> &'static AtomicBool {
+        ENABLED.get_or_init(|| AtomicBool::new(std::env::var("VPL_BUILD_LOG").is_ok()))
+    }
+
+    /// Start recording. Call before building the renderer; anything created
+    /// earlier is not in the log.
+    pub fn enable() {
+        flag().store(true, Ordering::Relaxed);
+    }
+
+    /// Stop recording. What is already recorded stays until drained.
+    pub fn disable() {
+        flag().store(false, Ordering::Relaxed);
+    }
+
+    /// Whether recording is on.
+    pub fn enabled() -> bool {
+        flag().load(Ordering::Relaxed)
+    }
+
+    static PIPELINES: OnceLock<Mutex<Vec<(String, f32)>>> = OnceLock::new();
+    static TEXTURES: OnceLock<Mutex<Vec<(String, u64)>>> = OnceLock::new();
+
+    pub(super) fn record(label: &str, ms: f32) {
+        if enabled() {
+            PIPELINES
+                .get_or_init(|| Mutex::new(Vec::new()))
+                .lock()
+                .unwrap()
+                .push((label.to_string(), ms));
+        }
+    }
+
+    /// Record a render target allocation and its size. The other half of what a
+    /// consumer pays before drawing anything: per-viewport target memory.
+    pub(crate) fn record_texture(label: &str, bytes: u64) {
+        if enabled() {
+            TEXTURES
+                .get_or_init(|| Mutex::new(Vec::new()))
+                .lock()
+                .unwrap()
+                .push((label.to_string(), bytes));
+        }
+    }
+
+    /// Take every pipeline and shader module recorded since the last call, in
+    /// creation order, with each one's wall-clock cost in milliseconds.
+    pub fn drain() -> Vec<(String, f32)> {
+        match PIPELINES.get() {
+            Some(l) => std::mem::take(&mut *l.lock().unwrap()),
+            None => Vec::new(),
+        }
+    }
+
+    /// Take every render target recorded since the last call, in allocation
+    /// order, with each one's size in bytes.
+    pub fn drain_textures() -> Vec<(String, u64)> {
+        match TEXTURES.get() {
+            Some(l) => std::mem::take(&mut *l.lock().unwrap()),
+            None => Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        /// `enable` works with no environment variable set, which is the only
+        /// route a web build has. Records after enabling, nothing before.
+        #[test]
+        fn enable_switches_recording_on_at_runtime() {
+            // Not asserting the initial state: the env seeds it, and another
+            // test in this binary may have enabled it already.
+            super::disable();
+            let _ = super::drain();
+            super::record("before", 1.0);
+            assert!(super::drain().is_empty(), "a disabled log records nothing");
+
+            super::enable();
+            assert!(super::enabled());
+            super::record("after", 2.0);
+            let got = super::drain();
+            assert_eq!(got.len(), 1, "an enabled log records");
+            assert_eq!(got[0].0, "after");
+            assert!(super::drain().is_empty(), "drain takes what it returned");
+            super::disable();
+        }
+    }
 }
 
 /// Wrap a depth-write flag for the current wgpu version's `DepthStencilState`.

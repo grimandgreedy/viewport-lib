@@ -3,7 +3,7 @@ use super::*;
 pub(crate) mod helpers;
 use helpers::*;
 mod gpu;
-pub(crate) use gpu::PendingPick;
+pub(crate) use gpu::{PendingPick, PendingSnap};
 /// Pick mask for controlling item types and sub-element levels in pick calls.
 pub mod pick_mask;
 pub(crate) mod point;
@@ -137,6 +137,21 @@ pub enum PickPoll {
     /// The pick resolved. `Some` is the hit under the cursor; `None` is empty
     /// space (or a type the GPU pass cannot draw).
     Ready(Option<PickHit>),
+}
+
+/// Outcome of polling a non-blocking snap query with
+/// [`ViewportRenderer::snap_query_poll`].
+#[derive(Clone, Debug)]
+pub enum SnapPoll {
+    /// No snap query is in flight: none has been started, or the last one was
+    /// already read.
+    Idle,
+    /// A query was submitted but its read-back has not completed yet. Poll
+    /// again on a later frame.
+    Pending,
+    /// The query resolved. `Some` is the nearest feature within the tolerance;
+    /// `None` is nothing pickable within it.
+    Ready(Option<SnapHit>),
 }
 
 impl ViewportRenderer {

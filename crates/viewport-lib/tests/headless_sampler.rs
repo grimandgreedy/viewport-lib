@@ -6,6 +6,7 @@
 
 mod common;
 use common::*;
+use viewport_lib::wgpu;
 
 use viewport_lib::{SamplerKey, TextureSlot};
 

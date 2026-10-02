@@ -93,13 +93,14 @@ pub struct ExposureResources {
     /// Bind group layout for all three compute passes (hdr texture, params
     /// uniform, histogram storage, exposure-state storage).
     pub bgl: crate::gpu::BindGroupLayout,
-    clear_pipeline: crate::gpu::ComputePipeline,
-    build_pipeline: crate::gpu::ComputePipeline,
-    resolve_pipeline: crate::gpu::ComputePipeline,
+    /// The three compute pipelines, `None` until `ensure_pipelines` runs. Only
+    /// the HDR post chain dispatches them, so they are built with the rest of it.
+    pipelines: Option<[crate::gpu::ComputePipeline; 3]>,
 }
 
 impl ExposureResources {
-    /// Build the shared bind group layout and the clear/build/resolve pipelines.
+    /// Build the shared bind group layout. The pipelines wait for
+    /// `ensure_pipelines`.
     pub fn new(device: &crate::gpu::Device) -> Self {
         let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("exposure_bgl"),
@@ -159,6 +160,18 @@ impl ExposureResources {
             ],
         });
 
+        Self {
+            bgl,
+            pipelines: None,
+        }
+    }
+
+    /// Build the clear, build and resolve compute pipelines and the module they
+    /// share. A no-op after the first call.
+    pub fn ensure_pipelines(&mut self, device: &crate::gpu::Device) {
+        if self.pipelines.is_some() {
+            return;
+        }
         let shader = crate::resources::builders::wgsl_module(
             device,
             "exposure_shader",
@@ -167,36 +180,16 @@ impl ExposureResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "exposure_pipeline_layout",
-            &[&bgl],
+            &[&self.bgl],
         );
-        let clear_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "exposure_clear_pipeline",
-            &layout,
-            &shader,
-            "clear_main",
-        );
-        let build_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "exposure_build_pipeline",
-            &layout,
-            &shader,
-            "build_main",
-        );
-        let resolve_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "exposure_resolve_pipeline",
-            &layout,
-            &shader,
-            "resolve_main",
-        );
-
-        Self {
-            bgl,
-            clear_pipeline,
-            build_pipeline,
-            resolve_pipeline,
-        }
+        let make = |label: &str, entry: &str| {
+            crate::resources::builders::compute_pipeline(device, label, &layout, &shader, entry)
+        };
+        self.pipelines = Some([
+            make("exposure_clear_pipeline", "clear_main"),
+            make("exposure_build_pipeline", "build_main"),
+            make("exposure_resolve_pipeline", "resolve_main"),
+        ]);
     }
 
     /// Allocate the per-viewport histogram, exposure-state, and params buffers.
@@ -293,12 +286,16 @@ impl ExposureResources {
         width: u32,
         height: u32,
     ) {
+        let Some([clear_pipeline, build_pipeline, resolve_pipeline]) = self.pipelines.as_ref()
+        else {
+            return;
+        };
         {
             let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some("exposure_clear_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.clear_pipeline);
+            pass.set_pipeline(clear_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(HISTOGRAM_BINS.div_ceil(256), 1, 1);
         }
@@ -307,7 +304,7 @@ impl ExposureResources {
                 label: Some("exposure_build_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.build_pipeline);
+            pass.set_pipeline(build_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(width.div_ceil(16), height.div_ceil(16), 1);
         }
@@ -316,7 +313,7 @@ impl ExposureResources {
                 label: Some("exposure_resolve_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.resolve_pipeline);
+            pass.set_pipeline(resolve_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }

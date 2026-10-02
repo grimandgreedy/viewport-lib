@@ -107,7 +107,12 @@ pub(crate) fn bindlessify(src: &str) -> String {
         );
         out = out.replace(from, to);
     }
-    out
+    // The array declaration needs its module directive ahead of everything
+    // else, so it goes on here rather than at each call site.
+    format!(
+        "{}{out}",
+        crate::plugin_api::shared_wgsl::BINDING_ARRAY_ENABLE_WGSL
+    )
 }
 
 /// Fixed size of the bindless texture array binding. A material's texture index
@@ -391,7 +396,13 @@ impl DeviceResources {
 
 #[cfg(test)]
 mod tests {
+    // The naga matching this build's wgpu leg; on 27 the crate keeps its own
+    // name, so only the aliases need importing.
     use super::*;
+    #[cfg(wgpu29)]
+    use naga29 as naga;
+    #[cfg(wgpu30)]
+    use naga30 as naga;
 
     // The generated bindless colour and OIT shaders must be valid WGSL under the
     // texture-array capabilities. naga validation runs without a device, so this

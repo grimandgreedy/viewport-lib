@@ -158,7 +158,7 @@ fn run_cull(h: &mut Harness, sizes: &[u32], keep: impl Fn(u32) -> bool) -> (Vec<
                 timeout: Some(std::time::Duration::from_secs(10)),
             })
             .expect("poll");
-        let bytes = slice.get_mapped_range().to_vec();
+        let bytes = viewport_lib::gpu::mapped_range(slice).to_vec();
         buf.unmap();
         bytes
     };

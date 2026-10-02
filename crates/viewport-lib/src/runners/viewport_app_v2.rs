@@ -547,6 +547,20 @@ impl<'rp> PaintCtxV2<'_, 'rp> {
         self.renderer.blit(self.rp, blit);
     }
 
+    /// Composite a prepared texture over a physical-pixel rect of the window
+    /// surface, instead of replacing it as [`blit_rect`](Self::blit_rect) does.
+    ///
+    /// For drawing a viewport inside the window's own render: prepare the source
+    /// with [`create_blit_composite`](crate::ViewportRenderer::create_blit_composite)
+    /// and render it with a transparent background, and whatever the window
+    /// already drew shows through wherever the inner viewport drew nothing.
+    pub fn blit_composite_rect(&mut self, blit: &BlitTexture, x: u32, y: u32, w: u32, h: u32) {
+        self.rp
+            .set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
+        self.rp.set_scissor_rect(x, y, w, h);
+        self.renderer.blit_composite(self.rp, blit);
+    }
+
     /// The window's renderer, for [`blit`](crate::ViewportRenderer::blit) /
     /// [`blit_with_depth`](crate::ViewportRenderer::blit_with_depth) variants beyond
     /// [`blit_rect`](Self::blit_rect).

@@ -6,8 +6,10 @@
 
 /// Full-screen ground-plane pipeline, uniform, and bind group.
 pub(crate) struct GroundPlaneResources {
-    /// Full-screen ground plane render pipeline (alpha blending, LessEqual depth).
-    pub(crate) pipeline: crate::gpu::RenderPipeline,
+    /// Full-screen ground plane render pipeline (alpha blending, LessEqual
+    /// depth). `None` until a frame asks for a ground plane; see
+    /// [`DeviceResources::ensure_ground_plane_pipeline`](crate::resources::DeviceResources::ensure_ground_plane_pipeline).
+    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
     /// Bind group layout for the ground plane (binding 0: uniform, 1: shadow
     /// depth, 2: comparison sampler). The bind group is rebuilt from the live
     /// layout inside `create_*`; this stored copy is currently unused.
@@ -17,6 +19,18 @@ pub(crate) struct GroundPlaneResources {
     pub(crate) uniform_buf: crate::gpu::Buffer,
     /// Bind group for the ground plane pass (rebuilt when shadow atlas changes).
     pub(crate) bind_group: crate::gpu::BindGroup,
+}
+
+impl GroundPlaneResources {
+    /// The ground-plane pipeline, built by
+    /// [`DeviceResources::ensure_ground_plane_pipeline`](crate::resources::DeviceResources::ensure_ground_plane_pipeline)
+    /// by the prepare of any frame that asks for a ground plane, which is before
+    /// the pass that draws it.
+    pub(crate) fn pipeline(&self) -> &crate::gpu::RenderPipeline {
+        self.pipeline
+            .as_ref()
+            .expect("ground plane pipeline missing; the scene prepare builds it")
+    }
 }
 
 #[cfg(test)]

@@ -22,9 +22,16 @@ pub struct CapturedHdr {
     pub width: u32,
     /// Capture height in pixels.
     pub height: u32,
-    /// Linear RGBA radiance, `width * height * 4` floats in row-major order. The
-    /// alpha channel is scene coverage: 0.0 on background pixels (matching the
-    /// HDR scene clear), > 0.0 where geometry or the skybox was drawn.
+    /// Linear RGBA radiance, `width * height * 4` floats in row-major order,
+    /// premultiplied by coverage.
+    ///
+    /// The alpha channel is scene coverage: 0.0 on background pixels, > 0.0
+    /// where geometry or the skybox was drawn. A background pixel is zero in
+    /// all four channels, because the HDR scene target is cleared to nothing.
+    /// `ViewportFrame::background_colour` does not reach a capture: it is
+    /// composited by the tone map, which a capture does not run. Bake a
+    /// backdrop into a probe with a skybox, which draws and carries coverage,
+    /// or composite one under the result.
     pub rgba: Vec<f32>,
 }
 
@@ -121,9 +128,11 @@ impl ViewportRenderer {
 
         // Mark this an auxiliary render for its duration: it reads the resident
         // scene and must not advance shared per-frame state. `render_mode`
-        // suppresses the upload pump, the frame-counter bump, the HiZ prev-depth
-        // store, and item-type plugins' prepare / cull; `last_stats` is a
-        // multi-site value, so snapshot and restore it so the caller's
+        // suppresses the upload pump, the frame-counter bump and the HiZ
+        // prev-depth store. Item-type plugin prepare / cull still runs: it
+        // prepares against the capture camera so the matching paint draws
+        // right-camera geometry (see `dispatch_plugin_prepare`). `last_stats` is
+        // a multi-site value, so snapshot and restore it so the caller's
         // `last_frame_stats()` keeps reflecting their presented frame.
         let saved_render_mode = self.render_mode;
         let saved_last_stats = self.last_stats;

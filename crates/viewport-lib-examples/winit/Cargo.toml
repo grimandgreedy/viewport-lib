@@ -91,6 +91,10 @@ path = "examples/web_scivis_smoke/main.rs"
 required-features = ["wgpu27"]
 
 [[example]]
+name = "viewport-in-viewport"
+path = "examples/viewport_in_viewport/main.rs"
+
+[[example]]
 name = "app-multi-window"
 path = "examples/app_multi_window/main.rs"
 
