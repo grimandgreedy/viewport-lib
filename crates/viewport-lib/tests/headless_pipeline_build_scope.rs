@@ -220,6 +220,8 @@ fn a_direct_paint_finds_the_ldr_pipelines(device: &wgpu::Device, queue: &wgpu::Q
         });
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                #[cfg(any(wgpu29, wgpu30))]
+                multiview_mask: None,
                 label: Some("direct_paint_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &colour,

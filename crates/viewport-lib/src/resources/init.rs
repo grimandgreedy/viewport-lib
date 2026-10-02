@@ -60,25 +60,22 @@ impl DeviceResources {
             .features()
             .contains(crate::gpu::Features::PIPELINE_CACHE)
         {
-            // One cache per device, shared by every renderer on it and found
-            // by every pipeline build through the registry. A second renderer
-            // on the device joins the existing cache and its data is ignored.
-            Some(crate::resources::builders::device_pipeline_cache::acquire(
-                device,
-                || unsafe {
-                    device.create_pipeline_cache(&crate::gpu::PipelineCacheDescriptor {
-                        label: Some("viewport_pipeline_cache"),
-                        data: pipeline_cache_data,
-                        fallback: true,
-                    })
-                },
-            ))
+            Some(unsafe {
+                device.create_pipeline_cache(&crate::gpu::PipelineCacheDescriptor {
+                    label: Some("viewport_pipeline_cache"),
+                    data: pipeline_cache_data,
+                    fallback: true,
+                })
+            })
         } else {
             None
         };
-        let pipeline_cache_lease = pipeline_cache
-            .as_ref()
-            .map(|_| crate::resources::builders::device_pipeline_cache::Lease(device.clone()));
+        // Registered with or without a cache: the lookup has to know about
+        // every renderer to tell when it cannot answer.
+        let pipeline_cache_lease = crate::resources::builders::device_pipeline_cache::register(
+            device,
+            pipeline_cache.as_ref(),
+        );
 
         // Cold-start instrumentation. Pipeline compilation and large depth-texture
         // allocation can dominate construction on some backends (notably Adreno
