@@ -8,7 +8,7 @@
 //! settings that make a still frame repeatable (see the scatter scene).
 
 use glam::{Mat4, Vec3};
-use viewport_lib::plugin_api::Uploads;
+use viewport_lib::plugin_api::{SURFACE_MASK_LAYERS, Uploads};
 use viewport_lib::{
     Aabb, ColourmapId, DecalBlendMode, DecalItem, Material, MeshInstanceItem, PickId,
     ScatterQuality, ScatterSettings, SpriteBlend, TextureData, VolumeData, primitives,
@@ -1481,10 +1481,10 @@ fn build_decal_on_non_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     mesh.mesh_id = ball;
     mesh.model = Mat4::from_translation(Vec3::new(-1.6, 0.0, 0.0)).to_cols_array_2d();
     mesh.material = Material::pbr([0.55, 0.55, 0.58], 0.1, 0.6);
-    // The mesh declines the decal. The implicit surface beside it does not
-    // stamp the surface mask, so it takes the projection whether it wants to
-    // or not.
-    mesh.settings.receives_decals = false;
+    // The mesh declines the decal by leaving the layers the surface mask
+    // holds. The implicit surface beside it does not stamp the mask, so it
+    // takes the projection whether it wants to or not.
+    mesh.settings.visibility_mask &= !SURFACE_MASK_LAYERS;
 
     let mut sphere = ImplicitPrimitive::zeroed();
     sphere.kind = 1;
@@ -1518,7 +1518,7 @@ fn build_decal_layers(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // Three spheres under two decal boxes that each enclose all of them. The
     // left sphere is on layer 0 and the middle one on layer 1; the red decal
     // targets layer 0 and the blue one layer 1, so each sphere takes one
-    // decal. The right sphere is on every layer and declines both.
+    // decal. The right sphere is on neither layer and takes no decal.
     let ball = ctx
         .renderer
         .resources_mut()
@@ -1536,7 +1536,7 @@ fn build_decal_layers(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut middle = sphere(0.0);
     middle.settings.visibility_mask = 0b10;
     let mut right = sphere(2.4);
-    right.settings.receives_decals = false;
+    right.settings.visibility_mask &= !SURFACE_MASK_LAYERS;
 
     let red = checker_texture(ctx, [220, 70, 40], [240, 220, 200]);
     let blue = checker_texture(ctx, [40, 90, 220], [200, 220, 240]);

@@ -82,28 +82,15 @@ pub struct ItemSettings {
     ///
     /// Decals read it too, through the surface mask: a decal lands on an item
     /// when the decal's `channel_mask` shares a layer with this mask. The
-    /// surface mask holds eight bits, so for decals layer `n` counts as layer
-    /// `n % 8` and layers eight apart are not told apart. See
-    /// [`receives_decals`](Self::receives_decals) for which item types take
-    /// part.
+    /// surface mask holds layers 0 to 7 only, so that test sees the low eight
+    /// bits of both masks. Clearing all eight (`visibility_mask &= !0xFF`)
+    /// keeps every decal off the item while leaving it on layers 8 and up for
+    /// cameras and lights.
+    ///
+    /// For decals this is honoured by mesh surfaces. An item type that writes
+    /// depth and does not stamp the surface mask takes every decal whatever
+    /// its mask; one that writes no depth takes none.
     pub visibility_mask: u32,
-    /// Whether projected decals land on this item. Default `true`.
-    ///
-    /// Clear it to keep every decal off the item whatever its layers. To let
-    /// some decals through and not others, leave this set and use
-    /// [`visibility_mask`](Self::visibility_mask) against the decal's
-    /// `channel_mask`.
-    ///
-    /// Honoured by mesh surfaces. An item type that writes depth and does not
-    /// stamp the surface mask takes every decal regardless of this flag; one
-    /// that writes no depth takes none.
-    #[cfg_attr(feature = "serde", serde(default = "default_true"))]
-    pub receives_decals: bool,
-}
-
-#[cfg(feature = "serde")]
-fn default_true() -> bool {
-    true
 }
 
 impl Default for ItemSettings {
@@ -120,7 +107,6 @@ impl Default for ItemSettings {
             ignore_clip: false,
             custom_data: [0.0; 8],
             visibility_mask: !0,
-            receives_decals: true,
         }
     }
 }

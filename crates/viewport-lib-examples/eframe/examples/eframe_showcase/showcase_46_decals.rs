@@ -754,7 +754,13 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
         glam::Mat4::from_translation(glam::Vec3::new(-1.5, 0.125, 2.0)),
         Material::from_colour([0.75, 0.28, 0.05]),
     );
-    scene.set_receives_decals(wall_obstacle_node, false);
+    // Off the layers the surface mask holds, so no decal lands on it. It
+    // stays on the higher layers, which keeps it drawn and lit.
+    if let Some(node) = scene.node(wall_obstacle_node) {
+        let mut appearance = *node.appearance();
+        appearance.visibility_mask &= !viewport_lib::plugin_api::SURFACE_MASK_LAYERS;
+        scene.set_appearance(wall_obstacle_node, appearance);
+    }
     app.decal46_state.wall_obstacle_node = Some(wall_obstacle_node);
 
     app.decal46_state.built = true;
@@ -1249,7 +1255,7 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
             &mut app.decal46_state.show_obstacle,
             "Show non-receiver obstacles",
         );
-        ui.small("Orange boxes (wall + ground): receives_decals = false.");
+        ui.small("Orange boxes (wall + ground): off layers 0 to 7, so no decal lands.");
 
         ui.add_space(6.0);
         ui.separator();

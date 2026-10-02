@@ -659,7 +659,7 @@ impl ViewportRenderer {
                     // Every pixel starts as a member of every layer; the
                     // surface mask pass overwrites the ones that are not.
                     stencil_ops: Some(crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(crate::plugin_api::SURFACE_MASK_DEFAULT),
+                        load: crate::gpu::LoadOp::Clear(crate::plugin_api::SURFACE_MASK_LAYERS),
                         store: crate::gpu::StoreOp::Store,
                     }),
                 }),
@@ -1653,9 +1653,7 @@ impl ViewportRenderer {
                         // owns this attachment. The surface mask pass then
                         // stamps over it as usual.
                         stencil_ops: Some(crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(
-                                crate::plugin_api::SURFACE_MASK_DEFAULT,
-                            ),
+                            load: crate::gpu::LoadOp::Clear(crate::plugin_api::SURFACE_MASK_LAYERS),
                             store: crate::gpu::StoreOp::Store,
                         }),
                     }),

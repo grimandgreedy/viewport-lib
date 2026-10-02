@@ -204,16 +204,6 @@ impl SceneNode {
     pub fn layer(&self) -> LayerId {
         self.layer
     }
-
-    /// Whether projected decals land on this surface.
-    pub fn receives_decals(&self) -> bool {
-        self.appearance.receives_decals
-    }
-
-    /// Set whether projected decals land on this surface.
-    pub fn set_receives_decals(&mut self, v: bool) {
-        self.appearance.receives_decals = v;
-    }
 }
 
 impl ViewportObject for SceneNode {
@@ -734,14 +724,6 @@ impl Scene {
     pub fn set_deform_instance(&mut self, id: NodeId, instance: Option<u32>) {
         if let Some(node) = self.nodes.get_mut(&id) {
             node.deform_instance = instance;
-        }
-        self.version = self.version.wrapping_add(1);
-    }
-
-    /// Set whether projected decals land on this node's surface.
-    pub fn set_receives_decals(&mut self, id: NodeId, v: bool) {
-        if let Some(node) = self.nodes.get_mut(&id) {
-            node.appearance.receives_decals = v;
         }
         self.version = self.version.wrapping_add(1);
     }
@@ -1275,11 +1257,7 @@ impl Scene {
             mesh_id: None,
             material: crate::scene::material::Material::default(),
             submesh_materials: None,
-            appearance: {
-                let mut appearance = crate::scene::material::ItemSettings::default();
-                appearance.receives_decals = false;
-                appearance
-            },
+            appearance: crate::scene::material::ItemSettings::default(),
             visible: true,
             show_normals: false,
             local_transform: glam::Mat4::IDENTITY,

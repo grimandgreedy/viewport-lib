@@ -561,7 +561,7 @@ pub struct EncoderScopeContext<'a> {
     ///
     /// A projection effect that lands only on some surfaces loads this at the
     /// pixel and skips it when the value shares no bit with the effect's own
-    /// mask, folded with [`surface_mask_bits`]. The type has to name that mask
+    /// mask, cut down with [`surface_mask_bits`]. The type has to name that mask
     /// in [`surface_mask_readers`](ItemTypePlugin::surface_mask_readers), or
     /// the items it would refuse are never stamped. Paired with
     /// [`scene_depth_only`](Self::scene_depth_only), which reconstructs the
@@ -654,18 +654,17 @@ pub struct OutlineMaskContext<'a> {
     pub meshes: crate::resources::MeshDraw<'a>,
 }
 
-/// The surface mask value every pixel holds until an item stamps over it:
-/// a member of every layer.
-pub const SURFACE_MASK_DEFAULT: u32 = 0xFF;
+/// The layers the surface mask holds, 0 to 7. Also the value every pixel
+/// holds until an item stamps over it: a member of all eight.
+pub const SURFACE_MASK_LAYERS: u32 = 0xFF;
 
-/// Fold a 32-bit layer mask into the eight bits the surface mask holds.
+/// The part of a 32-bit layer mask the surface mask holds: layers 0 to 7.
 ///
-/// Layer `n` lands on bit `n % 8`, so two masks that share a layer still share
-/// a bit after folding, and a non-zero mask never folds to zero. The cost is
-/// that layers eight apart are not told apart: a decal on layer 3 also lands
-/// on an item that is only on layer 11.
+/// Layers 8 and up are dropped. An item with none of the low eight owns its
+/// pixels with no layer at all, so nothing that reads the mask lands on it,
+/// and a reader with none of them lands nowhere.
 pub fn surface_mask_bits(mask: u32) -> u32 {
-    (mask | (mask >> 8) | (mask >> 16) | (mask >> 24)) & 0xFF
+    mask & SURFACE_MASK_LAYERS
 }
 
 /// Information forwarded to a plugin's
@@ -709,18 +708,8 @@ impl SurfaceMaskContext<'_> {
         if settings.hidden {
             return None;
         }
-        let value = surface_mask_value(settings);
+        let value = surface_mask_bits(settings.visibility_mask);
         surface_mask_needs_stamp(value, self.readers).then_some(value)
-    }
-}
-
-/// The surface mask value an item with `settings` owns its pixels with: its
-/// layers, or nothing at all when it takes no decals.
-pub(crate) fn surface_mask_value(settings: &ItemSettings) -> u32 {
-    if settings.receives_decals {
-        surface_mask_bits(settings.visibility_mask)
-    } else {
-        0
     }
 }
 
@@ -1185,9 +1174,8 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// whose surface a pixel belongs to.
     ///
     /// The surface mask holds, for each pixel of the opaque image, the layers
-    /// (`ItemSettings::visibility_mask`, folded by [`surface_mask_bits`]) of
-    /// the item that owns it, or no layers at all for an item with
-    /// `ItemSettings::receives_decals` cleared. A decal reads it to land on some surfaces and
+    /// (`ItemSettings::visibility_mask`, cut down by [`surface_mask_bits`]) of
+    /// the item that owns it. A decal reads it to land on some surfaces and
     /// not others. Every pixel starts as a member of every layer; this hook is
     /// where an item type overwrites that for the items that say otherwise.
     ///
@@ -1215,7 +1203,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     }
 
     /// Name the masks this type will test the surface mask against this
-    /// frame, one per distinct mask, folded by [`surface_mask_bits`].
+    /// frame, one per distinct mask, cut down by [`surface_mask_bits`].
     ///
     /// Push nothing when the type does not read the mask, which is the
     /// default. The lib uses the list to decide which items need stamping, so
@@ -1507,16 +1495,13 @@ mod surface_mask_tests {
     use super::*;
 
     #[test]
-    fn folding_keeps_shared_layers_shared() {
-        assert_eq!(surface_mask_bits(!0), SURFACE_MASK_DEFAULT);
+    fn the_mask_holds_the_low_eight_layers() {
+        assert_eq!(surface_mask_bits(!0), SURFACE_MASK_LAYERS);
         assert_eq!(surface_mask_bits(0), 0);
-        // A layer above the eighth still lands on a bit.
-        assert_eq!(surface_mask_bits(1 << 12), 1 << 4);
-        for layer in 0..32 {
-            let item = surface_mask_bits(1 << layer);
-            let reader = surface_mask_bits(1 << layer);
-            assert_ne!(item & reader, 0, "layer {layer} lost in the fold");
-        }
+        // Clearing one low layer clears it in the mask.
+        assert_eq!(surface_mask_bits(!0b1), 0xFE);
+        // An item on high layers only owns its pixels with no layer.
+        assert_eq!(surface_mask_bits(!SURFACE_MASK_LAYERS), 0);
     }
 
     #[test]
@@ -1524,13 +1509,13 @@ mod surface_mask_tests {
         // Every reader at the default: nothing but a zero value needs a stamp.
         assert!(!surface_mask_needs_stamp(
             0b0000_0010,
-            &[SURFACE_MASK_DEFAULT]
+            &[SURFACE_MASK_LAYERS]
         ));
-        assert!(surface_mask_needs_stamp(0, &[SURFACE_MASK_DEFAULT]));
+        assert!(surface_mask_needs_stamp(0, &[SURFACE_MASK_LAYERS]));
         // A narrowed reader makes an item on another layer need one.
         assert!(surface_mask_needs_stamp(
             0b0000_0010,
-            &[SURFACE_MASK_DEFAULT, 0b0000_0001]
+            &[SURFACE_MASK_LAYERS, 0b0000_0001]
         ));
         assert!(!surface_mask_needs_stamp(0b0000_0011, &[0b0000_0001]));
         // Nothing reads the mask: nothing is stamped.

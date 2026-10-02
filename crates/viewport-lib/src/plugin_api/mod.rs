@@ -150,7 +150,7 @@ pub use item_type::{
     AsAnyItemTypePlugin, DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections,
     ItemFrameContext, ItemTypeHost, ItemTypePlugin, LightContext, OutlineMaskContext, PaintContext,
     PickContext, PickPassContext, PickRay, PluginItem, PluginItemCollection, RectPickContext,
-    SURFACE_MASK_DEFAULT, ShadowCastContext, SurfaceMaskContext, surface_mask_bits,
+    SURFACE_MASK_LAYERS, ShadowCastContext, SurfaceMaskContext, surface_mask_bits,
 };
 pub use post_effect::{
     PostEffectContext, PostEffectProducer, PostEffectProducerId, PostEffectResizeContext,

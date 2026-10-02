@@ -9,8 +9,7 @@
 
 use super::ViewportRenderer;
 use crate::plugin_api::{
-    SURFACE_MASK_DEFAULT,
-    item_type::{surface_mask_needs_stamp, surface_mask_value},
+    SURFACE_MASK_LAYERS, item_type::surface_mask_needs_stamp, surface_mask_bits,
 };
 use crate::renderer::types::FrameData;
 
@@ -84,7 +83,7 @@ impl ViewportRenderer {
         // A reader with no bits lands nowhere whatever the mask holds, so it
         // gives no reason to stamp anything.
         for reader in &mut state.readers {
-            *reader &= SURFACE_MASK_DEFAULT;
+            *reader &= SURFACE_MASK_LAYERS;
         }
         state.readers.retain(|reader| *reader != 0);
         state.readers.sort_unstable();
@@ -98,7 +97,7 @@ impl ViewportRenderer {
             if item.settings.hidden {
                 continue;
             }
-            let value = surface_mask_value(&item.settings);
+            let value = surface_mask_bits(item.settings.visibility_mask);
             if surface_mask_needs_stamp(value, &state.readers) {
                 state.mesh_stamps.push(MeshStamp {
                     mesh_id: item.mesh_id,
@@ -117,7 +116,10 @@ impl ViewportRenderer {
             let needs = (0..items.len()).any(|i| {
                 let settings = items.item_settings(i);
                 !settings.hidden
-                    && surface_mask_needs_stamp(surface_mask_value(settings), &state.readers)
+                    && surface_mask_needs_stamp(
+                        surface_mask_bits(settings.visibility_mask),
+                        &state.readers,
+                    )
             });
             if needs {
                 state.plugin_stamps = true;

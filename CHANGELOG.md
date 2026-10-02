@@ -4,7 +4,7 @@
 
 ### Added
 
-- **`DecalItem::channel_mask`: a decal can target some surfaces and not others** - a decal lands on an item when its `channel_mask` shares a layer with the item's `ItemSettings::visibility_mask`, the test a light's `channel_mask` already makes. The default is every layer, so existing decals are unchanged. For decals layer `n` counts as layer `n % 8`.
+- **`DecalItem::channel_mask`: a decal can target some surfaces and not others** - a decal lands on an item when its `channel_mask` shares a layer with the item's `ItemSettings::visibility_mask`, the test a light's `channel_mask` already makes. The default is every layer, so existing decals are unchanged. Only layers 0 to 7 count for decals.
 
 - **`ItemTypePlugin::surface_mask`: a per-pixel layer mask screen-space effects can read** - a new pass stamps each opaque pixel's layers into the scene stencil, and an item type takes part by drawing its items from `surface_mask` with a pipeline from `build_surface_mask_pipeline`. A type that reads the mask names its masks in `surface_mask_readers`; the pass only runs when something reads it and some item needs a stamp. Decals read it in place of their own exclude pass, so nothing changes for a consumer.
 
@@ -18,7 +18,7 @@
 
 ### Changed
 
-- **`receives_decals` moved from `SceneRenderItem` to `ItemSettings`** - write `item.settings.receives_decals = false` where you wrote `item.receives_decals = false`. `Scene::set_receives_decals` and the `SceneNode` accessors are unchanged. Mesh surfaces are still the only items that honour it.
+- **`receives_decals` is gone; a surface declines decals through its layers** - `SceneRenderItem::receives_decals`, `Scene::set_receives_decals` and the `SceneNode` accessors are removed. To keep every decal off an item, take it off the layers a decal can see: `item.settings.visibility_mask &= !SURFACE_MASK_LAYERS` (layers 0 to 7). The item stays on layers 8 and up, so cameras and lights left at their default masks still draw and light it. Mesh surfaces are still the only items that can decline.
 
 - **`ViewportFrame::background_colour` is premultiplied, and its alpha now means something everywhere** - the output is `scene over background`, so alpha 1 is an opaque background (unchanged for every consumer passing an opaque colour), `Colour::TRANSPARENT` is no background at all, and in between is a translucent plate. Previously the alpha was honoured only on a wholly empty pixel: anything partially covered came back opaque with the background mixed into its RGB, so a render could not be composited over anything but the background colour it already had. Both paths honour it now, `Direct` by premultiplying its clear and HDR by compositing in the tone map, and both return premultiplied pixels with alpha as coverage. **Composite the result with `One` / `OneMinusSrcAlpha`, not `SrcAlpha` / `OneMinusSrcAlpha`.** Two things in this crate deliberately take straight alpha instead and so will not accept a premultiplied viewport directly: the overlay image path (`register_overlay_texture_view`), and `blit`, which has no blend state and replaces its destination.
 

@@ -8,9 +8,11 @@
 //! depth before the decal pass runs, not on meshes specifically. Ray-marched
 //! and blended item types that never write depth take no decal at all.
 //!
-//! The opt-out is asymmetric and that is the point of the scene: only mesh
-//! surfaces honour `ItemSettings::receives_decals`, so a mesh can decline a
-//! decal and an implicit surface or a marching-cubes surface cannot.
+//! The opt-out is asymmetric and that is the point of the scene: a decal
+//! lands where it shares a layer with the surface, and only mesh surfaces
+//! record their layers for it to read. So a mesh can decline a decal by
+//! leaving layers 0 to 7, and an implicit surface or a marching-cubes surface
+//! cannot.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -122,7 +124,7 @@ pub struct DecalCoverageShowcase {
     selected_objects: HashSet<u64>,
     sub: SubSelection,
 
-    /// The two mesh nodes, so `receives_decals` can be toggled on them.
+    /// The two mesh nodes, so their decal layers can be toggled.
     mesh_nodes: Vec<NodeId>,
     marker: Option<NodeId>,
     marker_pos: Option<Vec3>,
@@ -135,7 +137,8 @@ pub struct DecalCoverageShowcase {
 
     /// Master switch for the per-item decals.
     decals_on: bool,
-    /// `receives_decals` on the two mesh items, the only type that honours it.
+    /// Whether the two mesh items are on the layers a decal can see. Meshes
+    /// are the only type that can leave them.
     meshes_receive: bool,
     /// Decal box half-height in Z. Small values sit above a receiver and miss
     /// it; the default encloses every item in the scene.
@@ -773,13 +776,21 @@ impl Showcase for DecalCoverageShowcase {
         // through the session selection), so clear it here to keep the gizmo out.
         session.frame_data_mut().interaction.gizmo_model = None;
 
-        // The only opt-out honoured today: `receives_decals` on mesh items.
-        // Every other type in this scene takes a decal whenever it wrote depth,
-        // with no way to decline.
+        // The only opt-out honoured today: a mesh item off layers 0 to 7,
+        // which are the ones a decal can see. Every other type in this scene
+        // takes a decal whenever it wrote depth, with no way to decline.
         for node in &self.mesh_nodes {
-            session
-                .scene_mut()
-                .set_receives_decals(*node, self.meshes_receive);
+            let scene = session.scene_mut();
+            let Some(mut appearance) = scene.node(*node).map(|n| *n.appearance()) else {
+                continue;
+            };
+            let layers = viewport_lib::plugin_api::SURFACE_MASK_LAYERS;
+            if self.meshes_receive {
+                appearance.visibility_mask |= layers;
+            } else {
+                appearance.visibility_mask &= !layers;
+            }
+            scene.set_appearance(*node, appearance);
         }
 
         // Inject every non-mesh item (rendering + picking both read the frame).
@@ -984,7 +995,7 @@ impl Showcase for DecalCoverageShowcase {
         ui.checkbox(&mut self.decals_on, "Project a decal onto every item");
         ui.checkbox(
             &mut self.meshes_receive,
-            "Meshes receive decals (receives_decals)",
+            "Meshes receive decals (layers 0 to 7)",
         );
         ui.weak("Only SceneRenderItem has that flag: the other types cannot decline.");
         ui.add(egui::Slider::new(&mut self.decal_depth, 0.05..=4.0).text("box half-depth (Z)"));

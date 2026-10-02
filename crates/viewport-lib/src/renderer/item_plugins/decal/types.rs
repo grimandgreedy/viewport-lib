@@ -234,12 +234,9 @@ pub struct DecalItem {
     /// The decal lands on an item when this shares a layer with the item's
     /// [`ItemSettings::visibility_mask`], the same test a light's
     /// `channel_mask` makes. Give a selection ring the floor's layer and it
-    /// stays off the character standing in it. For decals layer `n` counts as
-    /// layer `n % 8`, so keep the layers you tell apart within eight of each
-    /// other. A mask of `0` lands nowhere.
-    ///
-    /// An item with `ItemSettings::receives_decals` cleared takes no decal
-    /// whatever this is.
+    /// stays off the character standing in it. Only layers 0 to 7 count: a
+    /// mask with none of them lands nowhere, and an item with none of them
+    /// takes no decal.
     pub channel_mask: u32,
     /// Visibility and opacity overrides. `hidden` skips the decal entirely; `opacity`
     /// multiplies the final alpha. `unlit` and `wireframe` are accepted but have no
