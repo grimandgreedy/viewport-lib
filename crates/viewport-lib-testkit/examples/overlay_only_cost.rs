@@ -152,6 +152,9 @@ fn main() {
         viewport_lib_item_types::install(&mut renderer, &device);
         install_total = t.elapsed().as_secs_f32() * 1000.0;
     }
+    // Drained here so a type that builds at registration is not counted
+    // against the first frame.
+    let install_builds = vpl::resources::build_log::drain();
 
     println!(
         "adapter: {:?} / {} ({:?})",
@@ -182,6 +185,16 @@ fn main() {
         "  total to usable renderer  {:8.2} ms",
         device_ms + new_ms + install_total
     );
+    if !install_builds.is_empty() {
+        let total: f32 = install_builds.iter().map(|(_, ms)| ms).sum();
+        println!(
+            "  {} pipelines/modules built during install(), {total:.2} ms of the {install_total:.2} ms:",
+            install_builds.len()
+        );
+        for (label, ms) in &install_builds {
+            println!("    {label:<48} {ms:7.3} ms");
+        }
+    }
     if !startup_builds.is_empty() {
         let total: f32 = startup_builds.iter().map(|(_, ms)| ms).sum();
         println!(

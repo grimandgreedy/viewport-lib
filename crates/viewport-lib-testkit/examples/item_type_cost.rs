@@ -39,7 +39,7 @@ const SCENES: &[(&str, &str)] = &[
     ("gpu particles", "gpu_particles"),
     ("scatter volume", "scatter_volume"),
     ("polyline (built in)", "polyline"),
-    ("decal (built in)", "decals"),
+    ("decal", "decals"),
 ];
 
 fn ms(t: Instant) -> f32 {
@@ -70,7 +70,12 @@ fn main() {
             let took = ms(t);
             total += took;
             let built = build_log::drain();
-            println!("  {:<22} {took:6.3} ms, {} pipelines/modules", $name, built.len());
+            let built_ms: f32 = built.iter().map(|(_, ms)| ms).sum();
+            println!(
+                "  {:<22} {took:6.3} ms, {} pipelines/modules ({built_ms:.2} ms)",
+                $name,
+                built.len()
+            );
         )*};
     }
     register!(
@@ -90,8 +95,9 @@ fn main() {
         "sprite" => types::SpritePlugin,
         "gpu particles" => types::GpuParticlesPlugin,
         "scatter volume" => types::ScatterVolumePlugin,
+        "decal" => types::DecalPlugin,
     );
-    println!("  {:<22} {total:6.3} ms", "all sixteen");
+    println!("  {:<22} {total:6.3} ms", "all seventeen");
     drop(renderer);
 
     // ---- First use, per type, each on a fresh harness.
