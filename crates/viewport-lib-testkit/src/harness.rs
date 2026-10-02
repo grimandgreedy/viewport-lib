@@ -82,7 +82,21 @@ impl Harness {
         queue: wgpu::Queue,
         target_format: wgpu::TextureFormat,
     ) -> Self {
-        let mut renderer = ViewportRenderer::new(&device, target_format);
+        Self::from_device_with_pipeline_cache(device, queue, target_format, None)
+    }
+
+    /// Like [`from_device`](Self::from_device), with the renderer's pipeline
+    /// cache seeded from `pipeline_cache_data`. Read the cache back with
+    /// `harness.renderer.pipeline_cache_data()`. The data is ignored on a
+    /// device without `Features::PIPELINE_CACHE`.
+    pub fn from_device_with_pipeline_cache(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        target_format: wgpu::TextureFormat,
+        pipeline_cache_data: Option<&[u8]>,
+    ) -> Self {
+        let mut renderer =
+            ViewportRenderer::new_with_pipeline_cache(&device, target_format, pipeline_cache_data);
         // The item types viewport-lib ships with live in their own crate and
         // register like any other plugin, so a harness that renders them has
         // to install them the way a consumer does.
