@@ -447,6 +447,13 @@ pub struct DeviceResources {
     /// across runs with `ViewportRenderer::pipeline_cache_data` to skip shader
     /// recompilation on later launches.
     pub(crate) pipeline_cache: Option<crate::gpu::PipelineCache>,
+    /// Shader modules shared between the pipeline families compiled from the
+    /// same source, keyed by the source text. The LDR and HDR mesh families
+    /// compile one `mesh.wgsl`, and the LDR, HDR and culled instanced families
+    /// one `mesh_instanced.wgsl`; a module this size takes milliseconds to
+    /// parse, so each is built once. See [`shared_module`](Self::shared_module).
+    pub(crate) shader_modules:
+        std::sync::Mutex<std::collections::HashMap<(usize, u64), crate::gpu::ShaderModule>>,
     /// Core scene mesh pipelines: base LDR set (solid, two-sided, transparent,
     /// wireframe) and their lazily-built HDR variants. See
     /// `resources::scene_pipelines::SceneCorePipelines`.
@@ -1657,6 +1664,26 @@ impl DeviceResources {
     /// `site` is the `file!()`/`line!()` of the builder, emitted at debug level
     /// under the `viewport_lib::pipelines` target so a hitch traced to a lazy
     /// compile can be attributed to the exact builder.
+    /// The shader module for `source`, created on first request and shared by
+    /// every later request for the same text. `label` names the module when it
+    /// is created; a later caller with a different label gets the same module.
+    pub(crate) fn shared_module(
+        &self,
+        device: &crate::gpu::Device,
+        label: &str,
+        source: &str,
+    ) -> crate::gpu::ShaderModule {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        source.hash(&mut hasher);
+        let key = (source.len(), hasher.finish());
+        let mut modules = self.shader_modules.lock().unwrap();
+        modules
+            .entry(key)
+            .or_insert_with(|| crate::resources::builders::wgsl_module(device, label, source))
+            .clone()
+    }
+
     pub(crate) fn note_pipeline_built(&self, site: &'static str) {
         self.frame_pipelines_built
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

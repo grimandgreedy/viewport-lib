@@ -1397,15 +1397,15 @@ impl DeviceResources {
             crate::resources::builders::strip_debug_vis(source, self.debug_vis_shaders),
         )
         .into_owned();
-        let shader =
-            crate::resources::builders::wgsl_module(device, "mesh_shader_hdr", final_src.clone());
+        // The LDR family compiles the same source, so the module is shared.
+        let shader = self.shared_module(device, "mesh_shader_hdr", &final_src);
         // Early-Z twin: identical shading with every `discard;` removed, valid
         // only for draws that would not have discarded (see the per-object gate
         // in hdr_path.rs).
-        let shader_nodiscard = crate::resources::builders::wgsl_module(
+        let shader_nodiscard = self.shared_module(
             device,
             "mesh_shader_hdr_nodiscard",
-            crate::resources::builders::strip_discards(&final_src),
+            &crate::resources::builders::strip_discards(&final_src),
         );
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,

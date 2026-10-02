@@ -1828,6 +1828,9 @@ impl DeviceResources {
         if !self.deform.enabled {
             return;
         }
+        // Every composed source is about to change, so the shared modules
+        // built from the old ones are no use to anyone.
+        self.shader_modules.lock().unwrap().clear();
         // Material-plugin pipeline sets compose on top of the deformer
         // registrations and the debug-vis strip state, both of which changed
         // when this runs. Drop them; the next prepare that references a

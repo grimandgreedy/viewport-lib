@@ -1991,6 +1991,7 @@ impl DeviceResources {
             force_debug_vis_shaders: false,
             mesh_pipelines_dirty: false,
             pipeline_cache,
+            shader_modules: Default::default(),
             scene: crate::resources::scene_pipelines::SceneCorePipelines {
                 solid: None,
                 solid_two_sided: None,

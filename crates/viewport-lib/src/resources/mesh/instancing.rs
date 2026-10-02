@@ -181,7 +181,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         label: &str,
     ) -> crate::gpu::ShaderModule {
-        crate::resources::builders::wgsl_module(device, label, self.instanced_shader_source(false))
+        self.shared_module(device, label, &self.instanced_shader_source(false))
     }
 
     /// The lit instanced module plus its discard-free twin (see
@@ -210,13 +210,15 @@ impl DeviceResources {
         label: &str,
         bindless: bool,
     ) -> (crate::gpu::ShaderModule, crate::gpu::ShaderModule) {
+        // The LDR, HDR and culled families all compile this source, so the two
+        // modules are shared between them.
         let source = self.instanced_shader_source(bindless);
-        let nodiscard = crate::resources::builders::wgsl_module(
+        let nodiscard = self.shared_module(
             device,
             &format!("{label}_nodiscard"),
-            crate::resources::builders::strip_discards(&source),
+            &crate::resources::builders::strip_discards(&source),
         );
-        let module = crate::resources::builders::wgsl_module(device, label, source);
+        let module = self.shared_module(device, label, &source);
         (module, nodiscard)
     }
 
@@ -690,10 +692,10 @@ impl DeviceResources {
                 &base,
                 &self.deform.registrations,
             );
-            crate::resources::builders::wgsl_module(
+            self.shared_module(
                 device,
                 "mesh_instanced_oit_shader",
-                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+                &crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
             )
         };
         let group1_bgl = if bindless {
@@ -948,10 +950,10 @@ impl DeviceResources {
                 &base,
                 &self.deform.registrations,
             );
-            crate::resources::builders::wgsl_module(
+            self.shared_module(
                 device,
                 "mesh_instanced_oit_shader_cull",
-                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+                &crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
             )
         };
         let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
