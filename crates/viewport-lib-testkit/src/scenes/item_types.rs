@@ -179,7 +179,7 @@ pub fn scenes() -> Vec<NamedScene> {
         },
         NamedScene {
             name: "volume_mesh_node_scalars_cut",
-            cameras: standard_cameras(Vec3::new(-1.6, -1.35, 0.0), 11.0),
+            cameras: standard_cameras(Vec3::ZERO, 11.0),
             build: build_volume_mesh_node_scalars_cut,
         },
         NamedScene {
@@ -1654,7 +1654,7 @@ fn build_volume_mesh_node_scalars_cut(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             &[[normal.x, normal.y, normal.z, 0.3]],
         )
         .expect("clipped volume mesh upload");
-    cut.model = Mat4::from_translation(Vec3::new(-3.2, -2.7, 0.0)).to_cols_array_2d();
+    cut.model = Mat4::from_translation(Vec3::new(-1.6, -1.35, 0.0)).to_cols_array_2d();
     cut.active_attribute = Some(viewport_lib::AttributeRef {
         name: "node".to_string(),
         kind: viewport_lib::AttributeKind::Vertex,
@@ -1668,7 +1668,10 @@ fn build_volume_mesh_node_scalars_cut(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_volume_mesh_with_transparency(ctx.device, grid.data.clone(), "node")
         .expect("transparent volume mesh upload");
-    // Left at the origin: the transparent draw does not apply `model`.
+    // Moved and turned, so the image also pins the transparent draw's use
+    // of `model`.
+    volume.model = (Mat4::from_translation(Vec3::new(1.6, 1.35, 0.0)) * Mat4::from_rotation_z(0.5))
+        .to_cols_array_2d();
     volume.colourmap_id = Some(ColourmapId(0));
     let mut transparency = viewport_lib::VolumeTransparency::default();
     transparency.density = 0.8;

@@ -3594,6 +3594,7 @@ impl DeviceResources {
         };
 
         let initial_uniform = crate::resources::types::ProjectedTetUniform {
+            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             density: 1.0,
             scalar_min: scalar_range.0,
             scalar_max: scalar_range.1,

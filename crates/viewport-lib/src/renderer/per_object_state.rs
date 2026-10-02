@@ -154,8 +154,11 @@ pub(crate) struct PerObjectState {
     pub(crate) wireframe_bind_groups: Vec<crate::gpu::BindGroup>,
     /// TransparentVolumeMesh boundary wireframe mesh IDs to draw.
     pub(crate) tvm_wireframe_draws: Vec<MeshId>,
-    /// Shared wireframe uniform (identity matrix, wireframe = 1) for TVM draws.
+    /// Object records for the TVM draws, one per entry of
+    /// `tvm_wireframe_draws`, each carrying its item's model matrix.
     pub(crate) tvm_wireframe_buf: Option<crate::gpu::Buffer>,
+    /// How many records `tvm_wireframe_buf` holds.
+    pub(crate) tvm_wireframe_capacity: usize,
     /// Bind group for the TVM wireframe draws.
     pub(crate) tvm_wireframe_bg: Option<crate::gpu::BindGroup>,
 }
@@ -176,6 +179,7 @@ impl PerObjectState {
             wireframe_bind_groups: Vec::new(),
             tvm_wireframe_draws: Vec::new(),
             tvm_wireframe_buf: None,
+            tvm_wireframe_capacity: 0,
             tvm_wireframe_bg: None,
         }
     }

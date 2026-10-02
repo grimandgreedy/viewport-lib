@@ -1501,7 +1501,8 @@ impl ViewportRenderer {
                     &self.mesh_uniforms.tvm_wireframe_bg,
                     &resources.scene.hdr_wireframe,
                 ) {
-                    for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
+                    for (slot, mesh_id) in self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate()
+                    {
                         if let Some(mesh) = resources.mesh_store.get(*mesh_id) {
                             render_pass.set_pipeline(hdr_wf);
                             bind_deform_group!(
@@ -1519,7 +1520,12 @@ impl ViewportRenderer {
                                     edge_buf.slice(..),
                                     crate::gpu::IndexFormat::Uint32,
                                 );
-                                render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                                let slot = slot as u32;
+                                render_pass.draw_indexed(
+                                    0..mesh.edge_index_count,
+                                    0,
+                                    slot..slot + 1,
+                                );
                             }
                         }
                     }
@@ -2566,6 +2572,7 @@ impl ViewportRenderer {
                             let (scalar_min, scalar_max) =
                                 item.scalar_range.unwrap_or(gpu.scalar_range);
                             let uniform = crate::resources::ProjectedTetUniform {
+                                model: item.model,
                                 density: transparency.density,
                                 scalar_min,
                                 scalar_max,
