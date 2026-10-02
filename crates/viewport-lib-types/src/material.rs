@@ -87,9 +87,11 @@ pub struct ItemSettings {
     /// keeps every decal off the item while leaving it on layers 8 and up for
     /// cameras and lights.
     ///
-    /// For decals this is honoured by mesh surfaces. An item type that writes
-    /// depth and does not stamp the surface mask takes every decal whatever
-    /// its mask; one that writes no depth takes none.
+    /// For decals this is honoured by mesh surfaces and by the item types
+    /// that stamp the surface mask: every depth-writing type in
+    /// `viewport-lib-item-types` does. A type that writes depth and does not
+    /// stamp it takes every decal whatever its mask; one that writes no depth
+    /// takes none.
     pub visibility_mask: u32,
 }
 

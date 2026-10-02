@@ -87,6 +87,7 @@ pub(super) struct CurvePickGpu {
     pub(super) instance_bgl: viewport_lib::gpu::BindGroupLayout,
     pub(super) node_bgl: viewport_lib::gpu::BindGroupLayout,
     pub(super) mask_pipeline: viewport_lib::gpu::RenderPipeline,
+    pub(super) surface_mask_pipeline: viewport_lib::gpu::RenderPipeline,
 }
 
 impl CurvePickGpu {
@@ -205,12 +206,23 @@ impl CurvePickGpu {
             viewport_lib::gpu::CompareFunction::Less,
         );
 
+        // The surface mask stamps the same mesh into the scene stencil.
+        let surface_mask_pipeline = viewport_lib::plugin_api::builders::build_surface_mask_pipeline(
+            device,
+            &format!("{label}_surface_mask_pipeline"),
+            &mask_layout,
+            &mask_shader,
+            &[position_only_layout()],
+            (!two_sided).then_some(viewport_lib::gpu::Face::Back),
+        );
+
         Self {
             pick_pipeline,
             node_pipeline,
             instance_bgl,
             node_bgl,
             mask_pipeline,
+            surface_mask_pipeline,
         }
     }
 
@@ -361,12 +373,15 @@ impl CurveMeshGpu {
 pub(super) struct CurveFrame {
     pub(super) gpu: StreamtubeGpuData,
     /// Group-1 model + object-id bind group; `None` when the item is not
-    /// pickable and not selected, so neither hook draws it.
+    /// pickable, not selected and on every surface mask layer, so no hook
+    /// draws it.
     pub(super) instance_bind_group: Option<viewport_lib::gpu::BindGroup>,
     /// Group-2 node payload for the POLY_NODE pick variant.
     pub(super) node_bind_group: Option<viewport_lib::gpu::BindGroup>,
     /// Whether this item's mesh goes into the selection outline mask.
     pub(super) outlined: bool,
+    /// The item's settings, for the surface mask.
+    pub(super) settings: viewport_lib::ItemSettings,
     /// Per-triangle segment and strip tables, for `resolve_sub_object`.
     pub(super) tri_segment: Vec<u32>,
     pub(super) tri_strip: Vec<u32>,

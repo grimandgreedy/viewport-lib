@@ -15,6 +15,7 @@ pub(super) struct VectorFieldGpu {
     pub(super) pick_pipeline: viewport_lib::gpu::RenderPipeline,
     pub(super) pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
     pub(super) mask_pipeline: viewport_lib::gpu::RenderPipeline,
+    pub(super) surface_mask_pipeline: viewport_lib::gpu::RenderPipeline,
 }
 
 /// One field's draw state for this frame.
@@ -25,6 +26,8 @@ pub(super) struct VectorFieldFrame {
     /// Outline coverage: `None` for an unselected field, `Some(None)` for the
     /// whole field, `Some(Some(indices))` for a sub-selection of samples.
     pub(super) outline: Option<Option<Vec<u32>>>,
+    /// The item's settings, for the surface mask.
+    pub(super) settings: viewport_lib::ItemSettings,
 }
 
 impl VectorFieldGpu {
@@ -151,11 +154,22 @@ impl VectorFieldGpu {
             viewport_lib::gpu::CompareFunction::Less,
         );
 
+        // The surface mask stamps the same shapes into the scene stencil.
+        let surface_mask_pipeline = viewport_lib::plugin_api::builders::build_surface_mask_pipeline(
+            device,
+            "vector_field_surface_mask_pipeline",
+            &mask_layout,
+            &mask_shader,
+            &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
+            Some(viewport_lib::gpu::Face::Back),
+        );
+
         Self {
             pipeline,
             pick_pipeline,
             pick_id_bgl,
             mask_pipeline,
+            surface_mask_pipeline,
         }
     }
 

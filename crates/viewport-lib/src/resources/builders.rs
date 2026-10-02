@@ -684,12 +684,6 @@ pub fn build_surface_mask_pipeline(
     vertex_buffers: &[crate::gpu::VertexBufferLayout],
     cull: Option<crate::gpu::Face>,
 ) -> crate::gpu::RenderPipeline {
-    let stamp = crate::gpu::StencilFaceState {
-        compare: crate::gpu::CompareFunction::Always,
-        fail_op: crate::gpu::StencilOperation::Keep,
-        depth_fail_op: crate::gpu::StencilOperation::Keep,
-        pass_op: crate::gpu::StencilOperation::Replace,
-    };
     render_pipeline(
         device,
         RenderPipelineDesc {
@@ -709,26 +703,39 @@ pub fn build_surface_mask_pipeline(
                 cull_mode: cull,
                 ..Default::default()
             },
-            depth_stencil: Some(crate::gpu::DepthStencilState {
-                format: crate::gpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: dwrite(false),
-                depth_compare: dcompare(crate::gpu::CompareFunction::LessEqual),
-                stencil: crate::gpu::StencilState {
-                    front: stamp,
-                    back: stamp,
-                    read_mask: 0xff,
-                    write_mask: 0xff,
-                },
-                bias: crate::gpu::DepthBiasState {
-                    constant: -2,
-                    slope_scale: 0.0,
-                    clamp: 0.0,
-                },
-            }),
+            depth_stencil: Some(surface_mask_depth_stencil()),
             multisample: crate::gpu::MultisampleState::default(),
             cache: None,
         },
     )
+}
+
+/// The depth-stencil state of a surface-mask pipeline: test against the scene
+/// depth without writing it, and replace the stencil with the pass's reference
+/// where the test passes.
+pub(crate) fn surface_mask_depth_stencil() -> crate::gpu::DepthStencilState {
+    let stamp = crate::gpu::StencilFaceState {
+        compare: crate::gpu::CompareFunction::Always,
+        fail_op: crate::gpu::StencilOperation::Keep,
+        depth_fail_op: crate::gpu::StencilOperation::Keep,
+        pass_op: crate::gpu::StencilOperation::Replace,
+    };
+    crate::gpu::DepthStencilState {
+        format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+        depth_write_enabled: dwrite(false),
+        depth_compare: dcompare(crate::gpu::CompareFunction::LessEqual),
+        stencil: crate::gpu::StencilState {
+            front: stamp,
+            back: stamp,
+            read_mask: 0xff,
+            write_mask: 0xff,
+        },
+        bias: crate::gpu::DepthBiasState {
+            constant: -2,
+            slope_scale: 0.0,
+            clamp: 0.0,
+        },
+    }
 }
 
 /// Create a compute pipeline. Every compute pipeline in the crate has the same

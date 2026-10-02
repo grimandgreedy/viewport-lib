@@ -8,7 +8,7 @@
 use super::cpu_pick::{self, CurveLevels};
 use super::draw::{
     build_frame, outline_mask_curve_mesh, paint_curve_mesh, radius_in_pixels,
-    render_pick_curve_mesh, resolve_curve_sub_object,
+    render_pick_curve_mesh, resolve_curve_sub_object, surface_mask_curve_mesh,
 };
 use super::pipeline::{CurveFrame, CurveMeshGpu};
 use super::types::StreamtubeId;
@@ -107,6 +107,7 @@ impl ItemTypePlugin for StreamtubePlugin {
                 gpu,
                 gpu_data,
                 ctx.outline_selected && item.settings.selected,
+                item.settings,
             ));
         }
 
@@ -139,6 +140,7 @@ impl ItemTypePlugin for StreamtubePlugin {
                 gpu,
                 gpu_data,
                 ctx.outline_selected && ref_item.settings.selected,
+                ref_item.settings,
             ));
         }
         Vec::new()
@@ -164,6 +166,15 @@ impl ItemTypePlugin for StreamtubePlugin {
         _items: &ItemCollections<'_>,
     ) {
         outline_mask_curve_mesh(pass, self.gpu.as_ref().map(|g| &g.pick), &self.frame);
+    }
+
+    fn surface_mask(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        ctx: &viewport_lib::plugin_api::SurfaceMaskContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        surface_mask_curve_mesh(pass, ctx, self.gpu.as_ref().map(|g| &g.pick), &self.frame);
     }
 
     fn pick(&self, ray: &PickRay, ctx: &PickContext<'_>) -> Option<(f32, PickHit)> {

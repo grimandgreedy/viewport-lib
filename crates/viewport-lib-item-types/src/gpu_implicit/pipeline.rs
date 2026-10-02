@@ -13,6 +13,7 @@ pub(super) struct GpuImplicitGpu {
     bgl: gpu::BindGroupLayout,
     pub(super) pipeline: builders::DualPipeline,
     pub(super) mask_pipeline: gpu::RenderPipeline,
+    pub(super) surface_mask_pipeline: gpu::RenderPipeline,
     pub(super) pick_pipeline: gpu::RenderPipeline,
     pick_id_bgl: gpu::BindGroupLayout,
 }
@@ -25,6 +26,7 @@ pub(super) struct GpuImplicitFrame {
     /// item is not pickable.
     pub(super) pick: Option<(gpu::Buffer, gpu::BindGroup)>,
     pub(super) selected: bool,
+    pub(super) settings: viewport_lib::ItemSettings,
 }
 
 /// Flat uniform buffer layout matching the WGSL `ImplicitUniform` struct.
@@ -88,22 +90,30 @@ impl GpuImplicitGpu {
             "implicit_outline_mask_shader",
             &scene_shader(&[], wgsl_source!("implicit_outline_mask")),
         );
-        let mask_pipeline = resources.build_mask_pipeline(
+        let mask_opts = viewport_lib::resources::PluginPipelineOpts {
+            primitive: gpu::PrimitiveState {
+                topology: gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            extra_bind_group_layouts: &[&bgl],
+            ..viewport_lib::resources::PluginPipelineOpts::new(
+                Some("implicit_outline_mask_pipeline"),
+                &mask_shader,
+                "vs_main",
+                "fs_main",
+                &[],
+            )
+        };
+        let mask_pipeline = resources.build_mask_pipeline(device, &mask_opts);
+        // The surface mask marches again, writing the hit depth so the stamp
+        // lands only where this surface is the visible one.
+        let surface_mask_pipeline = resources.build_surface_mask_pipeline(
             device,
             &viewport_lib::resources::PluginPipelineOpts {
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                extra_bind_group_layouts: &[&bgl],
-                ..viewport_lib::resources::PluginPipelineOpts::new(
-                    Some("implicit_outline_mask_pipeline"),
-                    &mask_shader,
-                    "vs_main",
-                    "fs_main",
-                    &[],
-                )
+                label: Some("implicit_surface_mask_pipeline"),
+                fs_entry: "fs_stamp",
+                ..mask_opts
             },
         );
 
@@ -153,6 +163,7 @@ impl GpuImplicitGpu {
             bgl,
             pipeline,
             mask_pipeline,
+            surface_mask_pipeline,
             pick_pipeline,
             pick_id_bgl,
         }
@@ -226,6 +237,7 @@ impl GpuImplicitGpu {
             _uniform_buf: uniform_buf,
             pick,
             selected: item.settings.selected,
+            settings: item.settings,
         }
     }
 }

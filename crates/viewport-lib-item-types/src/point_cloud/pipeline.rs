@@ -19,6 +19,9 @@ pub(super) struct PointCloudGpu {
     pub(super) pick_pipeline: gpu::RenderPipeline,
     pub(super) pick_id_bgl: gpu::BindGroupLayout,
     pub(super) mask_pipeline: gpu::RenderPipeline,
+    /// The colour shader again, stamping the scene stencil. Using the same
+    /// shader means the stamp covers exactly the discs the colour pass drew.
+    pub(super) surface_mask_pipeline: gpu::RenderPipeline,
     /// Group 1 of the outline mask pipeline: the single uniform
     /// `point_disc_mask.wgsl` reads.
     pub(super) mask_bgl: gpu::BindGroupLayout,
@@ -29,6 +32,8 @@ pub(super) struct PointCloudFrame {
     pub(super) draw: PointCloudDraw,
     /// Group-2 object-id bind group; `None` when the item is not pickable.
     pub(super) pick_bind_group: Option<gpu::BindGroup>,
+    /// The item's settings, for the surface mask.
+    pub(super) settings: viewport_lib::ItemSettings,
 }
 
 /// One selected item's outline coverage: instance-stepped disc positions and
@@ -90,6 +95,15 @@ impl PointCloudGpu {
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
             },
+        );
+
+        let surface_mask_pipeline = builders::build_surface_mask_pipeline(
+            device,
+            "point_cloud_surface_mask_pipeline",
+            &layout,
+            &shader,
+            &[position_layout()],
+            None,
         );
 
         // Pick: the same screen-space quad expansion, writing the item's object
@@ -205,6 +219,7 @@ impl PointCloudGpu {
             pick_pipeline,
             pick_id_bgl,
             mask_pipeline,
+            surface_mask_pipeline,
             mask_bgl,
         }
     }

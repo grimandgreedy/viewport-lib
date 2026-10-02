@@ -25,7 +25,10 @@ struct VertexIn {
 @vertex
 fn vs_main(in: VertexIn) -> @builtin(position) vec4<f32> {
     let model = mat4x4<f32>(pick.model_c0, pick.model_c1, pick.model_c2, pick.model_c3);
-    return camera.view_proj * model * vec4<f32>(in.position, 1.0);
+    // World position first, then the projection, as the colour shaders do:
+    // the surface mask draws this against the depth those wrote.
+    let world = (model * vec4<f32>(in.position, 1.0)).xyz;
+    return camera.view_proj * vec4<f32>(world, 1.0);
 }
 
 @fragment

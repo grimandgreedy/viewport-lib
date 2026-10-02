@@ -14,6 +14,7 @@ pub(super) struct SliceGpu {
     bgl: gpu::BindGroupLayout,
     pub(super) pipeline: builders::DualPipeline,
     pub(super) mask_pipeline: gpu::RenderPipeline,
+    pub(super) surface_mask_pipeline: gpu::RenderPipeline,
     pub(super) pick_pipeline: gpu::RenderPipeline,
     pick_id_bgl: gpu::BindGroupLayout,
 }
@@ -28,6 +29,7 @@ pub(super) struct SliceFrame {
     /// item is not pickable.
     pub(super) pick: Option<(gpu::Buffer, gpu::BindGroup)>,
     pub(super) selected: bool,
+    pub(super) settings: viewport_lib::ItemSettings,
 }
 
 #[repr(C)]
@@ -136,22 +138,29 @@ impl SliceGpu {
             "volume_surface_slice_mask_shader",
             &scene_shader(&[], wgsl_source!("volume_surface_slice_mask")),
         );
-        let mask_pipeline = resources.build_mask_pipeline(
+        let mask_vertex_layouts = [builders::mesh_vertex_layout()];
+        let mask_opts = viewport_lib::resources::PluginPipelineOpts {
+            primitive: gpu::PrimitiveState {
+                topology: gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            extra_bind_group_layouts: &[&bgl],
+            ..viewport_lib::resources::PluginPipelineOpts::new(
+                Some("volume_surface_slice_mask_pipeline"),
+                &mask_shader,
+                "vs_main",
+                "fs_main",
+                &mask_vertex_layouts,
+            )
+        };
+        let mask_pipeline = resources.build_mask_pipeline(device, &mask_opts);
+        // The surface mask stamps the same geometry into the scene stencil.
+        let surface_mask_pipeline = resources.build_surface_mask_pipeline(
             device,
             &viewport_lib::resources::PluginPipelineOpts {
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                extra_bind_group_layouts: &[&bgl],
-                ..viewport_lib::resources::PluginPipelineOpts::new(
-                    Some("volume_surface_slice_mask_pipeline"),
-                    &mask_shader,
-                    "vs_main",
-                    "fs_main",
-                    &[builders::mesh_vertex_layout()],
-                )
+                label: Some("volume_surface_slice_surface_mask_pipeline"),
+                ..mask_opts
             },
         );
 
@@ -198,6 +207,7 @@ impl SliceGpu {
             bgl,
             pipeline,
             mask_pipeline,
+            surface_mask_pipeline,
             pick_pipeline,
             pick_id_bgl,
         }
@@ -300,6 +310,7 @@ impl SliceGpu {
             mesh_id: item.mesh_id,
             pick,
             selected: item.settings.selected,
+            settings: item.settings,
         })
     }
 }

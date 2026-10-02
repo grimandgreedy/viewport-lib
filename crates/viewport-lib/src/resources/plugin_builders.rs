@@ -592,6 +592,42 @@ impl DeviceResources {
         )
     }
 
+    /// Build a pipeline for the surface-mask pass, from the same options an
+    /// outline-mask pipeline takes.
+    ///
+    /// The pass has no colour target, so whatever the fragment stage outputs
+    /// is dropped: a type can hand over its outline-mask shader unchanged and
+    /// what matters is where it discards. See
+    /// [`build_surface_mask_pipeline`](crate::plugin_api::builders::build_surface_mask_pipeline)
+    /// for the depth and stencil state, which is the same here.
+    pub fn build_surface_mask_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        opts: &PluginPipelineOpts<'_>,
+    ) -> crate::gpu::RenderPipeline {
+        let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: opts.label.unwrap_or_default(),
+                layout: &layout,
+                vertex_module: opts.shader,
+                vertex_entry: opts.vs_entry,
+                vertex_buffers: opts.vertex_layouts,
+                fragment: Some(crate::gpu::FragmentState {
+                    module: opts.shader,
+                    entry_point: Some(opts.fs_entry),
+                    targets: &[],
+                    compilation_options: Default::default(),
+                }),
+                primitive: opts.primitive,
+                depth_stencil: Some(crate::resources::builders::surface_mask_depth_stencil()),
+                multisample: crate::gpu::MultisampleState::default(),
+                cache: None,
+            },
+        )
+    }
+
     /// Build a pipeline for the pick-id pass.
     ///
     /// The pass has three colour targets (object id, primitive id, depth) plus a

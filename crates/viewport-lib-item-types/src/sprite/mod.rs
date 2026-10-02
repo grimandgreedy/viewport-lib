@@ -135,6 +135,8 @@ pub struct SpritePlugin {
     pick_items: Vec<SpriteItem>,
     /// Selection-outline coverage for this frame.
     outlines: Vec<SpriteOutline>,
+    /// Each batch's item settings, parallel to `frame`, for the surface mask.
+    frame_settings: Vec<viewport_lib::ItemSettings>,
     /// Per-batch group-2 pick-id bind groups, parallel to `frame`.
     pick_bind_groups: Vec<Option<viewport_lib::gpu::BindGroup>>,
     /// Scene-colour resolve targets for the refractive pass, one per viewport.
@@ -496,6 +498,7 @@ impl ItemTypePlugin for SpritePlugin {
         self.layouts = Some(SpriteLayouts::new(device));
         self.gpu = None;
         self.frame.clear();
+        self.frame_settings.clear();
         self.outlines.clear();
         self.pick_bind_groups.clear();
         self.refraction.lock().unwrap().clear();
@@ -509,6 +512,7 @@ impl ItemTypePlugin for SpritePlugin {
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
         self.frame.clear();
+        self.frame_settings.clear();
         self.outlines.clear();
         self.pick_bind_groups.clear();
         self.revalidate_stores(device, queue, ctx.resources);
@@ -540,6 +544,7 @@ impl ItemTypePlugin for SpritePlugin {
             gd.wireframe = ctx.wireframe_mode || item.settings.wireframe;
             let frame_index = self.frame.len();
             self.frame.push(gd);
+            self.frame_settings.push(item.settings);
             if ctx.outline_selected {
                 if item.settings.selected {
                     self.outlines.push(SpriteOutline {
@@ -580,6 +585,7 @@ impl ItemTypePlugin for SpritePlugin {
             let mut gd = entry.draw.clone();
             gd.wireframe = ctx.wireframe_mode || ref_item.settings.wireframe;
             self.frame.push(gd);
+            self.frame_settings.push(ref_item.settings);
         }
 
         // Pre-uploaded instance sets.
@@ -593,6 +599,7 @@ impl ItemTypePlugin for SpritePlugin {
             let mut gd = entry.draw.clone();
             gd.wireframe = ctx.wireframe_mode || ref_item.settings.wireframe;
             self.frame.push(gd);
+            self.frame_settings.push(ref_item.settings);
         }
 
         // Group-2 pick-id bind groups, one per pickable batch.
@@ -707,6 +714,37 @@ impl ItemTypePlugin for SpritePlugin {
                     }
                 }
             }
+        }
+    }
+
+    fn surface_mask(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        ctx: &viewport_lib::plugin_api::SurfaceMaskContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        let mut bound = false;
+        // Only batches that wrote depth own pixels a decal could land on.
+        for (sprite, settings) in self.frame.iter().zip(&self.frame_settings) {
+            if !is_opaque(sprite) {
+                continue;
+            }
+            let Some(value) = ctx.stamp_for(settings) else {
+                continue;
+            };
+            if !bound {
+                pass.set_pipeline(&gpu.surface_mask_pipeline);
+                // The stencil being written shares a texture with the depth
+                // the soft fade would sample, so group 2 gets the fallback, as
+                // in the opaque pass.
+                pass.set_bind_group(2, &gpu.soft_fallback_bg, &[]);
+                bound = true;
+            }
+            pass.set_stencil_reference(value);
+            pass.set_bind_group(1, &sprite.bind_group, &[]);
+            pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
+            pass.draw(0..6, 0..sprite.sprite_count);
         }
     }
 

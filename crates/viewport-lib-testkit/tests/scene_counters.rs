@@ -112,7 +112,7 @@ fn expected(name: &str) -> Option<Expected> {
         // the scene that pins what the refraction samples.
         "refraction_over_soft_sprite" => e(1, 1, 1, 0, 0, 12),
         // A mesh that opted out of decals beside a GPU implicit surface that
-        // cannot: pins that decals land on any depth writer, not just meshes.
+        // did not: pins that decals land on any depth writer, not just meshes.
         "decal_on_non_mesh" => e(1, 1, 1, 0, 0, 960),
         // Three spheres on different layers under two decals that each target
         // one. The spheres share a mesh and a material, so they batch.

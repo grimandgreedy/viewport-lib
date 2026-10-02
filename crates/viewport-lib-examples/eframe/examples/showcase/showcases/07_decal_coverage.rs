@@ -8,11 +8,9 @@
 //! depth before the decal pass runs, not on meshes specifically. Ray-marched
 //! and blended item types that never write depth take no decal at all.
 //!
-//! The opt-out is asymmetric and that is the point of the scene: a decal
-//! lands where it shares a layer with the surface, and only mesh surfaces
-//! record their layers for it to read. So a mesh can decline a decal by
-//! leaving layers 0 to 7, and an implicit surface or a marching-cubes surface
-//! cannot.
+//! A decal lands where it shares a layer with the surface, so any of these
+//! types can decline one by leaving layers 0 to 7. The toggle here does that
+//! for the two meshes.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -137,8 +135,7 @@ pub struct DecalCoverageShowcase {
 
     /// Master switch for the per-item decals.
     decals_on: bool,
-    /// Whether the two mesh items are on the layers a decal can see. Meshes
-    /// are the only type that can leave them.
+    /// Whether the two mesh items are on the layers a decal can see.
     meshes_receive: bool,
     /// Decal box half-height in Z. Small values sit above a receiver and miss
     /// it; the default encloses every item in the scene.
@@ -776,9 +773,9 @@ impl Showcase for DecalCoverageShowcase {
         // through the session selection), so clear it here to keep the gizmo out.
         session.frame_data_mut().interaction.gizmo_model = None;
 
-        // The only opt-out honoured today: a mesh item off layers 0 to 7,
-        // which are the ones a decal can see. Every other type in this scene
-        // takes a decal whenever it wrote depth, with no way to decline.
+        // Take the meshes off layers 0 to 7, the ones a decal can see, or put
+        // them back. The other types in this scene stay on them and take a
+        // decal wherever they wrote depth.
         for node in &self.mesh_nodes {
             let scene = session.scene_mut();
             let Some(mut appearance) = scene.node(*node).map(|n| *n.appearance()) else {

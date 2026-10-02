@@ -1470,8 +1470,7 @@ fn build_decal_on_curves(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 fn build_decal_on_non_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // A decal box enclosing both a mesh and a GPU implicit surface. The decal
     // pass reconstructs its receiver from the depth buffer, so it lands on
-    // anything that wrote depth; the implicit surface does, and unlike the mesh
-    // it has no way to decline.
+    // anything that wrote depth, which the implicit surface does.
     let ball = ctx
         .renderer
         .resources_mut()
@@ -1482,8 +1481,7 @@ fn build_decal_on_non_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     mesh.model = Mat4::from_translation(Vec3::new(-1.6, 0.0, 0.0)).to_cols_array_2d();
     mesh.material = Material::pbr([0.55, 0.55, 0.58], 0.1, 0.6);
     // The mesh declines the decal by leaving the layers the surface mask
-    // holds. The implicit surface beside it does not stamp the mask, so it
-    // takes the projection whether it wants to or not.
+    // holds. The implicit surface beside it stays on them and takes it.
     mesh.settings.visibility_mask &= !SURFACE_MASK_LAYERS;
 
     let mut sphere = ImplicitPrimitive::zeroed();

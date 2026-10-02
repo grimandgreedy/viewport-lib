@@ -3,6 +3,9 @@
 // Same ray-march as implicit.wgsl but the fragment stage outputs 1.0 (white) on
 // hit and discards on miss. No lighting computation. No depth write.
 //
+// `fs_stamp` is the surface-mask stage: the same march, writing the hit's
+// depth and no colour, so the stamp is depth-tested against the scene.
+//
 // Group 0 : the shared scene bindings, prefixed from SHARED_BINDINGS_WGSL.
 //           Only camera.inv_view_proj and camera.view_proj are read.
 // Group 1 : implicit-specific (binding 0: ImplicitUniform).
@@ -122,13 +125,18 @@ fn scene_sdf(p: vec3<f32>) -> f32 {
 }
 
 // ---------------------------------------------------------------------------
-// Fragment stage : output 1.0 on hit, discard on miss
+// Fragment stages
 // ---------------------------------------------------------------------------
 
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let near_clip = vec4<f32>(in.ndc_xy, 0.0, 1.0);
-    let far_clip  = vec4<f32>(in.ndc_xy, 1.0, 1.0);
+struct MarchHit {
+    pos: vec3<f32>,
+    hit: bool,
+}
+
+// March the pixel's ray to the surface.
+fn march(ndc_xy: vec2<f32>) -> MarchHit {
+    let near_clip = vec4<f32>(ndc_xy, 0.0, 1.0);
+    let far_clip  = vec4<f32>(ndc_xy, 1.0, 1.0);
 
     let near_world_h = camera.inv_view_proj * near_clip;
     let far_world_h  = camera.inv_view_proj * far_clip;
@@ -141,9 +149,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var t   = 0.0;
     var hit = false;
+    var p   = ray_origin;
 
     for (var step: u32 = 0u; step < u.max_steps; step++) {
-        let p = ray_origin + ray_dir * t;
+        p = ray_origin + ray_dir * t;
         let d = scene_sdf(p);
         if d < u.hit_threshold {
             hit = true;
@@ -155,9 +164,27 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    if !hit {
+    return MarchHit(p, hit);
+}
+
+// Outline mask: 1.0 on hit, discard on miss.
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let m = march(in.ndc_xy);
+    if !m.hit {
         discard;
     }
-
     return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+}
+
+// Surface mask: the hit's depth, nudged towards the camera so it passes the
+// depth test against the copy the colour pass wrote.
+@fragment
+fn fs_stamp(in: VertexOutput) -> @builtin(frag_depth) f32 {
+    let m = march(in.ndc_xy);
+    if !m.hit {
+        discard;
+    }
+    let clip = camera.view_proj * vec4<f32>(m.pos, 1.0);
+    return max(clip.z / clip.w - 1e-6, 0.0);
 }

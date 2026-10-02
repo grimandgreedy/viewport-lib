@@ -38,6 +38,7 @@ pub(super) struct McFrame {
     pub(super) cast_shadows: bool,
     pub(super) selected: bool,
     pub(super) hidden: bool,
+    pub(super) settings: viewport_lib::ItemSettings,
 }
 
 /// Pipelines, layouts, and case tables, built lazily on the first prepare with
@@ -54,6 +55,7 @@ pub(super) struct McGpu {
     /// group 0.
     pub(super) shadow_pipeline: viewport_lib::gpu::RenderPipeline,
     pub(super) mask_pipeline: viewport_lib::gpu::RenderPipeline,
+    pub(super) surface_mask_pipeline: viewport_lib::gpu::RenderPipeline,
     pub(super) pick_pipeline: viewport_lib::gpu::RenderPipeline,
     pub(super) pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
     wireframe_render_bgl: viewport_lib::gpu::BindGroupLayout,
@@ -336,22 +338,29 @@ impl McGpu {
             "mc_outline_mask_shader",
             &scene_shader(&[], wgsl_source!("mc_outline_mask")),
         );
-        let mask_pipeline = resources.build_mask_pipeline(
+        let mask_opts = viewport_lib::resources::PluginPipelineOpts {
+            primitive: viewport_lib::gpu::PrimitiveState {
+                topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            extra_bind_group_layouts: &[],
+            ..viewport_lib::resources::PluginPipelineOpts::new(
+                Some("mc_outline_mask_pipeline"),
+                &mask_shader,
+                "vs_main",
+                "fs_main",
+                &[MC_VERTEX_LAYOUT],
+            )
+        };
+        let mask_pipeline = resources.build_mask_pipeline(device, &mask_opts);
+        // The surface mask stamps the same generated geometry into the scene
+        // stencil.
+        let surface_mask_pipeline = resources.build_surface_mask_pipeline(
             device,
             &viewport_lib::resources::PluginPipelineOpts {
-                primitive: viewport_lib::gpu::PrimitiveState {
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                extra_bind_group_layouts: &[],
-                ..viewport_lib::resources::PluginPipelineOpts::new(
-                    Some("mc_outline_mask_pipeline"),
-                    &mask_shader,
-                    "vs_main",
-                    "fs_main",
-                    &[MC_VERTEX_LAYOUT],
-                )
+                label: Some("mc_surface_mask_pipeline"),
+                ..mask_opts
             },
         );
 
@@ -403,6 +412,7 @@ impl McGpu {
             wireframe_pipeline,
             shadow_pipeline,
             mask_pipeline,
+            surface_mask_pipeline,
             pick_pipeline,
             pick_id_bgl,
             wireframe_render_bgl,
@@ -798,6 +808,7 @@ impl McGpu {
                 cast_shadows: job.settings.cast_shadows,
                 selected: job.settings.selected,
                 hidden: job.settings.hidden,
+                settings: job.settings,
             });
         }
 
