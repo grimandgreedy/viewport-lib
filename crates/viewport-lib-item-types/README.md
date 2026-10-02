@@ -62,7 +62,7 @@ Not every type has one, and the split is about what the type actually holds.
 
 **A store, reached through `Uploads` and `Handles`.** Point clouds, sprites, the three curve types, vector fields, tensor fields, and gaussian splats. Each takes a large per-sample payload that costs something to turn into buffers, and each has a reference item to draw it again without rebuilding.
 
-**No store at all.** GPU implicit surfaces, scatter volumes, volumes, image slices and volume surface slices. Either the item is a handful of numbers that fits in a uniform (implicit primitives, a scatter volume's description), or the heavy content is renderer-owned rather than item-owned and is already named by a handle: `VolumeId` from `DeviceResources::upload_volume`, `MeshId` from `upload_mesh_data`. Adding a store would mean holding a second copy of something the renderer already keeps.
+**No store at all.** GPU implicit surfaces, scatter volumes, volumes, image slices, volume surface slices and decals. Either the item is a handful of numbers that fits in a uniform (implicit primitives, a scatter volume's description), or the heavy content is renderer-owned rather than item-owned and is already named by a handle: `VolumeId` from `DeviceResources::upload_volume`, `MeshId` from `upload_mesh_data`. Adding a store would mean holding a second copy of something the renderer already keeps.
 
 **A store, reached through verbs of its own.** Four types keep a store but cannot use the shared traits. They are listed in their sections below, with the reason in each case, because the reason is usually a constraint rather than a preference: `Uploads<T>` carries one handle type per implementation, and a trait implementation needs a type local to this crate.
 

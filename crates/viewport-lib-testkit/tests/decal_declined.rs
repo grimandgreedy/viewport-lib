@@ -7,8 +7,9 @@
 //! differ from the last (the type takes decals) and the second must match it
 //! exactly (the type can refuse them).
 
+use viewport_lib::TextureData;
 use viewport_lib::plugin_api::SURFACE_MASK_LAYERS;
-use viewport_lib::{DecalItem, TextureData};
+use viewport_lib_item_types::DecalItem;
 use viewport_lib_testkit::{BuiltScene, Harness, catalogue, frame_for};
 
 const W: u32 = 240;

@@ -1,4 +1,4 @@
-use crate::scene::material::ItemSettings;
+use viewport_lib::ItemSettings;
 
 /// How a decal's colour is composited onto the receiver surface.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -61,7 +61,7 @@ pub enum DecalProjection {
     },
 }
 
-/// UV animation applied to a [`LiveDecal`](crate::scene::LiveDecal).
+/// UV animation applied to a [`LiveDecal`](crate::LiveDecal).
 ///
 /// The renderer computes the effective `uv_offset` and `uv_scale` each frame from
 /// the decal's current age and the animation parameters.
@@ -99,7 +99,7 @@ pub enum DecalAnimation {
 /// box is the projection direction (front face = +Z in local space).
 ///
 /// `texture_id` must be a value returned by
-/// [`DeviceResources::upload_texture`].
+/// [`DeviceResources::upload_texture`](viewport_lib::resources::DeviceResources::upload_texture).
 ///
 /// # Normal map
 ///
@@ -122,7 +122,7 @@ pub enum DecalAnimation {
 /// shadows, and hemisphere ambient the opaque pass uses. A decal therefore
 /// darkens in shadow and tracks the key light the way the surface under it
 /// does. `roughness` and `metallic` drive that BRDF and mean what they mean on
-/// [`Material`](crate::scene::Material).
+/// [`Material`](viewport_lib::Material).
 ///
 /// Three gaps to know about. Shadowing follows the primary directional light
 /// only: point-light shadow cubes are not sampled, so a decal inside a point
@@ -144,7 +144,7 @@ pub enum DecalAnimation {
 ///
 /// `uv_offset` and `uv_scale` shift and scale the final UV before texture
 /// sampling. For sprite-sheet and scroll animations, use
-/// [`LiveDecal`](crate::scene::LiveDecal) with a
+/// [`LiveDecal`](crate::LiveDecal) with a
 /// [`DecalAnimation`]: the scene updates `uv_offset` / `uv_scale` from the
 /// animation each frame.
 ///
@@ -171,8 +171,8 @@ pub struct DecalItem {
     /// Texture handle from `resources.upload_texture()`.
     ///
     /// Colour, so upload it sRGB
-    /// ([`TextureData::srgb`](crate::resources::TextureData::srgb)).
-    pub texture_id: crate::resources::TextureId,
+    /// ([`TextureData::srgb`](viewport_lib::resources::TextureData::srgb)).
+    pub texture_id: viewport_lib::resources::TextureId,
     /// How the decal colour blends with the receiver. Default: `Replace`.
     pub blend_mode: DecalBlendMode,
     /// Overall opacity multiplier applied on top of the texture alpha. Default: 1.0.
@@ -180,10 +180,10 @@ pub struct DecalItem {
     /// Optional tangent-space normal map texture ID. Default: `None`.
     ///
     /// Directions, not colour, so upload it linear
-    /// ([`TextureData::normal_map`](crate::resources::TextureData::normal_map)).
+    /// ([`TextureData::normal_map`](viewport_lib::resources::TextureData::normal_map)).
     /// Uploading it sRGB biases every normal and reads as a flat disc with a
     /// bright wedge rather than as relief.
-    pub normal_texture_id: Option<crate::resources::TextureId>,
+    pub normal_texture_id: Option<viewport_lib::resources::TextureId>,
     /// How strongly the decal normal map overrides the receiver normal. Range [0, 1]. Default: 1.0.
     pub normal_blend_strength: f32,
     /// Draw order key. Lower = rendered first (underneath). Default: 0.
@@ -193,15 +193,15 @@ pub struct DecalItem {
     /// Optional per-texel roughness map (single-channel, R component used). Default: `None`.
     ///
     /// A factor, not colour, so upload it linear
-    /// ([`TextureData::linear`](crate::resources::TextureData::linear)).
-    pub roughness_texture_id: Option<crate::resources::TextureId>,
+    /// ([`TextureData::linear`](viewport_lib::resources::TextureData::linear)).
+    pub roughness_texture_id: Option<viewport_lib::resources::TextureId>,
     /// Metallic factor in [0, 1]. 0 = dielectric, 1 = metal. Default: 0.0.
     pub metallic: f32,
     /// Optional per-texel metallic map (single-channel, R component used). Default: `None`.
     ///
     /// A factor, not colour, so upload it linear
-    /// ([`TextureData::linear`](crate::resources::TextureData::linear)).
-    pub metallic_texture_id: Option<crate::resources::TextureId>,
+    /// ([`TextureData::linear`](viewport_lib::resources::TextureData::linear)).
+    pub metallic_texture_id: Option<viewport_lib::resources::TextureId>,
     /// UV offset applied before texture sampling. Modified by [`DecalAnimation`]. Default: [0, 0].
     pub uv_offset: [f32; 2],
     /// UV scale applied before texture sampling. Modified by [`DecalAnimation`]. Default: [1, 1].
@@ -211,13 +211,13 @@ pub struct DecalItem {
     /// Optional emissive texture. When `None`, the albedo colour is used as the emissive colour.
     ///
     /// Colour, so upload it sRGB
-    /// ([`TextureData::srgb`](crate::resources::TextureData::srgb)).
-    pub emissive_texture_id: Option<crate::resources::TextureId>,
+    /// ([`TextureData::srgb`](viewport_lib::resources::TextureData::srgb)).
+    pub emissive_texture_id: Option<viewport_lib::resources::TextureId>,
     /// Fraction of each local half-extent over which the alpha fades to zero at the box boundary.
     /// Range [0.0, 0.5]. Default: 0.0 (hard edge).
     pub edge_fade: f32,
     /// Constant ambient coefficient added to the hemisphere fill when the decal is lit,
-    /// the same role [`Material::ambient`](crate::scene::Material::ambient) plays for a
+    /// the same role [`Material::ambient`](viewport_lib::Material::ambient) plays for a
     /// mesh. Default 0.15, matching `Material`'s default, so a decal on a default-material
     /// surface picks up the same floor. Set it to the receiver material's `ambient` when
     /// that has been changed, or to 0.0 to rely on the hemisphere fill alone.
@@ -251,7 +251,7 @@ impl Default for DecalItem {
     fn default() -> Self {
         Self {
             transform: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            texture_id: crate::resources::TextureId::INVALID,
+            texture_id: viewport_lib::resources::TextureId::INVALID,
             blend_mode: DecalBlendMode::Replace,
             alpha: 1.0,
             normal_texture_id: None,

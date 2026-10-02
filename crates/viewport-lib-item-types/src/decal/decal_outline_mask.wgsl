@@ -8,22 +8,10 @@
 // colour shader would shade the decal this writes 1.0; where it discards, or
 // where coverage falls below the silhouette threshold, this discards.
 //
-// Group 0: camera_bgl (CameraUniform at binding 0; other bindings unused here)
+// Group 0: the shared scene bindings; only `camera` is read.
 // Group 1: per-viewport scene depth + stencil (same as the decal colour pass)
 // Group 2: per-decal bind group (same as the colour pass); the DecalUniform at
 //          binding 0 and the albedo texture/sampler at bindings 1/2 are read
-
-struct Camera {
-    view_proj:     mat4x4<f32>,
-    eye_pos:       vec3<f32>,
-    _pad:          f32,
-    forward:       vec3<f32>,
-    _pad1:         f32,
-    inv_view_proj: mat4x4<f32>,
-    view:          mat4x4<f32>,
-};
-
-@group(0) @binding(0) var<uniform> camera: Camera;
 
 @group(1) @binding(0) var scene_depth:   texture_depth_2d;
 @group(1) @binding(1) var scene_stencil: texture_2d<u32>;

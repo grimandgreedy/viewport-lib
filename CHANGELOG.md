@@ -4,6 +4,8 @@
 
 ### Added
 
+- **`SHARED_BRDF_WGSL` and `SHARED_OUTLINE_EDGE_WGSL`** - the direct Cook-Torrance BRDF the lit mesh shaders use, and the fullscreen edge trace behind the selection outline (with its `OutlineEdgeUniform`), published for item types that light a surface themselves or draw a selection ring of their own.
+
 - **Every depth-writing item type can decline a decal** - point clouds, vector and tensor fields, tubes, streamtubes, ribbons, opaque sprites, volume surface slices, GPU implicit surfaces and GPU marching-cubes surfaces now stamp the surface mask, so `visibility_mask` decides which decals land on them as it does for meshes. Before, only a mesh could refuse one.
 
 - **`DecalItem::channel_mask`: a decal can target some surfaces and not others** - a decal lands on an item when its `channel_mask` shares a layer with the item's `ItemSettings::visibility_mask`, the test a light's `channel_mask` already makes. The default is every layer, so existing decals are unchanged. Only layers 0 to 7 count for decals.
@@ -19,6 +21,12 @@
 - **`build_log` can be switched on at runtime** - `resources::build_log::enable` and `disable` turn the pipeline, shader module and render target record on without `VPL_BUILD_LOG`, which a web build cannot set because `std::env::var` always reports a variable missing under `wasm32`. `drain` and `drain_textures` return what was recorded since the last call, and the phase marks on the `viewport_lib::init` tracing target now cover the whole of `ViewportRenderer::new` (internal item plugin registration, the fallback and colourmap textures, the geometry slab, the glyph atlas and the polyline resources) rather than the pipeline phases alone.
 
 ### Changed
+
+- **Decals moved to `viewport-lib-item-types`** - `DecalItem`, `DecalBlendMode`, `DecalProjection`, `CylindricalFacing` and `DecalAnimation` are imported from `viewport_lib_item_types` now, and the type registers with that crate's `install`. A renderer that does not call `install` (or register `DecalPlugin` itself) draws no decals.
+
+- **Live decals are a standalone `LiveDecals`, not part of `Scene`** - `Scene::add_decal`, `add_decal_with_lifetime`, `add_decal_animated`, `remove_decal`, `update_decals` and `collect_decal_items` are gone. Keep a `viewport_lib_item_types::LiveDecals` beside the scene and call `add`, `add_with_lifetime`, `add_animated`, `remove`, `update` and `collect` on it.
+
+- **`FrameStats::decal_uploads` and `decal_reused` are gone** - read the same two counts from `DecalPlugin::cache_stats`, reached with `renderer.item_type_plugin`.
 
 - **`receives_decals` is gone; a surface declines decals through its layers** - `SceneRenderItem::receives_decals`, `Scene::set_receives_decals` and the `SceneNode` accessors are removed. To keep every decal off an item, take it off the layers a decal can see: `item.settings.visibility_mask &= !SURFACE_MASK_LAYERS` (layers 0 to 7). The item stays on layers 8 and up, so cameras and lights left at their default masks still draw and light it.
 

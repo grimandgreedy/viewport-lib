@@ -10,11 +10,12 @@
 use glam::{Mat4, Vec3};
 use viewport_lib::plugin_api::{SURFACE_MASK_LAYERS, Uploads};
 use viewport_lib::{
-    Aabb, ColourmapId, DecalBlendMode, DecalItem, Material, MeshInstanceItem, PickId,
-    ScatterQuality, ScatterSettings, SpriteBlend, TextureData, VolumeData, primitives,
+    Aabb, ColourmapId, Material, MeshInstanceItem, PickId, ScatterQuality, ScatterSettings,
+    SpriteBlend, TextureData, VolumeData, primitives,
 };
 use viewport_lib_item_types::GpuParticleSystems;
 use viewport_lib_item_types::VolumeItem;
+use viewport_lib_item_types::{DecalBlendMode, DecalItem};
 use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumes};
 use viewport_lib_item_types::{
     RibbonItem, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorFieldItem, TensorSource,

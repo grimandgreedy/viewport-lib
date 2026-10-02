@@ -8,22 +8,36 @@
 //! colour projection, then the outline mask and edge trace when a decal is
 //! selected.
 
+mod live;
 mod pipeline;
-pub(crate) mod types;
+mod types;
 
-use crate::plugin_api::{
+pub use live::{DecalHandle, LiveDecal, LiveDecals};
+pub use types::{CylindricalFacing, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection};
+use viewport_lib::plugin_api::pick_helpers::{ray_unit_box_toi, segment_in_rect};
+use viewport_lib::plugin_api::{
     EncoderScope, EncoderScopeContext, ItemCollections, ItemFrameContext, ItemTypePlugin,
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
-use crate::renderer::picking::helpers::{ray_unit_box_toi, segment_in_rect};
-use crate::renderer::{DecalBlendMode, DecalItem, PickHit, PickId, PickMask};
+use viewport_lib::renderer::{PickHit, PickId, PickMask};
+use viewport_lib::resources::{ResourceGate, Revalidate, TextureId};
 
-pub(crate) const TYPE_NAME: &str = "vpl.decal";
+pub const TYPE_NAME: &str = "vpl.decal";
+
+/// This type's shaders as the pipelines compile them, shared sections already
+/// spliced in front of each body.
+pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
+    vec![
+        ("decal.wgsl", pipeline::decal_source()),
+        ("decal_outline_mask.wgsl", pipeline::outline_mask_source()),
+        ("decal_pick.wgsl", pipeline::pick_source()),
+    ]
+}
 
 impl PluginItem for DecalItem {
     const TYPE_NAME: &'static str = TYPE_NAME;
 
-    fn settings(&self) -> &crate::scene::material::ItemSettings {
+    fn settings(&self) -> &viewport_lib::ItemSettings {
         &self.settings
     }
 }
@@ -55,25 +69,28 @@ const EDGES: [(usize, usize); 12] = [
     (6, 7),
 ];
 
-pub(crate) struct DecalPlugin {
+/// The textures one cached decal's bind group names, so the cache can tell
+/// when a free has left it pointing at a view that is gone.
+type BoundTextures = [Option<TextureId>; 5];
+
+/// The decal item type. Register it with
+/// [`ViewportRenderer::with_item_type_plugin`](viewport_lib::renderer::ViewportRenderer::with_item_type_plugin),
+/// or through [`install`](crate::install) with the rest of this crate.
+#[derive(Default)]
+pub struct DecalPlugin {
     gpu: pipeline::DecalGpu,
     /// This frame's draw list, in `sort_key` order, built in `prepare`.
     draws: Vec<pipeline::DecalGpuItem>,
     /// GPU resources cached across frames, keyed by decal content hash, so an
     /// unchanged decal rebuilds no uniform buffer and no bind group.
-    cache: std::collections::HashMap<
-        u64,
-        (
-            pipeline::DecalGpuItem,
-            crate::resources::resource_deps::ResourceDeps,
-        ),
-    >,
+    cache: std::collections::HashMap<u64, (pipeline::DecalGpuItem, BoundTextures)>,
     /// Resource epochs the cache was last validated against.
-    deps_gate: crate::resources::resource_deps::ResourceGate,
+    deps_gate: ResourceGate,
     /// Items retained from `prepare` for the out-of-band CPU pick answers.
     pick_items: Vec<DecalItem>,
-    /// Cache hit / miss counts for this frame, read back into `FrameStats`.
-    stats: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Cache miss and hit counts from the last prepare.
+    uploads: u32,
+    reused: u32,
     /// The outline mask target and its edge bind group, keyed by target size.
     /// Behind a lock because `encode` runs from a shared borrow but the target
     /// set is rebuilt when the viewport resizes.
@@ -81,18 +98,15 @@ pub(crate) struct DecalPlugin {
 }
 
 impl DecalPlugin {
-    /// `stats` is the renderer's handle on this frame's cache tallies, packed
-    /// `(uploads << 32) | reused`, which it reads back into `FrameStats`.
-    pub(crate) fn new(stats: std::sync::Arc<std::sync::atomic::AtomicU64>) -> Self {
-        Self {
-            gpu: pipeline::DecalGpu::default(),
-            draws: Vec::new(),
-            cache: std::collections::HashMap::new(),
-            deps_gate: crate::resources::resource_deps::ResourceGate::default(),
-            pick_items: Vec::new(),
-            stats,
-            outline_targets: std::sync::Mutex::new(None),
-        }
+    /// How the cross-frame resource cache did on the last prepared frame, as
+    /// `(uploads, reused)`.
+    ///
+    /// `uploads` counts decals whose uniform buffer and bind group were built
+    /// that frame, `reused` the ones served from the cache. With static decals
+    /// `uploads` is zero after the first frame; a value near the decal count
+    /// every frame means the cache is missing.
+    pub fn cache_stats(&self) -> (u32, u32) {
+        (self.uploads, self.reused)
     }
 }
 
@@ -108,8 +122,8 @@ impl ItemTypePlugin for DecalPlugin {
     /// lazy: they are only needed by scenes that select a decal.
     fn init_gpu(
         &mut self,
-        device: &crate::gpu::Device,
-        shared: &crate::plugin_api::SharedBindings<'_>,
+        device: &viewport_lib::gpu::Device,
+        shared: &viewport_lib::plugin_api::SharedBindings<'_>,
     ) {
         self.gpu.ensure_shared(device);
         self.gpu.ensure_pipeline(device, shared.group0_layout);
@@ -117,11 +131,11 @@ impl ItemTypePlugin for DecalPlugin {
 
     fn prepare(
         &mut self,
-        device: &crate::gpu::Device,
-        _queue: &crate::gpu::Queue,
+        device: &viewport_lib::gpu::Device,
+        _queue: &viewport_lib::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
-    ) -> Vec<crate::gpu::CommandBuffer> {
+    ) -> Vec<viewport_lib::gpu::CommandBuffer> {
         let decals = items.of::<DecalItem>();
         let res = ctx.resources;
 
@@ -152,11 +166,13 @@ impl ItemTypePlugin for DecalPlugin {
             // everything, since a view swapped behind a live id cannot be
             // detected per entry.
             match self.deps_gate.poll(res) {
-                crate::resources::resource_deps::Revalidate::RebuildAll => self.cache.clear(),
-                crate::resources::resource_deps::Revalidate::CheckEach => {
-                    self.cache.retain(|_, (_, deps)| deps.resolves(res));
+                Revalidate::RebuildAll => self.cache.clear(),
+                Revalidate::CheckEach => {
+                    self.cache.retain(|_, (_, bound)| {
+                        bound.iter().flatten().all(|id| res.has_texture(*id))
+                    });
                 }
-                crate::resources::resource_deps::Revalidate::Valid => {}
+                Revalidate::Valid => {}
             }
             // Stable sort so equal-key decals stay in submission order.
             let mut sorted: Vec<&DecalItem> = decals.iter().collect();
@@ -181,7 +197,7 @@ impl ItemTypePlugin for DecalPlugin {
                         reused += 1;
                     }
                     std::collections::hash_map::Entry::Vacant(e) => {
-                        use crate::resources::TextureSlot;
+                        use viewport_lib::resources::TextureSlot;
                         res.check_texture_slot(
                             Some(effective.texture_id),
                             TextureSlot::DecalAlbedo,
@@ -203,15 +219,15 @@ impl ItemTypePlugin for DecalPlugin {
                             TextureSlot::DecalEmissive,
                         );
                         let gpu = self.gpu.upload_item(device, res, &effective);
-                        let deps = crate::resources::resource_deps::ResourceDeps::textures([
+                        let bound = [
                             Some(effective.texture_id),
                             effective.normal_texture_id,
                             effective.roughness_texture_id,
                             effective.metallic_texture_id,
                             effective.emissive_texture_id,
-                        ]);
+                        ];
                         self.draws.push(gpu.clone());
-                        e.insert((gpu, deps));
+                        e.insert((gpu, bound));
                         uploads += 1;
                     }
                 }
@@ -221,10 +237,8 @@ impl ItemTypePlugin for DecalPlugin {
             self.cache.retain(|k, _| seen.contains(k));
             self.pick_items.extend(decals.iter().cloned());
         }
-        self.stats.store(
-            ((uploads as u64) << 32) | reused as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        self.uploads = uploads;
+        self.reused = reused;
 
         // The outline pipelines are cheap to hold and the outline pass runs
         // from a shared borrow, so build them here the first frame a decal is
@@ -242,7 +256,7 @@ impl ItemTypePlugin for DecalPlugin {
             if decal.settings.hidden || decal.settings.opacity <= 0.0 {
                 continue;
             }
-            let mask = crate::plugin_api::surface_mask_bits(decal.channel_mask);
+            let mask = viewport_lib::plugin_api::surface_mask_bits(decal.channel_mask);
             if !out.contains(&mask) {
                 out.push(mask);
             }
@@ -258,7 +272,7 @@ impl ItemTypePlugin for DecalPlugin {
 
     fn encode(
         &self,
-        encoder: &mut crate::gpu::CommandEncoder,
+        encoder: &mut viewport_lib::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
@@ -285,7 +299,7 @@ impl ItemTypePlugin for DecalPlugin {
     /// decal but off its receiver still selects it.
     fn render_pick(
         &self,
-        pass: &mut crate::gpu::RenderPass<'_>,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
@@ -310,7 +324,7 @@ impl ItemTypePlugin for DecalPlugin {
             if !bound {
                 pass.set_pipeline(pipeline);
                 pass.set_vertex_buffer(0, vbuf.slice(..));
-                pass.set_index_buffer(ibuf.slice(..), crate::gpu::IndexFormat::Uint32);
+                pass.set_index_buffer(ibuf.slice(..), viewport_lib::gpu::IndexFormat::Uint32);
                 bound = true;
             }
             pass.set_bind_group(1, &pick.bind_group, &[]);
@@ -346,22 +360,18 @@ impl ItemTypePlugin for DecalPlugin {
             if best.as_ref().is_some_and(|(b, _)| toi >= *b) {
                 continue;
             }
-            #[allow(deprecated)]
-            let hit = PickHit {
-                id: item.settings.pick_id.0,
-                sub_object: None,
-                world_pos: ray.origin + ray.direction * toi,
-                normal: -ray.direction.normalize_or_zero(),
-                scalar_value: None,
-                sub_object_world_pos: None,
-            };
+            let hit = PickHit::object_hit(
+                item.settings.pick_id.0,
+                ray.origin + ray.direction * toi,
+                -ray.direction.normalize_or_zero(),
+            );
             best = Some((toi, hit));
         }
         best
     }
 
-    fn pick_rect(&self, ctx: &RectPickContext<'_>) -> crate::renderer::PickRectResult {
-        let mut result = crate::renderer::PickRectResult::default();
+    fn pick_rect(&self, ctx: &RectPickContext<'_>) -> viewport_lib::renderer::PickRectResult {
+        let mut result = viewport_lib::renderer::PickRectResult::default();
         if !ctx.mask.intersects(PickMask::OBJECT) {
             return result;
         }
@@ -381,7 +391,7 @@ impl ItemTypePlugin for DecalPlugin {
             }
             let mvp = ctx.view_proj * model;
             let sc: [Option<glam::Vec2>; 8] = std::array::from_fn(|i| {
-                crate::renderer::picking::helpers::project_to_screen(
+                viewport_lib::plugin_api::pick_helpers::project_to_screen(
                     glam::Vec3::from(CORNERS[i]),
                     mvp,
                     ctx.viewport_size,
@@ -407,9 +417,9 @@ impl DecalPlugin {
     /// texture, so the pass has no depth attachment of its own.
     fn encode_colour(
         &self,
-        encoder: &mut crate::gpu::CommandEncoder,
+        encoder: &mut viewport_lib::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
-        depth_bg: &crate::gpu::BindGroup,
+        depth_bg: &viewport_lib::gpu::BindGroup,
     ) {
         if self.draws.is_empty() {
             return;
@@ -422,16 +432,16 @@ impl DecalPlugin {
             return;
         }
         let [target_w, target_h] = ctx.scene_size;
-        let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-            #[cfg(any(wgpu29, wgpu30))]
+        let mut pass = encoder.begin_render_pass(&viewport_lib::gpu::RenderPassDescriptor {
+            #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
             multiview_mask: None,
             label: Some("decal_pass"),
-            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+            color_attachments: &[Some(viewport_lib::gpu::RenderPassColorAttachment {
                 view: ctx.scene_colour,
                 resolve_target: None,
-                ops: crate::gpu::Operations {
-                    load: crate::gpu::LoadOp::Load,
-                    store: crate::gpu::StoreOp::Store,
+                ops: viewport_lib::gpu::Operations {
+                    load: viewport_lib::gpu::LoadOp::Load,
+                    store: viewport_lib::gpu::StoreOp::Store,
                 },
                 depth_slice: None,
             })],
@@ -473,9 +483,9 @@ impl DecalPlugin {
     /// when no decal is selected, so the common case pays no cost.
     fn encode_outline(
         &self,
-        encoder: &mut crate::gpu::CommandEncoder,
+        encoder: &mut viewport_lib::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
-        depth_bg: &crate::gpu::BindGroup,
+        depth_bg: &viewport_lib::gpu::BindGroup,
     ) {
         if !self.draws.iter().any(|g| g.selected) {
             return;
@@ -498,7 +508,7 @@ impl DecalPlugin {
         // view, buffer, bind group) is reused frame to frame and rebuilt only
         // when the viewport size changes, so the pass allocates nothing per
         // frame.
-        let edge_uniform = crate::resources::OutlineEdgeUniform {
+        let edge_uniform = viewport_lib::resources::OutlineEdgeUniform {
             colour: ctx.outline_colour.to_linear_rgba(),
             radius: ctx.outline_width_px,
             viewport_w: target_w as f32,
@@ -518,16 +528,18 @@ impl DecalPlugin {
         let mut any_full = false;
 
         {
-            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(any(wgpu29, wgpu30))]
+            let mut pass = encoder.begin_render_pass(&viewport_lib::gpu::RenderPassDescriptor {
+                #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
                 multiview_mask: None,
                 label: Some("decal_outline_mask_pass"),
-                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                color_attachments: &[Some(viewport_lib::gpu::RenderPassColorAttachment {
                     view: &targets.mask_view,
                     resolve_target: None,
-                    ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color::TRANSPARENT),
-                        store: crate::gpu::StoreOp::Store,
+                    ops: viewport_lib::gpu::Operations {
+                        load: viewport_lib::gpu::LoadOp::Clear(
+                            viewport_lib::gpu::Color::TRANSPARENT,
+                        ),
+                        store: viewport_lib::gpu::StoreOp::Store,
                     },
                     depth_slice: None,
                 })],
@@ -590,16 +602,16 @@ impl DecalPlugin {
             })
         };
 
-        let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-            #[cfg(any(wgpu29, wgpu30))]
+        let mut pass = encoder.begin_render_pass(&viewport_lib::gpu::RenderPassDescriptor {
+            #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
             multiview_mask: None,
             label: Some("decal_outline_edge_pass"),
-            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+            color_attachments: &[Some(viewport_lib::gpu::RenderPassColorAttachment {
                 view: ctx.scene_colour,
                 resolve_target: None,
-                ops: crate::gpu::Operations {
-                    load: crate::gpu::LoadOp::Load,
-                    store: crate::gpu::StoreOp::Store,
+                ops: viewport_lib::gpu::Operations {
+                    load: viewport_lib::gpu::LoadOp::Load,
+                    store: viewport_lib::gpu::StoreOp::Store,
                 },
                 depth_slice: None,
             })],

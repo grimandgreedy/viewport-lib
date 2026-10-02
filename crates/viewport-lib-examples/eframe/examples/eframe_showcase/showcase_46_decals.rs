@@ -9,10 +9,11 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
-use vpl::{
-    BuiltinMatcap, CylindricalFacing, DecalAnimation, DecalBlendMode, DecalHandle, DecalItem,
-    DecalProjection, Material, MeshId, SceneRenderItem, scene::Scene, selection::Selection,
+use viewport_lib_item_types::{
+    CylindricalFacing, DecalAnimation, DecalBlendMode, DecalHandle, DecalItem, DecalProjection,
+    LiveDecals,
 };
+use vpl::{BuiltinMatcap, Material, MeshId, SceneRenderItem, scene::Scene, selection::Selection};
 
 use crate::App;
 
@@ -453,6 +454,8 @@ pub(crate) struct PlacedDecal {
 pub(crate) struct Decal46State {
     pub built: bool,
     pub scene: Scene,
+    /// Decals with a lifetime or an animation, advanced each frame.
+    pub live_decals: LiveDecals,
     pub selection: Selection,
 
     pub wall_mesh: Option<MeshId>,
@@ -528,6 +531,7 @@ impl Default for Decal46State {
         Self {
             built: false,
             scene: Scene::new(),
+            live_decals: LiveDecals::new(),
             selection: Selection::new(),
             wall_mesh: None,
             ground_mesh: None,
@@ -827,7 +831,7 @@ pub(crate) fn decal46_place(app: &mut App, pick: &vpl::PickHit) {
         item.metallic = st.decal_metallic;
         item.projection = projection;
         let lt = st.fade_lifetime;
-        st.scene.add_decal_with_lifetime(item, lt, st.fade_out);
+        st.live_decals.add_with_lifetime(item, lt, st.fade_out);
     } else {
         let id = st.next_id;
         st.next_id += 1;
@@ -850,7 +854,7 @@ pub(crate) fn update_decal46(app: &mut App, dt: f32) {
         return;
     }
 
-    app.decal46_state.scene.update_decals(dt);
+    app.decal46_state.live_decals.update(dt);
 
     // sync obstacle visibility.
     let show = app.decal46_state.show_obstacle;
@@ -878,7 +882,7 @@ pub(crate) fn update_decal46(app: &mut App, dt: f32) {
             item.texture_id = stripe;
             item.alpha = 1.0;
             item.sort_key = -10;
-            let handle = st.scene.add_decal_animated(
+            let handle = st.live_decals.add_animated(
                 item,
                 DecalAnimation::UvScroll { vx: 0.15, vy: 0.0 },
                 None,
@@ -898,7 +902,7 @@ pub(crate) fn decal46_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
         .collect_render_items(&app.decal46_state.selection)
 }
 
-/// Push all active decals into `fd.scene.items_mut::<viewport_lib::DecalItem>()`.
+/// Push all active decals into `fd.scene.items_mut::<DecalItem>()`.
 pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
     let st = &app.decal46_state;
 
@@ -918,7 +922,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.metallic = 0.0;
             item.alpha = 1.0;
             item.sort_key = 10;
-            fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
+            fd.scene.items_mut::<DecalItem>().push(item);
         }
     }
 
@@ -952,7 +956,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.roughness = 1.0;
             item.metallic = 0.0;
             item.alpha = 1.0;
-            fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
+            fd.scene.items_mut::<DecalItem>().push(item);
         }
     }
 
@@ -971,7 +975,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.roughness = 1.0;
             item.metallic = 0.0;
             item.alpha = 1.0;
-            fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
+            fd.scene.items_mut::<DecalItem>().push(item);
         }
     }
 
@@ -1017,13 +1021,13 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
         } else {
             0.0
         };
-        fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
+        fd.scene.items_mut::<DecalItem>().push(item);
     }
 
     // live decals (fading + animation) from the scene.
     fd.scene
-        .items_mut::<viewport_lib::DecalItem>()
-        .extend(st.scene.collect_decal_items());
+        .items_mut::<DecalItem>()
+        .extend(st.live_decals.collect());
 
     // glowing rune on the wall, center-right.
     if st.show_rune {
@@ -1036,7 +1040,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.alpha = 1.0;
             item.emissive = st.rune_emissive.into();
             item.edge_fade = 0.1;
-            fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
+            fd.scene.items_mut::<DecalItem>().push(item);
         }
     }
 
@@ -1055,13 +1059,13 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.alpha = 1.0;
             item.edge_fade = 0.05;
             item.projection = if st.use_tri_planar {
-                vpl::DecalProjection::TriPlanar {
+                DecalProjection::TriPlanar {
                     blend_sharpness: st.tri_blend_sharpness,
                 }
             } else {
-                vpl::DecalProjection::Planar
+                DecalProjection::Planar
             };
-            fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
+            fd.scene.items_mut::<DecalItem>().push(item);
         }
     }
 
@@ -1085,7 +1089,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
         item.projection = DecalProjection::Cylindrical {
             facing: st.cyl_facing,
         };
-        fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
+        fd.scene.items_mut::<DecalItem>().push(item);
     }
 
     // spark-impact on the wall, alongside the rune.
@@ -1098,7 +1102,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.texture_id = spark;
             item.alpha = 1.0;
             item.emissive = st.spark_emissive.into();
-            fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
+            fd.scene.items_mut::<DecalItem>().push(item);
         }
     }
 
@@ -1119,7 +1123,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.blend_mode = DecalBlendMode::Additive;
             item.alpha = st.fire_alpha;
             item.emissive = 1.5;
-            fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
+            fd.scene.items_mut::<DecalItem>().push(item);
         }
     }
 }
@@ -1236,7 +1240,7 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         if app.decal46_state.decals.is_empty() && !app.decal46_state.fading_mode {
             ui.small("(none)");
         }
-        let live_count = app.decal46_state.scene.collect_decal_items().len();
+        let live_count = app.decal46_state.live_decals.len();
         if live_count > 0 {
             ui.small(format!(
                 "{live_count} live (fading/animated) decals active."
@@ -1434,7 +1438,7 @@ pub(crate) fn scene(
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
 pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
-    // Decals (Showcase 48): push placed decals into fd.scene.items_mut::<viewport_lib::DecalItem>().
+    // Decals (Showcase 48): push placed decals into fd.scene.items_mut::<DecalItem>().
     if app.decal46_state.built {
         submit_decal46_items(app, &mut *fd);
     }
@@ -1456,7 +1460,7 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
     if app.decal46_state.built {
         let dt = cx.egui.input(|i| i.stable_dt.min(1.0 / 30.0));
         update_decal46(app, dt);
-        if !app.decal46_state.scene.collect_decal_items().is_empty() {
+        if !app.decal46_state.live_decals.is_empty() {
             cx.egui.request_repaint();
         }
     }

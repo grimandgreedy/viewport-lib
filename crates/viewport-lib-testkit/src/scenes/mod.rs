@@ -24,10 +24,11 @@ pub mod textures;
 use glam::{Mat4, Quat, Vec3};
 use viewport_lib::wgpu;
 use viewport_lib::{
-    BackfacePolicy, Camera, CameraFrame, DecalItem, FrameData, LightingSettings, Material,
-    MeshData, MeshId, MeshInstanceItem, PolylineItem, ScatterSettings, SceneFrame, SceneRenderItem,
-    ViewportRenderer, primitives,
+    BackfacePolicy, Camera, CameraFrame, FrameData, LightingSettings, Material, MeshData, MeshId,
+    MeshInstanceItem, PolylineItem, ScatterSettings, SceneFrame, SceneRenderItem, ViewportRenderer,
+    primitives,
 };
+use viewport_lib_item_types::DecalItem;
 use viewport_lib_item_types::GpuMarchingCubesItem;
 use viewport_lib_item_types::PointCloudItem;
 use viewport_lib_item_types::ScatterVolumeItem;
@@ -218,7 +219,7 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     *sf.items_mut::<GpuImplicitItem>() = scene.gpu_implicit.clone();
     *sf.items_mut::<GpuMarchingCubesItem>() = scene.gpu_mc_items.clone();
     *sf.items_mut::<ScatterVolumeItem>() = scene.scatter_volumes.clone();
-    *sf.items_mut::<viewport_lib::DecalItem>() = scene.decals.clone();
+    *sf.items_mut::<DecalItem>() = scene.decals.clone();
     sf.mesh_instances = scene.mesh_instances.clone();
     let mut fd = FrameData::new(CameraFrame::from_camera(camera, viewport_size), sf);
     fd.effects.lighting = scene.lighting.clone();

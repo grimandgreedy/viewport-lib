@@ -23,8 +23,9 @@ struct Camera {
 
 // Scene lights, shared with the opaque pass (same group 0 layout). The decal
 // runs the same lighting model the opaque pass runs, so a decal sits in the
-// scene's light instead of reading as a sticker pasted over it.
-// #include "helpers/scene_lighting.wgsl"
+// scene's light instead of reading as a sticker pasted over it. The `Lights`
+// struct and the light loop come from the shared scene-lighting section
+// spliced in front of this body.
 @group(0) @binding(3) var<uniform> lights_uniform: Lights;
 
 // Cascaded shadow map for the primary directional light, same bindings the
@@ -109,10 +110,9 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 }
 
 // Cascade selection and filtering for the primary light's shadow, and the
-// Cook-Torrance BRDF. Both are the copies the mesh shaders use, so a decal and
-// the surface it lands on are lit and shadowed by the same code.
-// #include "helpers/csm.wgsl"
-// #include "helpers/brdf.wgsl"
+// Cook-Torrance BRDF, are the shared sections the mesh shaders use, spliced in
+// front of this body, so a decal and the surface it lands on are lit and
+// shadowed by the same code.
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {

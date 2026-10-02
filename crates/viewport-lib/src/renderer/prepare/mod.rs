@@ -760,10 +760,6 @@ impl ViewportRenderer {
                 .filter(|(item, inst)| !item.settings.hidden && !**inst)
                 .count() as u32;
 
-            let decal_cache_stats = self
-                .decal_cache_stats
-                .load(std::sync::atomic::Ordering::Relaxed);
-
             // Items drawn instanced whose mesh carries per-mesh deform slot
             // data. The instanced draws bind the empty deform group and the
             // instanced shader passes no flags, so that data does not reach the
@@ -810,8 +806,6 @@ impl ViewportRenderer {
                 per_object_bind_groups_built,
                 batches_reuploaded,
                 batches_skipped,
-                decal_uploads: (decal_cache_stats >> 32) as u32,
-                decal_reused: decal_cache_stats as u32,
                 plugin_draw_calls,
                 plugin_upload_bytes,
                 deform_slots_ignored,

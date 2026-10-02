@@ -19,6 +19,7 @@ use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{ColourSource, SizeSource};
 use viewport_lib_item_types::PointCloudItem;
 use viewport_lib_item_types::VolumeItem;
+use viewport_lib_item_types::{DecalItem, DecalProjection};
 use viewport_lib_item_types::{
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
     ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
@@ -32,10 +33,10 @@ use viewport_lib_item_types::{
 use crate::eframe::egui;
 use glam::{Mat4, Vec2, Vec3};
 use vpl::{
-    BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, DecalProjection, ItemSettings,
-    Material, MeshId, NodeId, OverlayFill, OverlayShape, OverlayShapeItem, PickId, PickMask,
-    PolylineItem, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, TextureId,
-    VolumeData, VolumeId, VolumeMeshData, VolumeMeshItem, VolumeSelectionInfo, primitives,
+    BuiltinColourmap, CellSelectionInfo, ColourmapId, ItemSettings, Material, MeshId, NodeId,
+    OverlayFill, OverlayShape, OverlayShapeItem, PickId, PickMask, PolylineItem,
+    PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, TextureId, VolumeData,
+    VolumeId, VolumeMeshData, VolumeMeshItem, VolumeSelectionInfo, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -414,7 +415,7 @@ impl DecalCoverageShowcase {
                 }
                 d.settings.pick_id = PickId(DECAL + i as u64);
                 d.settings.selected = sel(DECAL + i as u64);
-                fd.scene.items_mut::<viewport_lib::DecalItem>().push(d);
+                fd.scene.items_mut::<DecalItem>().push(d);
             }
         }
     }
