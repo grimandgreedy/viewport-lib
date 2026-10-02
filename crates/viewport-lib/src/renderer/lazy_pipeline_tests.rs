@@ -175,6 +175,39 @@ fn check(name: &str, setup: Setup, plain: Setup) {
     }
 }
 
+/// The same comparison for a feature switched on part-way through a session.
+///
+/// A viewport holds full-size targets only for what its frames have used, and
+/// promotes a group when a frame first asks for it. Drawing `first` and then
+/// `then` on one renderer has to give the image `then` gives on a fresh one:
+/// the promotion must not lose a target another pass already drew into, and
+/// nothing may be left bound to a stand-in.
+fn check_mid_session(name: &str, first: Setup, then: Setup) {
+    for recommended in [true, false] {
+        let Some((device, queue)) = device(recommended) else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let fresh = render_case(&device, &queue, then, false);
+
+        let mut renderer = ViewportRenderer::new(&device, FORMAT);
+        let meshes = upload(&mut renderer, &device);
+        // Distinct generations, so the second frame's items are not taken for
+        // the first's.
+        let mut frame = first(&meshes, &mut renderer);
+        frame.scene.generation = 1;
+        let _ = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+        let mut frame = then(&meshes, &mut renderer);
+        frame.scene.generation = 2;
+        let later = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+        assert!(
+            later == fresh,
+            "{name} (recommended device: {recommended}): switched on after an earlier frame, the \
+             image differs from the same frame on a fresh renderer"
+        );
+    }
+}
+
 /// An empty frame, for cases where the mesh itself is the feature.
 fn empty(meshes: &Meshes, _: &mut ViewportRenderer) -> FrameData {
     let mut frame = base_frame(meshes);
@@ -213,6 +246,9 @@ fn direct_mesh() {
         frame
     }
     check("direct mesh", setup, none);
+    // And across a change of path, in both directions.
+    check_mid_session("hdr then direct", plain, setup);
+    check_mid_session("direct then hdr", setup, plain);
 }
 
 #[test]
@@ -240,6 +276,7 @@ fn bloom() {
         frame
     }
     check("bloom", setup, plain);
+    check_mid_session("bloom", plain, setup);
 }
 
 #[test]
@@ -250,6 +287,7 @@ fn ssao() {
         frame
     }
     check("ssao", setup, plain_instanced);
+    check_mid_session("ssao", plain_instanced, setup);
 }
 
 #[test]
@@ -260,6 +298,7 @@ fn fxaa() {
         frame
     }
     check("fxaa", setup, plain);
+    check_mid_session("fxaa", plain, setup);
 }
 
 #[test]
@@ -273,6 +312,7 @@ fn depth_of_field() {
         frame
     }
     check("depth of field", setup, plain);
+    check_mid_session("depth of field", plain, setup);
 }
 
 #[test]
@@ -314,6 +354,7 @@ fn transparent_mesh() {
         frame
     }
     check("transparent mesh", setup, empty);
+    check_mid_session("transparent mesh", plain, setup);
 }
 
 #[test]
@@ -343,6 +384,7 @@ fn foreground_item() {
         frame
     }
     check("foreground item", setup, plain);
+    check_mid_session("foreground item", plain, setup);
 }
 
 #[test]
@@ -356,6 +398,7 @@ fn selection_outline() {
         frame
     }
     check("selection outline", setup, plain);
+    check_mid_session("selection outline", plain, setup);
 }
 
 #[test]
@@ -381,4 +424,5 @@ fn surface_lic() {
         frame
     }
     check("surface lic", setup, without);
+    check_mid_session("surface lic", plain, setup);
 }

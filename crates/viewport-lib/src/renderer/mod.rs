@@ -3578,6 +3578,7 @@ impl ViewportRenderer {
         h: u32,
         ssaa_factor: u32,
         render_scale: f32,
+        needed: crate::resources::TargetGroups,
     ) {
         let format = self.resources.target_format;
         // Ensure shared infrastructure (BGLs, samplers, placeholders) exists. The
@@ -3596,26 +3597,41 @@ impl ViewportRenderer {
         // Ensure the slot exists.
         self.ensure_viewport_slot(device, viewport_index);
         let slot = &mut self.viewport_slots[viewport_index];
-        // Create or resize the per-viewport HDR state.
-        let needs_create = match &slot.hdr {
-            None => true,
-            Some(s) => {
-                s.output_size != [w, h]
-                    || s.scene_size != [scene_w.max(1), scene_h.max(1)]
-                    || s.ssaa_factor != ssaa_factor
-            }
-        };
-        if needs_create {
+        // Create the per-viewport state, recreate it at a new size, or promote
+        // the target groups this frame is the first to ask for. A group stays
+        // live once promoted, across later frames and across a resize.
+        let scene_size = [scene_w.max(1), scene_h.max(1)];
+        let resized = slot.hdr.as_ref().is_none_or(|s| {
+            s.output_size != [w, h] || s.scene_size != scene_size || s.ssaa_factor != ssaa_factor
+        });
+        let held = slot
+            .hdr
+            .as_ref()
+            .map_or(crate::resources::TargetGroups::empty(), |s| s.groups);
+        if resized || !held.contains(needed) {
+            let old = slot.hdr.take();
+            // With no size change the old state's live targets carry over.
+            let reuse = if resized { None } else { old.as_ref() };
+            let scene_kept =
+                reuse.is_some() && held.contains(crate::resources::TargetGroups::SCENE);
             slot.hdr = Some(self.resources.create_hdr_viewport_state(
                 device,
                 queue,
                 format,
                 w,
                 h,
-                scene_w.max(1),
-                scene_h.max(1),
+                scene_size[0],
+                scene_size[1],
                 ssaa_factor,
+                held | needed,
+                reuse,
             ));
+            // A promotion that left the scene colour and depth in place has
+            // nothing to tell the post-effect plugins: the views they hold
+            // are still the live ones.
+            if scene_kept {
+                return;
+            }
             // Tell post-effect producers and stages this viewport's targets
             // changed so they can reallocate their own. Any still awaiting
             // deferred `init_gpu` get this signal during that init instead.

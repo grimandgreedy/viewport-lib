@@ -778,8 +778,29 @@ impl ViewportRenderer {
         let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
         let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
 
-        // Ensure per-viewport HDR targets. Provides a depth buffer for both LDR and HDR paths.
+        // Ensure the per-viewport targets this frame draws into. The LDR path
+        // needs its depth buffer and nothing else; the HDR path needs the scene
+        // colour and depth plus the targets of each effect that is on. A group
+        // an earlier frame promoted stays live.
         let ssaa_factor = frame.effects.post_process.ssaa_factor.max(1);
+        let needed = {
+            use crate::resources::TargetGroups as G;
+            if frame.effects.display.is_hdr() {
+                let pp = &frame.effects.post_process;
+                let lic = scene_items
+                    .iter()
+                    .any(|i| i.lic.is_some() && !i.settings.hidden);
+                G::SCENE
+                    | G::when(G::BLOOM, pp.bloom.enabled)
+                    | G::when(G::SSAO, pp.ssao)
+                    | G::when(G::DOF, pp.dof.enabled)
+                    | G::when(G::CONTACT_SHADOW, pp.contact_shadows.enabled)
+                    | G::when(G::FXAA, pp.fxaa)
+                    | G::when(G::LIC, lic)
+            } else {
+                G::LDR_DEPTH
+            }
+        };
         self.ensure_viewport_hdr(
             device,
             queue,
@@ -788,6 +809,7 @@ impl ViewportRenderer {
             h.max(1),
             ssaa_factor,
             self.current_render_scale,
+            needed,
         );
 
         // Lazy-initialize GPU timestamp resources on first render call when supported.

@@ -34,6 +34,7 @@ pub(crate) mod overlay;
 mod pick_pipelines;
 mod plugin_builders;
 mod postprocess;
+pub(crate) use postprocess::TargetGroups;
 pub(crate) mod resource_deps;
 /// Group-0/1 camera, per-object, and clip bind plumbing.
 pub(crate) mod scene_bindings;

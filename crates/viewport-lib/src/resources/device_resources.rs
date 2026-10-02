@@ -150,6 +150,9 @@ pub(crate) struct ViewportHdrState {
     /// Effective scene resolution after render scale: [output_size * render_scale].
     /// Equals output_size when render_scale = 1.0.
     pub scene_size: [u32; 2],
+    /// The target groups allocated at full size. The rest are one-texel
+    /// stand-ins until a frame asks for them.
+    pub groups: crate::resources::TargetGroups,
 }
 /// A render pipeline compiled for both the LDR swapchain format and the HDR
 /// intermediate format (`Rgba16Float`). Used for pipelines that draw into the

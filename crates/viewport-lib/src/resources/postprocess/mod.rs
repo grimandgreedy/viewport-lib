@@ -15,6 +15,7 @@ pub(crate) mod producer;
 pub(crate) mod targets;
 pub(crate) mod uniforms;
 
+pub(crate) use self::targets::TargetGroups;
 use self::targets::{TargetSize, ViewportTargetAllocator};
 
 pub(crate) use self::lic::LicResources;
@@ -1717,8 +1718,20 @@ impl DeviceResources {
     /// are allocated at `scene_w x scene_h`; output-side textures (FXAA) remain at
     /// `w x h`. The tone map pass upscales from scene to output resolution.
     ///
+    /// Only the targets of the groups in `groups` are allocated at these sizes.
+    /// Every other target is a one-texel stand-in, so a viewport holds memory
+    /// for what its frames use and nothing else, and the bind groups built here
+    /// are valid either way.
+    ///
+    /// `reuse` is the state this one replaces when a group is being promoted
+    /// and no size has changed. Its live groups, uniform buffers and lazily
+    /// allocated targets carry over by handle, so anything already rendered
+    /// into them this frame (the outline mask is drawn at prepare time) and
+    /// anything that persists across frames (the exposure state) survives.
+    ///
     /// [`ensure_hdr_infra`](Self::ensure_hdr_infra) must have been called first so that
     /// BGLs, samplers, and placeholder textures are available on `self`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn create_hdr_viewport_state(
         &self,
         device: &crate::gpu::Device,
@@ -1729,6 +1742,8 @@ impl DeviceResources {
         scene_w: u32,
         scene_h: u32,
         ssaa_factor: u32,
+        groups: TargetGroups,
+        reuse: Option<&ViewportHdrState>,
     ) -> ViewportHdrState {
         let w = w.max(1);
         let h = h.max(1);
@@ -1739,126 +1754,226 @@ impl DeviceResources {
         // All viewport-sized targets go through the allocator, which owns the
         // resolution classes and the base usage; see `targets.rs`.
         let alloc = ViewportTargetAllocator::new(device, w, h, scene_w, scene_h, ssaa_factor);
+        // The old state, for a group that was already live in it.
+        let kept = |group: TargetGroups| reuse.filter(|old| old.groups.contains(group));
 
         // HDR scene colour and depth -- at scene resolution (render_scale * output).
         // COPY_SRC enables the refractive sprite pass to copy the resolved
         // scene colour into its sample texture before drawing distortion.
-        let (hdr_tex, hdr_view) = alloc.colour(
-            "hdr_texture",
-            crate::gpu::TextureFormat::Rgba16Float,
-            TargetSize::Scene,
-            crate::gpu::TextureUsages::COPY_SRC,
-        );
-        let hdr_depth = alloc.depth("hdr_depth_texture", TargetSize::Scene);
-        let hdr_stencil_only_view =
-            hdr_depth
-                .texture
-                .create_view(&crate::gpu::TextureViewDescriptor {
-                    aspect: crate::gpu::TextureAspect::StencilOnly,
-                    ..Default::default()
-                });
-        let (hdr_depth_tex, hdr_depth_view, hdr_depth_only_view) =
-            (hdr_depth.texture, hdr_depth.view, hdr_depth.depth_only_view);
+        let scene_size = groups.size(TargetGroups::SCENE, TargetSize::Scene);
+        let (hdr_tex, hdr_view) = match kept(TargetGroups::SCENE) {
+            Some(old) => (old.hdr_texture.clone(), old.hdr_view.clone()),
+            None => alloc.colour(
+                "hdr_texture",
+                crate::gpu::TextureFormat::Rgba16Float,
+                scene_size,
+                crate::gpu::TextureUsages::COPY_SRC,
+            ),
+        };
+        let (hdr_depth_tex, hdr_depth_view, hdr_depth_only_view) = match kept(TargetGroups::SCENE) {
+            Some(old) => (
+                old.hdr_depth_texture.clone(),
+                old.hdr_depth_view.clone(),
+                old.hdr_depth_only_view.clone(),
+            ),
+            None => {
+                let depth = alloc.depth("hdr_depth_texture", scene_size);
+                (depth.texture, depth.view, depth.depth_only_view)
+            }
+        };
+        let hdr_stencil_only_view = hdr_depth_tex.create_view(&crate::gpu::TextureViewDescriptor {
+            aspect: crate::gpu::TextureAspect::StencilOnly,
+            ..Default::default()
+        });
 
         // Bloom -- threshold at scene resolution, ping/pong at half.
-        let (bloom_threshold_tex, bloom_threshold_view) = alloc.colour(
-            "bloom_threshold_texture",
-            crate::gpu::TextureFormat::Rgba16Float,
-            TargetSize::Scene,
-            crate::gpu::TextureUsages::empty(),
-        );
-        let (bloom_ping_tex, bloom_ping_view) = alloc.colour(
-            "bloom_ping_texture",
-            crate::gpu::TextureFormat::Rgba16Float,
-            TargetSize::HalfScene,
-            crate::gpu::TextureUsages::empty(),
-        );
-        let (bloom_pong_tex, bloom_pong_view) = alloc.colour(
-            "bloom_pong_texture",
-            crate::gpu::TextureFormat::Rgba16Float,
-            TargetSize::HalfScene,
-            crate::gpu::TextureUsages::empty(),
-        );
+        let (
+            (bloom_threshold_tex, bloom_threshold_view),
+            (bloom_ping_tex, bloom_ping_view),
+            (bloom_pong_tex, bloom_pong_view),
+        ) = match kept(TargetGroups::BLOOM) {
+            Some(old) => (
+                (
+                    old.bloom.threshold_texture.clone(),
+                    old.bloom.threshold_view.clone(),
+                ),
+                (old.bloom.ping_texture.clone(), old.bloom.ping_view.clone()),
+                (old.bloom.pong_texture.clone(), old.bloom.pong_view.clone()),
+            ),
+            None => {
+                let half = groups.size(TargetGroups::BLOOM, TargetSize::HalfScene);
+                (
+                    alloc.colour(
+                        "bloom_threshold_texture",
+                        crate::gpu::TextureFormat::Rgba16Float,
+                        groups.size(TargetGroups::BLOOM, TargetSize::Scene),
+                        crate::gpu::TextureUsages::empty(),
+                    ),
+                    alloc.colour(
+                        "bloom_ping_texture",
+                        crate::gpu::TextureFormat::Rgba16Float,
+                        half,
+                        crate::gpu::TextureUsages::empty(),
+                    ),
+                    alloc.colour(
+                        "bloom_pong_texture",
+                        crate::gpu::TextureFormat::Rgba16Float,
+                        half,
+                        crate::gpu::TextureUsages::empty(),
+                    ),
+                )
+            }
+        };
 
         // SSAO -- at scene resolution.
-        let (ssao_tex, ssao_view) = alloc.colour(
-            "ssao_texture",
-            crate::gpu::TextureFormat::R8Unorm,
-            TargetSize::Scene,
-            crate::gpu::TextureUsages::empty(),
-        );
-        let (ssao_blur_tex, ssao_blur_view) = alloc.colour(
-            "ssao_blur_texture",
-            crate::gpu::TextureFormat::R8Unorm,
-            TargetSize::Scene,
-            crate::gpu::TextureUsages::empty(),
-        );
+        let ((ssao_tex, ssao_view), (ssao_blur_tex, ssao_blur_view)) =
+            match kept(TargetGroups::SSAO) {
+                Some(old) => (
+                    (old.ssao.texture.clone(), old.ssao.view.clone()),
+                    (old.ssao.blur_texture.clone(), old.ssao.blur_view.clone()),
+                ),
+                None => {
+                    let size = groups.size(TargetGroups::SSAO, TargetSize::Scene);
+                    (
+                        alloc.colour(
+                            "ssao_texture",
+                            crate::gpu::TextureFormat::R8Unorm,
+                            size,
+                            crate::gpu::TextureUsages::empty(),
+                        ),
+                        alloc.colour(
+                            "ssao_blur_texture",
+                            crate::gpu::TextureFormat::R8Unorm,
+                            size,
+                            crate::gpu::TextureUsages::empty(),
+                        ),
+                    )
+                }
+            };
 
         // Depth of field -- at scene resolution.
-        let (dof_tex, dof_view) = alloc.colour(
-            "dof_texture",
-            crate::gpu::TextureFormat::Rgba16Float,
-            TargetSize::Scene,
-            crate::gpu::TextureUsages::empty(),
-        );
+        let (dof_tex, dof_view) = match kept(TargetGroups::DOF) {
+            Some(old) => (old.dof.texture.clone(), old.dof.view.clone()),
+            None => alloc.colour(
+                "dof_texture",
+                crate::gpu::TextureFormat::Rgba16Float,
+                groups.size(TargetGroups::DOF, TargetSize::Scene),
+                crate::gpu::TextureUsages::empty(),
+            ),
+        };
 
         // Contact shadow -- at scene resolution.
-        let (cs_tex, cs_view) = alloc.colour(
-            "contact_shadow_texture",
-            crate::gpu::TextureFormat::R8Unorm,
-            TargetSize::Scene,
-            crate::gpu::TextureUsages::empty(),
-        );
+        let (cs_tex, cs_view) = match kept(TargetGroups::CONTACT_SHADOW) {
+            Some(old) => (
+                old.contact_shadow.texture.clone(),
+                old.contact_shadow.view.clone(),
+            ),
+            None => alloc.colour(
+                "contact_shadow_texture",
+                crate::gpu::TextureFormat::R8Unorm,
+                groups.size(TargetGroups::CONTACT_SHADOW, TargetSize::Scene),
+                crate::gpu::TextureUsages::empty(),
+            ),
+        };
 
         // FXAA -- at scene resolution so the whole post-process chain runs at
         // the scaled size when render_scale < 1.0.
-        let (fxaa_tex, fxaa_view) = alloc.colour(
-            "fxaa_texture",
-            output_format,
-            TargetSize::Scene,
-            crate::gpu::TextureUsages::empty(),
-        );
+        let (fxaa_tex, fxaa_view) = match kept(TargetGroups::FXAA) {
+            Some(old) => (old.fxaa.texture.clone(), old.fxaa.view.clone()),
+            None => alloc.colour(
+                "fxaa_texture",
+                output_format,
+                groups.size(TargetGroups::FXAA, TargetSize::Scene),
+                crate::gpu::TextureUsages::empty(),
+            ),
+        };
 
         // Outline offscreen : mask (R8), colour (target_format), and depth -- at scene resolution.
-        let (outline_mask_tex, outline_mask_view) = alloc.colour(
-            "outline_mask_texture",
-            crate::gpu::TextureFormat::R8Unorm,
-            TargetSize::Scene,
-            crate::gpu::TextureUsages::empty(),
-        );
-        let (outline_colour_tex, outline_colour_view) = alloc.colour(
-            "outline_colour_texture",
-            self.target_format,
-            TargetSize::Scene,
-            crate::gpu::TextureUsages::empty(),
-        );
-        // The outline depth target is sampleable so the HiZ occlusion
-        // prev-depth copy can read the LDR scene depth (the LDR path renders
-        // into this target).
-        let outline_depth = alloc.depth("outline_depth_texture", TargetSize::Scene);
-        let (outline_depth_tex, outline_depth_view, outline_depth_only_view) = (
-            outline_depth.texture,
-            outline_depth.view,
-            outline_depth.depth_only_view,
-        );
+        let ((outline_mask_tex, outline_mask_view), (outline_colour_tex, outline_colour_view)) =
+            match kept(TargetGroups::OUTLINE) {
+                Some(old) => (
+                    (
+                        old.outline_mask_texture.clone(),
+                        old.outline_mask_view.clone(),
+                    ),
+                    (
+                        old.outline_colour_texture.clone(),
+                        old.outline_colour_view.clone(),
+                    ),
+                ),
+                None => {
+                    let size = groups.size(TargetGroups::OUTLINE, TargetSize::Scene);
+                    (
+                        alloc.colour(
+                            "outline_mask_texture",
+                            crate::gpu::TextureFormat::R8Unorm,
+                            size,
+                            crate::gpu::TextureUsages::empty(),
+                        ),
+                        alloc.colour(
+                            "outline_colour_texture",
+                            self.target_format,
+                            size,
+                            crate::gpu::TextureUsages::empty(),
+                        ),
+                    )
+                }
+            };
+        // The LDR path renders against this depth target and the outline mask
+        // pass tests against it. It is sampleable so the HiZ occlusion
+        // prev-depth copy can read the LDR scene depth.
+        let (outline_depth_tex, outline_depth_view, outline_depth_only_view) =
+            match kept(TargetGroups::LDR_DEPTH) {
+                Some(old) => (
+                    old.outline_depth_texture.clone(),
+                    old.outline_depth_view.clone(),
+                    old.outline_depth_only_view.clone(),
+                ),
+                None => {
+                    let depth = alloc.depth(
+                        "outline_depth_texture",
+                        groups.size(TargetGroups::LDR_DEPTH, TargetSize::Scene),
+                    );
+                    (depth.texture, depth.view, depth.depth_only_view)
+                }
+            };
 
-        // Uniform buffers
-        let tone_map_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("tone_map_uniform_buf"),
-            size: std::mem::size_of::<ToneMapUniform>() as u64,
-            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // Uniform buffers. None depends on a target's size, so a promotion keeps
+        // the old state's: the outline pass has already written its edge
+        // uniform this frame, and the exposure state is the adaptation history.
+        let uniform = |old: Option<&crate::gpu::Buffer>, label: &str, size: usize| match old {
+            Some(buf) => buf.clone(),
+            None => device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some(label),
+                size: size as u64,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+        };
+        let tone_map_uniform_buf = uniform(
+            reuse.map(|o| &o.tone_map_uniform_buf),
+            "tone_map_uniform_buf",
+            std::mem::size_of::<ToneMapUniform>(),
+        );
         // Auto-exposure per-viewport buffers (bind group built after `hdr_view`).
-        let (exposure_histogram_buf, exposure_state_buf, exposure_params_buf) =
-            crate::resources::gpu::exposure::ExposureResources::create_viewport_buffers(device);
-        let bloom_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("bloom_uniform_buf"),
-            size: std::mem::size_of::<BloomUniform>() as u64,
-            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let bloom_h_uniform_buf = {
+        let (exposure_histogram_buf, exposure_state_buf, exposure_params_buf) = match reuse {
+            Some(old) => (
+                old.exposure_histogram_buf.clone(),
+                old.exposure_state_buf.clone(),
+                old.exposure_params_buf.clone(),
+            ),
+            None => {
+                crate::resources::gpu::exposure::ExposureResources::create_viewport_buffers(device)
+            }
+        };
+        let bloom_uniform_buf = uniform(
+            reuse.map(|o| &o.bloom.uniform_buf),
+            "bloom_uniform_buf",
+            std::mem::size_of::<BloomUniform>(),
+        );
+        let bloom_h_uniform_buf = if let Some(old) = reuse {
+            old.bloom.h_uniform_buf.clone()
+        } else {
             let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("bloom_h_uniform_buf"),
                 size: std::mem::size_of::<BloomUniform>() as u64,
@@ -1877,7 +1992,9 @@ impl DeviceResources {
             );
             buf
         };
-        let bloom_v_uniform_buf = {
+        let bloom_v_uniform_buf = if let Some(old) = reuse {
+            old.bloom.v_uniform_buf.clone()
+        } else {
             let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("bloom_v_uniform_buf"),
                 size: std::mem::size_of::<BloomUniform>() as u64,
@@ -1896,24 +2013,21 @@ impl DeviceResources {
             );
             buf
         };
-        let ssao_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("ssao_uniform_buf"),
-            size: std::mem::size_of::<SsaoUniform>() as u64,
-            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let cs_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("contact_shadow_uniform_buf"),
-            size: std::mem::size_of::<ContactShadowUniform>() as u64,
-            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let dof_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("dof_uniform_buf"),
-            size: std::mem::size_of::<DofUniform>() as u64,
-            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let ssao_uniform_buf = uniform(
+            reuse.map(|o| &o.ssao.uniform_buf),
+            "ssao_uniform_buf",
+            std::mem::size_of::<SsaoUniform>(),
+        );
+        let cs_uniform_buf = uniform(
+            reuse.map(|o| &o.contact_shadow.uniform_buf),
+            "contact_shadow_uniform_buf",
+            std::mem::size_of::<ContactShadowUniform>(),
+        );
+        let dof_uniform_buf = uniform(
+            reuse.map(|o| &o.dof.uniform_buf),
+            "dof_uniform_buf",
+            std::mem::size_of::<DofUniform>(),
+        );
 
         // Shared references needed for bind groups
         let linear_sampler = self
@@ -2279,12 +2393,11 @@ impl DeviceResources {
             });
 
         // Edge-detection bind group : reads the R8 mask, writes outline ring.
-        let outline_edge_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("outline_edge_uniform_buf"),
-            size: std::mem::size_of::<OutlineEdgeUniform>() as u64,
-            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let outline_edge_uniform_buf = uniform(
+            reuse.map(|o| &o.outline_edge_uniform_buf),
+            "outline_edge_uniform_buf",
+            std::mem::size_of::<OutlineEdgeUniform>(),
+        );
         let outline_edge_bgl = &self.outline.edge_bgl;
         let outline_edge_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("outline_edge_bg"),
@@ -2340,7 +2453,7 @@ impl DeviceResources {
             ssaa_resolve_bind_group,
             ssaa_depth_blit_bind_group,
             ssaa_uniform_buf,
-        ) = if ssaa_factor > 1 {
+        ) = if ssaa_factor > 1 && groups.contains(TargetGroups::SCENE) {
             let (ssaa_colour_tex, ssaa_colour_view) = alloc.colour(
                 "ssaa_colour_texture",
                 crate::gpu::TextureFormat::Rgba16Float,
@@ -2443,62 +2556,82 @@ impl DeviceResources {
         };
 
         // --- Surface LIC per-viewport textures and bind group -- at scene resolution ---
-        let (lic_vector_tex, lic_vector_view) = alloc.colour(
-            "lic_vector",
-            crate::gpu::TextureFormat::Rgba8Unorm,
-            TargetSize::Scene,
-            crate::gpu::TextureUsages::empty(),
-        );
-        let (lic_output_tex, lic_output_view) = alloc.colour(
-            "lic_output",
-            crate::gpu::TextureFormat::R8Unorm,
-            TargetSize::Scene,
-            crate::gpu::TextureUsages::empty(),
-        );
+        let (
+            (lic_vector_tex, lic_vector_view),
+            (lic_output_tex, lic_output_view),
+            (lic_noise_tex, lic_noise_view),
+        ) = match kept(TargetGroups::LIC) {
+            Some(old) => (
+                (old.lic_vector_texture.clone(), old.lic_vector_view.clone()),
+                (old.lic_output_texture.clone(), old.lic_output_view.clone()),
+                (old.lic_noise_texture.clone(), old.lic_noise_view.clone()),
+            ),
+            None => {
+                let size = groups.size(TargetGroups::LIC, TargetSize::Scene);
+                let vector = alloc.colour(
+                    "lic_vector",
+                    crate::gpu::TextureFormat::Rgba8Unorm,
+                    size,
+                    crate::gpu::TextureUsages::empty(),
+                );
+                let output = alloc.colour(
+                    "lic_output",
+                    crate::gpu::TextureFormat::R8Unorm,
+                    size,
+                    crate::gpu::TextureUsages::empty(),
+                );
+                // Per-pixel white noise at scene resolution, or one texel while
+                // the group waits for its first LIC item.
+                let [noise_w, noise_h] = if groups.contains(TargetGroups::LIC) {
+                    [scene_w, scene_h]
+                } else {
+                    [1, 1]
+                };
+                let noise_data: Vec<u8> = (0u32..noise_w * noise_h)
+                    .map(|i| {
+                        // xorshift32 mix of pixel index -- uniform [0,255] distribution.
+                        let mut v = i.wrapping_add(1).wrapping_mul(2246822519);
+                        v ^= v >> 13;
+                        v ^= v << 17;
+                        v ^= v >> 5;
+                        v as u8
+                    })
+                    .collect();
+                let noise = alloc.texture(
+                    "lic_noise",
+                    crate::gpu::TextureFormat::R8Unorm,
+                    size,
+                    crate::gpu::TextureUsages::TEXTURE_BINDING
+                        | crate::gpu::TextureUsages::COPY_DST,
+                );
+                queue.write_texture(
+                    crate::gpu::TexelCopyTextureInfo {
+                        texture: &noise.0,
+                        mip_level: 0,
+                        origin: crate::gpu::Origin3d::ZERO,
+                        aspect: crate::gpu::TextureAspect::All,
+                    },
+                    &noise_data,
+                    crate::gpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(noise_w),
+                        rows_per_image: Some(noise_h),
+                    },
+                    crate::gpu::Extent3d {
+                        width: noise_w,
+                        height: noise_h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                (vector, output, noise)
+            }
+        };
 
-        // Per-pixel white noise at scene resolution.
-        let lic_noise_data: Vec<u8> = (0u32..scene_w * scene_h)
-            .map(|i| {
-                // xorshift32 mix of pixel index -- uniform [0,255] distribution.
-                let mut v = i.wrapping_add(1).wrapping_mul(2246822519);
-                v ^= v >> 13;
-                v ^= v << 17;
-                v ^= v >> 5;
-                v as u8
-            })
-            .collect();
-        let (lic_noise_tex, lic_noise_view) = alloc.texture(
-            "lic_noise",
-            crate::gpu::TextureFormat::R8Unorm,
-            TargetSize::Scene,
-            crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
+        let lic_uniform_buf = uniform(
+            reuse.map(|o| &o.lic_uniform_buf),
+            "lic_advect_uniform",
+            std::mem::size_of::<crate::resources::types::LicAdvectUniform>(),
         );
-        queue.write_texture(
-            crate::gpu::TexelCopyTextureInfo {
-                texture: &lic_noise_tex,
-                mip_level: 0,
-                origin: crate::gpu::Origin3d::ZERO,
-                aspect: crate::gpu::TextureAspect::All,
-            },
-            &lic_noise_data,
-            crate::gpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(scene_w),
-                rows_per_image: Some(scene_h),
-            },
-            crate::gpu::Extent3d {
-                width: scene_w,
-                height: scene_h,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        let lic_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("lic_advect_uniform"),
-            size: std::mem::size_of::<crate::resources::types::LicAdvectUniform>() as u64,
-            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
 
         let lic_advect_bgl = self
             .lic
@@ -2537,9 +2670,9 @@ impl DeviceResources {
         // When render scale = 1.0 (scene == output), reuse hdr_depth as a second view.
         // When render scale < 1.0, allocate a separate native-res texture and create a
         // bind group so the depth blit pass can copy hdr_depth into it each frame.
-        let (output_depth_texture, output_depth_view, depth_blit_bind_group) = if scene_w != w
-            || scene_h != h
-        {
+        // Both render-scale targets serve the HDR path only.
+        let scaled = (scene_w != w || scene_h != h) && groups.contains(TargetGroups::SCENE);
+        let (output_depth_texture, output_depth_view, depth_blit_bind_group) = if scaled {
             let output_depth = alloc.depth("output_depth_texture", TargetSize::Output);
             let (tex, view) = (output_depth.texture, output_depth.view);
             let bg = self.post.depth_blit_bgl.as_ref().map(|bgl| {
@@ -2561,7 +2694,7 @@ impl DeviceResources {
         // HDR upscale target: when scene_size != output_size, tone-map and FXAA
         // run at scene resolution and write to this texture. An upscale-blit pass
         // then copies the result to output_view at native resolution.
-        let (upscale_texture, upscale_view, upscale_bind_group) = if scene_w != w || scene_h != h {
+        let (upscale_texture, upscale_view, upscale_bind_group) = if scaled {
             let (tex, view) = alloc.colour(
                 "hdr_upscale_texture",
                 output_format,
@@ -2658,16 +2791,18 @@ impl DeviceResources {
             ssaa_depth_blit_bind_group,
             ssaa_uniform_buf,
             ssaa_factor,
-            oit_accum_texture: None,
-            oit_accum_view: None,
-            oit_reveal_texture: None,
-            oit_reveal_view: None,
-            oit_composite_bind_group: None,
-            oit_size: [0, 0],
-            foreground_depth_texture: None,
-            foreground_depth_view: None,
-            foreground_depth_only_view: None,
-            foreground_depth_size: [0, 0],
+            // The OIT and foreground targets are allocated on first use by
+            // their own `ensure_*`; a promotion keeps what is already there.
+            oit_accum_texture: reuse.and_then(|o| o.oit_accum_texture.clone()),
+            oit_accum_view: reuse.and_then(|o| o.oit_accum_view.clone()),
+            oit_reveal_texture: reuse.and_then(|o| o.oit_reveal_texture.clone()),
+            oit_reveal_view: reuse.and_then(|o| o.oit_reveal_view.clone()),
+            oit_composite_bind_group: reuse.and_then(|o| o.oit_composite_bind_group.clone()),
+            oit_size: reuse.map_or([0, 0], |o| o.oit_size),
+            foreground_depth_texture: reuse.and_then(|o| o.foreground_depth_texture.clone()),
+            foreground_depth_view: reuse.and_then(|o| o.foreground_depth_view.clone()),
+            foreground_depth_only_view: reuse.and_then(|o| o.foreground_depth_only_view.clone()),
+            foreground_depth_size: reuse.map_or([0, 0], |o| o.foreground_depth_size),
             outline_mask_texture: outline_mask_tex,
             outline_mask_view,
             outline_colour_texture: outline_colour_tex,
@@ -2694,6 +2829,7 @@ impl DeviceResources {
             lic_uniform_buf,
             output_size: [w, h],
             scene_size: [scene_w, scene_h],
+            groups,
             output_depth_texture,
             output_depth_view,
             depth_blit_bind_group,
