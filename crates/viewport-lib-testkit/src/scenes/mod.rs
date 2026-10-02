@@ -107,6 +107,8 @@ pub struct BuiltScene {
     pub scatter_volumes: Vec<ScatterVolumeItem>,
     /// Decal items.
     pub decals: Vec<DecalItem>,
+    /// Surface LIC items.
+    pub surface_lics: Vec<viewport_lib_item_types::SurfaceLicItem>,
     /// Mesh-instance batch items.
     pub mesh_instances: Vec<MeshInstanceItem>,
     /// Scatter pass settings override. Scenes with scatter volumes pin these
@@ -220,6 +222,7 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     *sf.items_mut::<GpuMarchingCubesItem>() = scene.gpu_mc_items.clone();
     *sf.items_mut::<ScatterVolumeItem>() = scene.scatter_volumes.clone();
     *sf.items_mut::<DecalItem>() = scene.decals.clone();
+    *sf.items_mut::<viewport_lib_item_types::SurfaceLicItem>() = scene.surface_lics.clone();
     sf.mesh_instances = scene.mesh_instances.clone();
     let mut fd = FrameData::new(CameraFrame::from_camera(camera, viewport_size), sf);
     fd.effects.lighting = scene.lighting.clone();

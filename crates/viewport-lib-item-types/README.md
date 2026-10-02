@@ -62,7 +62,7 @@ Not every type has one, and the split is about what the type actually holds.
 
 **A store, reached through `Uploads` and `Handles`.** Point clouds, sprites, the three curve types, vector fields, tensor fields, and gaussian splats. Each takes a large per-sample payload that costs something to turn into buffers, and each has a reference item to draw it again without rebuilding.
 
-**No store at all.** GPU implicit surfaces, scatter volumes, volumes, image slices, volume surface slices and decals. Either the item is a handful of numbers that fits in a uniform (implicit primitives, a scatter volume's description), or the heavy content is renderer-owned rather than item-owned and is already named by a handle: `VolumeId` from `DeviceResources::upload_volume`, `MeshId` from `upload_mesh_data`. Adding a store would mean holding a second copy of something the renderer already keeps.
+**No store at all.** GPU implicit surfaces, scatter volumes, volumes, image slices, volume surface slices, decals and surface LIC. Either the item is a handful of numbers that fits in a uniform (implicit primitives, a scatter volume's description), or the heavy content is renderer-owned rather than item-owned and is already named by a handle: `VolumeId` from `DeviceResources::upload_volume`, `MeshId` from `upload_mesh_data`. Adding a store would mean holding a second copy of something the renderer already keeps.
 
 **A store, reached through verbs of its own.** Four types keep a store but cannot use the shared traits. They are listed in their sections below, with the reason in each case, because the reason is usually a constraint rather than a preference: `Uploads<T>` carries one handle type per implementation, and a trait implementation needs a type local to this crate.
 
@@ -179,6 +179,14 @@ One item struct behind **two stores**, because a batch of billboards and a set o
   Its handle is distinct, so releasing one and collecting a finished job go through `Handles` like every other store, and `SpriteInstanceSetRefItem` draws it.
 
 `SpriteBlend` stays in viewport-lib: instanced mesh batches select a pipeline with it too.
+
+### `surface_lic`
+
+`SurfaceLicItem`, with `SurfaceLicConfig`.
+
+Line integral convolution: streaks along a vector field on a mesh, the dense counterpart to arrow glyphs. The field is a `VertexVector` attribute the mesh was uploaded with, named on the item. The item draws no surface of its own; it modulates the colour of whatever is on screen where the mesh is the visible surface, so submit it beside the `SceneRenderItem` that draws the same `MeshId`, with the same transform. A surface in front of the mesh is left alone.
+
+`strength` is per item. `steps` and `step_size` come from the first visible item in the frame, because every flow surface is advected in one fullscreen pass. Only the HDR render path draws it, and it registers after decals so a decal on a flow surface takes the streaks too.
 
 ### `tensor_field`
 

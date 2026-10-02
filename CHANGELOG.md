@@ -6,6 +6,7 @@
 
 - **`AppConfig::with_pipeline_cache` and `AppConfigV2::with_pipeline_cache`** - give the runner a file and it loads the GPU pipeline cache before building the renderer and saves it after the first frame and on exit, so a later launch skips the first one's shader compilation. Only a backend with a pipeline cache (Vulkan) reads or writes anything.
 - **`ViewportInstance::new_with_pipeline_cache` and `ViewportInstance::pipeline_cache_data`** - the instance-level route to the same cache, for an application that owns its own event loop. The winit and eframe minimal examples show both.
+- **`SurfaceLicItem` in `viewport-lib-item-types`** - surface LIC as an item type: submit one beside the surface item that draws the mesh, naming the mesh, its transform and the vector attribute. The streaks are depth-tested, so they no longer bleed onto a surface in front of the flow mesh or come from its hidden back faces, and they now sit under transparency, the foreground pass and bloom.
 - **`MeshDraw::bind_vector_attribute` and `builders::vector_attribute_layout`** - an item type drawing a consumer mesh can bind one of its `AttributeData::VertexVector` attributes by name as an extra vertex buffer, and declare the matching layout on its pipeline.
 - **`SHARED_BRDF_WGSL` and `SHARED_OUTLINE_EDGE_WGSL`** - the direct Cook-Torrance BRDF the lit mesh shaders use, and the fullscreen edge trace behind the selection outline (with its `OutlineEdgeUniform`), published for item types that light a surface themselves or draw a selection ring of their own.
 

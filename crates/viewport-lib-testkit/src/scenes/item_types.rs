@@ -15,7 +15,7 @@ use viewport_lib::{
 };
 use viewport_lib_item_types::GpuParticleSystems;
 use viewport_lib_item_types::VolumeItem;
-use viewport_lib_item_types::{DecalBlendMode, DecalItem};
+use viewport_lib_item_types::{DecalBlendMode, DecalItem, SurfaceLicItem};
 use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumes};
 use viewport_lib_item_types::{
     RibbonItem, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorFieldItem, TensorSource,
@@ -1585,16 +1585,17 @@ fn with_swirl(mut mesh: viewport_lib::MeshData) -> viewport_lib::MeshData {
     mesh
 }
 
-fn lic_surface(mesh: viewport_lib::MeshId, model: Mat4) -> viewport_lib::SceneRenderItem {
+/// A surface and the flow streaks drawn on it.
+fn lic_surface(
+    mesh: viewport_lib::MeshId,
+    model: Mat4,
+) -> (viewport_lib::SceneRenderItem, SurfaceLicItem) {
     let mut item = viewport_lib::SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = model.to_cols_array_2d();
     item.material = Material::pbr([0.55, 0.6, 0.7], 0.0, 0.7);
-    item.lic = Some(viewport_lib::LicOverlay::new(
-        "flow",
-        viewport_lib::SurfaceLICConfig::default(),
-    ));
-    item
+    let lic = SurfaceLicItem::new(mesh, model.to_cols_array_2d(), "flow");
+    (item, lic)
 }
 
 fn build_surface_lic(ctx: &mut BuildCtx<'_>) -> BuiltScene {
@@ -1604,8 +1605,10 @@ fn build_surface_lic(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &with_swirl(primitives::sphere(2.0, 48, 24)))
         .expect("sphere upload");
+    let (surface, lic) = lic_surface(ball, Mat4::IDENTITY);
     BuiltScene {
-        items: vec![lic_surface(ball, Mat4::IDENTITY)],
+        items: vec![surface],
+        surface_lics: vec![lic],
         lighting: rigs::from_above(),
         ..Default::default()
     }
@@ -1643,15 +1646,14 @@ fn build_surface_lic_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     blocker.model = Mat4::from_translation(sphere_at + toward_eye * 2.2).to_cols_array_2d();
     blocker.material = Material::pbr([0.8, 0.45, 0.2], 0.0, 0.6);
 
+    let (sphere, sphere_lic) = lic_surface(ball, Mat4::from_translation(sphere_at));
+    let (torus, torus_lic) = lic_surface(
+        ring,
+        Mat4::from_translation(Vec3::new(1.9, 0.0, 0.0)) * Mat4::from_rotation_x(-0.45),
+    );
     BuiltScene {
-        items: vec![
-            lic_surface(ball, Mat4::from_translation(sphere_at)),
-            lic_surface(
-                ring,
-                Mat4::from_translation(Vec3::new(1.9, 0.0, 0.0)) * Mat4::from_rotation_x(-0.45),
-            ),
-            blocker,
-        ],
+        items: vec![sphere, torus, blocker],
+        surface_lics: vec![sphere_lic, torus_lic],
         lighting: rigs::from_above(),
         ..Default::default()
     }
