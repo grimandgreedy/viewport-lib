@@ -28,8 +28,8 @@ pub(crate) mod picking;
 pub use picking::sub_object;
 pub use picking::{
     CellSelectionInfo, GpuPickHit, PickBackend, PickHit, PickId, PickMask, PickPoll,
-    PickRectResult, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef,
-    VolumeSelectionInfo,
+    PickRectResult, PolylineSelectionInfo, SnapHit, SnapPoll, SubObjectRef, SubSelection,
+    SubSelectionRef, VolumeSelectionInfo,
 };
 mod capture;
 mod overlay_buffers;
@@ -531,6 +531,9 @@ pub struct ViewportRenderer {
     /// and parks the staging buffers here; `pick_object_poll` reads them back
     /// without blocking on the GPU queue. `None` when no async pick is pending.
     pending_pick: Option<picking::PendingPick>,
+    /// In-flight async snap query, the windowed twin of `pending_pick`:
+    /// `snap_query_begin` parks it, `snap_query_poll` reads it back.
+    pending_snap: Option<picking::PendingSnap>,
 
     // --- GPU timestamp queries ---
     /// Timestamp query set with `2 * GPU_TS_SLOTS` entries: a begin/end pair per
@@ -971,6 +974,7 @@ impl ViewportRenderer {
             pick_volume_mesh_items: Vec::new(),
             cpu_pick_cache_enabled: false,
             pending_pick: None,
+            pending_snap: None,
             ts_query_set: None,
             ts_query_set_prev: None,
             ts_prev_mask: 0,

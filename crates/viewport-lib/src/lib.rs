@@ -314,10 +314,10 @@ pub use renderer::{
     PipelineMode, PolylineCap, PolylineItem, PolylineRefItem, PolylineSelectionInfo,
     PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
     ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
-    ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubObjectRef, SubPath, SubSelection,
-    SubSelectionRef, SurfaceLICConfig, SurfaceSubmission, TextureTransform, TileMode, ToneMapping,
-    TriangleDirection, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer,
-    VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
+    ShadowLayer, ShadowSettings, SnapHit, SnapPoll, SpriteBlend, StrokePattern, SubObjectRef,
+    SubPath, SubSelection, SubSelectionRef, SurfaceLICConfig, SurfaceSubmission, TextureTransform,
+    TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, ViewportId,
+    ViewportRenderer, VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
     aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};

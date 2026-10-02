@@ -1,8 +1,10 @@
-//! GPU and CPU picking: object id, sub-object refinement, plugin hooks, rect pick.
+//! GPU and CPU picking: object id, sub-object refinement, plugin hooks, rect pick,
+//! and the blocking and polling snap queries.
 //!
 //! Part of the headless integration suite (split from the former single
 //! headless.rs). Shared device and mesh helpers live in tests/common/mod.rs.
 
+use viewport_lib::SnapPoll;
 use viewport_lib::wgpu;
 
 mod common;
@@ -697,6 +699,206 @@ fn gpu_snap_query_empty_scene_returns_none() {
         PickMask::VERTEX,
     );
     assert!(snap.is_none(), "empty scene should not snap to anything");
+}
+
+#[test]
+fn gpu_snap_query_begin_poll_matches_the_blocking_query() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .expect("upload box mesh");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.settings.pick_id = PickId(321);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    let cursor = glam::Vec2::new(30.0, 30.0);
+    let blocking = renderer
+        .snap_query(cursor, 16.0, &frame, &device, &queue, PickMask::VERTEX)
+        .expect("the blocking query snaps to the box");
+
+    // Nothing in flight before a begin.
+    assert!(matches!(
+        renderer.snap_query_poll(&device, &frame),
+        SnapPoll::Idle
+    ));
+
+    let started =
+        renderer.snap_query_begin(cursor, 16.0, &frame, &device, &queue, PickMask::VERTEX);
+    assert!(started);
+
+    // Poll until the window lands, driving the device between polls the way a
+    // render loop's own submissions would, and bounded so a stuck map fails
+    // rather than hangs. The window is not ready the instant it is submitted,
+    // so the first poll should see it pending.
+    let mut polled = None;
+    let mut saw_pending = false;
+    for _ in 0..1000 {
+        match renderer.snap_query_poll(&device, &frame) {
+            SnapPoll::Pending => {
+                saw_pending = true;
+                let enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+                queue.submit(std::iter::once(enc.finish()));
+                continue;
+            }
+            SnapPoll::Ready(h) => {
+                polled = h;
+                break;
+            }
+            SnapPoll::Idle => panic!("poll went Idle while a snap query was in flight"),
+        }
+    }
+    assert!(
+        saw_pending,
+        "expected at least one Pending before the snap resolved"
+    );
+    let polled = polled.expect("the polled query snaps to the box too");
+
+    // The two forms share one window scan, so they agree exactly.
+    assert_eq!(polled.object_id, blocking.object_id);
+    assert_eq!(polled.sub_object, blocking.sub_object);
+    assert_eq!(polled.world_pos, blocking.world_pos);
+
+    // The slot is cleared once read.
+    assert!(matches!(
+        renderer.snap_query_poll(&device, &frame),
+        SnapPoll::Idle
+    ));
+}
+
+#[test]
+fn gpu_snap_query_begin_poll_reaches_an_object_the_pixel_misses() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_idx;
+    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.settings.pick_id = PickId(7);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    // Walk in from the corner to the first pixel the exact pick misses that
+    // is within a short reach of one it hits: the edge of the box as drawn.
+    // Found by the blocking pick so the test does not assume the projection.
+    let exact = |renderer: &mut ViewportRenderer, p: glam::Vec2| {
+        renderer
+            .pick_object(
+                PickBackend::Gpu,
+                p,
+                &frame,
+                &device,
+                &queue,
+                PickMask::OBJECT,
+            )
+            .map(|h| h.id)
+    };
+    let mut miss = None;
+    for d in 0..32 {
+        let p = glam::Vec2::new(d as f32 + 0.5, 32.0);
+        if exact(&mut renderer, p).is_none()
+            && exact(&mut renderer, p + glam::Vec2::new(6.0, 0.0)) == Some(7)
+        {
+            miss = Some(p);
+            break;
+        }
+    }
+    let miss = miss.expect("a pixel just outside the box, with the box six pixels to its right");
+
+    // The exact pick says empty space there; the windowed pick with a radius
+    // of eight reaches the box.
+    assert!(matches!(renderer.pick_object_poll(&device), PickPoll::Idle));
+    assert!(renderer.snap_query_begin(miss, 8.0, &frame, &device, &queue, PickMask::OBJECT));
+    let mut hit = None;
+    for _ in 0..1000 {
+        match renderer.snap_query_poll(&device, &frame) {
+            SnapPoll::Pending => {
+                let enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+                queue.submit(std::iter::once(enc.finish()));
+            }
+            SnapPoll::Ready(h) => {
+                hit = h;
+                break;
+            }
+            SnapPoll::Idle => panic!("poll went Idle while a snap query was in flight"),
+        }
+    }
+    assert_eq!(
+        hit.map(|h| h.object_id),
+        Some(7),
+        "the window reaches the box the pixel misses"
+    );
+
+    // And with a radius too small to reach it, the window agrees with the pixel.
+    assert!(renderer.snap_query_begin(miss, 1.0, &frame, &device, &queue, PickMask::OBJECT));
+    let mut hit = Some(());
+    for _ in 0..1000 {
+        match renderer.snap_query_poll(&device, &frame) {
+            SnapPoll::Pending => {
+                let enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+                queue.submit(std::iter::once(enc.finish()));
+            }
+            SnapPoll::Ready(h) => {
+                hit = h.map(|_| ());
+                break;
+            }
+            SnapPoll::Idle => panic!("poll went Idle while a snap query was in flight"),
+        }
+    }
+    assert!(
+        hit.is_none(),
+        "a one-pixel window finds what the pixel finds: nothing"
+    );
+}
+
+#[test]
+fn gpu_snap_query_begin_on_empty_scene_does_not_start() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let frame = sub_object_pick_frame();
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // Nothing pickable would draw, so no pass is submitted and nothing is left
+    // in flight, as `pick_object_begin` behaves on the same scene.
+    let started = renderer.snap_query_begin(
+        glam::Vec2::new(32.0, 32.0),
+        16.0,
+        &frame,
+        &device,
+        &queue,
+        PickMask::VERTEX,
+    );
+    assert!(!started);
+    assert!(matches!(
+        renderer.snap_query_poll(&device, &frame),
+        SnapPoll::Idle
+    ));
 }
 
 // ---------------------------------------------------------------------------
