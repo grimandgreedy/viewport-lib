@@ -867,7 +867,7 @@ impl ViewportRenderer {
         // block buffer so the scene pass can index it. Foreground objects
         // re-upload after they intern in `prepare_viewport_internal`.
         self.resources.upload_material_gpu(queue);
-        self.resources.upload_custom_data(queue);
+        self.resources.upload_custom_data(device, queue);
 
         // Item-type wireframes join the shared line substrate, after its own
         // producers (isolines, clip outlines) filled it in `upload_polylines`.
@@ -875,13 +875,21 @@ impl ViewportRenderer {
         // `resources` shared while the upload above holds it mutably.
         self.dispatch_plugin_wireframes(device, queue, frame);
 
-        // A shadow texture was promoted out of its placeholder above, so the
-        // per-viewport camera bind groups still name the texture it replaced.
-        // Rebuilt here, before the viewport phase and before any render pass,
-        // so the promoting frame is already correct rather than one frame late.
+        self.flush_camera_bind_group_rebuild(device);
+    }
+
+    /// Rebuild the camera bind groups if something they name was replaced this
+    /// prepare: a shadow texture promoted out of its placeholder, or the
+    /// custom-data buffer grown. Run at the end of each prepare phase, before
+    /// any render pass, so the frame that made the change already draws with
+    /// the new resource and not one frame late.
+    fn flush_camera_bind_group_rebuild(&mut self, device: &crate::gpu::Device) {
         if self.resources.camera_bind_groups_dirty {
             self.resources.camera_bind_groups_dirty = false;
             self.rebuild_camera_bind_groups(device);
+            // The per-object bundle recorded the old camera bind group. Drop it
+            // so this frame draws item by item; the next prepare records again.
+            self.per_object_bundle = None;
         }
     }
 
@@ -981,7 +989,9 @@ impl ViewportRenderer {
         // Foreground objects just interned their materials; re-upload the block
         // buffer so any new entries past the scene set are resident.
         self.resources.upload_material_gpu(queue);
-        self.resources.upload_custom_data(queue);
+        self.resources.upload_custom_data(device, queue);
+        // That upload can have grown the custom-data buffer.
+        self.flush_camera_bind_group_rebuild(device);
         self.prepare_outline_pass(device, queue, frame, sink);
         self.prepare_sub_highlight(device, queue, frame);
 

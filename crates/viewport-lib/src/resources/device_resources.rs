@@ -634,10 +634,12 @@ pub struct DeviceResources {
 
     // --- Per-instance custom-data buffer (group 0, binding 22) ---
     /// Scene-global buffer of per-instance custom-data blocks
-    /// (`InstanceCustomData`, one per distinct payload this frame). Fixed
-    /// capacity, so its handle is stable and the camera bind group never rebuilds
-    /// for it.
+    /// (`InstanceCustomData`, one per distinct payload this frame). Grows when
+    /// a frame needs more blocks than it holds, which replaces the buffer and
+    /// rebuilds the camera bind groups that name it.
     pub(crate) instance_custom_data_buf: crate::gpu::Buffer,
+    /// Blocks `instance_custom_data_buf` holds.
+    pub(crate) instance_custom_data_capacity: usize,
     /// Per-frame interner that deduplicates custom-data payloads and hands out
     /// `custom_data_id` indices into `instance_custom_data_buf`. Reset at each
     /// `prepare()`.
@@ -1048,16 +1050,50 @@ impl DeviceResources {
         self.frame_upload_bytes += bytes;
     }
 
+    /// A custom-data buffer holding `capacity` blocks.
+    pub(crate) fn create_custom_data_buffer(
+        device: &crate::gpu::Device,
+        capacity: usize,
+    ) -> crate::gpu::Buffer {
+        use crate::resources::builders::LoggedAlloc;
+        device.logged_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("instance_custom_data_buf"),
+            size: (std::mem::size_of::<crate::resources::custom_data::InstanceCustomData>()
+                * capacity) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
     /// Upload the current per-instance custom-data blocks to
     /// `instance_custom_data_buf`. Called after interning finishes, alongside
     /// [`upload_material_gpu`](Self::upload_material_gpu). Overwriting a superset
     /// each time is safe: index 0 is always the zero block and ids only grow
     /// within a frame, so earlier custom_data_ids stay valid.
-    pub(crate) fn upload_custom_data(&mut self, queue: &crate::gpu::Queue) {
+    ///
+    /// A frame that interns more blocks than the buffer holds replaces it with
+    /// one twice the size or larger and sets `camera_bind_groups_dirty`, since
+    /// every camera bind group names the old buffer. The caller rebuilds them
+    /// before anything draws.
+    pub(crate) fn upload_custom_data(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) {
         let entries = self.custom_data_builder.entries();
         let n = entries
             .len()
             .min(crate::resources::custom_data::CUSTOM_DATA_CAPACITY);
+        if n > self.instance_custom_data_capacity {
+            let capacity = n
+                .next_power_of_two()
+                .max(self.instance_custom_data_capacity * 2)
+                .min(crate::resources::custom_data::CUSTOM_DATA_CAPACITY);
+            self.instance_custom_data_buf = Self::create_custom_data_buffer(device, capacity);
+            self.instance_custom_data_capacity = capacity;
+            self.camera_bind_groups_dirty = true;
+        }
+        let entries = self.custom_data_builder.entries();
         queue.write_buffer(
             &self.instance_custom_data_buf,
             0,

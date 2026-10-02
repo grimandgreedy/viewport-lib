@@ -426,3 +426,80 @@ fn surface_lic() {
     check("surface lic", setup, without);
     check_mid_session("surface lic", plain, setup);
 }
+
+/// The custom-data buffer starts small and grows when a frame interns more
+/// blocks than it holds. Growing replaces the buffer, so every camera bind
+/// group has to be rebuilt before that frame draws; otherwise the frame reads
+/// the old buffer and only the next one is right.
+#[test]
+fn custom_data_past_the_initial_capacity_draws_on_the_frame_that_grows_it() {
+    const COUNT: usize = 1500;
+    fn grid(meshes: &Meshes, custom: bool) -> FrameData {
+        let mut frame = base_frame(meshes);
+        frame.scene.surfaces = SurfaceSubmission::Flat(
+            (0..COUNT)
+                .map(|i| {
+                    let (x, y) = ((i % 50) as f32, (i / 50) as f32);
+                    let mut item = cube_item(meshes, 0.0, [0.2, 0.2, 0.2]);
+                    item.model = (glam::Mat4::from_translation(glam::Vec3::new(
+                        x * 0.08 - 2.0,
+                        y * 0.08 - 1.2,
+                        0.0,
+                    )) * glam::Mat4::from_scale(glam::Vec3::splat(0.05)))
+                    .to_cols_array_2d();
+                    if custom {
+                        // A distinct block per instance, read as added emissive.
+                        item.settings.custom_data[0] = 0.5 + i as f32 * 0.001;
+                    }
+                    item
+                })
+                .collect::<Vec<_>>()
+                .into(),
+        );
+        frame
+    }
+
+    for recommended in [true, false] {
+        let Some((device, queue)) = device(recommended) else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut renderer = ViewportRenderer::new(&device, FORMAT);
+        let meshes = upload(&mut renderer, &device);
+        let initial = renderer.resources.instance_custom_data_capacity;
+        assert!(
+            initial < COUNT,
+            "the case needs more blocks than the buffer starts with"
+        );
+
+        // A first frame with no custom data, so the shadow atlas is promoted
+        // (which also rebuilds the camera bind groups) before the frame under
+        // test. The growth then has to trigger the rebuild on its own.
+        let mut warm = grid(&meshes, false);
+        warm.scene.generation = 1;
+        let _ = renderer.render_offscreen(&device, &queue, &warm, SIZE, SIZE);
+        assert_eq!(renderer.resources.instance_custom_data_capacity, initial);
+
+        let mut frame = grid(&meshes, true);
+        frame.scene.generation = 2;
+        let growing = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+        assert!(
+            renderer.resources.instance_custom_data_capacity >= COUNT,
+            "the buffer did not grow to hold the frame's blocks"
+        );
+        let settled = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+        assert!(
+            growing == settled,
+            "the frame that grew the buffer drew differently from the one after it"
+        );
+
+        let mut plain = ViewportRenderer::new(&device, FORMAT);
+        let plain_meshes = upload(&mut plain, &device);
+        let without =
+            plain.render_offscreen(&device, &queue, &grid(&plain_meshes, false), SIZE, SIZE);
+        assert!(
+            settled != without,
+            "the custom data changed nothing, so the case cannot tell which buffer was read"
+        );
+    }
+}

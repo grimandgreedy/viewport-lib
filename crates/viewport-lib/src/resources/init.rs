@@ -782,16 +782,13 @@ impl DeviceResources {
             mapped_at_creation: false,
         });
 
-        // Per-instance custom-data buffer (group 0, binding 22). Fixed capacity
-        // so the handle is stable across frames; the camera bind group binds it
-        // once and never rebuilds for custom-data churn.
-        let instance_custom_data_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("instance_custom_data_buf"),
-            size: (std::mem::size_of::<crate::resources::custom_data::InstanceCustomData>()
-                * crate::resources::custom_data::CUSTOM_DATA_CAPACITY) as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // Per-instance custom-data buffer (group 0, binding 22). Starts small
+        // and grows when a frame interns more blocks than it holds; see
+        // `upload_custom_data`.
+        let instance_custom_data_buf = Self::create_custom_data_buffer(
+            device,
+            crate::resources::custom_data::CUSTOM_DATA_INITIAL_CAPACITY,
+        );
 
         // Indirect-lighting storage buffer (group 0 binding 18). Holds the
         // per-object light-probe SH blocks in the first region and the
@@ -1877,10 +1874,13 @@ impl DeviceResources {
         // can reference the fallback texture views at creation time.
         // ------------------------------------------------------------------
         let (cube_verts, cube_indices) = build_unit_cube();
-        // Shared geometry slab; the fallback cube is its first allocation. Its
-        // write is recorded now and flushed at the first `process_uploads`.
+        // Shared geometry slab; the fallback cube is its first allocation, in
+        // a small chunk of its own so the slab's first full chunk waits for an
+        // application mesh. Its write is recorded now and flushed at the first
+        // `process_uploads`.
         mark("buffers_and_bind_groups");
         let mut geometry = crate::resources::mesh::geometry_slab::GeometrySlab::new(device);
+        geometry.dedicate_next_allocation();
         let cube_mesh = Self::create_mesh(
             device,
             &mut geometry,
@@ -2194,6 +2194,8 @@ impl DeviceResources {
             material_gpu_buf,
             material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder::default(),
             instance_custom_data_buf,
+            instance_custom_data_capacity:
+                crate::resources::custom_data::CUSTOM_DATA_INITIAL_CAPACITY,
             custom_data_builder: crate::resources::custom_data::CustomDataBuilder::default(),
             frame_upload_bytes: 0,
             frame_pipelines_built: std::sync::atomic::AtomicU32::new(0),
