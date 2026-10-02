@@ -1,7 +1,5 @@
 /// GPU marching cubes compute pipeline.
 /// Scatter-volume participating-media pipeline state and uploads.
-/// Sparse voxel grid topology processing (boundary face extraction).
-pub mod sparse_volume;
 /// Unstructured volume mesh topology processing (tet / hex boundary extraction).
 pub mod tetmesh;
 /// Unstructured volume mesh boundary extraction. Lives in the

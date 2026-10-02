@@ -1,9 +1,10 @@
 //! Showcase 31: Sparse Volume Grids
 //!
-//! Demonstrates [`SparseVolumeGridData`] topology processing.
-//! Three sparse grids are shown side by side, each using different occupancy
-//! masks, to illustrate how boundary face extraction works across different
-//! topologies.
+//! Occupied cells of a regular grid, drawn as a volume mesh. Each grid is
+//! built with `VolumeMeshData::from_grid_cells`, which makes one hex per
+//! occupied cell, and uploaded with `upload_volume_mesh`, which keeps only the
+//! faces not shared between two cells. Three grids with different occupancy
+//! are shown side by side.
 //!
 //! ## Shapes
 //!
@@ -13,7 +14,7 @@
 //!
 //! - **Hollow shell** (centre) : same 5x5x5 grid but only the cells between
 //!   inner radius 1.8 and outer radius 2.7 are active (54 active cells).
-//!   Because the interior is empty, `extract_sparse_boundary` produces
+//!   Because the interior is empty, the extraction produces
 //!   **two** surfaces : an outer boundary and an inner boundary : from a single
 //!   upload.
 //!
@@ -27,7 +28,7 @@
 //!   each cell centre.
 //! - **Node distance / elevation**: `node_scalars["distance"]` : distance from
 //!   the grid centre for the sphere/shell; normalised elevation for terrain.
-//!   Averaged over 4 quad corner nodes per face.
+//!   Held on the grid's nodes and interpolated across each face.
 //! - **Cell hue**: `cell_colours["hue"]` : direct RGBA from the azimuthal angle
 //!   of each cell centre, no colourmap.
 
@@ -36,8 +37,8 @@ use crate::eframe::egui;
 use std::f32::consts::PI;
 use viewport_lib as vpl;
 use vpl::{
-    AttributeKind, AttributeRef, BuiltinColourmap, ColourmapId, LightingSettings, MeshId,
-    SceneRenderItem, SparseVolumeGridData, ViewportRenderer,
+    AttributeKind, AttributeRef, BuiltinColourmap, ColourmapId, GridCells, LightingSettings,
+    MeshId, SceneRenderItem, ViewportRenderer, VolumeMeshData,
 };
 
 // ---------------------------------------------------------------------------
@@ -50,6 +51,9 @@ const PAINT_N: usize = 5;
 /// World-space translation applied to the paint grid at render time.
 /// The ray-picking code in `handle_svg_paint_click` must use the same value.
 const PAINT_OFFSET: [f32; 3] = [18.0, 0.0, 0.0];
+
+/// Low corner of the paint grid, before `PAINT_OFFSET`. Its cells are 1 unit.
+const PAINT_ORIGIN: [f32; 3] = [-(PAINT_N as f32) / 2.0; 3];
 
 /// Preset swatch colours shown in the controls panel (linear RGBA).
 const PAINT_SWATCHES: &[([f32; 4], &str)] = &[
@@ -74,7 +78,7 @@ pub(crate) enum SvgField {
     /// `cell_scalars["height"]`: normalised Y elevation of each cell centre.
     CellHeight,
     /// `node_scalars["distance"]`: distance from grid centre (sphere / shell)
-    /// or normalised elevation (terrain), averaged over 4 corner nodes.
+    /// or normalised elevation (terrain), interpolated across each face.
     NodeDistance,
     /// `cell_colours["hue"]`: direct RGBA from azimuthal angle, no colourmap.
     CellHue,
@@ -120,7 +124,7 @@ const GRID_N: usize = 5;
 const SPHERE_R: f32 = 2.7;
 
 /// 5x5x5 grid, all cells inside a sphere of radius 2.7 (81 active cells).
-fn build_sphere_grid() -> SparseVolumeGridData {
+fn build_sphere_grid() -> GridCells {
     let centre = GRID_N as f32 / 2.0; // 2.5
 
     let mut active_cells = Vec::new();
@@ -160,14 +164,13 @@ fn build_sphere_grid() -> SparseVolumeGridData {
         }
     }
 
-    let mut data = SparseVolumeGridData::default();
-    data.origin = [-(GRID_N as f32) / 2.0; 3];
-    data.cell_size = 1.0;
-    data.active_cells = active_cells;
-    data.cell_scalars.insert("height".to_string(), cell_heights);
-    data.node_scalars.insert("distance".to_string(), node_dist);
-    data.cell_colours.insert("hue".to_string(), cell_hues);
-    data
+    let mut grid =
+        VolumeMeshData::from_grid_cells([-(GRID_N as f32) / 2.0; 3], [1.0; 3], &active_cells);
+    let node_dist = grid.node_values(&node_dist, [nd, nd, nd]);
+    grid.data.cell_scalars.insert("height".to_string(), cell_heights);
+    grid.data.node_scalars.insert("distance".to_string(), node_dist);
+    grid.data.cell_colours.insert("hue".to_string(), cell_hues);
+    grid
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +181,7 @@ const INNER_R: f32 = 1.8;
 
 /// 5x5x5 grid, only the shell between inner radius 1.8 and outer radius 2.7
 /// (54 active cells).  Produces both an outer and an inner boundary surface.
-fn build_hollow_shell() -> SparseVolumeGridData {
+fn build_hollow_shell() -> GridCells {
     let centre = GRID_N as f32 / 2.0;
 
     let mut active_cells = Vec::new();
@@ -219,14 +222,13 @@ fn build_hollow_shell() -> SparseVolumeGridData {
         }
     }
 
-    let mut data = SparseVolumeGridData::default();
-    data.origin = [-(GRID_N as f32) / 2.0; 3];
-    data.cell_size = 1.0;
-    data.active_cells = active_cells;
-    data.cell_scalars.insert("height".to_string(), cell_heights);
-    data.node_scalars.insert("distance".to_string(), node_dist);
-    data.cell_colours.insert("hue".to_string(), cell_hues);
-    data
+    let mut grid =
+        VolumeMeshData::from_grid_cells([-(GRID_N as f32) / 2.0; 3], [1.0; 3], &active_cells);
+    let node_dist = grid.node_values(&node_dist, [nd, nd, nd]);
+    grid.data.cell_scalars.insert("height".to_string(), cell_heights);
+    grid.data.node_scalars.insert("distance".to_string(), node_dist);
+    grid.data.cell_colours.insert("hue".to_string(), cell_hues);
+    grid
 }
 
 // ---------------------------------------------------------------------------
@@ -239,7 +241,7 @@ const TERRAIN_D: usize = 8;
 
 /// 8x5x8 heightmap grid.  Each XZ column is filled up to a sine-wave height;
 /// only the top and outer boundary faces of each column survive extraction.
-fn build_terrain() -> SparseVolumeGridData {
+fn build_terrain() -> GridCells {
     let cx = TERRAIN_W as f32 / 2.0 - 0.5; // centre of columns for hue
     let cz = TERRAIN_D as f32 / 2.0 - 0.5;
 
@@ -278,19 +280,18 @@ fn build_terrain() -> SparseVolumeGridData {
         }
     }
 
-    let mut data = SparseVolumeGridData::default();
     // Centre the terrain in XZ; Y origin puts the base below world origin.
-    data.origin = [
+    let origin = [
         -(TERRAIN_W as f32) / 2.0,
         -(TERRAIN_H as f32) / 2.0,
         -(TERRAIN_D as f32) / 2.0,
     ];
-    data.cell_size = 1.0;
-    data.active_cells = active_cells;
-    data.cell_scalars.insert("height".to_string(), cell_heights);
-    data.node_scalars.insert("distance".to_string(), node_elev);
-    data.cell_colours.insert("hue".to_string(), cell_hues);
-    data
+    let mut grid = VolumeMeshData::from_grid_cells(origin, [1.0; 3], &active_cells);
+    let node_elev = grid.node_values(&node_elev, [nw, nh, nd]);
+    grid.data.cell_scalars.insert("height".to_string(), cell_heights);
+    grid.data.node_scalars.insert("distance".to_string(), node_elev);
+    grid.data.cell_colours.insert("hue".to_string(), cell_hues);
+    grid
 }
 
 // ---------------------------------------------------------------------------
@@ -299,7 +300,7 @@ fn build_terrain() -> SparseVolumeGridData {
 
 /// Build a fully-dense PAINT_N^3 voxel cube with all cells white.
 /// Cell colours are stored in `cell_colours["paint"]` and updated on each click.
-fn build_paint_grid() -> SparseVolumeGridData {
+fn build_paint_grid() -> GridCells {
     let n = PAINT_N;
     let mut active_cells = Vec::with_capacity(n * n * n);
     let mut colours = Vec::with_capacity(n * n * n);
@@ -311,13 +312,10 @@ fn build_paint_grid() -> SparseVolumeGridData {
             }
         }
     }
-    let mut data = SparseVolumeGridData::default();
     // Centre the grid at the world origin (before PAINT_OFFSET is applied).
-    data.origin = [-(n as f32) / 2.0; 3];
-    data.cell_size = 1.0;
-    data.active_cells = active_cells;
-    data.cell_colours.insert("paint".to_string(), colours);
-    data
+    let mut grid = VolumeMeshData::from_grid_cells(PAINT_ORIGIN, [1.0; 3], &active_cells);
+    grid.data.cell_colours.insert("paint".to_string(), colours);
+    grid
 }
 
 /// Ray-AABB slab intersection.  Returns the entry distance along `dir`, or
@@ -353,7 +351,8 @@ pub(crate) struct SvgState {
     pub field: SvgField,
     // Paint grid state
     pub paint_mesh_id: MeshId,
-    pub paint_data: SparseVolumeGridData,
+    /// The paint grid, with the colours in `data.cell_colours["paint"]`.
+    pub paint_data: GridCells,
     /// Currently selected paint colour (linear RGBA).
     pub paint_colour: [f32; 4],
     /// Set to true when a cell is painted; cleared after the GPU upload.
@@ -370,7 +369,7 @@ impl Default for SvgState {
             colourmap: BuiltinColourmap::Viridis,
             field: SvgField::CellHeight,
             paint_mesh_id: MeshId::INVALID,
-            paint_data: SparseVolumeGridData::default(),
+            paint_data: GridCells::default(),
             paint_colour: PAINT_SWATCHES[1].0, // red
             paint_dirty: false,
         }
@@ -382,32 +381,36 @@ impl Default for SvgState {
 // ---------------------------------------------------------------------------
 
 impl App {
-    /// Upload all three sparse grid meshes; called once when the showcase is
-    /// first shown.
+    /// Upload the grids as volume meshes; called once when the showcase is
+    /// first shown. The boundary of each is drawn as a plain surface item.
     pub(crate) fn build_svg_scene(&mut self, renderer: &mut ViewportRenderer) {
         let sphere = build_sphere_grid();
         self.svg_state.mesh_id = renderer
             .resources_mut()
-            .upload_sparse_volume_grid_data(&self.device, &sphere)
-            .expect("svg sphere upload");
+            .upload_volume_mesh(&self.device, &sphere.data)
+            .expect("svg sphere upload")
+            .boundary_mesh_id;
 
         let shell = build_hollow_shell();
         self.svg_state.shell_id = renderer
             .resources_mut()
-            .upload_sparse_volume_grid_data(&self.device, &shell)
-            .expect("svg shell upload");
+            .upload_volume_mesh(&self.device, &shell.data)
+            .expect("svg shell upload")
+            .boundary_mesh_id;
 
         let terrain = build_terrain();
         self.svg_state.terrain_id = renderer
             .resources_mut()
-            .upload_sparse_volume_grid_data(&self.device, &terrain)
-            .expect("svg terrain upload");
+            .upload_volume_mesh(&self.device, &terrain.data)
+            .expect("svg terrain upload")
+            .boundary_mesh_id;
 
         self.svg_state.paint_data = build_paint_grid();
         self.svg_state.paint_mesh_id = renderer
             .resources_mut()
-            .upload_sparse_volume_grid_data(&self.device, &build_paint_grid())
-            .expect("svg paint upload");
+            .upload_volume_mesh(&self.device, &self.svg_state.paint_data.data)
+            .expect("svg paint upload")
+            .boundary_mesh_id;
 
         self.svg_state.built = true;
     }
@@ -429,7 +432,7 @@ impl App {
             SvgField::NodeDistance => (
                 Some(AttributeRef {
                     name: "distance".to_string(),
-                    kind: AttributeKind::Face,
+                    kind: AttributeKind::Vertex,
                 }),
                 Some(ColourmapId(self.svg_state.colourmap as usize)),
             ),
@@ -482,19 +485,15 @@ impl App {
         let vp_inv = self.camera.view_proj_matrix().inverse();
         let (ray_o, ray_d) = vpl::picking::screen_to_ray(pos, glam::Vec2::new(w, h), vp_inv);
 
-        let data = &self.svg_state.paint_data;
+        let grid = &self.svg_state.paint_data;
         let offset = glam::Vec3::from(PAINT_OFFSET);
         let mut best_t = f32::MAX;
         let mut best_idx = None;
 
-        for (cell_idx, &[ci, cj, ck]) in data.active_cells.iter().enumerate() {
-            let local_min = glam::Vec3::new(
-                data.origin[0] + ci as f32 * data.cell_size,
-                data.origin[1] + cj as f32 * data.cell_size,
-                data.origin[2] + ck as f32 * data.cell_size,
-            );
-            let world_min = local_min + offset;
-            let world_max = world_min + glam::Vec3::splat(data.cell_size);
+        for (cell_idx, cell) in grid.data.cells.iter().enumerate() {
+            // A hex's first vertex is its low corner.
+            let world_min = glam::Vec3::from(grid.data.positions[cell[0] as usize]) + offset;
+            let world_max = world_min + glam::Vec3::ONE;
 
             if let Some(t) = ray_aabb(ray_o, ray_d, world_min, world_max) {
                 if t < best_t {
@@ -508,6 +507,7 @@ impl App {
             let colours = self
                 .svg_state
                 .paint_data
+                .data
                 .cell_colours
                 .get_mut("paint")
                 .unwrap();
@@ -567,6 +567,7 @@ pub(crate) fn controls_sparse_volume_grid(app: &mut App, ui: &mut egui::Ui) {
         let colours = app
             .svg_state
             .paint_data
+            .data
             .cell_colours
             .get_mut("paint")
             .unwrap();
@@ -712,11 +713,13 @@ pub(crate) fn flush_gpu(app: &mut crate::App, cx: &crate::ViewportCtx) {
         let rs = cx.frame.wgpu_render_state().expect("wgpu required");
         let mut guard = rs.renderer.write();
         if let Some(renderer) = guard.callback_resources.get_mut::<vpl::ViewportRenderer>() {
-            let _ = renderer.resources_mut().replace_sparse_volume_grid_data(
+            // The colours ride on the cells, so the boundary is extracted
+            // again into the same mesh slot.
+            let _ = renderer.resources_mut().replace_volume_mesh(
                 &app.device,
                 &app.queue,
                 app.svg_state.paint_mesh_id,
-                &app.svg_state.paint_data,
+                &app.svg_state.paint_data.data,
             );
         }
     }

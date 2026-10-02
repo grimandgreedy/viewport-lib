@@ -40,5 +40,5 @@ pub mod prelude {
     pub use crate::eigen::{SymmetricEigen, symmetric_eigen_3x3};
     pub use crate::marching_cubes::{VolumeData, extract_isosurface};
     pub use crate::vector_samples::VectorSamples;
-    pub use crate::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
+    pub use crate::volume_mesh::{CELL_SENTINEL, GridCells, VolumeMeshData};
 }

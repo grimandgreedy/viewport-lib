@@ -52,7 +52,7 @@ impl ViewportRenderer {
         if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
             if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
                 render_pass.set_bind_group(0, camera_bg, &[]);
-                for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
+                for (slot, mesh_id) in self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate() {
                     if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
                         render_pass.set_pipeline(self.resources.scene.wireframe());
                         bind_deform_group!(
@@ -70,7 +70,8 @@ impl ViewportRenderer {
                                 edge_buf.slice(..),
                                 crate::gpu::IndexFormat::Uint32,
                             );
-                            render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                            let slot = slot as u32;
+                            render_pass.draw_indexed(0..mesh.edge_index_count, 0, slot..slot + 1);
                         }
                     }
                 }

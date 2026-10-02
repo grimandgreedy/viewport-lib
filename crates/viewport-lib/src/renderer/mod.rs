@@ -2939,27 +2939,6 @@ impl ViewportRenderer {
         self.resources.upload_result_clipped_volume_mesh(id)
     }
 
-    /// Start an asynchronous sparse voxel grid upload. See
-    /// [`DeviceResources::begin_upload_sparse_volume_grid_data`].
-    pub fn begin_upload_sparse_volume_grid_data(
-        &mut self,
-        device: &crate::gpu::Device,
-        data: crate::resources::SparseVolumeGridData,
-    ) -> crate::resources::JobId {
-        self.resources
-            .begin_upload_sparse_volume_grid_data(device, data)
-    }
-
-    /// Take the [`MeshId`](crate::resources::mesh::mesh_store::MeshId) produced by a completed
-    /// [`begin_upload_sparse_volume_grid_data`](Self::begin_upload_sparse_volume_grid_data)
-    /// job.
-    pub fn upload_result_sparse_volume_grid(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
-        self.resources.upload_result_sparse_volume_grid(id)
-    }
-
     /// Start an asynchronous overlay texture upload. See
     /// [`DeviceResources::begin_upload_overlay_texture`].
     pub fn begin_upload_overlay_texture(
@@ -3463,7 +3442,7 @@ impl ViewportRenderer {
         if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
             if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
                 render_pass.set_bind_group(0, camera_bg, &[]);
-                for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
+                for (slot, mesh_id) in self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate() {
                     if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
                         render_pass.set_pipeline(self.resources.scene.wireframe());
                         bind_deform_group!(
@@ -3481,7 +3460,8 @@ impl ViewportRenderer {
                                 edge_buf.slice(..),
                                 crate::gpu::IndexFormat::Uint32,
                             );
-                            render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                            let slot = slot as u32;
+                            render_pass.draw_indexed(0..mesh.edge_index_count, 0, slot..slot + 1);
                         }
                     }
                 }
