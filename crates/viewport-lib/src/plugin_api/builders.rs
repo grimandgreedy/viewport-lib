@@ -16,7 +16,7 @@ pub use crate::resources::builders::{
     dcompare, depth_stencil, dmipmap, dwrite, mesh_vertex_layout, pipeline_layout, render_pipeline,
     repeat_linear_sampler, sampler_entry, scene_depth_stencil, standard_scene_layout,
     texture_entry, texture_sampler_bgl, uniform_bgl, uniform_entry, uniform_texture_sampler_bgl,
-    wgsl_module, write_mapped,
+    vector_attribute_layout, wgsl_module, write_mapped,
 };
 pub use crate::resources::builders::{
     DualPipelineDesc, build_dual_pipeline, build_fullscreen_pipeline, build_surface_mask_pipeline,

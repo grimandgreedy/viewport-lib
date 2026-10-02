@@ -939,6 +939,35 @@ impl<'a> MeshDraw<'a> {
         true
     }
 
+    /// Bind one of the mesh's per-vertex vector attributes as the vertex
+    /// buffer at `slot`.
+    ///
+    /// The attribute is one the mesh was uploaded with as
+    /// `AttributeData::VertexVector` under `name`: three floats per vertex,
+    /// in the same vertex order as slot 0. The pipeline declares it with
+    /// [`vector_attribute_layout`](crate::plugin_api::builders::vector_attribute_layout).
+    ///
+    /// Returns `false` without touching the pass when the mesh is stale or
+    /// carries no vector attribute of that name.
+    pub fn bind_vector_attribute(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        slot: u32,
+        mesh_id: MeshId,
+        name: &str,
+    ) -> bool {
+        let Some(buf) = self
+            .resources
+            .mesh_store
+            .get(mesh_id)
+            .and_then(|mesh| mesh.vector_attribute_buffers.get(name))
+        else {
+            return false;
+        };
+        pass.set_vertex_buffer(slot, buf.slice(..));
+        true
+    }
+
     /// Index count of an uploaded mesh, or `None` when the id is stale.
     pub fn index_count(&self, mesh_id: MeshId) -> Option<u32> {
         self.resources

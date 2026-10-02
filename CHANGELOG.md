@@ -6,6 +6,7 @@
 
 - **`AppConfig::with_pipeline_cache` and `AppConfigV2::with_pipeline_cache`** - give the runner a file and it loads the GPU pipeline cache before building the renderer and saves it after the first frame and on exit, so a later launch skips the first one's shader compilation. Only a backend with a pipeline cache (Vulkan) reads or writes anything.
 - **`ViewportInstance::new_with_pipeline_cache` and `ViewportInstance::pipeline_cache_data`** - the instance-level route to the same cache, for an application that owns its own event loop. The winit and eframe minimal examples show both.
+- **`MeshDraw::bind_vector_attribute` and `builders::vector_attribute_layout`** - an item type drawing a consumer mesh can bind one of its `AttributeData::VertexVector` attributes by name as an extra vertex buffer, and declare the matching layout on its pipeline.
 - **`SHARED_BRDF_WGSL` and `SHARED_OUTLINE_EDGE_WGSL`** - the direct Cook-Torrance BRDF the lit mesh shaders use, and the fullscreen edge trace behind the selection outline (with its `OutlineEdgeUniform`), published for item types that light a surface themselves or draw a selection ring of their own.
 
 - **Every depth-writing item type can decline a decal** - point clouds, vector and tensor fields, tubes, streamtubes, ribbons, opaque sprites, volume surface slices, GPU implicit surfaces and GPU marching-cubes surfaces now stamp the surface mask, so `visibility_mask` decides which decals land on them as it does for meshes. Before, only a mesh could refuse one.
