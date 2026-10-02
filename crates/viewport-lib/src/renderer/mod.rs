@@ -59,6 +59,8 @@ mod deform_stats_tests;
 #[cfg(test)]
 mod hidden_tests;
 #[cfg(test)]
+mod lazy_pipeline_tests;
+#[cfg(test)]
 mod lod_instance_tests;
 
 /// Item-type names beginning with this prefix belong to the types viewport-lib
@@ -382,6 +384,11 @@ pub struct ViewportRenderer {
     /// Step count and step size for this frame's LIC advect pass, when any
     /// LIC item was prepared.
     lic_advect_params: Option<(u32, f32)>,
+    /// Whether the frame being prepared may be painted straight into the
+    /// caller's render pass, which binds the LDR pipelines whatever display
+    /// mode the frame asks for. Set by each entry point before it prepares;
+    /// starts `true`, the choice that is right for either path.
+    pub(crate) direct_paint: bool,
     /// This frame's decal resource-cache tallies, packed `(uploads << 32) |
     /// reused`. Shared with the decal item type, which is where the cache
     /// lives; the renderer only reads it back into `FrameStats`.
@@ -938,6 +945,7 @@ impl ViewportRenderer {
             mesh_instance_gpu_data: Vec::new(),
             lic_gpu_data: Vec::new(),
             lic_advect_params: None,
+            direct_paint: true,
             decal_cache_stats: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             decal_excluded_surfaces: Vec::new(),
             label_gpu_data: None,

@@ -46,15 +46,25 @@ fn bulge() -> DeformerDesc {
     }
 }
 
-/// Registering a deformer has to rebuild the **point**-shadow pipeline, not just the cascade one.
+/// Lazy pipeline builds counted so far this frame.
+fn renderer_built(renderer: &ViewportRenderer) -> u32 {
+    renderer
+        .resources()
+        .frame_pipelines_built
+        .load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Both shadow pipelines run the registered deformers, whichever order registration and first use
+/// come in.
 ///
-/// `ensure_point_shadow_pipeline` returns early once the slot is filled and builds from the
-/// uncomposed source, so if the rebuild does not overwrite it the pipeline that draws every point
-/// light's cube faces runs the identity deformer for the rest of the session.
+/// Neither pipeline exists until a frame casts a shadow, so a registration made first has nothing
+/// to rebuild: the first use composes the deformer in. A registration made after has to rebuild
+/// both, the point-shadow one included, or every point light's cube faces draw the undeformed mesh
+/// for the rest of the session.
 #[test]
-fn registering_a_deformer_rebuilds_both_shadow_pipelines() {
+fn both_shadow_pipelines_follow_a_registered_deformer() {
     let Some((device, _queue)) = headless_device() else {
-        eprintln!("skipping registering_a_deformer_rebuilds_both_shadow_pipelines: no GPU adapter");
+        eprintln!("skipping both_shadow_pipelines_follow_a_registered_deformer: no GPU adapter");
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
@@ -63,6 +73,7 @@ fn registering_a_deformer_rebuilds_both_shadow_pipelines() {
         return;
     }
 
+    // Registered before any shadow is cast: nothing to rebuild, nothing built.
     renderer
         .resources_mut()
         .register_deformer(&device, bulge())
@@ -70,15 +81,33 @@ fn registering_a_deformer_rebuilds_both_shadow_pipelines() {
     renderer
         .resources_mut()
         .flush_mesh_pipeline_rebuild(&device);
+    assert!(renderer.resources().shadow.pipeline.is_none());
+    assert!(renderer.resources().shadow.point_pipeline.is_none());
 
+    // First use builds both, from the composed source.
+    renderer
+        .resources_mut()
+        .ensure_cascade_shadow_pipelines(&device);
+    renderer
+        .resources_mut()
+        .ensure_point_shadow_pipeline(&device);
+    let before = renderer_built(&renderer);
+
+    // A second registration rebuilds both, since both now exist.
+    let mut second = bulge();
+    second.name = "test_bulge_two";
+    renderer
+        .resources_mut()
+        .register_deformer(&device, second)
+        .expect("the second bulge registers");
+    renderer
+        .resources_mut()
+        .flush_mesh_pipeline_rebuild(&device);
+    assert!(renderer.resources().shadow.pipeline.is_some());
+    assert!(renderer.resources().shadow.point_pipeline.is_some());
     assert!(
-        renderer.resources().shadow.pipeline.is_some(),
-        "the cascade shadow pipeline was not composed"
-    );
-    assert!(
-        renderer.resources().shadow.point_pipeline.is_some(),
-        "the point shadow pipeline was not composed, so every point light's cube faces draw the \
-         undeformed mesh"
+        renderer_built(&renderer) >= before + 2,
+        "the second registration did not rebuild both shadow pipelines"
     );
 }
 

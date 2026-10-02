@@ -1836,213 +1836,36 @@ impl DeviceResources {
             plugin.pipelines = None;
             plugin.instanced_pipelines = None;
         }
-        let registrations = self.deform.registrations.clone();
-
-        // mesh.wgsl: LDR + HDR families.
-        if let Some(base) = lookup_source("mesh.wgsl") {
-            let composed = compose_shader(base, &registrations);
-            let final_src = crate::resources::builders::builtin_hook_env(
-                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
-            )
-            .into_owned();
-            let shader = crate::resources::builders::wgsl_module(
-                device,
-                "mesh_shader_composed",
-                final_src.clone(),
-            );
-
-            let ldr_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
-                device,
-                "mesh_pipeline_layout",
-                &self.binds.camera_bgl,
-                &self.binds.object_bgl,
-                Some(&self.deform.bind_group_layout),
-            );
-            let ldr = crate::resources::mesh::mesh_pipelines::build_ldr_mesh_pipelines(
-                device,
-                &ldr_layout,
-                &shader,
-                self.target_format,
-                self.sample_count,
-                None,
-            );
-            self.scene.solid = Some(ldr.solid);
-            self.scene.solid_two_sided = Some(ldr.solid_two_sided);
-            self.scene.transparent = Some(ldr.transparent);
-            self.scene.wireframe = Some(ldr.wireframe);
-
-            if self.scene.hdr_opaque.is_some() {
-                let hdr_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
-                    device,
-                    "hdr_mesh_pipeline_layout",
-                    &self.binds.camera_bgl,
-                    &self.binds.object_bgl,
-                    Some(&self.deform.bind_group_layout),
-                );
-                let hdr = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
-                    device,
-                    &hdr_layout,
-                    &shader,
-                );
-                let hdr_solid = hdr.solid;
-                let hdr_solid_two_sided = hdr.solid_two_sided;
-                self.scene.hdr_transparent = Some(hdr.transparent);
-                self.scene.hdr_wireframe = Some(hdr.wireframe);
-
-                // Discard-free twin, rebuilt from the same fresh composition
-                // so it never lags the discarding pipeline's shading (the
-                // pre-keyed code left this twin stale across a deformer
-                // registration; folding both into one `PipelineVariantSet`
-                // build fixes that for free).
-                let hdr_shader_nodiscard = crate::resources::builders::wgsl_module(
-                    device,
-                    "mesh_shader_hdr_nodiscard",
-                    crate::resources::builders::strip_discards(&final_src),
-                );
-                let hdr_nd = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
-                    device,
-                    &hdr_layout,
-                    &hdr_shader_nodiscard,
-                );
-                self.scene.hdr_opaque = Some(
-                    crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-                        let (solid, solid_two_sided) = if key.no_discard_eligible {
-                            (&hdr_nd.solid, &hdr_nd.solid_two_sided)
-                        } else {
-                            (&hdr_solid, &hdr_solid_two_sided)
-                        };
-                        if key.two_sided {
-                            solid_two_sided.clone()
-                        } else {
-                            solid.clone()
-                        }
-                    }),
-                );
-            }
+        // Every family is rebuilt through its own `ensure_*`, which composes
+        // the registered deformers in, so there is one copy of each build. A
+        // family that has not been built yet is left alone: its first use
+        // builds it from the same composition.
+        if self.scene.solid.is_some() {
+            self.scene.solid = None;
+            self.ensure_ldr_mesh_pipelines(device);
         }
-
-        // mesh_oit.wgsl: only present after ensure_hdr_pipelines has been
-        // called.
+        if self.scene.hdr_opaque.is_some() {
+            self.scene.hdr_opaque = None;
+            self.ensure_hdr_mesh_pipelines(device);
+        }
         if self.oit.pipeline.is_some() {
-            if let Some(base) = lookup_source("mesh_oit.wgsl") {
-                let composed = compose_shader(base, &registrations);
-                let shader = crate::resources::builders::wgsl_module(
-                    device,
-                    "mesh_oit_shader_composed",
-                    crate::resources::builders::builtin_hook_env(
-                        crate::resources::builders::strip_debug_vis(
-                            composed,
-                            self.debug_vis_shaders,
-                        ),
-                    ),
-                );
-                let oit_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
-                    device,
-                    "oit_pipeline_layout",
-                    &self.binds.camera_bgl,
-                    &self.binds.object_bgl,
-                    Some(&self.deform.bind_group_layout),
-                );
-                self.oit.pipeline = Some(crate::renderer::pipeline_key::PipelineVariantSet::build(
-                    |key| {
-                        crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
-                            device,
-                            &oit_layout,
-                            &shader,
-                            key.two_sided,
-                        )
-                    },
-                ));
-            }
+            self.oit.pipeline = None;
+            self.ensure_oit_mesh_pipelines(device);
         }
-
-        // shadow.wgsl: depth-only cascade pass.
-        if let Some(base) = lookup_source("shadow.wgsl") {
-            let composed = compose_shader(base, &registrations);
-            let shader =
-                crate::resources::builders::wgsl_module(device, "shadow_shader_composed", composed);
-            let layout = crate::resources::builders::pipeline_layout(
-                device,
-                "shadow_pipeline_layout",
-                &[
-                    &self.shadow.camera_bgl,
-                    &self.binds.object_bgl,
-                    &self.deform.bind_group_layout,
-                ],
-            );
-            self.shadow.pipeline = Some(crate::renderer::pipeline_key::PipelineVariantSet::build(
-                |key| {
-                    let cull_mode = if key.two_sided {
-                        None
-                    } else {
-                        Some(crate::gpu::Face::Front)
-                    };
-                    crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
-                        device, &layout, &shader, cull_mode, key.cutout, None,
-                    )
-                },
-            ));
+        // The shadow passes run the deformer too: a caster skinned on the GPU
+        // keeps the bind pose in its vertex buffer, so a depth pass that does
+        // not deform rasterises the bind pose and the shadow never moves a limb.
+        if self.shadow.pipeline.is_some() {
+            self.shadow.pipeline = None;
+            self.ensure_cascade_shadow_pipelines(device);
         }
-
-        // shadow_point.wgsl: depth-only cube-face pass for point lights. Rebuilt here for the
-        // same reason as the cascade pass above: a caster skinned on the GPU keeps the bind pose
-        // in its vertex buffer, so a shadow pass that does not run the deformer rasterises the
-        // bind pose into the cube face and the character's shadow never moves a limb.
-        if let Some(base) = lookup_source("shadow_point.wgsl") {
-            let composed = compose_shader(base, &registrations);
-            let shader = crate::resources::builders::wgsl_module(
-                device,
-                "shadow_point_shader_composed",
-                composed,
-            );
-            let layout = crate::resources::builders::pipeline_layout(
-                device,
-                "shadow_point_pipeline_layout",
-                &[
-                    &self.shadow.point_face_bgl,
-                    &self.binds.object_bgl,
-                    &self.deform.bind_group_layout,
-                ],
-            );
-            // Unconditional, like the cascade assignment: `ensure_point_shadow_pipeline` returns
-            // early once the slot is filled, so overwriting here is what makes build order
-            // irrelevant between the two.
-            self.shadow.point_pipeline = Some(
-                crate::resources::mesh::mesh_pipelines::build_shadow_point_pipeline(
-                    device,
-                    &layout,
-                    &shader,
-                    self.pipeline_cache.as_ref(),
-                ),
-            );
+        if self.shadow.point_pipeline.is_some() {
+            self.shadow.point_pipeline = None;
+            self.ensure_point_shadow_pipeline(device);
         }
-
-        // outline_mask.wgsl: mask-write pass for the selection silhouette.
-        if let Some(base) = lookup_source("outline_mask.wgsl") {
-            let composed = compose_shader(base, &registrations);
-            let shader = crate::resources::builders::wgsl_module(
-                device,
-                "outline_mask_shader_composed",
-                composed,
-            );
-            let layout = crate::resources::builders::pipeline_layout(
-                device,
-                "outline_pipeline_layout",
-                &[
-                    &self.binds.camera_bgl,
-                    &self.outline.bind_group_layout,
-                    &self.deform.bind_group_layout,
-                ],
-            );
-            let masks = crate::resources::mesh::mesh_pipelines::build_outline_mask_pipelines(
-                device,
-                &layout,
-                &shader,
-                crate::gpu::TextureFormat::R8Unorm,
-                None,
-            );
-            self.outline.mask_pipeline = Some(masks.mask);
-            self.outline.mask_two_sided_pipeline = Some(masks.mask_two_sided);
+        if self.outline.mask_pipeline.is_some() {
+            self.outline.mask_pipeline = None;
+            self.ensure_outline_pipelines(device);
         }
 
         // Instanced families (LDR / HDR / OIT / cull) rebuild through the
@@ -2058,6 +1881,10 @@ impl DeviceResources {
             self.instancing.bind_group_layout = None;
             self.ensure_instanced_pipelines(device);
         }
+        if self.instancing.solid_pipeline.is_some() {
+            self.instancing.solid_pipeline = None;
+            self.ensure_ldr_instanced_pipelines(device);
+        }
         if self.instancing.hdr_solid_pipeline.is_some() {
             self.instancing.hdr_solid_pipeline = None;
             self.ensure_hdr_instanced_pipelines(device);
@@ -2069,6 +1896,14 @@ impl DeviceResources {
         if self.cull.bind_group_layout.is_some() {
             self.cull.bind_group_layout = None;
             self.ensure_cull_instance_pipelines(device);
+        }
+        if self.cull.hdr_solid_pipeline.is_some() {
+            self.cull.hdr_solid_pipeline = None;
+            self.ensure_hdr_cull_pipelines(device);
+        }
+        if self.cull.oit_pipeline.is_some() {
+            self.cull.oit_pipeline = None;
+            self.ensure_oit_cull_pipelines(device);
         }
     }
 }
@@ -2227,15 +2062,13 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// Registering a deformer that actually reads from `deform_data` must
-    /// produce a rebuilt LDR `mesh.wgsl` pipeline family once the deferred
-    /// rebuild flushes. The simplest proof: if the composed source were
-    /// broken, `register_deformer` would fail at validation; if the rebuild
-    /// path were broken (e.g. shader module created from stale source),
-    /// this test would still pass because no draw is issued. So we also
-    /// re-fetch the LDR pipelines and confirm the rebuild populated them.
+    /// A deformer that reads from `deform_data` registers before any mesh has
+    /// drawn. The LDR `mesh.wgsl` family does not exist yet, so the deferred
+    /// rebuild leaves it alone, and the first use builds it from the composed
+    /// source. A broken composition would fail `register_deformer` at
+    /// validation; a module that failed to compile would fail the build here.
     #[test]
-    fn register_deformer_rebuilds_ldr_mesh_pipelines() {
+    fn a_registered_deformer_reaches_the_ldr_mesh_pipelines() {
         use crate::renderer::ViewportRenderer;
         let Some((device, _queue)) = headless() else {
             return;
@@ -2263,8 +2096,11 @@ mod tests {
             .resources_mut()
             .flush_mesh_pipeline_rebuild(&device);
 
-        // The rebuild composes the deformer into the LDR family, which also
-        // builds it: live handles rather than the empty slots from before.
+        // Nothing has drawn a mesh, so there is still nothing to rebuild.
+        assert!(renderer.resources().scene.solid.is_none());
+
+        // First use builds the family with the deformer composed in.
+        renderer.resources_mut().ensure_ldr_mesh_pipelines(&device);
         assert!(renderer.resources().scene.solid.is_some());
         assert!(renderer.resources().scene.wireframe.is_some());
     }

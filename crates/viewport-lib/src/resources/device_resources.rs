@@ -1117,7 +1117,8 @@ impl DeviceResources {
     /// Called by the outline prepare on the first frame with a selection to
     /// outline. A no-op after that.
     ///
-    /// `register_deformer` rebuilds the mask pair with the deformers composed in.
+    /// The mask pair runs the registered deformers, so `register_deformer`
+    /// rebuilds it once it exists.
     pub(crate) fn ensure_outline_pipelines(&mut self, device: &crate::gpu::Device) {
         if self.outline.mask_pipeline.is_some() {
             return;
@@ -1130,8 +1131,14 @@ impl DeviceResources {
         } else {
             include_str!(concat!(env!("OUT_DIR"), "/outline_mask_noop.wgsl"))
         };
-        let mask_shader =
-            crate::resources::builders::wgsl_module(device, "outline_mask_shader", mask_src);
+        let mask_shader = crate::resources::builders::wgsl_module(
+            device,
+            "outline_mask_shader",
+            crate::resources::mesh_sidecar::registry::compose_shader(
+                mask_src,
+                &self.deform.registrations,
+            ),
+        );
         let masks = crate::resources::mesh::mesh_pipelines::build_outline_mask_pipelines(
             device,
             &self.outline_pipeline_layout(device),
@@ -1304,7 +1311,8 @@ impl DeviceResources {
     /// Called from the cascade branch of the shadow prepare, the same point the
     /// atlas itself is allocated. A no-op once built.
     ///
-    /// `register_deformer` rebuilds the same set with the deformers composed in.
+    /// The pass runs the registered deformers, so `register_deformer` rebuilds
+    /// the set once it exists.
     pub(crate) fn ensure_cascade_shadow_pipelines(&mut self, device: &crate::gpu::Device) {
         if self.shadow.pipeline.is_some() {
             return;
@@ -1315,7 +1323,14 @@ impl DeviceResources {
         } else {
             include_str!(concat!(env!("OUT_DIR"), "/shadow_noop.wgsl"))
         };
-        let shader = crate::resources::builders::wgsl_module(device, "shadow_shader", src);
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "shadow_shader",
+            crate::resources::mesh_sidecar::registry::compose_shader(
+                src,
+                &self.deform.registrations,
+            ),
+        );
         let mut bgls = vec![&self.shadow.camera_bgl, &self.binds.object_bgl];
         if self.deform.enabled {
             bgls.push(&self.deform.bind_group_layout);
@@ -1358,7 +1373,14 @@ impl DeviceResources {
         } else {
             include_str!(concat!(env!("OUT_DIR"), "/shadow_point_noop.wgsl"))
         };
-        let shader = crate::resources::builders::wgsl_module(device, "shadow_point_shader", src);
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "shadow_point_shader",
+            crate::resources::mesh_sidecar::registry::compose_shader(
+                src,
+                &self.deform.registrations,
+            ),
+        );
         let mut bgls = vec![&self.shadow.point_face_bgl, &self.binds.object_bgl];
         if self.deform.enabled {
             bgls.push(&self.deform.bind_group_layout);

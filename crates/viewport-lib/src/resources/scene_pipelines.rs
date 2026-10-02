@@ -57,9 +57,8 @@ impl crate::resources::DeviceResources {
     /// carrying mesh-family content binds them, so the first such prepare calls
     /// this rather than paying for it at construction. No-op after that.
     ///
-    /// `register_deformer` rebuilds the same four through
-    /// `rebuild_mesh_pipelines`, which composes the registered deformers in; the
-    /// composition here is the identity-hook one a renderer starts with.
+    /// Composed with the registered deformers, so `register_deformer` rebuilds
+    /// the four through here once they exist.
     pub(crate) fn ensure_ldr_mesh_pipelines(&mut self, device: &crate::gpu::Device) {
         if self.scene.solid.is_some() {
             return;
@@ -78,7 +77,10 @@ impl crate::resources::DeviceResources {
                     crate::resources::builders::strip_mesh_non_pbr(
                         crate::resources::builders::strip_mesh_discards(
                             crate::resources::builders::strip_debug_vis(
-                                mesh_src,
+                                crate::resources::mesh_sidecar::registry::compose_shader(
+                                    mesh_src,
+                                    &self.deform.registrations,
+                                ),
                                 self.debug_vis_shaders,
                             ),
                         ),

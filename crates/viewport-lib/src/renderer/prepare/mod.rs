@@ -221,6 +221,7 @@ impl ViewportRenderer {
 
         let plugin_frame_index = self.plugin_frame_index;
 
+        let hdr_family = self.draws_hdr(frame);
         let resources = &mut self.resources;
         let lighting = scene_fx.lighting;
 
@@ -409,6 +410,7 @@ impl ViewportRenderer {
                 device,
                 queue,
                 frame,
+                hdr_family,
             )
         } else {
             (0, 0)
@@ -427,6 +429,7 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            hdr_family,
         );
         lod_items_resolved += inst_resolved;
         lod_switches += inst_switches;
@@ -882,21 +885,40 @@ impl ViewportRenderer {
         }
     }
 
+    /// Whether `frame` carries anything the mesh pipeline families draw.
+    pub(crate) fn has_mesh_content(frame: &FrameData) -> bool {
+        (match &frame.scene.surfaces {
+            crate::renderer::SurfaceSubmission::Flat(items) => !items.is_empty(),
+        }) || !frame.scene.volume_meshes.is_empty()
+            || !frame.scene.mesh_instances.is_empty()
+            || !frame.scene.foreground_items.is_empty()
+    }
+
+    /// Whether `frame` is drawn through the HDR path. A frame that asks for
+    /// HDR is still drawn with the LDR pipelines when the caller paints it
+    /// straight into its own render pass.
+    pub(crate) fn draws_hdr(&self, frame: &FrameData) -> bool {
+        frame.effects.display.is_hdr() && !self.direct_paint
+    }
+
     /// Build the pipelines `frame`'s own passes draw with, if this is the first
     /// frame to ask for them.
     ///
-    /// The base LDR mesh pipelines, the ground plane and the skybox are not built
-    /// at construction. The draw sites test the frame they are handed, so this
+    /// The mesh pipelines, the ground plane and the skybox are not built at
+    /// construction. The draw sites test the frame they are handed, so this
     /// runs for the scene frame and again for each viewport's frame: under the
     /// split API those can differ, and a viewport may be the only one asking.
+    ///
+    /// Only the mesh family the frame is drawn with is built: the HDR one for a
+    /// frame on the HDR path, the LDR one otherwise. A renderer that stays on
+    /// one path never compiles the other.
     fn ensure_frame_pipelines(&mut self, device: &crate::gpu::Device, frame: &FrameData) {
-        let has_mesh_content = match &frame.scene.surfaces {
-            crate::renderer::SurfaceSubmission::Flat(items) => !items.is_empty(),
-        } || !frame.scene.volume_meshes.is_empty()
-            || !frame.scene.mesh_instances.is_empty()
-            || !frame.scene.foreground_items.is_empty();
-        if has_mesh_content {
-            self.resources.ensure_ldr_mesh_pipelines(device);
+        if Self::has_mesh_content(frame) {
+            if self.draws_hdr(frame) {
+                self.resources.ensure_hdr_mesh_pipelines(device);
+            } else {
+                self.resources.ensure_ldr_mesh_pipelines(device);
+            }
         }
         if !matches!(
             frame.effects.ground_plane.mode,
@@ -933,6 +955,7 @@ impl ViewportRenderer {
         // Run the main-camera GPU cull for this viewport against its own camera,
         // writing this slot's visibility list and indirect args.
         let vp_idx = frame.camera.viewport_index;
+        let hdr_family = self.draws_hdr(frame);
         Self::run_viewport_cull(
             &mut self.resources,
             &mut self.viewport_slots[vp_idx].cull,
@@ -942,6 +965,7 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            hdr_family,
             sink,
         );
 

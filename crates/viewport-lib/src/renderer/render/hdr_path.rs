@@ -366,6 +366,76 @@ impl ViewportRenderer {
             grade_lut_size,
             _pad: [0; 2],
         };
+        // Build what this frame binds and nothing else. Each group is built by
+        // the first frame that asks for it, on the same condition its pass
+        // tests below, so an effect that stays off never compiles.
+        {
+            let format = self.resources.target_format;
+            let res = &mut self.resources;
+            res.ensure_tone_map_pipeline(device, format);
+            // The OIT resolve is one small pipeline, and an item-type plugin
+            // can draw into the OIT pass on any frame. Built up front so the
+            // first frame a plugin item appears compiles nothing of ours.
+            res.ensure_oit_composite_pipeline(device);
+            if pp.bloom.enabled {
+                res.ensure_bloom_pipelines(device);
+            }
+            if pp.ssao {
+                res.ensure_ssao_pipelines(device);
+            }
+            if pp.contact_shadows.enabled {
+                res.ensure_contact_shadow_pipeline(device);
+            }
+            if pp.dof.enabled {
+                res.ensure_dof_pipeline(device);
+            }
+            if pp.fxaa {
+                res.ensure_fxaa_pipeline(device, format);
+            }
+            if composite_inputs.lic {
+                res.ensure_lic_pipelines(device);
+            }
+            if composite_inputs.foreground {
+                res.ensure_foreground_stamp_pipeline(device);
+            }
+            if ssaa_factor > 1 {
+                res.ensure_ssaa_resolve_pipelines(device);
+            }
+            // Manual and physical-camera exposure write the state buffer
+            // directly; only automatic exposure dispatches the metering passes.
+            if frame.effects.display.exposure.manual_multiplier().is_none() {
+                res.exposure.ensure_pipelines(device);
+            }
+            let slot = &self.viewport_slots[vp_idx];
+            if slot
+                .hdr
+                .as_ref()
+                .is_some_and(|hdr| hdr.depth_blit_bind_group.is_some())
+            {
+                res.ensure_depth_blit_pipeline(device);
+            }
+            // The mesh family, and the cap fill that shares its group. The
+            // foreground pass sets up with these pipelines before it draws
+            // anything, so a foreground drawn only by a plugin needs them too.
+            if !scene_items.is_empty()
+                || !frame.scene.volume_meshes.is_empty()
+                || composite_inputs.foreground
+                || !slot.cap_buffers.is_empty()
+                || !self.mesh_uniforms.tvm_wireframe_draws.is_empty()
+            {
+                res.ensure_hdr_mesh_pipelines(device);
+            }
+            // Instanced batches and explicit mesh instances draw with the HDR
+            // instanced set. Prepare has normally built it; this covers a
+            // frame prepared for a direct paint and then rendered here.
+            if (self.instancing.use_instancing && !self.instancing.batches.is_empty())
+                || !self.mesh_instance_gpu_data.is_empty()
+            {
+                res.ensure_instanced_pipelines(device);
+                res.ensure_hdr_instanced_pipelines(device);
+                res.ensure_hdr_cull_pipelines(device);
+            }
+        }
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             queue.write_buffer(
@@ -439,23 +509,32 @@ impl ViewportRenderer {
         // Must happen before camera_bg is borrowed (borrow-checker constraint).
         // -----------------------------------------------------------------------
         {
-            let needs_oit = if self.instancing.use_instancing && !self.instancing.batches.is_empty()
-            {
-                self.instancing.batches.iter().any(|b| b.is_transparent)
-            } else {
-                scene_items.iter().any(|i| {
+            // A superset of the OIT pass's own test, so the pass never finds its
+            // targets or pipelines missing.
+            let mesh_transparency = (self.instancing.use_instancing
+                && self.instancing.batches.iter().any(|b| b.is_transparent))
+                || scene_items.iter().any(|i| {
                     !i.settings.hidden
                         && crate::renderer::prepare::has_transparent_draws(i, &self.resources)
                 })
-            } || frame
-                .scene
-                .volume_meshes
-                .iter()
-                .any(|i| !i.settings.hidden && i.transparency.is_some())
-                // Item-type plugins may draw into the OIT pass through
-                // `paint_transparent` (mirrors `has_transparent` below).
-                || self.any_plugin_items_submitted(frame);
+                || frame
+                    .scene
+                    .volume_meshes
+                    .iter()
+                    .any(|i| !i.settings.hidden && i.transparency.is_some());
+            // Item-type plugins may draw into the OIT pass through
+            // `paint_transparent`.
+            let needs_oit = mesh_transparency || self.any_plugin_items_submitted(frame);
             if needs_oit {
+                if mesh_transparency {
+                    self.resources.ensure_oit_mesh_pipelines(device);
+                }
+                if self.instancing.use_instancing
+                    && self.instancing.batches.iter().any(|b| b.is_transparent)
+                {
+                    self.resources.ensure_oit_instanced_pipeline(device);
+                    self.resources.ensure_oit_cull_pipelines(device);
+                }
                 let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
                 let [sw, sh] = hdr.scene_size;
                 self.resources.ensure_viewport_oit(device, hdr, sw, sh);

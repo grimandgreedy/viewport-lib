@@ -71,6 +71,7 @@ impl<'r> OwnedPath<'r> {
         frame: &FrameData,
         scene_effects: &SceneEffects<'_>,
     ) -> ScenePreparedToken {
+        self.renderer.direct_paint = false;
         self.renderer
             .prepare_scene(device, queue, frame, scene_effects);
         ScenePreparedToken { _private: () }
@@ -89,6 +90,7 @@ impl<'r> OwnedPath<'r> {
         id: ViewportId,
         frame: &FrameData,
     ) {
+        self.renderer.direct_paint = false;
         self.renderer.prepare_viewport(device, queue, id, frame);
     }
 
@@ -143,6 +145,7 @@ impl<'r> PassPath<'r> {
         frame: &FrameData,
         scene_effects: &SceneEffects<'_>,
     ) -> ScenePreparedToken {
+        self.renderer.direct_paint = true;
         self.renderer
             .prepare_scene(device, queue, frame, scene_effects);
         ScenePreparedToken { _private: () }
@@ -161,6 +164,7 @@ impl<'r> PassPath<'r> {
         id: ViewportId,
         frame: &FrameData,
     ) {
+        self.renderer.direct_paint = true;
         self.renderer.prepare_viewport(device, queue, id, frame);
     }
 

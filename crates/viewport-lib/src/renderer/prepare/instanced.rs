@@ -312,12 +312,19 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        hdr_family: bool,
     ) -> (u32, u32) {
         let mut batches_reuploaded = 0u32;
         let mut batches_skipped = 0u32;
+        // The shared layout and shadow pipelines, then the colour pipelines of
+        // the family this frame is drawn with. The OIT instanced pipeline is
+        // built by the HDR path on the first frame with a transparent batch.
         resources.ensure_instanced_pipelines(device);
-        resources.ensure_hdr_instanced_pipelines(device);
-        resources.ensure_oit_instanced_pipeline(device);
+        if hdr_family {
+            resources.ensure_hdr_instanced_pipelines(device);
+        } else {
+            resources.ensure_ldr_instanced_pipelines(device);
+        }
 
         // Generation-based cache: skip batch rebuild and GPU upload when nothing changed.
         // wireframe_mode removed from cache key : wireframe rendering
@@ -766,6 +773,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        hdr_family: bool,
         sink: &mut crate::renderer::SubmitSink,
     ) {
         if !instancing.gpu_culling_enabled
@@ -784,6 +792,9 @@ impl ViewportRenderer {
             instancing.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
         }
         resources.ensure_cull_instance_pipelines(device);
+        if hdr_family {
+            resources.ensure_hdr_cull_pipelines(device);
+        }
         cull_state.ensure_outputs(device, instance_count, batch_count);
         // Drop cull bind groups whose binding-0 instance storage buffer was
         // rebuilt this frame; `ensure_outputs` already handles a resized vis

@@ -1045,13 +1045,11 @@ impl DeviceResources {
         self.outline.composite_pipeline_hdr = Some(outline_composite_pipeline_hdr);
     }
 
-    /// Build the shared post-process pipelines and their shader modules: tone
-    /// map, bloom, SSAO, contact shadows, FXAA, DoF, SSAA resolve, the OIT and
-    /// HDR mesh sets, the outline composite, LIC, and the depth blit / stamp
-    /// passes. Only the HDR path and the outline composite bind any of these, so
-    /// an LDR frame with no outlines never compiles them. Calls
-    /// `ensure_hdr_infra` first for the layouts they are built against.
-    /// No-op after the first call.
+    /// Build every shared pipeline the HDR path can bind, whatever a frame asks
+    /// for. A frame builds only the groups it uses, through the per-group
+    /// `ensure_*` functions below; this is for a caller that wants the whole
+    /// set at once. Each group is a no-op once built.
+    #[cfg(test)]
     pub(crate) fn ensure_hdr_pipelines(
         &mut self,
         device: &crate::gpu::Device,
@@ -1059,127 +1057,241 @@ impl DeviceResources {
         output_format: crate::gpu::TextureFormat,
     ) {
         self.ensure_hdr_infra(device, queue);
+        self.ensure_tone_map_pipeline(device, output_format);
+        self.exposure.ensure_pipelines(device);
+        self.ensure_bloom_pipelines(device);
+        self.ensure_ssao_pipelines(device);
+        self.ensure_contact_shadow_pipeline(device);
+        self.ensure_fxaa_pipeline(device, output_format);
+        self.ensure_dof_pipeline(device);
+        self.ensure_oit_composite_pipeline(device);
+        self.ensure_oit_mesh_pipelines(device);
+        self.ensure_hdr_mesh_pipelines(device);
+        self.ensure_outline_composite_pipelines(device);
+        self.ensure_ssaa_resolve_pipelines(device);
+        self.ensure_lic_pipelines(device);
+        self.ensure_depth_blit_pipeline(device);
+        self.ensure_foreground_stamp_pipeline(device);
+    }
+
+    /// A full-screen pass over a single bind group: the layout, then the
+    /// pipeline.
+    fn fullscreen_pass_pipeline(
+        device: &crate::gpu::Device,
+        label: &str,
+        shader: &crate::gpu::ShaderModule,
+        bgl: &crate::gpu::BindGroupLayout,
+        format: crate::gpu::TextureFormat,
+    ) -> crate::gpu::RenderPipeline {
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            format!("{label}_layout").as_str(),
+            &[bgl],
+        );
+        crate::resources::builders::build_fullscreen_pipeline(
+            device, label, &layout, shader, format, None,
+        )
+    }
+
+    /// The tone-map composite, which every HDR frame ends with. Needs
+    /// `ensure_hdr_infra`.
+    pub(crate) fn ensure_tone_map_pipeline(
+        &mut self,
+        device: &crate::gpu::Device,
+        output_format: crate::gpu::TextureFormat,
+    ) {
         if self.post.tone_map_pipeline.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
-        // Auto-exposure meters the HDR target, so its compute set belongs here.
-        self.exposure.ensure_pipelines(device);
-
-        // Layouts and samplers the pipelines below are built against; cloned so
-        // the stores at the end of each group do not overlap the borrow.
-        let missing = "ensure_hdr_infra not called";
-        let tone_map_bgl = self.post.tone_map_bgl.clone().expect(missing);
-        let bloom_bgl = self.post.bloom.bgl.clone().expect(missing);
-        let ssao_bgl = self.post.ssao.bgl.clone().expect(missing);
-        let ssao_blur_bgl = self.post.ssao.blur_bgl.clone().expect(missing);
-        let cs_bgl = self.post.contact_shadow.bgl.clone().expect(missing);
-        let fxaa_bgl = self.post.fxaa.bgl.clone().expect(missing);
-        let oit_composite_bgl = self.oit.composite_bgl.clone().expect(missing);
-        let ssaa_resolve_bgl = self.post.ssaa_resolve_bgl.clone().expect(missing);
-        let dof_bgl = self.post.dof.bgl.clone().expect(missing);
-
-        // Fullscreen pass helper: build the single-bgl layout, then the pipeline.
-        let make_fs_pipeline = |label: &str,
-                                shader: crate::gpu::ShaderModule,
-                                bgl: &crate::gpu::BindGroupLayout,
-                                fmt: crate::gpu::TextureFormat|
-         -> crate::gpu::RenderPipeline {
-            let layout = crate::resources::builders::pipeline_layout(
-                device,
-                format!("{label}_layout").as_str(),
-                &[bgl],
-            );
-            crate::resources::builders::build_fullscreen_pipeline(
-                device, label, &layout, &shader, fmt, None,
-            )
-        };
-
-        // Tone map pipeline
-        let tone_map_shader = crate::resources::builders::wgsl_module(
+        let bgl = self
+            .post
+            .tone_map_bgl
+            .clone()
+            .expect("ensure_hdr_infra not called");
+        let shader = crate::resources::builders::wgsl_module(
             device,
             "tone_map_shader",
             crate::resources::builders::wgsl_source!("tone_map"),
         );
-        let tone_map_pipeline = make_fs_pipeline(
+        self.post.tone_map_pipeline = Some(Self::fullscreen_pass_pipeline(
+            device,
             "tone_map_pipeline",
-            tone_map_shader,
-            &tone_map_bgl,
+            &shader,
+            &bgl,
             output_format,
-        );
+        ));
+    }
 
-        // Bloom pipelines
-        let bloom_threshold_shader = crate::resources::builders::wgsl_module(
+    /// Bloom threshold and blur. Needs `ensure_hdr_infra`.
+    pub(crate) fn ensure_bloom_pipelines(&mut self, device: &crate::gpu::Device) {
+        if self.post.bloom.threshold_pipeline.is_some() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let bgl = self
+            .post
+            .bloom
+            .bgl
+            .clone()
+            .expect("ensure_hdr_infra not called");
+        let threshold_shader = crate::resources::builders::wgsl_module(
             device,
             "bloom_threshold_shader",
             crate::resources::builders::wgsl_source!("bloom_threshold"),
         );
-        let bloom_threshold_pipeline = make_fs_pipeline(
-            "bloom_threshold_pipeline",
-            bloom_threshold_shader,
-            &bloom_bgl,
-            crate::gpu::TextureFormat::Rgba16Float,
-        );
-        let bloom_blur_shader = crate::resources::builders::wgsl_module(
+        let blur_shader = crate::resources::builders::wgsl_module(
             device,
             "bloom_blur_shader",
             crate::resources::builders::wgsl_source!("bloom_blur"),
         );
-        let bloom_blur_pipeline = make_fs_pipeline(
-            "bloom_blur_pipeline",
-            bloom_blur_shader,
-            &bloom_bgl,
+        self.post.bloom.threshold_pipeline = Some(Self::fullscreen_pass_pipeline(
+            device,
+            "bloom_threshold_pipeline",
+            &threshold_shader,
+            &bgl,
             crate::gpu::TextureFormat::Rgba16Float,
-        );
+        ));
+        self.post.bloom.blur_pipeline = Some(Self::fullscreen_pass_pipeline(
+            device,
+            "bloom_blur_pipeline",
+            &blur_shader,
+            &bgl,
+            crate::gpu::TextureFormat::Rgba16Float,
+        ));
+    }
 
-        // SSAO pipelines
-        let ssao_shader = crate::resources::builders::wgsl_module(
+    /// SSAO occlusion and blur. Needs `ensure_hdr_infra`.
+    pub(crate) fn ensure_ssao_pipelines(&mut self, device: &crate::gpu::Device) {
+        if self.post.ssao.pipeline.is_some() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let missing = "ensure_hdr_infra not called";
+        let bgl = self.post.ssao.bgl.clone().expect(missing);
+        let blur_bgl = self.post.ssao.blur_bgl.clone().expect(missing);
+        let shader = crate::resources::builders::wgsl_module(
             device,
             "ssao_shader",
             crate::resources::builders::wgsl_source!("ssao"),
         );
-        let ssao_pipeline = make_fs_pipeline(
-            "ssao_pipeline",
-            ssao_shader,
-            &ssao_bgl,
-            crate::gpu::TextureFormat::R8Unorm,
-        );
-        let ssao_blur_shader = crate::resources::builders::wgsl_module(
+        let blur_shader = crate::resources::builders::wgsl_module(
             device,
             "ssao_blur_shader",
             crate::resources::builders::wgsl_source!("ssao_blur"),
         );
-        let ssao_blur_pipeline = make_fs_pipeline(
-            "ssao_blur_pipeline",
-            ssao_blur_shader,
-            &ssao_blur_bgl,
+        self.post.ssao.pipeline = Some(Self::fullscreen_pass_pipeline(
+            device,
+            "ssao_pipeline",
+            &shader,
+            &bgl,
             crate::gpu::TextureFormat::R8Unorm,
-        );
+        ));
+        self.post.ssao.blur_pipeline = Some(Self::fullscreen_pass_pipeline(
+            device,
+            "ssao_blur_pipeline",
+            &blur_shader,
+            &blur_bgl,
+            crate::gpu::TextureFormat::R8Unorm,
+        ));
+    }
 
-        // Contact shadow pipeline
-        let cs_shader = crate::resources::builders::wgsl_module(
+    /// Contact shadows. Needs `ensure_hdr_infra`.
+    pub(crate) fn ensure_contact_shadow_pipeline(&mut self, device: &crate::gpu::Device) {
+        if self.post.contact_shadow.pipeline.is_some() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let bgl = self
+            .post
+            .contact_shadow
+            .bgl
+            .clone()
+            .expect("ensure_hdr_infra not called");
+        let shader = crate::resources::builders::wgsl_module(
             device,
             "contact_shadow_shader",
             crate::resources::builders::wgsl_source!("contact_shadow"),
         );
-        let cs_pipeline = make_fs_pipeline(
+        self.post.contact_shadow.pipeline = Some(Self::fullscreen_pass_pipeline(
+            device,
             "contact_shadow_pipeline",
-            cs_shader,
-            &cs_bgl,
+            &shader,
+            &bgl,
             crate::gpu::TextureFormat::R8Unorm,
-        );
+        ));
+    }
 
-        // FXAA pipeline
-        let fxaa_shader = crate::resources::builders::wgsl_module(
+    /// FXAA. Needs `ensure_hdr_infra`.
+    pub(crate) fn ensure_fxaa_pipeline(
+        &mut self,
+        device: &crate::gpu::Device,
+        output_format: crate::gpu::TextureFormat,
+    ) {
+        if self.post.fxaa.pipeline.is_some() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let bgl = self
+            .post
+            .fxaa
+            .bgl
+            .clone()
+            .expect("ensure_hdr_infra not called");
+        let shader = crate::resources::builders::wgsl_module(
             device,
             "fxaa_shader",
             crate::resources::builders::wgsl_source!("fxaa"),
         );
-        let fxaa_pipeline =
-            make_fs_pipeline("fxaa_pipeline", fxaa_shader, &fxaa_bgl, output_format);
+        self.post.fxaa.pipeline = Some(Self::fullscreen_pass_pipeline(
+            device,
+            "fxaa_pipeline",
+            &shader,
+            &bgl,
+            output_format,
+        ));
+    }
 
-        // OIT composite pipeline
-        let oit_comp_shader = crate::resources::builders::wgsl_module(
+    /// Depth of field. Needs `ensure_hdr_infra`.
+    pub(crate) fn ensure_dof_pipeline(&mut self, device: &crate::gpu::Device) {
+        if self.post.dof.pipeline.is_some() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let bgl = self
+            .post
+            .dof
+            .bgl
+            .clone()
+            .expect("ensure_hdr_infra not called");
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "dof_shader",
+            crate::resources::builders::wgsl_source!("dof"),
+        );
+        self.post.dof.pipeline = Some(Self::fullscreen_pass_pipeline(
+            device,
+            "dof_pipeline",
+            &shader,
+            &bgl,
+            crate::gpu::TextureFormat::Rgba16Float,
+        ));
+    }
+
+    /// The OIT resolve, which composites the accumulation and reveal targets
+    /// over the opaque image. Every frame that runs the OIT pass binds it,
+    /// whoever drew into the pass. Needs `ensure_hdr_infra`.
+    pub(crate) fn ensure_oit_composite_pipeline(&mut self, device: &crate::gpu::Device) {
+        if self.oit.composite_pipeline.is_some() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let bgl = self
+            .oit
+            .composite_bgl
+            .clone()
+            .expect("ensure_hdr_infra not called");
+        let shader = crate::resources::builders::wgsl_module(
             device,
             "oit_composite_shader",
             crate::resources::builders::wgsl_source!("oit_composite"),
@@ -1196,23 +1308,31 @@ impl DeviceResources {
                 operation: crate::gpu::BlendOperation::Add,
             },
         };
-        let oit_comp_layout = crate::resources::builders::pipeline_layout(
+        let layout = crate::resources::builders::pipeline_layout(
             device,
             "oit_composite_pipeline_layout",
-            &[&oit_composite_bgl],
+            &[&bgl],
         );
-        let oit_composite_pipeline = crate::resources::builders::build_fullscreen_pipeline(
+        self.oit.composite_pipeline = Some(crate::resources::builders::build_fullscreen_pipeline(
             device,
             "oit_composite_pipeline",
-            &oit_comp_layout,
-            &oit_comp_shader,
+            &layout,
+            &shader,
             crate::gpu::TextureFormat::Rgba16Float,
             Some(premul_blend),
-        );
+        ));
+    }
 
-        // OIT mesh pipeline. Two color targets (`Rgba16Float` accumulation +
-        // `R8Unorm` reveal) and depth-test-only.
-        let oit_mesh_source = {
+    /// The per-object OIT mesh pipelines: two colour targets (`Rgba16Float`
+    /// accumulation and `R8Unorm` reveal), depth-test only. Composed with the
+    /// registered deformers. The instanced twin is built separately by
+    /// `ensure_oit_instanced_pipeline`, once the instance layout exists.
+    pub(crate) fn ensure_oit_mesh_pipelines(&mut self, device: &crate::gpu::Device) {
+        if self.oit.pipeline.is_some() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let source = {
             let base = if self.deform.enabled {
                 include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl"))
             } else {
@@ -1223,17 +1343,14 @@ impl DeviceResources {
                 &self.deform.registrations,
             )
         };
-        let oit_shader = crate::resources::builders::wgsl_module(
+        let shader = crate::resources::builders::wgsl_module(
             device,
             "mesh_oit_shader",
             crate::resources::builders::builtin_hook_env(
-                crate::resources::builders::strip_debug_vis(
-                    oit_mesh_source,
-                    self.debug_vis_shaders,
-                ),
+                crate::resources::builders::strip_debug_vis(source, self.debug_vis_shaders),
             ),
         );
-        let oit_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
+        let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "oit_pipeline_layout",
             &self.binds.camera_bgl,
@@ -1242,26 +1359,28 @@ impl DeviceResources {
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
-        let oit_pipeline = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-            crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
-                device,
-                &oit_layout,
-                &oit_shader,
-                key.two_sided,
-            )
-        });
+        self.oit.pipeline = Some(crate::renderer::pipeline_key::PipelineVariantSet::build(
+            |key| {
+                crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
+                    device,
+                    &layout,
+                    &shader,
+                    key.two_sided,
+                )
+            },
+        ));
+    }
 
-        // oit_instanced_pipeline is created lazily by ensure_oit_instanced_pipeline()
-        // once instance_bind_group_layout becomes available. Splitting it out avoids the
-        // empty-scene-on-frame-1 trap where this ensure_hdr_pipelines early-returns before
-        // the BGL exists and never re-runs.
-
-        // HDR scene pipelines. Compose the shader with currently registered
-        // deformers so any host or in-crate registration (skinning, wind,
-        // etc.) is picked up the first time HDR is enabled. Without this
-        // the HDR mesh pipeline would use the identity hook bodies even
-        // though the LDR pipeline was rebuilt at registration time.
-        let hdr_mesh_source = {
+    /// The HDR mesh family: opaque (with its discard-free twin), transparent,
+    /// wireframe, and the cap-fill overlay. Composed with the registered
+    /// deformers, so a registration made before the first HDR mesh frame is
+    /// picked up here.
+    pub(crate) fn ensure_hdr_mesh_pipelines(&mut self, device: &crate::gpu::Device) {
+        if self.scene.hdr_opaque.is_some() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let source = {
             let base = if self.deform.enabled {
                 include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"))
             } else {
@@ -1272,30 +1391,23 @@ impl DeviceResources {
                 &self.deform.registrations,
             )
         };
-        // Final composed HDR source, materialized so the discard-free twin can be
-        // stripped from the exact same source the normal module compiles.
-        let hdr_final_src = crate::resources::builders::builtin_hook_env(
-            crate::resources::builders::strip_debug_vis(hdr_mesh_source, self.debug_vis_shaders),
+        // Materialised so the discard-free twin is stripped from the exact
+        // source the discarding module compiles.
+        let final_src = crate::resources::builders::builtin_hook_env(
+            crate::resources::builders::strip_debug_vis(source, self.debug_vis_shaders),
         )
         .into_owned();
-        let hdr_shader = crate::resources::builders::wgsl_module(
-            device,
-            "mesh_shader_hdr",
-            hdr_final_src.clone(),
-        );
+        let shader =
+            crate::resources::builders::wgsl_module(device, "mesh_shader_hdr", final_src.clone());
         // Early-Z twin: identical shading with every `discard;` removed, valid
         // only for draws that would not have discarded (see the per-object gate
         // in hdr_path.rs).
-        let hdr_shader_nodiscard = crate::resources::builders::wgsl_module(
+        let shader_nodiscard = crate::resources::builders::wgsl_module(
             device,
             "mesh_shader_hdr_nodiscard",
-            crate::resources::builders::strip_discards(&hdr_final_src),
+            crate::resources::builders::strip_discards(&final_src),
         );
-        let hdr_depth_stencil = crate::resources::builders::scene_depth_stencil(
-            true,
-            crate::gpu::CompareFunction::Less,
-        );
-        let hdr_pipeline_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
+        let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "hdr_mesh_pipeline_layout",
             &self.binds.camera_bgl,
@@ -1305,59 +1417,57 @@ impl DeviceResources {
                 .then_some(&self.deform.bind_group_layout),
         );
         let hdr = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
-            device,
-            &hdr_pipeline_layout,
-            &hdr_shader,
+            device, &layout, &shader,
         );
+        // Only the two solid pipelines have a discard-free twin: transparency
+        // and wireframe do not benefit from early-Z. `cutout` is not a real
+        // axis here (the shader branches on a per-object uniform instead), so
+        // both its values map to the same pipeline.
+        let (nd_solid, nd_solid_two_sided) =
+            crate::resources::mesh::mesh_pipelines::build_hdr_solid_pipelines(
+                device,
+                &layout,
+                &shader_nodiscard,
+            );
         let hdr_solid = hdr.solid;
         let hdr_solid_two_sided = hdr.solid_two_sided;
-        let hdr_transparent_pipeline = hdr.transparent;
-        let hdr_wireframe_pipeline = hdr.wireframe;
+        self.scene.hdr_opaque = Some(crate::renderer::pipeline_key::PipelineVariantSet::build(
+            |key| {
+                let (solid, solid_two_sided) = if key.no_discard_eligible {
+                    (&nd_solid, &nd_solid_two_sided)
+                } else {
+                    (&hdr_solid, &hdr_solid_two_sided)
+                };
+                if key.two_sided {
+                    solid_two_sided.clone()
+                } else {
+                    solid.clone()
+                }
+            },
+        ));
+        self.scene.hdr_transparent = Some(hdr.transparent);
+        self.scene.hdr_wireframe = Some(hdr.wireframe);
 
-        // Discard-free solid twins for the early-Z fast path: only .solid and
-        // .solid_two_sided are used (transparency and wireframe do not
-        // benefit from early-Z). Folded into one keyed `PipelineVariantSet`
-        // with the discarding twins above; `cutout` is not a real axis here
-        // (the shader branches on a per-object uniform instead), so both its
-        // values map to the same pipeline.
-        let hdr_nd = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
-            device,
-            &hdr_pipeline_layout,
-            &hdr_shader_nodiscard,
-        );
-        let hdr_opaque = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-            let (solid, solid_two_sided) = if key.no_discard_eligible {
-                (&hdr_nd.solid, &hdr_nd.solid_two_sided)
-            } else {
-                (&hdr_solid, &hdr_solid_two_sided)
-            };
-            if key.two_sided {
-                solid_two_sided.clone()
-            } else {
-                solid.clone()
-            }
-        });
-
-        let hdr_overlay_shader = crate::resources::builders::wgsl_module(
+        let overlay_shader = crate::resources::builders::wgsl_module(
             device,
             "overlay_shader_hdr",
             crate::resources::builders::wgsl_source!("overlay"),
         );
-        let hdr_overlay_layout = crate::resources::builders::pipeline_layout(
+        let overlay_layout = crate::resources::builders::pipeline_layout(
             device,
             "hdr_overlay_pipeline_layout",
             &[&self.binds.camera_bgl, &self.guides.overlay_bgl],
         );
-        let hdr_overlay_pipeline = crate::resources::builders::render_pipeline(
+        self.scene.hdr_overlay = Some(crate::resources::builders::render_pipeline(
             device,
             crate::resources::builders::RenderPipelineDesc {
                 label: "hdr_overlay_pipeline",
-                layout: &hdr_overlay_layout,
-                vertex_module: &hdr_overlay_shader,
+                layout: &overlay_layout,
+                vertex_module: &overlay_shader,
                 vertex_entry: "vs_main",
                 vertex_buffers: &[OverlayVertex::buffer_layout()],
                 fragment: Some(crate::gpu::FragmentState {
-                    module: &hdr_overlay_shader,
+                    module: &overlay_shader,
                     entry_point: Some("fs_main"),
                     targets: &[Some(crate::gpu::ColorTargetState {
                         format: crate::gpu::TextureFormat::Rgba16Float,
@@ -1381,280 +1491,221 @@ impl DeviceResources {
                 },
                 cache: None,
             },
-        );
+        ));
+    }
 
-        self.ensure_outline_composite_pipelines(device);
-        // Store everything
-        self.post.tone_map_pipeline = Some(tone_map_pipeline);
-        self.post.bloom.threshold_pipeline = Some(bloom_threshold_pipeline);
-        self.post.bloom.blur_pipeline = Some(bloom_blur_pipeline);
-        self.post.ssao.pipeline = Some(ssao_pipeline);
-        self.post.ssao.blur_pipeline = Some(ssao_blur_pipeline);
-        self.post.contact_shadow.pipeline = Some(cs_pipeline);
-        self.post.fxaa.pipeline = Some(fxaa_pipeline);
-
-        // --- SSAA resolve pipeline ---
-        let ssaa_resolve_shader = crate::resources::builders::wgsl_module(
+    /// The SSAA colour resolve and its depth half, which downsamples the
+    /// supersampled depth into the scene-resolution buffer, taking the nearest
+    /// sample of each block. Needs `ensure_hdr_infra`.
+    pub(crate) fn ensure_ssaa_resolve_pipelines(&mut self, device: &crate::gpu::Device) {
+        if self.post.ssaa_resolve_pipeline.is_some() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let missing = "ensure_hdr_infra not called";
+        let resolve_bgl = self.post.ssaa_resolve_bgl.clone().expect(missing);
+        let shader = crate::resources::builders::wgsl_module(
             device,
             "ssaa_resolve_shader",
             crate::resources::builders::wgsl_source!("ssaa_resolve"),
         );
-        let ssaa_resolve_layout = crate::resources::builders::pipeline_layout(
+        let layout = crate::resources::builders::pipeline_layout(
             device,
             "ssaa_resolve_layout",
-            &[&ssaa_resolve_bgl],
+            &[&resolve_bgl],
         );
-        let ssaa_resolve_pipeline = crate::resources::builders::build_fullscreen_pipeline(
+        self.post.ssaa_resolve_pipeline =
+            Some(crate::resources::builders::build_fullscreen_pipeline(
+                device,
+                "ssaa_resolve_pipeline",
+                &layout,
+                &shader,
+                crate::gpu::TextureFormat::Rgba16Float,
+                None,
+            ));
+
+        let depth_bgl = self.post.ssaa_depth_resolve_bgl.clone().expect(missing);
+        self.post.ssaa_depth_resolve_pipeline = Some(Self::depth_only_fullscreen_pipeline(
             device,
-            "ssaa_resolve_pipeline",
-            &ssaa_resolve_layout,
-            &ssaa_resolve_shader,
-            crate::gpu::TextureFormat::Rgba16Float,
-            None,
-        );
-        self.post.ssaa_resolve_pipeline = Some(ssaa_resolve_pipeline);
+            "ssaa_depth_resolve",
+            crate::resources::builders::wgsl_source!("ssaa_depth_resolve"),
+            &depth_bgl,
+        ));
+    }
 
-        // DoF pipeline
-        let dof_shader = crate::resources::builders::wgsl_module(
+    /// A full-screen pass that writes depth and no colour, over one bind group.
+    /// `name` prefixes the shader, layout and pipeline labels.
+    fn depth_only_fullscreen_pipeline(
+        device: &crate::gpu::Device,
+        name: &str,
+        source: &'static str,
+        bgl: &crate::gpu::BindGroupLayout,
+    ) -> crate::gpu::RenderPipeline {
+        let shader = crate::resources::builders::wgsl_module(
             device,
-            "dof_shader",
-            crate::resources::builders::wgsl_source!("dof"),
+            format!("{name}_shader").as_str(),
+            source,
         );
-        let dof_pipeline = make_fs_pipeline(
-            "dof_pipeline",
-            dof_shader,
-            &dof_bgl,
-            crate::gpu::TextureFormat::Rgba16Float,
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            format!("{name}_layout").as_str(),
+            &[bgl],
         );
-        self.post.dof.pipeline = Some(dof_pipeline);
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: format!("{name}_pipeline").as_str(),
+                layout: &layout,
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[],
+                fragment: Some(crate::gpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[],
+                    compilation_options: Default::default(),
+                }),
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    crate::gpu::CompareFunction::Always,
+                )),
+                multisample: crate::gpu::MultisampleState::default(),
+                cache: None,
+            },
+        )
+    }
 
-        self.oit.pipeline = Some(oit_pipeline);
-        self.oit.composite_pipeline = Some(oit_composite_pipeline);
-        self.scene.hdr_opaque = Some(hdr_opaque);
-        self.scene.hdr_transparent = Some(hdr_transparent_pipeline);
-        self.scene.hdr_wireframe = Some(hdr_wireframe_pipeline);
-        self.scene.hdr_overlay = Some(hdr_overlay_pipeline);
+    /// The depth upscale for the render-scale path, which takes a single
+    /// sub-sample. Needs `ensure_hdr_infra`.
+    pub(crate) fn ensure_depth_blit_pipeline(&mut self, device: &crate::gpu::Device) {
+        if self.post.depth_blit_pipeline.is_some() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let bgl = self
+            .post
+            .depth_blit_bgl
+            .clone()
+            .expect("ensure_hdr_infra not called");
+        self.post.depth_blit_pipeline = Some(Self::depth_only_fullscreen_pipeline(
+            device,
+            "depth_blit",
+            crate::resources::builders::wgsl_source!("depth_blit"),
+            &bgl,
+        ));
+    }
 
-        let _ = hdr_depth_stencil; // used in make_hdr_mesh closure above
+    /// The foreground depth stamp: writes near depth into the output depth
+    /// buffer where the foreground pass drew, so post-tone-map passes are
+    /// occluded by foreground items. Needs `ensure_hdr_infra`.
+    pub(crate) fn ensure_foreground_stamp_pipeline(&mut self, device: &crate::gpu::Device) {
+        if self.post.foreground_stamp_pipeline.is_some() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let bgl = self
+            .post
+            .foreground_stamp_bgl
+            .clone()
+            .expect("ensure_hdr_infra not called");
+        self.post.foreground_stamp_pipeline = Some(Self::depth_only_fullscreen_pipeline(
+            device,
+            "foreground_stamp",
+            crate::resources::builders::wgsl_source!("foreground_depth_stamp"),
+            &bgl,
+        ));
+    }
 
-        // LIC surface pipeline: renders mesh into Rgba8Unorm lic_vector_texture.
-        // Group 0 = camera_bind_group_layout (already on self), group 1 = lic_surface_bgl.
+    /// The two surface LIC pipelines: the mesh pass into the `Rgba8Unorm`
+    /// vector target and the full-screen advect into the `R8Unorm` output.
+    /// Needs `ensure_hdr_infra` for the advect layout.
+    pub(crate) fn ensure_lic_pipelines(&mut self, device: &crate::gpu::Device) {
+        self.ensure_lic_surface_bgl(device);
         if self.lic.surface_pipeline.is_none() {
-            if let Some(surface_bgl) = self.lic.surface_bgl.as_ref() {
-                let shader = crate::resources::builders::wgsl_module(
-                    device,
-                    "lic_surface_shader",
-                    crate::resources::builders::wgsl_source!("lic_surface"),
-                );
-                let layout = crate::resources::builders::pipeline_layout(
-                    device,
-                    "lic_surface_layout",
-                    &[&self.binds.camera_bgl, surface_bgl],
-                );
-                // Vertex buffer 0: full Vertex stride, position at location 0.
-                let lic_vertex_layout = crate::gpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as crate::gpu::BufferAddress,
-                    step_mode: crate::gpu::VertexStepMode::Vertex,
-                    attributes: &[crate::gpu::VertexAttribute {
-                        offset: 0,
-                        shader_location: 0,
-                        format: crate::gpu::VertexFormat::Float32x3,
-                    }],
-                };
-                // Vertex buffer 1: tightly-packed [f32;3] flow vectors at location 1.
-                let lic_flow_layout = crate::gpu::VertexBufferLayout {
-                    array_stride: 12,
-                    step_mode: crate::gpu::VertexStepMode::Vertex,
-                    attributes: &[crate::gpu::VertexAttribute {
-                        offset: 0,
-                        shader_location: 1,
-                        format: crate::gpu::VertexFormat::Float32x3,
-                    }],
-                };
-                let pipeline = crate::resources::builders::render_pipeline(
-                    device,
-                    crate::resources::builders::RenderPipelineDesc {
-                        label: "lic_surface_pipeline",
-                        layout: &layout,
-                        vertex_module: &shader,
-                        vertex_entry: "vs_main",
-                        vertex_buffers: &[lic_vertex_layout, lic_flow_layout],
-                        fragment: Some(crate::gpu::FragmentState {
-                            module: &shader,
-                            entry_point: Some("fs_main"),
-                            targets: &[Some(crate::gpu::ColorTargetState {
-                                format: crate::gpu::TextureFormat::Rgba8Unorm,
-                                blend: None,
-                                write_mask: crate::gpu::ColorWrites::ALL,
-                            })],
-                            compilation_options: Default::default(),
-                        }),
-                        primitive: crate::gpu::PrimitiveState {
-                            topology: crate::gpu::PrimitiveTopology::TriangleList,
-                            cull_mode: None,
-                            ..Default::default()
-                        },
-                        depth_stencil: None,
-                        multisample: crate::gpu::MultisampleState::default(),
-                        cache: None,
+            self.note_pipeline_built(concat!(file!(), ":", line!()));
+            let surface_bgl = self.lic.surface_bgl.clone().expect("just ensured");
+            let shader = crate::resources::builders::wgsl_module(
+                device,
+                "lic_surface_shader",
+                crate::resources::builders::wgsl_source!("lic_surface"),
+            );
+            // Group 0 is the camera, group 1 the LIC object uniform.
+            let layout = crate::resources::builders::pipeline_layout(
+                device,
+                "lic_surface_layout",
+                &[&self.binds.camera_bgl, &surface_bgl],
+            );
+            // Vertex buffer 0: full Vertex stride, position at location 0.
+            let lic_vertex_layout = crate::gpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<Vertex>() as crate::gpu::BufferAddress,
+                step_mode: crate::gpu::VertexStepMode::Vertex,
+                attributes: &[crate::gpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: crate::gpu::VertexFormat::Float32x3,
+                }],
+            };
+            // Vertex buffer 1: tightly-packed [f32;3] flow vectors at location 1.
+            let lic_flow_layout = crate::gpu::VertexBufferLayout {
+                array_stride: 12,
+                step_mode: crate::gpu::VertexStepMode::Vertex,
+                attributes: &[crate::gpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 1,
+                    format: crate::gpu::VertexFormat::Float32x3,
+                }],
+            };
+            self.lic.surface_pipeline = Some(crate::resources::builders::render_pipeline(
+                device,
+                crate::resources::builders::RenderPipelineDesc {
+                    label: "lic_surface_pipeline",
+                    layout: &layout,
+                    vertex_module: &shader,
+                    vertex_entry: "vs_main",
+                    vertex_buffers: &[lic_vertex_layout, lic_flow_layout],
+                    fragment: Some(crate::gpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::Rgba8Unorm,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: crate::gpu::PrimitiveState {
+                        topology: crate::gpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
                     },
-                );
-                self.lic.surface_pipeline = Some(pipeline);
-            }
+                    depth_stencil: None,
+                    multisample: crate::gpu::MultisampleState::default(),
+                    cache: None,
+                },
+            ));
         }
-
-        // LIC advect pipeline: fullscreen render into R8Unorm lic_output_texture.
         if self.lic.advect_pipeline.is_none() {
-            if let Some(advect_bgl) = &self.lic.advect_bgl {
-                let shader = crate::resources::builders::wgsl_module(
-                    device,
-                    "lic_advect_shader",
-                    crate::resources::builders::wgsl_source!("lic_advect"),
-                );
-                let layout = crate::resources::builders::pipeline_layout(
-                    device,
-                    "lic_advect_layout",
-                    &[advect_bgl],
-                );
-                let pipeline = crate::resources::builders::build_fullscreen_pipeline(
-                    device,
-                    "lic_advect_pipeline",
-                    &layout,
-                    &shader,
-                    crate::gpu::TextureFormat::R8Unorm,
-                    None,
-                );
-                self.lic.advect_pipeline = Some(pipeline);
-            }
-        }
-
-        // --- Depth blit pipeline ---
-        if self.post.depth_blit_pipeline.is_none() {
-            let bgl = self.post.depth_blit_bgl.clone().expect(missing);
+            let advect_bgl = self
+                .lic
+                .advect_bgl
+                .clone()
+                .expect("ensure_hdr_infra not called");
             let shader = crate::resources::builders::wgsl_module(
                 device,
-                "depth_blit_shader",
-                crate::resources::builders::wgsl_source!("depth_blit"),
+                "lic_advect_shader",
+                crate::resources::builders::wgsl_source!("lic_advect"),
             );
-            let layout =
-                crate::resources::builders::pipeline_layout(device, "depth_blit_layout", &[&bgl]);
-            let pipeline = crate::resources::builders::render_pipeline(
+            self.lic.advect_pipeline = Some(Self::fullscreen_pass_pipeline(
                 device,
-                crate::resources::builders::RenderPipelineDesc {
-                    label: "depth_blit_pipeline",
-                    layout: &layout,
-                    vertex_module: &shader,
-                    vertex_entry: "vs_main",
-                    vertex_buffers: &[],
-                    fragment: Some(crate::gpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[],
-                        compilation_options: Default::default(),
-                    }),
-                    primitive: crate::gpu::PrimitiveState {
-                        topology: crate::gpu::PrimitiveTopology::TriangleList,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                        true,
-                        crate::gpu::CompareFunction::Always,
-                    )),
-                    multisample: crate::gpu::MultisampleState::default(),
-                    cache: None,
-                },
-            );
-            self.post.depth_blit_pipeline = Some(pipeline);
-        }
-
-        // --- SSAA depth resolve pipeline ---
-        // The depth half of the SSAA resolve: downsamples the supersampled
-        // depth into the scene-resolution buffer, taking the nearest sample of
-        // each block. Separate from `depth_blit` above, which upscales for the
-        // render-scale path and takes a single sub-sample.
-        if self.post.ssaa_depth_resolve_pipeline.is_none() {
-            let bgl = self.post.ssaa_depth_resolve_bgl.clone().expect(missing);
-            let shader = crate::resources::builders::wgsl_module(
-                device,
-                "ssaa_depth_resolve_shader",
-                crate::resources::builders::wgsl_source!("ssaa_depth_resolve"),
-            );
-            let layout = crate::resources::builders::pipeline_layout(
-                device,
-                "ssaa_depth_resolve_layout",
-                &[&bgl],
-            );
-            let pipeline = crate::resources::builders::render_pipeline(
-                device,
-                crate::resources::builders::RenderPipelineDesc {
-                    label: "ssaa_depth_resolve_pipeline",
-                    layout: &layout,
-                    vertex_module: &shader,
-                    vertex_entry: "vs_main",
-                    vertex_buffers: &[],
-                    fragment: Some(crate::gpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[],
-                        compilation_options: Default::default(),
-                    }),
-                    primitive: crate::gpu::PrimitiveState {
-                        topology: crate::gpu::PrimitiveTopology::TriangleList,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                        true,
-                        crate::gpu::CompareFunction::Always,
-                    )),
-                    multisample: crate::gpu::MultisampleState::default(),
-                    cache: None,
-                },
-            );
-            self.post.ssaa_depth_resolve_pipeline = Some(pipeline);
-        }
-
-        // --- Foreground depth stamp pipeline ---
-        // Writes near depth into the output depth buffer where the foreground
-        // pass drew, so post-tone-map passes are occluded by foreground items.
-        if self.post.foreground_stamp_pipeline.is_none() {
-            let bgl = self.post.foreground_stamp_bgl.clone().expect(missing);
-            let shader = crate::resources::builders::wgsl_module(
-                device,
-                "foreground_stamp_shader",
-                crate::resources::builders::wgsl_source!("foreground_depth_stamp"),
-            );
-            let layout = crate::resources::builders::pipeline_layout(
-                device,
-                "foreground_stamp_layout",
-                &[&bgl],
-            );
-            let pipeline = crate::resources::builders::render_pipeline(
-                device,
-                crate::resources::builders::RenderPipelineDesc {
-                    label: "foreground_stamp_pipeline",
-                    layout: &layout,
-                    vertex_module: &shader,
-                    vertex_entry: "vs_main",
-                    vertex_buffers: &[],
-                    fragment: Some(crate::gpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[],
-                        compilation_options: Default::default(),
-                    }),
-                    primitive: crate::gpu::PrimitiveState {
-                        topology: crate::gpu::PrimitiveTopology::TriangleList,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                        true,
-                        crate::gpu::CompareFunction::Always,
-                    )),
-                    multisample: crate::gpu::MultisampleState::default(),
-                    cache: None,
-                },
-            );
-            self.post.foreground_stamp_pipeline = Some(pipeline);
+                "lic_advect_pipeline",
+                &shader,
+                &advect_bgl,
+                crate::gpu::TextureFormat::R8Unorm,
+            ));
         }
     }
 
