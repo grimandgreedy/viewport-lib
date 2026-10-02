@@ -117,6 +117,11 @@ fn expected(name: &str) -> Option<Expected> {
         // Three spheres on different layers under two decals that each target
         // one. The spheres share a mesh and a material, so they batch.
         "decal_layers" => e(3, 3, 1, 1, 0, 2880),
+        // Two hex blocks drawn through their boundary meshes.
+        "volume_mesh_node_scalars" => e(2, 2, 2, 0, 2, 216),
+        // One clipped block drawn as a surface; the transparent one is not a
+        // mesh draw.
+        "volume_mesh_node_scalars_cut" => e(1, 1, 1, 0, 1, 127),
         // Tube, streamtube and ribbon under one decal. No mesh geometry: the
         // curve types are the whole scene.
         "decal_on_curves" => e(0, 0, 0, 0, 0, 0),

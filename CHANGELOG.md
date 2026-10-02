@@ -4,6 +4,10 @@
 
 ### Added
 
+- **`VolumeMeshData::node_scalars`: values on a volume mesh's vertices** - a named `Vec<f32>` with one entry per position is carried onto the boundary surface as a per-vertex attribute, so it interpolates across each face where a cell scalar is flat. Select it with `AttributeKind::Vertex`, and update it in place with `replace_attribute` on the item's `boundary_mesh_id`. A clipped extraction interpolates it onto the cut faces; the transparent mode gives each tet the mean of its corners.
+- **`VolumeMeshData::from_grid_cells`: a hex mesh from occupied cells of a regular grid** - takes an origin, a per-axis cell size and a list of `[i, j, k]` cells, and returns `GridCells`: the volume mesh, with neighbouring cells sharing corners so only the outer shell is extracted, and the grid node under each vertex. `GridCells::node_values` picks per-vertex values out of a dense node array.
+- **`DeviceResources::replace_volume_mesh`** - re-extracts a volume mesh's boundary into its existing mesh slot and returns the new face-to-cell map, for a volume whose cells changed.
+- **Two volume mesh scenes in the testkit catalogue** - `volume_mesh_node_scalars` (a hex block coloured by a node value beside one coloured by a cell value) and `volume_mesh_node_scalars_cut` (a node value on a clipped section and in the transparent mode). The catalogue had no volume mesh scene before.
 - **`SHARED_BRDF_WGSL` and `SHARED_OUTLINE_EDGE_WGSL`** - the direct Cook-Torrance BRDF the lit mesh shaders use, and the fullscreen edge trace behind the selection outline (with its `OutlineEdgeUniform`), published for item types that light a surface themselves or draw a selection ring of their own.
 
 - **Every depth-writing item type can decline a decal** - point clouds, vector and tensor fields, tubes, streamtubes, ribbons, opaque sprites, volume surface slices, GPU implicit surfaces and GPU marching-cubes surfaces now stamp the surface mask, so `visibility_mask` decides which decals land on them as it does for meshes. Before, only a mesh could refuse one.
@@ -21,6 +25,8 @@
 - **`build_log` can be switched on at runtime** - `resources::build_log::enable` and `disable` turn the pipeline, shader module and render target record on without `VPL_BUILD_LOG`, which a web build cannot set because `std::env::var` always reports a variable missing under `wasm32`. `drain` and `drain_textures` return what was recorded since the last call, and the phase marks on the `viewport_lib::init` tracing target now cover the whole of `ViewportRenderer::new` (internal item plugin registration, the fallback and colourmap textures, the geometry slab, the glyph atlas and the polyline resources) rather than the pipeline phases alone.
 
 ### Changed
+
+- **`SparseVolumeGridData` is removed** - with `upload_sparse_volume_grid_data`, `replace_sparse_volume_grid_data`, `begin_upload_sparse_volume_grid_data` and `upload_result_sparse_volume_grid`. A grid of occupied cells is a hex mesh: build it with `VolumeMeshData::from_grid_cells` and upload it with `upload_volume_mesh`, which returns a `VolumeMeshItem` (its `boundary_mesh_id` is the surface the old call returned). Node scalars now interpolate across each face where they used to be averaged to one value per face.
 
 - **Decals moved to `viewport-lib-item-types`** - `DecalItem`, `DecalBlendMode`, `DecalProjection`, `CylindricalFacing` and `DecalAnimation` are imported from `viewport_lib_item_types` now, and the type registers with that crate's `install`. A renderer that does not call `install` (or register `DecalPlugin` itself) draws no decals.
 

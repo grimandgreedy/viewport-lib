@@ -2939,27 +2939,6 @@ impl ViewportRenderer {
         self.resources.upload_result_clipped_volume_mesh(id)
     }
 
-    /// Start an asynchronous sparse voxel grid upload. See
-    /// [`DeviceResources::begin_upload_sparse_volume_grid_data`].
-    pub fn begin_upload_sparse_volume_grid_data(
-        &mut self,
-        device: &crate::gpu::Device,
-        data: crate::resources::SparseVolumeGridData,
-    ) -> crate::resources::JobId {
-        self.resources
-            .begin_upload_sparse_volume_grid_data(device, data)
-    }
-
-    /// Take the [`MeshId`](crate::resources::mesh::mesh_store::MeshId) produced by a completed
-    /// [`begin_upload_sparse_volume_grid_data`](Self::begin_upload_sparse_volume_grid_data)
-    /// job.
-    pub fn upload_result_sparse_volume_grid(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
-        self.resources.upload_result_sparse_volume_grid(id)
-    }
-
     /// Start an asynchronous overlay texture upload. See
     /// [`DeviceResources::begin_upload_overlay_texture`].
     pub fn begin_upload_overlay_texture(

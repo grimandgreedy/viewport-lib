@@ -173,6 +173,16 @@ pub fn scenes() -> Vec<NamedScene> {
             build: build_decal_layers,
         },
         NamedScene {
+            name: "volume_mesh_node_scalars",
+            cameras: standard_cameras(Vec3::ZERO, 9.0),
+            build: build_volume_mesh_node_scalars,
+        },
+        NamedScene {
+            name: "volume_mesh_node_scalars_cut",
+            cameras: standard_cameras(Vec3::new(-1.6, -1.35, 0.0), 11.0),
+            build: build_volume_mesh_node_scalars_cut,
+        },
+        NamedScene {
             name: "decal_on_curves",
             cameras: standard_cameras(Vec3::ZERO, 8.0),
             build: build_decal_on_curves,
@@ -1551,6 +1561,121 @@ fn build_decal_layers(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     BuiltScene {
         items: vec![left, middle, right],
         decals: vec![decal(red, 0b01), decal(blue, 0b10)],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+fn build_volume_mesh_node_scalars(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // The same stepped block of hex cells twice. The left one is coloured by
+    // a value on its nodes, which varies across each face; the right one by a
+    // value on its cells, which is flat per face.
+    let mut cells = Vec::new();
+    for k in 0..3u32 {
+        for j in 0..3u32 {
+            for i in 0..3u32 {
+                // Leave out one upper corner so the surface has a step.
+                if !(i == 2 && j == 0 && k == 2) {
+                    cells.push([i, j, k]);
+                }
+            }
+        }
+    }
+    let mut grid = viewport_lib::VolumeMeshData::from_grid_cells([-1.5; 3], [1.0; 3], &cells);
+    let node_field: Vec<f32> = grid
+        .data
+        .positions
+        .iter()
+        .map(|p| Vec3::from(*p).length())
+        .collect();
+    let cell_field: Vec<f32> = cells
+        .iter()
+        .map(|c| (Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32) - Vec3::ONE).length())
+        .collect();
+    grid.data.node_scalars.insert("node".into(), node_field);
+    grid.data.cell_scalars.insert("cell".into(), cell_field);
+
+    let block = |ctx: &mut BuildCtx<'_>, x: f32, name: &str, kind| {
+        let mut item = ctx
+            .renderer
+            .resources_mut()
+            .upload_volume_mesh(ctx.device, &grid.data)
+            .expect("volume mesh upload");
+        item.model = Mat4::from_translation(Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        item.active_attribute = Some(viewport_lib::AttributeRef {
+            name: name.to_string(),
+            kind,
+        });
+        item.colourmap_id = Some(ColourmapId(0));
+        item
+    };
+    let nodal = block(ctx, -2.2, "node", viewport_lib::AttributeKind::Vertex);
+    let per_cell = block(ctx, 2.2, "cell", viewport_lib::AttributeKind::Face);
+
+    BuiltScene {
+        volume_meshes: vec![nodal, per_cell],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+fn build_volume_mesh_node_scalars_cut(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // A block of hex cells carrying a value on its nodes, shown the two ways
+    // that have to derive it. On the left the block is cut by a plane, so the
+    // section faces take values interpolated onto the cut. On the right it is
+    // drawn as a transparent volume, where each tet takes the mean of its
+    // corners.
+    let mut cells = Vec::new();
+    for k in 0..3u32 {
+        for j in 0..3u32 {
+            for i in 0..3u32 {
+                cells.push([i, j, k]);
+            }
+        }
+    }
+    let mut grid = viewport_lib::VolumeMeshData::from_grid_cells([-1.5; 3], [1.0; 3], &cells);
+    let node_field: Vec<f32> = grid
+        .data
+        .positions
+        .iter()
+        .map(|p| Vec3::from(*p).length())
+        .collect();
+    grid.data.node_scalars.insert("node".into(), node_field);
+
+    // Cut away the corner nearest the iso camera, on a plane that passes
+    // through the middle of cells.
+    let normal = Vec3::new(-0.5, 0.7, -0.6).normalize();
+    let mut cut = ctx
+        .renderer
+        .resources_mut()
+        .upload_clipped_volume_mesh(
+            ctx.device,
+            &grid.data,
+            &[[normal.x, normal.y, normal.z, 0.3]],
+        )
+        .expect("clipped volume mesh upload");
+    cut.model = Mat4::from_translation(Vec3::new(-3.2, -2.7, 0.0)).to_cols_array_2d();
+    cut.active_attribute = Some(viewport_lib::AttributeRef {
+        name: "node".to_string(),
+        kind: viewport_lib::AttributeKind::Vertex,
+    });
+    cut.colourmap_id = Some(ColourmapId(0));
+    // Section faces point into the kept side, so draw both sides.
+    cut.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+
+    let mut volume = ctx
+        .renderer
+        .resources_mut()
+        .upload_volume_mesh_with_transparency(ctx.device, grid.data.clone(), "node")
+        .expect("transparent volume mesh upload");
+    // Left at the origin: the transparent draw does not apply `model`.
+    volume.colourmap_id = Some(ColourmapId(0));
+    let mut transparency = viewport_lib::VolumeTransparency::default();
+    transparency.density = 0.8;
+    volume.transparency = Some(transparency);
+
+    BuiltScene {
+        volume_meshes: vec![cut, volume],
         lighting: rigs::from_above(),
         ..Default::default()
     }
