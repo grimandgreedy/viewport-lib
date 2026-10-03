@@ -139,6 +139,8 @@ fn main() {
 
     // Per-pipeline attribution of what `new` just built (VPL_BUILD_LOG=1).
     let startup_builds = vpl::resources::build_log::drain();
+    // And every buffer and texture it allocated for itself.
+    let startup_allocs = vpl::resources::build_log::drain_allocations();
 
     // What a consumer that installs the built-in item types pays on top. The
     // registration itself is cheap; what it adds is pipelines built on the
@@ -150,6 +152,9 @@ fn main() {
         viewport_lib_item_types::install(&mut renderer, &device);
         install_total = t.elapsed().as_secs_f32() * 1000.0;
     }
+    // Drained here so a type that builds at registration is not counted
+    // against the first frame.
+    let install_builds = vpl::resources::build_log::drain();
 
     println!(
         "adapter: {:?} / {} ({:?})",
@@ -180,6 +185,16 @@ fn main() {
         "  total to usable renderer  {:8.2} ms",
         device_ms + new_ms + install_total
     );
+    if !install_builds.is_empty() {
+        let total: f32 = install_builds.iter().map(|(_, ms)| ms).sum();
+        println!(
+            "  {} pipelines/modules built during install(), {total:.2} ms of the {install_total:.2} ms:",
+            install_builds.len()
+        );
+        for (label, ms) in &install_builds {
+            println!("    {label:<48} {ms:7.3} ms");
+        }
+    }
     if !startup_builds.is_empty() {
         let total: f32 = startup_builds.iter().map(|(_, ms)| ms).sum();
         println!(
@@ -219,6 +234,22 @@ fn main() {
             "    of which {n} are scene-geometry pipelines an overlay-only frame never binds: \
              {wasted:.2} ms"
         );
+    }
+    if !startup_allocs.is_empty() {
+        let total: u64 = startup_allocs.iter().map(|(_, b)| b).sum();
+        println!(
+            "  {} buffers/textures allocated during new(), {:.2} MiB:",
+            startup_allocs.len(),
+            total as f64 / (1024.0 * 1024.0)
+        );
+        let mut sorted = startup_allocs.clone();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        for (label, bytes) in sorted.iter().take(12) {
+            println!(
+                "    {label:<48} {:9.3} MiB",
+                *bytes as f64 / (1024.0 * 1024.0)
+            );
+        }
     }
 
     // --------------------------------------------------------------------
@@ -319,6 +350,20 @@ fn main() {
             );
         }
         if i < 6 {
+            let allocs = vpl::resources::build_log::drain_allocations();
+            let targets = vpl::resources::build_log::drain_textures();
+            if !allocs.is_empty() || !targets.is_empty() {
+                let a: u64 = allocs.iter().map(|(_, b)| b).sum();
+                let t: u64 = targets.iter().map(|(_, b)| b).sum();
+                println!(
+                    "      frame {i} allocated {} buffers/textures ({:.2} MiB) and {} render \
+                     targets ({:.2} MiB)",
+                    allocs.len(),
+                    a as f64 / (1024.0 * 1024.0),
+                    targets.len(),
+                    t as f64 / (1024.0 * 1024.0)
+                );
+            }
             let builds = vpl::resources::build_log::drain();
             if !builds.is_empty() {
                 let total: f32 = builds.iter().map(|(_, ms)| ms).sum();
@@ -442,7 +487,7 @@ fn main() {
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
         item.material = vpl::Material::from_colour([0.8, 0.85, 0.9]);
         let mut shadow_frame = FrameData::default();
-        shadow_frame.camera.render_camera = frame.camera.render_camera;
+        shadow_frame.camera.render_camera = frame.camera.render_camera.clone();
         shadow_frame.camera.viewport_size = frame.camera.viewport_size;
         shadow_frame.scene = vpl::SceneFrame::from_surface_items(vec![item]);
         shadow_frame.scene.generation = 99;
@@ -460,6 +505,60 @@ fn main() {
             mb(renderer.shadow_allocation_bytes()),
             s.shadow_draw_calls
         );
+    }
+
+    // The same breakdown for a frame with one mesh and no lights, which is what
+    // the lighting and shadow prepare cost when there is nothing for them to do.
+    {
+        let cube = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &vpl::primitives::cube(1.0))
+            .expect("upload cube");
+        let mut item = vpl::SceneRenderItem::default();
+        item.mesh_id = cube;
+        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.material = vpl::Material::from_colour([0.8, 0.85, 0.9]);
+        let mut mesh_frame = FrameData::default();
+        mesh_frame.camera.render_camera = frame.camera.render_camera.clone();
+        mesh_frame.camera.viewport_size = frame.camera.viewport_size;
+        mesh_frame.effects.display.mode = frame.effects.display.mode;
+        mesh_frame.effects.lighting.lights.clear();
+        mesh_frame.effects.lighting.shadows.enabled = false;
+        mesh_frame.scene = vpl::SceneFrame::from_surface_items(vec![item]);
+        mesh_frame.scene.generation = 100;
+        const MESH_FRAMES: usize = 120;
+        let mut sums = [0.0f64; 8];
+        let mut counted = 0.0f64;
+        for i in 0..MESH_FRAMES {
+            let cmd = renderer.owned().render(&device, &queue, &view, &mesh_frame);
+            queue.submit(std::iter::once(cmd));
+            let _ = device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(5)),
+            });
+            if i < MESH_FRAMES / 4 {
+                continue;
+            }
+            let b = renderer.last_frame_stats().prepare_breakdown;
+            for (slot, v) in sums.iter_mut().zip([
+                b.plugin_ms,
+                b.plugin_cull_ms,
+                b.lighting_ms,
+                b.uniforms_ms,
+                b.instancing_ms,
+                b.geometry_ms,
+                b.shadow_ms,
+                b.viewport_ms,
+            ]) {
+                *slot += v as f64;
+            }
+            counted += 1.0;
+        }
+        println!();
+        println!("one mesh, no lights, shadows off: prepare breakdown, mean ms per frame:");
+        for (name, sum) in names.iter().zip(sums.iter()) {
+            println!("    {name:<14} {:7.4}", sum / counted);
+        }
     }
 
     let res = renderer.resident_bytes();

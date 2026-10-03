@@ -15,12 +15,11 @@ pub(crate) struct ToneMapUniform {
     pub(crate) background_colour: [f32; 4],
     pub(crate) near_plane: f32,
     pub(crate) far_plane: f32,
-    pub(crate) lic_enabled: u32,
-    /// Spare: per-item LIC strength is baked into the advect output, so the
-    /// composite no longer carries a global strength.
-    pub(crate) _pad_lic: f32,
+    /// Two spare lanes, kept so the fields after them hold their offsets.
+    pub(crate) _spare0: u32,
+    pub(crate) _spare1: f32,
     /// Non-zero when the foreground pass ran this frame. Gates the
-    /// foreground-coverage test that skips SSAO/contact-shadow/EDL/LIC on
+    /// foreground-coverage test that skips SSAO/contact-shadow/EDL on
     /// pixels covered by foreground geometry.
     pub(crate) foreground_enabled: u32,
     /// Vignette darkening strength at full falloff (0 = off).

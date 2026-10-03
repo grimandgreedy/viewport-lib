@@ -120,6 +120,79 @@ pub(crate) struct HdrMeshPipelines {
     pub wireframe: crate::gpu::RenderPipeline,
 }
 
+/// One HDR `mesh.wgsl` pipeline, drawing into the Rgba16Float intermediate.
+fn hdr_mesh_pipeline(
+    device: &crate::gpu::Device,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+    label: &str,
+    cull: Option<crate::gpu::Face>,
+    blend: Option<crate::gpu::BlendState>,
+    topo: crate::gpu::PrimitiveTopology,
+    depth_write: bool,
+) -> crate::gpu::RenderPipeline {
+    crate::resources::builders::render_pipeline(
+        device,
+        crate::resources::builders::RenderPipelineDesc {
+            label,
+            layout,
+            vertex_module: shader,
+            vertex_entry: "vs_main",
+            vertex_buffers: &[Vertex::buffer_layout()],
+            fragment: Some(crate::gpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(crate::gpu::ColorTargetState {
+                    format: crate::gpu::TextureFormat::Rgba16Float,
+                    blend,
+                    write_mask: crate::gpu::ColorWrites::ALL,
+                })],
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: crate::gpu::PrimitiveState {
+                topology: topo,
+                cull_mode: cull,
+                ..Default::default()
+            },
+            depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                depth_write,
+                crate::gpu::CompareFunction::Less,
+            )),
+            multisample: crate::gpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            cache: None,
+        },
+    )
+}
+
+/// The two solid HDR pipelines alone, back-face culled and two-sided. The
+/// discard-free twin of the opaque set needs these and not the transparent or
+/// wireframe ones.
+pub(crate) fn build_hdr_solid_pipelines(
+    device: &crate::gpu::Device,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+) -> (crate::gpu::RenderPipeline, crate::gpu::RenderPipeline) {
+    let make = |label: &str, cull: Option<crate::gpu::Face>| {
+        hdr_mesh_pipeline(
+            device,
+            layout,
+            shader,
+            label,
+            cull,
+            None,
+            crate::gpu::PrimitiveTopology::TriangleList,
+            true,
+        )
+    };
+    (
+        make("hdr_solid_pipeline", Some(crate::gpu::Face::Back)),
+        make("hdr_solid_two_sided_pipeline", None),
+    )
+}
+
 pub(crate) fn build_hdr_mesh_pipelines(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
@@ -130,39 +203,15 @@ pub(crate) fn build_hdr_mesh_pipelines(
                 blend: Option<crate::gpu::BlendState>,
                 topo: crate::gpu::PrimitiveTopology,
                 depth_write: bool| {
-        crate::resources::builders::render_pipeline(
+        hdr_mesh_pipeline(
             device,
-            crate::resources::builders::RenderPipelineDesc {
-                label,
-                layout,
-                vertex_module: shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[Vertex::buffer_layout()],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::Rgba16Float,
-                        blend,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: topo,
-                    cull_mode: cull,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    depth_write,
-                    crate::gpu::CompareFunction::Less,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: 1,
-                    ..Default::default()
-                },
-                cache: None,
-            },
+            layout,
+            shader,
+            label,
+            cull,
+            blend,
+            topo,
+            depth_write,
         )
     };
 
@@ -628,6 +677,39 @@ pub(crate) fn build_hdr_instanced_mesh_pipelines(
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
 ) -> HdrInstancedMeshPipelines {
+    let (solid, solid_two_sided) = build_instanced_solid_pipelines(
+        device,
+        layout,
+        shader,
+        crate::gpu::TextureFormat::Rgba16Float,
+        1,
+        "hdr_solid_instanced_pipeline",
+        "hdr_solid_two_sided_instanced_pipeline",
+    );
+    let blend = build_hdr_instanced_blend_pipelines(device, layout, shader);
+    HdrInstancedMeshPipelines {
+        solid,
+        solid_two_sided,
+        transparent: blend.transparent,
+        additive: blend.additive,
+        premultiplied: blend.premultiplied,
+    }
+}
+
+/// The three blended HDR `mesh_instanced.wgsl` pipelines, without the solid
+/// pair. The explicit mesh-instance draw path binds these whatever the solid
+/// pipelines were built against.
+pub(crate) struct HdrInstancedBlendPipelines {
+    pub transparent: crate::gpu::RenderPipeline,
+    pub additive: crate::gpu::RenderPipeline,
+    pub premultiplied: crate::gpu::RenderPipeline,
+}
+
+pub(crate) fn build_hdr_instanced_blend_pipelines(
+    device: &crate::gpu::Device,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+) -> HdrInstancedBlendPipelines {
     let additive_blend = crate::gpu::BlendState {
         color: crate::gpu::BlendComponent {
             src_factor: crate::gpu::BlendFactor::One,
@@ -652,10 +734,7 @@ pub(crate) fn build_hdr_instanced_mesh_pipelines(
             operation: crate::gpu::BlendOperation::Add,
         },
     };
-    let make = |label: &str,
-                cull: Option<crate::gpu::Face>,
-                blend: Option<crate::gpu::BlendState>,
-                depth_write: bool| {
+    let make = |label: &str, blend: crate::gpu::BlendState| {
         crate::resources::builders::render_pipeline(
             device,
             crate::resources::builders::RenderPipelineDesc {
@@ -669,18 +748,18 @@ pub(crate) fn build_hdr_instanced_mesh_pipelines(
                     entry_point: Some("fs_main"),
                     targets: &[Some(crate::gpu::ColorTargetState {
                         format: crate::gpu::TextureFormat::Rgba16Float,
-                        blend,
+                        blend: Some(blend),
                         write_mask: crate::gpu::ColorWrites::ALL,
                     })],
                     compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
                 primitive: crate::gpu::PrimitiveState {
                     topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: cull,
+                    cull_mode: None,
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    depth_write,
+                    false,
                     crate::gpu::CompareFunction::Less,
                 )),
                 multisample: crate::gpu::MultisampleState {
@@ -691,32 +770,13 @@ pub(crate) fn build_hdr_instanced_mesh_pipelines(
             },
         )
     };
-    HdrInstancedMeshPipelines {
-        solid: make(
-            "hdr_solid_instanced_pipeline",
-            Some(crate::gpu::Face::Back),
-            None,
-            true,
-        ),
-        solid_two_sided: make("hdr_solid_two_sided_instanced_pipeline", None, None, true),
+    HdrInstancedBlendPipelines {
         transparent: make(
             "hdr_transparent_instanced_pipeline",
-            None,
-            Some(crate::gpu::BlendState::ALPHA_BLENDING),
-            false,
+            crate::gpu::BlendState::ALPHA_BLENDING,
         ),
-        additive: make(
-            "hdr_instanced_additive_pipeline",
-            None,
-            Some(additive_blend),
-            false,
-        ),
-        premultiplied: make(
-            "hdr_instanced_premultiplied_pipeline",
-            None,
-            Some(premultiplied_blend),
-            false,
-        ),
+        additive: make("hdr_instanced_additive_pipeline", additive_blend),
+        premultiplied: make("hdr_instanced_premultiplied_pipeline", premultiplied_blend),
     }
 }
 

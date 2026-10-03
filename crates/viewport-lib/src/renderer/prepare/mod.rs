@@ -165,31 +165,8 @@ impl ViewportRenderer {
             .ts_written_mask
             .swap(0, std::sync::atomic::Ordering::Relaxed);
 
-        // The base LDR mesh pipelines draw plain `Material` surfaces and nothing
-        // else, so they are built on the first frame that carries any rather than
-        // at construction. An overlay-only frame never reaches this.
-        let has_mesh_content = match &frame.scene.surfaces {
-            crate::renderer::SurfaceSubmission::Flat(items) => !items.is_empty(),
-        } || !frame.scene.volume_meshes.is_empty()
-            || !frame.scene.mesh_instances.is_empty()
-            || !frame.scene.foreground_items.is_empty();
-        if has_mesh_content {
-            self.resources.ensure_ldr_mesh_pipelines(device);
-        }
-        // Same for the effects with their own pass: each is built by the first
-        // frame that asks for it.
-        if !matches!(
-            frame.effects.ground_plane.mode,
-            crate::renderer::types::GroundPlaneMode::None
-        ) {
-            self.resources.ensure_ground_plane_pipeline(device);
-        }
-        if frame
-            .effects
-            .environment
-            .as_ref()
-            .is_some_and(|e| e.show_skybox)
-        {
+        self.ensure_frame_pipelines(device, frame);
+        if scene_fx.environment.as_ref().is_some_and(|e| e.show_skybox) {
             self.resources.ensure_skybox_pipeline(device);
         }
 
@@ -244,6 +221,7 @@ impl ViewportRenderer {
 
         let plugin_frame_index = self.plugin_frame_index;
 
+        let hdr_family = self.draws_hdr(frame);
         let resources = &mut self.resources;
         let lighting = scene_fx.lighting;
 
@@ -432,6 +410,7 @@ impl ViewportRenderer {
                 device,
                 queue,
                 frame,
+                hdr_family,
             )
         } else {
             (0, 0)
@@ -450,6 +429,7 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            hdr_family,
         );
         lod_items_resolved += inst_resolved;
         lod_switches += inst_switches;
@@ -459,93 +439,6 @@ impl ViewportRenderer {
         // Refresh any deform slots bound to a same-device consumer buffer,
         // GPU-to-GPU, before the mesh render pass reads them.
         resources.run_deform_slot_copies(device, queue);
-        // Surface LIC GPU data upload.
-        // ------------------------------------------------------------------
-        self.lic_gpu_data.clear();
-        {
-            let lic_scene_items: Vec<(&SceneRenderItem, &LicOverlay)> = scene_items
-                .iter()
-                .filter(|i| !i.settings.hidden)
-                .filter_map(|i| i.lic.as_ref().map(|l| (i, l)))
-                .collect();
-            if !lic_scene_items.is_empty() {
-                // The LIC surface pipeline is created inside ensure_hdr_pipelines (already called
-                // before prepare_scene_internal runs), so no separate ensure call is needed here.
-                for (item, lic) in &lic_scene_items {
-                    if lic.vector_attribute.is_empty() {
-                        continue;
-                    }
-                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                        // Verify the vector attribute buffer exists before committing to this item.
-                        if mesh
-                            .vector_attribute_buffers
-                            .contains_key(&lic.vector_attribute)
-                        {
-                            if let Some(bgl) = &resources.lic.surface_bgl {
-                                use crate::resources::LicObjectUniform;
-                                let model = item.model;
-                                let obj_data = LicObjectUniform {
-                                    model,
-                                    // Pre-normalised for the vector texture's
-                                    // 8-bit blue channel; the advect pass
-                                    // decodes by the same constant.
-                                    strength: (lic.config.strength.max(0.0)
-                                        / crate::resources::LIC_STRENGTH_ENCODE_MAX)
-                                        .min(1.0),
-                                    _pad: [0.0; 3],
-                                };
-                                let obj_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                                    label: Some("lic_object_uniform"),
-                                    size: std::mem::size_of::<LicObjectUniform>() as u64,
-                                    usage: crate::gpu::BufferUsages::UNIFORM
-                                        | crate::gpu::BufferUsages::COPY_DST,
-                                    mapped_at_creation: false,
-                                });
-                                queue.write_buffer(&obj_buf, 0, bytemuck::cast_slice(&[obj_data]));
-                                // Bind group (group 1): object uniform only.
-                                // Flow vectors are bound as vertex buffer 1 in the render pass.
-                                let bg =
-                                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                                        label: Some("lic_surface_item_bg"),
-                                        layout: bgl,
-                                        entries: &[crate::gpu::BindGroupEntry {
-                                            binding: 0,
-                                            resource: obj_buf.as_entire_binding(),
-                                        }],
-                                    });
-                                self.lic_gpu_data.push(crate::resources::LicSurfaceGpuData {
-                                    bind_group: bg,
-                                    _object_uniform_buf: obj_buf,
-                                    mesh_id: item.mesh_id,
-                                    vector_attribute: lic.vector_attribute.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-                // Write LicAdvectUniform to the per-viewport buffer. The slot
-                // may not exist yet on the very first frame (it is created at
-                // render time); the advect uniform is then written next frame
-                // and the advect output stays neutral meanwhile.
-                if let Some(hdr) = self
-                    .viewport_slots
-                    .get(frame.camera.viewport_index)
-                    .and_then(|s| s.hdr.as_ref())
-                {
-                    if let Some((_, first_lic)) = lic_scene_items.first() {
-                        let [vw, vh] = hdr.scene_size;
-                        let u = crate::resources::LicAdvectUniform {
-                            steps: first_lic.config.steps,
-                            step_size: first_lic.config.step_size,
-                            vp_width: vw as f32,
-                            vp_height: vh as f32,
-                        };
-                        queue.write_buffer(&hdr.lic_uniform_buf, 0, bytemuck::cast_slice(&[u]));
-                    }
-                }
-            }
-        }
-
         // Volume wireframe overlay: OBB from bbox + model matrix.
         // Transparent volume meshes wireframe: boundary mesh edge overlay.
         // Items rendering as opaque already participate in the standard
@@ -903,7 +796,7 @@ impl ViewportRenderer {
         // block buffer so the scene pass can index it. Foreground objects
         // re-upload after they intern in `prepare_viewport_internal`.
         self.resources.upload_material_gpu(queue);
-        self.resources.upload_custom_data(queue);
+        self.resources.upload_custom_data(device, queue);
 
         // Item-type wireframes join the shared line substrate, after its own
         // producers (isolines, clip outlines) filled it in `upload_polylines`.
@@ -911,13 +804,72 @@ impl ViewportRenderer {
         // `resources` shared while the upload above holds it mutably.
         self.dispatch_plugin_wireframes(device, queue, frame);
 
-        // A shadow texture was promoted out of its placeholder above, so the
-        // per-viewport camera bind groups still name the texture it replaced.
-        // Rebuilt here, before the viewport phase and before any render pass,
-        // so the promoting frame is already correct rather than one frame late.
+        self.flush_camera_bind_group_rebuild(device);
+    }
+
+    /// Rebuild the camera bind groups if something they name was replaced this
+    /// prepare: a shadow texture promoted out of its placeholder, or the
+    /// custom-data buffer grown. Run at the end of each prepare phase, before
+    /// any render pass, so the frame that made the change already draws with
+    /// the new resource and not one frame late.
+    fn flush_camera_bind_group_rebuild(&mut self, device: &crate::gpu::Device) {
         if self.resources.camera_bind_groups_dirty {
             self.resources.camera_bind_groups_dirty = false;
             self.rebuild_camera_bind_groups(device);
+            // The per-object bundle recorded the old camera bind group. Drop it
+            // so this frame draws item by item; the next prepare records again.
+            self.per_object_bundle = None;
+        }
+    }
+
+    /// Whether `frame` carries anything the mesh pipeline families draw.
+    pub(crate) fn has_mesh_content(frame: &FrameData) -> bool {
+        (match &frame.scene.surfaces {
+            crate::renderer::SurfaceSubmission::Flat(items) => !items.is_empty(),
+        }) || !frame.scene.volume_meshes.is_empty()
+            || !frame.scene.mesh_instances.is_empty()
+            || !frame.scene.foreground_items.is_empty()
+    }
+
+    /// Whether `frame` is drawn through the HDR path. A frame that asks for
+    /// HDR is still drawn with the LDR pipelines when the caller paints it
+    /// straight into its own render pass.
+    pub(crate) fn draws_hdr(&self, frame: &FrameData) -> bool {
+        frame.effects.display.is_hdr() && !self.direct_paint
+    }
+
+    /// Build the pipelines `frame`'s own passes draw with, if this is the first
+    /// frame to ask for them.
+    ///
+    /// The mesh pipelines, the ground plane and the skybox are not built at
+    /// construction. The draw sites test the frame they are handed, so this
+    /// runs for the scene frame and again for each viewport's frame: under the
+    /// split API those can differ, and a viewport may be the only one asking.
+    ///
+    /// Only the mesh family the frame is drawn with is built: the HDR one for a
+    /// frame on the HDR path, the LDR one otherwise. A renderer that stays on
+    /// one path never compiles the other.
+    fn ensure_frame_pipelines(&mut self, device: &crate::gpu::Device, frame: &FrameData) {
+        if Self::has_mesh_content(frame) {
+            if self.draws_hdr(frame) {
+                self.resources.ensure_hdr_mesh_pipelines(device);
+            } else {
+                self.resources.ensure_ldr_mesh_pipelines(device);
+            }
+        }
+        if !matches!(
+            frame.effects.ground_plane.mode,
+            crate::renderer::types::GroundPlaneMode::None
+        ) {
+            self.resources.ensure_ground_plane_pipeline(device);
+        }
+        if frame
+            .effects
+            .environment
+            .as_ref()
+            .is_some_and(|e| e.show_skybox)
+        {
+            self.resources.ensure_skybox_pipeline(device);
         }
     }
 
@@ -935,10 +887,12 @@ impl ViewportRenderer {
     ) {
         // Ensure a per-viewport camera slot exists for this viewport index.
         self.ensure_viewport_slot(device, frame.camera.viewport_index);
+        self.ensure_frame_pipelines(device, frame);
 
         // Run the main-camera GPU cull for this viewport against its own camera,
         // writing this slot's visibility list and indirect args.
         let vp_idx = frame.camera.viewport_index;
+        let hdr_family = self.draws_hdr(frame);
         Self::run_viewport_cull(
             &mut self.resources,
             &mut self.viewport_slots[vp_idx].cull,
@@ -948,6 +902,7 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            hdr_family,
             sink,
         );
 
@@ -963,7 +918,9 @@ impl ViewportRenderer {
         // Foreground objects just interned their materials; re-upload the block
         // buffer so any new entries past the scene set are resident.
         self.resources.upload_material_gpu(queue);
-        self.resources.upload_custom_data(queue);
+        self.resources.upload_custom_data(device, queue);
+        // That upload can have grown the custom-data buffer.
+        self.flush_camera_bind_group_rebuild(device);
         self.prepare_outline_pass(device, queue, frame, sink);
         self.prepare_sub_highlight(device, queue, frame);
 

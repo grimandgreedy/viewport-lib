@@ -15,7 +15,7 @@ use viewport_lib::{
 };
 use viewport_lib_item_types::GpuParticleSystems;
 use viewport_lib_item_types::VolumeItem;
-use viewport_lib_item_types::{DecalBlendMode, DecalItem};
+use viewport_lib_item_types::{DecalBlendMode, DecalItem, SurfaceLicItem};
 use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumes};
 use viewport_lib_item_types::{
     RibbonItem, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorFieldItem, TensorSource,
@@ -171,6 +171,16 @@ pub fn scenes() -> Vec<NamedScene> {
             name: "decal_layers",
             cameras: standard_cameras(Vec3::ZERO, 8.0),
             build: build_decal_layers,
+        },
+        NamedScene {
+            name: "surface_lic",
+            cameras: standard_cameras(Vec3::ZERO, 7.0),
+            build: build_surface_lic,
+        },
+        NamedScene {
+            name: "surface_lic_occluded",
+            cameras: standard_cameras(Vec3::ZERO, 8.0),
+            build: build_surface_lic_occluded,
         },
         NamedScene {
             name: "volume_mesh_node_scalars",
@@ -1561,6 +1571,99 @@ fn build_decal_layers(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     BuiltScene {
         items: vec![left, middle, right],
         decals: vec![decal(red, 0b01), decal(blue, 0b10)],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+/// `mesh` with a `flow` vertex attribute that swirls about the local Z axis.
+fn with_swirl(mut mesh: viewport_lib::MeshData) -> viewport_lib::MeshData {
+    let flow = mesh
+        .positions
+        .iter()
+        .map(|p| {
+            Vec3::Z
+                .cross(Vec3::from(*p))
+                .normalize_or(Vec3::X)
+                .to_array()
+        })
+        .collect();
+    mesh.attributes.insert(
+        "flow".to_string(),
+        viewport_lib::AttributeData::VertexVector(flow),
+    );
+    mesh
+}
+
+/// A surface and the flow streaks drawn on it.
+fn lic_surface(
+    mesh: viewport_lib::MeshId,
+    model: Mat4,
+) -> (viewport_lib::SceneRenderItem, SurfaceLicItem) {
+    let mut item = viewport_lib::SceneRenderItem::default();
+    item.mesh_id = mesh;
+    item.model = model.to_cols_array_2d();
+    item.material = Material::pbr([0.55, 0.6, 0.7], 0.0, 0.7);
+    let lic = SurfaceLicItem::new(mesh, model.to_cols_array_2d(), "flow");
+    (item, lic)
+}
+
+fn build_surface_lic(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // One sphere carrying a flow that swirls about its vertical axis.
+    let ball = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(ctx.device, &with_swirl(primitives::sphere(2.0, 48, 24)))
+        .expect("sphere upload");
+    let (surface, lic) = lic_surface(ball, Mat4::IDENTITY);
+    BuiltScene {
+        items: vec![surface],
+        surface_lics: vec![lic],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+fn build_surface_lic_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // A flow sphere with a plain box between it and the camera, and a tilted
+    // flow torus whose near tube crosses its far tube on screen. The streaks
+    // must stop at the box and each part of the torus must keep its own
+    // direction.
+    let ball = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(ctx.device, &with_swirl(primitives::sphere(1.4, 48, 24)))
+        .expect("sphere upload");
+    let ring = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(
+            ctx.device,
+            &with_swirl(primitives::torus(1.3, 0.45, 48, 24)),
+        )
+        .expect("torus upload");
+    let cube = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(ctx.device, &primitives::cube(1.2))
+        .expect("cube upload");
+
+    let sphere_at = Vec3::new(-1.8, 0.0, 0.0);
+    // Along the iso camera's line of sight from the sphere.
+    let toward_eye = Vec3::new(0.54, -0.64, 0.54);
+    let mut blocker = viewport_lib::SceneRenderItem::default();
+    blocker.mesh_id = cube;
+    blocker.model = Mat4::from_translation(sphere_at + toward_eye * 2.2).to_cols_array_2d();
+    blocker.material = Material::pbr([0.8, 0.45, 0.2], 0.0, 0.6);
+
+    let (sphere, sphere_lic) = lic_surface(ball, Mat4::from_translation(sphere_at));
+    let (torus, torus_lic) = lic_surface(
+        ring,
+        Mat4::from_translation(Vec3::new(1.9, 0.0, 0.0)) * Mat4::from_rotation_x(-0.45),
+    );
+    BuiltScene {
+        items: vec![sphere, torus, blocker],
+        surface_lics: vec![sphere_lic, torus_lic],
         lighting: rigs::from_above(),
         ..Default::default()
     }

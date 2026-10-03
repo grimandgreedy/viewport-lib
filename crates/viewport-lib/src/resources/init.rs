@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::util::DeviceExt;
+use crate::resources::builders::LoggedAlloc;
 
 /// Count the storage buffers a set of bind group layout entries costs in one
 /// shader stage. Used to check the layouts built here against the constants
@@ -60,16 +60,25 @@ impl DeviceResources {
             .features()
             .contains(crate::gpu::Features::PIPELINE_CACHE)
         {
-            Some(unsafe {
-                device.create_pipeline_cache(&crate::gpu::PipelineCacheDescriptor {
-                    label: Some("viewport_pipeline_cache"),
-                    data: pipeline_cache_data,
-                    fallback: true,
-                })
-            })
+            // One cache per device, shared by every renderer on it and found
+            // by every pipeline build through the registry. A second renderer
+            // on the device joins the existing cache and its data is ignored.
+            Some(crate::resources::builders::device_pipeline_cache::acquire(
+                device,
+                || unsafe {
+                    device.create_pipeline_cache(&crate::gpu::PipelineCacheDescriptor {
+                        label: Some("viewport_pipeline_cache"),
+                        data: pipeline_cache_data,
+                        fallback: true,
+                    })
+                },
+            ))
         } else {
             None
         };
+        let pipeline_cache_lease = pipeline_cache
+            .as_ref()
+            .map(|_| crate::resources::builders::device_pipeline_cache::Lease(device.clone()));
 
         // Cold-start instrumentation. Pipeline compilation and large depth-texture
         // allocation can dominate construction on some backends (notably Adreno
@@ -384,7 +393,7 @@ impl DeviceResources {
             // Every per-object mesh draw binds the same buffer here and
             // selects its element with @builtin(instance_index), so group 1
             // stops changing per draw. Single-item paths (shadow casters,
-            // normal lines, LIC) bind a one-element buffer and draw at
+            // normal lines) bind a one-element buffer and draw at
             // instance 0.
             crate::gpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -740,21 +749,21 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Camera uniform buffer and bind group
         // ------------------------------------------------------------------
-        let camera_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let camera_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("camera_uniform_buf"),
             size: std::mem::size_of::<CameraUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let light_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let light_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("light_uniform_buf"),
             size: std::mem::size_of::<LightUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let light_storage_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let light_storage_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("light_storage_buf"),
             size: (std::mem::size_of::<crate::resources::SingleLightUniform>()
                 * crate::resources::MAX_SCENE_LIGHTS) as u64,
@@ -765,7 +774,7 @@ impl DeviceResources {
         // Per-material UV transform buffer (group 0, binding 13). Fixed capacity
         // so the handle is stable across frames; the camera bind group binds it
         // once and never rebuilds for material churn.
-        let material_gpu_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let material_gpu_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("material_gpu_buf"),
             size: (std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>()
                 * crate::resources::material_gpu::MATERIAL_GPU_CAPACITY) as u64,
@@ -773,16 +782,13 @@ impl DeviceResources {
             mapped_at_creation: false,
         });
 
-        // Per-instance custom-data buffer (group 0, binding 22). Fixed capacity
-        // so the handle is stable across frames; the camera bind group binds it
-        // once and never rebuilds for custom-data churn.
-        let instance_custom_data_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("instance_custom_data_buf"),
-            size: (std::mem::size_of::<crate::resources::custom_data::InstanceCustomData>()
-                * crate::resources::custom_data::CUSTOM_DATA_CAPACITY) as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // Per-instance custom-data buffer (group 0, binding 22). Starts small
+        // and grows when a frame interns more blocks than it holds; see
+        // `upload_custom_data`.
+        let instance_custom_data_buf = Self::create_custom_data_buffer(
+            device,
+            crate::resources::custom_data::CUSTOM_DATA_INITIAL_CAPACITY,
+        );
 
         // Indirect-lighting storage buffer (group 0 binding 18). Holds the
         // per-object light-probe SH blocks in the first region and the
@@ -792,7 +798,7 @@ impl DeviceResources {
         // region starts at MAX_LIGHT_PROBE_OBJECTS * SH_GPU_STRIDE_BYTES; the
         // shader's ENV_ZONE_BASE (in vec4) must match (guarded by a const_assert
         // in resources::material::environment).
-        let indirect_light_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let indirect_light_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("indirect_light_buf"),
             size: (crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS
                 * crate::resources::light_probes::SH_GPU_STRIDE_BYTES
@@ -806,7 +812,7 @@ impl DeviceResources {
         // Disabled probe-volume header (binding 20 fallback): 3 vec4, all zero so
         // the enabled flag (header[0].w) reads 0 and the sampler returns black.
         let light_probe_volume_fallback =
-            device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            device.logged_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                 label: Some("light_probe_volume_fallback"),
                 contents: bytemuck::cast_slice(&[[0.0f32; 4]; 3]),
                 usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -814,7 +820,7 @@ impl DeviceResources {
 
         // Clip planes uniform buffer (binding 4 of camera bind group).
         // Initialized to count=0 (no active clip planes).
-        let clip_planes_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let clip_planes_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("clip_planes_uniform_buf"),
             size: std::mem::size_of::<ClipPlanesUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -823,7 +829,7 @@ impl DeviceResources {
 
         // Clip volume uniform buffer (binding 6 of camera bind group).
         // Holds up to CLIP_VOLUME_MAX box/sphere entries; initialized to count=0 (no volumes).
-        let clip_volume_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let clip_volume_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("clip_volume_uniform_buf"),
             size: std::mem::size_of::<ClipVolumesUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -872,7 +878,7 @@ impl DeviceResources {
             crate::resources::builders::clamp_nearest_sampler(device, "shadow_atlas_depth_sampler");
 
         // Shadow atlas uniform buffer (binding 5).
-        let shadow_info_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let shadow_info_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("shadow_info_buf"),
             size: std::mem::size_of::<ShadowAtlasUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -884,7 +890,7 @@ impl DeviceResources {
         // and a linear/repeat sampler. Never sampled : the `ibl_enabled` uniform guard
         // prevents IBL calculations when no environment map is uploaded.
         // ------------------------------------------------------------------
-        let ibl_fallback_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+        let ibl_fallback_texture = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("ibl_fallback_black"),
             size: crate::gpu::Extent3d {
                 width: 1,
@@ -904,7 +910,7 @@ impl DeviceResources {
         // 1x1x1 black `2d-array` fallback for the irradiance / prefiltered array
         // slots (bindings 7-8), bound until the default environment is uploaded.
         // Never sampled: the `ibl_enabled` guard is off with no environment.
-        let ibl_fallback_array_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+        let ibl_fallback_array_texture = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("ibl_fallback_array_black"),
             size: crate::gpu::Extent3d {
                 width: 1,
@@ -929,7 +935,7 @@ impl DeviceResources {
         // 128x128 LUT on the first call to `upload_environment_map`. The LUT is scene-independent
         // (function of roughness x N.V only); idempotent caching inside `upload_environment_map`
         // means subsequent uploads skip its ~16.7M Hammersley samples.
-        let ibl_fallback_brdf_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+        let ibl_fallback_brdf_texture = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("ibl_fallback_brdf"),
             size: crate::gpu::Extent3d {
                 width: 1,
@@ -1074,7 +1080,7 @@ impl DeviceResources {
         // Shadow pass uniform buffer : 4 cascade slots x 256 bytes (wgpu dynamic-offset alignment).
         // Each slot holds one 4x4 matrix (64 bytes); the remaining 192 bytes per slot are padding.
         const SHADOW_SLOT_STRIDE: u64 = 256;
-        let shadow_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let shadow_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("shadow_uniform_buf"),
             size: 4 * SHADOW_SLOT_STRIDE,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -1127,7 +1133,7 @@ impl DeviceResources {
         // alignment requirement. Total slots = MAX_POINT_SHADOW_LIGHTS * 6.
         const SHADOW_POINT_FACE_STRIDE: u64 = 256;
         let shadow_point_face_count = (crate::renderer::MAX_POINT_SHADOW_LIGHTS * 6) as u64;
-        let shadow_point_face_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let shadow_point_face_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("shadow_point_face_buf"),
             size: shadow_point_face_count * SHADOW_POINT_FACE_STRIDE,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -1346,7 +1352,7 @@ impl DeviceResources {
             },
         );
         // Default-zero uniform : overwritten every frame in prepare().
-        let grid_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let grid_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("grid_uniform_buf"),
             size: std::mem::size_of::<GridUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -1420,7 +1426,7 @@ impl DeviceResources {
             });
         // The ground-plane pipeline is built by `ensure_ground_plane_pipeline` on
         // the first frame that asks for a ground plane.
-        let ground_plane_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let ground_plane_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("ground_plane_uniform_buf"),
             size: std::mem::size_of::<GroundPlaneUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -1497,7 +1503,7 @@ impl DeviceResources {
             "atlas_blit_layout",
             &[&atlas_blit_bgl],
         );
-        let shadow_atlas_viewer_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let shadow_atlas_viewer_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("shadow_atlas_viewer_buf"),
             size: std::mem::size_of::<AtlasBlitUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -1607,7 +1613,7 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Fallback normal map: 1x1 [128, 128, 255, 255] : flat tangent-space normal
         // ------------------------------------------------------------------
-        let fallback_normal_map = device.create_texture(&crate::gpu::TextureDescriptor {
+        let fallback_normal_map = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("fallback_normal_map"),
             size: crate::gpu::Extent3d {
                 width: 1,
@@ -1627,7 +1633,7 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Fallback AO map: 1x1 [255, 255, 255, 255] : no occlusion
         // ------------------------------------------------------------------
-        let fallback_ao_map = device.create_texture(&crate::gpu::TextureDescriptor {
+        let fallback_ao_map = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("fallback_ao_map"),
             size: crate::gpu::Extent3d {
                 width: 1,
@@ -1649,7 +1655,7 @@ impl DeviceResources {
         // Content is uninitialized: shader only samples when has_metallic_roughness_tex != 0.
         // ------------------------------------------------------------------
         let fallback_metallic_roughness_texture =
-            device.create_texture(&crate::gpu::TextureDescriptor {
+            device.logged_texture(&crate::gpu::TextureDescriptor {
                 label: Some("fallback_metallic_roughness_texture"),
                 size: crate::gpu::Extent3d {
                     width: 1,
@@ -1671,7 +1677,7 @@ impl DeviceResources {
         // Fallback emissive texture: 1x1 Rgba8Unorm.
         // Content is uninitialized: shader only samples when has_emissive_tex != 0.
         // ------------------------------------------------------------------
-        let fallback_emissive_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+        let fallback_emissive_texture = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("fallback_emissive_texture"),
             size: crate::gpu::Extent3d {
                 width: 1,
@@ -1692,7 +1698,7 @@ impl DeviceResources {
         // Fallback texture: 1x1 white RGBA (used when no albedo texture is assigned)
         // ------------------------------------------------------------------
         let fallback_texture = {
-            let tex = device.create_texture(&crate::gpu::TextureDescriptor {
+            let tex = device.logged_texture(&crate::gpu::TextureDescriptor {
                 label: Some("fallback_texture"),
                 size: crate::gpu::Extent3d {
                     width: 1,
@@ -1760,7 +1766,7 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Colourmap / LUT fallback resources
         // ------------------------------------------------------------------
-        let fallback_lut_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+        let fallback_lut_texture = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("fallback_lut_texture"),
             size: crate::gpu::Extent3d {
                 width: 1,
@@ -1789,7 +1795,7 @@ impl DeviceResources {
             crate::resources::material::textures::create_builtin_colourmaps(device);
         mark("builtin_colourmaps");
 
-        let fallback_scalar_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let fallback_scalar_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_scalar_buf"),
             size: 4,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -1798,7 +1804,7 @@ impl DeviceResources {
         crate::resources::builders::write_mapped(fallback_scalar_buf.slice(..), &[0u8; 4]);
         fallback_scalar_buf.unmap();
 
-        let fallback_face_colour_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let fallback_face_colour_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_face_colour_buf"),
             size: 16, // one vec4<f32>
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -1807,7 +1813,7 @@ impl DeviceResources {
         crate::resources::builders::write_mapped(fallback_face_colour_buf.slice(..), &[0u8; 16]);
         fallback_face_colour_buf.unmap();
 
-        let fallback_warp_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let fallback_warp_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_warp_buf"),
             size: 12, // one vec3<f32>
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -1816,7 +1822,7 @@ impl DeviceResources {
         crate::resources::builders::write_mapped(fallback_warp_buf.slice(..), &[0u8; 12]);
         fallback_warp_buf.unmap();
 
-        let fallback_position_override_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let fallback_position_override_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_position_override_buf"),
             size: 12, // one vec3<f32>
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -1828,7 +1834,7 @@ impl DeviceResources {
         );
         fallback_position_override_buf.unmap();
 
-        let fallback_normal_override_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let fallback_normal_override_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_normal_override_buf"),
             size: 12,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -1840,7 +1846,7 @@ impl DeviceResources {
         );
         fallback_normal_override_buf.unmap();
 
-        let fallback_extension_attr_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let fallback_extension_attr_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_extension_attr_buf"),
             size: 16, // one vec4<f32>
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -1853,7 +1859,7 @@ impl DeviceResources {
         // meshes without a second UV set (`MeshData::uvs1 == None`). A one-entry
         // `vec2<f32>`; the shader clamps any index to 0, so the sample reads
         // `vec2(0.0)`.
-        let fallback_uv1_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let fallback_uv1_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_uv1_buf"),
             size: 8, // one vec2<f32>
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -1868,10 +1874,13 @@ impl DeviceResources {
         // can reference the fallback texture views at creation time.
         // ------------------------------------------------------------------
         let (cube_verts, cube_indices) = build_unit_cube();
-        // Shared geometry slab; the fallback cube is its first allocation. Its
-        // write is recorded now and flushed at the first `process_uploads`.
+        // Shared geometry slab; the fallback cube is its first allocation, in
+        // a small chunk of its own so the slab's first full chunk waits for an
+        // application mesh. Its write is recorded now and flushed at the first
+        // `process_uploads`.
         mark("buffers_and_bind_groups");
         let mut geometry = crate::resources::mesh::geometry_slab::GeometrySlab::new(device);
+        geometry.dedicate_next_allocation();
         let cube_mesh = Self::create_mesh(
             device,
             &mut geometry,
@@ -1991,6 +2000,8 @@ impl DeviceResources {
             force_debug_vis_shaders: false,
             mesh_pipelines_dirty: false,
             pipeline_cache,
+            pipeline_cache_lease,
+            shader_modules: Default::default(),
             scene: crate::resources::scene_pipelines::SceneCorePipelines {
                 solid: None,
                 solid_two_sided: None,
@@ -2143,7 +2154,6 @@ impl DeviceResources {
             },
             instancing: crate::resources::mesh::instancing::InstancingResources::default(),
             cull: crate::resources::mesh::instancing::CullResources::default(),
-            lic: crate::resources::postprocess::LicResources::default(),
             polyline,
             compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources {
                 pipeline: None,
@@ -2183,6 +2193,8 @@ impl DeviceResources {
             material_gpu_buf,
             material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder::default(),
             instance_custom_data_buf,
+            instance_custom_data_capacity:
+                crate::resources::custom_data::CUSTOM_DATA_INITIAL_CAPACITY,
             custom_data_builder: crate::resources::custom_data::CustomDataBuilder::default(),
             frame_upload_bytes: 0,
             frame_pipelines_built: std::sync::atomic::AtomicU32::new(0),

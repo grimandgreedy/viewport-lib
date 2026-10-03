@@ -60,6 +60,8 @@ mod deform_stats_tests;
 #[cfg(test)]
 mod hidden_tests;
 #[cfg(test)]
+mod lazy_pipeline_tests;
+#[cfg(test)]
 mod lod_instance_tests;
 
 /// Item-type names beginning with this prefix belong to the types viewport-lib
@@ -80,20 +82,20 @@ pub use self::types::{
     DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentSettings, ExposureMode,
     ExposureSettings, FillRule, FilterMode, ForegroundPass, ForegroundProjection, FrameData,
     GlyphRunItem, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
-    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind,
-    LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux,
-    MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
-    OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
-    OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
-    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
-    OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment,
-    PathTrack, PipelineMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem,
-    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
-    ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
-    ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceLICConfig,
-    SurfaceSubmission, TextureTransform, TileMode, ToneMapping, TriangleDirection, ViewportEffects,
-    ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline,
-    obb_wireframe_polyline, sphere_wireframe_polyline,
+    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
+    LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS,
+    MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS,
+    OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill,
+    OverlayFrame, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape,
+    OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId,
+    OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment, PathTrack, PipelineMode,
+    PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph,
+    PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality,
+    ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer,
+    ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission, TextureTransform,
+    TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, VignetteSettings,
+    VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline,
+    sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -377,9 +379,11 @@ pub struct ViewportRenderer {
     last_stats: crate::renderer::stats::FrameStats,
     /// Per-frame polyline GPU data, rebuilt in prepare(), consumed in paint().
     polyline_gpu_data: Vec<crate::resources::PolylineGpuData>,
-    /// Per-frame general tube GPU data, rebuilt in prepare(), consumed in paint().
-    /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint().
-    lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
+    /// Whether the frame being prepared may be painted straight into the
+    /// caller's render pass, which binds the LDR pipelines whatever display
+    /// mode the frame asks for. Set by each entry point before it prepares;
+    /// starts `true`, the choice that is right for either path.
+    pub(crate) direct_paint: bool,
     /// Which items need stamping into the surface mask this frame, and the
     /// mesh family's pipeline and buffer for doing it.
     surface_mask: surface_mask::SurfaceMaskState,
@@ -928,7 +932,7 @@ impl ViewportRenderer {
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
             polyline_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
-            lic_gpu_data: Vec::new(),
+            direct_paint: true,
             surface_mask: surface_mask::SurfaceMaskState::new(),
             label_gpu_data: None,
             overlay_shape_gpu_data: None,
@@ -3538,6 +3542,7 @@ impl ViewportRenderer {
         h: u32,
         ssaa_factor: u32,
         render_scale: f32,
+        needed: crate::resources::TargetGroups,
     ) {
         let format = self.resources.target_format;
         // Ensure shared infrastructure (BGLs, samplers, placeholders) exists. The
@@ -3556,26 +3561,41 @@ impl ViewportRenderer {
         // Ensure the slot exists.
         self.ensure_viewport_slot(device, viewport_index);
         let slot = &mut self.viewport_slots[viewport_index];
-        // Create or resize the per-viewport HDR state.
-        let needs_create = match &slot.hdr {
-            None => true,
-            Some(s) => {
-                s.output_size != [w, h]
-                    || s.scene_size != [scene_w.max(1), scene_h.max(1)]
-                    || s.ssaa_factor != ssaa_factor
-            }
-        };
-        if needs_create {
+        // Create the per-viewport state, recreate it at a new size, or promote
+        // the target groups this frame is the first to ask for. A group stays
+        // live once promoted, across later frames and across a resize.
+        let scene_size = [scene_w.max(1), scene_h.max(1)];
+        let resized = slot.hdr.as_ref().is_none_or(|s| {
+            s.output_size != [w, h] || s.scene_size != scene_size || s.ssaa_factor != ssaa_factor
+        });
+        let held = slot
+            .hdr
+            .as_ref()
+            .map_or(crate::resources::TargetGroups::empty(), |s| s.groups);
+        if resized || !held.contains(needed) {
+            let old = slot.hdr.take();
+            // With no size change the old state's live targets carry over.
+            let reuse = if resized { None } else { old.as_ref() };
+            let scene_kept =
+                reuse.is_some() && held.contains(crate::resources::TargetGroups::SCENE);
             slot.hdr = Some(self.resources.create_hdr_viewport_state(
                 device,
                 queue,
                 format,
                 w,
                 h,
-                scene_w.max(1),
-                scene_h.max(1),
+                scene_size[0],
+                scene_size[1],
                 ssaa_factor,
+                held | needed,
+                reuse,
             ));
+            // A promotion that left the scene colour and depth in place has
+            // nothing to tell the post-effect plugins: the views they hold
+            // are still the live ones.
+            if scene_kept {
+                return;
+            }
             // Tell post-effect producers and stages this viewport's targets
             // changed so they can reallocate their own. Any still awaiting
             // deferred `init_gpu` get this signal during that init instead.

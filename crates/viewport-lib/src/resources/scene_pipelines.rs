@@ -57,9 +57,8 @@ impl crate::resources::DeviceResources {
     /// carrying mesh-family content binds them, so the first such prepare calls
     /// this rather than paying for it at construction. No-op after that.
     ///
-    /// `register_deformer` rebuilds the same four through
-    /// `rebuild_mesh_pipelines`, which composes the registered deformers in; the
-    /// composition here is the identity-hook one a renderer starts with.
+    /// Composed with the registered deformers, so `register_deformer` rebuilds
+    /// the four through here once they exist.
     pub(crate) fn ensure_ldr_mesh_pipelines(&mut self, device: &crate::gpu::Device) {
         if self.scene.solid.is_some() {
             return;
@@ -71,20 +70,21 @@ impl crate::resources::DeviceResources {
             include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))
         };
         let ldr = {
-            let shader = crate::resources::builders::wgsl_module(
-                device,
-                "mesh_shader",
-                crate::resources::builders::builtin_hook_env(
-                    crate::resources::builders::strip_mesh_non_pbr(
-                        crate::resources::builders::strip_mesh_discards(
-                            crate::resources::builders::strip_debug_vis(
+            let source = crate::resources::builders::builtin_hook_env(
+                crate::resources::builders::strip_mesh_non_pbr(
+                    crate::resources::builders::strip_mesh_discards(
+                        crate::resources::builders::strip_debug_vis(
+                            crate::resources::mesh_sidecar::registry::compose_shader(
                                 mesh_src,
-                                self.debug_vis_shaders,
+                                &self.deform.registrations,
                             ),
+                            self.debug_vis_shaders,
                         ),
                     ),
                 ),
             );
+            // The HDR family compiles the same source, so the module is shared.
+            let shader = self.shared_module(device, "mesh_shader", &source);
             let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
                 device,
                 "mesh_pipeline_layout",
@@ -162,5 +162,51 @@ mod tests {
             // pipeline, even one shared with its sibling key.
             let _ = hdr_opaque.get(key);
         }
+    }
+
+    /// Families compiled from one source share one module. The LDR and HDR
+    /// mesh families use the same `mesh.wgsl`, and the LDR, HDR and culled
+    /// instanced families the same `mesh_instanced.wgsl`, so building a second
+    /// family adds only the modules the first did not need.
+    #[test]
+    fn pipeline_families_share_their_shader_modules() {
+        let Some((device, _queue, mut res)) = crate::resources::test_support::try_make_resources()
+        else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let modules = |res: &crate::DeviceResources| res.shader_modules.lock().unwrap().len();
+
+        res.ensure_ldr_mesh_pipelines(&device);
+        assert_eq!(modules(&res), 1, "the LDR mesh family is one module");
+        res.ensure_hdr_mesh_pipelines(&device);
+        assert_eq!(
+            modules(&res),
+            2,
+            "the HDR mesh family adds its discard-free twin and nothing else"
+        );
+
+        res.ensure_instanced_pipelines(&device);
+        res.ensure_ldr_instanced_pipelines(&device);
+        assert_eq!(modules(&res), 4, "the instanced module and its twin");
+        // Under bindless the blended HDR pipelines stay on the per-batch
+        // source, which is one more module; the solids share the pair above.
+        let per_batch = usize::from(res.bindless_textures());
+        res.ensure_hdr_instanced_pipelines(&device);
+        res.ensure_cull_instance_pipelines(&device);
+        res.ensure_hdr_cull_pipelines(&device);
+        assert_eq!(
+            modules(&res),
+            4 + per_batch,
+            "the HDR and culled instanced families reuse the LDR family's modules"
+        );
+
+        res.ensure_oit_instanced_pipeline(&device);
+        res.ensure_oit_cull_pipelines(&device);
+        assert_eq!(
+            modules(&res),
+            5 + per_batch,
+            "the OIT instanced pipelines and their culled twins share one module"
+        );
     }
 }

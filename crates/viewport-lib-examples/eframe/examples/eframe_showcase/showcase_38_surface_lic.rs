@@ -27,9 +27,10 @@ use crate::App;
 use crate::eframe::egui;
 use std::collections::HashMap;
 use viewport_lib as vpl;
+use viewport_lib_item_types::{SurfaceLicConfig, SurfaceLicItem};
 use vpl::{
-    AttributeData, BackfacePolicy, FrameData, LicOverlay, Material, MeshData, MeshId,
-    SurfaceLICConfig, SurfaceSubmission, ViewportRenderer, scene::Scene,
+    AttributeData, BackfacePolicy, FrameData, Material, MeshData, MeshId, ViewportRenderer,
+    scene::Scene,
 };
 
 // ---------------------------------------------------------------------------
@@ -391,28 +392,20 @@ pub(crate) fn submit_lic_items(app: &App, fd: &mut FrameData) {
         return;
     }
 
-    let mut config = SurfaceLICConfig::default();
+    let mut config = SurfaceLicConfig::default();
     config.steps = state.steps;
     config.step_size = state.step_size;
     config.strength = state.strength;
 
-    // Build a lookup from MeshId to LicOverlay.
-    let mut lic_by_mesh: std::collections::HashMap<MeshId, LicOverlay> =
-        std::collections::HashMap::new();
-    for (_row, row_ids) in state.mesh_ids.iter().enumerate() {
-        for (_col, maybe_id) in row_ids.iter().enumerate() {
+    // One flow item beside each surface, with the surface's transform.
+    let lics = fd.scene.items_mut::<SurfaceLicItem>();
+    for (row, row_ids) in state.mesh_ids.iter().enumerate() {
+        for (col, maybe_id) in row_ids.iter().enumerate() {
             let Some(mesh_id) = *maybe_id else { continue };
-            lic_by_mesh.insert(mesh_id, LicOverlay::new("flow", config.clone()));
-        }
-    }
-
-    // Apply to matching SceneRenderItems.
-    if let SurfaceSubmission::Flat(ref mut items) = fd.scene.surfaces {
-        let items = std::sync::Arc::make_mut(items);
-        for item in items.iter_mut() {
-            if let Some(lic) = lic_by_mesh.remove(&item.mesh_id) {
-                item.lic = Some(lic);
-            }
+            let mut item =
+                SurfaceLicItem::new(mesh_id, transform(col, row).to_cols_array_2d(), "flow");
+            item.config = config;
+            lics.push(item);
         }
     }
 }
@@ -536,17 +529,11 @@ pub(crate) fn frame(
     fd: &mut vpl::FrameData,
     _ctx: &crate::FrameCtx,
 ) {
-    // Surface LIC render items (Showcase 38) : submitted every frame when built.
-    // LIC compositing happens inside the tone-map pass, so the HDR pipeline
-    // must be active (display.mode = PipelineMode::Hdr).
+    // Surface LIC items, submitted every frame once built. Only the HDR path
+    // draws them, so the frame asks for it while LIC is on.
     if app.lic_state.built {
         submit_lic_items(app, &mut *fd);
-        let has_lic = if let vpl::SurfaceSubmission::Flat(ref items) = fd.scene.surfaces {
-            items.iter().any(|i| i.lic.is_some())
-        } else {
-            false
-        };
-        if has_lic {
+        if app.lic_state.enabled {
             fd.effects.display.mode = vpl::PipelineMode::Hdr;
         }
     }

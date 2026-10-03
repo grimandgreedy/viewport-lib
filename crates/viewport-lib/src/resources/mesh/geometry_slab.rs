@@ -13,6 +13,7 @@
 //! compute-filter and GPU-picking paths read geometry that way).
 
 use crate::gpu;
+use crate::resources::builders::LoggedAlloc;
 
 /// Fallback storage-offset alignment when the device reports 0 (never expected;
 /// the spec minimum is 256).
@@ -142,6 +143,10 @@ struct ByteSlab {
     max_buffer: u64,
     /// Size of the first chunk; each next chunk doubles from here.
     base_chunk_bytes: u64,
+    /// Chunks sized to a single allocation, outside the doubling schedule.
+    dedicated_chunks: u32,
+    /// Give the next allocation a chunk of its own, sized to fit.
+    dedicated_next: bool,
 }
 
 impl ByteSlab {
@@ -159,6 +164,8 @@ impl ByteSlab {
             align,
             max_buffer,
             base_chunk_bytes,
+            dedicated_chunks: 0,
+            dedicated_next: false,
         }
     }
 
@@ -167,7 +174,7 @@ impl ByteSlab {
     /// below `need` (a single mesh larger than the doubling schedule gets its
     /// own exactly-sized chunk).
     fn next_chunk_capacity(&self, need: u64) -> u64 {
-        let n = self.chunks.len() as u32;
+        let n = self.chunks.len() as u32 - self.dedicated_chunks;
         let scheduled = self
             .base_chunk_bytes
             .saturating_mul(1u64 << n.min(20))
@@ -185,9 +192,16 @@ impl ByteSlab {
                 };
             }
         }
-        // No chunk fits; grow a new one.
-        let capacity = self.next_chunk_capacity(align_up(bytes, self.align));
-        let buffer = device.create_buffer(&gpu::BufferDescriptor {
+        // No chunk fits; grow a new one. A dedicated chunk is exactly the size
+        // asked for and leaves the doubling schedule where it was.
+        let need = align_up(bytes, self.align);
+        let capacity = if std::mem::take(&mut self.dedicated_next) {
+            self.dedicated_chunks += 1;
+            need
+        } else {
+            self.next_chunk_capacity(need)
+        };
+        let buffer = device.logged_buffer(&gpu::BufferDescriptor {
             label: Some(self.label),
             size: capacity,
             usage: self.usage,
@@ -395,6 +409,19 @@ impl GeometrySlab {
         }
     }
 
+    /// Give the next vertex and the next index allocation a chunk each, sized
+    /// to fit, and leave the chunk schedule untouched.
+    ///
+    /// For the renderer's own built-in mesh, which is uploaded at construction.
+    /// Without this it would be the slab's first allocation and reserve a full
+    /// first chunk in each slab for a renderer that may never upload a mesh;
+    /// with it, the first chunk is reserved by the first mesh an application
+    /// uploads.
+    pub(crate) fn dedicate_next_allocation(&mut self) {
+        self.vertex.dedicated_next = true;
+        self.index.dedicated_next = true;
+    }
+
     pub(crate) fn alloc_vertex(&mut self, device: &gpu::Device, bytes: u64) -> SlabSpan {
         self.vertex.alloc(device, bytes)
     }
@@ -435,7 +462,7 @@ impl GeometrySlab {
         if self.uv1_chunks[ci].is_none() {
             let vertex_bytes = self.vertex.buffer(chunk).size();
             let size = vertex_bytes / (VERTEX_STRIDE / UV1_STRIDE);
-            let buffer = device.create_buffer(&gpu::BufferDescriptor {
+            let buffer = device.logged_buffer(&gpu::BufferDescriptor {
                 label: Some("mesh_uv1_slab"),
                 size,
                 usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
@@ -569,11 +596,15 @@ impl GeometrySlab {
         self.vertex.resident_bytes() + self.index.resident_bytes() + uv1
     }
 
-    /// Number of chunk buffers backing the slab (vertex chunks + index chunks).
-    /// A steady value of 2 means all geometry fits one vertex and one index
-    /// chunk, so every pass binds geometry at most once.
+    /// Number of chunk buffers backing uploaded geometry (vertex chunks + index
+    /// chunks). A steady value of 2 means all of it fits one vertex and one
+    /// index chunk, so every pass binds geometry at most once. The small
+    /// dedicated chunks holding the renderer's built-in mesh are not counted:
+    /// no application geometry lives in them.
     pub(crate) fn chunk_count(&self) -> u32 {
         (self.vertex.chunks.len() + self.index.chunks.len()) as u32
+            - self.vertex.dedicated_chunks
+            - self.index.dedicated_chunks
     }
 }
 
@@ -660,6 +691,30 @@ mod tests {
     /// Force a second chunk and confirm a write into it round-trips: spans in
     /// different chunks address different buffers, and the deferred flush lands
     /// the bytes at the right offset across the chunk boundary.
+    /// A dedicated allocation gets a chunk exactly its size and leaves the
+    /// schedule alone, so the next allocation still opens the base chunk.
+    #[test]
+    fn a_dedicated_allocation_does_not_start_the_chunk_schedule() {
+        let Some((device, _queue)) = headless_device() else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        let mut slab = GeometrySlab::new_with_base_chunk(&device, 1 << 20);
+        slab.dedicate_next_allocation();
+        let seed_v = slab.alloc_vertex(&device, 512);
+        let seed_i = slab.alloc_index(&device, 96);
+        assert!(slab.vertex_chunk_buffer(seed_v).size() < 4096);
+        assert!(slab.index_chunk_buffer(seed_i).size() < 4096);
+
+        let mesh = slab.alloc_vertex(&device, 512);
+        assert_ne!(mesh.chunk, seed_v.chunk, "the dedicated chunk is full");
+        assert_eq!(
+            slab.vertex_chunk_buffer(mesh).size(),
+            1 << 20,
+            "the first scheduled chunk is still the base size"
+        );
+    }
+
     #[test]
     fn multi_chunk_write_round_trips() {
         let Some((device, queue)) = headless_device() else {

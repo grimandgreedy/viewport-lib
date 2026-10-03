@@ -450,6 +450,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
+        self.direct_paint = false;
         self.prepare(device, queue, frame);
 
         let vp_idx = frame.camera.viewport_index;
@@ -615,6 +616,7 @@ impl ViewportRenderer {
             let cb = self.prepare_hdr_callback(device, queue, frame);
             vec![cb]
         } else {
+            self.direct_paint = true;
             self.prepare(device, queue, frame);
             if self.current_render_scale < 1.0 - 0.001 {
                 let mut encoder =
@@ -703,6 +705,7 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
         // Always run prepare() to upload uniforms and run the shadow pass.
+        self.direct_paint = false;
         self.prepare(device, queue, frame);
         self.render_frame_internal(
             device,
@@ -724,6 +727,7 @@ impl ViewportRenderer {
         output_view: &crate::gpu::TextureView,
         frame: &FrameData,
     ) -> Vec<crate::gpu::CommandBuffer> {
+        self.direct_paint = false;
         let (_stats, mut buffers) = self.prepare_deferred(device, queue, frame);
         buffers.push(self.render_frame_internal(
             device,
@@ -780,8 +784,25 @@ impl ViewportRenderer {
         let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
         let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
 
-        // Ensure per-viewport HDR targets. Provides a depth buffer for both LDR and HDR paths.
+        // Ensure the per-viewport targets this frame draws into. The LDR path
+        // needs its depth buffer and nothing else; the HDR path needs the scene
+        // colour and depth plus the targets of each effect that is on. A group
+        // an earlier frame promoted stays live.
         let ssaa_factor = frame.effects.post_process.ssaa_factor.max(1);
+        let needed = {
+            use crate::resources::TargetGroups as G;
+            if frame.effects.display.is_hdr() {
+                let pp = &frame.effects.post_process;
+                G::SCENE
+                    | G::when(G::BLOOM, pp.bloom.enabled)
+                    | G::when(G::SSAO, pp.ssao)
+                    | G::when(G::DOF, pp.dof.enabled)
+                    | G::when(G::CONTACT_SHADOW, pp.contact_shadows.enabled)
+                    | G::when(G::FXAA, pp.fxaa)
+            } else {
+                G::LDR_DEPTH
+            }
+        };
         self.ensure_viewport_hdr(
             device,
             queue,
@@ -790,6 +811,7 @@ impl ViewportRenderer {
             h.max(1),
             ssaa_factor,
             self.current_render_scale,
+            needed,
         );
 
         // Lazy-initialize GPU timestamp resources on first render call when supported.
@@ -833,6 +855,14 @@ impl ViewportRenderer {
         }
 
         let cmd_buf = if !frame.effects.display.is_hdr() {
+            // The LDR path binds the LDR mesh family. Prepare has normally
+            // built it; this covers a frame prepared for the other family.
+            if !scene_items.is_empty() || Self::has_mesh_content(frame) {
+                self.resources.ensure_ldr_mesh_pipelines(device);
+            }
+            if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
+                self.resources.ensure_ldr_instanced_pipelines(device);
+            }
             self.render_frame_ldr(
                 device,
                 queue,
@@ -845,10 +875,8 @@ impl ViewportRenderer {
                 h,
             )
         } else {
-            // The HDR path is the only thing that binds the post chain, so its
-            // pipelines are compiled here rather than in `new()`.
-            let format = self.resources.target_format;
-            self.resources.ensure_hdr_pipelines(device, queue, format);
+            // The HDR path builds the post-chain pipelines it binds itself,
+            // group by group, as each frame asks for them.
             self.render_frame_hdr(
                 device,
                 queue,

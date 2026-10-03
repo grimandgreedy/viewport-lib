@@ -39,7 +39,7 @@ use ::winit::window::{Fullscreen, Window, WindowAttributes, WindowId as WinitWin
 use crate::interaction::input::adapters::{from_winit, from_winit_device};
 use crate::interaction::input::{CursorShape, ViewportContext, ViewportEvent};
 use crate::runners::ViewportInstance;
-use crate::runners::viewport_app::{RedrawMode, cursor_icon};
+use crate::runners::viewport_app::{RedrawMode, cursor_icon, wants_redraw};
 use crate::{
     BlitTexture, ExposureMode, FrameData, OrbitCameraController, OverlayFrame, ViewportRenderer,
 };
@@ -180,6 +180,9 @@ pub struct AppConfigV2 {
     /// not close the window; the callback decides whether to call
     /// [`FrameCtxV2::close_window`] (for example after a save prompt).
     pub intercept_close: bool,
+    /// File the runner keeps the GPU pipeline cache in. Default: `None`, no
+    /// cache. See [`with_pipeline_cache`](Self::with_pipeline_cache).
+    pub pipeline_cache_path: Option<std::path::PathBuf>,
 }
 
 impl Default for AppConfigV2 {
@@ -187,6 +190,7 @@ impl Default for AppConfigV2 {
         Self {
             exit_on_last_window_close: true,
             intercept_close: false,
+            pipeline_cache_path: None,
         }
     }
 }
@@ -202,6 +206,15 @@ impl AppConfigV2 {
     /// [`intercept_close`](Self::intercept_close)).
     pub fn with_intercept_close(mut self, intercept: bool) -> Self {
         self.intercept_close = intercept;
+        self
+    }
+
+    /// Keep the GPU pipeline cache in `path` between runs. The windows share
+    /// one device and so one cache; see
+    /// [`AppConfig::with_pipeline_cache`](crate::AppConfig::with_pipeline_cache)
+    /// for when it is loaded and saved and where it has an effect.
+    pub fn with_pipeline_cache(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.pipeline_cache_path = Some(path.into());
         self
     }
 }
@@ -740,6 +753,8 @@ struct WindowState {
     /// callback once, then cleared.
     close_requested: bool,
     last_frame: Instant,
+    /// Startup timing, held until the window's first frame is presented.
+    startup_marks: Option<super::InitMarks>,
 }
 
 struct AppHandlerV2 {
@@ -776,6 +791,7 @@ impl AppHandlerV2 {
             callback,
             paint,
         } = builder;
+        let mut marks = super::InitMarks::new();
 
         let window = Arc::new(
             event_loop
@@ -789,6 +805,7 @@ impl AppHandlerV2 {
                 )
                 .expect("window"),
         );
+        marks.mark("window");
 
         // Reuse the shared instance if the device is already up; otherwise this is
         // the first window and it seeds the shared device from its own surface.
@@ -799,6 +816,7 @@ impl AppHandlerV2 {
         } else {
             let instance = crate::gpu::default_instance();
             let surface = instance.create_surface(window.clone()).expect("surface");
+            marks.mark("instance_and_surface");
             let adapter = pollster::block_on(instance.request_adapter(
                 &crate::gpu::RequestAdapterOptions {
                     power_preference: crate::gpu::PowerPreference::HighPerformance,
@@ -807,6 +825,7 @@ impl AppHandlerV2 {
                 },
             ))
             .expect("adapter");
+            marks.mark("request_adapter");
             let required_features = crate::ViewportRenderer::recommended_device_features(&adapter);
             let (device, queue) =
                 pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
@@ -815,6 +834,7 @@ impl AppHandlerV2 {
                     ..Default::default()
                 }))
                 .expect("device");
+            marks.mark("request_device");
             self.gpu = Some(Gpu {
                 instance,
                 adapter,
@@ -832,18 +852,29 @@ impl AppHandlerV2 {
             .iter()
             .find(|f| f.is_srgb())
             .copied()
-            .unwrap_or(caps.formats[0]);
+            .or_else(|| caps.formats.first().copied())
+            .expect("the adapter cannot present to this surface");
         let surface_config = crate::gpu::runner_surface_config(
             format,
             size.width.max(1),
             size.height.max(1),
             config.present_mode,
-            caps.alpha_modes[0],
+            caps.alpha_modes
+                .first()
+                .copied()
+                .unwrap_or(crate::gpu::CompositeAlphaMode::Auto),
         );
         surface.configure(&gpu.device, &surface_config);
+        marks.mark("surface_configure");
 
-        let mut session = ViewportInstance::new(&gpu.device, format);
+        // Every window's renderer joins the device's one cache, so the saved
+        // data only seeds the first of them.
+        let cache_data = super::load_pipeline_cache(self.config.pipeline_cache_path.as_deref());
+        let mut session =
+            ViewportInstance::new_with_pipeline_cache(&gpu.device, format, cache_data.as_deref());
+        marks.mark("renderer");
         factory(&mut session, &gpu.device);
+        marks.mark("setup");
 
         let focused = true;
         let hovered = false;
@@ -878,6 +909,7 @@ impl AppHandlerV2 {
                 hovered,
                 close_requested: false,
                 last_frame: Instant::now(),
+                startup_marks: Some(marks),
             },
         );
     }
@@ -984,62 +1016,75 @@ impl AppHandlerV2 {
                     });
             }
 
-            let frame = match crate::gpu::acquire_surface(&state.surface) {
-                crate::gpu::SurfaceFrame::Acquired(f) => f,
+            // A frame that cannot be acquired is not drawn, but the rest of the
+            // turn still runs: the callback's window commands and exit request,
+            // the next frame's input window, and the redraw request.
+            let mut reconfigured = false;
+            let acquired = match crate::gpu::acquire_surface(&state.surface) {
+                crate::gpu::SurfaceFrame::Acquired(f) => Some(f),
                 crate::gpu::SurfaceFrame::Recreate => {
                     state.surface.configure(&gpu.device, &state.surface_config);
-                    return;
+                    reconfigured = true;
+                    None
                 }
-                crate::gpu::SurfaceFrame::Skip => return,
+                crate::gpu::SurfaceFrame::Skip => None,
             };
-            let view = frame
-                .texture
-                .create_view(&crate::gpu::TextureViewDescriptor::default());
-            let cmd = state.session.render(&gpu.device, &gpu.queue, &view);
-            gpu.queue.submit(std::iter::once(cmd));
+            if let Some(frame) = acquired {
+                let view = frame
+                    .texture
+                    .create_view(&crate::gpu::TextureViewDescriptor::default());
+                let cmd = state.session.render(&gpu.device, &gpu.queue, &view);
+                gpu.queue.submit(std::iter::once(cmd));
 
-            // Optional per-window paint hook: composite consumer content (in-window
-            // viewports) over the primary render, in a loaded pass on the surface.
-            if let Some(paint) = state.paint.as_mut() {
-                let mut encoder =
-                    gpu.device
-                        .create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-                            label: Some("viewport_app_v2_paint"),
+                // Optional per-window paint hook: composite consumer content (in-window
+                // viewports) over the primary render, in a loaded pass on the surface.
+                if let Some(paint) = state.paint.as_mut() {
+                    let mut encoder =
+                        gpu.device
+                            .create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                                label: Some("viewport_app_v2_paint"),
+                            });
+                    {
+                        let mut rp = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                            #[cfg(any(wgpu29, wgpu30))]
+                            multiview_mask: None,
+                            label: Some("viewport_app_v2_paint_pass"),
+                            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                                view: &view,
+                                resolve_target: None,
+                                ops: crate::gpu::Operations {
+                                    load: crate::gpu::LoadOp::Load,
+                                    store: crate::gpu::StoreOp::Store,
+                                },
+                                depth_slice: None,
+                            })],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
                         });
-                {
-                    let mut rp = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(any(wgpu29, wgpu30))]
-                        multiview_mask: None,
-                        label: Some("viewport_app_v2_paint_pass"),
-                        color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                            view: &view,
-                            resolve_target: None,
-                            ops: crate::gpu::Operations {
-                                load: crate::gpu::LoadOp::Load,
-                                store: crate::gpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-                    let renderer: &ViewportRenderer = state.session.renderer_mut();
-                    let mut pctx = PaintCtxV2 {
-                        window_id: id,
-                        viewport_size: [w, h],
-                        surface_size: [state.surface_config.width, state.surface_config.height],
-                        device: &gpu.device,
-                        queue: &gpu.queue,
-                        renderer,
-                        rp: &mut rp,
-                    };
-                    paint(&mut pctx);
+                        let renderer: &ViewportRenderer = state.session.renderer_mut();
+                        let mut pctx = PaintCtxV2 {
+                            window_id: id,
+                            viewport_size: [w, h],
+                            surface_size: [state.surface_config.width, state.surface_config.height],
+                            device: &gpu.device,
+                            queue: &gpu.queue,
+                            renderer,
+                            rp: &mut rp,
+                        };
+                        paint(&mut pctx);
+                    }
+                    gpu.queue.submit(std::iter::once(encoder.finish()));
                 }
-                gpu.queue.submit(std::iter::once(encoder.finish()));
-            }
 
-            crate::gpu::present(&gpu.queue, frame);
+                crate::gpu::present(&gpu.queue, frame);
+                if let Some(marks) = state.startup_marks.take() {
+                    marks.finish("first_frame");
+                    if let Some(path) = self.config.pipeline_cache_path.as_deref() {
+                        super::save_pipeline_cache(path, &state.session);
+                    }
+                }
+            }
 
             // begin_frame_at rather than begin_frame: the runner already owns a clock,
             // and double tap and long press need one.
@@ -1051,7 +1096,7 @@ impl AppHandlerV2 {
                 },
                 time,
             );
-            if state.redraw_mode == RedrawMode::Continuous || request_redraw {
+            if wants_redraw(state.redraw_mode, request_redraw, reconfigured) {
                 state.window.request_redraw();
             }
         }
@@ -1072,6 +1117,16 @@ impl AppHandlerV2 {
     /// Close one window: drop its state and, if the set is now empty and configured
     /// to, end the loop.
     fn close_window(&mut self, event_loop: &ActiveEventLoop, id: WindowId) {
+        // The last window takes the last renderer with it, so save the shared
+        // pipeline cache while one is still alive.
+        if self.windows.len() == 1 {
+            if let (Some(path), Some(state)) = (
+                self.config.pipeline_cache_path.as_deref(),
+                self.windows.get(&id),
+            ) {
+                super::save_pipeline_cache(path, &state.session);
+            }
+        }
         if let Some(state) = self.windows.remove(&id) {
             self.winit_ids.remove(&state.window.id());
         }
@@ -1082,6 +1137,16 @@ impl AppHandlerV2 {
 }
 
 impl ApplicationHandler for AppHandlerV2 {
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        // Any window's renderer returns the shared cache.
+        if let (Some(path), Some(state)) = (
+            self.config.pipeline_cache_path.as_deref(),
+            self.windows.values().next(),
+        ) {
+            super::save_pipeline_cache(path, &state.session);
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if !self.windows.is_empty() {
             return;

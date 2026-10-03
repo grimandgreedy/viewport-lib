@@ -1065,7 +1065,6 @@ impl Scene {
                 warp_attribute: None,
                 warp_scale: 1.0,
                 deform_instance: node.deform_instance,
-                lic: None,
                 lod_group: node.lod_group,
                 indirect_light: node.indirect_light,
             });
@@ -1154,7 +1153,6 @@ impl Scene {
                     warp_attribute: None,
                     warp_scale: 1.0,
                     deform_instance: node.deform_instance,
-                    lic: None,
                     lod_group: node.lod_group,
                     indirect_light: node.indirect_light,
                 });
@@ -1213,7 +1211,6 @@ impl Scene {
                     warp_attribute: None,
                     warp_scale: 1.0,
                     deform_instance: node.deform_instance,
-                    lic: None,
                     lod_group: node.lod_group,
                     indirect_light: node.indirect_light,
                 });

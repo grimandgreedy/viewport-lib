@@ -107,6 +107,22 @@ impl ViewportInstance {
     /// not keep it. CPU picking is enabled so [`pick`](Self::pick) works after
     /// the first frame.
     pub fn new(device: &crate::gpu::Device, target_format: crate::gpu::TextureFormat) -> Self {
+        Self::new_with_pipeline_cache(device, target_format, None)
+    }
+
+    /// As [`new`](Self::new), seeding the renderer's pipeline cache from data a
+    /// previous run saved with [`pipeline_cache_data`](Self::pipeline_cache_data).
+    ///
+    /// A pipeline cache lets the driver skip shader compilation on a later
+    /// launch. It needs a device created with `Features::PIPELINE_CACHE`, which
+    /// `ViewportRenderer::recommended_device_features` requests where the
+    /// adapter has it; on any other device the data is ignored. Stale or
+    /// foreign data is discarded, so passing whatever was last saved is safe.
+    pub fn new_with_pipeline_cache(
+        device: &crate::gpu::Device,
+        target_format: crate::gpu::TextureFormat,
+        pipeline_cache_data: Option<&[u8]>,
+    ) -> Self {
         // Your application creates the device before the instance, so a missing
         // feature otherwise degrades silently (e.g. mesh sub-object picking).
         // Warn about the ones the caller could still enable at device creation.
@@ -173,7 +189,8 @@ impl ViewportInstance {
         }
         warn_missing_device_capabilities(device);
 
-        let mut renderer = ViewportRenderer::new(device, target_format);
+        let mut renderer =
+            ViewportRenderer::new_with_pipeline_cache(device, target_format, pipeline_cache_data);
         renderer.set_cpu_pick_cache(true);
         let defaults = InteractionFrame::default();
         Self {
@@ -428,6 +445,13 @@ impl ViewportInstance {
     /// types: meshes, textures, 3D volumes and colourmaps.
     pub fn renderer_mut(&mut self) -> &mut ViewportRenderer {
         &mut self.renderer
+    }
+
+    /// The renderer's pipeline cache contents, to save and pass to
+    /// [`new_with_pipeline_cache`](Self::new_with_pipeline_cache) on the next
+    /// launch. `None` on a device without `Features::PIPELINE_CACHE`.
+    pub fn pipeline_cache_data(&self) -> Option<Vec<u8>> {
+        self.renderer.pipeline_cache_data()
     }
 
     /// Register an [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin), the
@@ -774,6 +798,75 @@ mod tests {
             frame.scene.items_of::<crate::PolylineItem>().len(),
             0,
             "removed extra gone"
+        );
+    }
+}
+
+/// Read the pipeline cache a previous run saved. A missing or unreadable file is
+/// a first run, not an error.
+#[cfg(feature = "app")]
+pub(crate) fn load_pipeline_cache(path: Option<&std::path::Path>) -> Option<Vec<u8>> {
+    std::fs::read(path?).ok()
+}
+
+/// Save `instance`'s pipeline cache to `path`. Written to a sibling file and
+/// renamed into place, so an interrupted write cannot leave a truncated cache
+/// for the next launch to read. Does nothing on a device with no cache.
+#[cfg(feature = "app")]
+pub(crate) fn save_pipeline_cache(path: &std::path::Path, instance: &ViewportInstance) {
+    let Some(data) = instance.pipeline_cache_data() else {
+        return;
+    };
+    let tmp = path.with_extension("tmp");
+    let written = std::fs::write(&tmp, &data).and_then(|()| std::fs::rename(&tmp, path));
+    if let Err(error) = written {
+        tracing::warn!(
+            path = %path.display(),
+            %error,
+            "could not save the pipeline cache"
+        );
+    }
+}
+
+/// Startup timing for the runners, reported on the `viewport_lib::init` tracing
+/// target alongside the renderer's own construction phases. Each mark carries
+/// the time since the previous one, so a subscriber sees where the time between
+/// `resumed` and the first presented frame went.
+#[cfg(feature = "app")]
+pub(crate) struct InitMarks {
+    start: web_time::Instant,
+    last: web_time::Instant,
+}
+
+#[cfg(feature = "app")]
+impl InitMarks {
+    pub(crate) fn new() -> Self {
+        let now = web_time::Instant::now();
+        Self {
+            start: now,
+            last: now,
+        }
+    }
+
+    pub(crate) fn mark(&mut self, section: &str) {
+        let now = web_time::Instant::now();
+        tracing::info!(
+            target: "viewport_lib::init",
+            section,
+            ms = now.duration_since(self.last).as_secs_f32() * 1000.0,
+            "runner startup phase"
+        );
+        self.last = now;
+    }
+
+    /// Report the last phase and the total since `new`.
+    pub(crate) fn finish(mut self, section: &str) {
+        self.mark(section);
+        tracing::info!(
+            target: "viewport_lib::init",
+            section = "runner_startup_total",
+            ms = self.last.duration_since(self.start).as_secs_f32() * 1000.0,
+            "runner startup phase"
         );
     }
 }

@@ -2,7 +2,7 @@
 //!
 //! `tone_map.wgsl` is a single fullscreen composite: it reads the HDR scene
 //! colour plus a fixed set of effect-produced inputs (bloom, ambient
-//! occlusion, contact shadows, surface LIC), the scene depth, the foreground
+//! occlusion, contact shadows), the scene depth, the foreground
 //! coverage mask, and the exposure state buffer. This module names that
 //! binding set once, so the bind group layout, the initial and per-frame bind
 //! groups, and the per-frame enable flags are all driven from the same table
@@ -20,7 +20,6 @@ pub(crate) mod slot {
     pub(crate) const AO: u32 = 4;
     pub(crate) const CONTACT_SHADOW: u32 = 5;
     pub(crate) const SCENE_DEPTH: u32 = 6;
-    pub(crate) const LIC: u32 = 7;
     pub(crate) const FOREGROUND_DEPTH: u32 = 8;
     pub(crate) const EXPOSURE: u32 = 9;
     /// Colour-grading strip LUT, sampled after tone mapping. A neutral
@@ -53,7 +52,6 @@ const BINDINGS: &[(u32, BindingKind)] = &[
     (slot::AO, BindingKind::FilterableTexture),
     (slot::CONTACT_SHADOW, BindingKind::FilterableTexture),
     (slot::SCENE_DEPTH, BindingKind::DepthTexture),
-    (slot::LIC, BindingKind::FilterableTexture),
     (slot::FOREGROUND_DEPTH, BindingKind::DepthTexture),
     (slot::EXPOSURE, BindingKind::StorageReadOnly),
     (slot::GRADE_LUT, BindingKind::FilterableTexture),
@@ -111,7 +109,6 @@ pub(crate) struct CompositeInputs {
     pub(crate) bloom: bool,
     pub(crate) ssao: bool,
     pub(crate) contact_shadows: bool,
-    pub(crate) lic: bool,
     /// Depth of field substitutes the primary colour input
     /// (`slot::HDR_COLOUR`) with the DoF output rather than occupying a slot
     /// of its own.

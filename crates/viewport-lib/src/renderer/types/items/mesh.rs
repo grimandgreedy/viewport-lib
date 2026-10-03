@@ -1,33 +1,5 @@
 use crate::scene::material::{ItemSettings, Material};
 
-/// LIC overlay data attached to a surface item.
-///
-/// Set `SceneRenderItem::lic` to `Some(LicOverlay { ... })` to render a
-/// Line Integral Convolution flow visualisation on that surface mesh.
-/// The mesh must have a `VertexVector` attribute matching `vector_attribute`
-/// uploaded via `DeviceResources::upload_mesh_data`.
-#[non_exhaustive]
-#[derive(Debug, Clone)]
-pub struct LicOverlay {
-    /// Name of the `AttributeData::VertexVector` attribute on the mesh.
-    pub vector_attribute: String,
-    /// LIC rendering configuration (step count, step size, strength).
-    pub config: crate::renderer::types::frame::SurfaceLICConfig,
-}
-
-impl LicOverlay {
-    /// Create a new `LicOverlay` with the given vector attribute name and LIC configuration.
-    pub fn new(
-        vector_attribute: impl Into<String>,
-        config: crate::renderer::types::frame::SurfaceLICConfig,
-    ) -> Self {
-        Self {
-            vector_attribute: vector_attribute.into(),
-            config,
-        }
-    }
-}
-
 /// Per-object render data for one frame.
 #[derive(Clone)]
 #[non_exhaustive]
@@ -90,11 +62,6 @@ pub struct SceneRenderItem {
     /// undeformed with no error. The single-instance convention is
     /// `deform_instance = Some(0)` alongside `attach_deform_slot_instance(.., 0, ..)`.
     pub deform_instance: Option<u32>,
-    /// LIC flow overlay for this surface. `None` disables LIC for this item.
-    ///
-    /// The mesh must have a `VertexVector` attribute matching
-    /// `LicOverlay::vector_attribute`.
-    pub lic: Option<LicOverlay>,
     /// LOD group to draw this object from. `None` means draw `mesh_id` directly.
     ///
     /// When set, the renderer measures how large the object appears each frame
@@ -143,7 +110,6 @@ impl Default for SceneRenderItem {
             warp_attribute: None,
             warp_scale: 1.0,
             deform_instance: None,
-            lic: None,
             lod_group: None,
             indirect_light: IndirectLightSource::default(),
         }

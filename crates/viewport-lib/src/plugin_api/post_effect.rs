@@ -6,8 +6,8 @@
 //! - A [`PostEffectProducer`] runs before tone mapping. It reads the HDR
 //!   scene colour and depth, encodes its own passes into the frame, and
 //!   contributes the result to one named composite input
-//!   ([`PostEffectSlot`]): the same slots the built-in bloom, SSAO, contact
-//!   shadows, and surface LIC fill. Registering a producer for a slot while
+//!   ([`PostEffectSlot`]): the same slots the built-in bloom, SSAO and
+//!   contact shadows fill. Registering a producer for a slot while
 //!   the corresponding built-in is switched off replaces that effect's
 //!   implementation; the composite treats the two identically.
 //! - A [`PostEffectStage`] runs after tone mapping, in display space,
@@ -59,9 +59,6 @@ pub enum PostEffectSlot {
     /// Screen-space contact-shadow factor (single channel, white = lit),
     /// multiplied into the scene colour.
     ContactShadow,
-    /// Surface line-integral-convolution intensity, modulated over surfaces
-    /// that submitted LIC vector data.
-    SurfaceLic,
 }
 
 /// Handle returned by

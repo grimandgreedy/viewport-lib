@@ -611,6 +611,8 @@ impl ViewportRenderer {
                 h.max(1),
                 frame.effects.post_process.ssaa_factor.max(1),
                 self.current_render_scale,
+                // The mask and colour targets, and the depth the mask tests.
+                crate::resources::TargetGroups::OUTLINE | crate::resources::TargetGroups::LDR_DEPTH,
             );
 
             // Write edge-detection uniform (colour, radius, viewport size).

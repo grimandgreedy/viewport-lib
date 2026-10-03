@@ -22,6 +22,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        hdr_family: bool,
     ) -> (u32, u32, u32, u32) {
         mesh_instance_gpu_data.clear();
         if frame.scene.mesh_instances.is_empty() {
@@ -31,7 +32,11 @@ impl ViewportRenderer {
             return (0, 0, 0, 0);
         }
         resources.ensure_instanced_pipelines(device);
-        resources.ensure_hdr_instanced_pipelines(device);
+        if hdr_family {
+            resources.ensure_hdr_instanced_pipelines(device);
+        } else {
+            resources.ensure_ldr_instanced_pipelines(device);
+        }
 
         let mut resolved = 0u32;
         let mut switches = 0u32;

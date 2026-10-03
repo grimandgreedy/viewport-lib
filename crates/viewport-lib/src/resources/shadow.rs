@@ -5,6 +5,8 @@
 //! `resources::init`; the shadow pass in `renderer::prepare::shadow_pass` and the
 //! lit pass in `renderer::prepare::lighting` read these fields each frame.
 
+use crate::resources::builders::LoggedAlloc;
+
 /// Directional-cascade and point-light shadow resources.
 pub(crate) struct ShadowResources {
     /// Shadow atlas depth texture (Depth32Float, atlas_size x atlas_size, 2x2
@@ -106,7 +108,7 @@ pub(crate) fn create_atlas_texture(
     device: &crate::gpu::Device,
     size: u32,
 ) -> (crate::gpu::Texture, crate::gpu::TextureView) {
-    let texture = device.create_texture(&crate::gpu::TextureDescriptor {
+    let texture = device.logged_texture(&crate::gpu::TextureDescriptor {
         label: Some("shadow_atlas"),
         size: crate::gpu::Extent3d {
             width: size,
@@ -139,7 +141,7 @@ pub(crate) fn create_point_cube_array(
     Vec<crate::gpu::TextureView>,
 ) {
     let layers = lights * 6;
-    let texture = device.create_texture(&crate::gpu::TextureDescriptor {
+    let texture = device.logged_texture(&crate::gpu::TextureDescriptor {
         label: Some("point_shadow_cube_array"),
         size: crate::gpu::Extent3d {
             width: face_size,

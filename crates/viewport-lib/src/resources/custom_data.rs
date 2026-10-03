@@ -20,8 +20,9 @@
 //! Slot convention read by the built-in instanced shading:
 //! - slots 0..3 (`data[0..3]`): added to the material's emissive (nits). Zero is
 //!   a no-op, so leaving custom data unset changes nothing.
-//! - slots 3..8: reserved as a raw channel for material plugins to consume. The
-//!   built-in shading does not read them.
+//! - slot 3: padding, not read.
+//! - slots 4..8: a raw channel for material plugins, handed to the plugin hook
+//!   as `surf.attr`. The built-in shading does not read them.
 
 use std::collections::HashMap;
 
@@ -33,7 +34,8 @@ pub const CUSTOM_DATA_FLOATS: usize = 8;
 /// a genuinely-unique value per instance, so this bounds the number of *distinct*
 /// blocks a frame holds. On overflow, further instances fall back to the zero
 /// block (id 0) and [`CustomDataBuilder::overflowed`] is set so the caller can
-/// log it. The buffer is preallocated at this size (32 bytes each, 8 MiB).
+/// log it. The buffer grows towards this size as frames need it (32 bytes
+/// each, 8 MiB at the limit); see [`CUSTOM_DATA_INITIAL_CAPACITY`].
 ///
 /// A workload with a genuinely-unique payload per instance beyond this count is
 /// the case this deduplicated buffer serves least well (it degenerates to one
@@ -41,6 +43,11 @@ pub const CUSTOM_DATA_FLOATS: usize = 8;
 /// growable or directly instance-indexed buffer. The public `custom_data` API on
 /// `ItemSettings` does not change with that.
 pub(crate) const CUSTOM_DATA_CAPACITY: usize = 262144;
+
+/// Blocks the buffer holds at construction: 32 KiB. A scene that never sets
+/// custom data uses one block, so the buffer starts small and doubles when a
+/// frame interns more than it holds, up to [`CUSTOM_DATA_CAPACITY`].
+pub(crate) const CUSTOM_DATA_INITIAL_CAPACITY: usize = 1024;
 
 /// One instance's raw custom-data payload, vec4-packed for std430 alignment.
 /// Matches the WGSL `CustomData` struct, 32 bytes.

@@ -29,22 +29,6 @@ pub(crate) struct ViewportHdrState {
     pub contact_shadow: crate::resources::postprocess::producer::ContactShadowViewport,
     pub dof: crate::resources::postprocess::producer::DofViewport,
 
-    // --- Surface LIC ---
-    /// Encodes screen-space flow vector per surface pixel (Rgba8Unorm, viewport-sized).
-    pub lic_vector_texture: crate::gpu::Texture,
-    pub lic_vector_view: crate::gpu::TextureView,
-    /// LIC intensity after advection (R8Unorm, viewport-sized). Read by tone_map.wgsl binding 7.
-    pub lic_output_texture: crate::gpu::Texture,
-    pub lic_output_view: crate::gpu::TextureView,
-    /// Per-pixel white noise (R8Unorm, viewport-sized). One independent random value per pixel.
-    /// Sampled with textureLoad (nearest) in lic_advect.wgsl to produce directional LIC contrast.
-    pub lic_noise_texture: crate::gpu::Texture,
-    pub lic_noise_view: crate::gpu::TextureView,
-    /// Bind group for the LIC advect render pass (reads lic_vector_texture + lic_noise_texture).
-    pub lic_advect_bind_group: crate::gpu::BindGroup,
-    /// Uniform buffer for LicAdvectUniform (steps, step_size, viewport dims).
-    pub lic_uniform_buf: crate::gpu::Buffer,
-
     // --- FXAA (post-composite stage) ---
     pub fxaa: crate::resources::postprocess::producer::FxaaViewport,
 
@@ -150,6 +134,9 @@ pub(crate) struct ViewportHdrState {
     /// Effective scene resolution after render scale: [output_size * render_scale].
     /// Equals output_size when render_scale = 1.0.
     pub scene_size: [u32; 2],
+    /// The target groups allocated at full size. The rest are one-texel
+    /// stand-ins until a frame asks for them.
+    pub groups: crate::resources::TargetGroups,
 }
 /// A render pipeline compiled for both the LDR swapchain format and the HDR
 /// intermediate format (`Rgba16Float`). Used for pipelines that draw into the
@@ -442,11 +429,24 @@ pub struct DeviceResources {
     /// `flush_mesh_pipeline_rebuild`, which prepare runs at the start of
     /// every frame.
     pub(crate) mesh_pipelines_dirty: bool,
-    /// Optional pipeline cache shared by every pipeline built here. `Some` only
+    /// The device's pipeline cache, which every pipeline built on the device is
+    /// created against, the renderer's own and any plugin's. `Some` only
     /// when the device enables `Features::PIPELINE_CACHE`. Persist its contents
     /// across runs with `ViewportRenderer::pipeline_cache_data` to skip shader
     /// recompilation on later launches.
     pub(crate) pipeline_cache: Option<crate::gpu::PipelineCache>,
+    /// This renderer's claim on the device's registered pipeline cache,
+    /// released when the renderer is dropped.
+    #[allow(dead_code)]
+    pub(crate) pipeline_cache_lease:
+        Option<crate::resources::builders::device_pipeline_cache::Lease>,
+    /// Shader modules shared between the pipeline families compiled from the
+    /// same source, keyed by the source text. The LDR and HDR mesh families
+    /// compile one `mesh.wgsl`, and the LDR, HDR and culled instanced families
+    /// one `mesh_instanced.wgsl`; a module this size takes milliseconds to
+    /// parse, so each is built once. See [`shared_module`](Self::shared_module).
+    pub(crate) shader_modules:
+        std::sync::Mutex<std::collections::HashMap<(usize, u64), crate::gpu::ShaderModule>>,
     /// Core scene mesh pipelines: base LDR set (solid, two-sided, transparent,
     /// wireframe) and their lazily-built HDR variants. See
     /// `resources::scene_pipelines::SceneCorePipelines`.
@@ -538,10 +538,6 @@ pub struct DeviceResources {
     /// per-viewport and live in `ViewportCullState` on each `ViewportSlot`, not here.
     pub(crate) cull: crate::resources::mesh::instancing::CullResources,
 
-    // --- Surface LIC shared resources ---
-    /// Surface LIC pipelines and layouts (surface + advect passes).
-    pub(crate) lic: crate::resources::postprocess::LicResources,
-
     // --- Sprite billboard pipelines (lazily created) ---
     /// Sprite (emissive + lit) pipelines, layouts, refraction, and soft-particle fallbacks.
     // The polyline outline mask pipeline lives on `polyline.outline_mask_pipeline`.
@@ -618,10 +614,12 @@ pub struct DeviceResources {
 
     // --- Per-instance custom-data buffer (group 0, binding 22) ---
     /// Scene-global buffer of per-instance custom-data blocks
-    /// (`InstanceCustomData`, one per distinct payload this frame). Fixed
-    /// capacity, so its handle is stable and the camera bind group never rebuilds
-    /// for it.
+    /// (`InstanceCustomData`, one per distinct payload this frame). Grows when
+    /// a frame needs more blocks than it holds, which replaces the buffer and
+    /// rebuilds the camera bind groups that name it.
     pub(crate) instance_custom_data_buf: crate::gpu::Buffer,
+    /// Blocks `instance_custom_data_buf` holds.
+    pub(crate) instance_custom_data_capacity: usize,
     /// Per-frame interner that deduplicates custom-data payloads and hands out
     /// `custom_data_id` indices into `instance_custom_data_buf`. Reset at each
     /// `prepare()`.
@@ -1032,16 +1030,50 @@ impl DeviceResources {
         self.frame_upload_bytes += bytes;
     }
 
+    /// A custom-data buffer holding `capacity` blocks.
+    pub(crate) fn create_custom_data_buffer(
+        device: &crate::gpu::Device,
+        capacity: usize,
+    ) -> crate::gpu::Buffer {
+        use crate::resources::builders::LoggedAlloc;
+        device.logged_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("instance_custom_data_buf"),
+            size: (std::mem::size_of::<crate::resources::custom_data::InstanceCustomData>()
+                * capacity) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
     /// Upload the current per-instance custom-data blocks to
     /// `instance_custom_data_buf`. Called after interning finishes, alongside
     /// [`upload_material_gpu`](Self::upload_material_gpu). Overwriting a superset
     /// each time is safe: index 0 is always the zero block and ids only grow
     /// within a frame, so earlier custom_data_ids stay valid.
-    pub(crate) fn upload_custom_data(&mut self, queue: &crate::gpu::Queue) {
+    ///
+    /// A frame that interns more blocks than the buffer holds replaces it with
+    /// one twice the size or larger and sets `camera_bind_groups_dirty`, since
+    /// every camera bind group names the old buffer. The caller rebuilds them
+    /// before anything draws.
+    pub(crate) fn upload_custom_data(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) {
         let entries = self.custom_data_builder.entries();
         let n = entries
             .len()
             .min(crate::resources::custom_data::CUSTOM_DATA_CAPACITY);
+        if n > self.instance_custom_data_capacity {
+            let capacity = n
+                .next_power_of_two()
+                .max(self.instance_custom_data_capacity * 2)
+                .min(crate::resources::custom_data::CUSTOM_DATA_CAPACITY);
+            self.instance_custom_data_buf = Self::create_custom_data_buffer(device, capacity);
+            self.instance_custom_data_capacity = capacity;
+            self.camera_bind_groups_dirty = true;
+        }
+        let entries = self.custom_data_builder.entries();
         queue.write_buffer(
             &self.instance_custom_data_buf,
             0,
@@ -1117,7 +1149,8 @@ impl DeviceResources {
     /// Called by the outline prepare on the first frame with a selection to
     /// outline. A no-op after that.
     ///
-    /// `register_deformer` rebuilds the mask pair with the deformers composed in.
+    /// The mask pair runs the registered deformers, so `register_deformer`
+    /// rebuilds it once it exists.
     pub(crate) fn ensure_outline_pipelines(&mut self, device: &crate::gpu::Device) {
         if self.outline.mask_pipeline.is_some() {
             return;
@@ -1130,8 +1163,14 @@ impl DeviceResources {
         } else {
             include_str!(concat!(env!("OUT_DIR"), "/outline_mask_noop.wgsl"))
         };
-        let mask_shader =
-            crate::resources::builders::wgsl_module(device, "outline_mask_shader", mask_src);
+        let mask_shader = crate::resources::builders::wgsl_module(
+            device,
+            "outline_mask_shader",
+            crate::resources::mesh_sidecar::registry::compose_shader(
+                mask_src,
+                &self.deform.registrations,
+            ),
+        );
         let masks = crate::resources::mesh::mesh_pipelines::build_outline_mask_pipelines(
             device,
             &self.outline_pipeline_layout(device),
@@ -1304,7 +1343,8 @@ impl DeviceResources {
     /// Called from the cascade branch of the shadow prepare, the same point the
     /// atlas itself is allocated. A no-op once built.
     ///
-    /// `register_deformer` rebuilds the same set with the deformers composed in.
+    /// The pass runs the registered deformers, so `register_deformer` rebuilds
+    /// the set once it exists.
     pub(crate) fn ensure_cascade_shadow_pipelines(&mut self, device: &crate::gpu::Device) {
         if self.shadow.pipeline.is_some() {
             return;
@@ -1315,7 +1355,14 @@ impl DeviceResources {
         } else {
             include_str!(concat!(env!("OUT_DIR"), "/shadow_noop.wgsl"))
         };
-        let shader = crate::resources::builders::wgsl_module(device, "shadow_shader", src);
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "shadow_shader",
+            crate::resources::mesh_sidecar::registry::compose_shader(
+                src,
+                &self.deform.registrations,
+            ),
+        );
         let mut bgls = vec![&self.shadow.camera_bgl, &self.binds.object_bgl];
         if self.deform.enabled {
             bgls.push(&self.deform.bind_group_layout);
@@ -1358,7 +1405,14 @@ impl DeviceResources {
         } else {
             include_str!(concat!(env!("OUT_DIR"), "/shadow_point_noop.wgsl"))
         };
-        let shader = crate::resources::builders::wgsl_module(device, "shadow_point_shader", src);
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "shadow_point_shader",
+            crate::resources::mesh_sidecar::registry::compose_shader(
+                src,
+                &self.deform.registrations,
+            ),
+        );
         let mut bgls = vec![&self.shadow.point_face_bgl, &self.binds.object_bgl];
         if self.deform.enabled {
             bgls.push(&self.deform.bind_group_layout);
@@ -1635,6 +1689,26 @@ impl DeviceResources {
     /// `site` is the `file!()`/`line!()` of the builder, emitted at debug level
     /// under the `viewport_lib::pipelines` target so a hitch traced to a lazy
     /// compile can be attributed to the exact builder.
+    /// The shader module for `source`, created on first request and shared by
+    /// every later request for the same text. `label` names the module when it
+    /// is created; a later caller with a different label gets the same module.
+    pub(crate) fn shared_module(
+        &self,
+        device: &crate::gpu::Device,
+        label: &str,
+        source: &str,
+    ) -> crate::gpu::ShaderModule {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        source.hash(&mut hasher);
+        let key = (source.len(), hasher.finish());
+        let mut modules = self.shader_modules.lock().unwrap();
+        modules
+            .entry(key)
+            .or_insert_with(|| crate::resources::builders::wgsl_module(device, label, source))
+            .clone()
+    }
+
     pub(crate) fn note_pipeline_built(&self, site: &'static str) {
         self.frame_pipelines_built
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
