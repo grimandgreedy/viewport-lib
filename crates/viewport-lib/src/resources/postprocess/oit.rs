@@ -27,7 +27,7 @@ pub(crate) struct OitResources {
     /// The instanced twins (mesh_instanced_oit.wgsl through `vs_main`).
     pub(crate) instanced: Option<LazyFamily<OitContext, 2>>,
     /// OIT composite pipeline (oit_composite.wgsl, fullscreen tri, no depth).
-    pub(crate) composite_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) composite_pipeline: Option<super::LazyFullscreen>,
     /// Bind group layout for the OIT composite pass (group 0: accum + reveal + sampler).
     pub(crate) composite_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Linear clamp sampler shared by the OIT composite pass.

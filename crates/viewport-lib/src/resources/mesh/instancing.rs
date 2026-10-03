@@ -57,17 +57,12 @@ pub(crate) struct InstancingResources {
     /// Composed by `ensure_ldr_instanced_pipelines`; each member is built by
     /// the first draw that selects it.
     pub(crate) ldr: Option<LazyFamily<InstancedLdrContext, 5>>,
-    /// Instanced shadow render pipeline (depth-only).
-    pub(crate) shadow_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided (`cull_mode: None` + two-sided depth bias) variant of
-    /// `shadow_pipeline` for `Identical` backface-policy batches.
-    pub(crate) shadow_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Alpha-cutout (`AlphaMode::Mask`) shadow pipeline: adds a fragment stage
-    /// that samples the albedo alpha and discards below the cutoff, so leaf
-    /// gaps do not cast solid shadows. Direct-draw path.
-    pub(crate) shadow_cutout_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided variant of `shadow_cutout_pipeline`.
-    pub(crate) shadow_cutout_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// The instanced shadow pipelines (depth-only, direct draw path), keyed
+    /// by facedness (`cull_mode: None` plus the two-sided depth bias for
+    /// `Identical` backface-policy batches) and cutout (a fragment stage that
+    /// samples the albedo alpha and discards below the cutoff, so leaf gaps
+    /// do not cast solid shadows). Composed by `ensure_instanced_pipelines`.
+    pub(crate) shadow: Option<LazyFamily<InstancedShadowRecipe, 4>>,
     /// Per-cascade uniform buffers for the shadow pipeline (64 bytes each, one mat4x4).
     pub(crate) shadow_cascade_bufs: [Option<crate::gpu::Buffer>; 4],
     /// Per-cascade bind groups for the shadow pipeline group 0.
@@ -101,17 +96,11 @@ pub(crate) struct CullResources {
     /// The GPU-culled OIT accumulate pipelines, keyed by facedness. Composed
     /// by `ensure_oit_cull_pipelines`.
     pub(crate) oit: Option<LazyFamily<crate::resources::postprocess::oit::OitContext, 2>>,
-    /// Shadow instanced cull pipeline (depth-only, uses `vs_shadow_cull`).
-    pub(crate) shadow_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided (`cull_mode: None` + two-sided depth bias) variant of
-    /// `shadow_pipeline` for `Identical` backface-policy batches.
-    pub(crate) shadow_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Alpha-cutout shadow cull pipeline: like `shadow_pipeline` but with a
-    /// fragment stage that discards on albedo alpha. Uses the full cull BGL
+    /// The GPU-culled shadow pipelines (`vs_shadow_cull`), keyed as
+    /// `InstancingResources::shadow`. The cutout twins use the full cull BGL
     /// (`bind_group_layout`) so the albedo texture is available in group 1.
-    pub(crate) shadow_cutout_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided variant of `shadow_cutout_pipeline`.
-    pub(crate) shadow_cutout_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Composed by `ensure_cull_instance_pipelines`.
+    pub(crate) shadow: Option<LazyFamily<InstancedShadowRecipe, 4>>,
     /// BGL for shadow cull instance group: binding 0 (instances) + binding 5 (visibility_indices).
     pub(crate) shadow_bgl: Option<crate::gpu::BindGroupLayout>,
 }
@@ -137,6 +126,81 @@ pub(crate) struct InstancedHdrContext {
     solid_shader_nodiscard: crate::gpu::ShaderModule,
     blend_layout: crate::gpu::PipelineLayout,
     blend_shader: crate::gpu::ShaderModule,
+}
+
+/// What an instanced shadow pipeline build reads: the depth-only layout, the
+/// cutout layout (whose group 1 carries the albedo), the module and the
+/// vertex entry points for the plain and cutout variants.
+pub(crate) struct InstancedShadowRecipe {
+    device: crate::gpu::Device,
+    layout: crate::gpu::PipelineLayout,
+    cutout_layout: crate::gpu::PipelineLayout,
+    shader: crate::gpu::ShaderModule,
+    label: &'static str,
+    vs_main: &'static str,
+    vs_cutout: &'static str,
+}
+
+/// Shadow slot index: bit 0 two-sided, bit 1 cutout.
+fn shadow_index(two_sided: bool, cutout: bool) -> usize {
+    two_sided as usize + 2 * cutout as usize
+}
+
+fn build_instanced_shadow(r: &InstancedShadowRecipe, i: usize) -> crate::gpu::RenderPipeline {
+    let two_sided = i & 1 != 0;
+    let cutout = i & 2 != 0;
+    // Front-cull for closed solids; `cull_mode: None` and the two-sided bias
+    // for two-sided (`Identical`) batches, so a single-winding foliage card
+    // still casts when its front face points away from the light.
+    let (cull_mode, bias) = if two_sided {
+        (
+            None,
+            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
+        )
+    } else {
+        (
+            Some(crate::gpu::Face::Front),
+            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS,
+        )
+    };
+    let label = format!(
+        "{}{}{}_pipeline",
+        r.label,
+        if cutout { "_cutout" } else { "" },
+        if two_sided { "_two_sided" } else { "" },
+    );
+    crate::resources::builders::render_pipeline(
+        &r.device,
+        crate::resources::builders::RenderPipelineDesc {
+            label: &label,
+            layout: if cutout { &r.cutout_layout } else { &r.layout },
+            vertex_module: &r.shader,
+            vertex_entry: if cutout { r.vs_cutout } else { r.vs_main },
+            vertex_buffers: &[Vertex::buffer_layout()],
+            fragment: cutout.then(|| crate::gpu::FragmentState {
+                module: &r.shader,
+                entry_point: Some("fs_cutout"),
+                targets: &[],
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: crate::gpu::PrimitiveState {
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
+                cull_mode,
+                ..Default::default()
+            },
+            depth_stencil: Some(crate::gpu::DepthStencilState {
+                format: crate::gpu::TextureFormat::Depth32Float,
+                depth_write_enabled: crate::resources::builders::dwrite(true),
+                depth_compare: crate::resources::builders::dcompare(
+                    crate::gpu::CompareFunction::Less,
+                ),
+                stencil: crate::gpu::StencilState::default(),
+                bias,
+            }),
+            multisample: crate::gpu::MultisampleState::default(),
+            cache: None,
+        },
+    )
 }
 
 /// What a GPU-culled HDR solid build reads.
@@ -312,6 +376,16 @@ impl InstancingResources {
         self.hdr.as_ref()?.get(INSTANCED_PREMULTIPLIED)
     }
 
+    /// The direct-draw shadow pipeline for a batch's facedness and cutout, or
+    /// `None` while a worker has it.
+    pub(crate) fn shadow(
+        &self,
+        two_sided: bool,
+        cutout: bool,
+    ) -> Option<&crate::gpu::RenderPipeline> {
+        self.shadow.as_ref()?.get(shadow_index(two_sided, cutout))
+    }
+
     /// Whether the direct-draw solid for `key` is built, without starting it.
     pub(crate) fn opaque_ready(
         &self,
@@ -337,6 +411,16 @@ impl CullResources {
         key: crate::renderer::pipeline_key::PipelineKey,
     ) -> Option<&crate::gpu::RenderPipeline> {
         self.hdr.as_ref()?.get(solid_index(key))
+    }
+
+    /// The GPU-culled shadow pipeline for a batch's facedness and cutout, or
+    /// `None` while a worker has it.
+    pub(crate) fn shadow(
+        &self,
+        two_sided: bool,
+        cutout: bool,
+    ) -> Option<&crate::gpu::RenderPipeline> {
+        self.shadow.as_ref()?.get(shadow_index(two_sided, cutout))
     }
 
     /// Whether the GPU-culled solid for `key` is built, without starting it.
@@ -582,99 +666,21 @@ impl DeviceResources {
             &[&shadow_bgl, &instance_bgl],
         );
 
-        // Front-cull for closed solids; `cull_mode: None` + the two-sided bias for
-        // two-sided (`Identical`) batches, so a single-winding foliage card still
-        // casts when its front face points away from the light. Mirrors the
-        // per-object `shadow_pipeline` / `shadow_pipeline_two_sided` split.
-        let make_shadow_instanced =
-            |label: &str, cull_mode: Option<crate::gpu::Face>, bias: crate::gpu::DepthBiasState| {
-                crate::resources::builders::render_pipeline(
-                    device,
-                    crate::resources::builders::RenderPipelineDesc {
-                        label,
-                        layout: &shadow_instanced_layout,
-                        vertex_module: &shadow_instanced_shader,
-                        vertex_entry: "vs_main",
-                        vertex_buffers: &[Vertex::buffer_layout()],
-                        fragment: None,
-                        primitive: crate::gpu::PrimitiveState {
-                            topology: crate::gpu::PrimitiveTopology::TriangleList,
-                            cull_mode,
-                            ..Default::default()
-                        },
-                        depth_stencil: Some(crate::gpu::DepthStencilState {
-                            format: crate::gpu::TextureFormat::Depth32Float,
-                            depth_write_enabled: crate::resources::builders::dwrite(true),
-                            depth_compare: crate::resources::builders::dcompare(
-                                crate::gpu::CompareFunction::Less,
-                            ),
-                            stencil: crate::gpu::StencilState::default(),
-                            bias,
-                        }),
-                        multisample: crate::gpu::MultisampleState::default(),
-                        cache: None,
-                    },
-                )
-            };
-        let shadow_instanced = make_shadow_instanced(
-            "shadow_instanced_pipeline",
-            Some(crate::gpu::Face::Front),
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS,
-        );
-        let shadow_instanced_two_sided = make_shadow_instanced(
-            "shadow_instanced_two_sided_pipeline",
-            None,
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
-        );
-
-        // Alpha-cutout shadow pipelines: same depth-only setup but with a fragment
-        // stage (`fs_cutout`) that samples the albedo alpha and discards below the
-        // material cutoff. `vs_cutout` carries the UV. Group 1 is the full
-        // `instance_bgl`, so the batch's albedo texture (bindings 1-2) is available.
-        let make_shadow_cutout =
-            |label: &str, cull_mode: Option<crate::gpu::Face>, bias: crate::gpu::DepthBiasState| {
-                crate::resources::builders::render_pipeline(
-                    device,
-                    crate::resources::builders::RenderPipelineDesc {
-                        label,
-                        layout: &shadow_instanced_layout,
-                        vertex_module: &shadow_instanced_shader,
-                        vertex_entry: "vs_cutout",
-                        vertex_buffers: &[Vertex::buffer_layout()],
-                        fragment: Some(crate::gpu::FragmentState {
-                            module: &shadow_instanced_shader,
-                            entry_point: Some("fs_cutout"),
-                            targets: &[],
-                            compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                        }),
-                        primitive: crate::gpu::PrimitiveState {
-                            topology: crate::gpu::PrimitiveTopology::TriangleList,
-                            cull_mode,
-                            ..Default::default()
-                        },
-                        depth_stencil: Some(crate::gpu::DepthStencilState {
-                            format: crate::gpu::TextureFormat::Depth32Float,
-                            depth_write_enabled: crate::resources::builders::dwrite(true),
-                            depth_compare: crate::resources::builders::dcompare(
-                                crate::gpu::CompareFunction::Less,
-                            ),
-                            stencil: crate::gpu::StencilState::default(),
-                            bias,
-                        }),
-                        multisample: crate::gpu::MultisampleState::default(),
-                        cache: None,
-                    },
-                )
-            };
-        let shadow_cutout = make_shadow_cutout(
-            "shadow_instanced_cutout_pipeline",
-            Some(crate::gpu::Face::Front),
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS,
-        );
-        let shadow_cutout_two_sided = make_shadow_cutout(
-            "shadow_instanced_cutout_two_sided_pipeline",
-            None,
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
+        // Both the plain and cutout variants bind the full `instance_bgl` at
+        // group 1, so the batch's albedo (bindings 1-2) is there for the cutout
+        // fragment stage.
+        let shadow = LazyFamily::new(
+            InstancedShadowRecipe {
+                device: device.clone(),
+                layout: shadow_instanced_layout.clone(),
+                cutout_layout: shadow_instanced_layout,
+                shader: shadow_instanced_shader,
+                label: "shadow_instanced",
+                vs_main: "vs_main",
+                vs_cutout: "vs_cutout",
+            },
+            std::sync::Arc::clone(&self.pipeline_compiler),
+            build_instanced_shadow,
         );
 
         // Allocate 4 per-cascade uniform buffers (64 bytes each = one mat4x4) and
@@ -707,10 +713,7 @@ impl DeviceResources {
         // the per-frame bindless bind group and the HDR/OIT/cull pipelines below
         // reuse it instead of rebuilding.
         self.instancing.bindless_bind_group_layout = bindless_bgl;
-        self.instancing.shadow_pipeline = Some(shadow_instanced);
-        self.instancing.shadow_two_sided_pipeline = Some(shadow_instanced_two_sided);
-        self.instancing.shadow_cutout_pipeline = Some(shadow_cutout);
-        self.instancing.shadow_cutout_two_sided_pipeline = Some(shadow_cutout_two_sided);
+        self.instancing.shadow = Some(shadow);
     }
 
     /// Ensure the LDR instanced colour pipelines exist: the ones a direct paint
@@ -1282,105 +1285,28 @@ impl DeviceResources {
             "shadow_instanced_cull_shader",
             crate::resources::builders::wgsl_source!("shadow_instanced"),
         );
-        // Front-cull for closed solids; `cull_mode: None` + the two-sided bias for
-        // two-sided (`Identical`) batches (see the direct-path shadow pipelines above).
-        let make_shadow_cull =
-            |label: &str, cull_mode: Option<crate::gpu::Face>, bias: crate::gpu::DepthBiasState| {
-                crate::resources::builders::render_pipeline(
-                    device,
-                    crate::resources::builders::RenderPipelineDesc {
-                        label,
-                        layout: &shadow_cull_layout,
-                        vertex_module: &shadow_cull_shader,
-                        vertex_entry: "vs_shadow_cull",
-                        vertex_buffers: &[Vertex::buffer_layout()],
-                        fragment: None,
-                        primitive: crate::gpu::PrimitiveState {
-                            topology: crate::gpu::PrimitiveTopology::TriangleList,
-                            cull_mode,
-                            ..Default::default()
-                        },
-                        depth_stencil: Some(crate::gpu::DepthStencilState {
-                            format: crate::gpu::TextureFormat::Depth32Float,
-                            depth_write_enabled: crate::resources::builders::dwrite(true),
-                            depth_compare: crate::resources::builders::dcompare(
-                                crate::gpu::CompareFunction::Less,
-                            ),
-                            stencil: crate::gpu::StencilState::default(),
-                            bias,
-                        }),
-                        multisample: crate::gpu::MultisampleState::default(),
-                        cache: None,
-                    },
-                )
-            };
-        let shadow_instanced_cull = make_shadow_cull(
-            "shadow_instanced_cull_pipeline",
-            Some(crate::gpu::Face::Front),
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS,
-        );
-        let shadow_instanced_cull_two_sided = make_shadow_cull(
-            "shadow_instanced_cull_two_sided_pipeline",
-            None,
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
-        );
-        self.cull.shadow_pipeline = Some(shadow_instanced_cull);
-        self.cull.shadow_two_sided_pipeline = Some(shadow_instanced_cull_two_sided);
-        self.cull.shadow_bgl = Some(shadow_cull_bgl);
-
-        // Alpha-cutout shadow cull pipelines: `vs_cutout_cull` + `fs_cutout`. Group 1
-        // uses the full `cull_bgl` (storage + albedo/sampler + visibility), so the
-        // fragment can sample the batch albedo and discard leaf-gap fragments.
+        // The cutout twins use the full `cull_bgl` (storage + albedo/sampler +
+        // visibility) at group 1, so the fragment can sample the batch albedo
+        // and discard leaf-gap fragments.
         let shadow_cutout_cull_layout = crate::resources::builders::pipeline_layout(
             device,
             "shadow_instanced_cutout_cull_pipeline_layout",
             &[&shadow_bgl_for_cull, &cull_bgl],
         );
-        let make_shadow_cutout_cull =
-            |label: &str, cull_mode: Option<crate::gpu::Face>, bias: crate::gpu::DepthBiasState| {
-                crate::resources::builders::render_pipeline(
-                    device,
-                    crate::resources::builders::RenderPipelineDesc {
-                        label,
-                        layout: &shadow_cutout_cull_layout,
-                        vertex_module: &shadow_cull_shader,
-                        vertex_entry: "vs_cutout_cull",
-                        vertex_buffers: &[Vertex::buffer_layout()],
-                        fragment: Some(crate::gpu::FragmentState {
-                            module: &shadow_cull_shader,
-                            entry_point: Some("fs_cutout"),
-                            targets: &[],
-                            compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                        }),
-                        primitive: crate::gpu::PrimitiveState {
-                            topology: crate::gpu::PrimitiveTopology::TriangleList,
-                            cull_mode,
-                            ..Default::default()
-                        },
-                        depth_stencil: Some(crate::gpu::DepthStencilState {
-                            format: crate::gpu::TextureFormat::Depth32Float,
-                            depth_write_enabled: crate::resources::builders::dwrite(true),
-                            depth_compare: crate::resources::builders::dcompare(
-                                crate::gpu::CompareFunction::Less,
-                            ),
-                            stencil: crate::gpu::StencilState::default(),
-                            bias,
-                        }),
-                        multisample: crate::gpu::MultisampleState::default(),
-                        cache: None,
-                    },
-                )
-            };
-        self.cull.shadow_cutout_pipeline = Some(make_shadow_cutout_cull(
-            "shadow_instanced_cutout_cull_pipeline",
-            Some(crate::gpu::Face::Front),
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS,
+        self.cull.shadow = Some(LazyFamily::new(
+            InstancedShadowRecipe {
+                device: device.clone(),
+                layout: shadow_cull_layout,
+                cutout_layout: shadow_cutout_cull_layout,
+                shader: shadow_cull_shader,
+                label: "shadow_instanced_cull",
+                vs_main: "vs_shadow_cull",
+                vs_cutout: "vs_cutout_cull",
+            },
+            std::sync::Arc::clone(&self.pipeline_compiler),
+            build_instanced_shadow,
         ));
-        self.cull.shadow_cutout_two_sided_pipeline = Some(make_shadow_cutout_cull(
-            "shadow_instanced_cutout_cull_two_sided_pipeline",
-            None,
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
-        ));
+        self.cull.shadow_bgl = Some(shadow_cull_bgl);
 
         self.cull.bind_group_layout = Some(cull_bgl);
         // The bindless cull colour layout (None under the per-batch binding).

@@ -1060,11 +1060,8 @@ macro_rules! emit_outline_composite {
                 || slot.selection_outlines.plugin_outline_present
             {
                 let composite_bg = slot.hdr.as_ref().map(|h| &h.outline_composite_bind_group);
-                let pipeline = resources
-                    .outline
-                    .composite_pipeline_msaa
-                    .as_ref()
-                    .or(resources.outline.composite_pipeline_single.as_ref());
+                // Skipped while the pipeline is on a worker.
+                let pipeline = resources.outline.composite_ldr(resources.sample_count);
                 if let (Some(pipeline), Some(bg)) = (pipeline, composite_bg) {
                     render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(0, bg, &[]);

@@ -183,3 +183,68 @@ fn a_compiling_item_casts_no_shadow() {
         );
     }
 }
+
+/// Switching an effect on mid-session under `Background` compiles nothing on
+/// the frame; the effect appears once its pipelines are built, and the image
+/// then matches a `Blocking` renderer's.
+#[test]
+fn an_effect_switched_on_under_background_catches_up() {
+    let _guard = LOG_LOCK.lock().unwrap();
+    let Some((device, queue)) = headless_device_recommended_limits() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let with_effects = |frame: &mut FrameData| {
+        frame.effects.post_process.bloom.enabled = true;
+        frame.effects.post_process.ssao = true;
+        frame.effects.post_process.fxaa = true;
+    };
+
+    let mut blocking = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    blocking.set_pipeline_compilation(PipelineCompilation::Blocking);
+    let mut frame = scene(&mut blocking, &device, true);
+    let _ = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
+    with_effects(&mut frame);
+    let _ = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
+    let expected = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    let mut background = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    background.set_pipeline_compilation(PipelineCompilation::Background);
+    let mut frame = scene(&mut background, &device, true);
+    let _ = background.render_offscreen(&device, &queue, &frame, 64, 64);
+    background.wait_for_pipelines(&device);
+    let _ = background.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    // The frame that switches the effects on hands their pipelines to the
+    // workers and compiles none of them itself.
+    viewport_lib::resources::build_log::enable();
+    let _ = pipelines_built();
+    with_effects(&mut frame);
+    let _ = background.render_offscreen(&device, &queue, &frame, 64, 64);
+    let on_thread: Vec<String> = pipelines_built()
+        .into_iter()
+        .filter(|l| l.contains("bloom") || l.contains("ssao") || l.contains("fxaa"))
+        .collect();
+    let pending = background.last_frame_stats().pipelines_pending;
+    // The workers may already have finished one; what matters is that none
+    // was built on the calling thread, which the count tells apart: a build
+    // on this thread never raises it.
+    assert!(
+        pending > 0 || on_thread.is_empty(),
+        "the frame built effect pipelines itself: {on_thread:?}"
+    );
+
+    background.wait_for_pipelines(&device);
+    let start = std::time::Instant::now();
+    loop {
+        let out = background.render_offscreen(&device, &queue, &frame, 64, 64);
+        if out == expected {
+            break;
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(30),
+            "the effects never matched the blocking renderer"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}

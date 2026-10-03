@@ -2724,8 +2724,14 @@ impl ViewportRenderer {
         // Only executes when transparent items were present.
         // -----------------------------------------------------------------------
         if has_transparent {
+            // Skipped while the pipeline is on a worker: transparency lands a
+            // frame or two late.
             if let (Some(pipeline), Some(bg)) = (
-                self.resources.oit.composite_pipeline.as_ref(),
+                self.resources
+                    .oit
+                    .composite_pipeline
+                    .as_ref()
+                    .and_then(|p| p.get(0)),
                 slot_hdr.oit_composite_bind_group.as_ref(),
             ) {
                 let hdr_view = &slot_hdr.hdr_view;
@@ -2776,9 +2782,18 @@ impl ViewportRenderer {
                 ctx.queue
                     .write_buffer(&slot_hdr.lic_uniform_buf, 0, bytemuck::cast_slice(&[u]));
             }
+            // Both LIC passes wait until both pipelines are built.
             if let (Some(surface_pipeline), Some(advect_pipeline)) = (
-                self.resources.lic.surface_pipeline.as_ref(),
-                self.resources.lic.advect_pipeline.as_ref(),
+                self.resources
+                    .lic
+                    .surface_pipeline
+                    .as_ref()
+                    .and_then(|p| p.get(0)),
+                self.resources
+                    .lic
+                    .advect_pipeline
+                    .as_ref()
+                    .and_then(|p| p.get(0)),
             ) {
                 let camera_bg = &slot.camera_bind_group;
                 // Pass 1: surface vector pass (clears lic_vector_texture first).
@@ -2872,14 +2887,9 @@ impl ViewportRenderer {
         if !slot.selection_outlines.outline_object_buffers.is_empty()
             || slot.selection_outlines.plugin_outline_present
         {
-            // Prefer the HDR-format pipeline; fall back to LDR single-sample.
-            let hdr_pipeline = self
-                .resources
-                .outline
-                .composite_pipeline_hdr
-                .as_ref()
-                .or(self.resources.outline.composite_pipeline_single.as_ref());
-            if let Some(pipeline) = hdr_pipeline {
+            // Skipped while the pipeline is on a worker: the outline appears
+            // a frame or two late.
+            if let Some(pipeline) = self.resources.outline.composite_hdr() {
                 let bg = &slot_hdr.outline_composite_bind_group;
                 let hdr_view = &slot_hdr.hdr_view;
                 let hdr_depth_view = &slot_hdr.hdr_depth_view;
