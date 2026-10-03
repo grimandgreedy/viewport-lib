@@ -2196,6 +2196,11 @@ impl DeviceResources {
             custom_data_builder: crate::resources::custom_data::CustomDataBuilder::default(),
             frame_upload_bytes: 0,
             frame_pipelines_built: std::sync::atomic::AtomicU32::new(0),
+            pipeline_compiler: std::sync::Arc::new(
+                crate::resources::pipeline_slot::PipelineCompiler::new(
+                    crate::resources::pipeline_slot::initial_policy(),
+                ),
+            ),
             resource_free_epoch: 0,
             resource_view_epoch: 0,
             retain_mesh_cpu_geometry: true,

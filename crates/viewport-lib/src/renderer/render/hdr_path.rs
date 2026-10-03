@@ -128,12 +128,16 @@ pub(super) fn draw_mesh_item(
                 } else if hdr {
                     pp.hdr_opaque(key)
                 } else {
-                    select_two_sided(key, pp.ldr_solid(), pp.ldr_solid_two_sided())
+                    pp.ldr_opaque(key)
                 }
             } else if item.settings.opacity < 1.0 {
-                trans_pl
+                Some(trans_pl)
             } else {
-                solid_pl
+                Some(solid_pl)
+            };
+            // A plugin pipeline still compiling skips the draw this frame.
+            let Some(pl) = pl else {
+                return;
             };
             render_pass.set_pipeline(pl);
             bind_deform_group!(render_pass, resources, deform_bg);
@@ -178,12 +182,15 @@ pub(super) fn draw_mesh_item(
                     } else if hdr {
                         pp.hdr_opaque(range_key)
                     } else {
-                        select_two_sided(range_key, pp.ldr_solid(), pp.ldr_solid_two_sided())
+                        pp.ldr_opaque(range_key)
                     }
                 } else if is_trans {
-                    trans_pl
+                    Some(trans_pl)
                 } else {
-                    select_two_sided(range_key, solid_pl, solid_two_sided_pl)
+                    Some(select_two_sided(range_key, solid_pl, solid_two_sided_pl))
+                };
+                let Some(pl) = pl else {
+                    continue;
                 };
                 render_pass.set_pipeline(pl);
                 let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
@@ -214,9 +221,12 @@ pub(super) fn draw_mesh_item(
                     pp.hdr_opaque(PipelineKey::two_sided(item.material.is_two_sided()))
                 }
             } else if item.settings.opacity < 1.0 {
-                trans_pl
+                Some(trans_pl)
             } else {
-                solid_pl
+                Some(solid_pl)
+            };
+            let Some(pl) = pl else {
+                return;
             };
             render_pass.set_pipeline(pl);
             bind_deform_group!(render_pass, resources, deform_bg);
@@ -1192,7 +1202,10 @@ impl ViewportRenderer {
                                             .map(|bg| (indirect_buf, bg))
                                     });
                                 if let Some((indirect_buf, cull_bg)) = culled {
-                                    render_pass.set_pipeline(plug_pipes.cull(key));
+                                    let Some(pl) = plug_pipes.cull(key) else {
+                                        continue;
+                                    };
+                                    render_pass.set_pipeline(pl);
                                     render_pass.set_bind_group(1, cull_bg, &[]);
                                     bind_material_group!(render_pass, mat_bg);
                                     render_pass.draw_indexed_indirect(
@@ -1205,7 +1218,10 @@ impl ViewportRenderer {
                                     else {
                                         continue;
                                     };
-                                    render_pass.set_pipeline(plug_pipes.hdr_opaque(key));
+                                    let Some(pl) = plug_pipes.hdr_opaque(key) else {
+                                        continue;
+                                    };
+                                    render_pass.set_pipeline(pl);
                                     render_pass.set_bind_group(1, inst_tex_bg, &[]);
                                     bind_material_group!(render_pass, mat_bg);
                                     let base_vertex =
@@ -1316,7 +1332,10 @@ impl ViewportRenderer {
                             let pipeline = if let Some((pp, _)) = plug {
                                 pp.hdr_opaque(key)
                             } else {
-                                hdr_opaque.get(key)
+                                Some(hdr_opaque.get(key))
+                            };
+                            let Some(pipeline) = pipeline else {
+                                continue;
                             };
                             render_pass.set_pipeline(pipeline);
                             bind_deform_group!(
@@ -1384,7 +1403,10 @@ impl ViewportRenderer {
                                     let pl = if let Some((pp, _)) = plug_r {
                                         pp.hdr_opaque(range_key)
                                     } else {
-                                        hdr_opaque.get(range_key)
+                                        Some(hdr_opaque.get(range_key))
+                                    };
+                                    let Some(pl) = pl else {
+                                        continue;
                                     };
                                     render_pass.set_pipeline(pl);
                                     let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
@@ -2364,7 +2386,10 @@ impl ViewportRenderer {
                                         .map(|bg| (indirect_buf, bg))
                                 });
                             if let Some((indirect_buf, cull_bg)) = culled {
-                                oit_pass.set_pipeline(plug_pipes.oit_cull(key));
+                                let Some(pl) = plug_pipes.oit_cull(key) else {
+                                    continue;
+                                };
+                                oit_pass.set_pipeline(pl);
                                 oit_pass.set_bind_group(1, cull_bg, &[]);
                                 bind_material_group!(oit_pass, mat_bg);
                                 oit_pass.draw_indexed_indirect(
@@ -2377,7 +2402,10 @@ impl ViewportRenderer {
                                 else {
                                     continue;
                                 };
-                                oit_pass.set_pipeline(plug_pipes.oit(key));
+                                let Some(pl) = plug_pipes.oit(key) else {
+                                    continue;
+                                };
+                                oit_pass.set_pipeline(pl);
                                 oit_pass.set_bind_group(1, inst_tex_bg, &[]);
                                 bind_material_group!(oit_pass, mat_bg);
                                 let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
@@ -2457,7 +2485,10 @@ impl ViewportRenderer {
                                     let range_key = PipelineKey::two_sided(mat.is_two_sided());
                                     match self.resources.material_plugin_draw(mat.shading_plugin) {
                                         Some((pp, mat_bg)) => {
-                                            oit_pass.set_pipeline(pp.oit(range_key));
+                                            let Some(pl) = pp.oit(range_key) else {
+                                                continue;
+                                            };
+                                            oit_pass.set_pipeline(pl);
                                             bind_material_group!(oit_pass, mat_bg);
                                         }
                                         // Two-sided per-range material draws back
@@ -2493,7 +2524,10 @@ impl ViewportRenderer {
                                 .material_plugin_draw(item.material.shading_plugin)
                             {
                                 Some((pp, mat_bg)) => {
-                                    oit_pass.set_pipeline(pp.oit(item_key));
+                                    let Some(pl) = pp.oit(item_key) else {
+                                        continue;
+                                    };
+                                    oit_pass.set_pipeline(pl);
                                     bind_material_group!(oit_pass, mat_bg);
                                 }
                                 // Select the two-sided OIT pipeline for a
@@ -2555,7 +2589,10 @@ impl ViewportRenderer {
                                 let range_key = PipelineKey::two_sided(mat.is_two_sided());
                                 match self.resources.material_plugin_draw(mat.shading_plugin) {
                                     Some((pp, mat_bg)) => {
-                                        oit_pass.set_pipeline(pp.oit(range_key));
+                                        let Some(pl) = pp.oit(range_key) else {
+                                            continue;
+                                        };
+                                        oit_pass.set_pipeline(pl);
                                         bind_material_group!(oit_pass, mat_bg);
                                     }
                                     // Two-sided per-range material draws back
@@ -2591,7 +2628,10 @@ impl ViewportRenderer {
                             .material_plugin_draw(item.material.shading_plugin)
                         {
                             Some((pp, mat_bg)) => {
-                                oit_pass.set_pipeline(pp.oit(item_key));
+                                let Some(pl) = pp.oit(item_key) else {
+                                    continue;
+                                };
+                                oit_pass.set_pipeline(pl);
                                 bind_material_group!(oit_pass, mat_bg);
                             }
                             // Select the two-sided OIT pipeline for a non-`Cull`

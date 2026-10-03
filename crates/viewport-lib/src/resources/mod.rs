@@ -32,6 +32,9 @@ pub(crate) mod mesh_sidecar;
 pub(crate) mod overlay;
 /// Lazy GPU pick-pipeline construction (`ensure_*_pick_pipeline` methods).
 mod pick_pipelines;
+/// A pipeline built on first use, on the calling thread or a worker.
+pub(crate) mod pipeline_slot;
+pub use pipeline_slot::PipelineCompilation;
 mod plugin_builders;
 mod postprocess;
 pub(crate) use postprocess::TargetGroups;

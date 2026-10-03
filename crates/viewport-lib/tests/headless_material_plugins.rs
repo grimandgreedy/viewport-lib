@@ -48,6 +48,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let mesh_id = renderer
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
@@ -177,6 +178,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let mesh_id = renderer
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
@@ -250,6 +252,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let plain_id = renderer
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
@@ -338,6 +341,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let mesh_id = renderer
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
@@ -440,6 +444,7 @@ fn example_reference_plugins_register() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let resources = renderer.resources_mut();
     resources
         .register_material_plugin(&device, &toon_plugin::ToonPlugin)
@@ -490,6 +495,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     // The low-power test device never enables bindless, so plugin items take
     // the per-batch instanced path (bindless would route them per-object).
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let mesh_id = renderer
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
@@ -585,6 +591,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let mesh_id = renderer
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
@@ -682,6 +689,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let mesh_id = renderer
         .resources_mut()
         .upload_mesh_data(&device, &viewport_lib::primitives::sphere(1.0, 32, 16))
@@ -779,6 +787,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     // A uniform green per-vertex attribute: the plugin adds it to the lit colour,
     // so a green bias in the image proves `surf.attr` reached the hook.
     let mut data = box_mesh();
@@ -892,6 +901,7 @@ fn a_plugin_draws_the_same_built_on_demand_as_built_up_front() {
     for (name, count, configure) in cases {
         let render = |warm: bool, with_plugin: bool| {
             let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+            renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
             let mesh_id = renderer
                 .resources_mut()
                 .upload_mesh_data(&device, &box_mesh())
@@ -950,4 +960,88 @@ fn a_plugin_draws_the_same_built_on_demand_as_built_up_front() {
             );
         }
     }
+}
+
+/// Under `Background`, the frame that first draws a plugin material skips
+/// the item instead of compiling, and draws it once the worker is done.
+#[test]
+fn a_plugin_compiled_in_the_background_is_skipped_then_drawn() {
+    struct Flat;
+    impl viewport_lib::MaterialPlugin for Flat {
+        fn name(&self) -> &'static str {
+            "flat_background"
+        }
+        fn wgsl_body(&self) -> String {
+            "fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {\n\
+             \x20   return vec3<f32>(1.0, 0.2, 0.2) * light.shadow;\n\
+             }\n"
+            .to_string()
+        }
+    }
+
+    let Some((device, queue)) = headless_device_recommended_limits() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+
+    let setup = |policy: viewport_lib::PipelineCompilation, with_item: bool| {
+        let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+        renderer.set_pipeline_compilation(policy);
+        let mesh_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &box_mesh())
+            .unwrap();
+        let plugin = renderer
+            .resources_mut()
+            .register_material_plugin(&device, &Flat)
+            .expect("register material plugin");
+        let mut frame = FrameData::default();
+        frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
+        frame.camera.viewport_size = [64.0, 64.0];
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        if with_item {
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = mesh_id;
+            item.material.shading_plugin = Some(plugin);
+            frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        }
+        (renderer, frame, plugin)
+    };
+
+    let (mut blocking, frame, _) = setup(viewport_lib::PipelineCompilation::Blocking, true);
+    let expected = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
+    let (mut empty, empty_frame, _) = setup(viewport_lib::PipelineCompilation::Blocking, false);
+    let nothing = empty.render_offscreen(&device, &queue, &empty_frame, 64, 64);
+    assert!(expected != nothing, "the plugin item has to be visible");
+
+    let (mut renderer, frame, plugin) = setup(viewport_lib::PipelineCompilation::Background, true);
+    let first = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_eq!(
+        renderer.resources().material_plugin_stats()[0].pipelines_built,
+        0,
+        "the first frame compiled on the calling thread"
+    );
+    assert!(
+        first == nothing,
+        "the item was drawn before its pipeline was ready"
+    );
+    assert!(renderer.resources().material_plugin_pipelines_ready(plugin));
+
+    let start = std::time::Instant::now();
+    loop {
+        let out = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        if out == expected {
+            break;
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(30),
+            "the background compile never produced the plugin's shading"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        renderer.resources().material_plugin_stats()[0].pipelines_built,
+        1
+    );
 }

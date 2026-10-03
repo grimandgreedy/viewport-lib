@@ -127,7 +127,7 @@ use crate::resources::{
     BatchMeta, CLIP_VOLUME_MAX, CameraUniform, ClipPlanesUniform, ClipVolumeEntry,
     ClipVolumesUniform, DeviceResources, GridUniform, InstanceAabb, InstanceData, LightsUniform,
     ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, PickInstance,
-    ShadowAtlasUniform, SingleLightUniform,
+    PipelineCompilation, ShadowAtlasUniform, SingleLightUniform,
 };
 
 /// Per-frame selection-outline state for one viewport, rebuilt in prepare().
@@ -1332,6 +1332,24 @@ impl ViewportRenderer {
     /// Return the current runtime mode.
     pub fn runtime_mode(&self) -> crate::renderer::stats::RuntimeMode {
         self.runtime_mode
+    }
+
+    /// Set how a pipeline is compiled the first time a frame needs it.
+    ///
+    /// The default is [`PipelineCompilation::platform_default`]: on a
+    /// worker, with the draw skipped until it is ready, everywhere but
+    /// macOS, iOS and the web. Set [`PipelineCompilation::Blocking`] to
+    /// compile on the calling thread and never skip a draw, which is what a
+    /// frame that is read back right away needs. Takes effect for the next
+    /// compile; one already running on a worker finishes there.
+    pub fn set_pipeline_compilation(&mut self, policy: PipelineCompilation) {
+        self.resources.pipeline_compiler.set_policy(policy);
+    }
+
+    /// The current pipeline compilation policy. See
+    /// [`set_pipeline_compilation`](Self::set_pipeline_compilation).
+    pub fn pipeline_compilation(&self) -> PipelineCompilation {
+        self.resources.pipeline_compiler.policy()
     }
 
     /// True when the current render presents a frame the user sees, and so

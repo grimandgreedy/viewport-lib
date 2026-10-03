@@ -660,6 +660,10 @@ pub struct DeviceResources {
     /// Atomic because some builders run behind a shared reference, so an item
     /// type's plugin can trigger them from `prepare`.
     pub(crate) frame_pipelines_built: std::sync::atomic::AtomicU32,
+    /// The compilation policy every lazily built pipeline follows, and the
+    /// compiles in flight on the workers. Shared with each pipeline set so a
+    /// build can run off this thread.
+    pub(crate) pipeline_compiler: std::sync::Arc<crate::resources::pipeline_slot::PipelineCompiler>,
     /// Bumped by `free_texture` and `free_mesh`. The per-object draw cache
     /// holds bind groups that keep their referenced GPU resources alive; when
     /// this changes, the cache purges its stale entries so a freed resource's

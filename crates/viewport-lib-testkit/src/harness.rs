@@ -97,6 +97,9 @@ impl Harness {
     ) -> Self {
         let mut renderer =
             ViewportRenderer::new_with_pipeline_cache(&device, target_format, pipeline_cache_data);
+        // A test reads its frame back at once, so every pipeline has to be
+        // there when the frame draws, whatever the platform's default.
+        renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
         // The item types viewport-lib ships with live in their own crate and
         // register like any other plugin, so a harness that renders them has
         // to install them the way a consumer does.

@@ -425,11 +425,9 @@ macro_rules! emit_draw_calls {
                                 resources.uv1_chunk_key(mesh.vertex_span.chunk),
                             );
                             let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
-                            let pipeline: &crate::gpu::RenderPipeline = if batch.two_sided {
-                                plug_pipes.ldr_solid_two_sided()
-                            } else {
-                                plug_pipes.ldr_solid()
-                            };
+                            let Some(pipeline) = plug_pipes.ldr_opaque(
+                                crate::renderer::pipeline_key::PipelineKey::two_sided(batch.two_sided),
+                            ) else { continue };
                             if cur_pipe != Some(pipeline as *const _) {
                                 render_pass.set_pipeline(pipeline);
                                 cur_pipe = Some(pipeline as *const _);
@@ -513,7 +511,7 @@ macro_rules! emit_draw_calls {
                                 resources.uv1_chunk_key(mesh.vertex_span.chunk),
                             );
                             let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
-                            let pipeline = plug_pipes.ldr_transparent();
+                            let Some(pipeline) = plug_pipes.ldr_transparent() else { continue };
                             if cur_pipe != Some(pipeline as *const _) {
                                 render_pass.set_pipeline(pipeline);
                                 cur_pipe = Some(pipeline as *const _);
@@ -586,21 +584,21 @@ macro_rules! emit_draw_calls {
                             let is_blended = item.settings.opacity < 1.0
                                 || item.material.is_blend();
                             let plug = resources.material_plugin_draw(item.material.shading_plugin);
-                            let pipeline: &crate::gpu::RenderPipeline = if let Some((pp, _)) = plug {
+                            let pipeline = if let Some((pp, _)) = plug {
                                 if is_blended {
                                     pp.ldr_transparent()
-                                } else if item.material.is_two_sided() {
-                                    pp.ldr_solid_two_sided()
                                 } else {
-                                    pp.ldr_solid()
+                                    pp.ldr_opaque(PipelineKey::two_sided(item.material.is_two_sided()))
                                 }
                             } else if is_blended {
-                                resources.scene.transparent()
+                                Some(resources.scene.transparent())
                             } else if item.material.is_two_sided() {
-                                resources.scene.solid_two_sided()
+                                Some(resources.scene.solid_two_sided())
                             } else {
-                                resources.scene.solid()
+                                Some(resources.scene.solid())
                             };
+                            // A plugin pipeline still compiling skips the item this frame.
+                            let Some(pipeline) = pipeline else { continue };
                             if cur_pipeline != Some(pipeline as *const _) {
                                 render_pass.set_pipeline(pipeline);
                                 cur_pipeline = Some(pipeline as *const _);
@@ -657,22 +655,20 @@ macro_rules! emit_draw_calls {
                                         item.settings.opacity < 1.0 || mat.is_blend();
                                     let plug_r =
                                         resources.material_plugin_draw(mat.shading_plugin);
-                                    let pl: &crate::gpu::RenderPipeline =
-                                        if let Some((pp, _)) = plug_r {
-                                            if blended_r {
-                                                pp.ldr_transparent()
-                                            } else if mat.is_two_sided() {
-                                                pp.ldr_solid_two_sided()
-                                            } else {
-                                                pp.ldr_solid()
-                                            }
-                                        } else if blended_r {
-                                            resources.scene.transparent()
-                                        } else if mat.is_two_sided() {
-                                            resources.scene.solid_two_sided()
+                                    let pl = if let Some((pp, _)) = plug_r {
+                                        if blended_r {
+                                            pp.ldr_transparent()
                                         } else {
-                                            resources.scene.solid()
-                                        };
+                                            pp.ldr_opaque(PipelineKey::two_sided(mat.is_two_sided()))
+                                        }
+                                    } else if blended_r {
+                                        Some(resources.scene.transparent())
+                                    } else if mat.is_two_sided() {
+                                        Some(resources.scene.solid_two_sided())
+                                    } else {
+                                        Some(resources.scene.solid())
+                                    };
+                                    let Some(pl) = pl else { continue };
                                     if cur_pipeline != Some(pl as *const _) {
                                         render_pass.set_pipeline(pl);
                                         cur_pipeline = Some(pl as *const _);
@@ -882,22 +878,20 @@ macro_rules! emit_draw_calls {
                                         item.settings.opacity < 1.0 || mat.is_blend();
                                     let plug_r =
                                         resources.material_plugin_draw(mat.shading_plugin);
-                                    let pl: &crate::gpu::RenderPipeline =
-                                        if let Some((pp, _)) = plug_r {
-                                            if blended_r {
-                                                pp.ldr_transparent()
-                                            } else if mat.is_two_sided() {
-                                                pp.ldr_solid_two_sided()
-                                            } else {
-                                                pp.ldr_solid()
-                                            }
-                                        } else if blended_r {
-                                            resources.scene.transparent()
-                                        } else if mat.is_two_sided() {
-                                            resources.scene.solid_two_sided()
+                                    let pl = if let Some((pp, _)) = plug_r {
+                                        if blended_r {
+                                            pp.ldr_transparent()
                                         } else {
-                                            resources.scene.solid()
-                                        };
+                                            pp.ldr_opaque(PipelineKey::two_sided(mat.is_two_sided()))
+                                        }
+                                    } else if blended_r {
+                                        Some(resources.scene.transparent())
+                                    } else if mat.is_two_sided() {
+                                        Some(resources.scene.solid_two_sided())
+                                    } else {
+                                        Some(resources.scene.solid())
+                                    };
+                                    let Some(pl) = pl else { continue };
                                     set_pipeline_cached!(pl);
                                     // Prefer the range's own bind group + index;
                                     // fall back to the item's whole-mesh slot, then
@@ -976,16 +970,14 @@ macro_rules! emit_draw_calls {
                 for entry in &opaque {
                     let plug = resources.material_plugin_draw(entry.1.material.shading_plugin);
                     let pl = if let Some((pp, _)) = plug {
-                        if entry.1.material.is_two_sided() {
-                            pp.ldr_solid_two_sided()
-                        } else {
-                            pp.ldr_solid()
-                        }
+                        pp.ldr_opaque(PipelineKey::two_sided(entry.1.material.is_two_sided()))
                     } else if entry.1.material.is_two_sided() {
-                        resources.scene.solid_two_sided()
+                        Some(resources.scene.solid_two_sided())
                     } else {
-                        resources.scene.solid()
+                        Some(resources.scene.solid())
                     };
+                    // A plugin pipeline still compiling skips the item this frame.
+                    let Some(pl) = pl else { continue };
                     draw_item!((entry.0, entry.1), pl);
                 }
                 for entry in &transparent {
@@ -994,8 +986,9 @@ macro_rules! emit_draw_calls {
                     {
                         pp.ldr_transparent()
                     } else {
-                        resources.scene.transparent()
+                        Some(resources.scene.transparent())
                     };
+                    let Some(pl) = pl else { continue };
                     draw_item!((entry.0, entry.1), pl);
                 }
             }

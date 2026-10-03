@@ -18,6 +18,7 @@
 //! the consumer-facing `MaterialPlugin` API build on top of it.
 
 use crate::error::{ViewportError, ViewportResult};
+use crate::resources::pipeline_slot::{PipelineCompiler, PipelineSlot};
 use crate::scene::material::MaterialPluginId;
 
 use super::registry;
@@ -543,11 +544,15 @@ impl crate::resources::DeviceResources {
     }
 }
 
-/// A shader module compiled the first time a pipeline needs it.
+/// A shader module compiled the first time a pipeline needs it, with its
+/// `discard`-free twin beside it.
 struct LazyModule {
     label: String,
     source: String,
     module: std::sync::OnceLock<crate::gpu::ShaderModule>,
+    /// `module` with every `discard;` removed, for the early-Z fast path.
+    /// Valid only for draws that would not have discarded.
+    nodiscard: std::sync::OnceLock<crate::gpu::ShaderModule>,
 }
 
 impl LazyModule {
@@ -556,6 +561,7 @@ impl LazyModule {
             label,
             source,
             module: std::sync::OnceLock::new(),
+            nodiscard: std::sync::OnceLock::new(),
         }
     }
 
@@ -565,15 +571,8 @@ impl LazyModule {
         })
     }
 
-    /// This module's source with every `discard;` removed, compiled into
-    /// `twin` the first time it is asked for. The twin is valid only for
-    /// draws that would not have discarded.
-    fn nodiscard<'a>(
-        &self,
-        device: &crate::gpu::Device,
-        twin: &'a std::sync::OnceLock<crate::gpu::ShaderModule>,
-    ) -> &'a crate::gpu::ShaderModule {
-        twin.get_or_init(|| {
+    fn nodiscard(&self, device: &crate::gpu::Device) -> &crate::gpu::ShaderModule {
+        self.nodiscard.get_or_init(|| {
             crate::resources::builders::wgsl_module(
                 device,
                 &format!("{}_nodiscard", self.label),
@@ -583,25 +582,35 @@ impl LazyModule {
     }
 }
 
+/// Everything a worker needs to build one of a plugin's pipelines, held by
+/// value so the build can run on any thread.
+struct PluginSetContext {
+    device: crate::gpu::Device,
+    name: &'static str,
+    layout: crate::gpu::PipelineLayout,
+    /// The instanced set's layout for its GPU-culled twins; unused by the
+    /// per-object set.
+    cull_layout: Option<crate::gpu::PipelineLayout>,
+    target_format: crate::gpu::TextureFormat,
+    sample_count: u32,
+    mesh: LazyModule,
+    oit_module: LazyModule,
+}
+
 /// The lit pipelines composed for one material plugin: the LDR and HDR
 /// families from `mesh.wgsl` and the OIT accumulate pipelines from
 /// `mesh_oit.wgsl`, all on the 4-group layout (camera, object, deform, plugin
 /// params).
 ///
 /// Each pipeline, and each of the three shader modules behind them, is built
-/// by the first draw that selects it. A frame that draws opaque plugin
-/// materials on the HDR path compiles one or two pipelines, not the set.
+/// by the first draw that selects it, under the renderer's compilation
+/// policy. A frame that draws opaque plugin materials on the HDR path
+/// compiles one or two pipelines, not the set. Every accessor returns `None`
+/// while its pipeline compiles on a worker; the draw is skipped until then.
 pub(crate) struct MaterialPluginPipelines {
-    device: crate::gpu::Device,
-    name: &'static str,
-    layout: crate::gpu::PipelineLayout,
-    target_format: crate::gpu::TextureFormat,
-    sample_count: u32,
-    mesh: LazyModule,
-    /// `mesh` with every `discard;` removed, for the early-Z fast path.
-    mesh_nodiscard: std::sync::OnceLock<crate::gpu::ShaderModule>,
-    oit_module: LazyModule,
-    slots: [std::sync::OnceLock<crate::gpu::RenderPipeline>; Self::COUNT as usize],
+    ctx: std::sync::Arc<PluginSetContext>,
+    compiler: std::sync::Arc<PipelineCompiler>,
+    slots: [PipelineSlot; Self::COUNT as usize],
 }
 
 impl MaterialPluginPipelines {
@@ -621,22 +630,23 @@ impl MaterialPluginPipelines {
     /// Two slots: bit 0 is two-sided.
     const OIT: usize = 8;
 
-    fn slot(&self, i: usize) -> &crate::gpu::RenderPipeline {
-        self.slots[i].get_or_init(|| self.build_slot(i))
+    fn slot(&self, i: usize) -> Option<&crate::gpu::RenderPipeline> {
+        let ctx = std::sync::Arc::clone(&self.ctx);
+        self.slots[i].get(&self.compiler, move || Self::build_slot(&ctx, i))
     }
 
-    fn build_slot(&self, i: usize) -> crate::gpu::RenderPipeline {
+    fn build_slot(ctx: &PluginSetContext, i: usize) -> crate::gpu::RenderPipeline {
         use crate::gpu::{BlendState, Face, PrimitiveTopology::TriangleList};
         use crate::resources::mesh::mesh_pipelines as mp;
-        let device = &self.device;
-        let name = self.name;
+        let device = &ctx.device;
+        let name = ctx.name;
         let ldr = |label: &str, cull, blend, depth_write| {
             mp::ldr_mesh_pipeline(
                 device,
-                &self.layout,
-                self.mesh.get(device),
-                self.target_format,
-                self.sample_count,
+                &ctx.layout,
+                ctx.mesh.get(device),
+                ctx.target_format,
+                ctx.sample_count,
                 None,
                 &format!("material_plugin_{name}_{label}"),
                 cull,
@@ -653,8 +663,8 @@ impl MaterialPluginPipelines {
             }
             Self::HDR_TRANSPARENT => mp::hdr_mesh_pipeline(
                 device,
-                &self.layout,
-                self.mesh.get(device),
+                &ctx.layout,
+                ctx.mesh.get(device),
                 &format!("material_plugin_{name}_hdr_transparent"),
                 None,
                 Some(BlendState::ALPHA_BLENDING),
@@ -665,13 +675,13 @@ impl MaterialPluginPipelines {
                 let two_sided = (i - Self::HDR_OPAQUE) & 1 != 0;
                 let nodiscard = (i - Self::HDR_OPAQUE) & 2 != 0;
                 let module = if nodiscard {
-                    self.mesh.nodiscard(device, &self.mesh_nodiscard)
+                    ctx.mesh.nodiscard(device)
                 } else {
-                    self.mesh.get(device)
+                    ctx.mesh.get(device)
                 };
                 mp::hdr_mesh_pipeline(
                     device,
-                    &self.layout,
+                    &ctx.layout,
                     module,
                     &format!(
                         "material_plugin_{name}_hdr_solid{}{}",
@@ -686,26 +696,30 @@ impl MaterialPluginPipelines {
             }
             _ => mp::build_oit_pipeline(
                 device,
-                &self.layout,
-                self.oit_module.get(device),
+                &ctx.layout,
+                ctx.oit_module.get(device),
                 (i - Self::OIT) & 1 != 0,
             ),
         }
     }
 
-    pub(crate) fn ldr_solid(&self) -> &crate::gpu::RenderPipeline {
-        self.slot(Self::LDR_SOLID)
-    }
-
-    pub(crate) fn ldr_solid_two_sided(&self) -> &crate::gpu::RenderPipeline {
-        self.slot(Self::LDR_SOLID_TWO_SIDED)
-    }
-
-    pub(crate) fn ldr_transparent(&self) -> &crate::gpu::RenderPipeline {
+    pub(crate) fn ldr_transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
         self.slot(Self::LDR_TRANSPARENT)
     }
 
-    pub(crate) fn hdr_transparent(&self) -> &crate::gpu::RenderPipeline {
+    /// The LDR solid pipeline for `key`'s facedness.
+    pub(crate) fn ldr_opaque(
+        &self,
+        key: crate::renderer::pipeline_key::PipelineKey,
+    ) -> Option<&crate::gpu::RenderPipeline> {
+        self.slot(if key.two_sided {
+            Self::LDR_SOLID_TWO_SIDED
+        } else {
+            Self::LDR_SOLID
+        })
+    }
+
+    pub(crate) fn hdr_transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
         self.slot(Self::HDR_TRANSPARENT)
     }
 
@@ -714,7 +728,7 @@ impl MaterialPluginPipelines {
     pub(crate) fn hdr_opaque(
         &self,
         key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> &crate::gpu::RenderPipeline {
+    ) -> Option<&crate::gpu::RenderPipeline> {
         self.slot(Self::HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize)
     }
 
@@ -722,19 +736,20 @@ impl MaterialPluginPipelines {
     pub(crate) fn oit(
         &self,
         key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> &crate::gpu::RenderPipeline {
+    ) -> Option<&crate::gpu::RenderPipeline> {
         self.slot(Self::OIT + key.two_sided as usize)
     }
 
-    /// Build every pipeline in the set now.
-    fn build_all(&self) {
+    /// Ask for every pipeline in the set: built now under `Blocking`, handed
+    /// to the workers under `Background`.
+    fn request_all(&self) {
         for i in 0..self.slots.len() {
             self.slot(i);
         }
     }
 
     fn built_count(&self) -> u32 {
-        self.slots.iter().filter(|s| s.get().is_some()).count() as u32
+        self.slots.iter().filter(|s| s.is_ready()).count() as u32
     }
 }
 
@@ -752,12 +767,13 @@ pub struct MaterialPluginStats {
     pub variants: u32,
     /// Declared texture slots per variant.
     pub texture_count: u32,
-    /// Per-object render pipelines currently built for this plugin. Each is
+    /// Per-object render pipelines built for this plugin so far. Each is
     /// built by the first draw that selects it, so this counts what the
     /// frames so far have used: `0` before the plugin is drawn, up to 10
-    /// (3 LDR, 5 HDR, 2 OIT) after `warm_material_plugin_pipelines`. Drops
-    /// back to `0` when a deformer registration or debug-vis toggle
-    /// invalidates the set.
+    /// (3 LDR, 5 HDR, 2 OIT) once `warm_material_plugin_pipelines` has
+    /// finished. One compiling on a worker is not counted until a draw
+    /// picks it up. Drops back to `0` when a deformer registration or
+    /// debug-vis toggle invalidates the set.
     pub pipelines_built: u32,
 }
 
@@ -778,22 +794,11 @@ pub(crate) struct MaterialPluginVariantGpu {
 /// (`emit_draw_calls`) and HDR scene / OIT passes.
 ///
 /// As with the per-object set, each pipeline and module is built by the first
-/// draw that selects it.
+/// draw that selects it, and an accessor returns `None` while a worker has it.
 pub(crate) struct MaterialPluginInstancedPipelines {
-    device: crate::gpu::Device,
-    name: &'static str,
-    layout: crate::gpu::PipelineLayout,
-    /// The layout for the GPU-culled twins (the `vs_main_cull` entry reading
-    /// `visibility_indices`), on the cull group-1 layout. `None` when the
-    /// device cannot GPU-cull, in which case plugin batches draw every
-    /// instance directly.
-    cull_layout: Option<crate::gpu::PipelineLayout>,
-    target_format: crate::gpu::TextureFormat,
-    sample_count: u32,
-    mesh: LazyModule,
-    mesh_nodiscard: std::sync::OnceLock<crate::gpu::ShaderModule>,
-    oit_module: LazyModule,
-    slots: [std::sync::OnceLock<crate::gpu::RenderPipeline>; 13],
+    ctx: std::sync::Arc<PluginSetContext>,
+    compiler: std::sync::Arc<PipelineCompiler>,
+    slots: [PipelineSlot; 13],
 }
 
 impl MaterialPluginInstancedPipelines {
@@ -810,22 +815,23 @@ impl MaterialPluginInstancedPipelines {
     const CULL: usize = 9;
     const OIT_CULL: usize = 11;
 
-    fn slot(&self, i: usize) -> &crate::gpu::RenderPipeline {
-        self.slots[i].get_or_init(|| self.build_slot(i))
+    fn slot(&self, i: usize) -> Option<&crate::gpu::RenderPipeline> {
+        let ctx = std::sync::Arc::clone(&self.ctx);
+        self.slots[i].get(&self.compiler, move || Self::build_slot(&ctx, i))
     }
 
-    fn build_slot(&self, i: usize) -> crate::gpu::RenderPipeline {
+    fn build_slot(ctx: &PluginSetContext, i: usize) -> crate::gpu::RenderPipeline {
         use crate::gpu::{BlendState, Face, TextureFormat};
         use crate::resources::mesh::mesh_pipelines as mp;
-        let device = &self.device;
-        let name = self.name;
+        let device = &ctx.device;
+        let name = ctx.name;
         let ldr = |label: &str, cull, blend, depth_write| {
             mp::instanced_mesh_pipeline(
                 device,
-                &self.layout,
-                self.mesh.get(device),
-                self.target_format,
-                self.sample_count,
+                &ctx.layout,
+                ctx.mesh.get(device),
+                ctx.target_format,
+                ctx.sample_count,
                 &format!("material_plugin_{name}_{label}"),
                 cull,
                 blend,
@@ -833,7 +839,7 @@ impl MaterialPluginInstancedPipelines {
             )
         };
         let cull_layout = || {
-            self.cull_layout
+            ctx.cull_layout
                 .as_ref()
                 .expect("the cull pipelines are only selected when the cull layout exists")
         };
@@ -850,13 +856,13 @@ impl MaterialPluginInstancedPipelines {
                 let two_sided = (i - Self::HDR_OPAQUE) & 1 != 0;
                 let nodiscard = (i - Self::HDR_OPAQUE) & 2 != 0;
                 let module = if nodiscard {
-                    self.mesh.nodiscard(device, &self.mesh_nodiscard)
+                    ctx.mesh.nodiscard(device)
                 } else {
-                    self.mesh.get(device)
+                    ctx.mesh.get(device)
                 };
                 mp::instanced_mesh_pipeline(
                     device,
-                    &self.layout,
+                    &ctx.layout,
                     module,
                     TextureFormat::Rgba16Float,
                     1,
@@ -872,8 +878,8 @@ impl MaterialPluginInstancedPipelines {
             }
             7 | 8 => mp::build_oit_instanced_pipeline(
                 device,
-                &self.layout,
-                self.oit_module.get(device),
+                &ctx.layout,
+                ctx.oit_module.get(device),
                 &format!("material_plugin_{name}_oit_instanced"),
                 "vs_main",
                 (i - Self::OIT) & 1 != 0,
@@ -881,14 +887,14 @@ impl MaterialPluginInstancedPipelines {
             9 | 10 => mp::build_hdr_instanced_cull_pipeline_with(
                 device,
                 cull_layout(),
-                self.mesh.get(device),
+                ctx.mesh.get(device),
                 &format!("material_plugin_{name}_instanced_cull"),
                 ((i - Self::CULL) & 1 == 0).then_some(Face::Back),
             ),
             _ => mp::build_oit_instanced_pipeline(
                 device,
                 cull_layout(),
-                self.oit_module.get(device),
+                ctx.oit_module.get(device),
                 &format!("material_plugin_{name}_oit_instanced_cull"),
                 "vs_main_cull",
                 (i - Self::OIT_CULL) & 1 != 0,
@@ -896,16 +902,20 @@ impl MaterialPluginInstancedPipelines {
         }
     }
 
-    pub(crate) fn ldr_solid(&self) -> &crate::gpu::RenderPipeline {
-        self.slot(Self::LDR_SOLID)
-    }
-
-    pub(crate) fn ldr_solid_two_sided(&self) -> &crate::gpu::RenderPipeline {
-        self.slot(Self::LDR_SOLID_TWO_SIDED)
-    }
-
-    pub(crate) fn ldr_transparent(&self) -> &crate::gpu::RenderPipeline {
+    pub(crate) fn ldr_transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
         self.slot(Self::LDR_TRANSPARENT)
+    }
+
+    /// The LDR solid pipeline for `key`'s facedness.
+    pub(crate) fn ldr_opaque(
+        &self,
+        key: crate::renderer::pipeline_key::PipelineKey,
+    ) -> Option<&crate::gpu::RenderPipeline> {
+        self.slot(if key.two_sided {
+            Self::LDR_SOLID_TWO_SIDED
+        } else {
+            Self::LDR_SOLID
+        })
     }
 
     /// The HDR opaque instanced pipeline for `key`: facedness and
@@ -913,7 +923,7 @@ impl MaterialPluginInstancedPipelines {
     pub(crate) fn hdr_opaque(
         &self,
         key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> &crate::gpu::RenderPipeline {
+    ) -> Option<&crate::gpu::RenderPipeline> {
         self.slot(Self::HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize)
     }
 
@@ -921,21 +931,21 @@ impl MaterialPluginInstancedPipelines {
     pub(crate) fn oit(
         &self,
         key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> &crate::gpu::RenderPipeline {
+    ) -> Option<&crate::gpu::RenderPipeline> {
         self.slot(Self::OIT + key.two_sided as usize)
     }
 
     /// Whether the GPU-culled twins can be built. Check before [`cull`](Self::cull)
     /// or [`oit_cull`](Self::oit_cull).
     pub(crate) fn has_cull(&self) -> bool {
-        self.cull_layout.is_some()
+        self.ctx.cull_layout.is_some()
     }
 
     /// The GPU-culled twin of [`hdr_opaque`](Self::hdr_opaque) (facedness only).
     pub(crate) fn cull(
         &self,
         key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> &crate::gpu::RenderPipeline {
+    ) -> Option<&crate::gpu::RenderPipeline> {
         self.slot(Self::CULL + key.two_sided as usize)
     }
 
@@ -943,12 +953,13 @@ impl MaterialPluginInstancedPipelines {
     pub(crate) fn oit_cull(
         &self,
         key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> &crate::gpu::RenderPipeline {
+    ) -> Option<&crate::gpu::RenderPipeline> {
         self.slot(Self::OIT_CULL + key.two_sided as usize)
     }
 
-    /// Build every pipeline in the set now.
-    fn build_all(&self) {
+    /// Ask for every pipeline in the set: built now under `Blocking`, handed
+    /// to the workers under `Background`.
+    fn request_all(&self) {
         let end = if self.has_cull() {
             self.slots.len()
         } else {
@@ -1272,12 +1283,13 @@ impl crate::resources::DeviceResources {
     /// variants it uses: typically one or two pipelines and one or two shader
     /// modules per plugin. That is the cheaper route for most applications.
     ///
-    /// This call builds all of them instead: about twenty render pipelines
+    /// This call asks for all of them instead: about twenty render pipelines
     /// and six shader modules per plugin, across the per-object and instanced
     /// sets, the LDR and HDR families, and the transparent and two-sided
-    /// variants, synchronously. Use it behind a load screen when no draw
-    /// should compile anything later, whatever the scene does with the
-    /// plugin.
+    /// variants. Under `PipelineCompilation::Blocking` they are built before
+    /// it returns; under `Background` it returns at once and the workers
+    /// build them. Use it behind a load screen when no draw should compile
+    /// anything later, whatever the scene does with the plugin.
     ///
     /// Already-built plugins and unknown ids are skipped, so the call is
     /// idempotent and safe with any id set. The variant field is ignored:
@@ -1306,10 +1318,10 @@ impl crate::resources::DeviceResources {
         self.ensure_material_plugin_instanced_pipelines(device, id);
         if let Some(gpu) = self.material_plugins.get(&id.plugin_index()) {
             if let Some(set) = &gpu.pipelines {
-                set.build_all();
+                set.request_all();
             }
             if let Some(set) = &gpu.instanced_pipelines {
-                set.build_all();
+                set.request_all();
             }
         }
     }
@@ -1410,14 +1422,17 @@ impl crate::resources::DeviceResources {
             ],
         );
         let pipelines = MaterialPluginPipelines {
-            device: device.clone(),
-            name,
-            layout,
-            target_format: self.target_format,
-            sample_count: self.sample_count,
-            mesh_nodiscard: std::sync::OnceLock::new(),
-            mesh: LazyModule::new(format!("material_plugin_{name}_mesh"), mesh_final_src),
-            oit_module: LazyModule::new(format!("material_plugin_{name}_oit"), oit_final_src),
+            ctx: std::sync::Arc::new(PluginSetContext {
+                device: device.clone(),
+                name,
+                layout,
+                cull_layout: None,
+                target_format: self.target_format,
+                sample_count: self.sample_count,
+                mesh: LazyModule::new(format!("material_plugin_{name}_mesh"), mesh_final_src),
+                oit_module: LazyModule::new(format!("material_plugin_{name}_oit"), oit_final_src),
+            }),
+            compiler: std::sync::Arc::clone(&self.pipeline_compiler),
             slots: Default::default(),
         };
         self.material_plugins
@@ -1543,21 +1558,23 @@ impl crate::resources::DeviceResources {
             )
         });
         let pipelines = MaterialPluginInstancedPipelines {
-            device: device.clone(),
-            name,
-            layout,
-            cull_layout,
-            target_format: self.target_format,
-            sample_count: self.sample_count,
-            mesh_nodiscard: std::sync::OnceLock::new(),
-            mesh: LazyModule::new(
-                format!("material_plugin_{name}_mesh_instanced"),
-                mesh_final_src,
-            ),
-            oit_module: LazyModule::new(
-                format!("material_plugin_{name}_oit_instanced"),
-                oit_final_src,
-            ),
+            ctx: std::sync::Arc::new(PluginSetContext {
+                device: device.clone(),
+                name,
+                layout,
+                cull_layout,
+                target_format: self.target_format,
+                sample_count: self.sample_count,
+                mesh: LazyModule::new(
+                    format!("material_plugin_{name}_mesh_instanced"),
+                    mesh_final_src,
+                ),
+                oit_module: LazyModule::new(
+                    format!("material_plugin_{name}_oit_instanced"),
+                    oit_final_src,
+                ),
+            }),
+            compiler: std::sync::Arc::clone(&self.pipeline_compiler),
             slots: Default::default(),
         };
         self.material_plugins
