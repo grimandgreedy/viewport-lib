@@ -1730,14 +1730,7 @@ impl Tracer {
         // the bake layout keeps a storage-buffer slot free for the env tables the
         // shared `trace_path` references. The shader reads pos at `idx` and normal
         // at `w*h + idx`.
-        let mut texel_surf: Vec<[f32; 4]> = Vec::with_capacity(texels * 2);
-        texel_surf.extend_from_slice(surfaces.world_pos);
-        texel_surf.extend_from_slice(surfaces.world_normal);
-        let surf_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-            label: Some("rt_bake_texel_surf"),
-            contents: bytemuck::cast_slice(&texel_surf),
-            usage: crate::gpu::BufferUsages::STORAGE,
-        });
+        let surf_buf = texel_surface_buffer(device, "rt_bake_texel_surf", surfaces);
         let storage_out = |label: &str| {
             device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some(label),
@@ -1880,14 +1873,7 @@ impl Tracer {
         }
 
         let bytes = (texels as u64) * 16;
-        let mut texel_surf: Vec<[f32; 4]> = Vec::with_capacity(texels * 2);
-        texel_surf.extend_from_slice(surfaces.world_pos);
-        texel_surf.extend_from_slice(surfaces.world_normal);
-        let surf_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-            label: Some("rt_shadowmask_texel_surf"),
-            contents: bytemuck::cast_slice(&texel_surf),
-            usage: crate::gpu::BufferUsages::STORAGE,
-        });
+        let surf_buf = texel_surface_buffer(device, "rt_shadowmask_texel_surf", surfaces);
         let storage_out = |label: &str| {
             device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some(label),
@@ -1975,6 +1961,33 @@ impl Tracer {
 
         Some(readback_f32(device, queue, &accum_buf, bytes))
     }
+}
+
+/// Positions then normals in one storage buffer, written straight into the
+/// buffer mapped at creation rather than concatenated first: at a large atlas
+/// that saves copying tens of megabytes.
+fn texel_surface_buffer(
+    device: &crate::gpu::Device,
+    label: &str,
+    surfaces: &TexelSurfaces,
+) -> crate::gpu::Buffer {
+    let half = std::mem::size_of_val(surfaces.world_pos) as u64;
+    let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        label: Some(label),
+        size: half * 2,
+        usage: crate::gpu::BufferUsages::STORAGE,
+        mapped_at_creation: true,
+    });
+    crate::resources::builders::write_mapped(
+        buf.slice(..half),
+        bytemuck::cast_slice(surfaces.world_pos),
+    );
+    crate::resources::builders::write_mapped(
+        buf.slice(half..),
+        bytemuck::cast_slice(surfaces.world_normal),
+    );
+    buf.unmap();
+    buf
 }
 
 /// Most samples one dispatch accumulates, so no dispatch runs long enough to
@@ -2115,9 +2128,7 @@ impl DirectionalBakeJob {
     fn take(&mut self) -> DirectionalBake {
         let len = (self.width * self.height * 4) as usize;
         let read = |r: crate::resources::readback::PendingReadback| {
-            r.take()
-                .map(|bytes| floats_from_bytes(&bytes))
-                .unwrap_or_else(|| vec![0.0; len])
+            r.take_as::<f32>().unwrap_or_else(|| vec![0.0; len])
         };
         let (irradiance, direction) = match self.readback.take() {
             Some((irr, dir)) => (read(irr), read(dir)),
@@ -2132,13 +2143,6 @@ impl DirectionalBakeJob {
     }
 }
 
-fn floats_from_bytes(bytes: &[u8]) -> Vec<f32> {
-    bytes
-        .chunks_exact(4)
-        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-        .collect()
-}
-
 /// Copy a storage buffer back and read it as `f32`, blocking.
 fn readback_f32(
     device: &crate::gpu::Device,
@@ -2149,8 +2153,7 @@ fn readback_f32(
     let pending = crate::resources::readback::PendingReadback::buffer(device, queue, src, bytes);
     pending.wait(device);
     pending
-        .take()
-        .map(|b| floats_from_bytes(&b))
+        .take_as::<f32>()
         .unwrap_or_else(|| vec![0.0; (bytes / 4) as usize])
 }
 

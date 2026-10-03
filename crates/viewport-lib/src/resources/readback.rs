@@ -118,22 +118,28 @@ impl PendingReadback {
         }
     }
 
-    /// The bytes, row padding removed, once [`poll`](Self::poll) or
-    /// [`wait`](Self::wait) has seen them arrive. `None` if the map failed.
-    pub(crate) fn take(self) -> Option<Vec<u8>> {
+    /// The data as `T`, row padding removed, once [`poll`](Self::poll) or
+    /// [`wait`](Self::wait) has seen it arrive. `None` if the map failed.
+    /// Copied once, straight out of the mapped buffer.
+    pub(crate) fn take_as<T: bytemuck::Pod>(self) -> Option<Vec<T>> {
         if self.state.load(Ordering::Acquire) != MAPPED {
             return None;
         }
+        let size = std::mem::size_of::<T>();
         let out = {
             let data = crate::gpu::mapped_range(self.staging.slice(..));
-            if self.padded_row == self.unpadded_row {
-                data.to_vec()
-            } else {
-                data.chunks_exact(self.padded_row)
-                    .flat_map(|row| &row[..self.unpadded_row])
-                    .copied()
-                    .collect()
+            let mut out: Vec<T> = Vec::with_capacity(data.len() / size);
+            for row in data.chunks(self.padded_row) {
+                let row = &row[..self.unpadded_row.min(row.len())];
+                match bytemuck::try_cast_slice::<u8, T>(row) {
+                    Ok(items) => out.extend_from_slice(items),
+                    Err(_) => out.extend(
+                        row.chunks_exact(size)
+                            .map(bytemuck::pod_read_unaligned::<T>),
+                    ),
+                }
             }
+            out
         };
         self.staging.unmap();
         Some(out)

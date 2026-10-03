@@ -164,7 +164,12 @@ fn a_polled_gbuffer_matches_the_blocking_one() {
     };
     let blocking = rasterize_texel_gbuffer(&device, &queue, &geom, 24, 16);
     let mut job = begin_texel_gbuffer(&device, &queue, &geom, 24, 16);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     let polled = loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the G-buffer never arrived"
+        );
         if let Some(g) = job.poll(&device) {
             break g;
         }

@@ -605,7 +605,8 @@ fn drive(
     mut job: viewport_lib::raytrace::DirectionalBakeJob,
     dispatches: u32,
 ) -> DirectionalBake {
-    for _ in 0..100_000 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
         job.step(device, queue, dispatches);
         if let Some(bake) = job.poll(device) {
             assert!(

@@ -122,8 +122,7 @@ impl TexelGBufferJob {
     fn take(&mut self) -> TexelGBuffer {
         let texels = (self.width * self.height) as usize;
         let read = |r: crate::resources::readback::PendingReadback| {
-            r.take()
-                .map(|bytes| texels_from_bytes(&bytes))
+            r.take_as::<[f32; 4]>()
                 .unwrap_or_else(|| vec![[0.0; 4]; texels])
         };
         let (world_pos, world_normal) = match self.readback.take() {
@@ -149,224 +148,245 @@ pub fn begin_texel_gbuffer(
     width: u32,
     height: u32,
 ) -> TexelGBufferJob {
-    let width = width.max(1);
-    let height = height.max(1);
-
-    let vertex_count = geom
-        .positions
-        .len()
-        .min(geom.normals.len())
-        .min(geom.uv1.len());
-    if geom.indices.is_empty() || vertex_count == 0 {
-        return TexelGBufferJob {
-            width,
-            height,
-            readback: None,
-            finished: false,
-        };
-    }
-
-    // Interleave position, normal, uv1 (8 floats per vertex) for one vertex
-    // buffer matching the shader's vertex layout.
-    let mut verts: Vec<f32> = Vec::with_capacity(vertex_count * 8);
-    for i in 0..vertex_count {
-        verts.extend_from_slice(&geom.positions[i]);
-        verts.extend_from_slice(&geom.normals[i]);
-        verts.extend_from_slice(&geom.uv1[i]);
-    }
-    let vertex_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-        label: Some("texel_gbuffer_verts"),
-        contents: bytemuck::cast_slice(&verts),
-        usage: crate::gpu::BufferUsages::VERTEX,
-    });
-    let index_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-        label: Some("texel_gbuffer_indices"),
-        contents: bytemuck::cast_slice(geom.indices),
-        usage: crate::gpu::BufferUsages::INDEX,
-    });
-
-    // Uniforms: model and its inverse-transpose (for normals under scale).
-    let normal_mat = Mat4::from_mat3(Mat3::from_mat4(geom.model).inverse().transpose());
-    let mut uniforms = [0.0f32; 32];
-    uniforms[..16].copy_from_slice(&geom.model.to_cols_array());
-    uniforms[16..].copy_from_slice(&normal_mat.to_cols_array());
-    let uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-        label: Some("texel_gbuffer_uniforms"),
-        contents: bytemuck::cast_slice(&uniforms),
-        usage: crate::gpu::BufferUsages::UNIFORM,
-    });
-
-    let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-        label: Some("texel_gbuffer_bgl"),
-        entries: &[crate::gpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: crate::gpu::ShaderStages::VERTEX,
-            ty: crate::gpu::BindingType::Buffer {
-                ty: crate::gpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }],
-    });
-    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-        label: Some("texel_gbuffer_bg"),
-        layout: &bgl,
-        entries: &[crate::gpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform_buf.as_entire_binding(),
-        }],
-    });
-
-    let shader = crate::resources::builders::wgsl_module(
-        device,
-        "texel_gbuffer",
-        crate::resources::builders::wgsl_source!("texel_gbuffer"),
-    );
-    let layout =
-        crate::resources::builders::pipeline_layout(device, Some("texel_gbuffer_layout"), &[&bgl]);
-
-    let attrs = [
-        crate::gpu::VertexAttribute {
-            format: crate::gpu::VertexFormat::Float32x3,
-            offset: 0,
-            shader_location: 0,
-        },
-        crate::gpu::VertexAttribute {
-            format: crate::gpu::VertexFormat::Float32x3,
-            offset: 12,
-            shader_location: 1,
-        },
-        crate::gpu::VertexAttribute {
-            format: crate::gpu::VertexFormat::Float32x2,
-            offset: 24,
-            shader_location: 2,
-        },
-    ];
-    let vbuf_layouts = [crate::gpu::VertexBufferLayout {
-        array_stride: 32,
-        step_mode: crate::gpu::VertexStepMode::Vertex,
-        attributes: &attrs,
-    }];
-    let targets = [
-        Some(crate::gpu::ColorTargetState {
-            format: crate::gpu::TextureFormat::Rgba32Float,
-            blend: None,
-            write_mask: crate::gpu::ColorWrites::ALL,
-        }),
-        Some(crate::gpu::ColorTargetState {
-            format: crate::gpu::TextureFormat::Rgba32Float,
-            blend: None,
-            write_mask: crate::gpu::ColorWrites::ALL,
-        }),
-    ];
-    let pipeline = crate::resources::builders::render_pipeline(
-        device,
-        crate::resources::builders::RenderPipelineDesc {
-            label: "texel_gbuffer_pipeline",
-            layout: &layout,
-            vertex_module: &shader,
-            vertex_entry: "vs_main",
-            vertex_buffers: &vbuf_layouts,
-            fragment: Some(crate::gpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &targets,
-                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: crate::gpu::PrimitiveState {
-                topology: crate::gpu::PrimitiveTopology::TriangleList,
-                // Bake both facings: a triangle's winding in UV space is
-                // unrelated to its facing in world space.
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: crate::gpu::MultisampleState::default(),
-            cache: None,
-        },
-    );
-
-    let make_target = |label: &str| {
-        let tex = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some(label),
-            size: crate::gpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Rgba32Float,
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let view = tex.create_view(&crate::gpu::TextureViewDescriptor::default());
-        (tex, view)
-    };
-    let (pos_tex, pos_view) = make_target("texel_gbuffer_pos");
-    let (nrm_tex, nrm_view) = make_target("texel_gbuffer_nrm");
-
-    let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-        label: Some("texel_gbuffer_encoder"),
-    });
-    {
-        let clear = crate::gpu::Operations {
-            load: crate::gpu::LoadOp::Clear(crate::gpu::Color::TRANSPARENT),
-            store: crate::gpu::StoreOp::Store,
-        };
-        let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-            #[cfg(any(wgpu29, wgpu30))]
-            multiview_mask: None,
-            label: Some("texel_gbuffer_pass"),
-            color_attachments: &[
-                Some(crate::gpu::RenderPassColorAttachment {
-                    view: &pos_view,
-                    resolve_target: None,
-                    ops: clear,
-                    depth_slice: None,
-                }),
-                Some(crate::gpu::RenderPassColorAttachment {
-                    view: &nrm_view,
-                    resolve_target: None,
-                    ops: clear,
-                    depth_slice: None,
-                }),
-            ],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &bind_group, &[]);
-        pass.set_vertex_buffer(0, vertex_buf.slice(..));
-        pass.set_index_buffer(index_buf.slice(..), crate::gpu::IndexFormat::Uint32);
-        pass.draw_indexed(0..geom.indices.len() as u32, 0, 0..1);
-    }
-    queue.submit(std::iter::once(encoder.finish()));
-
-    let read = |texture| {
-        crate::resources::readback::PendingReadback::texture(
-            device, queue, texture, width, height, 16,
-        )
-    };
-    TexelGBufferJob {
-        width,
-        height,
-        readback: Some((read(&pos_tex), read(&nrm_tex))),
-        finished: false,
-    }
+    TexelGBufferPass::new(device).begin(device, queue, geom, width, height)
 }
 
-/// `Rgba32Float` texels from their little-endian bytes.
-fn texels_from_bytes(bytes: &[u8]) -> Vec<[f32; 4]> {
-    bytes
-        .chunks_exact(16)
-        .map(|t| {
-            let f = |o: usize| f32::from_le_bytes([t[o], t[o + 1], t[o + 2], t[o + 3]]);
-            [f(0), f(4), f(8), f(12)]
-        })
-        .collect()
+/// The texel G-buffer pipeline, built once and reused for every object a bake
+/// rasterises. [`begin_texel_gbuffer`] and [`rasterize_texel_gbuffer`] build
+/// one per call, which costs a pipeline compile each time; a bake over many
+/// objects keeps one of these.
+pub struct TexelGBufferPass {
+    bgl: crate::gpu::BindGroupLayout,
+    pipeline: crate::gpu::RenderPipeline,
+}
+
+impl TexelGBufferPass {
+    /// Build the pipeline.
+    pub fn new(device: &crate::gpu::Device) -> Self {
+        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("texel_gbuffer_bgl"),
+            entries: &[crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "texel_gbuffer",
+            crate::resources::builders::wgsl_source!("texel_gbuffer"),
+        );
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            Some("texel_gbuffer_layout"),
+            &[&bgl],
+        );
+
+        let attrs = [
+            crate::gpu::VertexAttribute {
+                format: crate::gpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            },
+            crate::gpu::VertexAttribute {
+                format: crate::gpu::VertexFormat::Float32x3,
+                offset: 12,
+                shader_location: 1,
+            },
+            crate::gpu::VertexAttribute {
+                format: crate::gpu::VertexFormat::Float32x2,
+                offset: 24,
+                shader_location: 2,
+            },
+        ];
+        let vbuf_layouts = [crate::gpu::VertexBufferLayout {
+            array_stride: 32,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
+            attributes: &attrs,
+        }];
+        let targets = [
+            Some(crate::gpu::ColorTargetState {
+                format: crate::gpu::TextureFormat::Rgba32Float,
+                blend: None,
+                write_mask: crate::gpu::ColorWrites::ALL,
+            }),
+            Some(crate::gpu::ColorTargetState {
+                format: crate::gpu::TextureFormat::Rgba32Float,
+                blend: None,
+                write_mask: crate::gpu::ColorWrites::ALL,
+            }),
+        ];
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "texel_gbuffer_pipeline",
+                layout: &layout,
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &vbuf_layouts,
+                fragment: Some(crate::gpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &targets,
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    // Bake both facings: a triangle's winding in UV space is
+                    // unrelated to its facing in world space.
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: crate::gpu::MultisampleState::default(),
+                cache: None,
+            },
+        );
+
+        Self { bgl, pipeline }
+    }
+
+    /// Start rasterising `geom`, as [`begin_texel_gbuffer`] does, on this
+    /// pass's pipeline.
+    pub fn begin(
+        &self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        geom: &TexelGeometry,
+        width: u32,
+        height: u32,
+    ) -> TexelGBufferJob {
+        let width = width.max(1);
+        let height = height.max(1);
+
+        let vertex_count = geom
+            .positions
+            .len()
+            .min(geom.normals.len())
+            .min(geom.uv1.len());
+        if geom.indices.is_empty() || vertex_count == 0 {
+            return TexelGBufferJob {
+                width,
+                height,
+                readback: None,
+                finished: false,
+            };
+        }
+
+        // Interleave position, normal, uv1 (8 floats per vertex) for one vertex
+        // buffer matching the shader's vertex layout.
+        let mut verts: Vec<f32> = Vec::with_capacity(vertex_count * 8);
+        for i in 0..vertex_count {
+            verts.extend_from_slice(&geom.positions[i]);
+            verts.extend_from_slice(&geom.normals[i]);
+            verts.extend_from_slice(&geom.uv1[i]);
+        }
+        let vertex_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("texel_gbuffer_verts"),
+            contents: bytemuck::cast_slice(&verts),
+            usage: crate::gpu::BufferUsages::VERTEX,
+        });
+        let index_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("texel_gbuffer_indices"),
+            contents: bytemuck::cast_slice(geom.indices),
+            usage: crate::gpu::BufferUsages::INDEX,
+        });
+
+        // Uniforms: model and its inverse-transpose (for normals under scale).
+        let normal_mat = Mat4::from_mat3(Mat3::from_mat4(geom.model).inverse().transpose());
+        let mut uniforms = [0.0f32; 32];
+        uniforms[..16].copy_from_slice(&geom.model.to_cols_array());
+        uniforms[16..].copy_from_slice(&normal_mat.to_cols_array());
+        let uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("texel_gbuffer_uniforms"),
+            contents: bytemuck::cast_slice(&uniforms),
+            usage: crate::gpu::BufferUsages::UNIFORM,
+        });
+
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("texel_gbuffer_bg"),
+            layout: &self.bgl,
+            entries: &[crate::gpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buf.as_entire_binding(),
+            }],
+        });
+
+        let make_target = |label: &str| {
+            let tex = device.create_texture(&crate::gpu::TextureDescriptor {
+                label: Some(label),
+                size: crate::gpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: crate::gpu::TextureDimension::D2,
+                format: crate::gpu::TextureFormat::Rgba32Float,
+                usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                    | crate::gpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&crate::gpu::TextureViewDescriptor::default());
+            (tex, view)
+        };
+        let (pos_tex, pos_view) = make_target("texel_gbuffer_pos");
+        let (nrm_tex, nrm_view) = make_target("texel_gbuffer_nrm");
+
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("texel_gbuffer_encoder"),
+        });
+        {
+            let clear = crate::gpu::Operations {
+                load: crate::gpu::LoadOp::Clear(crate::gpu::Color::TRANSPARENT),
+                store: crate::gpu::StoreOp::Store,
+            };
+            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(any(wgpu29, wgpu30))]
+                multiview_mask: None,
+                label: Some("texel_gbuffer_pass"),
+                color_attachments: &[
+                    Some(crate::gpu::RenderPassColorAttachment {
+                        view: &pos_view,
+                        resolve_target: None,
+                        ops: clear,
+                        depth_slice: None,
+                    }),
+                    Some(crate::gpu::RenderPassColorAttachment {
+                        view: &nrm_view,
+                        resolve_target: None,
+                        ops: clear,
+                        depth_slice: None,
+                    }),
+                ],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.set_vertex_buffer(0, vertex_buf.slice(..));
+            pass.set_index_buffer(index_buf.slice(..), crate::gpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..geom.indices.len() as u32, 0, 0..1);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let read = |texture| {
+            crate::resources::readback::PendingReadback::texture(
+                device, queue, texture, width, height, 16,
+            )
+        };
+        TexelGBufferJob {
+            width,
+            height,
+            readback: Some((read(&pos_tex), read(&nrm_tex))),
+            finished: false,
+        }
+    }
 }
