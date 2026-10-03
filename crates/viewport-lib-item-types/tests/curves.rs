@@ -42,8 +42,16 @@ fn spine() -> (Vec<[f32; 3]>, Vec<u32>) {
     )
 }
 
+/// One test renders at a time. The warm-up tests read the process-wide build
+/// log, which the other tests' fresh renderers would write into.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[test]
 fn gpu_pick_hits_ribbon() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -81,6 +89,7 @@ fn gpu_pick_hits_ribbon() {
 
 #[test]
 fn gpu_pick_ribbon_resolves_segment_and_node() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device_with_primitive_index() else {
         eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
         return;
@@ -138,6 +147,7 @@ fn gpu_pick_ribbon_resolves_segment_and_node() {
 
 #[test]
 fn gpu_pick_curve_node_fills_snap_world_pos() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device_with_primitive_index() else {
         eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
         return;
@@ -180,6 +190,7 @@ fn gpu_pick_curve_node_fills_snap_world_pos() {
 
 #[test]
 fn gpu_pick_rect_resolves_curve_node() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device_with_primitive_index() else {
         eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
         return;
@@ -242,6 +253,7 @@ fn gpu_pick_rect_resolves_curve_node() {
 
 #[test]
 fn gpu_pick_hits_streamtube() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -267,6 +279,7 @@ fn gpu_pick_hits_streamtube() {
 
 #[test]
 fn gpu_pick_hits_tube() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -294,6 +307,7 @@ fn gpu_pick_hits_tube() {
 /// priority over SEGMENT when both are asked for.
 #[test]
 fn gpu_pick_streamtube_resolves_strip_without_cpu_cache() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device_with_primitive_index() else {
         eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
         return;
@@ -335,6 +349,7 @@ fn gpu_pick_streamtube_resolves_strip_without_cpu_cache() {
 /// the plugin retained at prepare.
 #[test]
 fn cpu_pick_tube_resolves_segment() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -374,6 +389,7 @@ fn cpu_pick_tube_resolves_segment() {
 
 #[test]
 fn rect_pick_collects_ribbon_segments() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -426,6 +442,7 @@ fn rect_pick_collects_ribbon_segments() {
 /// ids.
 #[test]
 fn a_reference_streamtube_picks_under_its_own_id() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -455,6 +472,7 @@ fn a_reference_streamtube_picks_under_its_own_id() {
 
 #[test]
 fn a_hidden_reference_tube_is_skipped() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -484,6 +502,7 @@ fn a_hidden_reference_tube_is_skipped() {
 
 #[test]
 fn a_reference_ribbon_draws_and_picks() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -516,6 +535,7 @@ fn a_reference_ribbon_draws_and_picks() {
 
 #[test]
 fn an_uploaded_streamtube_resolves_until_it_is_dropped() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -550,6 +570,7 @@ fn an_uploaded_streamtube_resolves_until_it_is_dropped() {
 
 #[test]
 fn begin_upload_streamtube_drains_to_a_handle() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -588,6 +609,7 @@ fn begin_upload_streamtube_drains_to_a_handle() {
 
 #[test]
 fn an_uploaded_tube_resolves_until_it_is_dropped() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -622,6 +644,7 @@ fn an_uploaded_tube_resolves_until_it_is_dropped() {
 
 #[test]
 fn begin_upload_tube_drains_to_a_handle() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -660,6 +683,7 @@ fn begin_upload_tube_drains_to_a_handle() {
 
 #[test]
 fn an_uploaded_ribbon_resolves_until_it_is_dropped() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -694,6 +718,7 @@ fn an_uploaded_ribbon_resolves_until_it_is_dropped() {
 
 #[test]
 fn begin_upload_ribbon_drains_to_a_handle() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -729,6 +754,7 @@ fn begin_upload_ribbon_drains_to_a_handle() {
 /// A hidden item produces no draw data, for each of the three curve types.
 #[test]
 fn hidden_items_produce_no_draw_data() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -795,4 +821,106 @@ fn hidden_items_produce_no_draw_data() {
     ] {
         assert_eq!(count, 1, "{name}: hidden item must not produce gpu data");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Warm-up
+// ---------------------------------------------------------------------------
+
+/// Warm `set`, then draw the items `push` adds in HDR and in LDR, outlined,
+/// and pick them at object and node level. Returns every build those frames
+/// made whose label starts with `prefix`; a warmed type should make none.
+fn builds_after_warm(
+    set: viewport_lib::PipelineSet,
+    prefix: &str,
+    push: impl Fn(&mut FrameData),
+) -> Option<Vec<String>> {
+    // The node pick variant needs primitive index; take it where the adapter
+    // has it, so the warm-up is checked against every pick member.
+    let (device, queue) = headless_device_with_primitive_index().or_else(headless_device)?;
+    let mut renderer = renderer_with_item_types(&device);
+    renderer.warm_pipelines(&device, &queue, &set);
+    renderer.wait_for_pipelines(&device);
+
+    viewport_lib::resources::build_log::enable();
+    let _ = viewport_lib::resources::build_log::drain();
+    for hdr in [true, false] {
+        let mut frame = curve_frame();
+        frame.interaction.outline_selected = true;
+        if !hdr {
+            frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        }
+        push(&mut frame);
+        let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        for mask in [PickMask::OBJECT, PickMask::POLY_NODE] {
+            let _ = renderer.pick_object(
+                PickBackend::Gpu,
+                glam::Vec2::new(32.0, 32.0),
+                &frame,
+                &device,
+                &queue,
+                mask,
+            );
+        }
+    }
+    let module = format!("module {prefix}");
+    Some(
+        viewport_lib::resources::build_log::drain()
+            .into_iter()
+            .map(|(label, _)| label)
+            .filter(|l| l.starts_with(prefix) || l.starts_with(&module))
+            .collect(),
+    )
+}
+
+#[test]
+fn a_warmed_streamtube_type_builds_nothing_on_its_first_frame() {
+    let _serial = serial();
+    let Some(builds) = builds_after_warm(
+        viewport_lib::PipelineSet::default().with_item_type::<StreamtubePlugin>(),
+        "streamtube",
+        |frame| {
+            let (positions, strip_lengths) = spine();
+            let mut tube = StreamtubeItem::default();
+            tube.positions = positions;
+            tube.strip_lengths = strip_lengths;
+            tube.radius = 0.5;
+            tube.settings.pick_id = PickId(1);
+            tube.settings.selected = true;
+            frame.scene.items_mut::<StreamtubeItem>().push(tube);
+        },
+    ) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    assert!(
+        builds.is_empty(),
+        "the first streamtube frames built pipelines after the warm-up: {builds:?}"
+    );
+}
+
+#[test]
+fn a_warmed_tube_type_builds_nothing_on_its_first_frame() {
+    let _serial = serial();
+    let Some(builds) = builds_after_warm(
+        viewport_lib::PipelineSet::default().with_item_type::<TubePlugin>(),
+        "tube",
+        |frame| {
+            let (positions, strip_lengths) = spine();
+            let mut tube = TubeItem::default();
+            tube.positions = positions;
+            tube.strip_lengths = strip_lengths;
+            tube.radius = 0.5;
+            tube.settings.pick_id = PickId(1);
+            tube.settings.selected = true;
+            frame.scene.items_mut::<TubeItem>().push(tube);
+        },
+    ) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    assert!(
+        builds.is_empty(),
+        "the first tube frames built pipelines after the warm-up: {builds:?}"
+    );
 }

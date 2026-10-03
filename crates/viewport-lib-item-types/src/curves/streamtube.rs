@@ -50,6 +50,20 @@ impl ItemTypePlugin for StreamtubePlugin {
         self.layouts = Some(super::store::StreamtubeResources::new(device));
     }
 
+    fn warm(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        resources: &viewport_lib::DeviceResources,
+    ) {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| super::store::StreamtubeResources::new(device));
+        let gpu = self
+            .gpu
+            .get_or_insert_with(|| CurveMeshGpu::new(device, resources, layouts, "streamtube"));
+        gpu.request_all();
+    }
+
     fn resident_bytes(&self) -> u64 {
         self.stored.allocated_bytes()
     }
@@ -165,7 +179,8 @@ impl ItemTypePlugin for StreamtubePlugin {
         _ctx: &OutlineMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        outline_mask_curve_mesh(pass, self.gpu.as_ref().map(|g| &g.pick), &self.frame);
+        let Some(gpu) = &self.gpu else { return };
+        outline_mask_curve_mesh(pass, &gpu.pick, |e| gpu.drawn(e), &self.frame);
     }
 
     fn surface_mask(
@@ -174,7 +189,8 @@ impl ItemTypePlugin for StreamtubePlugin {
         ctx: &viewport_lib::plugin_api::SurfaceMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        surface_mask_curve_mesh(pass, ctx, self.gpu.as_ref().map(|g| &g.pick), &self.frame);
+        let Some(gpu) = &self.gpu else { return };
+        surface_mask_curve_mesh(pass, ctx, &gpu.pick, |e| gpu.drawn(e), &self.frame);
     }
 
     fn pick(&self, ray: &PickRay, ctx: &PickContext<'_>) -> Option<(f32, PickHit)> {
@@ -258,7 +274,8 @@ impl ItemTypePlugin for StreamtubePlugin {
         ctx: &PickPassContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        render_pick_curve_mesh(pass, ctx, self.gpu.as_ref().map(|g| &g.pick), &self.frame);
+        let Some(gpu) = &self.gpu else { return };
+        render_pick_curve_mesh(pass, ctx, &gpu.pick, |e| gpu.drawn(e), &self.frame);
     }
 
     fn resolve_sub_object(

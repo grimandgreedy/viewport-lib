@@ -575,7 +575,8 @@ impl ItemTypePlugin for RibbonPlugin {
         _ctx: &OutlineMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        outline_mask_curve_mesh(pass, self.gpu.as_ref().map(|g| &g.pick), &self.frame);
+        let Some(gpu) = &self.gpu else { return };
+        outline_mask_curve_mesh(pass, &gpu.pick, |_| true, &self.frame);
     }
 
     fn surface_mask(
@@ -584,7 +585,8 @@ impl ItemTypePlugin for RibbonPlugin {
         ctx: &viewport_lib::plugin_api::SurfaceMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        surface_mask_curve_mesh(pass, ctx, self.gpu.as_ref().map(|g| &g.pick), &self.frame);
+        let Some(gpu) = &self.gpu else { return };
+        surface_mask_curve_mesh(pass, ctx, &gpu.pick, |_| true, &self.frame);
     }
 
     /// Node proximity plus a ray test against the reconstructed swept quads, so
@@ -717,7 +719,8 @@ impl ItemTypePlugin for RibbonPlugin {
         ctx: &PickPassContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        render_pick_curve_mesh(pass, ctx, self.gpu.as_ref().map(|g| &g.pick), &self.frame);
+        let Some(gpu) = &self.gpu else { return };
+        render_pick_curve_mesh(pass, ctx, &gpu.pick, |_| true, &self.frame);
     }
 
     fn resolve_sub_object(

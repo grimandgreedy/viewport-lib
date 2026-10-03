@@ -6,7 +6,10 @@
 //! the render pipelines differ. Keeping the bodies here rather than in each
 //! plugin means the three cannot drift apart in how they answer a pick.
 
-use super::pipeline::{CurveFrame, CurveMeshGpu, CurvePickGpu, draw_mesh, draw_solid_indexed};
+use super::pipeline::{
+    CurveFrame, CurveMeshGpu, CurvePickGpu, MASK, PICK, PICK_NODE, SURFACE_MASK, draw_mesh,
+    draw_solid_indexed,
+};
 use super::store::StreamtubeGpuData;
 use viewport_lib::plugin_api::{PaintContext, PickContext, PickPassContext};
 use viewport_lib::renderer::{PickId, PickMask, SubObjectRef};
@@ -90,10 +93,12 @@ pub(super) fn paint_curve_mesh(
         if gd.index_count == 0 && gd.edge_index_count == 0 {
             continue;
         }
-        let pipeline = if gd.wireframe {
-            gpu.wireframe_pipeline.for_format(is_hdr)
-        } else {
-            gpu.pipeline.for_format(is_hdr)
+        // Still compiling: the item draws next frame.
+        let Some(pipeline) = gpu
+            .pipelines
+            .get(CurveMeshGpu::member(gd.wireframe, is_hdr))
+        else {
+            continue;
         };
         pass.set_pipeline(pipeline);
         draw_mesh(pass, gd);
@@ -102,22 +107,27 @@ pub(super) fn paint_curve_mesh(
 
 /// The `outline_mask` body: draw every selected item's solid triangle mesh, so
 /// the outline follows the swept silhouette rather than a bounding proxy.
+/// `drawn` says whether an item's colour pipeline is ready; one that is not is
+/// left out, so nothing is outlined before it is drawn.
 pub(super) fn outline_mask_curve_mesh(
     pass: &mut viewport_lib::gpu::RenderPass<'_>,
-    pick: Option<&CurvePickGpu>,
+    pick: &CurvePickGpu,
+    drawn: impl Fn(&CurveFrame) -> bool,
     frame: &[CurveFrame],
 ) {
-    let Some(pick) = pick else { return };
     let mut bound = false;
     for entry in frame {
-        if !entry.outlined || entry.gpu.index_count == 0 {
+        if !entry.outlined || entry.gpu.index_count == 0 || !drawn(entry) {
             continue;
         }
         let Some(bg) = &entry.instance_bind_group else {
             continue;
         };
         if !bound {
-            pass.set_pipeline(&pick.mask_pipeline);
+            let Some(pl) = pick.pipelines.get(MASK) else {
+                return;
+            };
+            pass.set_pipeline(pl);
             bound = true;
         }
         pass.set_bind_group(1, bg, &[]);
@@ -125,20 +135,23 @@ pub(super) fn outline_mask_curve_mesh(
     }
 }
 
-/// The `surface_mask` body: stamp every item that needs it with its solid
+/// The `surface_mask` body: stamp every drawn item that needs it with its solid
 /// triangle mesh. Items that did not write depth as a solid are skipped, since
 /// the stamp would land on whatever shows through them.
 pub(super) fn surface_mask_curve_mesh(
     pass: &mut viewport_lib::gpu::RenderPass<'_>,
     ctx: &viewport_lib::plugin_api::SurfaceMaskContext<'_>,
-    pick: Option<&CurvePickGpu>,
+    pick: &CurvePickGpu,
+    drawn: impl Fn(&CurveFrame) -> bool,
     frame: &[CurveFrame],
 ) {
-    let Some(pick) = pick else { return };
     let mut bound = false;
     for entry in frame {
         let gd = &entry.gpu;
         if gd.index_count == 0 || gd.wireframe || !gd.depth_write || gd.oit_eligible {
+            continue;
+        }
+        if !drawn(entry) {
             continue;
         }
         let Some(value) = ctx.stamp_for(&entry.settings) else {
@@ -148,7 +161,10 @@ pub(super) fn surface_mask_curve_mesh(
             continue;
         };
         if !bound {
-            pass.set_pipeline(&pick.surface_mask_pipeline);
+            let Some(pl) = pick.pipelines.get(SURFACE_MASK) else {
+                return;
+            };
+            pass.set_pipeline(pl);
             bound = true;
         }
         pass.set_stencil_reference(value);
@@ -163,7 +179,8 @@ pub(super) fn surface_mask_curve_mesh(
 pub(super) fn render_pick_curve_mesh(
     pass: &mut viewport_lib::gpu::RenderPass<'_>,
     ctx: &PickPassContext<'_>,
-    pick: Option<&CurvePickGpu>,
+    pick: &CurvePickGpu,
+    drawn: impl Fn(&CurveFrame) -> bool,
     frame: &[CurveFrame],
 ) {
     if !ctx
@@ -172,34 +189,34 @@ pub(super) fn render_pick_curve_mesh(
     {
         return;
     }
-    let Some(pick) = pick else { return };
     // Matches the resolve-side priority STRIP > SEGMENT > POLY_NODE: the node
     // variant only fires when nothing coarser was asked for.
     let writes_node = ctx.mask.intersects(PickMask::POLY_NODE)
-        && !ctx.mask.intersects(PickMask::STRIP | PickMask::SEGMENT);
+        && !ctx.mask.intersects(PickMask::STRIP | PickMask::SEGMENT)
+        && pick.has_node();
     for entry in frame {
-        if entry.gpu.pick_id == PickId::NONE || entry.gpu.index_count == 0 {
+        if entry.gpu.pick_id == PickId::NONE || entry.gpu.index_count == 0 || !drawn(entry) {
             continue;
         }
         let Some(instance_bg) = &entry.instance_bind_group else {
             continue;
         };
-        let node = writes_node
-            .then(|| {
-                entry
-                    .node_bind_group
-                    .as_ref()
-                    .zip(pick.node_pipeline.as_ref())
-            })
-            .flatten();
-        match node {
-            Some((node_bg, node_pipeline)) => {
-                pass.set_pipeline(node_pipeline);
+        // A pipeline still compiling skips the item rather than falling back:
+        // the plain pick writes a triangle where the node variant writes a node.
+        match entry.node_bind_group.as_ref().filter(|_| writes_node) {
+            Some(node_bg) => {
+                let Some(pl) = pick.pipelines.get(PICK_NODE) else {
+                    continue;
+                };
+                pass.set_pipeline(pl);
                 pass.set_bind_group(1, instance_bg, &[]);
                 pass.set_bind_group(2, node_bg, &[]);
             }
             None => {
-                pass.set_pipeline(&pick.pick_pipeline);
+                let Some(pl) = pick.pipelines.get(PICK) else {
+                    continue;
+                };
+                pass.set_pipeline(pl);
                 pass.set_bind_group(1, instance_bg, &[]);
             }
         }

@@ -5,7 +5,8 @@
 //! POLY_NODE pick and outline-mask pipelines are the same shape and are built
 //! here once per plugin. The render pipelines differ: streamtube and tube share
 //! [`CurveMeshGpu`]'s solid + wireframe pair, ribbon has its own blend-keyed
-//! variant set plus OIT and shadow pipelines in [`RibbonMeshGpu`].
+//! variant set plus OIT and shadow pipelines in [`RibbonMeshGpu`]. Every
+//! pipeline is built the first time a draw needs it.
 //!
 //! Each plugin owns its own instance of these, so the three stay separable: two
 //! plugins drawing the same pipeline description compile it twice rather than
@@ -13,10 +14,10 @@
 
 use super::store::StreamtubeGpuData;
 use crate::shader::{lit_shader, scene_shader, wgsl_source};
-use viewport_lib::plugin_api::builders::DualPipeline;
 use viewport_lib::plugin_api::builders::Vertex;
 use viewport_lib::plugin_api::builders::{
-    DualPipelineDesc, build_dual_pipeline, pipeline_layout, standard_scene_layout, wgsl_module,
+    DualPipelineDesc, build_dual_pipeline_variant, pipeline_layout, standard_scene_layout,
+    wgsl_module,
 };
 use viewport_lib::plugin_api::shared_wgsl;
 use viewport_lib::resources::DeviceResources;
@@ -76,18 +77,105 @@ fn node_bgl(device: &viewport_lib::gpu::Device, label: &str) -> viewport_lib::gp
     })
 }
 
+/// Members of [`CurvePickPipelines`].
+pub(super) const PICK: usize = 0;
+pub(super) const MASK: usize = 1;
+pub(super) const SURFACE_MASK: usize = 2;
+/// Last, so a device without the primitive-index feature never asks for it.
+pub(super) const PICK_NODE: usize = 3;
+
+/// What a curve pick or mask pipeline build reads.
+pub(super) struct CurvePickRecipe {
+    device: viewport_lib::gpu::Device,
+    builder: viewport_lib::plugin_api::PipelineBuilder,
+    instance_bgl: viewport_lib::gpu::BindGroupLayout,
+    node_bgl: viewport_lib::gpu::BindGroupLayout,
+    pick_shader: viewport_lib::gpu::ShaderModule,
+    /// `None` on a device without the primitive-index feature: the pick then
+    /// stays object-level, matching the built-in surfaces.
+    node_shader: Option<viewport_lib::gpu::ShaderModule>,
+    mask_layout: viewport_lib::gpu::PipelineLayout,
+    mask_shader: viewport_lib::gpu::ShaderModule,
+    mask_cull: Option<viewport_lib::gpu::Face>,
+    label: String,
+}
+
+/// The pick, POLY_NODE pick and two mask pipelines, each built the first time
+/// a draw needs it.
+pub(super) type CurvePickPipelines = viewport_lib::plugin_api::LazyPipelines<CurvePickRecipe, 4>;
+
+fn build_pick(r: &CurvePickRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
+    let vertex_buffers = [position_only_layout()];
+    match i {
+        PICK => r.builder.build_pick_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive: viewport_lib::gpu::PrimitiveState {
+                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                    // No culling: the pick pass rasterises both faces so a click
+                    // on a back face of an open strip still registers.
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                extra_bind_group_layouts: &[&r.instance_bgl],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some(&format!("{}_pick_pipeline", r.label)),
+                    &r.pick_shader,
+                    "vs_main",
+                    "fs_main",
+                    &vertex_buffers,
+                )
+            },
+        ),
+        PICK_NODE => r.builder.build_pick_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive: viewport_lib::gpu::PrimitiveState {
+                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                extra_bind_group_layouts: &[&r.instance_bgl, &r.node_bgl],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some(&format!("{}_pick_node_pipeline", r.label)),
+                    r.node_shader
+                        .as_ref()
+                        .expect("the node pick is only asked for with primitive index"),
+                    "vs_main",
+                    "fs_main",
+                    &vertex_buffers,
+                )
+            },
+        ),
+        MASK => viewport_lib::plugin_api::builders::build_outline_mask_pipeline(
+            &r.device,
+            &format!("{}_outline_mask_pipeline", r.label),
+            &r.mask_layout,
+            &r.mask_shader,
+            viewport_lib::gpu::TextureFormat::R8Unorm,
+            &vertex_buffers,
+            r.mask_cull,
+            true,
+            viewport_lib::gpu::CompareFunction::Less,
+        ),
+        // The surface mask stamps the same mesh into the scene stencil.
+        _ => viewport_lib::plugin_api::builders::build_surface_mask_pipeline(
+            &r.device,
+            &format!("{}_surface_mask_pipeline", r.label),
+            &r.mask_layout,
+            &r.mask_shader,
+            &vertex_buffers,
+            r.mask_cull,
+        ),
+    }
+}
+
 /// The pick, POLY_NODE pick and outline-mask pipelines every curve mesh type
 /// needs, built against the shared group-0 scene layout.
 pub(super) struct CurvePickGpu {
-    pub(super) pick_pipeline: viewport_lib::gpu::RenderPipeline,
-    /// The POLY_NODE variant, absent on a device without the primitive-index
-    /// feature: without it the pick stays object-level, matching the built-in
-    /// surfaces.
-    pub(super) node_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
+    pub(super) pipelines: CurvePickPipelines,
     pub(super) instance_bgl: viewport_lib::gpu::BindGroupLayout,
     pub(super) node_bgl: viewport_lib::gpu::BindGroupLayout,
-    pub(super) mask_pipeline: viewport_lib::gpu::RenderPipeline,
-    pub(super) surface_mask_pipeline: viewport_lib::gpu::RenderPipeline,
 }
 
 impl CurvePickGpu {
@@ -102,12 +190,9 @@ impl CurvePickGpu {
         let instance_bgl = instance_bgl(device, &format!("{label}_pick_instance_bgl"));
         let node_bgl = node_bgl(device, &format!("{label}_pick_node_bgl"));
         let pick_shader_label = format!("{label}_pick_shader");
-        let pick_pipeline_label = format!("{label}_pick_pipeline");
         let node_shader_label = format!("{label}_pick_node_shader");
-        let node_pipeline_label = format!("{label}_pick_node_pipeline");
         let mask_shader_label = format!("{label}_outline_mask_shader");
         let mask_layout_label = format!("{label}_outline_mask_pipeline_layout");
-        let mask_pipeline_label = format!("{label}_outline_mask_pipeline");
         let has_prim = device
             .features()
             .contains(viewport_lib::gpu::PRIMITIVE_INDEX_FEATURE);
@@ -133,54 +218,14 @@ impl CurvePickGpu {
         } else {
             wgsl_module(device, &pick_shader_label, &pick_src)
         };
-
-        let pick_pipeline = resources.build_pick_pipeline(
-            device,
-            &viewport_lib::resources::PluginPipelineOpts {
-                primitive: viewport_lib::gpu::PrimitiveState {
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    // No culling: the pick pass rasterises both faces so a click
-                    // on a back face of an open strip still registers.
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                extra_bind_group_layouts: &[&instance_bgl],
-                ..viewport_lib::resources::PluginPipelineOpts::new(
-                    Some(&pick_pipeline_label),
-                    &pick_shader,
-                    "vs_main",
-                    "fs_main",
-                    &[position_only_layout()],
-                )
-            },
-        );
-
-        let node_pipeline = has_prim.then(|| {
-            let node_shader = wgsl_module(
+        let node_shader = has_prim.then(|| {
+            wgsl_module(
                 device,
                 &node_shader_label,
                 viewport_lib::plugin_api::builders::with_primitive_index_enable(&scene_shader(
                     &[],
                     wgsl_source!("curve_pick_node"),
                 )),
-            );
-            resources.build_pick_pipeline(
-                device,
-                &viewport_lib::resources::PluginPipelineOpts {
-                    primitive: viewport_lib::gpu::PrimitiveState {
-                        topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    extra_bind_group_layouts: &[&instance_bgl, &node_bgl],
-                    ..viewport_lib::resources::PluginPipelineOpts::new(
-                        Some(&node_pipeline_label),
-                        &node_shader,
-                        "vs_main",
-                        "fs_main",
-                        &[position_only_layout()],
-                    )
-                },
             )
         });
 
@@ -194,36 +239,43 @@ impl CurvePickGpu {
             mask_layout_label.as_str(),
             &[resources.shared_bindings().group0_layout, &instance_bgl],
         );
-        let mask_pipeline = viewport_lib::plugin_api::builders::build_outline_mask_pipeline(
-            device,
-            &mask_pipeline_label,
-            &mask_layout,
-            &mask_shader,
-            viewport_lib::gpu::TextureFormat::R8Unorm,
-            &[position_only_layout()],
-            (!two_sided).then_some(viewport_lib::gpu::Face::Back),
-            true,
-            viewport_lib::gpu::CompareFunction::Less,
-        );
 
-        // The surface mask stamps the same mesh into the scene stencil.
-        let surface_mask_pipeline = viewport_lib::plugin_api::builders::build_surface_mask_pipeline(
-            device,
-            &format!("{label}_surface_mask_pipeline"),
-            &mask_layout,
-            &mask_shader,
-            &[position_only_layout()],
-            (!two_sided).then_some(viewport_lib::gpu::Face::Back),
+        let pipelines = resources.lazy_pipelines(
+            CurvePickRecipe {
+                device: device.clone(),
+                builder: resources.pipeline_builder(),
+                instance_bgl: instance_bgl.clone(),
+                node_bgl: node_bgl.clone(),
+                pick_shader,
+                node_shader,
+                mask_layout,
+                mask_shader,
+                mask_cull: (!two_sided).then_some(viewport_lib::gpu::Face::Back),
+                label: label.to_string(),
+            },
+            build_pick,
         );
 
         Self {
-            pick_pipeline,
-            node_pipeline,
+            pipelines,
             instance_bgl,
             node_bgl,
-            mask_pipeline,
-            surface_mask_pipeline,
         }
+    }
+
+    /// Whether the POLY_NODE pick variant exists on this device.
+    pub(super) fn has_node(&self) -> bool {
+        self.pipelines.context().node_shader.is_some()
+    }
+
+    /// Ask for every pipeline this device can build.
+    pub(super) fn request_all(&self) {
+        let end = if self.has_node() {
+            PICK_NODE + 1
+        } else {
+            PICK_NODE
+        };
+        self.pipelines.request(end);
     }
 
     /// Build the group-1 model + object-id bind group for one item.
@@ -269,7 +321,9 @@ impl CurvePickGpu {
         node_buffer: Option<&viewport_lib::gpu::Buffer>,
     ) -> Option<viewport_lib::gpu::BindGroup> {
         let node_buffer = node_buffer?;
-        self.node_pipeline.as_ref()?;
+        if !self.has_node() {
+            return None;
+        }
         Some(
             device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
                 label: Some("curve_pick_node_bg"),
@@ -283,15 +337,67 @@ impl CurvePickGpu {
     }
 }
 
+/// Members of [`CurveMeshPipelines`].
+const SOLID_LDR: usize = 0;
+const SOLID_HDR: usize = 1;
+const WIREFRAME_LDR: usize = 2;
+const WIREFRAME_HDR: usize = 3;
+
+/// What a streamtube or tube render pipeline build reads.
+pub(super) struct CurveMeshRecipe {
+    device: viewport_lib::gpu::Device,
+    layout: viewport_lib::gpu::PipelineLayout,
+    shader: viewport_lib::gpu::ShaderModule,
+    sample_count: u32,
+    ldr_format: viewport_lib::gpu::TextureFormat,
+    solid_label: String,
+    wireframe_label: String,
+}
+
+/// The solid and wireframe pipelines in both formats, each built the first
+/// time a draw needs it.
+pub(super) type CurveMeshPipelines = viewport_lib::plugin_api::LazyPipelines<CurveMeshRecipe, 4>;
+
+fn build_mesh(r: &CurveMeshRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
+    // Wireframe: the same shader and bind groups as the solid tube, but
+    // LineList topology and no back-face culling so edges on both sides are
+    // visible.
+    let wireframe = matches!(i, WIREFRAME_LDR | WIREFRAME_HDR);
+    build_dual_pipeline_variant(
+        &r.device,
+        &DualPipelineDesc {
+            label: if wireframe {
+                &r.wireframe_label
+            } else {
+                &r.solid_label
+            },
+            layout: &r.layout,
+            shader: &r.shader,
+            vertex_entry: "vs_main",
+            fragment_entry: "fs_main",
+            vertex_buffers: &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
+            blend: Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
+            topology: if wireframe {
+                viewport_lib::gpu::PrimitiveTopology::LineList
+            } else {
+                viewport_lib::gpu::PrimitiveTopology::TriangleList
+            },
+            cull_mode: (!wireframe).then_some(viewport_lib::gpu::Face::Back),
+            depth_write: true,
+            depth_compare: viewport_lib::gpu::CompareFunction::Less,
+            sample_count: r.sample_count,
+            ldr_format: r.ldr_format,
+        },
+        matches!(i, SOLID_HDR | WIREFRAME_HDR),
+    )
+}
+
 /// The solid + wireframe render pipelines streamtube and tube draw with. Both
 /// types generate the same connected tube mesh and shade it through
 /// `streamtube.wgsl`, so the description is identical; each plugin builds its
 /// own copy.
 pub(super) struct CurveMeshGpu {
-    pub(super) pipeline: DualPipeline,
-    /// LineList topology with no back-face culling, so edges on both sides of
-    /// the tube are visible.
-    pub(super) wireframe_pipeline: DualPipeline,
+    pub(super) pipelines: CurveMeshPipelines,
     pub(super) pick: CurvePickGpu,
 }
 
@@ -302,13 +408,9 @@ impl CurveMeshGpu {
         layouts: &super::store::StreamtubeResources,
         label: &str,
     ) -> Self {
-        let shader_label = format!("{label}_shader");
-        let layout_label = format!("{label}_pipeline_layout");
-        let solid_label = format!("{label}_pipeline");
-        let wireframe_label = format!("{label}_wireframe_pipeline");
         let shader = wgsl_module(
             device,
-            &shader_label,
+            &format!("{label}_shader"),
             &lit_shader(
                 &[shared_wgsl::SHARED_CLIP_VOLUME_WGSL],
                 wgsl_source!("streamtube"),
@@ -316,55 +418,51 @@ impl CurveMeshGpu {
         );
         let layout = standard_scene_layout(
             device,
-            &layout_label,
+            &format!("{label}_pipeline_layout"),
             resources.shared_bindings().group0_layout,
             &layouts.bgl,
         );
-        let vertex_buffers = [viewport_lib::plugin_api::builders::mesh_vertex_layout()];
-        let pipeline = build_dual_pipeline(
-            device,
-            &DualPipelineDesc {
-                label: &solid_label,
-                layout: &layout,
-                shader: &shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &vertex_buffers,
-                blend: Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
-                topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(viewport_lib::gpu::Face::Back),
-                depth_write: true,
-                depth_compare: viewport_lib::gpu::CompareFunction::Less,
+        let pipelines = resources.lazy_pipelines(
+            CurveMeshRecipe {
+                device: device.clone(),
+                layout,
+                shader,
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
+                solid_label: format!("{label}_pipeline"),
+                wireframe_label: format!("{label}_wireframe_pipeline"),
             },
-        );
-        // Wireframe: the same shader and bind groups as the solid tube, but
-        // LineList topology and no back-face culling so edges on both sides are
-        // visible.
-        let wireframe_pipeline = build_dual_pipeline(
-            device,
-            &DualPipelineDesc {
-                label: &wireframe_label,
-                layout: &layout,
-                shader: &shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &vertex_buffers,
-                blend: Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
-                topology: viewport_lib::gpu::PrimitiveTopology::LineList,
-                cull_mode: None,
-                depth_write: true,
-                depth_compare: viewport_lib::gpu::CompareFunction::Less,
-                sample_count: resources.sample_count(),
-                ldr_format: resources.target_format(),
-            },
+            build_mesh,
         );
         Self {
-            pipeline,
-            wireframe_pipeline,
+            pipelines,
             pick: CurvePickGpu::new(device, resources, label, false),
         }
+    }
+
+    /// The member an item draws with in the given format.
+    pub(super) fn member(wireframe: bool, hdr: bool) -> usize {
+        match (wireframe, hdr) {
+            (false, false) => SOLID_LDR,
+            (false, true) => SOLID_HDR,
+            (true, false) => WIREFRAME_LDR,
+            (true, true) => WIREFRAME_HDR,
+        }
+    }
+
+    /// Whether an item's colour pipeline can draw this frame in either format.
+    /// The mask and pick passes wait for it, so an item is never outlined or
+    /// picked before it is drawn.
+    pub(super) fn drawn(&self, entry: &CurveFrame) -> bool {
+        let wireframe = entry.gpu.wireframe;
+        self.pipelines.available(Self::member(wireframe, false))
+            || self.pipelines.available(Self::member(wireframe, true))
+    }
+
+    /// Ask for every pipeline, for `warm`.
+    pub(super) fn request_all(&self) {
+        self.pipelines.request_all();
+        self.pick.request_all();
     }
 }
 
