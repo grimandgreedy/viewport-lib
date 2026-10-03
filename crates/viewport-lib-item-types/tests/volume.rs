@@ -8,8 +8,16 @@ use common::*;
 use viewport_lib::SurfaceSubmission;
 use viewport_lib_item_types::VolumeItem;
 
+/// One test renders at a time. The warm-up test reads the process-wide build
+/// log, which the other tests' fresh renderers would write into.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[test]
 fn gpu_pick_hits_voxel_volume() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -65,6 +73,7 @@ fn gpu_pick_hits_voxel_volume() {
 
 #[test]
 fn gpu_pick_voxel_volume_resolves_voxel() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -143,6 +152,7 @@ fn gpu_pick_voxel_volume_resolves_voxel() {
 
 #[test]
 fn gpu_pick_hits_showcase_style_voxel_volume() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -227,6 +237,7 @@ fn gpu_pick_hits_showcase_style_voxel_volume() {
 
 #[test]
 fn cpu_pick_hits_voxel_volume() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -286,6 +297,7 @@ fn cpu_pick_hits_voxel_volume() {
 
 #[test]
 fn rect_pick_hits_voxel_volume() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -350,4 +362,67 @@ fn rect_pick_hits_voxel_volume() {
         PickMask::OBJECT | PickMask::VOXEL,
     );
     assert!(!away.objects.contains(&65));
+}
+
+/// Naming the type in a warm-up builds its pipelines, so the first frames that
+/// draw, outline and pick a volume, in either format, compile none of them.
+#[test]
+fn a_warmed_volume_type_builds_nothing_on_its_first_frame() {
+    let _serial = serial();
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    let dims = [8u32, 8, 8];
+    let data = vec![1.0f32; (dims[0] * dims[1] * dims[2]) as usize];
+    let volume_id = renderer
+        .resources_mut()
+        .upload_volume(&device, &queue, &data, dims);
+    renderer.warm_pipelines(
+        &device,
+        &queue,
+        &viewport_lib::PipelineSet::default()
+            .with_item_type::<viewport_lib_item_types::VolumePlugin>(),
+    );
+    renderer.wait_for_pipelines(&device);
+
+    viewport_lib::resources::build_log::enable();
+    let _ = viewport_lib::resources::build_log::drain();
+    for hdr in [true, false] {
+        let mut frame = sub_object_pick_frame();
+        if !hdr {
+            frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        }
+        frame.interaction.outline_selected = true;
+        let mut vol = VolumeItem::default();
+        vol.volume_id = volume_id;
+        vol.scalar_range = (0.0, 1.0);
+        vol.threshold_min = 0.0;
+        vol.threshold_max = 1.0;
+        vol.bbox_min = [-0.5, -0.5, -0.5];
+        vol.bbox_max = [0.5, 0.5, 0.5];
+        vol.settings.pick_id = PickId(63);
+        vol.settings.selected = true;
+        *frame.scene.items_mut::<VolumeItem>() = vec![vol];
+        let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        let hit = renderer.pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::all(),
+        );
+        assert_eq!(hit.map(|h| h.id), Some(63));
+    }
+    let builds: Vec<String> = viewport_lib::resources::build_log::drain()
+        .into_iter()
+        .map(|(label, _)| label)
+        .filter(|l| l.starts_with("volume") || l.starts_with("module volume"))
+        .collect();
+    assert!(
+        builds.is_empty(),
+        "the first volume frames built pipelines after the warm-up: {builds:?}"
+    );
 }

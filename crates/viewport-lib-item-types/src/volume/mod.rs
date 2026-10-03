@@ -50,6 +50,7 @@ impl PluginItem for VolumeItem {
 #[derive(Default)]
 pub struct VolumePlugin {
     gpu: Option<pipeline::VolumeGpu>,
+    default_lut: Option<pipeline::DefaultOpacityLut>,
     /// Per drawn item, rebuilt each prepare.
     frame: Vec<pipeline::VolumeFrame>,
     /// All items from the last prepared frame, hidden included, matching what
@@ -71,7 +72,19 @@ impl ItemTypePlugin for VolumePlugin {
         _queue: &viewport_lib::gpu::Queue,
     ) {
         self.gpu = None;
+        self.default_lut = None;
         self.frame.clear();
+    }
+
+    fn warm(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        resources: &viewport_lib::DeviceResources,
+    ) {
+        self.gpu
+            .get_or_insert_with(|| pipeline::VolumeGpu::new(device, resources))
+            .pipelines
+            .request_all();
     }
 
     fn prepare(
@@ -91,7 +104,10 @@ impl ItemTypePlugin for VolumePlugin {
         }
         let gpu = self
             .gpu
-            .get_or_insert_with(|| pipeline::VolumeGpu::new(device, queue, ctx.resources));
+            .get_or_insert_with(|| pipeline::VolumeGpu::new(device, ctx.resources));
+        let default_lut = self
+            .default_lut
+            .get_or_insert_with(|| pipeline::DefaultOpacityLut::new(device, queue));
         // Under budget pressure, double the step size (half the sample count)
         // to cut the ray-march cost.
         let step_multiplier = if ctx.quality_reduced { 2.0 } else { 1.0 };
@@ -104,6 +120,7 @@ impl ItemTypePlugin for VolumePlugin {
                 device,
                 queue,
                 ctx.resources,
+                default_lut,
                 item,
                 ctx.clip_objects,
                 step_multiplier,
@@ -129,10 +146,16 @@ impl ItemTypePlugin for VolumePlugin {
                 continue;
             }
             if !bound {
-                pass.set_pipeline(
-                    gpu.pipeline
-                        .for_format(ctx.target_format == HDR_COLOR_FORMAT),
-                );
+                // Still compiling: the volumes draw next frame.
+                let colour = if ctx.target_format == HDR_COLOR_FORMAT {
+                    pipeline::COLOUR_HDR
+                } else {
+                    pipeline::COLOUR_LDR
+                };
+                let Some(pl) = gpu.pipelines.get(colour) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             bind_cube(pass, entry);
@@ -150,7 +173,9 @@ impl ItemTypePlugin for VolumePlugin {
         _ctx: &OutlineMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        let Some(gpu) = &self.gpu else { return };
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         if !self.outline_active {
             return;
         }
@@ -160,7 +185,10 @@ impl ItemTypePlugin for VolumePlugin {
                 continue;
             }
             if !bound {
-                pass.set_pipeline(&gpu.mask_pipeline);
+                let Some(pl) = gpu.pipelines.get(pipeline::MASK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             bind_cube(pass, entry);
@@ -286,7 +314,9 @@ impl ItemTypePlugin for VolumePlugin {
         if !ctx.mask.intersects(PickMask::OBJECT | PickMask::VOXEL) {
             return;
         }
-        let Some(gpu) = &self.gpu else { return };
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         let mut bound = false;
         for entry in &self.frame {
             if entry.wireframe {
@@ -296,7 +326,10 @@ impl ItemTypePlugin for VolumePlugin {
                 continue;
             };
             if !bound {
-                pass.set_pipeline(&gpu.pick_pipeline);
+                let Some(pl) = gpu.pipelines.get(pipeline::PICK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             bind_cube(pass, entry);

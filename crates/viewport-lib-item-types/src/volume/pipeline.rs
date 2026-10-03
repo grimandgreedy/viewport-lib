@@ -1,24 +1,125 @@
 //! GPU state for the volume item type: the render, pick, and outline-mask
-//! pipelines, the shared default opacity LUT, and the per-frame per-item bind
-//! groups and cube proxy buffers.
+//! pipelines, each built the first time a draw needs it, the shared default
+//! opacity LUT, and the per-frame per-item bind groups and cube proxy buffers.
 
 use super::types::VolumeItem;
-use viewport_lib::plugin_api::builders::DualPipeline;
 use viewport_lib::renderer::{ClipObject, ClipShape, PickId};
 use viewport_lib::resources::DeviceResources;
 
-/// Pipelines, layouts, and the default opacity ramp, built lazily on the first
-/// prepare with items.
+/// Members of [`VolumePipelines`].
+pub(super) const COLOUR_LDR: usize = 0;
+pub(super) const COLOUR_HDR: usize = 1;
+pub(super) const MASK: usize = 2;
+pub(super) const PICK: usize = 3;
+
+/// What a volume pipeline build reads.
+pub(super) struct VolumeRecipe {
+    device: viewport_lib::gpu::Device,
+    builder: viewport_lib::plugin_api::PipelineBuilder,
+    layout: viewport_lib::gpu::PipelineLayout,
+    shader: viewport_lib::gpu::ShaderModule,
+    mask_shader: viewport_lib::gpu::ShaderModule,
+    pick_shader: viewport_lib::gpu::ShaderModule,
+    bgl: viewport_lib::gpu::BindGroupLayout,
+    pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
+    sample_count: u32,
+    ldr_format: viewport_lib::gpu::TextureFormat,
+}
+
+/// The ray-march in both formats, the outline mask and the pick pipeline.
+pub(super) type VolumePipelines = viewport_lib::plugin_api::LazyPipelines<VolumeRecipe, 4>;
+
+fn build(r: &VolumeRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
+    match i {
+        COLOUR_LDR | COLOUR_HDR => viewport_lib::plugin_api::builders::build_dual_pipeline_variant(
+            &r.device,
+            &viewport_lib::plugin_api::builders::DualPipelineDesc {
+                label: "volume_pipeline",
+                layout: &r.layout,
+                shader: &r.shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[CUBE_VERTEX_LAYOUT],
+                blend: Some(viewport_lib::gpu::BlendState {
+                    color: viewport_lib::gpu::BlendComponent {
+                        src_factor: viewport_lib::gpu::BlendFactor::SrcAlpha,
+                        dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: viewport_lib::gpu::BlendOperation::Add,
+                    },
+                    alpha: viewport_lib::gpu::BlendComponent {
+                        src_factor: viewport_lib::gpu::BlendFactor::One,
+                        dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: viewport_lib::gpu::BlendOperation::Add,
+                    },
+                }),
+                topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: false,
+                depth_compare: viewport_lib::gpu::CompareFunction::Less,
+                sample_count: r.sample_count,
+                ldr_format: r.ldr_format,
+            },
+            i == COLOUR_HDR,
+        ),
+        // Outline mask: the same ray-march into the R8 mask, so the outline
+        // hugs the marched silhouette rather than the bounding cube.
+        MASK => r.builder.build_mask_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive: viewport_lib::gpu::PrimitiveState {
+                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                extra_bind_group_layouts: &[&r.bgl],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some("volume_outline_mask_pipeline"),
+                    &r.mask_shader,
+                    "vs_main",
+                    "fs_main",
+                    &[CUBE_VERTEX_LAYOUT],
+                )
+            },
+        ),
+        // Pick: the same cube, marched to the first in-threshold voxel, writing
+        // the object id and that voxel's flat index. Group 1 reuses the render
+        // bind group, group 2 is the object id. Both cube faces are drawn so
+        // the volume stays pickable with the camera inside the box.
+        _ => r.builder.build_pick_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive: viewport_lib::gpu::PrimitiveState {
+                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                    front_face: viewport_lib::gpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                extra_bind_group_layouts: &[&r.bgl, &r.pick_id_bgl],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some("volume_pick_pipeline"),
+                    &r.pick_shader,
+                    "vs_main",
+                    "fs_pick",
+                    &[CUBE_VERTEX_LAYOUT],
+                )
+            },
+        ),
+    }
+}
+
+/// Pipelines and layouts, made on the first prepare with items.
 pub(super) struct VolumeGpu {
     bgl: viewport_lib::gpu::BindGroupLayout,
-    pub(super) pipeline: DualPipeline,
-    pub(super) mask_pipeline: viewport_lib::gpu::RenderPipeline,
-    pub(super) pick_pipeline: viewport_lib::gpu::RenderPipeline,
+    pub(super) pipelines: VolumePipelines,
     pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
-    /// Linear ramp opacity LUT (256x1, R8Unorm), bound whenever an item does
-    /// not name one of its own. Kept alive by the view it backs.
-    _default_opacity_lut: viewport_lib::gpu::Texture,
-    default_opacity_lut_view: viewport_lib::gpu::TextureView,
+}
+
+/// Linear ramp opacity LUT (256x1, R8Unorm), bound whenever an item does not
+/// name one of its own. Made on the first prepare, which has the queue its
+/// upload needs.
+pub(super) struct DefaultOpacityLut {
+    _texture: viewport_lib::gpu::Texture,
+    view: viewport_lib::gpu::TextureView,
 }
 
 /// Per-item draw data rebuilt each prepare.
@@ -62,11 +163,7 @@ const CUBE_VERTEX_LAYOUT: viewport_lib::gpu::VertexBufferLayout<'static> =
     };
 
 impl VolumeGpu {
-    pub(super) fn new(
-        device: &viewport_lib::gpu::Device,
-        queue: &viewport_lib::gpu::Queue,
-        resources: &DeviceResources,
-    ) -> Self {
+    pub(super) fn new(device: &viewport_lib::gpu::Device, resources: &DeviceResources) -> Self {
         let filterable = |view_dimension| viewport_lib::gpu::BindingType::Texture {
             sample_type: viewport_lib::gpu::TextureSampleType::Float { filterable: true },
             view_dimension,
@@ -138,66 +235,12 @@ impl VolumeGpu {
             resources.shared_bindings().group0_layout,
             &bgl,
         );
-        let pipeline = viewport_lib::plugin_api::builders::build_dual_pipeline(
-            device,
-            &viewport_lib::plugin_api::builders::DualPipelineDesc {
-                label: "volume_pipeline",
-                layout: &layout,
-                shader: &shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[CUBE_VERTEX_LAYOUT],
-                blend: Some(viewport_lib::gpu::BlendState {
-                    color: viewport_lib::gpu::BlendComponent {
-                        src_factor: viewport_lib::gpu::BlendFactor::SrcAlpha,
-                        dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
-                        operation: viewport_lib::gpu::BlendOperation::Add,
-                    },
-                    alpha: viewport_lib::gpu::BlendComponent {
-                        src_factor: viewport_lib::gpu::BlendFactor::One,
-                        dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
-                        operation: viewport_lib::gpu::BlendOperation::Add,
-                    },
-                }),
-                topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                depth_write: false,
-                depth_compare: viewport_lib::gpu::CompareFunction::Less,
-                sample_count: resources.sample_count(),
-                ldr_format: resources.target_format(),
-            },
-        );
-
-        // Outline mask: the same ray-march into the R8 mask, so the outline
-        // hugs the marched silhouette rather than the bounding cube.
         let mask_shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
             "volume_outline_mask_shader",
             &crate::shader::scene_shader(&[], crate::shader::wgsl_source!("volume_outline_mask")),
         );
-        let mask_pipeline = resources.build_mask_pipeline(
-            device,
-            &viewport_lib::resources::PluginPipelineOpts {
-                primitive: viewport_lib::gpu::PrimitiveState {
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                extra_bind_group_layouts: &[&bgl],
-                ..viewport_lib::resources::PluginPipelineOpts::new(
-                    Some("volume_outline_mask_pipeline"),
-                    &mask_shader,
-                    "vs_main",
-                    "fs_main",
-                    &[CUBE_VERTEX_LAYOUT],
-                )
-            },
-        );
-
-        // Pick: the same cube, marched to the first in-threshold voxel, writing
-        // the object id and that voxel's flat index. Group 1 reuses the render
-        // bind group, group 2 is the object id. Both cube faces are drawn so
-        // the volume stays pickable with the camera inside the box.
+        // Group 2 of the pick pass: the object id.
         let pick_id_bgl =
             device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
                 label: Some("volume_pick_id_bgl"),
@@ -217,37 +260,34 @@ impl VolumeGpu {
             "volume_pick_shader",
             &crate::shader::scene_shader(&[], crate::shader::wgsl_source!("volume_pick")),
         );
-        let pick_pipeline = resources.build_pick_pipeline(
-            device,
-            &viewport_lib::resources::PluginPipelineOpts {
-                primitive: viewport_lib::gpu::PrimitiveState {
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    front_face: viewport_lib::gpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                extra_bind_group_layouts: &[&bgl, &pick_id_bgl],
-                ..viewport_lib::resources::PluginPipelineOpts::new(
-                    Some("volume_pick_pipeline"),
-                    &pick_shader,
-                    "vs_main",
-                    "fs_pick",
-                    &[CUBE_VERTEX_LAYOUT],
-                )
+        let pipelines = resources.lazy_pipelines(
+            VolumeRecipe {
+                device: device.clone(),
+                builder: resources.pipeline_builder(),
+                layout,
+                shader,
+                mask_shader,
+                pick_shader,
+                bgl: bgl.clone(),
+                pick_id_bgl: pick_id_bgl.clone(),
+                sample_count: resources.sample_count(),
+                ldr_format: resources.target_format(),
             },
+            build,
         );
-
-        let (lut, lut_view) = default_opacity_lut(device, queue);
 
         Self {
             bgl,
-            pipeline,
-            mask_pipeline,
-            pick_pipeline,
+            pipelines,
             pick_id_bgl,
-            _default_opacity_lut: lut,
-            default_opacity_lut_view: lut_view,
         }
+    }
+
+    /// Whether the ray-march can draw this frame in either format. The mask
+    /// and pick passes wait for it, so a volume is never outlined or picked
+    /// before it is drawn.
+    pub(super) fn drawn(&self) -> bool {
+        self.pipelines.available(COLOUR_LDR) || self.pipelines.available(COLOUR_HDR)
     }
 
     /// Build the per-item uniform, bind group, and cube proxy buffers.
@@ -256,6 +296,7 @@ impl VolumeGpu {
         device: &viewport_lib::gpu::Device,
         queue: &viewport_lib::gpu::Queue,
         resources: &DeviceResources,
+        default_lut: &DefaultOpacityLut,
         item: &VolumeItem,
         clip_objects: &[ClipObject],
         step_scale_multiplier: f32,
@@ -355,7 +396,7 @@ impl VolumeGpu {
         let opacity_lut_view = item
             .opacity_lut
             .and_then(|id| resources.colourmap_view(id))
-            .unwrap_or(&self.default_opacity_lut_view);
+            .unwrap_or(&default_lut.view);
 
         // Trilinear sampling of the scalar field: the volume texture is
         // filterable (R16Float, or R32Float with FLOAT32_FILTERABLE), so a
@@ -458,47 +499,52 @@ impl VolumeGpu {
     }
 }
 
-/// Build the 256x1 linear ramp bound as the opacity transfer function for any
-/// item that does not name one.
-fn default_opacity_lut(
-    device: &viewport_lib::gpu::Device,
-    queue: &viewport_lib::gpu::Queue,
-) -> (viewport_lib::gpu::Texture, viewport_lib::gpu::TextureView) {
-    let mut data = [0u8; 256];
-    for (i, v) in data.iter_mut().enumerate() {
-        *v = i as u8;
+impl DefaultOpacityLut {
+    /// Build the 256x1 linear ramp bound as the opacity transfer function for
+    /// any item that does not name one.
+    pub(super) fn new(
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+    ) -> Self {
+        let mut data = [0u8; 256];
+        for (i, v) in data.iter_mut().enumerate() {
+            *v = i as u8;
+        }
+        let size = viewport_lib::gpu::Extent3d {
+            width: 256,
+            height: 1,
+            depth_or_array_layers: 1,
+        };
+        let texture = device.create_texture(&viewport_lib::gpu::TextureDescriptor {
+            label: Some("volume_default_opacity_lut"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: viewport_lib::gpu::TextureDimension::D2,
+            format: viewport_lib::gpu::TextureFormat::R8Unorm,
+            usage: viewport_lib::gpu::TextureUsages::TEXTURE_BINDING
+                | viewport_lib::gpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            viewport_lib::gpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: viewport_lib::gpu::Origin3d::ZERO,
+                aspect: viewport_lib::gpu::TextureAspect::All,
+            },
+            &data,
+            viewport_lib::gpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(256),
+                rows_per_image: Some(1),
+            },
+            size,
+        );
+        let view = texture.create_view(&viewport_lib::gpu::TextureViewDescriptor::default());
+        Self {
+            _texture: texture,
+            view,
+        }
     }
-    let size = viewport_lib::gpu::Extent3d {
-        width: 256,
-        height: 1,
-        depth_or_array_layers: 1,
-    };
-    let texture = device.create_texture(&viewport_lib::gpu::TextureDescriptor {
-        label: Some("volume_default_opacity_lut"),
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: viewport_lib::gpu::TextureDimension::D2,
-        format: viewport_lib::gpu::TextureFormat::R8Unorm,
-        usage: viewport_lib::gpu::TextureUsages::TEXTURE_BINDING
-            | viewport_lib::gpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    queue.write_texture(
-        viewport_lib::gpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: viewport_lib::gpu::Origin3d::ZERO,
-            aspect: viewport_lib::gpu::TextureAspect::All,
-        },
-        &data,
-        viewport_lib::gpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(256),
-            rows_per_image: Some(1),
-        },
-        size,
-    );
-    let view = texture.create_view(&viewport_lib::gpu::TextureViewDescriptor::default());
-    (texture, view)
 }
