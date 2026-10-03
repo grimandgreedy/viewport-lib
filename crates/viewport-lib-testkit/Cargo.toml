@@ -23,7 +23,7 @@ exclude = ["tests/snapshots/*.png"]
 # wgpu through `viewport_lib::wgpu`, so it always matches the library's leg.
 [dependencies]
 viewport-lib = { path = "../viewport-lib", version = "0.22", default-features = false }
-viewport-lib-plugins = { path = "../viewport-lib-plugins", version = "0.1", default-features = false, features = ["item-types", "deformers"] }
+viewport-lib-plugins = { path = "../viewport-lib-plugins", version = "0.1", default-features = false, features = ["item-types"] }
 glam = { version = "=0.30.10", features = ["bytemuck"] }
 pollster = "0.4"
 viewport-lib-io = { version = "0.8", optional = true }
