@@ -12,6 +12,7 @@ struct VertexOutput {
     @location(0) world_vec: vec3<f32>,
     @location(1) strength: f32,
     @location(2) clip_pos: vec4<f32>,
+    @location(3) world_pos: vec3<f32>,
 }
 
 @vertex
@@ -35,11 +36,17 @@ fn vs_main(
     out.clip_pos = out.pos;
     out.world_vec = (model * vec4<f32>(flow, 0.0)).xyz;
     out.strength = params.x;
+    out.world_pos = world_pos;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Clipped with the surface it sits on. A discarded fragment leaves the
+    // target transparent, which the advect pass reads as no flow surface.
+    if !viewport_clip_test(in.world_pos) {
+        discard;
+    }
     // Which way the point moves on screen when it moves along the flow: the
     // derivative of clip.xy / clip.w, less its positive 1 / w^2 factor.
     let clip_vec = camera.view_proj * vec4<f32>(in.world_vec, 0.0);

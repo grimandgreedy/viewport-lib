@@ -283,3 +283,64 @@ fn a_warmed_contour_type_builds_nothing_on_its_first_frame() {
         "the first contour frames built pipelines after the warm-up: {builds:?}"
     );
 }
+
+/// A clip plane through the surface clips the lines with it: where the cut
+/// leaves background, the lines leave it too.
+#[test]
+fn lines_are_clipped_with_the_surface() {
+    let _serial = serial();
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    let mesh = field_quad(&mut renderer, &device);
+
+    // Keep x <= 0: half the quad, and two of its three lines, go.
+    let clipped = |mut frame: FrameData| {
+        let mut clip = viewport_lib::ClipObject::default();
+        clip.shape = viewport_lib::ClipShape::Plane {
+            normal: [-1.0, 0.0, 0.0],
+            distance: 0.0,
+            cap_colour: None,
+        };
+        frame.effects.clip.objects.push(clip);
+        frame.effects.clip.cap_fill_enabled = false;
+        frame
+    };
+    let mut empty = base_frame();
+    empty.scene.surfaces = SurfaceSubmission::Flat(Vec::new().into());
+    let background = renderer.render_offscreen(&device, &queue, &empty, SIZE, SIZE);
+    let surface_only = renderer.render_offscreen(
+        &device,
+        &queue,
+        &clipped(frame_with(mesh, vec![])),
+        SIZE,
+        SIZE,
+    );
+    let with_lines = renderer.render_offscreen(
+        &device,
+        &queue,
+        &clipped(frame_with(mesh, vec![contours(mesh, "x")])),
+        SIZE,
+        SIZE,
+    );
+
+    let cut_away = background
+        .chunks_exact(4)
+        .zip(surface_only.chunks_exact(4))
+        .filter(|(b, s)| b == s)
+        .count();
+    let drawn_over = background
+        .chunks_exact(4)
+        .zip(surface_only.chunks_exact(4))
+        .zip(with_lines.chunks_exact(4))
+        .filter(|((b, s), l)| b == s && l != s)
+        .count();
+    assert!(cut_away > 0, "the clip plane removed nothing");
+    assert!(line_pixels(&with_lines) > 0, "the kept half lost its line");
+    assert_eq!(
+        drawn_over, 0,
+        "lines drawn where the surface was clipped away"
+    );
+}

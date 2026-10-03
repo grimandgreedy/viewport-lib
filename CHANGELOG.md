@@ -79,6 +79,7 @@
 
 ### Fixed
 
+- **Surface LIC streaks are clipped with their surface** - the vector pass did not test the clip planes and volumes, so where a clip object cut a flow surface away, streaks were drawn on whatever showed through the cut.
 - **A viewport asking for a ground plane, skybox or foreground item the scene frame did not mention panicked** - under the split API the pipelines for those passes were built from the frame given to `prepare_scene`, and drawn from each viewport's own frame. They are now built for each viewport's frame as well.
 - **Surface LIC was not drawn on the first frame** - the first frame's LIC items were dropped because their bind group layout did not exist until render time, and the advect step settings were only written from the second frame on, and only for the viewport `prepare_scene` was given. Both now apply on the first frame and for every viewport.
 - **`ViewportApp` and `ViewportAppV2` stalled after a surface reconfigure** - a frame whose surface was lost or outdated returned without asking for another, so a `Continuous` loop stopped until the next input event and an `OnDemand` first frame could be lost. `ViewportAppV2` also dropped the window commands the callback raised on that frame.

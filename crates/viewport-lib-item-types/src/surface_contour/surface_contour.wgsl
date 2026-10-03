@@ -36,6 +36,7 @@ struct VertexOutput {
     // NDC x, interpolated linearly on screen so its rate of change is the
     // pass's NDC per pixel.
     @location(1) @interpolate(linear) ndc_x: f32,
+    @location(2) world_pos: vec3<f32>,
 }
 
 @vertex
@@ -50,6 +51,7 @@ fn vs_main(
     out.pos = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.scalar = scalar;
     out.ndc_x = out.pos.x / out.pos.w;
+    out.world_pos = world_pos;
     return out;
 }
 
@@ -65,6 +67,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // 2 / pass width, constant across the pass.
     let dndc = fwidth(in.ndc_x);
 
+    // Clipped with the surface it sits on.
+    if !viewport_clip_test(in.world_pos) {
+        discard;
+    }
     // NaN never compares equal to itself.
     if s != s {
         discard;
