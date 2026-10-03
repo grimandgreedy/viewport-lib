@@ -1,6 +1,7 @@
 //! GPU state for the volume surface slice item type: the render, pick, and
-//! outline-mask pipelines and the per-frame per-item bind groups. The geometry
-//! is a consumer-uploaded mesh, so nothing here owns vertex or index buffers.
+//! mask pipelines, each built the first time a draw needs it, and the
+//! per-frame per-item bind groups. The geometry is a consumer-uploaded mesh,
+//! so nothing here owns vertex or index buffers.
 
 use super::types::VolumeSurfaceSliceItem;
 use crate::shader::{scene_shader, wgsl_source};
@@ -9,13 +10,109 @@ use viewport_lib::plugin_api::builders;
 use viewport_lib::renderer::PickId;
 use viewport_lib::resources::DeviceResources;
 
-/// Pipelines and layouts, built lazily on the first prepare with items.
+/// Members of [`SlicePipelines`].
+pub(super) const COLOUR_LDR: usize = 0;
+pub(super) const COLOUR_HDR: usize = 1;
+pub(super) const MASK: usize = 2;
+pub(super) const SURFACE_MASK: usize = 3;
+pub(super) const PICK: usize = 4;
+
+/// What a slice pipeline build reads.
+pub(super) struct SliceRecipe {
+    device: gpu::Device,
+    builder: viewport_lib::plugin_api::PipelineBuilder,
+    layout: gpu::PipelineLayout,
+    shader: gpu::ShaderModule,
+    mask_shader: gpu::ShaderModule,
+    pick_shader: gpu::ShaderModule,
+    bgl: gpu::BindGroupLayout,
+    pick_id_bgl: gpu::BindGroupLayout,
+    sample_count: u32,
+    ldr_format: gpu::TextureFormat,
+}
+
+/// The slice in both formats, the outline and surface masks and the pick
+/// pipeline.
+pub(super) type SlicePipelines = viewport_lib::plugin_api::LazyPipelines<SliceRecipe, 5>;
+
+fn build(r: &SliceRecipe, i: usize) -> gpu::RenderPipeline {
+    let vertex_buffers = [builders::mesh_vertex_layout()];
+    let primitive = gpu::PrimitiveState {
+        topology: gpu::PrimitiveTopology::TriangleList,
+        cull_mode: None,
+        ..Default::default()
+    };
+    match i {
+        COLOUR_LDR | COLOUR_HDR => builders::build_dual_pipeline_variant(
+            &r.device,
+            &builders::DualPipelineDesc {
+                label: "volume_surface_slice_pipeline",
+                layout: &r.layout,
+                shader: &r.shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &vertex_buffers,
+                blend: Some(gpu::BlendState::ALPHA_BLENDING),
+                topology: gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: gpu::CompareFunction::LessEqual,
+                sample_count: r.sample_count,
+                ldr_format: r.ldr_format,
+            },
+            i == COLOUR_HDR,
+        ),
+        // Outline mask: the slice mesh transformed by its model matrix. The
+        // shared mesh mask pipeline also carries position-override and deform
+        // support, neither of which a slice ever uses, so this is the same
+        // vertex transform with those branches removed. The surface mask
+        // stamps the same geometry into the scene stencil.
+        MASK | SURFACE_MASK => {
+            let label = if i == MASK {
+                "volume_surface_slice_mask_pipeline"
+            } else {
+                "volume_surface_slice_surface_mask_pipeline"
+            };
+            let opts = viewport_lib::resources::PluginPipelineOpts {
+                primitive,
+                extra_bind_group_layouts: &[&r.bgl],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some(label),
+                    &r.mask_shader,
+                    "vs_main",
+                    "fs_main",
+                    &vertex_buffers,
+                )
+            };
+            if i == MASK {
+                r.builder.build_mask_pipeline(&r.device, &opts)
+            } else {
+                r.builder.build_surface_mask_pipeline(&r.device, &opts)
+            }
+        }
+        // Pick: the same mesh, writing the item's object id. Group 1 reuses the
+        // render bind group, group 2 is the object id.
+        _ => r.builder.build_pick_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive,
+                extra_bind_group_layouts: &[&r.bgl, &r.pick_id_bgl],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some("volume_surface_slice_pick_pipeline"),
+                    &r.pick_shader,
+                    "vs_main",
+                    "fs_main",
+                    &vertex_buffers,
+                )
+            },
+        ),
+    }
+}
+
+/// Pipelines and layouts, made on the first prepare with items.
 pub(super) struct SliceGpu {
     bgl: gpu::BindGroupLayout,
-    pub(super) pipeline: builders::DualPipeline,
-    pub(super) mask_pipeline: gpu::RenderPipeline,
-    pub(super) surface_mask_pipeline: gpu::RenderPipeline,
-    pub(super) pick_pipeline: gpu::RenderPipeline,
+    pub(super) pipelines: SlicePipelines,
     pick_id_bgl: gpu::BindGroupLayout,
 }
 
@@ -110,62 +207,12 @@ impl SliceGpu {
             resources.shared_bindings().group0_layout,
             &bgl,
         );
-        let pipeline = builders::build_dual_pipeline(
-            device,
-            &builders::DualPipelineDesc {
-                label: "volume_surface_slice_pipeline",
-                layout: &layout,
-                shader: &shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[builders::mesh_vertex_layout()],
-                blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                topology: gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                depth_write: true,
-                depth_compare: gpu::CompareFunction::LessEqual,
-                sample_count: resources.sample_count(),
-                ldr_format: resources.target_format(),
-            },
-        );
-
-        // Outline mask: the slice mesh transformed by its model matrix. The
-        // shared mesh mask pipeline also carries position-override and deform
-        // support, neither of which a slice ever uses, so this is the same
-        // vertex transform with those branches removed.
         let mask_shader = builders::wgsl_module(
             device,
             "volume_surface_slice_mask_shader",
             &scene_shader(&[], wgsl_source!("volume_surface_slice_mask")),
         );
-        let mask_vertex_layouts = [builders::mesh_vertex_layout()];
-        let mask_opts = viewport_lib::resources::PluginPipelineOpts {
-            primitive: gpu::PrimitiveState {
-                topology: gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            extra_bind_group_layouts: &[&bgl],
-            ..viewport_lib::resources::PluginPipelineOpts::new(
-                Some("volume_surface_slice_mask_pipeline"),
-                &mask_shader,
-                "vs_main",
-                "fs_main",
-                &mask_vertex_layouts,
-            )
-        };
-        let mask_pipeline = resources.build_mask_pipeline(device, &mask_opts);
-        // The surface mask stamps the same geometry into the scene stencil.
-        let surface_mask_pipeline = resources.build_surface_mask_pipeline(
-            device,
-            &viewport_lib::resources::PluginPipelineOpts {
-                label: Some("volume_surface_slice_surface_mask_pipeline"),
-                ..mask_opts
-            },
-        );
-
-        // Pick: the same mesh, writing the item's object id. Group 1 reuses the
-        // render bind group, group 2 is the object id.
+        // Group 2 of the pick pass: the object id.
         let pick_id_bgl = device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
             label: Some("volume_surface_slice_pick_id_bgl"),
             entries: &[gpu::BindGroupLayoutEntry {
@@ -184,33 +231,34 @@ impl SliceGpu {
             "volume_surface_slice_pick_shader",
             &scene_shader(&[], wgsl_source!("volume_surface_slice_pick")),
         );
-        let pick_pipeline = resources.build_pick_pipeline(
-            device,
-            &viewport_lib::resources::PluginPipelineOpts {
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                extra_bind_group_layouts: &[&bgl, &pick_id_bgl],
-                ..viewport_lib::resources::PluginPipelineOpts::new(
-                    Some("volume_surface_slice_pick_pipeline"),
-                    &pick_shader,
-                    "vs_main",
-                    "fs_main",
-                    &[builders::mesh_vertex_layout()],
-                )
+        let pipelines = resources.lazy_pipelines(
+            SliceRecipe {
+                device: device.clone(),
+                builder: resources.pipeline_builder(),
+                layout,
+                shader,
+                mask_shader,
+                pick_shader,
+                bgl: bgl.clone(),
+                pick_id_bgl: pick_id_bgl.clone(),
+                sample_count: resources.sample_count(),
+                ldr_format: resources.target_format(),
             },
+            build,
         );
 
         Self {
             bgl,
-            pipeline,
-            mask_pipeline,
-            surface_mask_pipeline,
-            pick_pipeline,
+            pipelines,
             pick_id_bgl,
         }
+    }
+
+    /// Whether the slice can draw this frame in either format. The mask and
+    /// pick passes wait for it, so a slice is never outlined, stamped or
+    /// picked before it is drawn.
+    pub(super) fn drawn(&self) -> bool {
+        self.pipelines.available(COLOUR_LDR) || self.pipelines.available(COLOUR_HDR)
     }
 
     /// Build the per-item uniform and bind group, or `None` when the item's
