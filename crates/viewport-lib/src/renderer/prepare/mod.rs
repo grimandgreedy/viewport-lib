@@ -365,6 +365,7 @@ impl ViewportRenderer {
         } else {
             (0, 0)
         };
+        settle_gpu_culling(&mut self.instancing, &resources.pipeline_compiler, device);
         let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0;
 
         let geometry_start = web_time::Instant::now();
@@ -1340,6 +1341,29 @@ impl ViewportRenderer {
         self.last_stats = stats;
         stats
     }
+}
+
+/// Decide whether this frame runs the GPU cull. It needs the cull compute
+/// pipelines; the first frame that wants them with instances to cull asks
+/// for them under the compilation policy, and under `Background` the
+/// frames until they are built take the CPU path, which draws the same
+/// image.
+fn settle_gpu_culling(
+    inst: &mut InstancingState,
+    compiler: &crate::resources::pipeline_slot::PipelineCompiler,
+    device: &crate::gpu::Device,
+) {
+    let has_work =
+        inst.use_instancing && !inst.batches.is_empty() && inst.cached_instance_count > 0;
+    inst.gpu_culling_enabled = inst.gpu_culling_wanted
+        && (!has_work || {
+            let dev = device.clone();
+            inst.cull_resources
+                .get(compiler, move || {
+                    crate::renderer::indirect::CullResources::new(&dev)
+                })
+                .is_some()
+        });
 }
 
 #[cfg(test)]

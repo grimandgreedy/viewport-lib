@@ -1180,6 +1180,7 @@ impl ViewportRenderer {
     /// Has no effect when the device does not support `INDIRECT_FIRST_INSTANCE`
     /// (culling is already disabled on those devices).
     pub fn disable_gpu_driven_culling(&mut self) {
+        self.instancing.gpu_culling_wanted = false;
         self.instancing.gpu_culling_enabled = false;
     }
 
@@ -1204,7 +1205,8 @@ impl ViewportRenderer {
     /// Has no effect when the device does not support `INDIRECT_FIRST_INSTANCE`.
     pub fn enable_gpu_driven_culling(&mut self) {
         if self.instancing.gpu_culling_supported {
-            self.instancing.gpu_culling_enabled = true;
+            // Active from the next prepare, once its compute is built.
+            self.instancing.gpu_culling_wanted = true;
         }
     }
 
@@ -1445,7 +1447,7 @@ impl ViewportRenderer {
     /// [`is_gpu_culling_supported`](Self::is_gpu_culling_supported) is true.
     pub fn tuning(&self) -> crate::renderer::tuning::RenderTuning {
         crate::renderer::tuning::RenderTuning {
-            gpu_driven_culling: self.instancing.gpu_culling_enabled,
+            gpu_driven_culling: self.instancing.gpu_culling_wanted,
             occlusion_culling: self.occlusion_culling_enabled(),
             performance: self.performance_policy(),
             render_scale: self.current_render_scale,
@@ -1577,11 +1579,12 @@ impl ViewportRenderer {
         if !self.instancing.gpu_culling_supported {
             return;
         }
-        if self.instancing.cull_resources.is_none() {
-            self.instancing.cull_resources =
-                Some(crate::renderer::indirect::CullResources::new(device));
-        }
-        let cull = self.instancing.cull_resources.as_ref().unwrap();
+        // A plugin's indirect draw reads what this dispatch writes, so it
+        // cannot be skipped while the compute compiles.
+        let cull = self
+            .instancing
+            .cull_resources
+            .get_blocking(|| crate::renderer::indirect::CullResources::new(device));
         cull.dispatch(encoder, device, queue, frustum, None, sub, None, None);
     }
 
@@ -1608,11 +1611,12 @@ impl ViewportRenderer {
         }
         debug_assert!(cascade_idx < 4, "cascade_idx must be in 0..4");
         let cascade_idx = cascade_idx.min(3);
-        if self.instancing.cull_resources.is_none() {
-            self.instancing.cull_resources =
-                Some(crate::renderer::indirect::CullResources::new(device));
-        }
-        let cull = self.instancing.cull_resources.as_ref().unwrap();
+        // A plugin's indirect draw reads what this dispatch writes, so it
+        // cannot be skipped while the compute compiles.
+        let cull = self
+            .instancing
+            .cull_resources
+            .get_blocking(|| crate::renderer::indirect::CullResources::new(device));
         cull.dispatch(
             encoder,
             device,
@@ -1712,11 +1716,12 @@ impl ViewportRenderer {
         if !self.instancing.gpu_culling_supported {
             return;
         }
-        if self.instancing.cull_resources.is_none() {
-            self.instancing.cull_resources =
-                Some(crate::renderer::indirect::CullResources::new(device));
-        }
-        let cull = self.instancing.cull_resources.as_ref().unwrap();
+        // A plugin's indirect draw reads what this dispatch writes, so it
+        // cannot be skipped while the compute compiles.
+        let cull = self
+            .instancing
+            .cull_resources
+            .get_blocking(|| crate::renderer::indirect::CullResources::new(device));
         let (meta_buf, counter_buf) = cull.scratch_single_mesh_buffers();
         let meta = crate::plugin_api::BatchMeta {
             index_count: draw.index_count,

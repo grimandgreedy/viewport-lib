@@ -780,9 +780,6 @@ impl ViewportRenderer {
         let batch_count = instancing.batches.len() as u32;
 
         // Do all mutable borrows before taking immutable borrows from resources.
-        if instancing.cull_resources.is_none() {
-            instancing.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
-        }
         resources.ensure_cull_instance_pipelines(device);
         if hdr_family {
             resources.ensure_hdr_cull_pipelines(device);
@@ -855,7 +852,10 @@ impl ViewportRenderer {
             let vp_mat = frame.camera.render_camera.view_proj();
             let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(&vp_mat);
 
-            let cull = instancing.cull_resources.as_ref().unwrap();
+            // `gpu_culling_enabled` is only set once the compute is built.
+            let Some(cull) = instancing.cull_resources.ready() else {
+                return;
+            };
             let mut encoder =
                 device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                     label: Some("cull_encoder"),

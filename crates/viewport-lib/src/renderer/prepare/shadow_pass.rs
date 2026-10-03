@@ -160,10 +160,6 @@ impl ViewportRenderer {
                 && instancing.cached_instance_count > 0
             {
                 // Mutable operations first.
-                if instancing.cull_resources.is_none() {
-                    instancing.cull_resources =
-                        Some(crate::renderer::indirect::CullResources::new(device));
-                }
                 resources.ensure_cull_instance_pipelines(device);
 
                 let instance_count = instancing.cached_instance_count as u32;
@@ -200,12 +196,13 @@ impl ViewportRenderer {
                     );
                 }
 
-                if let (Some(aabb_buf), Some(meta_buf), Some(counter_buf)) = (
+                // `gpu_culling_enabled` is only set once the compute is built.
+                if let (Some(aabb_buf), Some(meta_buf), Some(counter_buf), Some(cull)) = (
                     resources.cull.aabb_buf.as_ref(),
                     resources.cull.batch_meta_buf.as_ref(),
                     instancing.shadow_cull.batch_counter_buf.as_ref(),
+                    instancing.cull_resources.ready(),
                 ) {
-                    let cull = instancing.cull_resources.as_ref().unwrap();
                     let mut shadow_cull_encoder =
                         device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                             label: Some("shadow_cull_encoder"),

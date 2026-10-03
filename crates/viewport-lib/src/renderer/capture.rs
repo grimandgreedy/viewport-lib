@@ -79,6 +79,8 @@ impl ViewportRenderer {
         camera: RenderCamera,
         size: u32,
     ) -> CapturedHdr {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let size = size.max(1);
         self.render_capture_frame(device, queue, frame, camera, size);
 
@@ -269,6 +271,8 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> CapturedHdr {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let face_size = face_size.max(1);
         let eq_h = equirect_height.max(1);
         let eq_w = eq_h * 2;
@@ -372,6 +376,8 @@ impl ViewportRenderer {
         camera: RenderCamera,
         size: u32,
     ) -> CapturedHdrGpu {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let size = size.max(1);
         let texture = new_hdr_target(device, "capture_hdr_gpu", size, size, 1, false);
         self.copy_capture_face(device, queue, frame, camera, size, &texture, 0);
@@ -407,6 +413,8 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> CapturedHdrGpu {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let face_size = face_size.max(1);
         let eq_h = equirect_height.max(1);
         let eq_w = eq_h * 2;
@@ -528,6 +536,8 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> crate::resources::LightProbeSet {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let probes = positions
             .iter()
             .map(|&position| {
@@ -601,6 +611,8 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> crate::resources::LightProbeVolume {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let dims = [dims[0].max(1), dims[1].max(1), dims[2].max(1)];
         let count = (dims[0] * dims[1] * dims[2]) as usize;
         let mut sh = Vec::with_capacity(count);
@@ -656,6 +668,8 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> crate::error::ViewportResult<crate::resources::EnvironmentZone> {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let zones = self.capture_reflection_probes(
             device,
             queue,
@@ -685,6 +699,8 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> crate::error::ViewportResult<Vec<crate::resources::EnvironmentZone>> {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let mut zones = Vec::with_capacity(probes.len());
         for &(bounds, fade_distance) in probes {
             let center = bounds.center().to_array();

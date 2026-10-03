@@ -1181,12 +1181,13 @@ impl DeviceResources {
                 &self.deform.registrations,
             )
         };
-        let shader = crate::resources::builders::wgsl_module(
+        let shader = self.shared_module(
             device,
             "mesh_oit_shader",
             crate::resources::builders::builtin_hook_env(
                 crate::resources::builders::strip_debug_vis(source, self.debug_vis_shaders),
-            ),
+            )
+            .as_ref(),
         );
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,

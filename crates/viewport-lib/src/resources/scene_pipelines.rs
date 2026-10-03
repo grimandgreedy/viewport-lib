@@ -15,7 +15,7 @@ use crate::resources::pipeline_slot::LazyFamily;
 pub(crate) struct LdrMeshContext {
     device: crate::gpu::Device,
     layout: crate::gpu::PipelineLayout,
-    shader: crate::gpu::ShaderModule,
+    shader: crate::resources::pipeline_slot::LazyModule,
     target_format: crate::gpu::TextureFormat,
     sample_count: u32,
 }
@@ -25,8 +25,8 @@ pub(crate) struct LdrMeshContext {
 pub(crate) struct HdrMeshContext {
     device: crate::gpu::Device,
     layout: crate::gpu::PipelineLayout,
-    shader: crate::gpu::ShaderModule,
-    shader_nodiscard: crate::gpu::ShaderModule,
+    shader: crate::resources::pipeline_slot::LazyModule,
+    shader_nodiscard: crate::resources::pipeline_slot::LazyModule,
     overlay_layout: crate::gpu::PipelineLayout,
     overlay_shader: crate::gpu::ShaderModule,
 }
@@ -61,7 +61,7 @@ fn build_ldr(ctx: &LdrMeshContext, i: usize) -> crate::gpu::RenderPipeline {
         crate::resources::mesh::mesh_pipelines::ldr_mesh_pipeline(
             &ctx.device,
             &ctx.layout,
-            &ctx.shader,
+            ctx.shader.get(),
             ctx.target_format,
             ctx.sample_count,
             None,
@@ -129,9 +129,9 @@ fn build_hdr(ctx: &HdrMeshContext, i: usize) -> crate::gpu::RenderPipeline {
             // valid only for draws that would not have discarded (see the
             // per-object gate in hdr_path.rs).
             let shader = if nodiscard {
-                &ctx.shader_nodiscard
+                ctx.shader_nodiscard.get()
             } else {
-                &ctx.shader
+                ctx.shader.get()
             };
             let label = match (two_sided, nodiscard) {
                 (false, false) => "hdr_solid_pipeline",
@@ -149,7 +149,7 @@ fn build_hdr(ctx: &HdrMeshContext, i: usize) -> crate::gpu::RenderPipeline {
             )
         }
         HDR_TRANSPARENT => make(
-            &ctx.shader,
+            ctx.shader.get(),
             "hdr_transparent_pipeline",
             None,
             Some(BlendState::ALPHA_BLENDING),
@@ -157,7 +157,7 @@ fn build_hdr(ctx: &HdrMeshContext, i: usize) -> crate::gpu::RenderPipeline {
             false,
         ),
         HDR_WIREFRAME => make(
-            &ctx.shader,
+            ctx.shader.get(),
             "hdr_wireframe_pipeline",
             None,
             None,
@@ -476,7 +476,9 @@ mod tests {
     /// Families compiled from one source share one module. The LDR and HDR
     /// mesh families use the same `mesh.wgsl`, and the LDR, HDR and culled
     /// instanced families the same `mesh_instanced.wgsl`, so composing a
-    /// second family adds only the modules the first did not need.
+    /// second family adds only the modules the first did not need. Composing
+    /// compiles none of them: the first pipeline build that reads a module
+    /// does.
     #[test]
     fn pipeline_families_share_their_shader_modules() {
         let Some((device, _queue, mut res)) = crate::resources::test_support::try_make_resources()
@@ -485,6 +487,14 @@ mod tests {
             return;
         };
         let modules = |res: &crate::DeviceResources| res.shader_modules.lock().unwrap().len();
+        let compiled = |res: &crate::DeviceResources| {
+            res.shader_modules
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|cell| cell.get().is_some())
+                .count()
+        };
 
         res.ensure_ldr_mesh_pipelines(&device);
         assert_eq!(modules(&res), 1, "the LDR mesh family is one module");
@@ -497,7 +507,11 @@ mod tests {
 
         res.ensure_instanced_pipelines(&device);
         res.ensure_ldr_instanced_pipelines(&device);
-        assert_eq!(modules(&res), 4, "the instanced module and its twin");
+        assert_eq!(
+            modules(&res),
+            5,
+            "the instanced module, its twin and the instanced shadow module"
+        );
         // Under bindless the blended HDR pipelines stay on the per-batch
         // source, which is one more module; the solids share the pair above.
         let per_batch = usize::from(res.bindless_textures());
@@ -506,16 +520,26 @@ mod tests {
         res.ensure_hdr_cull_pipelines(&device);
         assert_eq!(
             modules(&res),
-            4 + per_batch,
-            "the HDR and culled instanced families reuse the LDR family's modules"
+            5 + per_batch,
+            "the HDR and culled instanced families, and the culled shadows, reuse the modules above"
         );
 
         res.ensure_oit_instanced_pipeline(&device);
         res.ensure_oit_cull_pipelines(&device);
         assert_eq!(
             modules(&res),
-            5 + per_batch,
+            6 + per_batch,
             "the OIT instanced pipelines and their culled twins share one module"
+        );
+        assert_eq!(compiled(&res), 0, "composing a family compiled a module");
+
+        res.pipeline_compiler
+            .set_policy(crate::resources::PipelineCompilation::Blocking);
+        res.scene.hdr.as_ref().unwrap().get(0);
+        assert_eq!(
+            compiled(&res),
+            1,
+            "one build compiles the one module it reads"
         );
     }
 }

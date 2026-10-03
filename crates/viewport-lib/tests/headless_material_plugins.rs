@@ -1010,13 +1010,13 @@ fn a_plugin_compiled_in_the_background_is_skipped_then_drawn() {
     };
 
     let (mut blocking, frame, _) = setup(viewport_lib::PipelineCompilation::Blocking, true);
-    let expected = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
+    let expected = render_presented(&mut blocking, &device, &queue, &frame, 64, 64);
     let (mut empty, empty_frame, _) = setup(viewport_lib::PipelineCompilation::Blocking, false);
-    let nothing = empty.render_offscreen(&device, &queue, &empty_frame, 64, 64);
+    let nothing = render_presented(&mut empty, &device, &queue, &empty_frame, 64, 64);
     assert!(expected != nothing, "the plugin item has to be visible");
 
     let (mut renderer, frame, plugin) = setup(viewport_lib::PipelineCompilation::Background, true);
-    let first = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    let first = render_presented(&mut renderer, &device, &queue, &frame, 64, 64);
     assert_eq!(
         renderer.resources().material_plugin_stats()[0].pipelines_built,
         0,
@@ -1030,7 +1030,7 @@ fn a_plugin_compiled_in_the_background_is_skipped_then_drawn() {
 
     let start = std::time::Instant::now();
     loop {
-        let out = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        let out = render_presented(&mut renderer, &device, &queue, &frame, 64, 64);
         if out == expected {
             break;
         }

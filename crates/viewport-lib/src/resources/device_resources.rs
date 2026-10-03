@@ -457,8 +457,9 @@ pub struct DeviceResources {
     /// compile one `mesh.wgsl`, and the LDR, HDR and culled instanced families
     /// one `mesh_instanced.wgsl`; a module this size takes milliseconds to
     /// parse, so each is built once. See [`shared_module`](Self::shared_module).
-    pub(crate) shader_modules:
-        std::sync::Mutex<std::collections::HashMap<(usize, u64), crate::gpu::ShaderModule>>,
+    pub(crate) shader_modules: std::sync::Mutex<
+        std::collections::HashMap<(usize, u64), crate::resources::pipeline_slot::ModuleCell>,
+    >,
     /// Core scene mesh pipelines: base LDR set (solid, two-sided, transparent,
     /// wireframe) and their lazily-built HDR variants. See
     /// `resources::scene_pipelines::SceneCorePipelines`.
@@ -653,6 +654,8 @@ pub struct DeviceResources {
     /// compiles in flight on the workers. Shared with each pipeline set so a
     /// build can run off this thread.
     pub(crate) pipeline_compiler: std::sync::Arc<crate::resources::pipeline_slot::PipelineCompiler>,
+    /// Cancels and waits for this renderer's compiles when it is dropped.
+    pub(crate) pipeline_compiler_shutdown: crate::resources::pipeline_slot::CompilerShutdown,
     /// Bumped by `free_texture` and `free_mesh`. The per-object draw cache
     /// holds bind groups that keep their referenced GPU resources alive; when
     /// this changes, the cache purges its stale entries so a freed resource's
@@ -1694,31 +1697,30 @@ impl DeviceResources {
 }
 
 impl DeviceResources {
-    /// Record a lazy pipeline build for `FrameStats::pipelines_built_this_frame`.
-    ///
-    /// `site` is the `file!()`/`line!()` of the builder, emitted at debug level
-    /// under the `viewport_lib::pipelines` target so a hitch traced to a lazy
-    /// compile can be attributed to the exact builder.
-    /// The shader module for `source`, created on first request and shared by
-    /// every later request for the same text. `label` names the module when it
-    /// is created; a later caller with a different label gets the same module.
+    /// The shader module for `source`, compiled the first time a build asks
+    /// for it and shared by every handle made from the same text. `label`
+    /// names the module when it is compiled; a handle with a different label
+    /// gets the same module. Nothing is compiled here.
     pub(crate) fn shared_module(
         &self,
         device: &crate::gpu::Device,
         label: &str,
         source: &str,
-    ) -> crate::gpu::ShaderModule {
+    ) -> crate::resources::pipeline_slot::LazyModule {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         source.hash(&mut hasher);
         let key = (source.len(), hasher.finish());
-        let mut modules = self.shader_modules.lock().unwrap();
-        modules
-            .entry(key)
-            .or_insert_with(|| crate::resources::builders::wgsl_module(device, label, source))
-            .clone()
+        let cell =
+            std::sync::Arc::clone(self.shader_modules.lock().unwrap().entry(key).or_default());
+        crate::resources::pipeline_slot::LazyModule::new(device, label, source, cell)
     }
 
+    /// Record a lazy pipeline build for `FrameStats::pipelines_built_this_frame`.
+    ///
+    /// `site` is the `file!()`/`line!()` of the builder, emitted at debug level
+    /// under the `viewport_lib::pipelines` target so a hitch traced to a lazy
+    /// compile can be attributed to the exact builder.
     pub(crate) fn note_pipeline_built(&self, site: &'static str) {
         self.frame_pipelines_built
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

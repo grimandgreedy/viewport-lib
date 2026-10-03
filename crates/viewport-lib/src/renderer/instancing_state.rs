@@ -37,7 +37,12 @@ pub(crate) struct InstancingState {
     pub(crate) use_instancing: bool,
     /// True when the device supports `INDIRECT_FIRST_INSTANCE`.
     pub(crate) gpu_culling_supported: bool,
-    /// True when GPU-driven culling is active (supported and not disabled by the caller).
+    /// True when the caller wants GPU-driven culling: supported and not
+    /// disabled with `disable_gpu_driven_culling`.
+    pub(crate) gpu_culling_wanted: bool,
+    /// True when GPU-driven culling runs this frame: wanted, and its compute
+    /// pipelines are built. Settled once per frame by the scene prepare; while
+    /// the compute compiles on a worker the frame takes the CPU path.
     pub(crate) gpu_culling_enabled: bool,
     /// True when `multi_draw_indexed_indirect` runs natively (signalled by
     /// `MULTI_DRAW_INDIRECT_COUNT`, present on Vulkan/DX12). On these backends
@@ -52,9 +57,11 @@ pub(crate) struct InstancingState {
     /// forming, the actual multi-draw call) be exercised and pixel-compared on
     /// the correctness box. Off by default; set via `set_force_multi_draw`.
     pub(crate) multi_draw_forced: bool,
-    /// GPU culling compute pipelines and frustum buffer. Created lazily on the first
-    /// frame where `gpu_culling_enabled` is true and instance buffers are present.
-    pub(crate) cull_resources: Option<indirect::CullResources>,
+    /// GPU culling compute pipelines and frustum buffer. Built under the
+    /// compilation policy by the first frame that wants GPU culling and has
+    /// instance buffers to cull.
+    pub(crate) cull_resources:
+        crate::resources::pipeline_slot::PipelineSlot<indirect::CullResources>,
     /// Last scene generation seen during prepare(). u64::MAX forces rebuild on first frame.
     pub(crate) last_scene_generation: u64,
     /// Global wireframe toggle (`frame.viewport.wireframe_mode`) at the last
@@ -164,10 +171,11 @@ impl InstancingState {
             batches: Vec::new(),
             use_instancing: false,
             gpu_culling_supported,
+            gpu_culling_wanted: gpu_culling_supported,
             gpu_culling_enabled: gpu_culling_supported,
             multi_draw_supported,
             multi_draw_forced: false,
-            cull_resources: None,
+            cull_resources: crate::resources::pipeline_slot::PipelineSlot::new(),
             last_scene_generation: u64::MAX,
             last_wireframe_mode: false,
             last_selection_generation: u64::MAX,

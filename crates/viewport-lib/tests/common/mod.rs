@@ -147,3 +147,92 @@ pub fn box_mesh() -> MeshData {
     mesh.indices = indices;
     mesh
 }
+
+/// Render `frame` the way a presented frame is rendered, through
+/// `render_to_texture`,
+/// and read the result back as RGBA. Unlike `render_offscreen`, which compiles
+/// everything a frame needs before drawing, this follows the renderer's
+/// compilation policy, so under `Background` it shows what a live frame skips.
+pub fn render_presented(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame: &FrameData,
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
+    let format = renderer.resources().target_format();
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("presented_target"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    renderer.render_to_texture(device, queue, &view, frame);
+
+    let padded_row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("presented_staging"),
+        size: (padded_row * height) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    enc.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &staging,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit(std::iter::once(enc.finish()));
+    staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(5)),
+        })
+        .unwrap();
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    {
+        let data = viewport_lib::gpu::mapped_range(staging.slice(..));
+        for row in 0..height as usize {
+            let start = row * padded_row as usize;
+            pixels.extend_from_slice(&data[start..start + width as usize * 4]);
+        }
+    }
+    staging.unmap();
+    if matches!(
+        format,
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    ) {
+        for px in pixels.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+    }
+    pixels
+}

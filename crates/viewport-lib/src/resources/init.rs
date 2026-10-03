@@ -1990,6 +1990,10 @@ impl DeviceResources {
         let polyline = crate::resources::scivis::polyline::PolylineResources::new(device);
         mark("polyline_resources");
 
+        let pipeline_compiler =
+            std::sync::Arc::new(crate::resources::pipeline_slot::PipelineCompiler::new(
+                crate::resources::pipeline_slot::initial_policy(),
+            ));
         let resources = Self {
             target_format,
             sample_count,
@@ -2174,10 +2178,9 @@ impl DeviceResources {
             custom_data_builder: crate::resources::custom_data::CustomDataBuilder::default(),
             frame_upload_bytes: 0,
             frame_pipelines_built: std::sync::atomic::AtomicU32::new(0),
-            pipeline_compiler: std::sync::Arc::new(
-                crate::resources::pipeline_slot::PipelineCompiler::new(
-                    crate::resources::pipeline_slot::initial_policy(),
-                ),
+            pipeline_compiler: std::sync::Arc::clone(&pipeline_compiler),
+            pipeline_compiler_shutdown: crate::resources::pipeline_slot::CompilerShutdown(
+                pipeline_compiler,
             ),
             resource_free_epoch: 0,
             resource_view_epoch: 0,

@@ -158,10 +158,12 @@ impl ViewportRenderer {
                 r.ensure_cull_instance_pipelines(device);
                 // The compute side of GPU culling, which the first culled
                 // frame would otherwise build.
-                if self.instancing.cull_resources.is_none() {
-                    self.instancing.cull_resources =
-                        Some(crate::renderer::indirect::CullResources::new(device));
-                }
+                let dev = device.clone();
+                self.instancing
+                    .cull_resources
+                    .get(&r.pipeline_compiler, move || {
+                        crate::renderer::indirect::CullResources::new(&dev)
+                    });
             }
         }
         if set.direct {

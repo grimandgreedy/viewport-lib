@@ -990,6 +990,8 @@ impl ViewportRenderer {
         width: u32,
         height: u32,
     ) -> Vec<u8> {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         // 1. Create offscreen texture with RENDER_ATTACHMENT | COPY_SRC usage.
         let target_format = self.resources.target_format;
         let offscreen_texture = device.create_texture(&crate::gpu::TextureDescriptor {
@@ -1131,6 +1133,8 @@ impl ViewportRenderer {
         width: u32,
         height: u32,
     ) -> Vec<u8> {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let saved_mode = self.render_mode;
         let saved_stats = self.last_stats;
         self.render_mode = crate::renderer::RenderMode::Derivative;
