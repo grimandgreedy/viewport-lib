@@ -112,6 +112,13 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         self.sets.allocated_bytes()
     }
 
+    fn warm(&mut self, device: &gpu::Device, resources: &viewport_lib::DeviceResources) {
+        let gpu = self
+            .gpu
+            .get_or_insert_with(|| pipeline::SplatGpu::new(device, resources));
+        gpu.pipelines.request_all();
+    }
+
     fn on_device_recreated(&mut self, _device: &gpu::Device, _queue: &gpu::Queue) {
         self.gpu = None;
         self.sorts.clear();
@@ -249,10 +256,16 @@ impl ItemTypePlugin for GaussianSplatPlugin {
                 continue;
             };
             if !bound {
-                pass.set_pipeline(
-                    gpu.pipeline
-                        .for_format(ctx.target_format == HDR_COLOR_FORMAT),
-                );
+                // Still compiling: the sets draw next frame.
+                let colour = if ctx.target_format == HDR_COLOR_FORMAT {
+                    pipeline::COLOUR_HDR
+                } else {
+                    pipeline::COLOUR_LDR
+                };
+                let Some(pl) = gpu.pipelines.get(colour) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             pass.set_bind_group(1, &sort.render_bg, &[]);
@@ -270,11 +283,16 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         _ctx: &OutlineMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        let Some(gpu) = &self.gpu else { return };
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         if self.outlines.is_empty() {
             return;
         }
-        pass.set_pipeline(&gpu.mask_pipeline);
+        let Some(pl) = gpu.pipelines.get(pipeline::MASK) else {
+            return;
+        };
+        pass.set_pipeline(pl);
         for entry in &self.outlines {
             pass.set_bind_group(1, &entry.bind_group, &[]);
             pass.set_vertex_buffer(0, entry.position_buf.slice(..));
@@ -399,7 +417,9 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         if !ctx.mask.intersects(PickMask::OBJECT | PickMask::SPLAT) {
             return;
         }
-        let Some(gpu) = &self.gpu else { return };
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         let mut bound = false;
         for fd in &self.frame {
             if fd.wireframe || fd.count == 0 {
@@ -412,7 +432,10 @@ impl ItemTypePlugin for GaussianSplatPlugin {
                 continue;
             };
             if !bound {
-                pass.set_pipeline(&gpu.pick_pipeline);
+                let Some(pl) = gpu.pipelines.get(pipeline::PICK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             pass.set_bind_group(1, &sort.render_bg, &[]);

@@ -1,6 +1,7 @@
 //! GPU state for the Gaussian splat item type: the render pipeline, the
 //! depth + radix-sort compute passes and their per-viewport scratch, the
-//! pick and outline-mask pipelines, and the per-frame outline buffers.
+//! pick and outline-mask pipelines, and the per-frame outline buffers. The
+//! render, pick and mask pipelines are built the first time a draw needs them.
 
 use super::store::{GaussianSplatGpuSet, ShDegree};
 use crate::shader::{scene_shader, wgsl_source};
@@ -38,10 +39,142 @@ struct SortUniform {
     _pad: u32,
 }
 
-/// Pipelines and layouts, built lazily on the first prepare with items.
+/// Members of [`SplatPipelines`].
+pub(super) const COLOUR_LDR: usize = 0;
+pub(super) const COLOUR_HDR: usize = 1;
+pub(super) const PICK: usize = 2;
+pub(super) const MASK: usize = 3;
+
+/// What a splat render pipeline build reads.
+pub(super) struct SplatRecipe {
+    device: gpu::Device,
+    builder: viewport_lib::plugin_api::PipelineBuilder,
+    render_layout: gpu::PipelineLayout,
+    render_shader: gpu::ShaderModule,
+    bgl: gpu::BindGroupLayout,
+    pick_shader: gpu::ShaderModule,
+    pick_id_bgl: gpu::BindGroupLayout,
+    mask_layout: gpu::PipelineLayout,
+    mask_shader: gpu::ShaderModule,
+    ldr_format: gpu::TextureFormat,
+}
+
+/// The render pipeline in both formats, the pick pipeline and the outline
+/// mask, each built the first time a draw needs it.
+pub(super) type SplatPipelines = viewport_lib::plugin_api::LazyPipelines<SplatRecipe, 4>;
+
+fn build(r: &SplatRecipe, i: usize) -> gpu::RenderPipeline {
+    match i {
+        // No MSAA for Gaussian splats (alpha blending requires single-sample).
+        COLOUR_LDR | COLOUR_HDR => builders::build_dual_pipeline_variant(
+            &r.device,
+            &builders::DualPipelineDesc {
+                label: "gaussian_splat_pipeline",
+                layout: &r.render_layout,
+                shader: &r.render_shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[],
+                blend: Some(gpu::BlendState::ALPHA_BLENDING),
+                topology: gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: false,
+                depth_compare: gpu::CompareFunction::Less,
+                sample_count: 1,
+                ldr_format: r.ldr_format,
+            },
+            i == COLOUR_HDR,
+        ),
+        // Pick: the same covariance-projected billboard expansion, object id
+        // at group 2, splat index in the primitive channel. Laid out against
+        // the shared group-0 camera, which the pick pass binds before plugin
+        // dispatch.
+        PICK => r.builder.build_pick_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive: gpu::PrimitiveState {
+                    topology: gpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                extra_bind_group_layouts: &[&r.bgl, &r.pick_id_bgl],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some("gaussian_splat_pick_pipeline"),
+                    &r.pick_shader,
+                    "vs_main",
+                    "fs_main",
+                    &[],
+                )
+            },
+        ),
+        // Outline mask: point-sprite discs, instance-stepped position and
+        // pixel-size vertex buffers, over the shared outline bind group
+        // layout (the same shape the point-cloud outline pipeline uses).
+        _ => {
+            let mask_pos_attrs = [gpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: gpu::VertexFormat::Float32x3,
+            }];
+            let mask_size_attrs = [gpu::VertexAttribute {
+                offset: 0,
+                shader_location: 1,
+                format: gpu::VertexFormat::Float32,
+            }];
+            builders::render_pipeline(
+                &r.device,
+                builders::RenderPipelineDesc {
+                    label: "point_disc_mask_pipeline",
+                    layout: &r.mask_layout,
+                    vertex_module: &r.mask_shader,
+                    vertex_entry: "vs_main",
+                    vertex_buffers: &[
+                        gpu::VertexBufferLayout {
+                            array_stride: 12, // vec3<f32>
+                            step_mode: gpu::VertexStepMode::Instance,
+                            attributes: &mask_pos_attrs,
+                        },
+                        gpu::VertexBufferLayout {
+                            array_stride: 4, // f32
+                            step_mode: gpu::VertexStepMode::Instance,
+                            attributes: &mask_size_attrs,
+                        },
+                    ],
+                    fragment: Some(gpu::FragmentState {
+                        module: &r.mask_shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(gpu::ColorTargetState {
+                            format: gpu::TextureFormat::R8Unorm,
+                            blend: None,
+                            write_mask: gpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: gpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: gpu::PrimitiveState {
+                        topology: gpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(builders::scene_depth_stencil(
+                        false,
+                        gpu::CompareFunction::Less,
+                    )),
+                    multisample: gpu::MultisampleState {
+                        count: 1,
+                        ..Default::default()
+                    },
+                    cache: None,
+                },
+            )
+        }
+    }
+}
+
+/// Pipelines and layouts, made on the first prepare with items. The sort
+/// compute pipelines are built here, blocking.
 pub(super) struct SplatGpu {
     pub(super) bgl: gpu::BindGroupLayout,
-    pub(super) pipeline: builders::DualPipeline,
+    pub(super) pipelines: SplatPipelines,
     depth_pipeline: gpu::ComputePipeline,
     sort_init_pipeline: gpu::ComputePipeline,
     sort_clear_pipeline: gpu::ComputePipeline,
@@ -50,9 +183,7 @@ pub(super) struct SplatGpu {
     sort_scatter_pipeline: gpu::ComputePipeline,
     depth_bgl: gpu::BindGroupLayout,
     sort_bgl: gpu::BindGroupLayout,
-    pub(super) pick_pipeline: gpu::RenderPipeline,
     pub(super) pick_id_bgl: gpu::BindGroupLayout,
-    pub(super) mask_pipeline: gpu::RenderPipeline,
     /// Group 1 of the outline mask pipeline: the single uniform
     /// `point_disc_mask.wgsl` reads.
     pub(super) mask_bgl: gpu::BindGroupLayout,
@@ -130,26 +261,6 @@ impl SplatGpu {
             resources.shared_bindings().group0_layout,
             &bgl,
         );
-        // No MSAA for Gaussian splats (alpha blending requires single-sample).
-        let pipeline = builders::build_dual_pipeline(
-            device,
-            &builders::DualPipelineDesc {
-                label: "gaussian_splat_pipeline",
-                layout: &render_layout,
-                shader: &render_shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[],
-                blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                topology: gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                depth_write: false,
-                depth_compare: gpu::CompareFunction::Less,
-                sample_count: 1,
-                ldr_format: resources.target_format(),
-            },
-        );
-
         // Sort compute pipelines.
         let sort_shader = builders::wgsl_module(
             device,
@@ -247,10 +358,7 @@ impl SplatGpu {
             compute("gaussian_splat_sort_prefix_pipeline", "prefix_sum_pass");
         let sort_scatter_pipeline = compute("gaussian_splat_sort_scatter_pipeline", "scatter_pass");
 
-        // Pick: the same covariance-projected billboard expansion, object id
-        // at group 2, splat index in the primitive channel. Laid out against
-        // the shared group-0 camera, which the pick pass binds before plugin
-        // dispatch.
+        // Group 2 of the pick pipeline: the set's object id.
         let pick_id_bgl = device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
             label: Some("gaussian_splat_pick_id_bgl"),
             entries: &[gpu::BindGroupLayoutEntry {
@@ -269,28 +377,8 @@ impl SplatGpu {
             "gaussian_splat_pick_shader",
             &scene_shader(&[], wgsl_source!("gaussian_splat_pick")),
         );
-        let pick_pipeline = resources.build_pick_pipeline(
-            device,
-            &viewport_lib::resources::PluginPipelineOpts {
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                extra_bind_group_layouts: &[&bgl, &pick_id_bgl],
-                ..viewport_lib::resources::PluginPipelineOpts::new(
-                    Some("gaussian_splat_pick_pipeline"),
-                    &pick_shader,
-                    "vs_main",
-                    "fs_main",
-                    &[],
-                )
-            },
-        );
-
-        // Outline mask: point-sprite discs, instance-stepped position and
-        // pixel-size vertex buffers, over the shared outline bind group
-        // layout (the same shape the point-cloud outline pipeline uses).
+        // Outline mask: a group-1 layout holding the single uniform
+        // `point_disc_mask.wgsl` reads.
         let mask_shader = builders::wgsl_module(
             device,
             "point_disc_mask_shader",
@@ -308,65 +396,25 @@ impl SplatGpu {
             "gaussian_splat_mask_layout",
             &[resources.shared_bindings().group0_layout, &mask_bgl],
         );
-        let mask_pos_attrs = [gpu::VertexAttribute {
-            offset: 0,
-            shader_location: 0,
-            format: gpu::VertexFormat::Float32x3,
-        }];
-        let mask_size_attrs = [gpu::VertexAttribute {
-            offset: 0,
-            shader_location: 1,
-            format: gpu::VertexFormat::Float32,
-        }];
-        let mask_pipeline = builders::render_pipeline(
-            device,
-            builders::RenderPipelineDesc {
-                label: "point_disc_mask_pipeline",
-                layout: &mask_layout,
-                vertex_module: &mask_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[
-                    gpu::VertexBufferLayout {
-                        array_stride: 12, // vec3<f32>
-                        step_mode: gpu::VertexStepMode::Instance,
-                        attributes: &mask_pos_attrs,
-                    },
-                    gpu::VertexBufferLayout {
-                        array_stride: 4, // f32
-                        step_mode: gpu::VertexStepMode::Instance,
-                        attributes: &mask_size_attrs,
-                    },
-                ],
-                fragment: Some(gpu::FragmentState {
-                    module: &mask_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(gpu::ColorTargetState {
-                        format: gpu::TextureFormat::R8Unorm,
-                        blend: None,
-                        write_mask: gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(builders::scene_depth_stencil(
-                    false,
-                    gpu::CompareFunction::Less,
-                )),
-                multisample: gpu::MultisampleState {
-                    count: 1,
-                    ..Default::default()
-                },
-                cache: None,
+        let pipelines = resources.lazy_pipelines(
+            SplatRecipe {
+                device: device.clone(),
+                builder: resources.pipeline_builder(),
+                render_layout,
+                render_shader,
+                bgl: bgl.clone(),
+                pick_shader,
+                pick_id_bgl: pick_id_bgl.clone(),
+                mask_layout,
+                mask_shader,
+                ldr_format: resources.target_format(),
             },
+            build,
         );
 
         Self {
             bgl,
-            pipeline,
+            pipelines,
             depth_pipeline,
             sort_init_pipeline,
             sort_clear_pipeline,
@@ -375,11 +423,16 @@ impl SplatGpu {
             sort_scatter_pipeline,
             depth_bgl,
             sort_bgl,
-            pick_pipeline,
             pick_id_bgl,
-            mask_pipeline,
             mask_bgl,
         }
+    }
+
+    /// Whether the render pipeline can draw this frame in either format. The
+    /// mask and pick passes wait for it, so a set is never outlined or picked
+    /// before it is drawn.
+    pub(super) fn drawn(&self) -> bool {
+        self.pipelines.available(COLOUR_LDR) || self.pipelines.available(COLOUR_HDR)
     }
 
     /// Build the sort scratch and render bind group for one (set, viewport).

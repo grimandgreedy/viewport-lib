@@ -257,3 +257,62 @@ fn a_splat_set_without_sh_refuses_an_sh_write() {
             .is_ok()
     );
 }
+
+/// Naming the splat type in a warm-up builds its pipelines, so the first frame
+/// that draws, outlines and picks a set, in either format, compiles none of
+/// them.
+#[test]
+fn a_warmed_splat_type_builds_nothing_on_its_first_frame() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    let id = renderer
+        .upload(&device, &queue, &sample_splats(8))
+        .expect("upload a splat set");
+    renderer.warm_pipelines(
+        &device,
+        &queue,
+        &viewport_lib::PipelineSet::default().with_item_type::<GaussianSplatPlugin>(),
+    );
+    renderer.wait_for_pipelines(&device);
+
+    viewport_lib::resources::build_log::enable();
+    let _ = viewport_lib::resources::build_log::drain();
+    for hdr in [true, false] {
+        let mut frame = sub_object_pick_frame();
+        if !hdr {
+            frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        }
+        frame.interaction.outline_selected = true;
+        let mut item = GaussianSplatItem::default();
+        item.source = id;
+        item.settings.pick_id = PickId(55);
+        item.settings.selected = true;
+        frame.scene.items_mut::<GaussianSplatItem>().push(item);
+        let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        let _ = renderer.pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::SPLAT,
+        );
+    }
+    // The outline mask is labelled after the shared disc shader it draws with.
+    let builds: Vec<String> = viewport_lib::resources::build_log::drain()
+        .into_iter()
+        .map(|(label, _)| label)
+        .filter(|l| {
+            ["gaussian_splat", "point_disc_mask"]
+                .iter()
+                .any(|p| l.starts_with(p) || l.starts_with(&format!("module {p}")))
+        })
+        .collect();
+    assert!(
+        builds.is_empty(),
+        "the first splat frames built pipelines after the warm-up: {builds:?}"
+    );
+}
