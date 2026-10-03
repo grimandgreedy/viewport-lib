@@ -15,7 +15,9 @@ use viewport_lib::{
 };
 use viewport_lib_item_types::GpuParticleSystems;
 use viewport_lib_item_types::VolumeItem;
-use viewport_lib_item_types::{DecalBlendMode, DecalItem, SurfaceLicItem};
+use viewport_lib_item_types::{
+    ContourLevels, DecalBlendMode, DecalItem, SurfaceContourItem, SurfaceLicItem,
+};
 use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumes};
 use viewport_lib_item_types::{
     RibbonItem, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorFieldItem, TensorSource,
@@ -191,6 +193,16 @@ pub fn scenes() -> Vec<NamedScene> {
             name: "volume_mesh_node_scalars_cut",
             cameras: standard_cameras(Vec3::ZERO, 11.0),
             build: build_volume_mesh_node_scalars_cut,
+        },
+        NamedScene {
+            name: "surface_contours",
+            cameras: standard_cameras(Vec3::new(0.0, 0.0, 0.6), 10.5),
+            build: build_surface_contours,
+        },
+        NamedScene {
+            name: "surface_contours_occluded",
+            cameras: standard_cameras(Vec3::ZERO, 8.5),
+            build: build_surface_contours_occluded,
         },
         NamedScene {
             name: "decal_on_curves",
@@ -1782,6 +1794,206 @@ fn build_volume_mesh_node_scalars_cut(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
     BuiltScene {
         volume_meshes: vec![cut, volume],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+/// `mesh` with a per-vertex scalar attribute `name` computed from each
+/// position.
+fn with_field(
+    mut mesh: viewport_lib::MeshData,
+    name: &str,
+    f: impl Fn(Vec3) -> f32,
+) -> viewport_lib::MeshData {
+    let values = mesh.positions.iter().map(|p| f(Vec3::from(*p))).collect();
+    mesh.attributes.insert(
+        name.to_string(),
+        viewport_lib::AttributeData::Vertex(values),
+    );
+    mesh
+}
+
+fn build_surface_contours(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // Below: a wave grid whose height and colour follow its field, contoured
+    // at evenly spaced levels of that field, none of them on the peaks at 1
+    // and -1, which would draw as specks. Above: a smaller sphere coloured
+    // by its height and contoured by a different field at listed levels, so
+    // the lines cut across the colour bands instead of following them.
+    let mut grid = primitives::grid_plane(6.0, 6.0, 96, 96);
+    for (p, n) in grid.positions.iter_mut().zip(grid.normals.iter_mut()) {
+        let (x, y) = (p[0], p[1]);
+        p[2] = 0.4 * (1.2 * x).sin() * y.cos();
+        let dx = 0.48 * (1.2 * x).cos() * y.cos();
+        let dy = -0.4 * (1.2 * x).sin() * y.sin();
+        *n = Vec3::new(-dx, -dy, 1.0).normalize().to_array();
+    }
+    let grid = with_field(grid, "wave", |p| p.z / 0.4);
+    let grid = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(ctx.device, &grid)
+        .expect("grid upload");
+
+    let mesh = with_field(primitives::sphere(1.0, 48, 24), "height", |p| p.z);
+    let mesh = with_field(mesh, "wave", |p| (3.2 * p.x).sin() + p.y);
+    let ball = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(ctx.device, &mesh)
+        .expect("sphere upload");
+
+    let coloured = |mesh, model: Mat4, attribute: &str, map: viewport_lib::BuiltinColourmap| {
+        let mut item = viewport_lib::SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = model.to_cols_array_2d();
+        item.active_attribute = Some(viewport_lib::AttributeRef {
+            name: attribute.to_string(),
+            kind: viewport_lib::AttributeKind::Vertex,
+        });
+        item.colourmap_id = Some(ColourmapId(map as usize));
+        item
+    };
+    let ball_model = Mat4::from_translation(Vec3::new(0.0, 0.0, 1.8));
+    let mut floor = coloured(
+        grid,
+        Mat4::IDENTITY,
+        "wave",
+        viewport_lib::BuiltinColourmap::Coolwarm,
+    );
+    floor.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+    let sphere = coloured(
+        ball,
+        ball_model,
+        "height",
+        viewport_lib::BuiltinColourmap::Plasma,
+    );
+
+    let floor_lines = SurfaceContourItem::new(
+        grid,
+        Mat4::IDENTITY.to_cols_array_2d(),
+        "wave",
+        ContourLevels::Spaced {
+            origin: 0.0,
+            interval: 0.3,
+        },
+    );
+    let ball_lines = SurfaceContourItem::new(
+        ball,
+        ball_model.to_cols_array_2d(),
+        "wave",
+        ContourLevels::Values(vec![-0.75, -0.25, 0.25, 0.75]),
+    );
+    BuiltScene {
+        items: vec![floor, sphere],
+        surface_contours: vec![floor_lines, ball_lines],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+fn build_surface_contours_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // Left: a plane whose field is flat at zero inside a disc and rises
+    // outside it, contoured at every quarter from zero. The disc sits on a
+    // level and must not fill in; the rings outside it are cut off by a
+    // plain box between them and the camera. Right: a clipped block of hex
+    // cells contoured by a value on its nodes, in a second colour and width,
+    // with lines on the section faces as well as the outer shell.
+    let plane_at = Vec3::new(-1.9, 0.0, 0.0);
+    let plane = with_field(primitives::grid_plane(3.4, 3.4, 64, 64), "radial", |p| {
+        (p.truncate().length() - 0.7).max(0.0)
+    });
+    let plane = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(ctx.device, &plane)
+        .expect("plane upload");
+    let cube = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(ctx.device, &primitives::cube(0.8))
+        .expect("cube upload");
+
+    let plane_model = Mat4::from_translation(plane_at);
+    let mut floor = viewport_lib::SceneRenderItem::default();
+    floor.mesh_id = plane;
+    floor.model = plane_model.to_cols_array_2d();
+    floor.material = Material::pbr([0.75, 0.75, 0.72], 0.0, 0.8);
+    floor.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+    let mut rings = SurfaceContourItem::new(
+        plane,
+        plane_model.to_cols_array_2d(),
+        "radial",
+        ContourLevels::Spaced {
+            origin: 0.0,
+            interval: 0.25,
+        },
+    );
+    rings.colour = [0.05, 0.1, 0.45, 1.0].into();
+    rings.width = 2.0;
+
+    // Between the camera and the outer rings on the plane's right, clear of
+    // the disc.
+    let mut blocker = viewport_lib::SceneRenderItem::default();
+    blocker.mesh_id = cube;
+    blocker.model = Mat4::from_translation(plane_at + Vec3::new(1.3, 0.6, 0.4)).to_cols_array_2d();
+    blocker.material = Material::pbr([0.8, 0.45, 0.2], 0.0, 0.6);
+
+    let mut cells = Vec::new();
+    for k in 0..3u32 {
+        for j in 0..3u32 {
+            for i in 0..3u32 {
+                cells.push([i, j, k]);
+            }
+        }
+    }
+    let mut grid = viewport_lib::VolumeMeshData::from_grid_cells([-1.5; 3], [1.0; 3], &cells);
+    let node_field: Vec<f32> = grid
+        .data
+        .positions
+        .iter()
+        .map(|p| Vec3::from(*p).length())
+        .collect();
+    grid.data.node_scalars.insert("node".into(), node_field);
+    let normal = Vec3::new(-0.5, 0.7, -0.6).normalize();
+    let mut block = ctx
+        .renderer
+        .resources_mut()
+        .upload_clipped_volume_mesh(
+            ctx.device,
+            &grid.data,
+            &[[normal.x, normal.y, normal.z, 0.3]],
+        )
+        .expect("clipped volume mesh upload");
+    // Turned so the cut corner is to the side: the uncut faces and the
+    // section face are both in view.
+    let block_model = Mat4::from_translation(Vec3::new(2.2, 0.4, 0.0))
+        * Mat4::from_rotation_z(1.2)
+        * Mat4::from_scale(Vec3::splat(0.7));
+    block.model = block_model.to_cols_array_2d();
+    block.active_attribute = Some(viewport_lib::AttributeRef {
+        name: "node".to_string(),
+        kind: viewport_lib::AttributeKind::Vertex,
+    });
+    block.colourmap_id = Some(ColourmapId(0));
+    // Section faces point into the kept side, so draw both sides.
+    block.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+    let mut shells = SurfaceContourItem::new(
+        block.boundary_mesh_id,
+        block_model.to_cols_array_2d(),
+        "node",
+        ContourLevels::Spaced {
+            origin: 0.0,
+            interval: 0.2,
+        },
+    );
+    shells.colour = [1.0, 1.0, 1.0, 1.0].into();
+    shells.width = 1.0;
+
+    BuiltScene {
+        items: vec![floor, blocker],
+        volume_meshes: vec![block],
+        surface_contours: vec![rings, shells],
         lighting: rigs::from_above(),
         ..Default::default()
     }

@@ -35,6 +35,7 @@ fn every_scene_builds_and_renders() {
             || !built.scatter_volumes.is_empty()
             || !built.decals.is_empty()
             || !built.surface_lics.is_empty()
+            || !built.surface_contours.is_empty()
             || !built.mesh_instances.is_empty()
             || !built.volume_meshes.is_empty()
             || !built.gpu_particle_systems.is_empty();

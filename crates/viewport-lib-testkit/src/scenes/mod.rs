@@ -109,6 +109,8 @@ pub struct BuiltScene {
     pub decals: Vec<DecalItem>,
     /// Surface LIC items.
     pub surface_lics: Vec<viewport_lib_item_types::SurfaceLicItem>,
+    /// Surface contour items.
+    pub surface_contours: Vec<viewport_lib_item_types::SurfaceContourItem>,
     /// Mesh-instance batch items.
     pub mesh_instances: Vec<MeshInstanceItem>,
     /// Volume mesh items.
@@ -225,6 +227,7 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     *sf.items_mut::<ScatterVolumeItem>() = scene.scatter_volumes.clone();
     *sf.items_mut::<DecalItem>() = scene.decals.clone();
     *sf.items_mut::<viewport_lib_item_types::SurfaceLicItem>() = scene.surface_lics.clone();
+    *sf.items_mut::<viewport_lib_item_types::SurfaceContourItem>() = scene.surface_contours.clone();
     sf.mesh_instances = scene.mesh_instances.clone();
     sf.volume_meshes = scene.volume_meshes.clone();
     let mut fd = FrameData::new(CameraFrame::from_camera(camera, viewport_size), sf);

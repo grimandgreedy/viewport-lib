@@ -1,18 +1,28 @@
 //! Showcase 14: Isolines & Contours
 //!
-//! A wave-function grid mesh coloured by its scalar field, with isoline
-//! contour strips rendered on top via the `SceneFrame::isolines` pipeline.
+//! A wave-function grid mesh coloured by its scalar field, with contour lines
+//! drawn over it two ways, switchable to compare by eye:
 //!
-//! The mesh is built once and uploaded. `IsolineItem`s are re-submitted each
-//! frame with the current slider/colour/width settings : no re-upload needed.
+//! - `SurfaceContourItem`: a fragment shader finds the lines per pixel from
+//!   the mesh's `wave` attribute. Nothing is extracted or uploaded per frame.
+//! - `IsolineItem`: the lines are extracted on the CPU every frame and drawn
+//!   as polylines.
+//!
+//! Beside it, a block of hex cells carrying a value on its nodes is cut open
+//! by a plane, and contoured the same two ways: the lines run over the outer
+//! shell and the section face, and follow the cut as it moves.
+//!
+//! The meshes are built once and uploaded. The items are re-submitted each
+//! frame with the current slider/colour/width settings.
 
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::{ContourLevels, SurfaceContourItem};
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, ColourmapId,
     FrameData, LightingSettings, Material, MeshData, MeshId, SceneRenderItem, ViewportRenderer,
-    geometry::isoline::IsolineItem, scene::Scene,
+    VolumeMeshData, VolumeMeshItem, geometry::isoline::IsolineItem, scene::Scene,
 };
 
 // ---------------------------------------------------------------------------
@@ -32,6 +42,74 @@ pub(crate) struct IsolinesState {
     pub line_width: f32,
     pub show_surface_colour: bool,
     pub depth_bias: f32,
+    /// Draw through `SurfaceContourItem` rather than `IsolineItem`.
+    pub use_shader: bool,
+    pub show_volume: bool,
+    /// `d` of the cut plane: larger keeps more of the block.
+    pub cut_offset: f32,
+    /// The cut moved: extract the block's surface again before the next frame.
+    pub cut_dirty: bool,
+    pub volume: Option<CutBlock>,
+}
+
+/// The cut volume mesh and what each contour method needs from it.
+pub(crate) struct CutBlock {
+    data: VolumeMeshData,
+    item: VolumeMeshItem,
+    node_range: (f32, f32),
+    /// The cut surface on the CPU, for `IsolineItem`: positions, indices and
+    /// the node value at each vertex.
+    positions: Vec<[f32; 3]>,
+    indices: Vec<u32>,
+    scalars: Vec<f32>,
+}
+
+/// Where the block stands, beside the wave grid.
+fn block_model() -> glam::Mat4 {
+    glam::Mat4::from_translation(glam::Vec3::new(7.0, 0.0, 1.5))
+}
+
+/// The cut plane in the block's own space. It takes off the corner nearest
+/// the opening camera at a slant, so the front face and the section face are
+/// both in view.
+fn cut_plane(offset: f32) -> [f32; 4] {
+    let n = glam::Vec3::new(-0.75, 0.35, -0.55).normalize();
+    [n.x, n.y, n.z, offset]
+}
+
+/// A 6x6x6 block of hex cells, 3 units a side and centred on its origin,
+/// with a smooth value on its nodes.
+fn make_block() -> VolumeMeshData {
+    let mut cells = Vec::new();
+    for k in 0..6u32 {
+        for j in 0..6u32 {
+            for i in 0..6u32 {
+                cells.push([i, j, k]);
+            }
+        }
+    }
+    let mut grid = VolumeMeshData::from_grid_cells([-1.5; 3], [0.5; 3], &cells);
+    let node: Vec<f32> = grid
+        .data
+        .positions
+        .iter()
+        .map(|p| (1.5 * p[0]).sin() * (1.2 * p[1]).cos() + 0.4 * p[2])
+        .collect();
+    grid.data.node_scalars.insert("node".into(), node);
+    grid.data
+}
+
+impl CutBlock {
+    /// Refresh the CPU copy of the cut surface for `offset`.
+    fn extract(&mut self, offset: f32) {
+        let (mesh, _) = vpl::extract_clipped_volume_faces(&self.data, &[cut_plane(offset)]);
+        self.scalars = match mesh.attributes.get("node") {
+            Some(AttributeData::Vertex(v)) => v.clone(),
+            _ => Vec::new(),
+        };
+        self.positions = mesh.positions;
+        self.indices = mesh.indices;
+    }
 }
 
 impl Default for IsolinesState {
@@ -48,7 +126,12 @@ impl Default for IsolinesState {
             line_colour: [0.0, 0.0, 0.0, 1.0],
             line_width: 1.5,
             show_surface_colour: true,
-            depth_bias: 0.005,
+            depth_bias: 0.02,
+            use_shader: true,
+            show_volume: true,
+            cut_offset: 0.6,
+            cut_dirty: false,
+            volume: None,
         }
     }
 }
@@ -84,6 +167,29 @@ impl App {
                 m
             });
 
+        let data = make_block();
+        let node_range = data.node_scalars["node"]
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), v| {
+                (lo.min(*v), hi.max(*v))
+            });
+        let offset = self.iso_state.cut_offset;
+        let item = renderer
+            .resources_mut()
+            .upload_clipped_volume_mesh(&self.device, &data, &[cut_plane(offset)])
+            .expect("cut volume mesh");
+        let mut block = CutBlock {
+            data,
+            item,
+            node_range,
+            positions: Vec::new(),
+            indices: Vec::new(),
+            scalars: Vec::new(),
+        };
+        block.extract(offset);
+        self.iso_state.volume = Some(block);
+        self.iso_state.cut_dirty = false;
+
         self.iso_state.built = true;
     }
 }
@@ -93,6 +199,19 @@ impl App {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn controls_isolines(app: &mut App, ui: &mut egui::Ui) {
+    ui.label("Method:");
+    ui.radio_value(
+        &mut app.iso_state.use_shader,
+        true,
+        "Shader (SurfaceContourItem)",
+    );
+    ui.radio_value(
+        &mut app.iso_state.use_shader,
+        false,
+        "CPU extraction (IsolineItem)",
+    );
+
+    ui.separator();
     ui.label("Mesh resolution:");
     let res_resp = ui.add(
         egui::Slider::new(&mut app.iso_state.grid_resolution, 16..=256)
@@ -140,13 +259,27 @@ pub(crate) fn controls_isolines(app: &mut App, ui: &mut egui::Ui) {
     ui.label("(grey when off, wave-coloured when on)");
 
     ui.separator();
+    ui.checkbox(&mut app.iso_state.show_volume, "Cut volume mesh");
+    if app.iso_state.show_volume {
+        let resp =
+            ui.add(egui::Slider::new(&mut app.iso_state.cut_offset, -1.5..=2.5).text("cut offset"));
+        if resp.changed() {
+            app.iso_state.cut_dirty = true;
+        }
+    }
 
-    ui.label("Depth bias:");
-    ui.add(
-        egui::Slider::new(&mut app.iso_state.depth_bias, 0.0..=0.05)
-            .step_by(0.001)
-            .text("(z-fighting offset)"),
-    );
+    // The shader lines are depth-tested against the surface and need no
+    // offset off it.
+    if !app.iso_state.use_shader {
+        ui.separator();
+
+        ui.label("Depth bias:");
+        ui.add(
+            egui::Slider::new(&mut app.iso_state.depth_bias, 0.0..=0.05)
+                .step_by(0.001)
+                .text("(z-fighting offset)"),
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -234,10 +367,65 @@ pub(crate) fn iso_collect_scene_items(
     (items, lighting, sg, 0)
 }
 
+/// `count` levels spread evenly inside `(lo, hi)`, not touching either end.
+fn even_levels(lo: f32, hi: f32, count: usize) -> Vec<f32> {
+    (0..count)
+        .map(|i| lo + (hi - lo) * (i as f32 + 1.0) / (count as f32 + 1.0))
+        .collect()
+}
+
+/// The cut block, and its contours by the selected method.
+fn submit_block(app: &App, fd: &mut FrameData) {
+    let state = &app.iso_state;
+    let Some(block) = state.volume.as_ref().filter(|_| state.show_volume) else {
+        return;
+    };
+    let model = block_model();
+    let mut item = block.item.clone();
+    item.model = model.to_cols_array_2d();
+    if state.show_surface_colour {
+        item.active_attribute = Some(AttributeRef {
+            name: "node".to_string(),
+            kind: AttributeKind::Vertex,
+        });
+        item.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
+    }
+    // Section faces point into the kept side, so draw both sides.
+    item.material.backface_policy = BackfacePolicy::Identical;
+    let boundary = item.boundary_mesh_id;
+    fd.scene.volume_meshes.push(item);
+
+    let (lo, hi) = block.node_range;
+    let levels = even_levels(lo, hi, state.contour_count);
+    if state.use_shader {
+        let mut contours = SurfaceContourItem::new(
+            boundary,
+            model.to_cols_array_2d(),
+            "node",
+            ContourLevels::Values(levels),
+        );
+        contours.colour = state.line_colour.into();
+        contours.width = state.line_width;
+        fd.scene.items_mut::<SurfaceContourItem>().push(contours);
+    } else {
+        let mut iso = IsolineItem::default();
+        iso.positions = block.positions.clone();
+        iso.indices = block.indices.clone();
+        iso.scalars = block.scalars.clone();
+        iso.isovalues = levels;
+        iso.colour = state.line_colour.into();
+        iso.line_width = state.line_width;
+        iso.depth_bias = state.depth_bias;
+        iso.model_matrix = model;
+        fd.scene.isolines.push(iso);
+    }
+}
+
 pub(crate) fn submit_iso_items(app: &App, fd: &mut FrameData) {
     if !app.iso_state.built {
         return;
     }
+    submit_block(app, fd);
     let scalar_min = app
         .iso_state
         .scalars
@@ -250,10 +438,19 @@ pub(crate) fn submit_iso_items(app: &App, fd: &mut FrameData) {
         .iter()
         .cloned()
         .fold(f32::NEG_INFINITY, f32::max);
-    let range = scalar_max - scalar_min;
-    let isovalues: Vec<f32> = (0..app.iso_state.contour_count)
-        .map(|i| scalar_min + range * (i as f32 + 1.0) / (app.iso_state.contour_count as f32 + 1.0))
-        .collect();
+    let isovalues = even_levels(scalar_min, scalar_max, app.iso_state.contour_count);
+    if app.iso_state.use_shader {
+        let mut item = SurfaceContourItem::new(
+            app.iso_state.mesh_index,
+            glam::Mat4::IDENTITY.to_cols_array_2d(),
+            "wave",
+            ContourLevels::Values(isovalues),
+        );
+        item.colour = app.iso_state.line_colour.into();
+        item.width = app.iso_state.line_width;
+        fd.scene.items_mut::<SurfaceContourItem>().push(item);
+        return;
+    }
     let mut iso_item = IsolineItem::default();
     iso_item.positions = app.iso_state.positions.clone();
     iso_item.indices = app.iso_state.indices.clone();
@@ -279,8 +476,8 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_iso_scene(renderer);
     app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
-        distance: 14.0,
+        center: glam::Vec3::new(2.5, 0.0, 0.5),
+        distance: 17.0,
         orientation: glam::Quat::from_rotation_z(0.3) * glam::Quat::from_rotation_x(0.8),
         ..vpl::Camera::default()
     };
@@ -318,7 +515,7 @@ pub(crate) fn scene(
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
 pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
-    // Isoline items (Showcase 14) : submitted every frame with current settings.
+    // Contour items, submitted every frame with the current settings.
     submit_iso_items(app, &mut *fd);
 }
 
@@ -343,6 +540,33 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
+pub(crate) fn flush_gpu(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    if !app.iso_state.cut_dirty {
+        return;
+    }
+    app.iso_state.cut_dirty = false;
+    let offset = app.iso_state.cut_offset;
+    let Some(block) = app.iso_state.volume.as_mut() else {
+        return;
+    };
+    let rs = cx.frame.wgpu_render_state().expect("wgpu required");
+    let mut guard = rs.renderer.write();
+    if let Some(renderer) = guard.callback_resources.get_mut::<vpl::ViewportRenderer>() {
+        // Extracted again into the same mesh slot, so the contour item's mesh
+        // id stays valid.
+        let mesh_id = block.item.boundary_mesh_id;
+        if let Ok(face_to_cell) = renderer.resources_mut().replace_clipped_volume_mesh(
+            &app.device,
+            &app.queue,
+            mesh_id,
+            &block.data,
+            &[cut_plane(offset)],
+        ) {
+            block.item.update_mesh(mesh_id, face_to_cell);
+        }
+    }
+    block.extract(offset);
+}
 
 /// Cache gizmo placement for next frame's hit-testing.
 
@@ -409,6 +633,9 @@ impl crate::Showcase for ScIsolines {
     }
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
+    }
+    fn flush_gpu(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
+        flush_gpu(app, cx)
     }
     fn controls(
         &self,

@@ -63,6 +63,7 @@ mod scatter_volume;
 mod shader;
 mod sources;
 mod sprite;
+mod surface_contour;
 mod surface_lic;
 mod tensor_field;
 mod vector_field;
@@ -103,6 +104,9 @@ pub use scatter_volume::{ScatterVolumeItem, ScatterVolumePlugin};
 pub use sprite::{
     SpriteInstanceSetId, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
     SpriteOrientation, SpritePlugin, SpriteSetId, SpriteSetRefItem, SpriteSizeMode,
+};
+pub use surface_contour::{
+    ContourLevels, MAX_CONTOUR_LEVELS, SurfaceContourItem, SurfaceContourPlugin,
 };
 pub use surface_lic::{SurfaceLicConfig, SurfaceLicItem, SurfaceLicPlugin};
 pub use tensor_field::{
@@ -148,6 +152,8 @@ pub const SCATTER_VOLUME_TYPE_NAME: &str = scatter_volume::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const SPRITE_TYPE_NAME: &str = sprite::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
+pub const SURFACE_CONTOUR_TYPE_NAME: &str = surface_contour::TYPE_NAME;
+/// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const SURFACE_LIC_TYPE_NAME: &str = surface_lic::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const STREAMTUBE_TYPE_NAME: &str = curves::STREAMTUBE_TYPE_NAME;
@@ -191,6 +197,7 @@ pub fn shader_sources() -> Vec<(&'static str, String)> {
     all.extend(point_cloud::shader_sources());
     all.extend(scatter_volume::shader_sources());
     all.extend(sprite::shader_sources());
+    all.extend(surface_contour::shader_sources());
     all.extend(surface_lic::shader_sources());
     all.extend(tensor_field::shader_sources());
     all.extend(vector_field::shader_sources());
@@ -214,6 +221,9 @@ pub fn install(renderer: &mut ViewportRenderer, device: &gpu::Device) {
     renderer.with_item_type_plugin(device, Box::new(DecalPlugin::default()));
     // After decals, so a decal on a flow surface takes the streaks too.
     renderer.with_item_type_plugin(device, Box::new(SurfaceLicPlugin::default()));
+    // Draws in the scene pass, so the decals and streaks above, which run
+    // after it, land over the lines.
+    renderer.with_item_type_plugin(device, Box::new(SurfaceContourPlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(ImageSlicePlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(VolumeSurfaceSlicePlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(PointCloudPlugin::default()));
