@@ -9,7 +9,7 @@ use crate::eframe::egui;
 /// the shared look for the viewport overlays.
 pub fn overlay<R>(
     ctx: &egui::Context,
-    id: impl std::hash::Hash,
+    id: impl std::hash::Hash + std::fmt::Debug,
     pos: egui::Pos2,
     pivot: egui::Align2,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,

@@ -1213,7 +1213,7 @@ impl Showcase for LightmapBakeShowcase {
                 let t = self.timings;
                 eprintln!(
                     "lightmap bake: {} ms total | unwrap {:.0} ms ({}x, at setup) | gbuffer {:.0} ms ({}x) | \
-                     tracer setup {:.0} ms ({}x) | trace {:.0} ms | cleanup {:.0} ms (denoise {:.0}, stitch {:.0}, \
+                     tracer setup {:.0} ms ({}x) | trace {:.0} ms ({}) | cleanup {:.0} ms (denoise {:.0}, stitch {:.0}, \
                      dilate {:.0}, encode {:.0}; {:.2} Mtexel, {:.0} ms/Mtexel) | scene objects {:.0} ms \
                      ({:.2} Mtexel, {:.0} ms/Mtexel) | scene pack {:.0} ms | upload {:.0} ms | builds {} ({:.0} ms)",
                     self.bake_ms,
@@ -1224,6 +1224,7 @@ impl Showcase for LightmapBakeShowcase {
                     t.tracer_ms,
                     t.tracers,
                     t.trace_ms,
+                    if t.hardware { "hardware" } else { "software" },
                     t.cleanup_ms,
                     t.denoise_ms,
                     t.stitch_ms,
@@ -1400,7 +1401,11 @@ impl Showcase for LightmapBakeShowcase {
             "  tracer setup: {:.0} ms, {} tracers",
             t.tracer_ms, t.tracers
         ));
-        ui.label(format!("  trace: {:.0} ms", t.trace_ms));
+        ui.label(format!(
+            "  trace: {:.0} ms ({})",
+            t.trace_ms,
+            if t.hardware { "hardware" } else { "software" }
+        ));
         ui.label(format!("  cleanup: {:.0} ms", t.cleanup_ms));
         ui.label(format!(
             "    denoise {:.0}, stitch {:.0}, dilate {:.0}, encode {:.0}",
@@ -1442,8 +1447,9 @@ struct BakeTimings {
     /// `Tracer::new`: kernel pipelines, scene upload and BVH, once per solve.
     tracer_ms: f32,
     tracers: u32,
-    /// The path-traced solve itself.
+    /// The path-traced solve itself, and the traversal it ran on.
     trace_ms: f32,
+    hardware: bool,
     /// CPU cleanup of the per-piece atlases, and its stages.
     cleanup_ms: f32,
     denoise_ms: f32,
@@ -1570,6 +1576,7 @@ fn timed_solve(
     let mut tracer = Tracer::new(device, queue, scene);
     timings.tracer_ms += ms_since(t);
     timings.tracers += 1;
+    timings.hardware = tracer.backend() == vpl::raytrace::RtBackend::Hardware;
     let t = std::time::Instant::now();
     let bake = tracer.bake_directional(device, queue, surfaces, settings);
     timings.trace_ms += ms_since(t);

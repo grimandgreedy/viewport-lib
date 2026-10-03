@@ -48,8 +48,9 @@ default = ["wgpu27", "showcase"]
 wgpu27 = ["viewport-lib/wgpu27", "viewport-lib-plugins/wgpu27", "viewport-lib/egui-adapter", "dep:eframe033"]
 wgpu29 = ["viewport-lib/wgpu29", "viewport-lib-plugins/wgpu29", "viewport-lib/egui-adapter-035", "dep:eframe035"]
 wgpu30 = ["viewport-lib/wgpu30", "viewport-lib-plugins/wgpu30", "viewport-lib/egui-adapter-036", "dep:eframe036"]
-# The full showcase drives the path tracer and the lightmap baker.
-showcase = ["viewport-lib/raytrace", "viewport-lib/bake"]
+# The full showcase drives the path tracer and the lightmap baker, in hardware
+# where the device has ray queries.
+showcase = ["viewport-lib/raytrace", "viewport-lib/raytrace-hardware", "viewport-lib/bake"]
 
 [[example]]
 name = "eframe-minimal"
@@ -107,7 +108,7 @@ required-features = ["wgpu27"]
 [[example]]
 name = "showcase"
 path = "examples/showcase/main.rs"
-required-features = ["wgpu27", "showcase"]
+required-features = ["showcase"]
 
 [[example]]
 name = "debug-light"
