@@ -55,6 +55,9 @@ fn main() {
 
     let format = wgpu::TextureFormat::Bgra8UnormSrgb;
     let mut renderer = ViewportRenderer::new(&device, format);
+    // The frame is read back right after it is drawn, so build every pipeline
+    // it needs before drawing rather than on worker threads.
+    renderer.set_pipeline_compilation(vpl::PipelineCompilation::Blocking);
 
     let (m_ground, m_sphere, m_cube, m_torus);
     {

@@ -561,6 +561,9 @@ fn main() {
     }
 
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // Build on this thread, so no timed frame skips a draw whose pipeline is
+    // still compiling.
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let meshes = build_meshes(
         &mut renderer,
         &device,

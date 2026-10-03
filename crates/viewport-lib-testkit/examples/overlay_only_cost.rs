@@ -140,6 +140,8 @@ fn main() {
     let t_new = Instant::now();
     let mut renderer =
         ViewportRenderer::new_with_pipeline_cache(&device, FORMAT, cache_in.as_deref());
+    // Build on this thread so each build lands in the frame that asked for it.
+    renderer.set_pipeline_compilation(vpl::PipelineCompilation::Blocking);
     let new_ms = t_new.elapsed().as_secs_f32() * 1000.0;
     let sections = collected.lock().unwrap().clone();
 

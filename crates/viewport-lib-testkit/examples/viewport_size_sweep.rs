@@ -74,6 +74,8 @@ fn main() {
     .expect("no wgpu device");
 
     let mut renderer = ViewportRenderer::new(&device, FORMAT);
+    // Build on this thread so each build lands in the frame that asked for it.
+    renderer.set_pipeline_compilation(vpl::PipelineCompilation::Blocking);
 
     // Warm-up frame at a throwaway size. The first frame any renderer draws
     // compiles the shared post-chain pipelines, tens of milliseconds that have

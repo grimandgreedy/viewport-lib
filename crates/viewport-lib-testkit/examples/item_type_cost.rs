@@ -83,6 +83,8 @@ fn main() {
     );
     let t = Instant::now();
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+    // Build on this thread so each build lands in the frame that asked for it.
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let new_ms = ms(t);
     let new_builds = build_log::drain();
     println!(
