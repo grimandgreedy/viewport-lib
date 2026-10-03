@@ -32,6 +32,7 @@ mod showcase_15_point_clouds;
 mod showcase_16_streamlines;
 mod showcase_17_volume;
 mod showcase_18_clip_volumes;
+mod showcase_18_cuts;
 mod showcase_19_matcap;
 mod showcase_20_face_attributes;
 mod showcase_21_textures;
@@ -72,7 +73,6 @@ mod showcase_56_submesh_materials;
 mod showcase_57_photometric_lighting;
 mod showcase_58_physically_based_surfaces;
 mod showcase_59_vector_art;
-mod showcase_60_cut_views;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
 
@@ -253,7 +253,7 @@ fn main() -> eframe::Result {
                 surfaces_state:
                     showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState::default(),
                 va_state: showcase_59_vector_art::VectorArtState::default(),
-                cut_state: showcase_60_cut_views::CutViewsState::default(),
+                cut_state: showcase_18_cuts::CutViewsState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -324,7 +324,6 @@ enum ShowcaseMode {
     PhotometricLighting,
     PhysicallyBasedSurfaces,
     VectorArt,
-    CutViews,
 }
 
 // `ShowcaseMode::label` and the menu order live in `registry.rs`.
@@ -545,7 +544,7 @@ pub(crate) struct App {
     // --- Showcase 58: Physically-Based Surfaces (shading parity + emissive/IBL) ---
     pub(crate) surfaces_state: showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState,
     pub(crate) va_state: showcase_59_vector_art::VectorArtState,
-    pub(crate) cut_state: showcase_60_cut_views::CutViewsState,
+    pub(crate) cut_state: showcase_18_cuts::CutViewsState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.

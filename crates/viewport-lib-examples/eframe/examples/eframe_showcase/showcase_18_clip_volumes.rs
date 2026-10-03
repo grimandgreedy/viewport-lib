@@ -1,12 +1,17 @@
-//! Showcase 18: Clip Objects
+//! Showcase 18: Clips and Cuts
 //!
-//! Demonstrates multiple simultaneous `ClipObject` entries on `EffectsFrame`.
+//! Two ways to look inside a scene, on two tabs.
+//!
+//! **Clips** demonstrates multiple simultaneous `ClipObject` entries on `EffectsFrame`.
 //! Use the add buttons to push plane, box, sphere, or cylinder clips.
 //! Each entry can be tuned independently and removed. All active clips
 //! apply with AND semantics: geometry must be inside every volume.
 //!
 //! The scene is a torus lying flat with a capsule standing upright through its
 //! hole. Cross-sections through either shape reveal their internal geometry.
+//!
+//! **Cuts** removes part of one object with the cut deformer from
+//! `viewport-lib-plugins`; see `showcase_18_cuts.rs`.
 
 use crate::App;
 use crate::eframe::egui;
@@ -79,7 +84,15 @@ impl ActiveClip {
 // State
 // ---------------------------------------------------------------------------
 
+/// Which tab of the showcase is showing.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum ClipsCutsTab {
+    Clips,
+    Cuts,
+}
+
 pub(crate) struct ClipVolState {
+    pub tab: ClipsCutsTab,
     pub scene: Scene,
     pub built: bool,
     pub scene_mode: SceneMode,
@@ -98,6 +111,7 @@ pub(crate) struct ClipVolState {
 impl Default for ClipVolState {
     fn default() -> Self {
         Self {
+            tab: ClipsCutsTab::Clips,
             scene: Scene::new(),
             built: false,
             scene_mode: SceneMode::Mesh,
@@ -221,6 +235,22 @@ fn build_clipvol_volume() -> Vec<f32> {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn controls_clipvol(app: &mut App, ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        for (tab, label) in [(ClipsCutsTab::Clips, "Clips"), (ClipsCutsTab::Cuts, "Cuts")] {
+            if ui
+                .selectable_label(app.clipvol_state.tab == tab, label)
+                .clicked()
+            {
+                app.clipvol_state.tab = tab;
+                app.clipvol_state.gizmo_drag_active = false;
+            }
+        }
+    });
+    ui.separator();
+    if app.clipvol_state.tab == ClipsCutsTab::Cuts {
+        crate::showcase_18_cuts::controls(app, ui);
+        return;
+    }
     let s = &mut app.clipvol_state;
 
     ui.label("Scene:");
@@ -634,12 +664,19 @@ pub(crate) fn submit_clipvol_items(app: &mut App, fd: &mut FrameData) {
 
 /// Whether the host should call [`build`] before the next frame.
 pub(crate) fn needs_build(app: &crate::App) -> bool {
-    !app.clipvol_state.built
+    match app.clipvol_state.tab {
+        ClipsCutsTab::Clips => !app.clipvol_state.built,
+        ClipsCutsTab::Cuts => !app.cut_state.built,
+    }
 }
 
 /// Build this showcase's scene and frame its opening camera. Called once, on
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    if app.clipvol_state.tab == ClipsCutsTab::Cuts {
+        crate::showcase_18_cuts::build(app, renderer);
+        return;
+    }
     app.build_clipvol_scene(renderer);
     app.camera = vpl::Camera {
         center: glam::Vec3::ZERO,
@@ -660,6 +697,15 @@ pub(crate) fn scene(
     _frame: &crate::eframe::Frame,
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
+    if app.clipvol_state.tab == ClipsCutsTab::Cuts {
+        return crate::SceneContents {
+            items: crate::showcase_18_cuts::scene_items(app),
+            bg_colour: None,
+            lighting: crate::showcase_18_cuts::lighting(),
+            scene_gen: 0,
+            sel_gen: 0,
+        };
+    }
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
         let (items, lighting, sg, ss) = clipvol_collect_scene_items(app);
         (items, None, lighting, sg, ss)
@@ -681,8 +727,11 @@ pub(crate) fn scene(
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
 pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
-    // Clip volume (Showcase 18) : set every frame from current state.
-    submit_clipvol_items(app, &mut *fd);
+    match app.clipvol_state.tab {
+        // Clip objects, set every frame from current state.
+        ClipsCutsTab::Clips => submit_clipvol_items(app, &mut *fd),
+        ClipsCutsTab::Cuts => crate::showcase_18_cuts::frame(app, fd),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -720,6 +769,10 @@ pub(crate) fn drag_input(app: &mut crate::App, cx: &crate::ViewportCtx) {
 
 /// Cache gizmo placement for next frame's hit-testing.
 pub(crate) fn cache_gizmo(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    if app.clipvol_state.tab == ClipsCutsTab::Cuts {
+        app.clipvol_state.gizmo_center = None;
+        return;
+    }
     if app.clipvol_state.built {
         app.clipvol_state.gizmo_center = app.clip_gizmo_center();
         if let Some(center) = app.clipvol_state.gizmo_center {
@@ -802,6 +855,11 @@ impl crate::Showcase for ScClipVolumes {
     }
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
+    }
+    fn flush_gpu(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
+        if app.clipvol_state.tab == ClipsCutsTab::Cuts {
+            crate::showcase_18_cuts::flush_gpu(app, cx);
+        }
     }
     fn controls(
         &self,

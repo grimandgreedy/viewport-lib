@@ -1,4 +1,4 @@
-//! Showcase 60: Cut Views.
+//! The Cuts tab of showcase 18 (Clips and Cuts).
 //!
 //! `viewport_lib_plugins::deformers::cut` removes part of a mesh per item: a
 //! plane, a box, a sphere, or a range of a per-vertex scalar. It is a
@@ -81,7 +81,7 @@ impl CutViewsState {
     }
 }
 
-fn build(app: &mut App, renderer: &mut vpl::ViewportRenderer) {
+pub(crate) fn build(app: &mut App, renderer: &mut vpl::ViewportRenderer) {
     let state = &mut app.cut_state;
     let resources = renderer.resources_mut();
     state.cut = CutDeformer::install(resources, &app.device).ok();
@@ -118,7 +118,7 @@ fn build(app: &mut App, renderer: &mut vpl::ViewportRenderer) {
     };
 }
 
-fn scene_items(app: &App) -> Vec<SceneRenderItem> {
+pub(crate) fn scene_items(app: &App) -> Vec<SceneRenderItem> {
     let state = &app.cut_state;
     let (Some(torus), Some(column), Some(floor)) = (state.torus, state.column, state.floor) else {
         return Vec::new();
@@ -156,7 +156,7 @@ fn scene_items(app: &App) -> Vec<SceneRenderItem> {
     items
 }
 
-fn controls(app: &mut App, ui: &mut egui::Ui) {
+pub(crate) fn controls(app: &mut App, ui: &mut egui::Ui) {
     let state = &mut app.cut_state;
     if state.cut.is_none() {
         ui.label("This device cannot run deformers, so nothing is cut.");
@@ -189,7 +189,7 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
     );
 }
 
-fn flush_gpu(app: &mut App, cx: &crate::ViewportCtx) {
+pub(crate) fn flush_gpu(app: &mut App, cx: &crate::ViewportCtx) {
     let state = &mut app.cut_state;
     if !state.dirty {
         return;
@@ -212,47 +212,15 @@ fn flush_gpu(app: &mut App, cx: &crate::ViewportCtx) {
     }
 }
 
-/// Stateless handle for this showcase; the scene state lives on [`crate::App`].
-pub(crate) struct ScCutViews;
+/// The lighting for the Cuts tab: the default sun, which casts the shadows the
+/// cut has to agree with.
+pub(crate) fn lighting() -> LightingSettings {
+    let mut lighting = LightingSettings::default();
+    lighting.hemisphere_intensity = 0.4;
+    lighting
+}
 
-/// The registry's handle to this showcase.
-pub(crate) static SHOWCASE: ScCutViews = ScCutViews;
-
-impl crate::Showcase for ScCutViews {
-    fn needs_build(&self, app: &crate::App) -> bool {
-        !app.cut_state.built
-    }
-    fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
-        build(app, renderer)
-    }
-    fn scene(
-        &self,
-        app: &mut crate::App,
-        _frame: &crate::eframe::Frame,
-        _out: &mut crate::SceneOverrides,
-    ) -> crate::SceneContents {
-        let mut lighting = LightingSettings::default();
-        lighting.hemisphere_intensity = 0.4;
-        crate::SceneContents {
-            items: scene_items(app),
-            bg_colour: None,
-            lighting,
-            scene_gen: 0,
-            sel_gen: 0,
-        }
-    }
-    fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
-        fd.interaction.outline_selected = app.cut_state.outline;
-    }
-    fn flush_gpu(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
-        flush_gpu(app, cx)
-    }
-    fn controls(
-        &self,
-        app: &mut crate::App,
-        ui: &mut crate::eframe::egui::Ui,
-        _frame: &crate::eframe::Frame,
-    ) {
-        controls(app, ui)
-    }
+/// Per-frame settings for the Cuts tab.
+pub(crate) fn frame(app: &mut App, fd: &mut vpl::FrameData) {
+    fd.interaction.outline_selected = app.cut_state.outline;
 }
