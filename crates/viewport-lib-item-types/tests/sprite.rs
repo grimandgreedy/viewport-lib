@@ -15,6 +15,13 @@ use viewport_lib_item_types::SpriteInstanceUploads;
 use viewport_lib_item_types::channels::sprite as sp;
 use viewport_lib_item_types::{SpriteItem, SpriteSetId, SpriteSetRefItem};
 
+/// The build log is process-wide, so a test that reads it must not overlap
+/// another test building this type's pipelines.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn sample_sprites() -> SpriteItem {
     let mut item = SpriteItem::default();
     item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
@@ -24,6 +31,7 @@ fn sample_sprites() -> SpriteItem {
 
 #[test]
 fn an_uploaded_sprite_set_resolves_until_it_is_dropped() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -51,6 +59,7 @@ fn an_uploaded_sprite_set_resolves_until_it_is_dropped() {
 /// resolve in the other even when the slot index matches.
 #[test]
 fn the_two_sprite_handle_spaces_do_not_alias() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -72,6 +81,7 @@ fn the_two_sprite_handle_spaces_do_not_alias() {
 
 #[test]
 fn begin_upload_sprite_set_drains_to_a_handle() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -112,6 +122,7 @@ fn begin_upload_sprite_set_drains_to_a_handle() {
 /// with how many were drawn.
 #[test]
 fn a_selected_batch_outlines_every_billboard() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -162,6 +173,7 @@ fn a_selected_batch_outlines_every_billboard() {
 /// particle feed that only moves its sprites writes a quarter of the bytes.
 #[test]
 fn a_reserved_sprite_batch_takes_ranged_writes_per_channel() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -216,6 +228,7 @@ fn a_reserved_sprite_batch_takes_ranged_writes_per_channel() {
 /// allocation.
 #[test]
 fn set_len_moves_the_sprite_draw_count() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -241,6 +254,7 @@ fn set_len_moves_the_sprite_draw_count() {
 /// colour variants, and not the OIT, refraction, outline or pick pipelines.
 #[test]
 fn a_warmed_sprite_type_builds_nothing_on_its_first_frame() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
