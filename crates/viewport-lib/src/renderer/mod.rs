@@ -1327,6 +1327,11 @@ impl ViewportRenderer {
     /// - [`RuntimeMode::Capture`]: full quality, intended for screenshot/export workflows.
     pub fn set_runtime_mode(&mut self, mode: crate::renderer::stats::RuntimeMode) {
         self.runtime_mode = mode;
+        // A capture must have every pipeline it binds, so compiles block
+        // for as long as the mode is set, whatever the compilation policy.
+        self.resources
+            .pipeline_compiler
+            .set_capturing(mode == crate::renderer::stats::RuntimeMode::Capture);
     }
 
     /// Return the current runtime mode.
@@ -1342,14 +1347,16 @@ impl ViewportRenderer {
     /// compile on the calling thread and never skip a draw, which is what a
     /// frame that is read back right away needs. Takes effect for the next
     /// compile; one already running on a worker finishes there.
+    /// [`RuntimeMode::Capture`](crate::RuntimeMode::Capture) compiles
+    /// blocking while it is set, whatever this says.
     pub fn set_pipeline_compilation(&mut self, policy: PipelineCompilation) {
         self.resources.pipeline_compiler.set_policy(policy);
     }
 
-    /// The current pipeline compilation policy. See
+    /// The pipeline compilation policy as set. See
     /// [`set_pipeline_compilation`](Self::set_pipeline_compilation).
     pub fn pipeline_compilation(&self) -> PipelineCompilation {
-        self.resources.pipeline_compiler.policy()
+        self.resources.pipeline_compiler.configured_policy()
     }
 
     /// True when the current render presents a frame the user sees, and so

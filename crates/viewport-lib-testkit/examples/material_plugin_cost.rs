@@ -38,7 +38,7 @@ fn ms(t: Instant) -> f32 {
 }
 
 fn report(what: &str, took: f32) {
-    let mut builds = build_log::drain();
+    let builds = build_log::drain();
     let total: f32 = builds.iter().map(|(_, ms)| ms).sum();
     println!(
         "{what:<34} {took:8.2} ms, {} pipelines/modules ({total:.2} ms)",

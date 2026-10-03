@@ -9,7 +9,7 @@
 //! returns nothing. [`PipelineCompiler`] carries the policy and counts the
 //! compiles in flight, so an application can wait for them.
 
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 
 /// How the renderer compiles a pipeline the first time a frame needs it.
@@ -93,6 +93,9 @@ impl Pending {
 /// compiles they have running.
 pub(crate) struct PipelineCompiler {
     policy: AtomicU8,
+    /// Set while the renderer captures: every read blocks whatever the
+    /// policy, so a captured frame has nothing missing.
+    capturing: AtomicBool,
     pending: Arc<Pending>,
 }
 
@@ -100,20 +103,31 @@ impl PipelineCompiler {
     pub(crate) fn new(policy: PipelineCompilation) -> Self {
         Self {
             policy: AtomicU8::new(policy as u8),
+            capturing: AtomicBool::new(false),
             pending: Arc::new(Pending::default()),
         }
     }
 
-    /// The policy slots follow. Always `Blocking` where there are no threads.
+    /// The policy slots follow right now: the one set, or `Blocking` while
+    /// capturing or where there are no threads.
     pub(crate) fn policy(&self) -> PipelineCompilation {
-        if cfg!(target_family = "wasm") {
+        if cfg!(target_family = "wasm") || self.capturing.load(Ordering::Relaxed) {
             return PipelineCompilation::Blocking;
         }
+        self.configured_policy()
+    }
+
+    /// The policy as set, before capture or the platform overrides it.
+    pub(crate) fn configured_policy(&self) -> PipelineCompilation {
         PipelineCompilation::from_u8(self.policy.load(Ordering::Relaxed))
     }
 
     pub(crate) fn set_policy(&self, policy: PipelineCompilation) {
         self.policy.store(policy as u8, Ordering::Relaxed);
+    }
+
+    pub(crate) fn set_capturing(&self, capturing: bool) {
+        self.capturing.store(capturing, Ordering::Relaxed);
     }
 
     fn spawn(&self, job: impl FnOnce() + Send + 'static) {
@@ -410,6 +424,21 @@ mod tests {
         for (i, slot) in slots.iter().enumerate() {
             assert_eq!(settle(slot, &compiler), &(i as u32));
         }
+    }
+
+    #[test]
+    fn capturing_makes_every_read_block() {
+        let compiler = background();
+        compiler.set_capturing(true);
+        let slot = PipelineSlot::<u32>::new();
+        assert_eq!(slot.get(&compiler, || 5), Some(&5));
+        assert_eq!(pending(&compiler), 0);
+        assert_eq!(
+            compiler.configured_policy(),
+            PipelineCompilation::Background
+        );
+        compiler.set_capturing(false);
+        assert_eq!(compiler.policy(), PipelineCompilation::Background);
     }
 
     #[test]
