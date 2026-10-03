@@ -163,6 +163,14 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
         self.bgl = Some(store::build_bgl(device));
     }
 
+    fn warm(&mut self, device: &gpu::Device, resources: &viewport_lib::DeviceResources) {
+        let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
+        let gpu = self
+            .gpu
+            .get_or_insert_with(|| pipeline::ExternalInstancesGpu::new(device, resources, bgl));
+        gpu.pipelines.request_all();
+    }
+
     fn on_device_recreated(&mut self, device: &gpu::Device, _queue: &gpu::Queue) {
         self.bgl = Some(store::build_bgl(device));
         self.gpu = None;
@@ -209,10 +217,16 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
         if self.frame.is_empty() {
             return;
         }
-        pass.set_pipeline(
-            gpu.pipeline
-                .for_format(ctx.target_format == viewport_lib::resources::HDR_COLOR_FORMAT),
-        );
+        let member = if ctx.target_format == viewport_lib::resources::HDR_COLOR_FORMAT {
+            pipeline::COLOUR_HDR
+        } else {
+            pipeline::COLOUR_LDR
+        };
+        // Still compiling: the instances draw next frame.
+        let Some(pl) = gpu.pipelines.get(member) else {
+            return;
+        };
+        pass.set_pipeline(pl);
         for gd in &self.frame {
             pass.set_bind_group(1, &gd.bind_group, &[]);
             // The instance range is the buffer window: `instance_index` in the

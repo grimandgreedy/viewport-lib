@@ -88,3 +88,60 @@ fn create_rejects_non_storage_buffer() {
         Err(viewport_lib::error::ViewportError::ExternalBufferUsageMissing { .. })
     ));
 }
+
+/// Warming the type builds every pipeline its draws use, so the first frames
+/// in either format build nothing.
+#[test]
+fn a_warmed_external_instances_type_builds_nothing_on_its_first_frame() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let positions: Vec<f32> = vec![-0.6, 0.0, 0.0, 0.6, 0.0, 0.0];
+    let buf = positions_buffer(
+        &device,
+        2,
+        gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
+    );
+    queue.write_buffer(&buf, 0, bytemuck::cast_slice(&positions));
+    let set_id = renderer
+        .create_external_instance_set(&device, &ExternalInstanceSetConfig::new(mesh_id, buf))
+        .unwrap();
+
+    renderer.warm_pipelines(
+        &device,
+        &queue,
+        &viewport_lib::PipelineSet::default()
+            .with_item_type::<viewport_lib_item_types::ExternalInstancesPlugin>(),
+    );
+    renderer.wait_for_pipelines(&device);
+
+    viewport_lib::resources::build_log::enable();
+    let _ = viewport_lib::resources::build_log::drain();
+    for hdr in [true, false] {
+        let mut frame = sub_object_pick_frame();
+        if !hdr {
+            frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        }
+        let mut item = ExternalInstancesItem::new(set_id, 2);
+        item.scale = 0.4;
+        frame.scene.items_mut::<ExternalInstancesItem>().push(item);
+        let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    }
+    let builds: Vec<String> = viewport_lib::resources::build_log::drain()
+        .into_iter()
+        .map(|(label, _)| label)
+        .filter(|l| {
+            l.starts_with("external_instances") || l.starts_with("module external_instances")
+        })
+        .collect();
+    assert!(
+        builds.is_empty(),
+        "the first external instance frames built pipelines after the warm-up: {builds:?}"
+    );
+}
