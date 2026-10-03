@@ -27,12 +27,15 @@
 
 use crate::eframe::egui;
 use glam::{Mat3, Mat4, Vec2, Vec3};
+use std::collections::VecDeque;
+use std::sync::mpsc;
+use std::time::Instant;
 use viewport_lib as vpl;
 use viewport_lib::wgpu;
 use viewport_lib_lightbake::denoise::{DenoiseParams, denoise, dilate};
 use viewport_lib_lightbake::encode::{Encoding, encode};
 use viewport_lib_lightbake::stitch::{StitchGeometry, StitchParams, stitch};
-use vpl::bake::{TexelGeometry, rasterize_texel_gbuffer};
+use vpl::bake::TexelGeometry;
 use vpl::raytrace::{RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, Tracer};
 use vpl::resources::{LightmapData, LightmapMode, TextureId};
 use vpl::{
@@ -48,6 +51,25 @@ use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
 // the size the piece's uv1 is normalised to, or the charts squash and read as
 // blocky steps on the mesh.
 const ATLAS: u32 = 512;
+
+/// Texel-samples of GI the live bake submits per frame: one dispatch over
+/// the whole atlas, with as many samples as fit. About 6 ms of GPU time on an
+/// M4 Pro tracing in hardware, and about 5 ms with the compute traversal, so
+/// a frame drawn during the bake is not held up behind a long solve; the bake
+/// takes more frames instead. An atlas larger than the budget still takes one
+/// sample a frame.
+const HARDWARE_TEXEL_SAMPLES_PER_FRAME: u32 = 1_000_000;
+const SOFTWARE_TEXEL_SAMPLES_PER_FRAME: u32 = 250_000;
+
+/// Samples per dispatch for an atlas of `texels`, under the frame budget.
+fn samples_per_dispatch(texels: u32, hardware: bool) -> u32 {
+    let budget = if hardware {
+        HARDWARE_TEXEL_SAMPLES_PER_FRAME
+    } else {
+        SOFTWARE_TEXEL_SAMPLES_PER_FRAME
+    };
+    (budget / texels.max(1)).clamp(1, 16)
+}
 /// Key-light direction (toward the light); shared by the bake and the realtime
 /// mode so the two are directly comparable. Raked off vertical so the torus casts
 /// a long, obvious shadow across the floor.
@@ -152,7 +174,13 @@ pub struct LightmapBakeShowcase {
     // Bake controls.
     samples: u32,
     denoise: bool,
-    baked_at: Option<u32>,
+    /// The samples and scene variant the shown lightmaps were baked for;
+    /// `None` until the first bake lands.
+    baked_target: Option<(u32, usize)>,
+    /// The bake running across frames, if any.
+    live: Option<LiveBake>,
+    /// Smoothed frame time while no bake runs, to compare the bake's frames to.
+    idle_frame_ms: f32,
     need_reencode: bool,
     applied: Option<(usize, bool, usize)>,
     /// Realtime shadow casting (Realtime-only mode). Off by default so the
@@ -189,9 +217,6 @@ pub struct LightmapBakeShowcase {
     /// The floating dynamic sphere shown in Mixed mode, casting a realtime shadow
     /// onto the baked floor.
     dynamic_occluder: Option<MeshId>,
-    /// Which mode's scene the cached bake was traced against (Baked vs Emissive
-    /// integrate different lights), so a switch between them forces a re-trace.
-    baked_kind: Option<usize>,
 }
 
 impl LightmapBakeShowcase {
@@ -204,7 +229,9 @@ impl LightmapBakeShowcase {
             nodes: Vec::new(),
             samples: 64,
             denoise: true,
-            baked_at: None,
+            baked_target: None,
+            live: None,
+            idle_frame_ms: 0.0,
             need_reencode: false,
             applied: None,
             realtime_shadows: false,
@@ -227,7 +254,6 @@ impl LightmapBakeShowcase {
             request_rebake: false,
             emissive_panel: None,
             dynamic_occluder: None,
-            baked_kind: None,
         }
     }
 
@@ -292,430 +318,471 @@ impl LightmapBakeShowcase {
         scene
     }
 
-    /// Trace the shared room and, for each baked piece, path-trace its lightmap
-    /// and cache the raw irradiance + direction atlases (no denoise/encode yet).
-    fn trace_all(&mut self, ctx: &mut ShowcaseCtx) {
-        let device = ctx.device;
-        let queue = ctx.queue;
-
-        // The scene every bake traces against: all pieces in world space (every
-        // piece is an occluder, including the scene-atlas heroes), plus a key light
-        // and a soft sky.
-        let scene = self.build_rt_scene();
-        let mut tracer = new_tracer(device, queue, &scene, &mut self.timings);
-
-        let settings = RtSettings {
+    fn rt_settings(&self) -> RtSettings {
+        RtSettings {
             samples: self.samples,
             max_bounces: 4,
             denoise: false,
             seed: 0,
-        };
-        for i in 0..self.pieces.len() {
-            // Scene-atlas heroes are baked in one `bake_scene_prepared` call in
-            // encode_all (which owns their gbuffer + GI), not here.
-            if !self.pieces[i].baked || self.pieces[i].scene_atlas {
-                continue;
-            }
-            let (pos, nrm, uv1, idx, pages, xf, aw, ah, atlas_count) = {
-                let p = &self.pieces[i];
-                (
-                    p.pos.clone(),
-                    p.nrm.clone(),
-                    p.uv1.iter().map(|u| [u.x, u.y]).collect::<Vec<_>>(),
-                    p.idx.clone(),
-                    p.pages.clone(),
-                    p.xf,
-                    p.atlas_w,
-                    p.atlas_h,
-                    p.atlas_count.max(1),
-                )
-            };
-            // Bake each atlas page on its own: a page holds a disjoint set of
-            // charts (all three vertices of a triangle share a page), so its texel
-            // G-buffer must rasterise only that page's triangles. Single-page
-            // pieces run this loop once over the whole mesh.
-            let mut irr_pages = Vec::with_capacity(atlas_count as usize);
-            let mut dir_pages = Vec::with_capacity(atlas_count as usize);
-            let mut gp_pages = Vec::with_capacity(atlas_count as usize);
-            let mut gn_pages = Vec::with_capacity(atlas_count as usize);
-            for page in 0..atlas_count {
-                let idx_k = page_indices(&idx, &pages, page);
-                if idx_k.is_empty() {
-                    irr_pages.push(Vec::new());
-                    dir_pages.push(Vec::new());
-                    gp_pages.push(Vec::new());
-                    gn_pages.push(Vec::new());
-                    continue;
-                }
-                let t = std::time::Instant::now();
-                let gbuf = rasterize_texel_gbuffer(
-                    device,
-                    queue,
-                    &TexelGeometry {
-                        positions: &pos,
-                        normals: &nrm,
-                        uv1: &uv1,
-                        indices: &idx_k,
-                        model: xf,
-                    },
-                    aw,
-                    ah,
-                );
-                self.timings.gbuffer_ms += ms_since(t);
-                self.timings.gbuffers += 1;
-                let bake = timed_solve(
-                    device,
-                    queue,
-                    &mut tracer,
-                    &TexelSurfaces {
-                        width: gbuf.width,
-                        height: gbuf.height,
-                        world_pos: &gbuf.world_pos,
-                        world_normal: &gbuf.world_normal,
-                    },
-                    &settings,
-                    &mut self.timings,
-                );
-                irr_pages.push(to_rgba4(&bake.irradiance));
-                dir_pages.push(to_rgba4(&bake.direction));
-                gp_pages.push(gbuf.world_pos);
-                gn_pages.push(gbuf.world_normal);
-            }
-            let p = &mut self.pieces[i];
-            p.raw_irradiance = irr_pages;
-            p.raw_direction = dir_pages;
-            p.gbuf_pos = gp_pages;
-            p.gbuf_nrm = gn_pages;
         }
-        self.baked_at = Some(self.samples);
     }
 
-    /// Denoise (or not), encode, tonemap, and upload each baked piece's atlas.
-    /// Cheap : re-runs on the cached raw bake when the denoise toggle flips.
-    fn encode_all(&mut self, ctx: &mut ShowcaseCtx) {
-        let device = ctx.device;
-        let queue = ctx.queue;
-        let mut directionality_sum = 0.0f64;
-        let mut directionality_n = 0u64;
-        for i in 0..self.pieces.len() {
-            // Scene-atlas heroes are skipped here; they are baked together below
-            // via bake_scene_prepared. Non-scene pieces (whose raw was cached by
-            // trace_all) run the per-page cleanup + upload path.
-            if !self.pieces[i].baked || self.pieces[i].raw_irradiance.is_empty() {
-                continue;
-            }
-            let piece_start = std::time::Instant::now();
-            let mut piece_upload_ms = 0.0f32;
-            let (aw, ah) = (self.pieces[i].atlas_w, self.pieces[i].atlas_h);
-            let atlas_count = self.pieces[i].atlas_count.max(1);
-            let idx = self.pieces[i].idx.clone();
-            let pages = self.pieces[i].pages.clone();
-            let inv_pi = 1.0 / std::f32::consts::PI;
-            let page_texels = (aw * ah) as usize;
-            let p = atlas_count as usize;
-
-            // Denoise is optional (the toggle) and local, so it runs per page on
-            // that page's own atlas. Dilation is not optional; it comes after the
-            // stitch below.
-            let mut denoised_pages: Vec<Vec<[f32; 4]>> = Vec::with_capacity(p);
-            for page in 0..p {
-                let raw = &self.pieces[i].raw_irradiance[page];
-                if raw.is_empty() {
-                    denoised_pages.push(vec![[0.0f32; 4]; page_texels]);
+    /// Start a bake that runs across frames: the per-piece solves when `trace`
+    /// (otherwise the cached raw atlases are cleaned up again), then the
+    /// per-piece cleanup on a worker thread beside the scene atlas. A bake
+    /// already running is dropped.
+    fn start_bake(&mut self, ctx: &mut ShowcaseCtx, trace: bool) {
+        // The cleanup stages spread over every core by default, which leaves
+        // the thread drawing the frames and the driver's own threads waiting
+        // for one. Keep two free while a bake runs beside the frames.
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        viewport_lib_lightbake::set_threads(cores.saturating_sub(2).max(1));
+        self.timings = BakeTimings {
+            unwrap_ms: self.timings.unwrap_ms,
+            unwraps: self.timings.unwraps,
+            ..Default::default()
+        };
+        if vpl::resources::build_log::enabled() {
+            let _ = vpl::resources::build_log::drain();
+        }
+        let mut pending = VecDeque::new();
+        if trace {
+            for (i, p) in self.pieces.iter_mut().enumerate() {
+                // Scene-atlas heroes are baked by the scene job, not here.
+                if !p.baked || p.scene_atlas {
                     continue;
                 }
-                let t = std::time::Instant::now();
-                let d = if self.denoise {
-                    denoise(
-                        raw,
-                        &self.pieces[i].gbuf_pos[page],
-                        &self.pieces[i].gbuf_nrm[page],
-                        aw,
-                        ah,
-                        &DenoiseParams::default(),
-                    )
-                } else {
-                    raw.clone()
-                };
-                self.timings.denoise_ms += ms_since(t);
-                self.timings.piece_texels += page_texels as u64;
-                denoised_pages.push(d);
-            }
-
-            // Stitch every chart seam at once, including cuts whose two charts
-            // landed on different atlas pages. Stack the pages into one tall atlas
-            // (page k -> vertical band k) and shift each vertex's UV into its band;
-            // stitch welds the two sides of a cut by 3D position, so a cross-page
-            // cut reconciles exactly like a within-page one. Stitching each page in
-            // isolation would leave those cross-page seams visible. Single-page
-            // pieces stack to themselves (band 0), so this is a no-op for them.
-            let stacked: Vec<[f32; 4]> = denoised_pages.concat();
-            let inv_p = 1.0 / p as f32;
-            let uv_stacked: Vec<[f32; 2]> = self.pieces[i]
-                .uv1
-                .iter()
-                .enumerate()
-                .map(|(v, u)| {
-                    let page = pages.get(v).copied().unwrap_or(0).min(atlas_count - 1) as f32;
-                    [u.x, (u.y + page) * inv_p]
-                })
-                .collect();
-            let t = std::time::Instant::now();
-            let stitched = stitch(
-                &stacked,
-                aw,
-                ah * atlas_count,
-                &StitchGeometry {
-                    positions: &self.pieces[i].pos,
-                    uv1: &uv_stacked,
-                    indices: &idx,
-                },
-                &StitchParams::default(),
-            );
-            self.timings.stitch_ms += ms_since(t);
-
-            // Per page: dilate its band into the gutter, encode, and write its
-            // layer. Radiance is concatenated layer-major (page 0, then page 1, ...)
-            // so a multi-page piece uploads as one texture array; single-page
-            // pieces produce one layer.
-            let mut layers = vec![0.0f32; page_texels * 4 * p];
-            // The directional atlas is only uploaded for the (single-page) normal-
-            // mapped pieces; the multi-page hero is non-directional.
-            let mut dir_tex: Option<TextureId> = None;
-            for page in 0..p {
-                if self.pieces[i].raw_irradiance[page].is_empty() {
-                    continue; // leaves this layer zeroed (no charts on this page)
-                }
-                let band = &stitched[page * page_texels..(page + 1) * page_texels];
-                let t = std::time::Instant::now();
-                let cleaned = dilate(band, aw, ah, 6);
-                self.timings.dilate_ms += ms_since(t);
-                let t = std::time::Instant::now();
-                // Encode into the neutral directional lightmap (exercises the
-                // encoder and yields the directionality stat); the display samples
-                // the radiance channel.
-                let lm = encode(
-                    aw,
-                    ah,
-                    &cleaned,
-                    Some(&self.pieces[i].raw_direction[page]),
-                    &self.pieces[i].gbuf_nrm[page],
-                    Encoding::DominantDirection,
-                );
-                self.timings.encode_ms += ms_since(t);
-                if let Some(dir) = lm.direction() {
-                    for d in dir {
-                        if d[3] > 0.0 {
-                            directionality_sum += d[3] as f64;
-                            directionality_n += 1;
-                        }
-                    }
-                }
-                // Write this page's linear diffuse radiance (incident irradiance /
-                // pi) into its layer. The material keeps the true albedo, so
-                // Replace mode (base_colour * lm.rgb) gives albedo * E/pi. No albedo
-                // baked in, no exposure here: the renderer's HDR pipeline tonemaps
-                // once for display.
-                let base = page * page_texels * 4;
-                for (t, px) in lm.radiance().iter().enumerate() {
-                    if px[3] <= 0.5 {
-                        continue;
-                    }
-                    layers[base + t * 4] = px[0] * inv_pi;
-                    layers[base + t * 4 + 1] = px[1] * inv_pi;
-                    layers[base + t * 4 + 2] = px[2] * inv_pi;
-                    layers[base + t * 4 + 3] = 1.0;
-                }
-
-                // Normal-mapped pieces get the directional atlas too (dominant
-                // direction xyz + directionality w, uploaded linear/raw), so the
-                // bumps respond to where the baked light came from. These are all
-                // single-page, so only page 0 runs.
-                if atlas_count == 1 && self.pieces[i].normal_tex.is_some() {
-                    if let Some(dir) = lm.direction() {
-                        // Dilate the direction atlas into the gutter using the
-                        // radiance coverage as the mask (its own w is directionality,
-                        // not coverage), so bilinear at a chart edge reads a real
-                        // direction rather than the w=0 gutter (which fades to flat).
-                        let covered: Vec<bool> = cleaned.iter().map(|c| c[3] > 0.5).collect();
-                        let dir = dilate_masked(dir, &covered, aw as usize, ah as usize, 6);
-                        let mut dirbuf = vec![0.0f32; dir.len() * 4];
-                        for (t, d) in dir.iter().enumerate() {
-                            dirbuf[t * 4] = d[0];
-                            dirbuf[t * 4 + 1] = d[1];
-                            dirbuf[t * 4 + 2] = d[2];
-                            dirbuf[t * 4 + 3] = d[3];
-                        }
-                        let t = std::time::Instant::now();
-                        dir_tex = Some(
-                            ctx.session
-                                .resources_mut()
-                                .upload_texture(
-                                    device,
-                                    queue,
-                                    vpl::TextureData::hdr(aw, ah, dirbuf.to_vec()),
-                                )
-                                .unwrap(),
-                        );
-                        piece_upload_ms += ms_since(t);
+                // Each atlas page bakes on its own: a page holds a disjoint set
+                // of charts, so its texel G-buffer rasterises only that page's
+                // triangles.
+                let pages = p.atlas_count.max(1) as usize;
+                p.raw_irradiance = vec![Vec::new(); pages];
+                p.raw_direction = vec![Vec::new(); pages];
+                p.gbuf_pos = vec![Vec::new(); pages];
+                p.gbuf_nrm = vec![Vec::new(); pages];
+                for page in 0..pages as u32 {
+                    if !page_indices(&p.idx, &p.pages, page).is_empty() {
+                        pending.push_back((i, page));
                     }
                 }
             }
+        }
+        // The tracer and the G-buffer pipeline cost a few milliseconds to build
+        // with a warm shader cache and most of a second without one, so they
+        // are built on a worker thread rather than in this frame.
+        let scene = self.build_rt_scene();
+        let (device, queue) = (ctx.device.clone(), ctx.queue.clone());
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let t = Instant::now();
+            let tracer = Tracer::new(&device, &queue, &scene);
+            let gbuffer = std::sync::Arc::new(vpl::bake::TexelGBufferPass::new(&device));
+            let _ = tx.send(BakeTools {
+                tracer,
+                gbuffer,
+                ms: ms_since(t),
+            });
+        });
+        self.live = Some(LiveBake {
+            target: (self.samples, self.bake_scene_variant()),
+            started: Instant::now(),
+            piece_total: pending.len(),
+            pending,
+            tools_rx: Some(rx),
+            tools: None,
+            solving: None,
+            uploads: VecDeque::new(),
+            texture_jobs: Vec::new(),
+            encode: None,
+            encode_started: false,
+            encoded: false,
+            frame_ms: Vec::new(),
+            scene: None,
+            scene_started: Instant::now(),
+            scene_done: false,
+        });
+    }
 
-            // Single texture for single-page pieces; an N-layer texture array for
-            // the multi-page hero, which set_lightmap_paged then samples per vertex.
-            let t = std::time::Instant::now();
-            let res = ctx.session.resources_mut();
-            let tex = if atlas_count > 1 {
-                res.upload_texture_hdr_layers(device, queue, aw, ah, atlas_count, &layers)
-                    .unwrap()
-            } else {
-                res.upload_texture(
-                    device,
-                    queue,
-                    vpl::TextureData::hdr(aw, ah, layers.to_vec()),
-                )
-                .unwrap()
-            };
-            piece_upload_ms += ms_since(t);
-            self.timings.upload_ms += piece_upload_ms;
-            self.timings.cleanup_ms += ms_since(piece_start) - piece_upload_ms;
-            self.pieces[i].tex = Some(tex);
-            self.pieces[i].dir_tex = dir_tex;
+    /// Move the running bake on by one frame's worth of work. Nothing here
+    /// waits on the GPU or on the cleanup thread.
+    fn step_bake(&mut self, ctx: &mut ShowcaseCtx) {
+        let Some(mut live) = self.live.take() else {
+            return;
+        };
+        let frame_start = Instant::now();
+        let (device, queue) = (ctx.device, ctx.queue);
+        let settings = self.rt_settings();
+
+        if let Some(rx) = &live.tools_rx
+            && let Ok(tools) = rx.try_recv()
+        {
+            self.timings.tracer_ms = tools.ms;
+            self.timings.tracers = 1;
+            self.timings.hardware = tools.tracer.backend() == vpl::raytrace::RtBackend::Hardware;
+            live.tools_rx = None;
+            live.tools = Some(tools);
         }
 
-        // Scene-atlas heroes: bake them all in one `bake_scene_prepared` call. Its
-        // injected passes run the renderer's texel G-buffer + GI solve (against the
-        // same occluder scene), then the orchestrator denoises, stitches, encodes,
-        // packs into one shared atlas, and returns a placement per object. This
-        // runs the whole one-call scene bake under the live renderer, exercising the
-        // real GPU-passes path rather than the headless mock.
-        let scene_pieces: Vec<usize> = (0..self.pieces.len())
-            .filter(|&i| self.pieces[i].scene_atlas && self.pieces[i].baked)
-            .collect();
-        if !scene_pieces.is_empty() {
-            // Owned, already-unwrapped geometry for each hero; PreparedObject
-            // borrows it.
-            let owned: Vec<(
-                Vec<[f32; 3]>,
-                Vec<[f32; 3]>,
-                Vec<[f32; 2]>,
-                Vec<u32>,
-                u32,
-                u32,
-                [[f32; 4]; 4],
-            )> = scene_pieces
-                .iter()
-                .map(|&i| {
-                    let p = &self.pieces[i];
-                    (
-                        p.pos.clone(),
-                        p.nrm.clone(),
-                        p.uv1.iter().map(|u| [u.x, u.y]).collect(),
-                        p.idx.clone(),
-                        p.atlas_w,
-                        p.atlas_h,
-                        p.xf.to_cols_array_2d(),
-                    )
-                })
-                .collect();
-            let prepared: Vec<viewport_lib_lightbake::PreparedObject> = owned
-                .iter()
-                .map(
-                    |(pos, nrm, uv1, idx, w, h, model)| viewport_lib_lightbake::PreparedObject {
-                        positions: pos,
-                        normals: nrm,
-                        uv1,
-                        indices: idx,
-                        width: *w,
-                        height: *h,
-                        model: *model,
-                    },
-                )
-                .collect();
-            let rt = self.build_rt_scene();
-            self.timings.scene_texels = prepared
-                .iter()
-                .map(|o| u64::from(o.width) * u64::from(o.height))
-                .sum();
-            // The orchestrator reports after each object and after packing; the
-            // GPU passes it called in between are subtracted to leave its CPU work.
-            let scene_gpu_ms = std::cell::Cell::new(0.0f32);
-            let mut mark = (std::time::Instant::now(), 0.0f32);
-            let mut object_ms = 0.0f32;
-            let mut pack_ms = 0.0f32;
-            let tracer = new_tracer(device, queue, &rt, &mut self.timings);
-            let mut passes = ScenePasses {
+        // The per-piece solves, one at a time: a texel G-buffer, then the GI
+        // solve over it, a few dispatches a frame.
+        if live.solving.is_none()
+            && let Some(tools) = &live.tools
+            && let Some((i, page)) = live.pending.pop_front()
+        {
+            let p = &self.pieces[i];
+            let indices = page_indices(&p.idx, &p.pages, page);
+            let uv1: Vec<[f32; 2]> = p.uv1.iter().map(|u| [u.x, u.y]).collect();
+            let job = tools.gbuffer.begin(
                 device,
                 queue,
-                tracer,
-                settings: RtSettings {
-                    samples: self.samples,
-                    max_bounces: 4,
-                    denoise: false,
-                    seed: 0,
+                &TexelGeometry {
+                    positions: &p.pos,
+                    normals: &p.nrm,
+                    uv1: &uv1,
+                    indices: &indices,
+                    model: p.xf,
                 },
-                timings: &mut self.timings,
-                gpu_ms: &scene_gpu_ms,
+                p.atlas_w,
+                p.atlas_h,
+            );
+            live.solving = Some((i, page, PieceSolve::Gbuffer(job)));
+        }
+        if let Some((i, page, solve)) = live.solving.take() {
+            live.solving = match solve {
+                PieceSolve::Gbuffer(mut job) => match job.poll(device) {
+                    Some(gbuf) => {
+                        let tools = live.tools.as_ref().expect("solving needs the tools");
+                        let hardware = tools.tracer.backend() == vpl::raytrace::RtBackend::Hardware;
+                        let job = tools
+                            .tracer
+                            .begin_directional(device, &texel_surfaces(&gbuf), &settings)
+                            .samples_per_dispatch(samples_per_dispatch(
+                                gbuf.width * gbuf.height,
+                                hardware,
+                            ));
+                        Some((i, page, PieceSolve::Trace(gbuf, job)))
+                    }
+                    None => Some((i, page, PieceSolve::Gbuffer(job))),
+                },
+                PieceSolve::Trace(gbuf, mut job) => {
+                    job.step(device, queue, 1);
+                    match job.poll(device) {
+                        Some(bake) => {
+                            let p = &mut self.pieces[i];
+                            let k = page as usize;
+                            p.raw_irradiance[k] = to_rgba4(&bake.irradiance);
+                            p.raw_direction[k] = to_rgba4(&bake.direction);
+                            p.gbuf_pos[k] = gbuf.world_pos;
+                            p.gbuf_nrm[k] = gbuf.world_normal;
+                            None
+                        }
+                        None => Some((i, page, PieceSolve::Trace(gbuf, job))),
+                    }
+                }
             };
-            // 1024 fits each hero's atlas (the torus packs to ~980), so no rect is
-            // clamped; objects still spill to a second page, which the array handles.
-            let opts = viewport_lib_lightbake::SceneBakeOptions {
+            if live.solving.is_none() && live.pending.is_empty() {
+                self.timings.trace_ms = ms_since(live.started);
+            }
+        }
+
+        // Once the per-piece solves are in: their cleanup on a worker thread,
+        // and the scene atlas beside it.
+        let solves_done = live.solving.is_none() && live.pending.is_empty();
+        if solves_done && live.tools.is_some() && !live.encode_started {
+            let inputs: Vec<PieceInput> = self
+                .pieces
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.baked && !p.raw_irradiance.is_empty())
+                .map(|(i, p)| PieceInput::new(i, p))
+                .collect();
+            let denoise_on = self.denoise;
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let out: Vec<PieceEncoded> = inputs
+                    .iter()
+                    .map(|inp| encode_piece(inp, denoise_on))
+                    .collect();
+                // The bake may have been replaced meanwhile; then nobody listens.
+                let _ = tx.send(out);
+            });
+            live.encode = Some(rx);
+            live.encode_started = true;
+            live.scene_started = Instant::now();
+            let tools = live.tools.take().expect("checked above");
+            live.scene = self.start_scene_job(ctx, tools, settings);
+            live.scene_done = live.scene.is_none();
+        }
+        if let Some(rx) = &live.encode
+            && let Ok(encoded) = rx.try_recv()
+        {
+            live.encode = None;
+            live.uploads.extend(encoded);
+        }
+        // One piece's textures a frame, so the uploads do not all land at once.
+        if let Some(piece) = live.uploads.pop_front() {
+            self.upload_piece(ctx, &mut live, piece);
+        }
+        if !live.texture_jobs.is_empty() {
+            let res = ctx.session.resources_mut();
+            res.process_uploads(device, queue);
+            let pieces = &mut self.pieces;
+            live.texture_jobs
+                .retain(|&(piece, direction, job)| match res.upload_status(job) {
+                    vpl::resources::UploadStatus::Pending { .. } => true,
+                    vpl::resources::UploadStatus::Ready => {
+                        let tex = res.upload_result_texture(job).ok();
+                        if direction {
+                            pieces[piece].dir_tex = tex;
+                        } else {
+                            pieces[piece].tex = tex;
+                        }
+                        false
+                    }
+                    _ => false,
+                });
+            self.applied = None;
+        }
+        live.encoded = live.encode_started
+            && live.encode.is_none()
+            && live.uploads.is_empty()
+            && live.texture_jobs.is_empty();
+        if let Some(stage) = &mut live.scene
+            && let Some(bake) = stage.job.step(&mut stage.passes)
+        {
+            self.timings.scene_ms = ms_since(live.scene_started);
+            let pieces = std::mem::take(&mut stage.pieces);
+            live.scene = None;
+            live.scene_done = true;
+            self.upload_scene_atlas(ctx, &pieces, bake);
+        }
+
+        let t = &mut self.timings;
+        let work = ms_since(frame_start);
+        t.frames += 1;
+        t.work_ms += work;
+        t.worst_work_ms = t.worst_work_ms.max(work);
+        // The first frame's time is the frame before the bake started.
+        if t.frames > 1 {
+            t.worst_frame_ms = t.worst_frame_ms.max(ctx.dt * 1000.0);
+            live.frame_ms.push(ctx.dt * 1000.0);
+        }
+        if live.encoded && live.scene_done {
+            self.finish_bake(&live);
+        } else {
+            self.live = Some(live);
+        }
+    }
+
+    /// The scene-atlas heroes' bake as a job, driven by the same polled GPU
+    /// passes. `None` when no piece goes into the scene atlas.
+    fn start_scene_job(
+        &mut self,
+        ctx: &mut ShowcaseCtx,
+        tools: BakeTools,
+        settings: RtSettings,
+    ) -> Option<SceneStage> {
+        let pieces: Vec<usize> = (0..self.pieces.len())
+            .filter(|&i| self.pieces[i].scene_atlas && self.pieces[i].baked)
+            .collect();
+        if pieces.is_empty() {
+            return None;
+        }
+        let uv1: Vec<Vec<[f32; 2]>> = pieces
+            .iter()
+            .map(|&i| self.pieces[i].uv1.iter().map(|u| [u.x, u.y]).collect())
+            .collect();
+        let prepared: Vec<viewport_lib_lightbake::PreparedObject> = pieces
+            .iter()
+            .zip(&uv1)
+            .map(|(&i, uv1)| {
+                let p = &self.pieces[i];
+                viewport_lib_lightbake::PreparedObject {
+                    positions: &p.pos,
+                    normals: &p.nrm,
+                    uv1,
+                    indices: &p.idx,
+                    width: p.atlas_w,
+                    height: p.atlas_h,
+                    model: p.xf.to_cols_array_2d(),
+                }
+            })
+            .collect();
+        // 1024 fits each hero's atlas (the torus packs to ~980), so no rect is
+        // clamped; objects still spill to a second page, which the array handles.
+        let job = viewport_lib_lightbake::SceneBakeJob::new(
+            &prepared,
+            &viewport_lib_lightbake::SceneBakeOptions {
                 page_size: 1024,
                 padding: 8,
                 denoise: self.denoise,
                 ..Default::default()
-            };
-            let bake = viewport_lib_lightbake::bake_scene_prepared_with_progress(
-                &prepared,
-                &mut passes,
-                &opts,
-                &mut |p| {
-                    let cpu = ms_since(mark.0) - (scene_gpu_ms.get() - mark.1);
-                    match p.stage {
-                        viewport_lib_lightbake::BakeStage::Packed => pack_ms += cpu,
-                        _ => object_ms += cpu,
-                    }
-                    mark = (std::time::Instant::now(), scene_gpu_ms.get());
-                    viewport_lib_lightbake::BakeControl::Continue
-                },
-            )
-            .expect("the bake is never cancelled");
-            self.timings.scene_object_ms += object_ms;
-            self.timings.scene_pack_ms += pack_ms;
-            let t = std::time::Instant::now();
-            let tex = ctx
-                .session
-                .resources_mut()
-                .upload_texture_hdr_layers(
+            },
+        );
+        self.timings.scene_objects = pieces.len() as u32;
+        Some(SceneStage {
+            job,
+            passes: LivePasses {
+                device: ctx.device.clone(),
+                queue: ctx.queue.clone(),
+                tracer: tools.tracer,
+                gbuffer_pass: tools.gbuffer,
+                settings,
+                gbuffer: None,
+                solve: None,
+            },
+            pieces,
+        })
+    }
+
+    /// Upload one piece's atlases from the cleanup thread.
+    fn upload_piece(&mut self, ctx: &mut ShowcaseCtx, live: &mut LiveBake, e: PieceEncoded) {
+        let t = Instant::now();
+        let (device, queue) = (ctx.device, ctx.queue);
+        self.timings.directionality.0 += e.directionality.0;
+        self.timings.directionality.1 += e.directionality.1;
+        self.timings.cleanup_ms += e.stages.iter().sum::<f32>();
+        self.timings.denoise_ms += e.stages[0];
+        self.timings.stitch_ms += e.stages[1];
+        self.timings.dilate_ms += e.stages[2];
+        self.timings.encode_ms += e.stages[3];
+        let res = ctx.session.resources_mut();
+        // Single textures go through the upload jobs and are picked up on a
+        // later frame (the synchronous upload waits for the job, which competes
+        // with the cleanup threads for the CPU). The multi-page hero's texture
+        // array is written directly.
+        if let Some(dir) = e.direction {
+            let job = res
+                .begin_upload_texture(device, queue, vpl::TextureData::hdr(e.width, e.height, dir))
+                .unwrap();
+            live.texture_jobs.push((e.piece, true, job));
+        }
+        if e.pages > 1 {
+            let tex = res
+                .upload_texture_hdr_layers(device, queue, e.width, e.height, e.pages, &e.layers)
+                .unwrap();
+            self.pieces[e.piece].tex = Some(tex);
+        } else {
+            let job = res
+                .begin_upload_texture(
                     device,
                     queue,
-                    bake.page_size,
-                    bake.page_size,
-                    bake.layers,
-                    &bake.radiance,
+                    vpl::TextureData::hdr(e.width, e.height, e.layers),
                 )
                 .unwrap();
-            self.timings.upload_ms += ms_since(t);
-            self.scene_atlas_tex = Some(tex);
-            self.scene_objects = scene_pieces.len() as u32;
-            self.scene_pages = bake.layers;
-            self.scene_page_size = bake.page_size;
-            for (k, &i) in scene_pieces.iter().enumerate() {
-                let pl = bake.placements[k];
-                self.pieces[i].tex = Some(tex);
-                self.pieces[i].dir_tex = None;
-                self.pieces[i].scene_scale_bias = pl.scale_bias;
-                self.pieces[i].scene_layer = pl.layer;
-            }
+            live.texture_jobs.push((e.piece, false, job));
         }
-        self.directionality = if directionality_n > 0 {
-            (directionality_sum / directionality_n as f64) as f32
-        } else {
-            0.0
-        };
-        // Force the lightmaps to re-apply with the new textures.
+        let (sum, n) = self.timings.directionality;
+        self.directionality = if n > 0 { (sum / n as f64) as f32 } else { 0.0 };
+        self.timings.upload_ms += ms_since(t);
         self.applied = None;
+    }
+
+    /// Upload the shared scene atlas and point its heroes at their placements.
+    fn upload_scene_atlas(
+        &mut self,
+        ctx: &mut ShowcaseCtx,
+        pieces: &[usize],
+        bake: viewport_lib_lightbake::PreparedSceneBake,
+    ) {
+        let t = Instant::now();
+        let tex = ctx
+            .session
+            .resources_mut()
+            .upload_texture_hdr_layers(
+                ctx.device,
+                ctx.queue,
+                bake.page_size,
+                bake.page_size,
+                bake.layers,
+                &bake.radiance,
+            )
+            .unwrap();
+        self.scene_atlas_tex = Some(tex);
+        self.scene_objects = pieces.len() as u32;
+        self.scene_pages = bake.layers;
+        self.scene_page_size = bake.page_size;
+        for (k, &i) in pieces.iter().enumerate() {
+            let pl = bake.placements[k];
+            let p = &mut self.pieces[i];
+            p.tex = Some(tex);
+            p.dir_tex = None;
+            p.scene_scale_bias = pl.scale_bias;
+            p.scene_layer = pl.layer;
+        }
+        self.timings.upload_ms += ms_since(t);
+        self.applied = None;
+    }
+
+    fn finish_bake(&mut self, live: &LiveBake) {
+        if self.baked_target.is_none() {
+            // The scene was lit for realtime while there were no lightmaps;
+            // rebuild it for the baked mode now that there are.
+            self.shown = None;
+        }
+        self.baked_target = Some(live.target);
+        self.built = true;
+        self.bake_ms = ms_since(live.started) as u32;
+        if vpl::resources::build_log::enabled() {
+            let builds = vpl::resources::build_log::drain();
+            self.timings.builds = builds.len() as u32;
+            self.timings.build_ms = builds.iter().map(|(_, ms)| ms).sum();
+        }
+        let mut frames = live.frame_ms.clone();
+        frames.sort_by(f32::total_cmp);
+        self.timings.median_frame_ms = frames.get(frames.len() / 2).copied().unwrap_or(0.0);
+        let t = self.timings;
+        eprintln!(
+            "lightmap bake: {} ms over {} frames | on this thread {:.0} ms, worst frame {:.1} ms | \
+             frame time median {:.1} ms, worst {:.1} ms | unwrap {:.0} ms ({}x, at setup) | \
+             tracer setup {:.0} ms ({}x, {}) | per-piece solves {:.0} ms | per-piece cleanup {:.0} ms \
+             on a worker (denoise {:.0}, stitch {:.0}, dilate {:.0}, encode {:.0}) | scene atlas {:.0} ms \
+             ({} objects) | upload {:.0} ms | builds {} ({:.0} ms)",
+            self.bake_ms,
+            t.frames,
+            t.work_ms,
+            t.worst_work_ms,
+            t.median_frame_ms,
+            t.worst_frame_ms,
+            t.unwrap_ms,
+            t.unwraps,
+            t.tracer_ms,
+            t.tracers,
+            if t.hardware { "hardware" } else { "software" },
+            t.trace_ms,
+            t.cleanup_ms,
+            t.denoise_ms,
+            t.stitch_ms,
+            t.dilate_ms,
+            t.encode_ms,
+            t.scene_ms,
+            t.scene_objects,
+            t.upload_ms,
+            t.builds,
+            t.build_ms,
+        );
+    }
+
+    /// How far the running bake has got, as a fraction and a line of text.
+    fn bake_progress(&self) -> Option<(f32, String)> {
+        let live = self.live.as_ref()?;
+        let solves_done =
+            live.piece_total - live.pending.len() - usize::from(live.solving.is_some());
+        let (scene_done, scene_total) = match &live.scene {
+            Some(stage) => (stage.job.objects_baked(), stage.job.total()),
+            None if live.scene_done => (1, 1),
+            None => (0, 1),
+        };
+        let cleaned = usize::from(live.encoded);
+        let fraction = (solves_done + scene_done + cleaned) as f32
+            / (live.piece_total + scene_total + 1) as f32;
+        Some((
+            fraction,
+            format!(
+                "Baking: piece solves {solves_done}/{}, scene objects {scene_done}/{scene_total}",
+                live.piece_total
+            ),
+        ))
     }
 
     /// Build (or rebuild) the scene nodes for the current mode.
@@ -727,6 +794,13 @@ impl LightmapBakeShowcase {
         self.atlas_node = None;
 
         let baked_mode = self.baked_mode();
+        // Until the first bake lands there are no lightmaps to lean on, so the
+        // baked modes are lit the way the realtime one is.
+        let lighting = if self.baked_target.is_none() {
+            REALTIME_MODE
+        } else {
+            self.mode
+        };
 
         // Lighting: pure-baked modes lean on the lightmaps (runtime lights off, dim
         // ambient for the walls); Mixed keeps the realtime key on so the dynamic
@@ -734,12 +808,12 @@ impl LightmapBakeShowcase {
         // lights everything with one key light plus hemisphere ambient.
         {
             let l = &mut session.effects_mut().lighting;
-            if self.mode == BAKED_MODE || self.mode == EMISSIVE_MODE {
+            if lighting == BAKED_MODE || lighting == EMISSIVE_MODE {
                 l.lights = Vec::new();
                 l.hemisphere_intensity = 0.28;
                 l.sky_colour = [0.5, 0.54, 0.62].into();
                 l.ground_colour = [0.16, 0.16, 0.18].into();
-            } else if self.mode == MIXED_MODE {
+            } else if lighting == MIXED_MODE {
                 // The lightmap (consumed subtractively) carries the static lighting;
                 // the realtime directional stays on. On lightmapped surfaces its
                 // direct is baked (suppressed), but its realtime shadow darkens the
@@ -1003,7 +1077,8 @@ impl Showcase for LightmapBakeShowcase {
     fn setup(&mut self, ctx: &mut SetupCtx) {
         // Fresh meshes mean a fresh bake, even if this instance is re-set up on a
         // later visit.
-        self.baked_at = None;
+        self.baked_target = None;
+        self.live = None;
         self.built = false;
         self.timings = BakeTimings::default();
         self.applied = None;
@@ -1185,70 +1260,32 @@ impl Showcase for LightmapBakeShowcase {
             // Re-trace on first entry, a rebake request, a sample-count change, or a
             // switch to a different bake scene variant (Emissive integrates a
             // different light than Baked/Mixed, so its cached bake is stale);
-            // re-encode only (cheap, no tracing) when the denoiser is toggled.
-            // Baked and Mixed share variant 0, so switching between them reuses the
-            // bake and only re-consumes it (Replace vs Subtractive) in rebuild.
-            let need_trace = self.request_rebake
-                || self.baked_at.is_none()
-                || self.baked_at != Some(self.samples)
-                || self.baked_kind != Some(self.bake_scene_variant());
-            if need_trace {
+            // re-encode only (no tracing) when the denoiser is toggled. Baked and
+            // Mixed share variant 0, so switching between them reuses the bake and
+            // only re-consumes it (Replace vs Subtractive) in rebuild.
+            let target = (self.samples, self.bake_scene_variant());
+            let current = self.live.as_ref().map(|l| l.target).or(self.baked_target);
+            if self.request_rebake || current != Some(target) {
                 self.request_rebake = false;
-                // Keep the setup-time unwrap figures; everything else is per bake.
-                self.timings = BakeTimings {
-                    unwrap_ms: self.timings.unwrap_ms,
-                    unwraps: self.timings.unwraps,
-                    ..Default::default()
-                };
-                if vpl::resources::build_log::enabled() {
-                    let _ = vpl::resources::build_log::drain();
-                }
-                let t0 = std::time::Instant::now();
-                self.trace_all(ctx);
-                self.encode_all(ctx);
-                self.bake_ms = t0.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
-                if vpl::resources::build_log::enabled() {
-                    let builds = vpl::resources::build_log::drain();
-                    self.timings.builds = builds.len() as u32;
-                    self.timings.build_ms = builds.iter().map(|(_, ms)| ms).sum();
-                }
-                let t = self.timings;
-                eprintln!(
-                    "lightmap bake: {} ms total | unwrap {:.0} ms ({}x, at setup) | gbuffer {:.0} ms ({}x) | \
-                     tracer setup {:.0} ms ({}x) | trace {:.0} ms ({}) | cleanup {:.0} ms (denoise {:.0}, stitch {:.0}, \
-                     dilate {:.0}, encode {:.0}; {:.2} Mtexel, {:.0} ms/Mtexel) | scene objects {:.0} ms \
-                     ({:.2} Mtexel, {:.0} ms/Mtexel) | scene pack {:.0} ms | upload {:.0} ms | builds {} ({:.0} ms)",
-                    self.bake_ms,
-                    t.unwrap_ms,
-                    t.unwraps,
-                    t.gbuffer_ms,
-                    t.gbuffers,
-                    t.tracer_ms,
-                    t.tracers,
-                    t.trace_ms,
-                    if t.hardware { "hardware" } else { "software" },
-                    t.cleanup_ms,
-                    t.denoise_ms,
-                    t.stitch_ms,
-                    t.dilate_ms,
-                    t.encode_ms,
-                    t.piece_texels as f32 / 1.0e6,
-                    t.ms_per_mtexel().0,
-                    t.scene_object_ms,
-                    t.scene_texels as f32 / 1.0e6,
-                    t.ms_per_mtexel().1,
-                    t.scene_pack_ms,
-                    t.upload_ms,
-                    t.builds,
-                    t.build_ms,
-                );
                 self.need_reencode = false;
-                self.built = true;
-                self.baked_kind = Some(self.bake_scene_variant());
+                self.start_bake(ctx, true);
             } else if self.need_reencode {
                 self.need_reencode = false;
-                self.encode_all(ctx);
+                // A bake still running restarts with the new setting; a finished
+                // one cleans up its cached raw atlases again.
+                let trace = self.live.is_some();
+                self.start_bake(ctx, trace);
             }
+        }
+        if self.live.is_some() {
+            self.step_bake(ctx);
+        } else {
+            let ms = ctx.dt * 1000.0;
+            self.idle_frame_ms = if self.idle_frame_ms == 0.0 {
+                ms
+            } else {
+                self.idle_frame_ms * 0.95 + ms * 0.05
+            };
         }
 
         self.apply_lightmaps(ctx);
@@ -1302,6 +1339,13 @@ impl Showcase for LightmapBakeShowcase {
             &["Baked GI", "Emissive GI", "Mixed", "Realtime only"],
         ) {
             self.mode = i;
+        }
+        if let Some((fraction, text)) = self.bake_progress() {
+            ui.add(
+                egui::ProgressBar::new(fraction)
+                    .desired_width(320.0)
+                    .text(text),
+            );
         }
     }
 
@@ -1388,34 +1432,42 @@ impl Showcase for LightmapBakeShowcase {
             "Scene atlas: {} objects in {} page(s) ({}^2)",
             self.scene_objects, self.scene_pages, self.scene_page_size
         ));
-        ui.label(format!("Samples: {}", self.baked_at.unwrap_or(0)));
+        ui.label(format!(
+            "Samples: {}",
+            self.baked_target.map_or(0, |(samples, _)| samples)
+        ));
         ui.label(format!("Bake time: {} ms", self.bake_ms));
         let t = &self.timings;
+        ui.label(format!(
+            "  over {} frames; worst frame {:.1} ms (idle {:.1})",
+            t.frames, t.worst_frame_ms, self.idle_frame_ms
+        ));
+        ui.label(format!(
+            "  bake work on this thread: {:.0} ms, worst frame {:.1} ms",
+            t.work_ms, t.worst_work_ms
+        ));
         ui.label(format!(
             "  unwrap (setup): {:.0} ms, {} calls",
             t.unwrap_ms, t.unwraps
         ));
         ui.label(format!(
-            "  texel G-buffer: {:.0} ms, {} calls",
-            t.gbuffer_ms, t.gbuffers
-        ));
-        ui.label(format!(
-            "  tracer setup: {:.0} ms, {} tracers",
-            t.tracer_ms, t.tracers
-        ));
-        ui.label(format!(
-            "  trace: {:.0} ms ({})",
-            t.trace_ms,
+            "  tracer setup: {:.0} ms, {} tracers ({})",
+            t.tracer_ms,
+            t.tracers,
             if t.hardware { "hardware" } else { "software" }
         ));
-        ui.label(format!("  cleanup: {:.0} ms", t.cleanup_ms));
+        ui.label(format!("  per-piece solves: {:.0} ms", t.trace_ms));
+        ui.label(format!(
+            "  per-piece cleanup (worker): {:.0} ms",
+            t.cleanup_ms
+        ));
         ui.label(format!(
             "    denoise {:.0}, stitch {:.0}, dilate {:.0}, encode {:.0}",
             t.denoise_ms, t.stitch_ms, t.dilate_ms, t.encode_ms
         ));
         ui.label(format!(
-            "  scene atlas: objects {:.0} ms, pack {:.0} ms",
-            t.scene_object_ms, t.scene_pack_ms
+            "  scene atlas: {:.0} ms, {} objects",
+            t.scene_ms, t.scene_objects
         ));
         ui.label(format!("  upload: {:.0} ms", t.upload_ms));
         if vpl::resources::build_log::enabled() {
@@ -1435,85 +1487,121 @@ impl Showcase for LightmapBakeShowcase {
     }
 }
 
-/// Where a bake's time went, shown in the side panel and printed once per
-/// bake. Wall-clock on this thread; the GPU stages wait for their readback, so
-/// they include the GPU work.
+/// Where a bake's time went, shown in the side panel and printed when it
+/// lands. The bake runs across frames, so the stages are wall-clock spans, and
+/// the per-frame figures are what it cost the thread that draws.
 #[derive(Default, Clone, Copy)]
 struct BakeTimings {
     /// xatlas, at setup.
     unwrap_ms: f32,
     unwraps: u32,
-    /// Texel G-buffer rasterisation, per piece and page.
-    gbuffer_ms: f32,
-    gbuffers: u32,
-    /// `Tracer::new`: kernel pipelines, scene upload and BVH, once per solve.
+    /// `Tracer::new`: kernel pipelines, scene upload and BVH.
     tracer_ms: f32,
     tracers: u32,
-    /// The path-traced solve itself, and the traversal it ran on.
-    trace_ms: f32,
+    /// Whether the solves traced in hardware.
     hardware: bool,
-    /// CPU cleanup of the per-piece atlases, and its stages.
+    /// From the start of the bake until the per-piece solves are in.
+    trace_ms: f32,
+    /// Per-piece cleanup on the worker thread, and its stages.
     cleanup_ms: f32,
     denoise_ms: f32,
     stitch_ms: f32,
     dilate_ms: f32,
     encode_ms: f32,
-    /// Texels the per-piece cleanup ran over.
-    piece_texels: u64,
-    /// The scene-atlas orchestrator's CPU work: per-object cleanup (the same
-    /// four stages) and packing. Its G-buffer and solve calls are counted above.
-    scene_object_ms: f32,
-    scene_pack_ms: f32,
-    scene_texels: u64,
+    /// The scene atlas job, from its start to its atlas.
+    scene_ms: f32,
+    scene_objects: u32,
     upload_ms: f32,
+    /// Frames the bake ran over; its own work on this thread, in all and in the
+    /// worst frame; the worst frame time while it ran.
+    frames: u32,
+    work_ms: f32,
+    worst_work_ms: f32,
+    worst_frame_ms: f32,
+    median_frame_ms: f32,
+    /// Directionality sum and count over the per-piece atlases.
+    directionality: (f64, u64),
     /// Pipelines and shader modules built during the bake. Only counted when
     /// the build log is on (`VPL_BUILD_LOG`).
     builds: u32,
     build_ms: f32,
 }
 
-impl BakeTimings {
-    /// CPU cleanup cost per million texels, per-piece path then scene path.
-    fn ms_per_mtexel(&self) -> (f32, f32) {
-        let rate = |ms: f32, texels: u64| {
-            if texels == 0 {
-                0.0
-            } else {
-                ms / (texels as f32 / 1.0e6)
-            }
-        };
-        (
-            rate(self.cleanup_ms, self.piece_texels),
-            rate(self.scene_object_ms, self.scene_texels),
-        )
-    }
+/// A bake running across frames.
+struct LiveBake {
+    /// The samples and scene variant it bakes for.
+    target: (u32, usize),
+    started: Instant,
+    /// Per-piece solves not yet started, as (piece, atlas page), and how many
+    /// there were.
+    pending: VecDeque<(usize, u32)>,
+    piece_total: usize,
+    /// The tracer and G-buffer pipeline, on their way from the worker that
+    /// builds them; used by the per-piece solves, then handed to the scene job.
+    tools_rx: Option<mpsc::Receiver<BakeTools>>,
+    tools: Option<BakeTools>,
+    solving: Option<(usize, u32, PieceSolve)>,
+    /// Cleaned pieces waiting to upload, one a frame, and texture uploads in
+    /// flight as (piece, whether it is the direction atlas, job).
+    uploads: VecDeque<PieceEncoded>,
+    texture_jobs: Vec<(usize, bool, vpl::resources::JobId)>,
+    /// Frame times while the bake ran.
+    frame_ms: Vec<f32>,
+    /// The per-piece cleanup, running on a worker thread.
+    encode: Option<mpsc::Receiver<Vec<PieceEncoded>>>,
+    encode_started: bool,
+    /// The per-piece atlases are cleaned and uploaded.
+    encoded: bool,
+    scene: Option<SceneStage>,
+    scene_started: Instant,
+    scene_done: bool,
 }
 
-/// Injected GPU passes for `bake_scene_prepared`: the renderer's texel G-buffer
-/// rasteriser and GI solve, run against a fixed occluder scene. The orchestrator
-/// in viewport-lib-lightbake owns the CPU steps (denoise, stitch, encode, pack) and
-/// calls these two for the GPU work, so the bake crate stays GPU-free.
-struct ScenePasses<'a> {
-    device: &'a wgpu::Device,
-    queue: &'a wgpu::Queue,
+/// What the GPU passes are built from, made on a worker thread at the start of
+/// a bake.
+struct BakeTools {
     tracer: Tracer,
-    settings: RtSettings,
-    timings: &'a mut BakeTimings,
-    /// GPU pass time, readable while the orchestrator holds the passes.
-    gpu_ms: &'a std::cell::Cell<f32>,
+    gbuffer: std::sync::Arc<vpl::bake::TexelGBufferPass>,
+    ms: f32,
 }
 
-impl viewport_lib_lightbake::SceneBakePasses for ScenePasses<'_> {
-    fn texel_gbuffer(
+/// One per-piece solve in flight: its G-buffer on the way back, then the GI
+/// solve over it.
+enum PieceSolve {
+    Gbuffer(vpl::bake::TexelGBufferJob),
+    Trace(vpl::bake::TexelGBuffer, vpl::raytrace::DirectionalBakeJob),
+}
+
+/// The scene-atlas job and the pieces it bakes, in its object order.
+struct SceneStage {
+    job: viewport_lib_lightbake::SceneBakeJob,
+    passes: LivePasses,
+    pieces: Vec<usize>,
+}
+
+/// The renderer's texel G-buffer and GI solve as polled passes for the scene
+/// bake job: each starts a job and polls it, submitting a few dispatches of the
+/// solve per poll, against a fixed occluder scene.
+struct LivePasses {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    tracer: Tracer,
+    gbuffer_pass: std::sync::Arc<vpl::bake::TexelGBufferPass>,
+    settings: RtSettings,
+    gbuffer: Option<vpl::bake::TexelGBufferJob>,
+    solve: Option<vpl::raytrace::DirectionalBakeJob>,
+}
+
+impl viewport_lib_lightbake::SceneBakeJobPasses for LivePasses {
+    fn start_texel_gbuffer(
         &mut self,
         geom: &viewport_lib_lightbake::BakeGeometry<'_>,
         width: u32,
         height: u32,
-    ) -> viewport_lib_lightbake::TexelGbuffer {
-        let t = std::time::Instant::now();
-        let g = rasterize_texel_gbuffer(
-            self.device,
-            self.queue,
+    ) {
+        self.gbuffer = Some(self.gbuffer_pass.begin(
+            &self.device,
+            &self.queue,
             &TexelGeometry {
                 positions: geom.positions,
                 normals: geom.normals,
@@ -1523,76 +1611,257 @@ impl viewport_lib_lightbake::SceneBakePasses for ScenePasses<'_> {
             },
             width,
             height,
-        );
-        self.timings.gbuffer_ms += ms_since(t);
-        self.timings.gbuffers += 1;
-        self.gpu_ms.set(self.gpu_ms.get() + ms_since(t));
-        viewport_lib_lightbake::TexelGbuffer {
+        ));
+    }
+
+    fn poll_texel_gbuffer(&mut self) -> Option<viewport_lib_lightbake::TexelGbuffer> {
+        let g = self.gbuffer.as_mut()?.poll(&self.device)?;
+        self.gbuffer = None;
+        Some(viewport_lib_lightbake::TexelGbuffer {
             width: g.width,
             height: g.height,
             world_pos: g.world_pos,
             world_normal: g.world_normal,
-        }
+        })
     }
 
-    fn solve_gi(
-        &mut self,
-        gbuffer: &viewport_lib_lightbake::TexelGbuffer,
-    ) -> viewport_lib_lightbake::GiBake {
-        let t = std::time::Instant::now();
-        let bake = timed_solve(
-            self.device,
-            self.queue,
-            &mut self.tracer,
-            &TexelSurfaces {
-                width: gbuffer.width,
-                height: gbuffer.height,
-                world_pos: &gbuffer.world_pos,
-                world_normal: &gbuffer.world_normal,
-            },
-            &self.settings,
-            self.timings,
+    fn start_solve_gi(&mut self, gbuffer: &viewport_lib_lightbake::TexelGbuffer) {
+        let surfaces = TexelSurfaces {
+            width: gbuffer.width,
+            height: gbuffer.height,
+            world_pos: &gbuffer.world_pos,
+            world_normal: &gbuffer.world_normal,
+        };
+        let hardware = self.tracer.backend() == vpl::raytrace::RtBackend::Hardware;
+        self.solve = Some(
+            self.tracer
+                .begin_directional(&self.device, &surfaces, &self.settings)
+                .samples_per_dispatch(samples_per_dispatch(
+                    gbuffer.width * gbuffer.height,
+                    hardware,
+                )),
         );
-        self.gpu_ms.set(self.gpu_ms.get() + ms_since(t));
-        viewport_lib_lightbake::GiBake {
+    }
+
+    fn poll_solve_gi(&mut self) -> Option<viewport_lib_lightbake::GiBake> {
+        let job = self.solve.as_mut()?;
+        job.step(&self.device, &self.queue, 1);
+        let bake = job.poll(&self.device)?;
+        self.solve = None;
+        Some(viewport_lib_lightbake::GiBake {
             irradiance: bake.irradiance,
+        })
+    }
+}
+
+/// What the cleanup thread needs from one piece, copied so it can run there.
+struct PieceInput {
+    piece: usize,
+    pos: Vec<[f32; 3]>,
+    uv1: Vec<Vec2>,
+    idx: Vec<u32>,
+    pages: Vec<u32>,
+    width: u32,
+    height: u32,
+    page_count: u32,
+    raw_irradiance: Vec<Vec<[f32; 4]>>,
+    raw_direction: Vec<Vec<[f32; 4]>>,
+    gbuf_nrm: Vec<Vec<[f32; 4]>>,
+    gbuf_pos: Vec<Vec<[f32; 4]>>,
+    /// Normal-mapped pieces get the directional atlas too.
+    directional: bool,
+}
+
+impl PieceInput {
+    fn new(piece: usize, p: &Piece) -> Self {
+        Self {
+            piece,
+            pos: p.pos.clone(),
+            uv1: p.uv1.clone(),
+            idx: p.idx.clone(),
+            pages: p.pages.clone(),
+            width: p.atlas_w,
+            height: p.atlas_h,
+            page_count: p.atlas_count.max(1),
+            raw_irradiance: p.raw_irradiance.clone(),
+            raw_direction: p.raw_direction.clone(),
+            gbuf_nrm: p.gbuf_nrm.clone(),
+            gbuf_pos: p.gbuf_pos.clone(),
+            directional: p.normal_tex.is_some(),
         }
+    }
+}
+
+/// One piece's atlases, ready to upload.
+struct PieceEncoded {
+    piece: usize,
+    width: u32,
+    height: u32,
+    pages: u32,
+    /// Linear diffuse radiance (E / pi), layer-major across pages.
+    layers: Vec<f32>,
+    /// Dominant direction xyz + directionality w, for a directional piece.
+    direction: Option<Vec<f32>>,
+    /// Directionality sum and count over covered texels.
+    directionality: (f64, u64),
+    /// Denoise, stitch, dilate and encode, in ms.
+    stages: [f32; 4],
+}
+
+/// Denoise (or not), stitch, dilate and encode one piece's raw bake. Runs on
+/// the cleanup thread.
+fn encode_piece(input: &PieceInput, denoise_on: bool) -> PieceEncoded {
+    let (aw, ah) = (input.width, input.height);
+    let atlas_count = input.page_count;
+    let inv_pi = 1.0 / std::f32::consts::PI;
+    let page_texels = (aw * ah) as usize;
+    let p = atlas_count as usize;
+    let mut stages = [0.0f32; 4];
+
+    // Denoise is optional and local, so it runs per page on that page's own
+    // atlas. Dilation is not optional; it comes after the stitch below.
+    let t = Instant::now();
+    let mut denoised_pages: Vec<Vec<[f32; 4]>> = Vec::with_capacity(p);
+    for page in 0..p {
+        let raw = &input.raw_irradiance[page];
+        if raw.is_empty() {
+            denoised_pages.push(vec![[0.0f32; 4]; page_texels]);
+            continue;
+        }
+        denoised_pages.push(if denoise_on {
+            denoise(
+                raw,
+                &input.gbuf_pos[page],
+                &input.gbuf_nrm[page],
+                aw,
+                ah,
+                &DenoiseParams::default(),
+            )
+        } else {
+            raw.clone()
+        });
+    }
+    stages[0] = ms_since(t);
+
+    // Stitch every chart seam at once, including cuts whose two charts landed
+    // on different atlas pages. Stack the pages into one tall atlas (page k ->
+    // vertical band k) and shift each vertex's UV into its band; stitch welds
+    // the two sides of a cut by 3D position, so a cross-page cut reconciles
+    // exactly like a within-page one. Single-page pieces stack to themselves.
+    let t = Instant::now();
+    let stacked: Vec<[f32; 4]> = denoised_pages.concat();
+    let inv_p = 1.0 / p as f32;
+    let uv_stacked: Vec<[f32; 2]> = input
+        .uv1
+        .iter()
+        .enumerate()
+        .map(|(v, u)| {
+            let page = input
+                .pages
+                .get(v)
+                .copied()
+                .unwrap_or(0)
+                .min(atlas_count - 1) as f32;
+            [u.x, (u.y + page) * inv_p]
+        })
+        .collect();
+    let stitched = stitch(
+        &stacked,
+        aw,
+        ah * atlas_count,
+        &StitchGeometry {
+            positions: &input.pos,
+            uv1: &uv_stacked,
+            indices: &input.idx,
+        },
+        &StitchParams::default(),
+    );
+    stages[1] = ms_since(t);
+
+    // Per page: dilate its band into the gutter, encode, and write its layer.
+    let mut layers = vec![0.0f32; page_texels * 4 * p];
+    let mut direction = None;
+    let (mut dir_sum, mut dir_n) = (0.0f64, 0u64);
+    for page in 0..p {
+        if input.raw_irradiance[page].is_empty() {
+            continue; // leaves this layer zeroed (no charts on this page)
+        }
+        let band = &stitched[page * page_texels..(page + 1) * page_texels];
+        let t = Instant::now();
+        let cleaned = dilate(band, aw, ah, 6);
+        stages[2] += ms_since(t);
+        // Encode into the neutral directional lightmap (exercises the encoder
+        // and yields the directionality stat); the display samples the
+        // radiance channel.
+        let t = Instant::now();
+        let lm = encode(
+            aw,
+            ah,
+            &cleaned,
+            Some(&input.raw_direction[page]),
+            &input.gbuf_nrm[page],
+            Encoding::DominantDirection,
+        );
+        stages[3] += ms_since(t);
+        if let Some(dir) = lm.direction() {
+            for d in dir {
+                if d[3] > 0.0 {
+                    dir_sum += d[3] as f64;
+                    dir_n += 1;
+                }
+            }
+        }
+        // Linear diffuse radiance (incident irradiance / pi). The material keeps
+        // the true albedo, so Replace mode (base_colour * lm.rgb) gives
+        // albedo * E/pi; the renderer's HDR pipeline tonemaps once for display.
+        let base = page * page_texels * 4;
+        for (t, px) in lm.radiance().iter().enumerate() {
+            if px[3] <= 0.5 {
+                continue;
+            }
+            layers[base + t * 4] = px[0] * inv_pi;
+            layers[base + t * 4 + 1] = px[1] * inv_pi;
+            layers[base + t * 4 + 2] = px[2] * inv_pi;
+            layers[base + t * 4 + 3] = 1.0;
+        }
+
+        // Normal-mapped pieces get the directional atlas too, so the bumps
+        // respond to where the baked light came from. These are single-page.
+        if atlas_count == 1
+            && input.directional
+            && let Some(dir) = lm.direction()
+        {
+            // Dilate the direction atlas into the gutter using the radiance
+            // coverage as the mask (its own w is directionality, not coverage),
+            // so bilinear at a chart edge reads a real direction.
+            let covered: Vec<bool> = cleaned.iter().map(|c| c[3] > 0.5).collect();
+            let dir = dilate_masked(dir, &covered, aw as usize, ah as usize, 6);
+            direction = Some(dir.iter().flatten().copied().collect());
+        }
+    }
+    PieceEncoded {
+        piece: input.piece,
+        width: aw,
+        height: ah,
+        pages: atlas_count,
+        layers,
+        direction,
+        directionality: (dir_sum, dir_n),
+        stages,
+    }
+}
+
+fn texel_surfaces(g: &vpl::bake::TexelGBuffer) -> TexelSurfaces<'_> {
+    TexelSurfaces {
+        width: g.width,
+        height: g.height,
+        world_pos: &g.world_pos,
+        world_normal: &g.world_normal,
     }
 }
 
 fn ms_since(t: std::time::Instant) -> f32 {
     t.elapsed().as_secs_f32() * 1000.0
-}
-
-/// A tracer for `scene`, timed. One serves every solve against that scene:
-/// the upload and BVH build are per scene, not per object.
-fn new_tracer(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    scene: &RtScene,
-    timings: &mut BakeTimings,
-) -> Tracer {
-    let t = std::time::Instant::now();
-    let tracer = Tracer::new(device, queue, scene);
-    timings.tracer_ms += ms_since(t);
-    timings.tracers += 1;
-    timings.hardware = tracer.backend() == vpl::raytrace::RtBackend::Hardware;
-    tracer
-}
-
-/// `Tracer::bake_directional`, timed.
-fn timed_solve(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    tracer: &mut Tracer,
-    surfaces: &TexelSurfaces<'_>,
-    settings: &RtSettings,
-    timings: &mut BakeTimings,
-) -> vpl::raytrace::DirectionalBake {
-    let t = std::time::Instant::now();
-    let bake = tracer.bake_directional(device, queue, surfaces, settings);
-    timings.trace_ms += ms_since(t);
-    bake
 }
 
 /// Upload a primitive as a baked-or-context [`Piece`], keeping its local geometry.

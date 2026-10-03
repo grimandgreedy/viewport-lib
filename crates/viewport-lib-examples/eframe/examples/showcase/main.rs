@@ -14,6 +14,8 @@
 //!
 //! cargo run --release -p viewport-lib-examples-eframe --no-default-features \
 //!     --features wgpu30,showcase --example showcase
+//!
+//! `VPL_SHOWCASE=<n>` opens on showcase n (1-based) instead of the first.
 
 mod camera;
 mod showcase;
@@ -52,18 +54,24 @@ fn main() -> eframe::Result {
             viewport_lib_plugins::item_types::install(session.renderer_mut(), &rs.device);
 
             let mut list = showcases::all();
+            // `VPL_SHOWCASE=<n>` opens on showcase n (1-based) instead of the first.
+            let active = std::env::var("VPL_SHOWCASE")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|&n| (1..=list.len()).contains(&n))
+                .map_or(0, |n| n - 1);
             let mut setup = SetupCtx {
                 session: &mut session,
                 device: &rs.device,
                 queue: &rs.queue,
             };
-            list[0].setup(&mut setup);
+            list[active].setup(&mut setup);
 
             Ok(Box::new(App {
                 session,
                 camera: camera::CameraRig::new(),
                 list,
-                active: 0,
+                active,
                 target: None,
                 show_controls: false,
             }))
