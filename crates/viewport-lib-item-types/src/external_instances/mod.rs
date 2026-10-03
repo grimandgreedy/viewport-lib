@@ -168,7 +168,8 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::ExternalInstancesGpu::new(device, resources, bgl));
-        gpu.pipelines.request_all();
+        // The type does not draw into the LDR pass.
+        gpu.pipelines.get(pipeline::COLOUR_HDR);
     }
 
     fn on_device_recreated(&mut self, device: &gpu::Device, _queue: &gpu::Queue) {

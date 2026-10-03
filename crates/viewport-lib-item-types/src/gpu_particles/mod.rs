@@ -324,7 +324,8 @@ impl ItemTypePlugin for GpuParticlesPlugin {
         self.systems.allocated_bytes()
     }
 
-    /// Builds the compute pipelines and asks for every draw pipeline.
+    /// Builds the compute pipelines and asks for every HDR draw pipeline; the
+    /// type does not draw into the LDR pass.
     fn warm(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -336,7 +337,15 @@ impl ItemTypePlugin for GpuParticlesPlugin {
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::ParticleGpu::new(device, resources, layouts));
-        gpu.pipelines.request_all();
+        for route in [pipeline::SPRITE, pipeline::SPRITE_LIT, pipeline::MESH] {
+            for blend in [
+                viewport_lib::renderer::SpriteBlend::AlphaBlend,
+                viewport_lib::renderer::SpriteBlend::Additive,
+                viewport_lib::renderer::SpriteBlend::Premultiplied,
+            ] {
+                gpu.pipelines.get(pipeline::draw_index(route, blend, true));
+            }
+        }
     }
 
     fn on_device_recreated(
