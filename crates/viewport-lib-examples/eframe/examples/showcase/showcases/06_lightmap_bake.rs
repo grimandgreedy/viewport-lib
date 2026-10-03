@@ -302,6 +302,7 @@ impl LightmapBakeShowcase {
         // piece is an occluder, including the scene-atlas heroes), plus a key light
         // and a soft sky.
         let scene = self.build_rt_scene();
+        let mut tracer = new_tracer(device, queue, &scene, &mut self.timings);
 
         let settings = RtSettings {
             samples: self.samples,
@@ -365,7 +366,7 @@ impl LightmapBakeShowcase {
                 let bake = timed_solve(
                     device,
                     queue,
-                    &scene,
+                    &mut tracer,
                     &TexelSurfaces {
                         width: gbuf.width,
                         height: gbuf.height,
@@ -643,10 +644,11 @@ impl LightmapBakeShowcase {
             let mut mark = (std::time::Instant::now(), 0.0f32);
             let mut object_ms = 0.0f32;
             let mut pack_ms = 0.0f32;
+            let tracer = new_tracer(device, queue, &rt, &mut self.timings);
             let mut passes = ScenePasses {
                 device,
                 queue,
-                scene: &rt,
+                tracer,
                 settings: RtSettings {
                     samples: self.samples,
                     max_bounces: 4,
@@ -1494,7 +1496,7 @@ impl BakeTimings {
 struct ScenePasses<'a> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
-    scene: &'a RtScene,
+    tracer: Tracer,
     settings: RtSettings,
     timings: &'a mut BakeTimings,
     /// GPU pass time, readable while the orchestrator holds the passes.
@@ -1541,7 +1543,7 @@ impl viewport_lib_lightbake::SceneBakePasses for ScenePasses<'_> {
         let bake = timed_solve(
             self.device,
             self.queue,
-            self.scene,
+            &mut self.tracer,
             &TexelSurfaces {
                 width: gbuffer.width,
                 height: gbuffer.height,
@@ -1562,21 +1564,31 @@ fn ms_since(t: std::time::Instant) -> f32 {
     t.elapsed().as_secs_f32() * 1000.0
 }
 
-/// `bake_lightmap_directional`, split so the tracer's construction and the
-/// solve are timed apart.
-fn timed_solve(
+/// A tracer for `scene`, timed. One serves every solve against that scene:
+/// the upload and BVH build are per scene, not per object.
+fn new_tracer(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     scene: &RtScene,
+    timings: &mut BakeTimings,
+) -> Tracer {
+    let t = std::time::Instant::now();
+    let tracer = Tracer::new(device, queue, scene);
+    timings.tracer_ms += ms_since(t);
+    timings.tracers += 1;
+    timings.hardware = tracer.backend() == vpl::raytrace::RtBackend::Hardware;
+    tracer
+}
+
+/// `Tracer::bake_directional`, timed.
+fn timed_solve(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    tracer: &mut Tracer,
     surfaces: &TexelSurfaces<'_>,
     settings: &RtSettings,
     timings: &mut BakeTimings,
 ) -> vpl::raytrace::DirectionalBake {
-    let t = std::time::Instant::now();
-    let mut tracer = Tracer::new(device, queue, scene);
-    timings.tracer_ms += ms_since(t);
-    timings.tracers += 1;
-    timings.hardware = tracer.backend() == vpl::raytrace::RtBackend::Hardware;
     let t = std::time::Instant::now();
     let bake = tracer.bake_directional(device, queue, surfaces, settings);
     timings.trace_ms += ms_since(t);

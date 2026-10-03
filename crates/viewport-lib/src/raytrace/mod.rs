@@ -1661,19 +1661,13 @@ impl Tracer {
         surfaces: &TexelSurfaces,
         settings: &RtSettings,
     ) -> RtImage {
-        let width = surfaces.width.max(1);
-        let height = surfaces.height.max(1);
-        match self.run_bake(device, queue, surfaces, settings) {
-            Some((irradiance, _direction)) => RtImage {
-                width,
-                height,
-                rgba: irradiance,
-            },
-            None => RtImage {
-                width,
-                height,
-                rgba: vec![0.0; (width * height * 4) as usize],
-            },
+        let bake = self
+            .begin_directional(device, surfaces, settings)
+            .wait(device, queue);
+        RtImage {
+            width: bake.width,
+            height: bake.height,
+            rgba: bake.irradiance,
         }
     }
 
@@ -1684,6 +1678,9 @@ impl Tracer {
     /// encode stage can produce a directional lightmap. See [`DirectionalBake`]
     /// for the layout. Returns all-black atlases if the scene has no geometry or
     /// the surface slices are the wrong length.
+    ///
+    /// Blocks until the result is read back; [`begin_directional`](Self::begin_directional)
+    /// runs the same solve a few samples at a time.
     pub fn bake_directional(
         &mut self,
         device: &crate::gpu::Device,
@@ -1691,43 +1688,41 @@ impl Tracer {
         surfaces: &TexelSurfaces,
         settings: &RtSettings,
     ) -> DirectionalBake {
-        let width = surfaces.width.max(1);
-        let height = surfaces.height.max(1);
-        match self.run_bake(device, queue, surfaces, settings) {
-            Some((irradiance, direction)) => DirectionalBake {
-                width,
-                height,
-                irradiance,
-                direction,
-            },
-            None => DirectionalBake {
-                width,
-                height,
-                irradiance: vec![0.0; (width * height * 4) as usize],
-                direction: vec![0.0; (width * height * 4) as usize],
-            },
-        }
+        self.begin_directional(device, surfaces, settings)
+            .wait(device, queue)
     }
 
-    /// Run the bake and read back both the irradiance and direction atlases as
-    /// row-major RGBA f32. Returns `None` (leaving the caller to supply black
-    /// atlases) when the scene has no geometry or the surface slices do not match
-    /// `width * height`.
-    fn run_bake(
-        &mut self,
+    /// Start the solve [`bake_directional`](Self::bake_directional) runs, and
+    /// return without submitting any of it. Advance the job with
+    /// [`DirectionalBakeJob::step`] and collect the result with
+    /// [`DirectionalBakeJob::poll`], a frame at a time, so an application keeps
+    /// drawing while it bakes. The job holds what it needs, so it does not
+    /// borrow the tracer.
+    pub fn begin_directional(
+        &self,
         device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
         surfaces: &TexelSurfaces,
         settings: &RtSettings,
-    ) -> Option<(Vec<f32>, Vec<f32>)> {
+    ) -> DirectionalBakeJob {
         let width = surfaces.width.max(1);
         let height = surfaces.height.max(1);
         let texels = (width * height) as usize;
+        let mut job = DirectionalBakeJob {
+            width,
+            height,
+            gpu: None,
+            target: settings.samples.max(1),
+            done: 0,
+            per_dispatch: MAX_SAMPLES_PER_DISPATCH,
+            seed: settings.seed,
+            readback: None,
+            finished: false,
+        };
         if !self.has_geometry
             || surfaces.world_pos.len() != texels
             || surfaces.world_normal.len() != texels
         {
-            return None;
+            return job;
         }
 
         let bytes = (texels as u64) * 16;
@@ -1753,9 +1748,17 @@ impl Tracer {
         };
         let accum_buf = storage_out("rt_bake_accum");
         let accum_dir_buf = storage_out("rt_bake_accum_dir");
+        // The job's own frame uniform, so jobs on one tracer can be stepped in
+        // any order without overwriting each other's.
+        let frame_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("rt_bake_frame"),
+            size: std::mem::size_of::<FrameUniform>() as u64,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         #[allow(unused_mut)]
         let mut entries = vec![
-            bg_entry(0, &self.frame_buf),
+            bg_entry(0, &frame_buf),
             bg_entry(1, &self.node_buf),
             bg_entry(2, &self.tri_buf),
             bg_entry(3, &self.mat_buf),
@@ -1797,7 +1800,8 @@ impl Tracer {
                 0.0,
             ],
             dims: [width, height, self.num_lights, settings.max_bounces.max(1)],
-            params: [0, 0, 0, 0],
+            // samples, sample base and seed are set per dispatch.
+            params: [0, 0, 0, self.has_env as u32],
             // The bake path samples the environment on miss only; it does not use
             // the importance-sampling tables, so leave the metadata disabled.
             env_dist: [0.0; 4],
@@ -1805,44 +1809,17 @@ impl Tracer {
             inst: self.inst,
         };
 
-        // Batch the samples so no single dispatch runs long enough to risk a GPU
-        // watchdog reset; `sample_base` blends each batch into the running mean.
-        const BATCH: u32 = 16;
-        let gx = width.div_ceil(8);
-        let gy = height.div_ceil(8);
-        let target = settings.samples.max(1);
-        let mut done = 0u32;
-        while done < target {
-            let this_batch = (target - done).min(BATCH);
-            let mut fu = base_frame;
-            fu.params = [
-                this_batch,
-                done,
-                frame_seed(done, settings.seed),
-                self.has_env as u32,
-            ];
-            queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&fu));
-
-            let mut encoder =
-                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-                    label: Some("rt_bake_encoder"),
-                });
-            {
-                let mut cpass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
-                    label: Some("rt_bake_pass"),
-                    timestamp_writes: None,
-                });
-                cpass.set_pipeline(&self.bake_pipeline);
-                cpass.set_bind_group(0, &bind_group, &[]);
-                cpass.dispatch_workgroups(gx, gy, 1);
-            }
-            queue.submit(std::iter::once(encoder.finish()));
-            done += this_batch;
-        }
-
-        let irradiance = readback_f32(device, queue, &accum_buf, bytes);
-        let direction = readback_f32(device, queue, &accum_dir_buf, bytes);
-        Some((irradiance, direction))
+        job.gpu = Some(BakeJobGpu {
+            pipeline: self.bake_pipeline.clone(),
+            frame_buf,
+            bind_group,
+            accum_buf,
+            accum_dir_buf,
+            base_frame,
+            bytes,
+            groups: [width.div_ceil(8), height.div_ceil(8)],
+        });
+        job
     }
 
     /// Bake a per-light static-occluder shadowmask atlas.
@@ -2000,37 +1977,181 @@ impl Tracer {
     }
 }
 
-/// Copy a storage buffer to a staging buffer and read it back as `f32`.
+/// Most samples one dispatch accumulates, so no dispatch runs long enough to
+/// risk a GPU watchdog reset.
+const MAX_SAMPLES_PER_DISPATCH: u32 = 16;
+
+/// A lightmap solve in progress, from [`Tracer::begin_directional`].
+///
+/// The samples are submitted a dispatch at a time by [`step`](Self::step).
+/// Once the last is submitted the result is copied back, and
+/// [`poll`](Self::poll) hands it over when it arrives. Each dispatch draws
+/// fresh random numbers, so the result depends on
+/// [`samples_per_dispatch`](Self::samples_per_dispatch) but not on how the
+/// dispatches are spread over steps. Dropping the job abandons the solve.
+pub struct DirectionalBakeJob {
+    width: u32,
+    height: u32,
+    /// `None` when there is nothing to trace (no geometry, or surfaces of the
+    /// wrong length); the result is then black.
+    gpu: Option<BakeJobGpu>,
+    target: u32,
+    done: u32,
+    per_dispatch: u32,
+    seed: u32,
+    readback: Option<(
+        crate::resources::readback::PendingReadback,
+        crate::resources::readback::PendingReadback,
+    )>,
+    finished: bool,
+}
+
+struct BakeJobGpu {
+    pipeline: crate::gpu::ComputePipeline,
+    frame_buf: crate::gpu::Buffer,
+    bind_group: crate::gpu::BindGroup,
+    accum_buf: crate::gpu::Buffer,
+    accum_dir_buf: crate::gpu::Buffer,
+    base_frame: FrameUniform,
+    bytes: u64,
+    groups: [u32; 2],
+}
+
+impl DirectionalBakeJob {
+    /// Samples per dispatch, 1 to 16; 16 unless set. Fewer makes each
+    /// dispatch shorter, which keeps the frames an application draws while
+    /// baking from stalling behind it. Set it before the first step.
+    pub fn samples_per_dispatch(mut self, samples: u32) -> Self {
+        self.per_dispatch = samples.clamp(1, MAX_SAMPLES_PER_DISPATCH);
+        self
+    }
+
+    /// Samples per texel the solve takes in all.
+    pub fn samples(&self) -> u32 {
+        self.target
+    }
+
+    /// Samples submitted so far.
+    pub fn samples_submitted(&self) -> u32 {
+        self.done
+    }
+
+    /// Submit up to `dispatches` more dispatches. Once the last sample is
+    /// submitted, start copying the result back; after that it does nothing.
+    pub fn step(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        dispatches: u32,
+    ) {
+        let Some(gpu) = &self.gpu else {
+            return;
+        };
+        for _ in 0..dispatches {
+            if self.done >= self.target {
+                break;
+            }
+            let this_batch = (self.target - self.done).min(self.per_dispatch);
+            let mut fu = gpu.base_frame;
+            fu.params[0] = this_batch;
+            fu.params[1] = self.done;
+            fu.params[2] = frame_seed(self.done, self.seed);
+            queue.write_buffer(&gpu.frame_buf, 0, bytemuck::bytes_of(&fu));
+            let mut encoder =
+                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                    label: Some("rt_bake_encoder"),
+                });
+            {
+                let mut cpass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
+                    label: Some("rt_bake_pass"),
+                    timestamp_writes: None,
+                });
+                cpass.set_pipeline(&gpu.pipeline);
+                cpass.set_bind_group(0, &gpu.bind_group, &[]);
+                cpass.dispatch_workgroups(gpu.groups[0], gpu.groups[1], 1);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+            self.done += this_batch;
+        }
+        if self.done >= self.target && self.readback.is_none() {
+            let read = |buf| {
+                crate::resources::readback::PendingReadback::buffer(device, queue, buf, gpu.bytes)
+            };
+            self.readback = Some((read(&gpu.accum_buf), read(&gpu.accum_dir_buf)));
+        }
+    }
+
+    /// The result, the first time it is called after the GPU has finished and
+    /// the copy has arrived; `None` before that, and after it has been handed
+    /// over. Never waits, and submits nothing: call [`step`](Self::step) too.
+    pub fn poll(&mut self, device: &crate::gpu::Device) -> Option<DirectionalBake> {
+        if self.finished {
+            return None;
+        }
+        if self.gpu.is_some() {
+            let (irr, dir) = self.readback.as_ref()?;
+            if !(irr.poll(device) && dir.poll(device)) {
+                return None;
+            }
+        }
+        self.finished = true;
+        Some(self.take())
+    }
+
+    /// Submit whatever is left and block until the result is back.
+    pub fn wait(
+        mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) -> DirectionalBake {
+        self.step(device, queue, u32::MAX);
+        if let Some((irr, dir)) = &self.readback {
+            irr.wait(device);
+            dir.wait(device);
+        }
+        self.take()
+    }
+
+    fn take(&mut self) -> DirectionalBake {
+        let len = (self.width * self.height * 4) as usize;
+        let read = |r: crate::resources::readback::PendingReadback| {
+            r.take()
+                .map(|bytes| floats_from_bytes(&bytes))
+                .unwrap_or_else(|| vec![0.0; len])
+        };
+        let (irradiance, direction) = match self.readback.take() {
+            Some((irr, dir)) => (read(irr), read(dir)),
+            None => (vec![0.0; len], vec![0.0; len]),
+        };
+        DirectionalBake {
+            width: self.width,
+            height: self.height,
+            irradiance,
+            direction,
+        }
+    }
+}
+
+fn floats_from_bytes(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect()
+}
+
+/// Copy a storage buffer back and read it as `f32`, blocking.
 fn readback_f32(
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
     src: &crate::gpu::Buffer,
     bytes: u64,
 ) -> Vec<f32> {
-    let staging = device.create_buffer(&crate::gpu::BufferDescriptor {
-        label: Some("rt_bake_staging"),
-        size: bytes,
-        usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-        label: Some("rt_bake_readback"),
-    });
-    encoder.copy_buffer_to_buffer(src, 0, &staging, 0, bytes);
-    queue.submit(std::iter::once(encoder.finish()));
-
-    let slice = staging.slice(..);
-    slice.map_async(crate::gpu::MapMode::Read, |_| {});
-    let _ = device.poll(crate::gpu::PollType::Wait {
-        submission_index: None,
-        timeout: Some(std::time::Duration::from_secs(60)),
-    });
-    let out: Vec<f32> = {
-        let data = crate::gpu::mapped_range(slice);
-        bytemuck::cast_slice::<u8, f32>(&data).to_vec()
-    };
-    staging.unmap();
-    out
+    let pending = crate::resources::readback::PendingReadback::buffer(device, queue, src, bytes);
+    pending.wait(device);
+    pending
+        .take()
+        .map(|b| floats_from_bytes(&b))
+        .unwrap_or_else(|| vec![0.0; (bytes / 4) as usize])
 }
 
 /// Bake incident irradiance into a lightmap atlas from per-texel surfaces.

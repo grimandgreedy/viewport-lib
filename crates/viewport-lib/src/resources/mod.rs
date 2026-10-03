@@ -38,6 +38,9 @@ pub use pipeline_slot::PipelineCompilation;
 mod plugin_builders;
 mod postprocess;
 pub(crate) use postprocess::TargetGroups;
+/// A GPU readback that can be polled instead of waited on.
+#[cfg(any(feature = "raytrace", feature = "bake"))]
+pub(crate) mod readback;
 pub(crate) mod resource_deps;
 /// Group-0/1 camera, per-object, and clip bind plumbing.
 pub(crate) mod scene_bindings;

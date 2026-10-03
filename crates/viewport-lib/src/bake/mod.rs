@@ -68,6 +68,9 @@ impl TexelGBuffer {
 ///
 /// An empty mesh (no indices) returns an all-empty buffer without touching the
 /// GPU.
+///
+/// Blocks until the result is read back. [`begin_texel_gbuffer`] does the same
+/// work without waiting, for a bake that runs while the application draws.
 pub fn rasterize_texel_gbuffer(
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
@@ -75,9 +78,79 @@ pub fn rasterize_texel_gbuffer(
     width: u32,
     height: u32,
 ) -> TexelGBuffer {
+    begin_texel_gbuffer(device, queue, geom, width, height).wait(device)
+}
+
+/// A texel G-buffer on its way back from the GPU, from [`begin_texel_gbuffer`].
+pub struct TexelGBufferJob {
+    width: u32,
+    height: u32,
+    /// Position and normal readbacks; `None` for an empty mesh, which has
+    /// nothing to read.
+    readback: Option<(
+        crate::resources::readback::PendingReadback,
+        crate::resources::readback::PendingReadback,
+    )>,
+    finished: bool,
+}
+
+impl TexelGBufferJob {
+    /// The G-buffer, the first time it is called after the GPU has finished;
+    /// `None` before that, and after it has been handed over. Never waits.
+    pub fn poll(&mut self, device: &crate::gpu::Device) -> Option<TexelGBuffer> {
+        if self.finished {
+            return None;
+        }
+        if let Some((pos, nrm)) = &self.readback
+            && !(pos.poll(device) && nrm.poll(device))
+        {
+            return None;
+        }
+        self.finished = true;
+        Some(self.take())
+    }
+
+    /// Block until the G-buffer is back.
+    pub fn wait(mut self, device: &crate::gpu::Device) -> TexelGBuffer {
+        if let Some((pos, nrm)) = &self.readback {
+            pos.wait(device);
+            nrm.wait(device);
+        }
+        self.take()
+    }
+
+    fn take(&mut self) -> TexelGBuffer {
+        let texels = (self.width * self.height) as usize;
+        let read = |r: crate::resources::readback::PendingReadback| {
+            r.take()
+                .map(|bytes| texels_from_bytes(&bytes))
+                .unwrap_or_else(|| vec![[0.0; 4]; texels])
+        };
+        let (world_pos, world_normal) = match self.readback.take() {
+            Some((pos, nrm)) => (read(pos), read(nrm)),
+            None => (vec![[0.0; 4]; texels], vec![[0.0; 4]; texels]),
+        };
+        TexelGBuffer {
+            width: self.width,
+            height: self.height,
+            world_pos,
+            world_normal,
+        }
+    }
+}
+
+/// Start rasterising `geom` into a `width` x `height` texel G-buffer, as
+/// [`rasterize_texel_gbuffer`] does, and return without waiting for the result:
+/// poll the job each frame until it hands the G-buffer over.
+pub fn begin_texel_gbuffer(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    geom: &TexelGeometry,
+    width: u32,
+    height: u32,
+) -> TexelGBufferJob {
     let width = width.max(1);
     let height = height.max(1);
-    let texels = (width * height) as usize;
 
     let vertex_count = geom
         .positions
@@ -85,11 +158,11 @@ pub fn rasterize_texel_gbuffer(
         .min(geom.normals.len())
         .min(geom.uv1.len());
     if geom.indices.is_empty() || vertex_count == 0 {
-        return TexelGBuffer {
+        return TexelGBufferJob {
             width,
             height,
-            world_pos: vec![[0.0; 4]; texels],
-            world_normal: vec![[0.0; 4]; texels],
+            readback: None,
+            finished: false,
         };
     }
 
@@ -274,93 +347,26 @@ pub fn rasterize_texel_gbuffer(
     }
     queue.submit(std::iter::once(encoder.finish()));
 
-    let world_pos = readback_rgba32f(device, queue, &pos_tex, width, height);
-    let world_normal = readback_rgba32f(device, queue, &nrm_tex, width, height);
-    TexelGBuffer {
+    let read = |texture| {
+        crate::resources::readback::PendingReadback::texture(
+            device, queue, texture, width, height, 16,
+        )
+    };
+    TexelGBufferJob {
         width,
         height,
-        world_pos,
-        world_normal,
+        readback: Some((read(&pos_tex), read(&nrm_tex))),
+        finished: false,
     }
 }
 
-/// Read an `Rgba32Float` texture back to `width * height` `[f32; 4]` texels,
-/// handling the copy row-alignment.
-fn readback_rgba32f(
-    device: &crate::gpu::Device,
-    queue: &crate::gpu::Queue,
-    texture: &crate::gpu::Texture,
-    width: u32,
-    height: u32,
-) -> Vec<[f32; 4]> {
-    let bytes_per_pixel = 16u32; // Rgba32Float: four 32-bit channels.
-    let unpadded_row = width * bytes_per_pixel;
-    let align = crate::gpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-    let padded_row = (unpadded_row + align - 1) & !(align - 1);
-    let buffer_size = (padded_row * height) as u64;
-
-    let staging = device.create_buffer(&crate::gpu::BufferDescriptor {
-        label: Some("texel_gbuffer_readback"),
-        size: buffer_size,
-        usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-
-    let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-        label: Some("texel_gbuffer_readback_encoder"),
-    });
-    encoder.copy_texture_to_buffer(
-        crate::gpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: crate::gpu::Origin3d::ZERO,
-            aspect: crate::gpu::TextureAspect::All,
-        },
-        crate::gpu::TexelCopyBufferInfo {
-            buffer: &staging,
-            layout: crate::gpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded_row),
-                rows_per_image: Some(height),
-            },
-        },
-        crate::gpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-    );
-    queue.submit(std::iter::once(encoder.finish()));
-
-    let (tx, rx) = std::sync::mpsc::channel();
-    staging
-        .slice(..)
-        .map_async(crate::gpu::MapMode::Read, move |result| {
-            let _ = tx.send(result);
-        });
-    device
-        .poll(crate::gpu::PollType::Wait {
-            submission_index: None,
-            timeout: Some(std::time::Duration::from_secs(5)),
+/// `Rgba32Float` texels from their little-endian bytes.
+fn texels_from_bytes(bytes: &[u8]) -> Vec<[f32; 4]> {
+    bytes
+        .chunks_exact(16)
+        .map(|t| {
+            let f = |o: usize| f32::from_le_bytes([t[o], t[o + 1], t[o + 2], t[o + 3]]);
+            [f(0), f(4), f(8), f(12)]
         })
-        .unwrap();
-    let _ = rx.recv().unwrap_or(Err(crate::gpu::BufferAsyncError));
-
-    let mut out: Vec<[f32; 4]> = Vec::with_capacity((width * height) as usize);
-    {
-        let mapped = crate::gpu::mapped_range(staging.slice(..));
-        let data: &[u8] = &mapped;
-        for row in 0..height as usize {
-            let start = row * padded_row as usize;
-            let row_bytes = &data[start..start + unpadded_row as usize];
-            for texel in row_bytes.chunks_exact(16) {
-                let f = |o: usize| {
-                    f32::from_le_bytes([texel[o], texel[o + 1], texel[o + 2], texel[o + 3]])
-                };
-                out.push([f(0), f(4), f(8), f(12)]);
-            }
-        }
-    }
-    staging.unmap();
-    out
+        .collect()
 }
