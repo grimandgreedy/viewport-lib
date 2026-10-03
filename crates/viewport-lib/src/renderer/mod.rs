@@ -2136,8 +2136,8 @@ impl ViewportRenderer {
     /// Collect every plugin's wireframe polylines and upload them into the
     /// shared line substrate.
     ///
-    /// Runs in scene prepare, right after the substrate's own producers
-    /// (isolines, clip outlines), so a plugin's wireframe draws in the same
+    /// Runs in scene prepare, right after the substrate is cleared, so a
+    /// plugin's wireframe draws in the same
     /// pass and the same order relative to scene geometry as before these
     /// moved behind the seam. Two phases because the context borrows
     /// `resources` while the upload needs it mutably.

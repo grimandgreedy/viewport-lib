@@ -5,7 +5,7 @@
 //! `Uploads::upload`; the renderer routes both forms to this plugin.
 //!
 //! The pipelines this draws with belong to `resources`, not to the plugin: they
-//! are the shared line substrate that isolines, scatter-volume bounds, volume
+//! are the shared line substrate that scatter-volume bounds, volume
 //! bounding boxes, clip-object outlines and the splat and sprite wireframe
 //! overlays also render through. See [`pipeline`] for why.
 

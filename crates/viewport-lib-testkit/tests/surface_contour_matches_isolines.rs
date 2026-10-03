@@ -1,14 +1,14 @@
 //! `SurfaceContourItem` draws its lines where the CPU extraction puts them.
 //!
 //! The same field on the same surface is rendered twice: once with the lines
-//! extracted on the CPU and drawn as polylines, once with the contour item
-//! finding them per pixel. Every line pixel of each image must have a line
+//! extracted on the CPU by `extract_isolines` and drawn as a polyline, once
+//! with the contour item finding them per pixel. Every line pixel of each image must have a line
 //! pixel of the other close by.
 
 use glam::{Mat4, Vec3};
 use viewport_lib::{
-    AttributeData, CameraFrame, FrameData, IsolineItem, Material, SceneFrame, SceneRenderItem,
-    primitives,
+    AttributeData, CameraFrame, FrameData, Material, PolylineItem, SceneFrame, SceneRenderItem,
+    extract_isolines, isoline_strips, primitives,
 };
 use viewport_lib_item_types::{ContourLevels, SurfaceContourItem};
 use viewport_lib_testkit::{Harness, orbit_camera};
@@ -92,15 +92,17 @@ fn contour_lines_coincide_with_extracted_isolines() {
     surface.settings.unlit = true;
 
     let mut extracted = frame(surface.clone());
-    let mut isolines = IsolineItem::default();
-    isolines.positions = mesh.positions.clone();
-    isolines.indices = mesh.indices.clone();
-    isolines.scalars = scalars;
-    isolines.isovalues = LEVELS.to_vec();
-    isolines.colour = [0.0, 0.0, 0.0, 1.0].into();
-    isolines.line_width = 1.5;
-    isolines.model_matrix = model;
-    extracted.scene.isolines = vec![isolines];
+    // The same small lift off the surface the old per-frame extraction used,
+    // so the lines do not fight the surface for depth.
+    let lines = extract_isolines(&mesh.positions, &mesh.indices, &scalars, &LEVELS, 0.005);
+    let (positions, strip_lengths, _) = isoline_strips(&lines);
+    let mut polyline = PolylineItem::default();
+    polyline.positions = positions;
+    polyline.strip_lengths = strip_lengths;
+    polyline.default_colour = [0.0, 0.0, 0.0, 1.0].into();
+    polyline.line_width = 1.5;
+    polyline.model = model.to_cols_array_2d();
+    *extracted.scene.items_mut::<PolylineItem>() = vec![polyline];
 
     let mut shaded = frame(surface);
     *shaded.scene.items_mut::<SurfaceContourItem>() = vec![SurfaceContourItem::new(

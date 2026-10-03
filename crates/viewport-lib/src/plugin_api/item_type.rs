@@ -1080,7 +1080,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     ///
     /// Called during `prepare` for every registered plugin. The returned items
     /// are uploaded and drawn through the shared line substrate, the same one
-    /// isolines, clip-object outlines and consumer-submitted polylines render
+    /// clip-object outlines and consumer-submitted polylines render
     /// through, so a plugin needs no pipeline of its own for this. Return an
     /// empty vector, the default, for a type with nothing to draw.
     ///

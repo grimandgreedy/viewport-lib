@@ -234,7 +234,7 @@ pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, sr
 pub use vplt::data::texture::{TextureData, TexturePayload, TextureRole};
 
 pub use geometry::bvh::PickAccelerator;
-pub use geometry::isoline::{IsolineItem, extract_isolines};
+pub use geometry::isoline::{Isoline, extract_isolines, isoline_strips};
 pub use geometry::marching_cubes::{VolumeData, extract_isosurface};
 
 #[allow(deprecated)]

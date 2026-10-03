@@ -143,49 +143,4 @@ impl ViewportRenderer {
 
         (resolved, switches, culled, reduced)
     }
-
-    pub(super) fn upload_polylines(
-        resources: &mut DeviceResources,
-        polyline_gpu_data: &mut Vec<crate::resources::PolylineGpuData>,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        frame: &FrameData,
-    ) {
-        // ------------------------------------------------------------------
-        // The shared line substrate: everything that renders through the
-        // polyline pipelines without being a polyline item. The polyline item
-        // type prepares its own draws in its plugin.
-        // ------------------------------------------------------------------
-        polyline_gpu_data.clear();
-        let vp_size = frame.camera.viewport_size;
-
-        // ------------------------------------------------------------------
-        // isoline extraction and upload via polyline pipeline.
-        // ------------------------------------------------------------------
-        if !frame.scene.isolines.is_empty() {
-            resources.ensure_polyline_pipeline(device);
-            for item in &frame.scene.isolines {
-                if item.positions.is_empty() || item.indices.is_empty() || item.scalars.is_empty() {
-                    continue;
-                }
-                let (positions, strip_lengths) = crate::geometry::isoline::extract_isolines(item);
-                if positions.is_empty() {
-                    continue;
-                }
-                let polyline = PolylineItem {
-                    positions,
-                    scalars: Vec::new(),
-                    strip_lengths,
-                    scalar_range: None,
-                    colourmap_id: None,
-                    default_colour: item.colour,
-                    line_width: item.line_width,
-                    ..Default::default()
-                };
-                let gpu_data =
-                    resources.upload_polyline_per_frame(device, queue, &polyline, vp_size);
-                polyline_gpu_data.push(gpu_data);
-            }
-        }
-    }
 }

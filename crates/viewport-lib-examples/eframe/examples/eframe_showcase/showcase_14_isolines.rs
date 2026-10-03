@@ -5,8 +5,9 @@
 //!
 //! - `SurfaceContourItem`: a fragment shader finds the lines per pixel from
 //!   the mesh's `wave` attribute. Nothing is extracted or uploaded per frame.
-//! - `IsolineItem`: the lines are extracted on the CPU every frame and drawn
-//!   as polylines.
+//! - `extract_isolines`: the lines are extracted on the CPU, joined into
+//!   continuous strips and drawn as a `PolylineItem`. They are extracted again
+//!   only when the levels, the offset or the cut change.
 //!
 //! Beside it, a block of hex cells carrying a value on its nodes is cut open
 //! by a plane, and contoured the same two ways: the lines run over the outer
@@ -21,8 +22,9 @@ use viewport_lib as vpl;
 use viewport_lib_item_types::{ContourLevels, SurfaceContourItem};
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, ColourmapId,
-    FrameData, LightingSettings, Material, MeshData, MeshId, SceneRenderItem, ViewportRenderer,
-    VolumeMeshData, VolumeMeshItem, geometry::isoline::IsolineItem, scene::Scene,
+    FrameData, LightingSettings, Material, MeshData, MeshId, PolylineItem, SceneRenderItem,
+    ViewportRenderer, VolumeMeshData, VolumeMeshItem, extract_isolines, isoline_strips,
+    scene::Scene,
 };
 
 // ---------------------------------------------------------------------------
@@ -42,7 +44,7 @@ pub(crate) struct IsolinesState {
     pub line_width: f32,
     pub show_surface_colour: bool,
     pub depth_bias: f32,
-    /// Draw through `SurfaceContourItem` rather than `IsolineItem`.
+    /// Draw through `SurfaceContourItem` rather than extracted polylines.
     pub use_shader: bool,
     pub show_volume: bool,
     /// `d` of the cut plane: larger keeps more of the block.
@@ -50,6 +52,37 @@ pub(crate) struct IsolinesState {
     /// The cut moved: extract the block's surface again before the next frame.
     pub cut_dirty: bool,
     pub volume: Option<CutBlock>,
+    /// The extracted lines of the grid and the block, with what they were
+    /// extracted for.
+    pub grid_lines: Option<(LinesKey, PolylineItem)>,
+    pub block_lines: Option<(LinesKey, PolylineItem)>,
+}
+
+/// What an extraction depends on: the level count, the offset and the cut.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) struct LinesKey {
+    levels: usize,
+    offset: f32,
+    cut: f32,
+}
+
+/// Extract the contour lines of `scalars` at `levels` into a polyline drawn
+/// with `model`.
+fn extracted_lines(
+    positions: &[[f32; 3]],
+    indices: &[u32],
+    scalars: &[f32],
+    levels: &[f32],
+    offset: f32,
+    model: glam::Mat4,
+) -> PolylineItem {
+    let lines = extract_isolines(positions, indices, scalars, levels, offset);
+    let (positions, strip_lengths, _) = isoline_strips(&lines);
+    let mut item = PolylineItem::default();
+    item.positions = positions;
+    item.strip_lengths = strip_lengths;
+    item.model = model.to_cols_array_2d();
+    item
 }
 
 /// The cut volume mesh and what each contour method needs from it.
@@ -57,7 +90,7 @@ pub(crate) struct CutBlock {
     data: VolumeMeshData,
     item: VolumeMeshItem,
     node_range: (f32, f32),
-    /// The cut surface on the CPU, for `IsolineItem`: positions, indices and
+    /// The cut surface on the CPU, for the extracted lines: positions, indices and
     /// the node value at each vertex.
     positions: Vec<[f32; 3]>,
     indices: Vec<u32>,
@@ -132,6 +165,8 @@ impl Default for IsolinesState {
             cut_offset: 0.6,
             cut_dirty: false,
             volume: None,
+            grid_lines: None,
+            block_lines: None,
         }
     }
 }
@@ -148,7 +183,7 @@ impl App {
         let res = self.iso_state.grid_resolution;
         let (mesh, scalars) = make_wave_grid_iso(res, res, 10.0);
 
-        // Keep CPU copies for IsolineItem re-submission each frame.
+        // Keep CPU copies to extract the lines from.
         self.iso_state.positions = mesh.positions.clone();
         self.iso_state.indices = mesh.indices.clone();
         self.iso_state.scalars = scalars;
@@ -189,6 +224,8 @@ impl App {
         block.extract(offset);
         self.iso_state.volume = Some(block);
         self.iso_state.cut_dirty = false;
+        self.iso_state.grid_lines = None;
+        self.iso_state.block_lines = None;
 
         self.iso_state.built = true;
     }
@@ -208,7 +245,7 @@ pub(crate) fn controls_isolines(app: &mut App, ui: &mut egui::Ui) {
     ui.radio_value(
         &mut app.iso_state.use_shader,
         false,
-        "CPU extraction (IsolineItem)",
+        "CPU extraction (extract_isolines)",
     );
 
     ui.separator();
@@ -375,8 +412,8 @@ fn even_levels(lo: f32, hi: f32, count: usize) -> Vec<f32> {
 }
 
 /// The cut block, and its contours by the selected method.
-fn submit_block(app: &App, fd: &mut FrameData) {
-    let state = &app.iso_state;
+fn submit_block(app: &mut App, fd: &mut FrameData) {
+    let state = &mut app.iso_state;
     let Some(block) = state.volume.as_ref().filter(|_| state.show_volume) else {
         return;
     };
@@ -408,20 +445,31 @@ fn submit_block(app: &App, fd: &mut FrameData) {
         contours.width = state.line_width;
         fd.scene.items_mut::<SurfaceContourItem>().push(contours);
     } else {
-        let mut iso = IsolineItem::default();
-        iso.positions = block.positions.clone();
-        iso.indices = block.indices.clone();
-        iso.scalars = block.scalars.clone();
-        iso.isovalues = levels;
-        iso.colour = state.line_colour.into();
-        iso.line_width = state.line_width;
-        iso.depth_bias = state.depth_bias;
-        iso.model_matrix = model;
-        fd.scene.isolines.push(iso);
+        let key = LinesKey {
+            levels: state.contour_count,
+            offset: state.depth_bias,
+            cut: state.cut_offset,
+        };
+        if state.block_lines.as_ref().is_none_or(|(k, _)| *k != key) {
+            let lines = extracted_lines(
+                &block.positions,
+                &block.indices,
+                &block.scalars,
+                &levels,
+                state.depth_bias,
+                model,
+            );
+            state.block_lines = Some((key, lines));
+        }
+        let (_, lines) = state.block_lines.as_ref().unwrap();
+        let mut lines = lines.clone();
+        lines.default_colour = state.line_colour.into();
+        lines.line_width = state.line_width;
+        fd.scene.items_mut::<PolylineItem>().push(lines);
     }
 }
 
-pub(crate) fn submit_iso_items(app: &App, fd: &mut FrameData) {
+pub(crate) fn submit_iso_items(app: &mut App, fd: &mut FrameData) {
     if !app.iso_state.built {
         return;
     }
@@ -451,15 +499,28 @@ pub(crate) fn submit_iso_items(app: &App, fd: &mut FrameData) {
         fd.scene.items_mut::<SurfaceContourItem>().push(item);
         return;
     }
-    let mut iso_item = IsolineItem::default();
-    iso_item.positions = app.iso_state.positions.clone();
-    iso_item.indices = app.iso_state.indices.clone();
-    iso_item.scalars = app.iso_state.scalars.clone();
-    iso_item.isovalues = isovalues;
-    iso_item.colour = app.iso_state.line_colour.into();
-    iso_item.line_width = app.iso_state.line_width;
-    iso_item.depth_bias = app.iso_state.depth_bias;
-    fd.scene.isolines.push(iso_item);
+    let state = &mut app.iso_state;
+    let key = LinesKey {
+        levels: state.contour_count,
+        offset: state.depth_bias,
+        cut: 0.0,
+    };
+    if state.grid_lines.as_ref().is_none_or(|(k, _)| *k != key) {
+        let lines = extracted_lines(
+            &state.positions,
+            &state.indices,
+            &state.scalars,
+            &isovalues,
+            state.depth_bias,
+            glam::Mat4::IDENTITY,
+        );
+        state.grid_lines = Some((key, lines));
+    }
+    let (_, lines) = state.grid_lines.as_ref().unwrap();
+    let mut lines = lines.clone();
+    lines.default_colour = state.line_colour.into();
+    lines.line_width = state.line_width;
+    fd.scene.items_mut::<PolylineItem>().push(lines);
 }
 
 // ---------------------------------------------------------------------------

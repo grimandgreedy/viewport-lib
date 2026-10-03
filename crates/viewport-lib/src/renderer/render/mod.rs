@@ -1427,8 +1427,8 @@ impl crate::renderer::ViewportRenderer {
     /// GPU data `prepare()` built.
     ///
     /// Both are core rather than item-type plugins, and deliberately so: the
-    /// line substrate is shared machinery with several producers (isolines,
-    /// scatter and volume bounds, clip outlines, the splat and sprite
+    /// line substrate is shared machinery with several producers (scatter
+    /// and volume bounds, clip outlines, the splat and sprite
     /// wireframes), and a mesh-instance batch rides the scene graph's own
     /// instanced pipeline. Every item type that used to draw from here has
     /// moved to [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin).

@@ -398,7 +398,9 @@ impl ViewportRenderer {
         lod_switches += inst_switches;
         lod_culled += inst_culled;
         lod_items_reduced += inst_reduced;
-        Self::upload_polylines(resources, &mut self.polyline_gpu_data, device, queue, frame);
+        // The shared line substrate is refilled each frame: the plugin
+        // wireframes below are its producers.
+        self.polyline_gpu_data.clear();
         // Refresh any deform slots bound to a same-device consumer buffer,
         // GPU-to-GPU, before the mesh render pass reads them.
         resources.run_deform_slot_copies(device, queue);
@@ -763,8 +765,7 @@ impl ViewportRenderer {
         self.resources.upload_material_gpu(queue);
         self.resources.upload_custom_data(device, queue);
 
-        // Item-type wireframes join the shared line substrate, after its own
-        // producers (isolines, clip outlines) filled it in `upload_polylines`.
+        // Item-type wireframes fill the shared line substrate, cleared above.
         // Placed at the end of scene prepare because the plugin context borrows
         // `resources` shared while the upload above holds it mutably.
         self.dispatch_plugin_wireframes(device, queue, frame);

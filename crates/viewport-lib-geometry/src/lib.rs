@@ -16,6 +16,8 @@ pub mod eigen;
 pub mod intersect;
 /// Tangent-plane (intrinsic) vector fields to world-space vectors.
 pub mod intrinsic_vectors;
+/// Contour lines of a per-vertex scalar field on a triangle mesh.
+pub mod isoline;
 pub mod marching_cubes;
 /// Pure CPU mesh operations: tangent computation, attribute expansion, validation.
 pub mod mesh_ops;
