@@ -58,11 +58,6 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
 /// Stable name this item type submits and registers under.
 pub const TYPE_NAME: &str = "vpl.scatter_volume";
 
-/// The scatter intermediates and the scene colour they composite onto are both
-/// HDR; the pass has no LDR form.
-const TARGET_FORMAT: viewport_lib::gpu::TextureFormat =
-    viewport_lib::gpu::TextureFormat::Rgba16Float;
-
 impl PluginItem for ScatterVolumeItem {
     const TYPE_NAME: &'static str = TYPE_NAME;
 
@@ -114,6 +109,17 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         derive_virtual_lights(items, ctx.resources)
     }
 
+    fn warm(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        resources: &viewport_lib::DeviceResources,
+    ) {
+        self.gpu.ensure_pipelines(device, resources);
+        if let Some(pipelines) = &self.gpu.pipelines {
+            pipelines.request_all();
+        }
+    }
+
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -134,6 +140,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         if volumes.is_empty() {
             return Vec::new();
         }
+        self.gpu.ensure_pipelines(device, ctx.resources);
 
         // Pick bindings: a volume answers object picks with its own shape, so
         // build one proxy transform per pickable volume. Skipped entirely when
@@ -142,7 +149,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
             .iter()
             .any(|v| !v.settings.hidden && v.settings.pick_id != PickId::NONE)
         {
-            self.gpu.ensure_pick(device, ctx.resources);
+            self.gpu.ensure_pick_proxies(device);
             self.build_pick_bindings(device, volumes);
         }
 
@@ -174,10 +181,6 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         sort_back_to_front(&mut self.draws, ctx.camera.eye_position);
 
         let res = ctx.resources;
-        self.gpu
-            .ensure_pipeline(device, res.shared_bindings().group0_layout, TARGET_FORMAT);
-        self.gpu.ensure_composite_pipeline(device, TARGET_FORMAT);
-        self.gpu.ensure_temporal_resolve_pipeline(device);
         self.gpu.ensure_frame_uniform_buffer(device);
         self.gpu.ensure_temporal_uniform_buffer(device);
 
@@ -198,13 +201,6 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         self.draws.truncate(n as usize);
 
         if !self.refraction_draws.is_empty() {
-            self.gpu.ensure_refraction_pipeline(
-                device,
-                res.shared_bindings().group0_layout,
-                TARGET_FORMAT,
-            );
-            self.gpu
-                .ensure_refraction_blit_pipeline(device, TARGET_FORMAT);
             // Sized here; filled at encode time, where the frame's animation
             // clock is readable.
             self.gpu
@@ -231,6 +227,9 @@ impl ItemTypePlugin for ScatterVolumePlugin {
             return;
         }
         let settings = &ctx.effects.scatter;
+        let Some(passes) = self.passes(settings.temporal) else {
+            return;
+        };
         let [sw, sh] = ctx.scene_size;
         let size = if settings.downsample {
             [(sw / 2).max(1), (sh / 2).max(1)]
@@ -261,7 +260,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         // Refraction first: it shimmers the scene colour behind each refractive
         // volume so the absorption and in-scattering below land on top of the
         // distorted image rather than under it.
-        self.encode_refraction(encoder, ctx, state);
+        self.encode_refraction(encoder, ctx, state, &passes);
 
         self.gpu.write_frame_uniform(
             ctx.queue,
@@ -272,7 +271,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         );
         let frame_bg = self.gpu.make_frame_bg(ctx.device, ctx.scene_depth_only);
 
-        self.encode_march(encoder, ctx, state, &frame_bg);
+        self.encode_march(encoder, ctx, state, &frame_bg, passes.march);
 
         let composite_source = if settings.temporal {
             self.gpu.write_temporal_uniform(
@@ -281,11 +280,11 @@ impl ItemTypePlugin for ScatterVolumePlugin {
                 settings.temporal_blend,
                 state.history_valid,
             );
-            self.encode_temporal_resolve(encoder, ctx, state)
+            self.encode_temporal_resolve(encoder, ctx, state, passes.temporal_resolve)
         } else {
             &state.composite_bg_raw
         };
-        self.encode_composite(encoder, ctx, composite_source);
+        self.encode_composite(encoder, ctx, composite_source, passes.composite);
 
         state.prev_view_proj = ctx.camera.view_proj().to_cols_array_2d();
         state.parity = 1 - state.parity;
@@ -345,8 +344,13 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         if !ctx.mask.intersects(PickMask::OBJECT) {
             return;
         }
-        let (Some(pipeline), Some(cube), Some(sphere)) = (
-            self.gpu.pick_pipeline.as_ref(),
+        // A volume is not picked before it is drawn: wait for the ray-march
+        // when this frame marches anything.
+        let (Some(pipelines), Some(cube), Some(sphere)) = (
+            self.gpu
+                .pipelines
+                .as_ref()
+                .filter(|p| self.draws.is_empty() || p.available(pipeline::MARCH)),
             self.gpu.pick_cube.as_ref(),
             self.gpu.pick_sphere.as_ref(),
         ) else {
@@ -356,7 +360,10 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         let mut current: Option<ScatterProxyShape> = None;
         for (bind_group, shape) in &self.pick_draws {
             if !bound {
-                pass.set_pipeline(pipeline);
+                let Some(pl) = pipelines.get(pipeline::PICK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             if current != Some(*shape) {
@@ -443,7 +450,50 @@ fn sort_back_to_front(draws: &mut [(ScatterVolume, f32, u32)], eye: [f32; 3]) {
     });
 }
 
+/// The pipelines one frame's passes draw with.
+struct ScatterPasses<'a> {
+    march: &'a viewport_lib::gpu::RenderPipeline,
+    composite: &'a viewport_lib::gpu::RenderPipeline,
+    /// Only read when temporal accumulation is on.
+    temporal_resolve: Option<&'a viewport_lib::gpu::RenderPipeline>,
+    /// The blit and the distortion, when any volume refracts.
+    refraction: Option<(
+        &'a viewport_lib::gpu::RenderPipeline,
+        &'a viewport_lib::gpu::RenderPipeline,
+    )>,
+}
+
 impl ScatterVolumePlugin {
+    /// Every pipeline this frame's passes need, or `None` while any of them is
+    /// still compiling: the volumes then draw from the frame all are ready,
+    /// rather than a frame composited from half its passes. Each needed member
+    /// is asked for before any is checked, so they compile side by side.
+    fn passes(&self, temporal: bool) -> Option<ScatterPasses<'_>> {
+        let p = self.gpu.pipelines.as_ref()?;
+        let refracts = !self.refraction_draws.is_empty();
+        let march = p.get(pipeline::MARCH);
+        let composite = p.get(pipeline::COMPOSITE);
+        let temporal_resolve = temporal.then(|| p.get(pipeline::TEMPORAL_RESOLVE));
+        let refraction = refracts.then(|| {
+            (
+                p.get(pipeline::REFRACTION_BLIT),
+                p.get(pipeline::REFRACTION),
+            )
+        });
+        Some(ScatterPasses {
+            march: march?,
+            composite: composite?,
+            temporal_resolve: match temporal_resolve {
+                Some(pl) => Some(pl?),
+                None => None,
+            },
+            refraction: match refraction {
+                Some((blit, distort)) => Some((blit?, distort?)),
+                None => None,
+            },
+        })
+    }
+
     /// Copy the scene colour aside, then write a noise-driven distortion of it
     /// back over each refractive volume's screen footprint.
     fn encode_refraction(
@@ -451,10 +501,11 @@ impl ScatterVolumePlugin {
         encoder: &mut viewport_lib::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
         state: &mut pipeline::ScatterViewportState,
+        passes: &ScatterPasses<'_>,
     ) {
-        if self.refraction_draws.is_empty() {
+        let Some((blit_pipeline, refraction_pipeline)) = passes.refraction else {
             return;
-        }
+        };
         // Pack the refraction params at this frame's animation clock. A volume
         // whose strength is zero packs nothing, so the count of slots actually
         // written is what the draw loop below runs over.
@@ -477,7 +528,7 @@ impl ScatterVolumePlugin {
             self.gpu
                 .make_refraction_source_bg(ctx.device, source_view, ctx.scene_depth_only);
 
-        if let Some(blit_pipeline) = self.gpu.refraction_blit_pipeline.as_ref() {
+        {
             let mut pass = encoder.begin_render_pass(&viewport_lib::gpu::RenderPassDescriptor {
                 #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
                 multiview_mask: None,
@@ -502,10 +553,7 @@ impl ScatterVolumePlugin {
             pass.draw(0..3, 0..1);
         }
 
-        if let (Some(pipeline), Some(per_vol_bg)) = (
-            self.gpu.refraction_pipeline.as_ref(),
-            self.gpu.refraction_per_volume_bg.as_ref(),
-        ) {
+        if let Some(per_vol_bg) = self.gpu.refraction_per_volume_bg.as_ref() {
             let mut pass = encoder.begin_render_pass(&viewport_lib::gpu::RenderPassDescriptor {
                 #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
                 multiview_mask: None,
@@ -523,7 +571,7 @@ impl ScatterVolumePlugin {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(pipeline);
+            pass.set_pipeline(refraction_pipeline);
             pass.set_bind_group(0, ctx.camera_bind_group, &[]);
             pass.set_bind_group(2, &source_bg, &[]);
             for i in 0..n_ref {
@@ -541,10 +589,9 @@ impl ScatterVolumePlugin {
         ctx: &EncoderScopeContext<'_>,
         state: &pipeline::ScatterViewportState,
         frame_bg: &viewport_lib::gpu::BindGroup,
+        march_pipeline: &viewport_lib::gpu::RenderPipeline,
     ) {
-        let (Some(pipeline), Some(per_vol_bg)) =
-            (self.gpu.pipeline.as_ref(), self.gpu.per_volume_bg.as_ref())
-        else {
+        let Some(per_vol_bg) = self.gpu.per_volume_bg.as_ref() else {
             return;
         };
         let mut pass = encoder.begin_render_pass(&viewport_lib::gpu::RenderPassDescriptor {
@@ -564,7 +611,7 @@ impl ScatterVolumePlugin {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        pass.set_pipeline(pipeline);
+        pass.set_pipeline(march_pipeline);
         pass.set_bind_group(0, ctx.camera_bind_group, &[]);
         pass.set_bind_group(3, frame_bg, &[]);
         for (i, tex_bg) in self.per_volume_tex_bgs.iter().enumerate() {
@@ -581,6 +628,7 @@ impl ScatterVolumePlugin {
         encoder: &mut viewport_lib::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
         state: &'s pipeline::ScatterViewportState,
+        resolve_pipeline: Option<&viewport_lib::gpu::RenderPipeline>,
     ) -> &'s viewport_lib::gpu::BindGroup {
         // `parity` names the slot to write next, so the other slot holds the
         // previous frame.
@@ -597,7 +645,7 @@ impl ScatterVolumePlugin {
                 &state.composite_bg_history_b,
             )
         };
-        if let Some(resolve_pipeline) = self.gpu.temporal_resolve_pipeline.as_ref() {
+        if let Some(resolve_pipeline) = resolve_pipeline {
             let resolve_bg = self.gpu.make_temporal_resolve_bg(
                 ctx.device,
                 &state.raw_current_view,
@@ -637,10 +685,8 @@ impl ScatterVolumePlugin {
         encoder: &mut viewport_lib::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
         source: &viewport_lib::gpu::BindGroup,
+        composite_pipeline: &viewport_lib::gpu::RenderPipeline,
     ) {
-        let Some(composite_pipeline) = self.gpu.composite_pipeline.as_ref() else {
-            return;
-        };
         let mut pass = encoder.begin_render_pass(&viewport_lib::gpu::RenderPassDescriptor {
             #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
             multiview_mask: None,

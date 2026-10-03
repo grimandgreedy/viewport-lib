@@ -25,9 +25,6 @@ use super::volume::{
 };
 use crate::shader::{lit_shader, scene_shader, wgsl_source};
 
-/// Scatter-volume (participating media) pipelines, layouts, and per-frame
-/// upload buffers. All device-shared and lazily built by the `ensure_scatter_*`
-/// methods; the uploaded density textures are keyed elsewhere.
 /// Unit proxy geometry for the pick pass: positions, indices, and the index
 /// count to draw.
 pub(crate) struct PickProxyMesh {
@@ -36,10 +33,163 @@ pub(crate) struct PickProxyMesh {
     pub(crate) index_count: u32,
 }
 
+/// Members of [`ScatterPipelines`].
+pub(crate) const MARCH: usize = 0;
+pub(crate) const COMPOSITE: usize = 1;
+pub(crate) const TEMPORAL_RESOLVE: usize = 2;
+pub(crate) const REFRACTION: usize = 3;
+pub(crate) const REFRACTION_BLIT: usize = 4;
+pub(crate) const PICK: usize = 5;
+
+/// What a scatter pipeline build reads.
+pub(crate) struct ScatterRecipe {
+    device: viewport_lib::gpu::Device,
+    builder: viewport_lib::plugin_api::PipelineBuilder,
+    march_layout: viewport_lib::gpu::PipelineLayout,
+    march_shader: viewport_lib::gpu::ShaderModule,
+    composite_layout: viewport_lib::gpu::PipelineLayout,
+    composite_shader: viewport_lib::gpu::ShaderModule,
+    temporal_layout: viewport_lib::gpu::PipelineLayout,
+    temporal_shader: viewport_lib::gpu::ShaderModule,
+    refraction_layout: viewport_lib::gpu::PipelineLayout,
+    refraction_shader: viewport_lib::gpu::ShaderModule,
+    blit_layout: viewport_lib::gpu::PipelineLayout,
+    blit_shader: viewport_lib::gpu::ShaderModule,
+    pick_shader: viewport_lib::gpu::ShaderModule,
+    pick_bgl: viewport_lib::gpu::BindGroupLayout,
+}
+
+/// The ray-march, composite, temporal-resolve, refraction and refraction blit
+/// passes and the pick pipeline, each built the first time a frame needs it.
+pub(crate) type ScatterPipelines = viewport_lib::plugin_api::LazyPipelines<ScatterRecipe, 6>;
+
+/// Premultiplied alpha-over, shared by the ray-march and the composite.
+const PREMULTIPLIED_OVER: viewport_lib::gpu::BlendState = viewport_lib::gpu::BlendState {
+    color: viewport_lib::gpu::BlendComponent {
+        src_factor: viewport_lib::gpu::BlendFactor::One,
+        dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
+        operation: viewport_lib::gpu::BlendOperation::Add,
+    },
+    alpha: viewport_lib::gpu::BlendComponent {
+        src_factor: viewport_lib::gpu::BlendFactor::One,
+        dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
+        operation: viewport_lib::gpu::BlendOperation::Add,
+    },
+};
+
+fn build(r: &ScatterRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
+    use viewport_lib::plugin_api::builders::build_fullscreen_pipeline;
+    // The scatter intermediates and the scene colour they composite onto are
+    // both HDR; no pass here has an LDR form.
+    let hdr = viewport_lib::gpu::TextureFormat::Rgba16Float;
+    match i {
+        // Per-volume draws composite into the (cleared) raw_current target in
+        // back-to-front order.
+        MARCH => viewport_lib::plugin_api::builders::render_pipeline(
+            &r.device,
+            viewport_lib::plugin_api::builders::RenderPipelineDesc {
+                label: "scatter_volume_pipeline",
+                layout: &r.march_layout,
+                vertex_module: &r.march_shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[],
+                fragment: Some(viewport_lib::gpu::FragmentState {
+                    module: &r.march_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(viewport_lib::gpu::ColorTargetState {
+                        format: hdr,
+                        blend: Some(PREMULTIPLIED_OVER),
+                        write_mask: viewport_lib::gpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: viewport_lib::gpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: viewport_lib::gpu::PrimitiveState {
+                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: viewport_lib::gpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
+            },
+        ),
+        COMPOSITE => build_fullscreen_pipeline(
+            &r.device,
+            "scatter_composite_pipeline",
+            &r.composite_layout,
+            &r.composite_shader,
+            hdr,
+            Some(PREMULTIPLIED_OVER),
+        ),
+        // History textures are RGBA16F. Blend is None: this pass owns the new
+        // history fully and overwrites it.
+        TEMPORAL_RESOLVE => build_fullscreen_pipeline(
+            &r.device,
+            "scatter_temporal_resolve_pipeline",
+            &r.temporal_layout,
+            &r.temporal_shader,
+            viewport_lib::gpu::TextureFormat::Rgba16Float,
+            None,
+        ),
+        // Replace blend: the distorted sample overwrites the HDR pixel before
+        // the scatter pass composites on top.
+        REFRACTION => build_fullscreen_pipeline(
+            &r.device,
+            "scatter_refraction_pipeline",
+            &r.refraction_layout,
+            &r.refraction_shader,
+            hdr,
+            None,
+        ),
+        // Copies the HDR scene into the refraction source texture with replace
+        // blend, before the per-volume distortion runs.
+        REFRACTION_BLIT => build_fullscreen_pipeline(
+            &r.device,
+            "scatter_refraction_blit_pipeline",
+            &r.blit_layout,
+            &r.blit_shader,
+            hdr,
+            None,
+        ),
+        _ => {
+            const POS_ATTRS: [viewport_lib::gpu::VertexAttribute; 1] =
+                [viewport_lib::gpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: viewport_lib::gpu::VertexFormat::Float32x3,
+                }];
+            let vertex_layout = viewport_lib::gpu::VertexBufferLayout {
+                array_stride: 12,
+                step_mode: viewport_lib::gpu::VertexStepMode::Vertex,
+                attributes: &POS_ATTRS,
+            };
+            let mut opts = viewport_lib::resources::PluginPipelineOpts::new(
+                Some("scatter_pick_pipeline"),
+                &r.pick_shader,
+                "vs_main",
+                "fs_main",
+                std::slice::from_ref(&vertex_layout),
+            );
+            // Two-sided: the camera is often inside a scatter volume, and a
+            // click from in there still selects it.
+            opts.primitive.cull_mode = None;
+            let extra: [&viewport_lib::gpu::BindGroupLayout; 1] = [&r.pick_bgl];
+            opts.extra_bind_group_layouts = &extra;
+            r.builder.build_pick_pipeline(&r.device, &opts)
+        }
+    }
+}
+
+/// Scatter-volume (participating media) pipelines, layouts, and per-frame
+/// upload buffers, all device-shared. Layouts and buffers are made by the
+/// `ensure_*` methods; the uploaded density textures are keyed elsewhere.
 #[derive(Default)]
 pub(crate) struct ScatterGpu {
-    /// Object-id pick pipeline: rasterises each volume's shape.
-    pub(crate) pick_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
+    /// Every pass's pipeline. `None` until the first prepare with items.
+    pub(crate) pipelines: Option<ScatterPipelines>,
     /// Group 1 of the pick pass: one `ScatterProxyUniform` per volume.
     pub(crate) pick_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
     /// Unit cube, for box volumes.
@@ -47,8 +197,6 @@ pub(crate) struct ScatterGpu {
     /// Unit icosphere, for sphere volumes. Same subdivision the CPU pick's
     /// analytic sphere test approximates.
     pub(crate) pick_sphere: Option<PickProxyMesh>,
-    /// Render pipeline for the scatter-volume pass. None until first item submitted.
-    pub(crate) pipeline: Option<viewport_lib::gpu::RenderPipeline>,
     /// Group 1 layout (per-volume uniform with dynamic offset).
     pub(crate) per_volume_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
     /// Group 2 layout (per-volume LUT + density texture + samplers).
@@ -77,20 +225,14 @@ pub(crate) struct ScatterGpu {
     pub(crate) colourmap_sampler: Option<viewport_lib::gpu::Sampler>,
     /// 1x1x1 R32Float fallback view bound at the per-volume 3D density slot.
     pub(crate) density_fallback_view: Option<viewport_lib::gpu::TextureView>,
-    /// Composite pipeline that blends a scatter intermediate onto the HDR target.
-    pub(crate) composite_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
     /// Bind group layout for the composite pass (one sampled RGBA16F + sampler).
     pub(crate) composite_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
     /// Bilinear-clamp sampler used by the composite pass.
     pub(crate) composite_sampler: Option<viewport_lib::gpu::Sampler>,
-    /// Temporal-resolve pipeline: mixes (raw_current, history_prev) into history_new.
-    pub(crate) temporal_resolve_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
     /// Bind group layout for the temporal-resolve pass.
     pub(crate) temporal_resolve_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
     /// Per-frame uniform buffer for the temporal-resolve pass.
     pub(crate) temporal_resolve_uniform_buffer: Option<viewport_lib::gpu::Buffer>,
-    /// Refraction pass: per-volume distortion using a noise-driven gradient.
-    pub(crate) refraction_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
     /// Bind group layout for the refraction pass's per-volume uniform.
     pub(crate) refraction_per_volume_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
     /// Bind group layout for the refraction pass's source-scene + depth bindings.
@@ -103,8 +245,6 @@ pub(crate) struct ScatterGpu {
     pub(crate) refraction_per_volume_capacity: u32,
     /// Dynamic-offset bind group for the refraction per-volume uniform buffer.
     pub(crate) refraction_per_volume_bg: Option<viewport_lib::gpu::BindGroup>,
-    /// Blit pipeline that copies the HDR target into the refraction source texture.
-    pub(crate) refraction_blit_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
 }
 
 /// Per-frame uniform layout shared across every per-volume draw.
@@ -138,54 +278,28 @@ pub(crate) struct ScatterProxyUniform {
 }
 
 impl ScatterGpu {
-    /// Lazily build the object-id pick pipeline, its group-1 layout, and the
-    /// two unit proxy shapes a scatter volume is picked as.
-    pub(crate) fn ensure_pick(
-        &mut self,
-        device: &viewport_lib::gpu::Device,
-        resources: &viewport_lib::resources::DeviceResources,
-    ) {
-        if self.pick_pipeline.is_some() {
+    /// Make the group-1 layout of the pick pass.
+    fn ensure_pick_bgl(&mut self, device: &viewport_lib::gpu::Device) {
+        if self.pick_bgl.is_some() {
             return;
         }
-        let bgl = device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
-            label: Some("scatter_pick_bgl"),
-            entries: &[viewport_lib::plugin_api::builders::uniform_entry(
-                0,
-                viewport_lib::gpu::ShaderStages::VERTEX | viewport_lib::gpu::ShaderStages::FRAGMENT,
-            )],
-        });
-        let shader = viewport_lib::plugin_api::builders::wgsl_module(
-            device,
-            "scatter_pick_shader",
-            &scene_shader(&[], wgsl_source!("scatter_pick")),
-        );
-        const POS_ATTRS: [viewport_lib::gpu::VertexAttribute; 1] =
-            [viewport_lib::gpu::VertexAttribute {
-                offset: 0,
-                shader_location: 0,
-                format: viewport_lib::gpu::VertexFormat::Float32x3,
-            }];
-        let vertex_layout = viewport_lib::gpu::VertexBufferLayout {
-            array_stride: 12,
-            step_mode: viewport_lib::gpu::VertexStepMode::Vertex,
-            attributes: &POS_ATTRS,
-        };
-        let mut opts = viewport_lib::resources::PluginPipelineOpts::new(
-            Some("scatter_pick_pipeline"),
-            &shader,
-            "vs_main",
-            "fs_main",
-            std::slice::from_ref(&vertex_layout),
-        );
-        // Two-sided: the camera is often inside a scatter volume, and a click
-        // from in there still selects it.
-        opts.primitive.cull_mode = None;
-        let extra: [&viewport_lib::gpu::BindGroupLayout; 1] = [&bgl];
-        opts.extra_bind_group_layouts = &extra;
-        self.pick_pipeline = Some(resources.build_pick_pipeline(device, &opts));
-        self.pick_bgl = Some(bgl);
+        self.pick_bgl = Some(device.create_bind_group_layout(
+            &viewport_lib::gpu::BindGroupLayoutDescriptor {
+                label: Some("scatter_pick_bgl"),
+                entries: &[viewport_lib::plugin_api::builders::uniform_entry(
+                    0,
+                    viewport_lib::gpu::ShaderStages::VERTEX
+                        | viewport_lib::gpu::ShaderStages::FRAGMENT,
+                )],
+            },
+        ));
+    }
 
+    /// Upload the two unit proxy shapes a scatter volume is picked as.
+    pub(crate) fn ensure_pick_proxies(&mut self, device: &viewport_lib::gpu::Device) {
+        if self.pick_cube.is_some() {
+            return;
+        }
         let cube_positions: [[f32; 3]; 8] = [
             [-0.5, -0.5, -0.5],
             [0.5, -0.5, -0.5],
@@ -495,168 +609,112 @@ impl ScatterGpu {
         ));
     }
 
-    // ---------------------------------------------------------------------
-    // Pipelines
-    // ---------------------------------------------------------------------
-
-    pub(crate) fn ensure_pipeline(
+    /// Make every layout and shader module the passes use, and the lazy set
+    /// their pipelines are built from. The pipelines themselves are built the
+    /// first time a frame reads them.
+    pub(crate) fn ensure_pipelines(
         &mut self,
         device: &viewport_lib::gpu::Device,
-        camera_bgl: &viewport_lib::gpu::BindGroupLayout,
-        colour_format: viewport_lib::gpu::TextureFormat,
+        resources: &viewport_lib::resources::DeviceResources,
     ) {
-        if self.pipeline.is_some() {
+        if self.pipelines.is_some() {
             return;
         }
         self.ensure_per_volume_bgl(device);
         self.ensure_per_volume_tex_bgl(device);
         self.ensure_frame_bgl(device);
-
-        let per_vol = self.per_volume_bgl.as_ref().unwrap();
-        let per_tex = self.per_volume_tex_bgl.as_ref().unwrap();
-        let frame_bgl = self.frame_bgl.as_ref().unwrap();
-
-        let shader = viewport_lib::plugin_api::builders::wgsl_module(
-            device,
-            "scatter_volume_shader",
-            &lit_shader(&[], wgsl_source!("scatter_volume")),
-        );
-
-        let layout = viewport_lib::plugin_api::builders::pipeline_layout(
-            device,
-            "scatter_volume_pipeline_layout",
-            &[camera_bgl, per_vol, per_tex, frame_bgl],
-        );
-
-        // Premultiplied alpha-over: per-volume draws composite into the
-        // (cleared) raw_current target in back-to-front order.
-        let blend = viewport_lib::gpu::BlendState {
-            color: viewport_lib::gpu::BlendComponent {
-                src_factor: viewport_lib::gpu::BlendFactor::One,
-                dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
-                operation: viewport_lib::gpu::BlendOperation::Add,
-            },
-            alpha: viewport_lib::gpu::BlendComponent {
-                src_factor: viewport_lib::gpu::BlendFactor::One,
-                dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
-                operation: viewport_lib::gpu::BlendOperation::Add,
-            },
+        self.ensure_composite_bgl(device);
+        self.ensure_temporal_resolve_bgl(device);
+        self.ensure_refraction_per_volume_bgl(device);
+        self.ensure_refraction_source_bgl(device);
+        self.ensure_pick_bgl(device);
+        let (
+            Some(per_vol),
+            Some(per_tex),
+            Some(frame_bgl),
+            Some(composite_bgl),
+            Some(temporal_bgl),
+            Some(refraction_per_vol),
+            Some(refraction_source),
+            Some(pick_bgl),
+        ) = (
+            self.per_volume_bgl.as_ref(),
+            self.per_volume_tex_bgl.as_ref(),
+            self.frame_bgl.as_ref(),
+            self.composite_bgl.as_ref(),
+            self.temporal_resolve_bgl.as_ref(),
+            self.refraction_per_volume_bgl.as_ref(),
+            self.refraction_source_bgl.as_ref(),
+            self.pick_bgl.as_ref(),
+        )
+        else {
+            return;
         };
-
-        let pipeline = viewport_lib::plugin_api::builders::render_pipeline(
-            device,
-            viewport_lib::plugin_api::builders::RenderPipelineDesc {
-                label: "scatter_volume_pipeline",
-                layout: &layout,
-                vertex_module: &shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[],
-                fragment: Some(viewport_lib::gpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(viewport_lib::gpu::ColorTargetState {
-                        format: colour_format,
-                        blend: Some(blend),
-                        write_mask: viewport_lib::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: viewport_lib::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: viewport_lib::gpu::PrimitiveState {
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: viewport_lib::gpu::MultisampleState {
-                    count: 1,
-                    ..Default::default()
-                },
-                cache: None,
-            },
-        );
-
-        self.pipeline = Some(pipeline);
+        let camera_bgl = resources.shared_bindings().group0_layout;
+        let module = |label, source: &str| {
+            viewport_lib::plugin_api::builders::wgsl_module(device, label, source)
+        };
+        let layout = |label, bgls: &[&viewport_lib::gpu::BindGroupLayout]| {
+            viewport_lib::plugin_api::builders::pipeline_layout(device, label, bgls)
+        };
+        let recipe = ScatterRecipe {
+            device: device.clone(),
+            builder: resources.pipeline_builder(),
+            march_layout: layout(
+                "scatter_volume_pipeline_layout",
+                &[camera_bgl, per_vol, per_tex, frame_bgl],
+            ),
+            march_shader: module(
+                "scatter_volume_shader",
+                &lit_shader(&[], wgsl_source!("scatter_volume")),
+            ),
+            composite_layout: layout("scatter_composite_pipeline_layout", &[composite_bgl]),
+            composite_shader: module(
+                "scatter_composite_shader",
+                wgsl_source!("scatter_composite"),
+            ),
+            temporal_layout: layout("scatter_temporal_resolve_pipeline_layout", &[temporal_bgl]),
+            temporal_shader: module(
+                "scatter_temporal_resolve_shader",
+                wgsl_source!("scatter_temporal_resolve"),
+            ),
+            refraction_layout: layout(
+                "scatter_refraction_pipeline_layout",
+                &[camera_bgl, refraction_per_vol, refraction_source],
+            ),
+            refraction_shader: module(
+                "scatter_refraction_shader",
+                &scene_shader(&[], wgsl_source!("scatter_refraction")),
+            ),
+            blit_layout: layout("scatter_refraction_blit_pipeline_layout", &[composite_bgl]),
+            blit_shader: module(
+                "scatter_refraction_blit_shader",
+                wgsl_source!("scatter_composite"),
+            ),
+            pick_shader: module(
+                "scatter_pick_shader",
+                &scene_shader(&[], wgsl_source!("scatter_pick")),
+            ),
+            pick_bgl: pick_bgl.clone(),
+        };
+        self.pipelines = Some(resources.lazy_pipelines(recipe, build));
     }
 
-    pub(crate) fn ensure_composite_pipeline(
-        &mut self,
-        device: &viewport_lib::gpu::Device,
-        colour_format: viewport_lib::gpu::TextureFormat,
-    ) {
-        if self.composite_pipeline.is_some() {
+    /// Make the composite pass's layout and its bilinear sampler, which the
+    /// temporal resolve and the refraction pass sample through too.
+    fn ensure_composite_bgl(&mut self, device: &viewport_lib::gpu::Device) {
+        if self.composite_bgl.is_some() {
             return;
         }
-        let bgl = viewport_lib::plugin_api::builders::texture_sampler_bgl(
+        self.composite_bgl = Some(viewport_lib::plugin_api::builders::texture_sampler_bgl(
             device,
             "scatter_composite_bgl",
             viewport_lib::gpu::ShaderStages::FRAGMENT,
-        );
-        let sampler = viewport_lib::plugin_api::builders::clamp_linear_sampler(
+        ));
+        self.composite_sampler = Some(viewport_lib::plugin_api::builders::clamp_linear_sampler(
             device,
             "scatter_composite_sampler",
-        );
-        let shader = viewport_lib::plugin_api::builders::wgsl_module(
-            device,
-            "scatter_composite_shader",
-            wgsl_source!("scatter_composite"),
-        );
-        let layout = viewport_lib::plugin_api::builders::pipeline_layout(
-            device,
-            "scatter_composite_pipeline_layout",
-            &[&bgl],
-        );
-        let blend = viewport_lib::gpu::BlendState {
-            color: viewport_lib::gpu::BlendComponent {
-                src_factor: viewport_lib::gpu::BlendFactor::One,
-                dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
-                operation: viewport_lib::gpu::BlendOperation::Add,
-            },
-            alpha: viewport_lib::gpu::BlendComponent {
-                src_factor: viewport_lib::gpu::BlendFactor::One,
-                dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
-                operation: viewport_lib::gpu::BlendOperation::Add,
-            },
-        };
-        let pipeline = viewport_lib::plugin_api::builders::build_fullscreen_pipeline(
-            device,
-            "scatter_composite_pipeline",
-            &layout,
-            &shader,
-            colour_format,
-            Some(blend),
-        );
-        self.composite_pipeline = Some(pipeline);
-        self.composite_bgl = Some(bgl);
-        self.composite_sampler = Some(sampler);
-    }
-
-    pub(crate) fn ensure_temporal_resolve_pipeline(&mut self, device: &viewport_lib::gpu::Device) {
-        if self.temporal_resolve_pipeline.is_some() {
-            return;
-        }
-        self.ensure_temporal_resolve_bgl(device);
-        let bgl = self.temporal_resolve_bgl.as_ref().unwrap();
-        let shader = viewport_lib::plugin_api::builders::wgsl_module(
-            device,
-            "scatter_temporal_resolve_shader",
-            wgsl_source!("scatter_temporal_resolve"),
-        );
-        let layout = viewport_lib::plugin_api::builders::pipeline_layout(
-            device,
-            "scatter_temporal_resolve_pipeline_layout",
-            &[bgl],
-        );
-        // History textures are RGBA16F. Blend is None: this pass owns the new
-        // history fully and overwrites it.
-        let pipeline = viewport_lib::plugin_api::builders::build_fullscreen_pipeline(
-            device,
-            "scatter_temporal_resolve_pipeline",
-            &layout,
-            &shader,
-            viewport_lib::gpu::TextureFormat::Rgba16Float,
-            None,
-        );
-        self.temporal_resolve_pipeline = Some(pipeline);
+        ));
     }
 
     // ---------------------------------------------------------------------
@@ -1035,83 +1093,6 @@ impl ScatterGpu {
             ],
         });
         self.refraction_source_bgl = Some(bgl);
-    }
-
-    pub(crate) fn ensure_refraction_pipeline(
-        &mut self,
-        device: &viewport_lib::gpu::Device,
-        camera_bgl: &viewport_lib::gpu::BindGroupLayout,
-        colour_format: viewport_lib::gpu::TextureFormat,
-    ) {
-        if self.refraction_pipeline.is_some() {
-            return;
-        }
-        self.ensure_refraction_per_volume_bgl(device);
-        self.ensure_refraction_source_bgl(device);
-        self.ensure_composite_pipeline(device, colour_format);
-
-        let per_vol = self.refraction_per_volume_bgl.as_ref().unwrap();
-        let source_bgl = self.refraction_source_bgl.as_ref().unwrap();
-
-        let shader = viewport_lib::plugin_api::builders::wgsl_module(
-            device,
-            "scatter_refraction_shader",
-            &scene_shader(&[], wgsl_source!("scatter_refraction")),
-        );
-
-        let layout = viewport_lib::plugin_api::builders::pipeline_layout(
-            device,
-            "scatter_refraction_pipeline_layout",
-            &[camera_bgl, per_vol, source_bgl],
-        );
-
-        // Replace blend: the distorted sample overwrites the HDR pixel before
-        // the scatter pass composites on top.
-        let pipeline = viewport_lib::plugin_api::builders::build_fullscreen_pipeline(
-            device,
-            "scatter_refraction_pipeline",
-            &layout,
-            &shader,
-            colour_format,
-            None,
-        );
-
-        self.refraction_pipeline = Some(pipeline);
-    }
-
-    /// Build a render pipeline that samples a source colour texture (via the
-    /// composite BGL / shader) and writes it to a render target with replace
-    /// blend. Used to copy the HDR scene into the refraction source texture
-    /// before the per-volume distortion runs.
-    pub(crate) fn ensure_refraction_blit_pipeline(
-        &mut self,
-        device: &viewport_lib::gpu::Device,
-        colour_format: viewport_lib::gpu::TextureFormat,
-    ) {
-        if self.refraction_blit_pipeline.is_some() {
-            return;
-        }
-        self.ensure_composite_pipeline(device, colour_format);
-        let bgl = self.composite_bgl.as_ref().unwrap();
-        let shader = viewport_lib::plugin_api::builders::wgsl_module(
-            device,
-            "scatter_refraction_blit_shader",
-            wgsl_source!("scatter_composite"),
-        );
-        let layout = viewport_lib::plugin_api::builders::pipeline_layout(
-            device,
-            "scatter_refraction_blit_pipeline_layout",
-            &[bgl],
-        );
-        let pipeline = viewport_lib::plugin_api::builders::build_fullscreen_pipeline(
-            device,
-            "scatter_refraction_blit_pipeline",
-            &layout,
-            &shader,
-            colour_format,
-            None,
-        );
-        self.refraction_blit_pipeline = Some(pipeline);
     }
 
     /// Size the refraction per-volume buffer and its bind group for `count`
