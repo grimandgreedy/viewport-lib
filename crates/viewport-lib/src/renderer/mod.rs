@@ -80,25 +80,24 @@ pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 #[allow(deprecated)]
 pub use self::types::{
     Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
-    BloomSettings, CameraFrame, Candela, ClipObject, ClipShape, ComputeFilterItem,
-    ComputeFilterKind, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis,
-    DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentSettings, ExposureMode,
-    ExposureSettings, FillRule, FilterMode, ForegroundPass, ForegroundProjection, FrameData,
-    GlyphRunItem, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
-    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
-    LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS,
-    MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS,
-    OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill,
-    OverlayFrame, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape,
-    OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId,
-    OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment, PathTrack, PipelineMode,
-    PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph,
-    PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality,
-    ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer,
-    ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission, TextureTransform,
-    TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, VignetteSettings,
-    VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline,
-    sphere_wireframe_polyline,
+    BloomSettings, CameraFrame, Candela, ClipObject, ClipShape, ContactShadowSettings,
+    DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings, DofSettings, EdlSettings,
+    EffectsFrame, EnvironmentSettings, ExposureMode, ExposureSettings, FillRule, ForegroundPass,
+    ForegroundProjection, FrameData, GlyphRunItem, GradientStop, GroundPlane, GroundPlaneMode,
+    IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
+    LightKind, LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux,
+    MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
+    OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
+    OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
+    OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment,
+    PathTrack, PipelineMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem,
+    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
+    ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
+    ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission,
+    TextureTransform, TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame,
+    VignetteSettings, VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline,
+    obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -447,12 +446,6 @@ pub struct ViewportRenderer {
     /// shadow info, and grid. Slots are grown lazily in `prepare` via
     /// `ensure_viewport_slot`. There are at most 4 in the current UI.
     viewport_slots: Vec<ViewportSlot>,
-    /// GPU compute filter results from the last `prepare()` call.
-    ///
-    /// Each entry contains a compacted index buffer + count for one filtered mesh.
-    /// Consumed during `paint()` to override the mesh's default index buffer.
-    /// Cleared and rebuilt each frame.
-    compute_filter_results: Vec<crate::resources::ComputeFilterResult>,
     /// State for the non-instanced (per-object) mesh draw path.
     mesh_uniforms: PerObjectState,
     /// Cached render bundle for the opaque per-object draws, rebuilt by
@@ -953,7 +946,6 @@ impl ViewportRenderer {
             overlay_uses_zorder: false,
             backdrop_blur_state: None,
             viewport_slots: Vec::new(),
-            compute_filter_results: Vec::new(),
             mesh_uniforms: PerObjectState::new(),
             per_object_bundle: None,
             per_object_bundle_gate: Default::default(),
@@ -3404,8 +3396,7 @@ impl ViewportRenderer {
     ///
     /// `scene_effects` carries the scene-global effects: lighting, environment
     /// map, and scatter settings.  Obtain it by constructing [`SceneEffects`]
-    /// directly or via [`EffectsFrame::split`]. Compute filter items are read
-    /// from `frame.scene.compute_filter_items`.
+    /// directly or via [`EffectsFrame::split`].
     pub(crate) fn prepare_scene(
         &mut self,
         device: &crate::gpu::Device,
@@ -3479,7 +3470,6 @@ impl ViewportRenderer {
             &self.instancing.batches,
             camera_bg,
             grid_bg,
-            &self.compute_filter_results,
             vp_slot,
             &self.mesh_uniforms.wireframe_bind_groups,
             &self.mesh_uniforms.bind_groups,

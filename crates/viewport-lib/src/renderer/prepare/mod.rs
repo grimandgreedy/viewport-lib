@@ -130,12 +130,12 @@ impl ViewportRenderer {
         (resolved, switches, culled, reduced)
     }
 
-    /// Scene-global prepare stage: compute filters, lighting, shadow pass, batching, scivis.
+    /// Scene-global prepare stage: lighting, shadow pass, batching, scivis.
     ///
     /// Call once per frame before any `prepare_viewport_internal` calls.
     ///
-    /// Reads `scene_fx` for lighting and IBL, `frame.scene` for compute filter
-    /// items, and `frame.camera` for shadow cascade computation.
+    /// Reads `scene_fx` for lighting and IBL, `frame.scene` for the items, and
+    /// `frame.camera` for shadow cascade computation.
     pub(super) fn prepare_scene_internal(
         &mut self,
         device: &crate::gpu::Device,
@@ -187,18 +187,6 @@ impl ViewportRenderer {
                 ),
                 None => self.resources.process_uploads(device, queue),
             }
-        }
-
-        // GPU compute filtering.
-        // Dispatch before the render pass. Completely skipped when list is empty (zero overhead).
-        if !frame.scene.compute_filter_items.is_empty() {
-            self.compute_filter_results = self.resources.run_compute_filters(
-                device,
-                queue,
-                &frame.scene.compute_filter_items,
-            );
-        } else {
-            self.compute_filter_results.clear();
         }
 
         // Run the mesh-family pipeline rebuild that deformer registration
@@ -333,16 +321,15 @@ impl ViewportRenderer {
             }
         }
         // Evaluate instanceability once per frame and share the result. Each
-        // `is_instanceable` call does several mesh-store and deform lookups plus
-        // a linear scan over the compute-filter results, so computing it once
-        // here instead of separately in the per-object skip test and the
-        // instanced batch filter keeps this O(items) rather than running the
+        // `is_instanceable` call does several mesh-store and deform lookups, so
+        // computing it once here instead of separately in the per-object skip
+        // test and the instanced batch filter keeps this O(items) rather than running the
         // same per-item work three times over. At city scale (tens of thousands
         // of resident meshes) that is the difference between a few milliseconds
         // and a few hundred.
         let instanceable: Vec<bool> = scene_items
             .iter()
-            .map(|item| is_instanceable(item, resources, &self.compute_filter_results))
+            .map(|item| is_instanceable(item, resources))
             .collect();
         // Blend each light-probe-lit item's SH into the shared buffer once, so
         // the per-object and instanced paths that draw those items index the
@@ -719,7 +706,6 @@ impl ViewportRenderer {
             resources,
             &mut self.instancing,
             &mut self.shadow,
-            &self.compute_filter_results,
             &self.item_type_plugins,
             plugin_frame_index,
             lighting,

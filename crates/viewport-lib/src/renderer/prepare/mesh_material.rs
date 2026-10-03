@@ -13,9 +13,7 @@ use super::*;
 /// and when deciding the instanced-batch cache key. An item is excluded when it
 /// is hidden, carries a scalar attribute, carries a GPU vertex warp (the
 /// instanced shader has no warp support), uses a matcap (a texture bind the
-/// instanced path does not yet carry), has a pending
-/// compute-filter result (which needs a per-item index buffer), carries
-/// per-submesh materials, has per-instance deform data, or its mesh has a
+/// instanced path does not yet carry), carries per-submesh materials, has per-instance deform data, or its mesh has a
 /// position/normal override or baked lightmap. All four back-face policies now
 /// instance: `Cull` and `Identical` use the one- and two-sided pipelines, and the
 /// styled policies (`DifferentColour`/`Tint`/`Pattern`) run on the two-sided
@@ -23,11 +21,7 @@ use super::*;
 /// `material_gpu_buf`, flip the normal on back faces, and read the Pattern world
 /// scale from `InstanceData`. Param-vis and premultiplied blend also instance
 /// (their `param_vis` mode/scale and `alpha_mode` ride `material_gpu_buf`).
-pub(crate) fn is_instanceable(
-    item: &SceneRenderItem,
-    resources: &DeviceResources,
-    compute_filter_results: &[crate::resources::ComputeFilterResult],
-) -> bool {
+pub(crate) fn is_instanceable(item: &SceneRenderItem, resources: &DeviceResources) -> bool {
     !item.settings.hidden
         && item.active_attribute.is_none()
         // Material-plugin items instance once the plugin's instanced pipeline set
@@ -65,9 +59,6 @@ pub(crate) fn is_instanceable(
         // one call with batch-level textures, so range items stay per-object.
         && item.submesh_materials.is_none()
         && resources.mesh_store.get(item.mesh_id).is_some()
-        && !compute_filter_results
-            .iter()
-            .any(|r| r.mesh_id == item.mesh_id)
         && !resources
             .deform
             .has_per_instance_deform_data(item.mesh_id, item.deform_instance)
@@ -241,7 +232,7 @@ mod tests {
         item.material.backface_policy =
             BackfacePolicy::DifferentColour(crate::Colour::linear_rgb(1.0, 0.0, 0.0));
         assert!(
-            is_instanceable(&item, &resources, &[]),
+            is_instanceable(&item, &resources),
             "a styled-backface item should instance",
         );
     }
@@ -284,7 +275,7 @@ mod tests {
         item.material.shading_plugin = Some(id);
 
         assert!(
-            !is_instanceable(&item, &resources, &[]),
+            !is_instanceable(&item, &resources),
             "a plugin item stays per-object until its instanced set is built",
         );
 
@@ -292,7 +283,7 @@ mod tests {
         resources.ensure_material_plugin_instanced_pipelines(&device, id);
 
         assert!(
-            is_instanceable(&item, &resources, &[]),
+            is_instanceable(&item, &resources),
             "a plugin item instances once its instanced set is ready",
         );
     }
@@ -330,13 +321,13 @@ mod tests {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         assert!(
-            is_instanceable(&item, &resources, &[]),
+            is_instanceable(&item, &resources),
             "a plain mesh item should instance",
         );
 
         item.warp_attribute = Some("warp".to_string());
         assert!(
-            !is_instanceable(&item, &resources, &[]),
+            !is_instanceable(&item, &resources),
             "a warp item must fall back to the per-object path",
         );
     }
@@ -360,14 +351,14 @@ mod tests {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         assert!(
-            is_instanceable(&item, &resources, &[]),
+            is_instanceable(&item, &resources),
             "a plain mesh item should instance",
         );
 
         // One f32 per vertex on slot 0, the shape a displacement deformer takes.
         resources.attach_deform_slot(&device, mesh_id, 0, 4, &vec![0u8; vertex_count * 4]);
         assert!(
-            !is_instanceable(&item, &resources, &[]),
+            !is_instanceable(&item, &resources),
             "an item whose mesh carries per-mesh deform data must fall back to \
              the per-object path, or it draws undeformed",
         );
@@ -376,7 +367,7 @@ mod tests {
         // one-way flag on the mesh.
         assert!(resources.detach_deform_slot(&device, mesh_id, 0));
         assert!(
-            is_instanceable(&item, &resources, &[]),
+            is_instanceable(&item, &resources),
             "detaching the slot puts the item back on the instanced path",
         );
     }
@@ -399,13 +390,13 @@ mod tests {
         item.mesh_id = mesh_id;
         item.material.alpha_mode = AlphaMode::Blend;
         assert!(
-            is_instanceable(&item, &resources, &[]),
+            is_instanceable(&item, &resources),
             "a straight-blend item should instance",
         );
 
         item.material.alpha_mode = AlphaMode::BlendPremultiplied;
         assert!(
-            is_instanceable(&item, &resources, &[]),
+            is_instanceable(&item, &resources),
             "a premultiplied-blend item should instance (alpha_mode rides the material buffer)",
         );
     }
@@ -430,7 +421,7 @@ mod tests {
             scale: 8.0,
         });
         assert!(
-            is_instanceable(&item, &resources, &[]),
+            is_instanceable(&item, &resources),
             "a param-vis item should instance (mode/scale ride the material buffer)",
         );
     }
@@ -458,14 +449,14 @@ mod tests {
         item.material.emissive = [2.0, 2.0, 2.0].into();
         item.material.emissive_texture_id = Some(crate::resources::TextureId::from_raw(1));
         assert!(
-            is_instanceable(&item, &resources, &[]),
+            is_instanceable(&item, &resources),
             "an emissive-textured item should instance",
         );
 
         item.material.metallic_roughness_texture_id =
             Some(crate::resources::TextureId::from_raw(2));
         assert!(
-            is_instanceable(&item, &resources, &[]),
+            is_instanceable(&item, &resources),
             "a metallic-roughness-textured item should instance",
         );
     }
@@ -487,7 +478,7 @@ mod tests {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         assert!(
-            is_instanceable(&item, &resources, &[]),
+            is_instanceable(&item, &resources),
             "a plain mesh item should instance",
         );
 
@@ -509,7 +500,7 @@ mod tests {
             )
             .unwrap();
         assert!(
-            !is_instanceable(&item, &resources, &[]),
+            !is_instanceable(&item, &resources),
             "a lightmapped mesh must fall back to the per-object path",
         );
     }

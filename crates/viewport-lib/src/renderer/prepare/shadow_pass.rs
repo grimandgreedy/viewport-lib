@@ -32,7 +32,6 @@ impl ViewportRenderer {
         resources: &mut DeviceResources,
         instancing: &mut InstancingState,
         shadow: &mut crate::renderer::shadow_state::ShadowState,
-        compute_filter_results: &[crate::resources::ComputeFilterResult],
         plugins: &crate::renderer::item_plugins::registry::ItemPluginRegistry,
         plugin_frame_index: u64,
         lighting: &crate::renderer::types::LightingSettings,
@@ -909,7 +908,6 @@ impl ViewportRenderer {
                     // (group 0 = `shadow_bind_group` with cascade dynamic
                     // offset, group 1 = mesh.object_bind_group, group 2 =
                     // per-mesh deform sidecar).
-                    let filter_results = compute_filter_results;
                     for cascade in 0..light.effective_cascade_count {
                         let tile_col = (cascade % 2) as f32;
                         let tile_row = (cascade / 2) as f32;
@@ -956,8 +954,7 @@ impl ViewportRenderer {
                             // policies and param-vis now instance, so they are not
                             // excluded; matcap, emissive texture, submesh, plugin,
                             // warp, deform, and overrides still fall here.
-                            let in_instanced_batch =
-                                is_instanceable(item, resources, filter_results);
+                            let in_instanced_batch = is_instanceable(item, resources);
                             if in_instanced_batch {
                                 continue;
                             }

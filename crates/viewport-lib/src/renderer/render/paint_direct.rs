@@ -37,7 +37,6 @@ impl ViewportRenderer {
             &self.instancing.batches,
             camera_bg,
             grid_bg,
-            &self.compute_filter_results,
             vp_slot,
             &self.mesh_uniforms.wireframe_bind_groups,
             &self.mesh_uniforms.bind_groups,

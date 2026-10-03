@@ -78,7 +78,6 @@ pub(crate) struct InstancedBatch {
 }
 
 mod clip;
-mod compute_filter;
 pub mod debug;
 mod frame;
 pub(crate) mod items;
@@ -87,7 +86,6 @@ mod overlay;
 mod postprocess;
 
 pub use self::clip::*;
-pub use self::compute_filter::*;
 pub use self::debug::{AtlasViewerCorner, DebugOutputMode, DebugQuantity, DebugVis};
 pub use self::frame::*;
 pub use self::items::*;
@@ -224,15 +222,13 @@ impl FrameData {
 /// ~90 lines of rendering code while satisfying Rust's lifetime invariance
 /// on `&mut RenderPass<'a>`.
 macro_rules! emit_draw_calls {
-    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr, $wireframe_bgs:expr, $per_item_bgs:expr, $submesh_bgs:expr, $object_indices:expr, $submesh_indices:expr, $scene_items:expr, $po_bundle:expr) => {{
+    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $slot:expr, $wireframe_bgs:expr, $per_item_bgs:expr, $submesh_bgs:expr, $object_indices:expr, $submesh_indices:expr, $scene_items:expr, $po_bundle:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let frame = $frame;
         let use_instancing: bool = $use_instancing;
         let po_bundle: Option<&crate::renderer::per_object_state::PerObjectBundle> = $po_bundle;
         let _vp_slot: Option<&ViewportSlot> = $slot;
-        // Compute filter results: used by per-object path to override index buffers.
-        let compute_filter_results: &[crate::resources::ComputeFilterResult] = $compute_filter_results;
         let batches: &[InstancedBatch] = $batches;
         let camera_bg: &crate::gpu::BindGroup = $camera_bg;
         let grid_bg: &crate::gpu::BindGroup = $grid_bg;
@@ -308,8 +304,7 @@ macro_rules! emit_draw_calls {
                                 && resources.mesh_store.get(item.mesh_id).is_some()
                                 && !crate::renderer::prepare::is_instanceable(
                                     item,
-                                    resources,
-                                    compute_filter_results,
+                                    resources
                                 )
                         })
                         .collect();
@@ -843,18 +838,9 @@ macro_rules! emit_draw_calls {
                                 cur_geometry = None;
                             }
                         } else {
-                            // Check for a compute-filtered index buffer override.
-                            let filter_result = compute_filter_results
-                                .iter()
-                                .find(|r| r.mesh_id == item.mesh_id);
-                            let ranges = if filter_result.is_none() {
-                                // A compute-filtered index buffer is compacted,
-                                // so the mesh's ranges no longer address it.
+                            let ranges =
                                 crate::renderer::prepare::active_submesh_materials(item, mesh)
-                                    .zip(submesh_bind_groups.get(&item_idx))
-                            } else {
-                                None
-                            };
+                                    .zip(submesh_bind_groups.get(&item_idx));
                             if let Some((mats, bgs)) = ranges {
                                 set_deform_cached!(deform_bg);
                                 if cur_geometry != Some((item.mesh_id, false)) {
@@ -923,26 +909,16 @@ macro_rules! emit_draw_calls {
                                 set_pipeline_cached!($pipeline);
                                 set_deform_cached!(deform_bg);
                                 let inst = object_inst(item_idx);
-                                if let Some(fr) = filter_result {
-                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
+                                if cur_geometry != Some((item.mesh_id, false)) {
+                                    render_pass
+                                        .set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                                     render_pass.set_index_buffer(
-                                        fr.index_buffer.slice(..),
+                                        resources.geometry.index_slice(mesh.index_span),
                                         crate::gpu::IndexFormat::Uint32,
                                     );
-                                    render_pass.draw_indexed(0..fr.index_count, 0, inst..inst + 1);
-                                    cur_geometry = None;
-                                } else {
-                                    if cur_geometry != Some((item.mesh_id, false)) {
-                                        render_pass
-                                            .set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-                                        render_pass.set_index_buffer(
-                                            resources.geometry.index_slice(mesh.index_span),
-                                            crate::gpu::IndexFormat::Uint32,
-                                        );
-                                        cur_geometry = Some((item.mesh_id, false));
-                                    }
-                                    render_pass.draw_indexed(0..mesh.index_count, 0, inst..inst + 1);
+                                    cur_geometry = Some((item.mesh_id, false));
                                 }
+                                render_pass.draw_indexed(0..mesh.index_count, 0, inst..inst + 1);
                             }
                         }
 

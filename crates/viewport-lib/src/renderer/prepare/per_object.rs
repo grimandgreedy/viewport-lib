@@ -983,8 +983,8 @@ impl ViewportRenderer {
     ///
     /// Eligible frames are the all-per-object case (instancing selected but no
     /// batch formed) with plain solid meshes: no wireframe mode or per-item
-    /// wireframe/normals/attribute/warp/deform features, no compute-filter
-    /// index overrides, no registered deformers, and the LDR path (the HDR
+    /// wireframe/normals/attribute/warp/deform features, no registered
+    /// deformers, and the LDR path (the HDR
     /// path records its own scene pass). The bundle stores the opaque draws
     /// in item order; blended items are listed for immediate depth-sorted
     /// drawing after the bundle. Per-item transforms and colours flow through
@@ -1024,7 +1024,6 @@ impl ViewportRenderer {
             .any(|o| o.enabled && o.clip_geometry);
         let plan = 'plan: {
             if frame.viewport.wireframe_mode
-                || !self.compute_filter_results.is_empty()
                 || !self.instancing.use_instancing
                 || !self.instancing.batches.is_empty()
                 || !self.resources.deform.meshes.is_empty()

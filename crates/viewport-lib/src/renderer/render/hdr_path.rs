@@ -68,7 +68,6 @@ fn post_effect_ctx<'a>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn draw_mesh_item(
     resources: &DeviceResources,
-    compute_filter_results: &[crate::resources::ComputeFilterResult],
     render_pass: &mut crate::gpu::RenderPass<'_>,
     item: &SceneRenderItem,
     obj_bg_override: Option<&crate::gpu::BindGroup>,
@@ -148,17 +147,8 @@ pub(super) fn draw_mesh_item(
             render_pass.draw(0..mesh.index_count, obj_index..obj_index + 1);
         }
     } else {
-        let filter = compute_filter_results
-            .iter()
-            .find(|r| r.mesh_id == item.mesh_id);
-        let ranges = if filter.is_none() {
-            // A compute-filtered index buffer is compacted, so the mesh's
-            // ranges no longer address it; the filter branch below draws the
-            // whole filtered mesh with the item material instead.
-            crate::renderer::prepare::active_submesh_materials(item, mesh).zip(submesh_bgs)
-        } else {
-            None
-        };
+        let ranges =
+            crate::renderer::prepare::active_submesh_materials(item, mesh).zip(submesh_bgs);
         if let Some((mats, bgs)) = ranges {
             bind_deform_group!(render_pass, resources, deform_bg);
             render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
@@ -243,17 +233,11 @@ pub(super) fn draw_mesh_item(
             render_pass.set_pipeline(pl);
             bind_deform_group!(render_pass, resources, deform_bg);
             render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-            if let Some(fr) = filter {
-                render_pass
-                    .set_index_buffer(fr.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..fr.index_count, 0, obj_index..obj_index + 1);
-            } else {
-                render_pass.set_index_buffer(
-                    resources.geometry.index_slice(mesh.index_span),
-                    crate::gpu::IndexFormat::Uint32,
-                );
-                render_pass.draw_indexed(0..mesh.index_count, 0, obj_index..obj_index + 1);
-            }
+            render_pass.set_index_buffer(
+                resources.geometry.index_slice(mesh.index_span),
+                crate::gpu::IndexFormat::Uint32,
+            );
+            render_pass.draw_indexed(0..mesh.index_count, 0, obj_index..obj_index + 1);
         }
     }
     if item.show_normals {
@@ -787,7 +771,6 @@ impl ViewportRenderer {
 
             let use_instancing = self.instancing.use_instancing;
             let batches = &self.instancing.batches;
-            let compute_filter_results = &self.compute_filter_results;
 
             if !scene_items.is_empty() {
                 if use_instancing && !batches.is_empty() {
@@ -799,15 +782,11 @@ impl ViewportRenderer {
                             // not admitted to an instanced batch. Reuse `is_instanceable`
                             // (the single source of truth used in prepare) instead of
                             // re-listing its conditions, so this filter cannot drift from
-                            // it -- a past drift dropped position-override and
-                            // compute-filter items from the scene pass entirely.
+                            // it -- a past drift dropped position-override items
+                            // from the scene pass entirely.
                             !item.settings.hidden
                                 && resources.mesh_store.get(item.mesh_id).is_some()
-                                && !crate::renderer::prepare::is_instanceable(
-                                    item,
-                                    resources,
-                                    compute_filter_results,
-                                )
+                                && !crate::renderer::prepare::is_instanceable(item, resources)
                         })
                         .collect();
 
@@ -1356,26 +1335,10 @@ impl ViewportRenderer {
                                 0,
                                 resources.geometry.vertex_slice(mesh.vertex_span),
                             );
-                            let filter = compute_filter_results
-                                .iter()
-                                .find(|r| r.mesh_id == item.mesh_id);
-                            let ranges = if filter.is_none() {
+                            let ranges =
                                 crate::renderer::prepare::active_submesh_materials(item, mesh)
-                                    .zip(self.mesh_uniforms.submesh_bind_groups.get(&item_idx))
-                            } else {
-                                None
-                            };
-                            if let Some(fr) = filter {
-                                render_pass.set_index_buffer(
-                                    fr.index_buffer.slice(..),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                render_pass.draw_indexed(
-                                    0..fr.index_count,
-                                    0,
-                                    obj_inst..obj_inst + 1,
-                                );
-                            } else if let Some((mats, bgs)) = ranges {
+                                    .zip(self.mesh_uniforms.submesh_bind_groups.get(&item_idx));
+                            if let Some((mats, bgs)) = ranges {
                                 // One draw per opaque-material range; blend
                                 // ranges go to the OIT pass with the other
                                 // transparent excluded items.
@@ -1536,7 +1499,6 @@ impl ViewportRenderer {
                             let obj_bg = per_item_bgs.get(*item_idx).and_then(|opt| opt.as_ref());
                             draw_mesh_item(
                                 resources,
-                                compute_filter_results,
                                 &mut render_pass,
                                 item,
                                 obj_bg,
@@ -1941,8 +1903,7 @@ impl ViewportRenderer {
                             && crate::renderer::prepare::has_transparent_draws(i, &self.resources)
                             && !crate::renderer::prepare::is_instanceable(
                                 i,
-                                &self.resources,
-                                &self.compute_filter_results,
+                                &self.resources
                             )
                     })
             } else {
@@ -2420,11 +2381,7 @@ impl ViewportRenderer {
                             }
                             // Instanceable transparent items go through the instanced OIT
                             // path; only the per-object (non-instanceable) ones draw here.
-                            if crate::renderer::prepare::is_instanceable(
-                                item,
-                                &self.resources,
-                                &self.compute_filter_results,
-                            ) {
+                            if crate::renderer::prepare::is_instanceable(item, &self.resources) {
                                 continue;
                             }
                             let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
@@ -2928,7 +2885,6 @@ impl ViewportRenderer {
                 .and_then(|e| e.bind_group.as_ref());
             draw_mesh_item(
                 resources,
-                &self.compute_filter_results,
                 &mut render_pass,
                 item,
                 obj_bg,

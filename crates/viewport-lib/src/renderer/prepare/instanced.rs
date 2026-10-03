@@ -327,9 +327,7 @@ impl ViewportRenderer {
         //
         // Items with active_attribute, matcap, warp, deform slot data (per-mesh
         // or per-instance), submesh materials, or overrides are excluded from
-        // the instanced batch filter (see `is_instanceable`). Items whose mesh has an active compute filter result
-        // are also excluded so the per-object path can apply the filtered index
-        // buffer (instanced draws always use the full index buffer).
+        // the instanced batch filter (see `is_instanceable`).
         // These flags are set on render items AFTER collect_render_items() (per-frame
         // mutations), so they do NOT bump the scene generation. Use last_instancable_count
         // as a cache key instead of a blanket has_per_frame_mutations flag; this allows

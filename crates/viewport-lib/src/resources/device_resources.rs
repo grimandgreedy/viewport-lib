@@ -566,10 +566,6 @@ pub struct DeviceResources {
     // --- volume rendering (lazily created) ---
     /// Volume render/surface-slice/outline pipelines, layouts, cube geometry, and default LUT.
 
-    // --- GPU compute filtering (lazily created) ---
-    /// Compute-filter pipeline and bind group layout (lazy).
-    pub(crate) compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources,
-
     // --- Order-independent transparency (OIT) : lazily created ---
     // The viewport-sized accum/reveal textures, composite bind group, and target
     // size live on ViewportHdrState; only the shared pipelines and layout sit here.

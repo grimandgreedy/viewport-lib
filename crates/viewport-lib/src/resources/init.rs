@@ -2135,10 +2135,6 @@ impl DeviceResources {
             instancing: crate::resources::mesh::instancing::InstancingResources::default(),
             cull: crate::resources::mesh::instancing::CullResources::default(),
             polyline,
-            compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources {
-                pipeline: None,
-                bgl: None,
-            },
             oit: crate::resources::postprocess::OitResources::default(),
             pt: crate::resources::types::ProjectedTetResources::default(),
             // IBL / environment map resources.

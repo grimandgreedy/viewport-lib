@@ -155,7 +155,6 @@ impl ViewportRenderer {
                 &self.instancing.batches,
                 camera_bg,
                 grid_bg,
-                &self.compute_filter_results,
                 Some(slot),
                 &self.mesh_uniforms.wireframe_bind_groups,
                 &self.mesh_uniforms.bind_groups,
@@ -336,7 +335,6 @@ impl ViewportRenderer {
                         .and_then(|e| e.bind_group.as_ref());
                     super::hdr_path::draw_mesh_item(
                         resources,
-                        &self.compute_filter_results,
                         &mut render_pass,
                         item,
                         obj_bg,

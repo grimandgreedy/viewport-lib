@@ -727,22 +727,11 @@ impl ViewportRenderer {
                         0,
                         self.resources.geometry.vertex_slice(mesh.vertex_span),
                     );
-                    // Use the compacted index buffer when a compute filter clipped this
-                    // mesh, so the outline follows the filtered geometry (matching the
-                    // scene pass) rather than the full mesh.
-                    let filter = self
-                        .compute_filter_results
-                        .iter()
-                        .find(|r| r.mesh_id == outlined.mesh_id);
-                    let (index_slice, index_count) = match filter {
-                        Some(f) => (f.index_buffer.slice(..), f.index_count),
-                        None => (
-                            self.resources.geometry.index_slice(mesh.index_span),
-                            mesh.index_count,
-                        ),
-                    };
-                    pass.set_index_buffer(index_slice, crate::gpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..index_count, 0, 0..1);
+                    pass.set_index_buffer(
+                        self.resources.geometry.index_slice(mesh.index_span),
+                        crate::gpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
 
                 // Item-type plugin outline mask: each registered plugin

@@ -3,7 +3,7 @@
 //! Each object is a different shape configured to take one reachable scene/shadow
 //! path: instanced vs per-object, opaque vs transparent, one-sided vs two-sided,
 //! plus the shading modifiers (matcap, scalar attribute, param-vis), a bound
-//! position-override buffer, and the two heavy paths (compute-filter and GPU
+//! position-override buffer, and the two deformer paths (a cut and GPU
 //! skinning). The left panel drives lighting and shadows and toggles the HDR
 //! (post-process + OIT) vs LDR inline path, GPU culling, and wireframe. The
 //! light-kind selector switches between directional cascade shadows and
@@ -24,17 +24,21 @@
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
+use viewport_lib_plugins::deformers::cut::{Cut, CutDeformer};
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePattern, BackfacePolicy, BuiltinColourmap,
-    BuiltinMatcap, ButtonState, Camera, CameraFrame, ColourmapId, ComputeFilterItem,
-    ComputeFilterKind, FrameData, LightKind, LightSource, LightingSettings, MatcapId, Material,
-    MeshId, OffscreenViewportTarget, OrbitCameraController, ParamVis, ParamVisMode, PatternConfig,
-    PickId, PickMask, SceneFrame, SceneRenderItem, ScrollUnits, ShadingModel, ShadowFilter,
-    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
+    BuiltinMatcap, ButtonState, Camera, CameraFrame, ColourmapId, FrameData, LightKind,
+    LightSource, LightingSettings, MatcapId, Material, MeshId, OffscreenViewportTarget,
+    OrbitCameraController, ParamVis, ParamVisMode, PatternConfig, PickId, PickMask, SceneFrame,
+    SceneRenderItem, ScrollUnits, ShadingModel, ShadowFilter, ViewportContext, ViewportEvent,
+    ViewportInput, ViewportRenderer,
     material::AlphaMode,
     plugins::skinning::{SkinWeights, SkinningPlugin},
     primitives,
 };
+
+/// The deform instance the cut sphere selects its cut with.
+const CUT_INSTANCE: u32 = 1;
 
 /// Legend: (pick id, short name, path it exercises). Order matches the grid.
 const PATHS: &[(u64, &str, &str)] = &[
@@ -52,7 +56,7 @@ const PATHS: &[(u64, &str, &str)] = &[
     (8, "Icosphere", "Per-object: matcap shading"),
     (9, "Sphere", "Per-object: scalar attribute + colourmap"),
     (10, "Ellipsoid", "Per-object: UV param-vis (checker)"),
-    (11, "Sphere", "Per-object: compute-filter (clip plane)"),
+    (11, "Sphere", "Per-object: cut deformer (plane)"),
     (
         12,
         "Capsule",
@@ -200,6 +204,16 @@ fn main() -> eframe::Result {
                 let filter = res
                     .upload_mesh_data(device, &primitives::sphere(0.9, 36, 18))
                     .expect("filter");
+                // Cut the sphere to its top half: keep world z above its centre.
+                let cut = CutDeformer::install(res, device).expect("cut install");
+                cut.set(
+                    res,
+                    device,
+                    queue,
+                    filter,
+                    CUT_INSTANCE,
+                    &[Cut::plane([0.0, 0.0, 1.0], grid_pos(11).z)],
+                );
 
                 // Skinned capsule: build weights from vertex height, attach to the
                 // skinning deformer. The joint palette is uploaded per frame in the callback.
@@ -476,9 +490,8 @@ impl App {
         s
     }
 
-    /// One render item per object, plus the ground. Returns the scene items and the
-    /// compute-filter specs (the clipped sphere needs an entry on the effects frame).
-    fn build_scene(&self) -> (Vec<SceneRenderItem>, Vec<ComputeFilterItem>) {
+    /// One render item per object, plus the ground.
+    fn build_scene(&self) -> Vec<SceneRenderItem> {
         let mut items = Vec::new();
 
         let mut place = |mesh: MeshId, pick_id: u64, configure: &dyn Fn(&mut SceneRenderItem)| {
@@ -559,10 +572,11 @@ impl App {
                 scale: 8.0,
             });
         });
-        // 11: per-object compute-filter (handled below; the pending filter result forces per-object).
+        // 11: per-object cut deformer (its deform instance forces per-object).
         place(self.meshes.filter, 11, &|it| {
             it.material.base_colour = [0.10, 0.75, 0.90].into(); // cyan
             it.material.backface_policy = BackfacePolicy::Identical; // show the cut interior
+            it.deform_instance = Some(CUT_INSTANCE);
         });
         // 12: per-object GPU skinning. deform_instance binds the per-instance palette.
         place(self.meshes.skinned, 12, &|it| {
@@ -611,16 +625,7 @@ impl App {
             }
         }
 
-        // Clip the filtered sphere to its top half (local mesh space, before the model transform).
-        let mut clip = ComputeFilterItem::default();
-        clip.mesh_id = self.meshes.filter;
-        clip.kind = ComputeFilterKind::Clip {
-            plane_normal: [0.0, 0.0, 1.0],
-            plane_dist: 0.0,
-        };
-        let filters = vec![clip];
-
-        (items, filters)
+        items
     }
 }
 
@@ -780,14 +785,13 @@ impl eframe::App for App {
                 }
             }
 
-            let (items, filters) = self.build_scene();
+            let items = self.build_scene();
             let ppp = ui.ctx().pixels_per_point();
             let mut fd = FrameData::new(
                 CameraFrame::from_camera(&self.camera, [w, h]).with_pixels_per_point(ppp),
                 SceneFrame::from_surface_items(items),
             );
             fd.effects.lighting = self.build_lighting();
-            fd.scene.compute_filter_items = filters;
             // HDR path (post-process + OIT transparency) vs LDR inline path.
             fd.effects.display.mode = if self.hdr {
                 vpl::PipelineMode::Hdr

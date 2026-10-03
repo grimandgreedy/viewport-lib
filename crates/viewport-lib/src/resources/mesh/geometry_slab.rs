@@ -10,7 +10,7 @@
 //! Storage is split into a vertex slab and an index slab, each a growable list
 //! of chunk buffers with a first-fit free list. Spans are aligned to the storage
 //! offset alignment so a sub-range can also be bound as a STORAGE buffer (the
-//! compute-filter and GPU-picking paths read geometry that way).
+//! GPU-picking paths read geometry that way).
 
 use crate::gpu;
 use crate::resources::builders::LoggedAlloc;

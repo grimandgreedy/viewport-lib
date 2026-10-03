@@ -55,7 +55,6 @@ pub mod upload_jobs;
 pub mod volume;
 
 pub use self::content_buffer::ContentBuffer;
-pub use self::gpu::compute_filter::ComputeFilterResult;
 pub use self::handle::ContentHandle;
 pub use self::light_probes::{
     LightProbe, LightProbeSet, LightProbeVolume, SHCoefficients, evaluate_sh,
@@ -85,7 +84,8 @@ pub use self::overlay::font::{FontError, FontHandle, TextMetrics};
 pub(crate) use self::overlay::geometry::{CompiledOverlay, CompiledSource, OverlayInstance};
 pub use self::plugin_builders::{
     HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry, PICK_COLOR_FORMAT,
-    PICK_DEPTH_CHANNEL_FORMAT, PipelineBuilder, PluginPipelineOpts, SCENE_DEPTH_FORMAT, SHADOW_DEPTH_FORMAT,
+    PICK_DEPTH_CHANNEL_FORMAT, PipelineBuilder, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
+    SHADOW_DEPTH_FORMAT,
 };
 pub use self::resource_deps::{ResourceGate, Revalidate};
 pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};

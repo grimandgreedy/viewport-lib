@@ -347,8 +347,8 @@ pub struct FrameStats {
     /// (different-colour/tint/pattern) or is two-sided and transparent, uses a
     /// matcap, has a scalar attribute or parameter visualization, carries a
     /// position/normal override, carries deform slot data (per-mesh or
-    /// per-instance, so skinning and displacement both land here), or is
-    /// hit by a compute filter. Each such item costs a uniform write and a bind-group
+    /// per-instance, so skinning and displacement both land here). Each such
+    /// item costs a uniform write and a bind-group
     /// build in `prepare`, so a large count here means `prepare` is paying
     /// per-object cost across much of the scene rather than batching it.
     pub per_object_items: u32,
