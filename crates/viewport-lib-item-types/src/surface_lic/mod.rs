@@ -148,10 +148,102 @@ struct AdvectParams {
     _pad: [f32; 2],
 }
 
+/// Members of [`LicPipelines`].
+const VECTOR: usize = 0;
+const ADVECT: usize = 1;
+
+/// What a pipeline build reads.
+struct LicRecipe {
+    device: viewport_lib::gpu::Device,
+    vector_layout: viewport_lib::gpu::PipelineLayout,
+    vector_shader: viewport_lib::gpu::ShaderModule,
+    advect_layout: viewport_lib::gpu::PipelineLayout,
+    advect_shader: viewport_lib::gpu::ShaderModule,
+}
+
+/// The vector pass and the advect pass, each built the first time a frame
+/// draws streaks.
+type LicPipelines = viewport_lib::plugin_api::LazyPipelines<LicRecipe, 2>;
+
+fn build(r: &LicRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
+    if i == ADVECT {
+        // src * dst + dst * src: the scene colour times twice the modulation.
+        // Alpha keeps what the scene wrote.
+        let modulate = viewport_lib::gpu::BlendState {
+            color: viewport_lib::gpu::BlendComponent {
+                src_factor: viewport_lib::gpu::BlendFactor::Dst,
+                dst_factor: viewport_lib::gpu::BlendFactor::Src,
+                operation: viewport_lib::gpu::BlendOperation::Add,
+            },
+            alpha: viewport_lib::gpu::BlendComponent {
+                src_factor: viewport_lib::gpu::BlendFactor::Zero,
+                dst_factor: viewport_lib::gpu::BlendFactor::One,
+                operation: viewport_lib::gpu::BlendOperation::Add,
+            },
+        };
+        return builders::build_fullscreen_pipeline(
+            &r.device,
+            "surface_lic_advect_pipeline",
+            &r.advect_layout,
+            &r.advect_shader,
+            viewport_lib::resources::HDR_COLOR_FORMAT,
+            Some(modulate),
+        );
+    }
+    // Buffer 0 is the shared mesh vertex, read for its position alone.
+    let position_layout = viewport_lib::gpu::VertexBufferLayout {
+        array_stride: builders::mesh_vertex_layout().array_stride,
+        step_mode: viewport_lib::gpu::VertexStepMode::Vertex,
+        attributes: &viewport_lib::gpu::vertex_attr_array![0 => Float32x3],
+    };
+    let instance_layout = viewport_lib::gpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<LicInstance>() as u64,
+        step_mode: viewport_lib::gpu::VertexStepMode::Instance,
+        attributes: &INSTANCE_ATTRIBUTES,
+    };
+    // Tested against the scene depth so a flow surface writes vectors only
+    // where it is the visible one. The bias absorbs the rounding between
+    // this draw and the colour draw of the same triangles.
+    let mut depth =
+        builders::scene_depth_stencil(false, viewport_lib::gpu::CompareFunction::LessEqual);
+    depth.bias.constant = -2;
+    builders::render_pipeline(
+        &r.device,
+        builders::RenderPipelineDesc {
+            label: "surface_lic_vector_pipeline",
+            layout: &r.vector_layout,
+            vertex_module: &r.vector_shader,
+            vertex_entry: "vs_main",
+            vertex_buffers: &[
+                position_layout,
+                builders::vector_attribute_layout(1),
+                instance_layout,
+            ],
+            fragment: Some(viewport_lib::gpu::FragmentState {
+                module: &r.vector_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(viewport_lib::gpu::ColorTargetState {
+                    format: VECTOR_FORMAT,
+                    blend: None,
+                    write_mask: viewport_lib::gpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: viewport_lib::gpu::PrimitiveState {
+                topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(depth),
+            multisample: viewport_lib::gpu::MultisampleState::default(),
+            cache: None,
+        },
+    )
+}
+
 /// Pipelines and the resources every viewport shares.
 struct LicGpu {
-    vector_pipeline: viewport_lib::gpu::RenderPipeline,
-    advect_pipeline: viewport_lib::gpu::RenderPipeline,
+    pipelines: LicPipelines,
     advect_bgl: viewport_lib::gpu::BindGroupLayout,
     sampler: viewport_lib::gpu::Sampler,
     params_buf: viewport_lib::gpu::Buffer,
@@ -160,59 +252,13 @@ struct LicGpu {
 impl LicGpu {
     fn new(
         device: &viewport_lib::gpu::Device,
-        camera_bgl: &viewport_lib::gpu::BindGroupLayout,
+        resources: &viewport_lib::resources::DeviceResources,
     ) -> Self {
         let vector_shader = builders::wgsl_module(device, "surface_lic_vector", &vector_source());
-        let vector_layout =
-            builders::pipeline_layout(device, "surface_lic_vector_layout", &[camera_bgl]);
-        // Buffer 0 is the shared mesh vertex, read for its position alone.
-        let position_layout = viewport_lib::gpu::VertexBufferLayout {
-            array_stride: builders::mesh_vertex_layout().array_stride,
-            step_mode: viewport_lib::gpu::VertexStepMode::Vertex,
-            attributes: &viewport_lib::gpu::vertex_attr_array![0 => Float32x3],
-        };
-        let instance_layout = viewport_lib::gpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<LicInstance>() as u64,
-            step_mode: viewport_lib::gpu::VertexStepMode::Instance,
-            attributes: &INSTANCE_ATTRIBUTES,
-        };
-        // Tested against the scene depth so a flow surface writes vectors only
-        // where it is the visible one. The bias absorbs the rounding between
-        // this draw and the colour draw of the same triangles.
-        let mut depth =
-            builders::scene_depth_stencil(false, viewport_lib::gpu::CompareFunction::LessEqual);
-        depth.bias.constant = -2;
-        let vector_pipeline = builders::render_pipeline(
+        let vector_layout = builders::pipeline_layout(
             device,
-            builders::RenderPipelineDesc {
-                label: "surface_lic_vector_pipeline",
-                layout: &vector_layout,
-                vertex_module: &vector_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[
-                    position_layout,
-                    builders::vector_attribute_layout(1),
-                    instance_layout,
-                ],
-                fragment: Some(viewport_lib::gpu::FragmentState {
-                    module: &vector_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(viewport_lib::gpu::ColorTargetState {
-                        format: VECTOR_FORMAT,
-                        blend: None,
-                        write_mask: viewport_lib::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: viewport_lib::gpu::PrimitiveState {
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(depth),
-                multisample: viewport_lib::gpu::MultisampleState::default(),
-                cache: None,
-            },
+            "surface_lic_vector_layout",
+            &[resources.shared_bindings().group0_layout],
         );
 
         let advect_shader = builders::wgsl_module(
@@ -233,27 +279,15 @@ impl LicGpu {
             });
         let advect_layout =
             builders::pipeline_layout(device, "surface_lic_advect_layout", &[&advect_bgl]);
-        // src * dst + dst * src: the scene colour times twice the modulation.
-        // Alpha keeps what the scene wrote.
-        let modulate = viewport_lib::gpu::BlendState {
-            color: viewport_lib::gpu::BlendComponent {
-                src_factor: viewport_lib::gpu::BlendFactor::Dst,
-                dst_factor: viewport_lib::gpu::BlendFactor::Src,
-                operation: viewport_lib::gpu::BlendOperation::Add,
+        let pipelines = resources.lazy_pipelines(
+            LicRecipe {
+                device: device.clone(),
+                vector_layout,
+                vector_shader,
+                advect_layout,
+                advect_shader,
             },
-            alpha: viewport_lib::gpu::BlendComponent {
-                src_factor: viewport_lib::gpu::BlendFactor::Zero,
-                dst_factor: viewport_lib::gpu::BlendFactor::One,
-                operation: viewport_lib::gpu::BlendOperation::Add,
-            },
-        };
-        let advect_pipeline = builders::build_fullscreen_pipeline(
-            device,
-            "surface_lic_advect_pipeline",
-            &advect_layout,
-            &advect_shader,
-            viewport_lib::resources::HDR_COLOR_FORMAT,
-            Some(modulate),
+            build,
         );
 
         let params_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
@@ -265,8 +299,7 @@ impl LicGpu {
         });
 
         Self {
-            vector_pipeline,
-            advect_pipeline,
+            pipelines,
             advect_bgl,
             sampler: builders::clamp_linear_sampler(device, "surface_lic_sampler"),
             params_buf,
@@ -414,6 +447,17 @@ impl ItemTypePlugin for SurfaceLicPlugin {
         TYPE_NAME
     }
 
+    fn warm(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        resources: &viewport_lib::resources::DeviceResources,
+    ) {
+        self.gpu
+            .get_or_insert_with(|| LicGpu::new(device, resources))
+            .pipelines
+            .request_all();
+    }
+
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -433,9 +477,9 @@ impl ItemTypePlugin for SurfaceLicPlugin {
             return Vec::new();
         };
 
-        let gpu = self.gpu.get_or_insert_with(|| {
-            LicGpu::new(device, ctx.resources.shared_bindings().group0_layout)
-        });
+        let gpu = self
+            .gpu
+            .get_or_insert_with(|| LicGpu::new(device, ctx.resources));
         let params = AdvectParams {
             steps: first.config.steps,
             step_size: first.config.step_size,
@@ -501,6 +545,12 @@ impl ItemTypePlugin for SurfaceLicPlugin {
         if self.draws.is_empty() || ctx.scene_size[0] == 0 || ctx.scene_size[1] == 0 {
             return;
         }
+        // Still compiling: the streaks draw from the frame both are ready.
+        let (Some(vector_pipeline), Some(advect_pipeline)) =
+            (gpu.pipelines.get(VECTOR), gpu.pipelines.get(ADVECT))
+        else {
+            return;
+        };
 
         let mut targets = self.targets.lock().unwrap();
         if targets
@@ -547,7 +597,7 @@ impl ItemTypePlugin for SurfaceLicPlugin {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(&gpu.vector_pipeline);
+            pass.set_pipeline(vector_pipeline);
             pass.set_bind_group(0, ctx.camera_bind_group, &[]);
             pass.set_vertex_buffer(2, instances.slice(..));
             for draw in &self.draws {
@@ -587,7 +637,7 @@ impl ItemTypePlugin for SurfaceLicPlugin {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        pass.set_pipeline(&gpu.advect_pipeline);
+        pass.set_pipeline(advect_pipeline);
         pass.set_bind_group(0, &targets.bind_group, &[]);
         pass.draw(0..3, 0..1);
     }

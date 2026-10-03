@@ -31,6 +31,13 @@ fn flow_quad(renderer: &mut ViewportRenderer, device: &viewport_lib::wgpu::Devic
         .unwrap()
 }
 
+/// One test renders at a time. The warm-up test reads the process-wide build
+/// log, which the other tests' fresh renderers would write into.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn base_frame() -> FrameData {
     let mut frame = sub_object_pick_frame();
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
@@ -79,6 +86,7 @@ const RIGHT: (u32, u32) = (49, 60);
 
 #[test]
 fn strength_is_per_item() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -107,6 +115,7 @@ fn strength_is_per_item() {
 
 #[test]
 fn streaks_appear_mid_session_and_go_when_the_item_does() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -131,6 +140,7 @@ fn streaks_appear_mid_session_and_go_when_the_item_does() {
 
 #[test]
 fn missing_attribute_or_hidden_item_draws_nothing() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -157,6 +167,7 @@ fn missing_attribute_or_hidden_item_draws_nothing() {
 /// cut shows what is behind, the streaks leave that alone.
 #[test]
 fn streaks_are_clipped_with_the_surface() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -231,5 +242,46 @@ fn streaks_are_clipped_with_the_surface() {
     assert_eq!(
         drawn_over, 0,
         "streaks drawn where the surface was clipped away"
+    );
+}
+
+/// Naming the type in a warm-up builds its pipelines, so the first frame that
+/// draws streaks compiles none of them.
+#[test]
+fn a_warmed_lic_type_builds_nothing_on_its_first_frame() {
+    let _serial = serial();
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    let mesh = flow_quad(&mut renderer, &device);
+    renderer.warm_pipelines(
+        &device,
+        &queue,
+        &viewport_lib::PipelineSet::default()
+            .with_item_type::<viewport_lib_item_types::SurfaceLicPlugin>(),
+    );
+    renderer.wait_for_pipelines(&device);
+
+    viewport_lib::resources::build_log::enable();
+    let _ = viewport_lib::resources::build_log::drain();
+    for direct in [false, true] {
+        let mut frame = base_frame();
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![surface(mesh, 0.5)].into());
+        *frame.scene.items_mut::<SurfaceLicItem>() = vec![lic(mesh, 0.5, "flow", 2.0)];
+        if direct {
+            frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        }
+        let _ = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+    }
+    let builds: Vec<String> = viewport_lib::resources::build_log::drain()
+        .into_iter()
+        .map(|(label, _)| label)
+        .filter(|l| l.contains("surface_lic"))
+        .collect();
+    assert!(
+        builds.is_empty(),
+        "the first streak frames built pipelines after the warm-up: {builds:?}"
     );
 }
