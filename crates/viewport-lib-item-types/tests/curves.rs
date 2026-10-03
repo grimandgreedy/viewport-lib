@@ -924,3 +924,41 @@ fn a_warmed_tube_type_builds_nothing_on_its_first_frame() {
         "the first tube frames built pipelines after the warm-up: {builds:?}"
     );
 }
+
+/// An opaque ribbon, one that routes through OIT in HDR and an additive one,
+/// so the warm-up is checked against the variant, OIT and shadow members.
+#[test]
+fn a_warmed_ribbon_type_builds_nothing_on_its_first_frame() {
+    let _serial = serial();
+    let Some(builds) = builds_after_warm(
+        viewport_lib::PipelineSet::default().with_item_type::<RibbonPlugin>(),
+        "ribbon",
+        |frame| {
+            let (positions, strip_lengths) = spine();
+            let mut opaque = RibbonItem::default();
+            opaque.positions = positions;
+            opaque.strip_lengths = strip_lengths;
+            opaque.width = 1.0;
+            opaque.settings.pick_id = PickId(1);
+            opaque.settings.selected = true;
+            opaque.settings.cast_shadows = true;
+            let mut transparent = opaque.clone();
+            transparent.depth_write = false;
+            transparent.settings.pick_id = PickId(2);
+            let mut additive = opaque.clone();
+            additive.blend = viewport_lib::SpriteBlend::Additive;
+            additive.settings.pick_id = PickId(3);
+            frame
+                .scene
+                .items_mut::<RibbonItem>()
+                .extend([opaque, transparent, additive]);
+        },
+    ) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    assert!(
+        builds.is_empty(),
+        "the first ribbon frames built pipelines after the warm-up: {builds:?}"
+    );
+}

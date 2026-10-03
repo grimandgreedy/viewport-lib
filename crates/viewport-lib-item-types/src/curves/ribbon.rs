@@ -17,7 +17,6 @@ use super::draw::{
 use super::pipeline::{CurveFrame, CurvePickGpu, draw_mesh, draw_solid_indexed};
 use super::types::RibbonId;
 use super::types::{RibbonItem, RibbonRefItem};
-use viewport_lib::plugin_api::builders::DualPipeline;
 use viewport_lib::plugin_api::shared_wgsl;
 
 /// The catalogue sections `ribbon.wgsl` and `ribbon_oit.wgsl` need on top of
@@ -56,7 +55,16 @@ pub(super) struct RibbonKey {
     pub depth_write: bool,
 }
 
+/// Number of [`RibbonKey`] slots.
+const KEY_COUNT: usize = 12;
+
 impl RibbonKey {
+    const BLENDS: [SpriteBlend; 3] = [
+        SpriteBlend::AlphaBlend,
+        SpriteBlend::Additive,
+        SpriteBlend::Premultiplied,
+    ];
+
     fn blend_index(self) -> usize {
         match self.blend {
             SpriteBlend::AlphaBlend => 0,
@@ -65,81 +73,213 @@ impl RibbonKey {
         }
     }
 
-    /// Every axis combination, for eager cross-product construction
-    /// (`RibbonVariantSet::build`).
-    pub fn all() -> impl Iterator<Item = RibbonKey> {
-        [
-            SpriteBlend::AlphaBlend,
-            SpriteBlend::Additive,
-            SpriteBlend::Premultiplied,
-        ]
-        .into_iter()
-        .flat_map(|blend| {
-            [false, true].into_iter().flat_map(move |wireframe| {
-                [false, true].into_iter().map(move |depth_write| RibbonKey {
-                    blend,
-                    wireframe,
-                    depth_write,
-                })
-            })
-        })
-    }
-
     fn slot(self) -> usize {
         self.blend_index() + 3 * (self.wireframe as usize) + 6 * (self.depth_write as usize)
     }
-}
 
-/// Build one value per [`RibbonKey`] and place each at its own
-/// [`slot`](RibbonKey::slot), which is *not* the order `all()` yields them in.
-/// Collecting in iteration order instead puts variants under the wrong keys, so
-/// `get` hands back a pipeline belonging to a different blend or topology.
-fn place_by_slot<T>(mut build: impl FnMut(RibbonKey) -> T) -> Vec<T> {
-    let mut slots: Vec<Option<T>> = (0..12).map(|_| None).collect();
-    for key in RibbonKey::all() {
-        slots[key.slot()] = Some(build(key));
-    }
-    slots
-        .into_iter()
-        .map(|v| v.unwrap_or_else(|| unreachable!("every slot is covered by all()")))
-        .collect()
-}
-
-/// A `DualPipeline` built for every reachable [`RibbonKey`], indexed for a
-/// hash-free draw-time lookup (`get`).
-pub(super) struct RibbonVariantSet {
-    variants: [DualPipeline; 12],
-}
-
-impl RibbonVariantSet {
-    pub fn build(build: impl FnMut(RibbonKey) -> DualPipeline) -> Self {
+    /// The key at `slot`, the inverse of [`slot`](Self::slot).
+    fn from_slot(slot: usize) -> Self {
         Self {
-            variants: place_by_slot(build)
-                .try_into()
-                .unwrap_or_else(|_| unreachable!("RibbonKey::all() yields exactly 12 keys")),
+            blend: Self::BLENDS[slot % 3],
+            wireframe: (slot / 3) % 2 == 1,
+            depth_write: slot >= 6,
         }
     }
 
-    pub fn get(&self, key: RibbonKey) -> &DualPipeline {
-        &self.variants[key.slot()]
+    /// The key a ribbon's draw data selects.
+    fn of(gd: &super::store::StreamtubeGpuData) -> Self {
+        Self {
+            blend: gd.blend,
+            wireframe: gd.wireframe,
+            depth_write: gd.depth_write,
+        }
     }
+}
+
+/// The member of [`RibbonPipelines`] that draws `key` in one format: two per
+/// [`RibbonKey`] slot, LDR then HDR. The OIT and shadow members follow them.
+fn variant(key: RibbonKey, hdr: bool) -> usize {
+    key.slot() * 2 + hdr as usize
+}
+const OIT: usize = KEY_COUNT * 2;
+const OIT_PREMULTIPLIED: usize = OIT + 1;
+const SHADOW: usize = OIT + 2;
+
+/// The OIT member a ribbon of this blend draws with.
+fn oit_member(blend: SpriteBlend) -> usize {
+    match blend {
+        SpriteBlend::Premultiplied => OIT_PREMULTIPLIED,
+        _ => OIT,
+    }
+}
+
+/// What a ribbon pipeline build reads.
+struct RibbonRecipe {
+    device: viewport_lib::gpu::Device,
+    builder: viewport_lib::plugin_api::PipelineBuilder,
+    layout: viewport_lib::gpu::PipelineLayout,
+    shader: viewport_lib::gpu::ShaderModule,
+    oit_shader: viewport_lib::gpu::ShaderModule,
+    shadow_shader: viewport_lib::gpu::ShaderModule,
+    bgl: viewport_lib::gpu::BindGroupLayout,
+    sample_count: u32,
+    ldr_format: viewport_lib::gpu::TextureFormat,
+}
+
+/// Every blend, topology and depth-write variant in both formats, the two OIT
+/// pipelines and the shadow pipeline, each built the first time a draw needs
+/// it.
+type RibbonPipelines = viewport_lib::plugin_api::LazyPipelines<RibbonRecipe, { SHADOW + 1 }>;
+
+fn build(r: &RibbonRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
+    match i {
+        OIT | OIT_PREMULTIPLIED => build_oit(r, i == OIT_PREMULTIPLIED),
+        SHADOW => build_shadow(r),
+        _ => build_variant(r, RibbonKey::from_slot(i / 2), i % 2 == 1),
+    }
+}
+
+fn build_variant(r: &RibbonRecipe, key: RibbonKey, hdr: bool) -> viewport_lib::gpu::RenderPipeline {
+    use viewport_lib::plugin_api::builders::{DualPipelineDesc, build_dual_pipeline_variant};
+
+    let additive_blend = viewport_lib::gpu::BlendState {
+        color: viewport_lib::gpu::BlendComponent {
+            src_factor: viewport_lib::gpu::BlendFactor::One,
+            dst_factor: viewport_lib::gpu::BlendFactor::One,
+            operation: viewport_lib::gpu::BlendOperation::Add,
+        },
+        alpha: viewport_lib::gpu::BlendComponent {
+            src_factor: viewport_lib::gpu::BlendFactor::One,
+            dst_factor: viewport_lib::gpu::BlendFactor::One,
+            operation: viewport_lib::gpu::BlendOperation::Add,
+        },
+    };
+    let premultiplied_blend = viewport_lib::gpu::BlendState {
+        color: viewport_lib::gpu::BlendComponent {
+            src_factor: viewport_lib::gpu::BlendFactor::One,
+            dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
+            operation: viewport_lib::gpu::BlendOperation::Add,
+        },
+        alpha: viewport_lib::gpu::BlendComponent {
+            src_factor: viewport_lib::gpu::BlendFactor::One,
+            dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
+            operation: viewport_lib::gpu::BlendOperation::Add,
+        },
+    };
+
+    let blend = match key.blend {
+        SpriteBlend::AlphaBlend => viewport_lib::gpu::BlendState::ALPHA_BLENDING,
+        SpriteBlend::Additive => additive_blend,
+        SpriteBlend::Premultiplied => premultiplied_blend,
+    };
+    // Additive never writes depth: successive segments accumulate rather than
+    // clipping each other where they overlap.
+    let depth_write = key.depth_write && !matches!(key.blend, SpriteBlend::Additive);
+    build_dual_pipeline_variant(
+        &r.device,
+        &DualPipelineDesc {
+            label: "ribbon_pipeline_variant",
+            layout: &r.layout,
+            shader: &r.shader,
+            vertex_entry: "vs_main",
+            fragment_entry: "fs_main",
+            vertex_buffers: &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
+            blend: Some(blend),
+            topology: if key.wireframe {
+                viewport_lib::gpu::PrimitiveTopology::LineList
+            } else {
+                viewport_lib::gpu::PrimitiveTopology::TriangleList
+            },
+            cull_mode: None,
+            depth_write,
+            depth_compare: viewport_lib::gpu::CompareFunction::Less,
+            sample_count: r.sample_count,
+            ldr_format: r.ldr_format,
+        },
+        hdr,
+    )
+}
+
+/// Weighted-blended OIT, HDR-only. The same layout as the solid draw, so the
+/// same bind group is bound again; only the accum / reveal targets differ.
+/// Straight and premultiplied alpha share one module and differ only in
+/// fragment entry point.
+fn build_oit(r: &RibbonRecipe, premultiplied: bool) -> viewport_lib::gpu::RenderPipeline {
+    let (entry, label) = if premultiplied {
+        ("fs_oit_premultiplied", "ribbon_oit_pipeline_premultiplied")
+    } else {
+        ("fs_oit", "ribbon_oit_pipeline")
+    };
+    viewport_lib::plugin_api::builders::render_pipeline(
+        &r.device,
+        viewport_lib::plugin_api::builders::RenderPipelineDesc {
+            label,
+            layout: &r.layout,
+            vertex_module: &r.oit_shader,
+            vertex_entry: "vs_main",
+            vertex_buffers: &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
+            fragment: Some(viewport_lib::gpu::FragmentState {
+                module: &r.oit_shader,
+                entry_point: Some(entry),
+                targets: &[
+                    Some(viewport_lib::gpu::ColorTargetState {
+                        format: viewport_lib::gpu::TextureFormat::Rgba16Float,
+                        blend: Some(viewport_lib::plugin_api::target_desc::OIT_ACCUM_BLEND),
+                        write_mask: viewport_lib::gpu::ColorWrites::ALL,
+                    }),
+                    Some(viewport_lib::gpu::ColorTargetState {
+                        format: viewport_lib::gpu::TextureFormat::R8Unorm,
+                        blend: Some(viewport_lib::plugin_api::target_desc::OIT_REVEAL_BLEND),
+                        write_mask: viewport_lib::gpu::ColorWrites::RED,
+                    }),
+                ],
+                compilation_options: viewport_lib::gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: viewport_lib::gpu::PrimitiveState {
+                topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
+                false,
+                viewport_lib::gpu::CompareFunction::LessEqual,
+            )),
+            multisample: viewport_lib::gpu::MultisampleState {
+                count: r.sample_count,
+                ..Default::default()
+            },
+            cache: None,
+        },
+    )
+}
+
+/// Depth-only shadow-cast pipeline. One pipeline covers every ribbon: geometry
+/// is always the thin, two-sided expanded quad strip, so there is no cutout or
+/// two-sided axis to key on the way the mesh family has. Group 0 is the shadow
+/// pass's own dynamic-offset camera; group 1 reuses the ribbon bind group built
+/// for the solid draw.
+fn build_shadow(r: &RibbonRecipe) -> viewport_lib::gpu::RenderPipeline {
+    let shadow_vertex_layouts = [super::pipeline::position_only_layout()];
+    let mut shadow_opts = viewport_lib::resources::PluginPipelineOpts::new(
+        Some("ribbon_shadow_pipeline"),
+        &r.shadow_shader,
+        "vs_main",
+        "",
+        &shadow_vertex_layouts,
+    );
+    let shadow_extra: [&viewport_lib::gpu::BindGroupLayout; 1] = [&r.bgl];
+    shadow_opts.extra_bind_group_layouts = &shadow_extra;
+    shadow_opts.primitive.cull_mode = None;
+    shadow_opts.depth_compare = viewport_lib::gpu::CompareFunction::Less;
+    // A ribbon is a thin open surface, so it self-shadows badly under the mild
+    // default. Same bias the lib uses where the shadow pass does not cull.
+    shadow_opts.depth_bias = Some(viewport_lib::plugin_api::builders::CSM_SHADOW_BIAS_TWO_SIDED);
+    r.builder.build_shadow_pipeline(&r.device, &shadow_opts)
 }
 
 /// The ribbon render, OIT, shadow, pick and mask pipelines.
 struct RibbonGpu {
-    pipelines: RibbonVariantSet,
-    /// Weighted-blended OIT pipeline, straight alpha. HDR-only.
-    oit_pipeline: viewport_lib::gpu::RenderPipeline,
-    /// The same pipeline with the premultiplied fragment entry. The two share
-    /// one shader module and pipeline layout, differing only in entry point:
-    /// straight versus premultiplied is not a separate GPU blend state here.
-    oit_pipeline_premultiplied: viewport_lib::gpu::RenderPipeline,
-    /// Depth-only shadow-cast pipeline. One pipeline covers every ribbon:
-    /// geometry is always the thin, two-sided expanded quad strip, so there is
-    /// no cutout or two-sided axis to key on the way the mesh family has.
-    /// Group 0 is the shadow pass's own dynamic-offset camera; group 1 reuses
-    /// the ribbon bind group built for the solid draw.
-    shadow_pipeline: viewport_lib::gpu::RenderPipeline,
+    pipelines: RibbonPipelines,
     pick: CurvePickGpu,
 }
 
@@ -149,14 +289,22 @@ impl RibbonGpu {
         resources: &DeviceResources,
         layouts: &super::store::RibbonResources,
     ) -> Self {
-        use viewport_lib::plugin_api::builders::{
-            DualPipelineDesc, build_dual_pipeline, standard_scene_layout, wgsl_module,
-        };
+        use viewport_lib::plugin_api::builders::{standard_scene_layout, wgsl_module};
 
         let shader = wgsl_module(
             device,
             "ribbon_shader",
             &crate::shader::lit_shader(RIBBON_LIT_EXTRA, crate::shader::wgsl_source!("ribbon")),
+        );
+        let oit_shader = wgsl_module(
+            device,
+            "ribbon_oit_shader",
+            &crate::shader::lit_shader(RIBBON_LIT_EXTRA, crate::shader::wgsl_source!("ribbon_oit")),
+        );
+        let shadow_shader = wgsl_module(
+            device,
+            "ribbon_shadow_shader",
+            crate::shader::wgsl_source!("ribbon_shadow"),
         );
         let layout = standard_scene_layout(
             device,
@@ -164,155 +312,36 @@ impl RibbonGpu {
             resources.shared_bindings().group0_layout,
             &layouts.bgl,
         );
-
-        let additive_blend = viewport_lib::gpu::BlendState {
-            color: viewport_lib::gpu::BlendComponent {
-                src_factor: viewport_lib::gpu::BlendFactor::One,
-                dst_factor: viewport_lib::gpu::BlendFactor::One,
-                operation: viewport_lib::gpu::BlendOperation::Add,
+        let pipelines = resources.lazy_pipelines(
+            RibbonRecipe {
+                device: device.clone(),
+                builder: resources.pipeline_builder(),
+                layout,
+                shader,
+                oit_shader,
+                shadow_shader,
+                bgl: layouts.bgl.clone(),
+                sample_count: resources.sample_count(),
+                ldr_format: resources.target_format(),
             },
-            alpha: viewport_lib::gpu::BlendComponent {
-                src_factor: viewport_lib::gpu::BlendFactor::One,
-                dst_factor: viewport_lib::gpu::BlendFactor::One,
-                operation: viewport_lib::gpu::BlendOperation::Add,
-            },
-        };
-        let premultiplied_blend = viewport_lib::gpu::BlendState {
-            color: viewport_lib::gpu::BlendComponent {
-                src_factor: viewport_lib::gpu::BlendFactor::One,
-                dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
-                operation: viewport_lib::gpu::BlendOperation::Add,
-            },
-            alpha: viewport_lib::gpu::BlendComponent {
-                src_factor: viewport_lib::gpu::BlendFactor::One,
-                dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
-                operation: viewport_lib::gpu::BlendOperation::Add,
-            },
-        };
-
-        // Additive and premultiplied ribbons are typically used for emissive
-        // trails; depth write is disabled so successive segments accumulate
-        // rather than clipping each other when they overlap.
-        let pipelines = RibbonVariantSet::build(|key| {
-            let blend = match key.blend {
-                SpriteBlend::AlphaBlend => viewport_lib::gpu::BlendState::ALPHA_BLENDING,
-                SpriteBlend::Additive => additive_blend,
-                SpriteBlend::Premultiplied => premultiplied_blend,
-            };
-            // Additive never writes depth: successive segments accumulate
-            // rather than clipping each other where they overlap.
-            let depth_write = key.depth_write && !matches!(key.blend, SpriteBlend::Additive);
-            build_dual_pipeline(
-                device,
-                &DualPipelineDesc {
-                    label: "ribbon_pipeline_variant",
-                    layout: &layout,
-                    shader: &shader,
-                    vertex_entry: "vs_main",
-                    fragment_entry: "fs_main",
-                    vertex_buffers: &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
-                    blend: Some(blend),
-                    topology: if key.wireframe {
-                        viewport_lib::gpu::PrimitiveTopology::LineList
-                    } else {
-                        viewport_lib::gpu::PrimitiveTopology::TriangleList
-                    },
-                    cull_mode: None,
-                    depth_write,
-                    depth_compare: viewport_lib::gpu::CompareFunction::Less,
-                    sample_count: resources.sample_count(),
-                    ldr_format: resources.target_format(),
-                },
-            )
-        });
-
-        // OIT: the same layout as the solid draw, so the same bind group is
-        // bound again here; only the accum / reveal targets differ.
-        let oit_shader = wgsl_module(
-            device,
-            "ribbon_oit_shader",
-            &crate::shader::lit_shader(RIBBON_LIT_EXTRA, crate::shader::wgsl_source!("ribbon_oit")),
+            build,
         );
-        let make_oit = |entry: &str, label: &str| {
-            viewport_lib::plugin_api::builders::render_pipeline(
-                device,
-                viewport_lib::plugin_api::builders::RenderPipelineDesc {
-                    label,
-                    layout: &layout,
-                    vertex_module: &oit_shader,
-                    vertex_entry: "vs_main",
-                    vertex_buffers: &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
-                    fragment: Some(viewport_lib::gpu::FragmentState {
-                        module: &oit_shader,
-                        entry_point: Some(entry),
-                        targets: &[
-                            Some(viewport_lib::gpu::ColorTargetState {
-                                format: viewport_lib::gpu::TextureFormat::Rgba16Float,
-                                blend: Some(viewport_lib::plugin_api::target_desc::OIT_ACCUM_BLEND),
-                                write_mask: viewport_lib::gpu::ColorWrites::ALL,
-                            }),
-                            Some(viewport_lib::gpu::ColorTargetState {
-                                format: viewport_lib::gpu::TextureFormat::R8Unorm,
-                                blend: Some(
-                                    viewport_lib::plugin_api::target_desc::OIT_REVEAL_BLEND,
-                                ),
-                                write_mask: viewport_lib::gpu::ColorWrites::RED,
-                            }),
-                        ],
-                        compilation_options: viewport_lib::gpu::PipelineCompilationOptions::default(
-                        ),
-                    }),
-                    primitive: viewport_lib::gpu::PrimitiveState {
-                        topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
-                        false,
-                        viewport_lib::gpu::CompareFunction::LessEqual,
-                    )),
-                    multisample: viewport_lib::gpu::MultisampleState {
-                        count: resources.sample_count(),
-                        ..Default::default()
-                    },
-                    cache: None,
-                },
-            )
-        };
-
-        let shadow_shader = wgsl_module(
-            device,
-            "ribbon_shadow_shader",
-            crate::shader::wgsl_source!("ribbon_shadow"),
-        );
-        let shadow_vertex_layouts = [super::pipeline::position_only_layout()];
-        let mut shadow_opts = viewport_lib::resources::PluginPipelineOpts::new(
-            Some("ribbon_shadow_pipeline"),
-            &shadow_shader,
-            "vs_main",
-            "",
-            &shadow_vertex_layouts,
-        );
-        let shadow_extra: [&viewport_lib::gpu::BindGroupLayout; 1] = [&layouts.bgl];
-        shadow_opts.extra_bind_group_layouts = &shadow_extra;
-        shadow_opts.primitive.cull_mode = None;
-        shadow_opts.depth_compare = viewport_lib::gpu::CompareFunction::Less;
-        // A ribbon is a thin open surface, so it self-shadows badly under the
-        // mild default. Same bias the lib uses where the shadow pass does not
-        // cull.
-        shadow_opts.depth_bias =
-            Some(viewport_lib::plugin_api::builders::CSM_SHADOW_BIAS_TWO_SIDED);
-
         Self {
             pipelines,
-            oit_pipeline: make_oit("fs_oit", "ribbon_oit_pipeline"),
-            oit_pipeline_premultiplied: make_oit(
-                "fs_oit_premultiplied",
-                "ribbon_oit_pipeline_premultiplied",
-            ),
-            shadow_pipeline: resources.build_shadow_pipeline(device, &shadow_opts),
             pick: CurvePickGpu::new(device, resources, "ribbon", true),
         }
+    }
+
+    /// Whether a ribbon's colour pipeline can draw this frame in either format,
+    /// counting the OIT pipeline for one that routes there. The mask, pick and
+    /// shadow passes wait for it, so a ribbon is never outlined, picked or cast
+    /// before it is drawn.
+    fn drawn(&self, entry: &CurveFrame) -> bool {
+        let gd = &entry.gpu;
+        let key = RibbonKey::of(gd);
+        self.pipelines.available(variant(key, false))
+            || self.pipelines.available(variant(key, true))
+            || (gd.oit_eligible && self.pipelines.available(oit_member(gd.blend)))
     }
 }
 
@@ -395,6 +424,21 @@ impl ItemTypePlugin for RibbonPlugin {
         _shared: &viewport_lib::plugin_api::SharedBindings<'_>,
     ) {
         self.layouts = Some(super::store::RibbonResources::new(device));
+    }
+
+    fn warm(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        resources: &viewport_lib::DeviceResources,
+    ) {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| super::store::RibbonResources::new(device));
+        let gpu = self
+            .gpu
+            .get_or_insert_with(|| RibbonGpu::new(device, resources, layouts));
+        gpu.pipelines.request_all();
+        gpu.pick.request_all();
     }
 
     fn resident_bytes(&self) -> u64 {
@@ -512,12 +556,11 @@ impl ItemTypePlugin for RibbonPlugin {
             if is_hdr && gd.oit_eligible {
                 continue;
             }
-            let key = RibbonKey {
-                blend: gd.blend,
-                wireframe: gd.wireframe,
-                depth_write: gd.depth_write,
+            // Still compiling: the ribbon draws next frame.
+            let Some(pl) = gpu.pipelines.get(variant(RibbonKey::of(gd), is_hdr)) else {
+                continue;
             };
-            pass.set_pipeline(gpu.pipelines.get(key).for_format(is_hdr));
+            pass.set_pipeline(pl);
             draw_mesh(pass, gd);
         }
     }
@@ -534,11 +577,10 @@ impl ItemTypePlugin for RibbonPlugin {
     ) {
         let Some(gpu) = &self.gpu else { return };
         for entry in self.frame.iter().filter(|f| f.gpu.oit_eligible) {
-            let pipeline = match entry.gpu.blend {
-                SpriteBlend::Premultiplied => &gpu.oit_pipeline_premultiplied,
-                _ => &gpu.oit_pipeline,
+            let Some(pl) = gpu.pipelines.get(oit_member(entry.gpu.blend)) else {
+                continue;
             };
-            pass.set_pipeline(pipeline);
+            pass.set_pipeline(pl);
             pass.set_bind_group(1, &entry.gpu.uniform_bind_group, &[]);
             draw_solid_indexed(pass, &entry.gpu);
         }
@@ -557,11 +599,14 @@ impl ItemTypePlugin for RibbonPlugin {
         // group; only the leading `model` field is read by `ribbon_shadow.wgsl`.
         let mut bound = false;
         for entry in &self.frame {
-            if !entry.gpu.cast_shadows || entry.gpu.index_count == 0 {
+            if !entry.gpu.cast_shadows || entry.gpu.index_count == 0 || !gpu.drawn(entry) {
                 continue;
             }
             if !bound {
-                pass.set_pipeline(&gpu.shadow_pipeline);
+                let Some(pl) = gpu.pipelines.get(SHADOW) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             pass.set_bind_group(1, &entry.gpu.uniform_bind_group, &[]);
@@ -576,7 +621,7 @@ impl ItemTypePlugin for RibbonPlugin {
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
-        outline_mask_curve_mesh(pass, &gpu.pick, |_| true, &self.frame);
+        outline_mask_curve_mesh(pass, &gpu.pick, |e| gpu.drawn(e), &self.frame);
     }
 
     fn surface_mask(
@@ -586,7 +631,7 @@ impl ItemTypePlugin for RibbonPlugin {
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
-        surface_mask_curve_mesh(pass, ctx, &gpu.pick, |_| true, &self.frame);
+        surface_mask_curve_mesh(pass, ctx, &gpu.pick, |e| gpu.drawn(e), &self.frame);
     }
 
     /// Node proximity plus a ray test against the reconstructed swept quads, so
@@ -720,7 +765,7 @@ impl ItemTypePlugin for RibbonPlugin {
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
-        render_pick_curve_mesh(pass, ctx, &gpu.pick, |_| true, &self.frame);
+        render_pick_curve_mesh(pass, ctx, &gpu.pick, |e| gpu.drawn(e), &self.frame);
     }
 
     fn resolve_sub_object(
@@ -975,67 +1020,37 @@ impl RibbonPlugin {
 mod tests {
     use super::*;
 
-    /// Same completeness guarantee as the mesh-family `PipelineVariantSet`
-    /// tests: every key in `RibbonKey::all()` must land in its own slot, so a
-    /// built set resolves each through `get()` without aliasing. Covers the
-    /// `blend x wireframe x depth_write` cross product.
+    /// Every slot maps back to a key that maps to it, so `build` makes for
+    /// each member the variant the draw asks for. A mismatch hands out a
+    /// pipeline belonging to a different key: an opaque ribbon drew through
+    /// the additive wireframe pipeline and rendered as a zigzag of lines.
     #[test]
-    fn all_keys_are_distinct_and_densely_slotted() {
-        let keys: Vec<RibbonKey> = RibbonKey::all().collect();
+    fn every_slot_round_trips_through_its_key() {
+        let mut keys = std::collections::HashSet::new();
+        for slot in 0..KEY_COUNT {
+            let key = RibbonKey::from_slot(slot);
+            assert_eq!(key.slot(), slot, "{key:?} does not map back to slot {slot}");
+            assert!(keys.insert(key), "{key:?} appears at two slots");
+        }
         assert_eq!(
             keys.len(),
-            12,
-            "RibbonKey has blend(3) x wireframe x depth_write = 12 keys"
+            3 * 2 * 2,
+            "blend(3) x wireframe x depth_write keys"
         );
-
-        let mut seen_keys = std::collections::HashSet::new();
-        let mut seen_slots = std::collections::HashSet::new();
-        for key in keys {
-            assert!(
-                seen_keys.insert(key),
-                "all() yielded {key:?} more than once"
-            );
-            let slot = key.slot();
-            assert!(slot < 12, "{key:?} slotted out of range: {slot}");
-            assert!(
-                seen_slots.insert(slot),
-                "{key:?} collided with another key at slot {slot}"
-            );
-        }
     }
 
-    /// `build` must place each variant at its own `slot`, not in iteration
-    /// order. The two orderings differ, so pushing in iteration order hands out
-    /// a pipeline belonging to a different key at draw time: an opaque ribbon
-    /// drew through the additive wireframe pipeline and rendered as a zigzag of
-    /// lines. The slot-distinctness test above does not catch it, because the
-    /// slots are fine; it is the placement that was wrong.
+    /// The variant members fill the range below the OIT and shadow members
+    /// without overlapping them.
     #[test]
-    fn build_places_each_variant_at_its_own_slot() {
-        // The same placement `RibbonVariantSet::build` uses, standing the
-        // pipelines in for the key each slot was built from.
-        let placed = place_by_slot(|key| key);
-        for key in RibbonKey::all() {
-            assert_eq!(
-                placed[key.slot()],
-                key,
-                "slot {} does not hold the variant built for {key:?}",
-                key.slot()
-            );
+    fn variant_members_sit_below_the_oit_and_shadow_members() {
+        let mut members = std::collections::HashSet::new();
+        for slot in 0..KEY_COUNT {
+            for hdr in [false, true] {
+                let m = variant(RibbonKey::from_slot(slot), hdr);
+                assert!(m < OIT, "variant member {m} overlaps the OIT members");
+                assert!(members.insert(m), "member {m} used twice");
+            }
         }
-    }
-
-    /// The reason the placement matters: `all()` order and `slot()` order are
-    /// genuinely different, so collecting in iteration order is wrong rather
-    /// than merely unidiomatic. If this ever stops being true the placement is
-    /// still correct, but the hazard it guards has gone.
-    #[test]
-    fn iteration_order_differs_from_slot_order() {
-        let iteration: Vec<usize> = RibbonKey::all().map(|k| k.slot()).collect();
-        let dense: Vec<usize> = (0..12).collect();
-        assert_ne!(
-            iteration, dense,
-            "all() now yields keys in slot order; place_by_slot still correct"
-        );
+        assert_eq!(members.len(), OIT);
     }
 }
