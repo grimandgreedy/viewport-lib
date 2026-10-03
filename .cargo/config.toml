@@ -17,3 +17,7 @@ check-bevy-example = "check --manifest-path crates/viewport-lib-examples/bevy/Ca
 # mobile targets.
 mobile-example = "run --release --manifest-path crates/viewport-lib-examples/mobile/Cargo.toml --bin mobile-desktop"
 check-mobile-example = "check --manifest-path crates/viewport-lib-examples/mobile/Cargo.toml --all-targets"
+# The eframe showcase on wgpu 30, where the path tracer and lightmap baker use
+# hardware ray queries on Apple silicon. The eframe crate defaults to wgpu 27
+# while some of its examples are still pinned there, so the leg is named here.
+showcase = "run --release -p viewport-lib-examples-eframe --no-default-features --features wgpu30,showcase --example showcase"
