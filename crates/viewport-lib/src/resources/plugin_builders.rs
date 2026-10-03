@@ -59,6 +59,22 @@ impl DeviceResources {
         )
     }
 
+    /// The pipeline builders' inputs, by value, for a build that runs later
+    /// or on another thread.
+    pub fn pipeline_builder(&self) -> PipelineBuilder {
+        PipelineBuilder {
+            camera_bgl: self.binds.camera_bgl.clone(),
+            shadow_camera_bgl: self.shadow.camera_bgl.clone(),
+            opaque: self.opaque_target_desc(),
+            foreground: self.foreground_target_desc(),
+            oit: self.oit_target_desc(),
+            depth_read: self.depth_read_target_desc(),
+            mask: self.mask_target_desc(),
+            pick: self.pick_target_desc(),
+            shadow: self.shadow_target_desc(),
+        }
+    }
+
     /// Group-0 bind layout shared by every scene pipeline. Use as group 0
     /// when building a plugin pipeline layout.
     pub fn shared_bindings(&self) -> SharedBindings<'_> {
@@ -371,39 +387,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         opts: &PluginPipelineOpts<'_>,
     ) -> crate::gpu::RenderPipeline {
-        let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
-        let desc = self.opaque_target_desc();
-        crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: opts.label.unwrap_or_default(),
-                layout: &layout,
-                vertex_module: opts.shader,
-                vertex_entry: opts.vs_entry,
-                vertex_buffers: opts.vertex_layouts,
-                fragment: Some(crate::gpu::FragmentState {
-                    module: opts.shader,
-                    entry_point: Some(opts.fs_entry),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: desc.color_format,
-                        blend: opts.color_blend,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: opts.primitive,
-                depth_stencil: Some(crate::resources::builders::depth_stencil(
-                    desc.depth_format,
-                    opts.depth_write,
-                    opts.depth_compare,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: desc.sample_count,
-                    ..Default::default()
-                },
-                cache: None,
-            },
-        )
+        self.pipeline_builder().build_opaque_pipeline(device, opts)
     }
 
     /// Build a pipeline that draws into the foreground pass.
@@ -418,39 +402,8 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         opts: &PluginPipelineOpts<'_>,
     ) -> crate::gpu::RenderPipeline {
-        let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
-        let desc = self.foreground_target_desc();
-        crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: opts.label.unwrap_or_default(),
-                layout: &layout,
-                vertex_module: opts.shader,
-                vertex_entry: opts.vs_entry,
-                vertex_buffers: opts.vertex_layouts,
-                fragment: Some(crate::gpu::FragmentState {
-                    module: opts.shader,
-                    entry_point: Some(opts.fs_entry),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: desc.color_format,
-                        blend: opts.color_blend,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: opts.primitive,
-                depth_stencil: Some(crate::resources::builders::depth_stencil(
-                    desc.depth_format,
-                    opts.depth_write,
-                    opts.depth_compare,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: desc.sample_count,
-                    ..Default::default()
-                },
-                cache: None,
-            },
-        )
+        self.pipeline_builder()
+            .build_foreground_pipeline(device, opts)
     }
 
     /// Build a transparent pipeline that draws into the OIT pass.
@@ -470,8 +423,253 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         opts: &PluginPipelineOpts<'_>,
     ) -> crate::gpu::RenderPipeline {
-        let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
-        let desc = self.oit_target_desc();
+        self.pipeline_builder().build_oit_pipeline(device, opts)
+    }
+
+    /// Build a pipeline that draws into the read-only-depth pass.
+    ///
+    /// One colour target (the HDR scene buffer) with the caller's blend state,
+    /// and the scene depth attachment bound read-only: the pipeline tests
+    /// against opaque depth (`opts.depth_compare`, `LessEqual` by default) but
+    /// never writes it, since the pass binds depth read-only. Set
+    /// `opts.color_blend` to alpha blending for soft particles.
+    ///
+    /// The plugin lists its own bind group layouts in
+    /// `opts.extra_bind_group_layouts` as usual. The scene depth read is not a
+    /// fixed group: the plugin either adds
+    /// [`depth_read_bind_group_layout`](Self::depth_read_bind_group_layout) at a
+    /// spare slot, or folds the two depth bindings into one of its existing
+    /// layouts. It reconstructs depth through
+    /// [`SHARED_DEPTH_READ_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_READ_WGSL).
+    pub fn build_depth_read_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        opts: &PluginPipelineOpts<'_>,
+    ) -> crate::gpu::RenderPipeline {
+        self.pipeline_builder()
+            .build_depth_read_pipeline(device, opts)
+    }
+
+    /// Build a pipeline for the outline-mask pass (R8 target).
+    ///
+    /// Fragment shader must write `1.0` at `@location(0)` for any covered
+    /// pixel; use [`SHARED_MASK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_MASK_WGSL).
+    /// Depth state: `LessEqual` test, no depth write.
+    pub fn build_mask_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        opts: &PluginPipelineOpts<'_>,
+    ) -> crate::gpu::RenderPipeline {
+        self.pipeline_builder().build_mask_pipeline(device, opts)
+    }
+
+    /// Build a pipeline for the surface-mask pass, from the same options an
+    /// outline-mask pipeline takes.
+    ///
+    /// The pass has no colour target, so whatever the fragment stage outputs
+    /// is dropped: a type can hand over its outline-mask shader unchanged and
+    /// what matters is where it discards. See
+    /// [`build_surface_mask_pipeline`](crate::plugin_api::builders::build_surface_mask_pipeline)
+    /// for the depth and stencil state, which is the same here.
+    pub fn build_surface_mask_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        opts: &PluginPipelineOpts<'_>,
+    ) -> crate::gpu::RenderPipeline {
+        self.pipeline_builder()
+            .build_surface_mask_pipeline(device, opts)
+    }
+
+    /// Build a pipeline for the pick-id pass.
+    ///
+    /// The pass has three colour targets (object id, primitive id, depth) plus a
+    /// depth-stencil attachment; this matches the pipeline to all of them. The
+    /// fragment shader must write all three: the item's `PickId` at
+    /// `@location(0)`, a sub-object index (or 0) at `@location(1)`, and the
+    /// framebuffer `z` at `@location(2)`. Use
+    /// [`SHARED_PICK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_WGSL),
+    /// whose `viewport_pick_fs` produces exactly that output.
+    pub fn build_pick_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        opts: &PluginPipelineOpts<'_>,
+    ) -> crate::gpu::RenderPipeline {
+        self.pipeline_builder().build_pick_pipeline(device, opts)
+    }
+
+    /// Build a depth-only pipeline for the shadow-atlas pass.
+    ///
+    /// No fragment output. The fragment entry is optional; pass an empty
+    /// string to use a depth-only configuration with no fragment stage.
+    /// Standard depth state: `LessEqual` test, depth write on, with the
+    /// lib's standard depth bias.
+    ///
+    /// Group 0 is the shadow pass's own camera, not the scene bind group the
+    /// other builders use: the lib binds the cascade's light view-projection
+    /// as a single dynamic-offset uniform before calling
+    /// [`cast_shadow_pass`](crate::plugin_api::ItemTypePlugin::cast_shadow_pass).
+    /// Declare it in the shader with
+    /// [`SHARED_SHADOW_BINDINGS_WGSL`](crate::plugin_api::shared_wgsl::SHARED_SHADOW_BINDINGS_WGSL)
+    /// rather than `SHARED_BINDINGS_WGSL`.
+    pub fn build_shadow_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        opts: &PluginPipelineOpts<'_>,
+    ) -> crate::gpu::RenderPipeline {
+        self.pipeline_builder().build_shadow_pipeline(device, opts)
+    }
+
+    /// Build a fullscreen post-effect pipeline. Convenience alias for
+    /// [`plugin_api::post_effect::build_post_effect_pipeline`]
+    /// (a free function taking only the device, so it is also callable
+    /// from a post effect's `init_gpu` / `on_viewport_resized`, where no
+    /// `DeviceResources` is available).
+    ///
+    /// [`plugin_api::post_effect::build_post_effect_pipeline`]: crate::plugin_api::post_effect::build_post_effect_pipeline
+    pub fn build_post_effect_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        label: &str,
+        shader: &crate::gpu::ShaderModule,
+        bind_group_layout: &crate::gpu::BindGroupLayout,
+        target_format: crate::gpu::TextureFormat,
+        blend: Option<crate::gpu::BlendState>,
+    ) -> crate::gpu::RenderPipeline {
+        crate::plugin_api::post_effect::build_post_effect_pipeline(
+            device,
+            label,
+            shader,
+            bind_group_layout,
+            target_format,
+            blend,
+        )
+    }
+}
+
+/// What the plugin pipeline builders read from [`DeviceResources`], held by
+/// value so a build can run on a worker thread, inside a
+/// [`LazyPipelines`](crate::plugin_api::LazyPipelines) build function. Get
+/// one with [`DeviceResources::pipeline_builder`]; its methods match the
+/// `build_*_pipeline` methods there.
+#[derive(Clone)]
+pub struct PipelineBuilder {
+    camera_bgl: crate::gpu::BindGroupLayout,
+    shadow_camera_bgl: crate::gpu::BindGroupLayout,
+    opaque: OpaqueTargetDesc,
+    foreground: ForegroundTargetDesc,
+    oit: OitTargetDesc,
+    depth_read: DepthReadTargetDesc,
+    mask: MaskTargetDesc,
+    pick: PickTargetDesc,
+    shadow: ShadowTargetDesc,
+}
+
+impl PipelineBuilder {
+    /// See [`DeviceResources::build_opaque_pipeline`].
+    pub fn build_opaque_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        opts: &PluginPipelineOpts<'_>,
+    ) -> crate::gpu::RenderPipeline {
+        let layout = build_layout(
+            device,
+            opts.label,
+            &self.camera_bgl,
+            opts.extra_bind_group_layouts,
+        );
+        let desc = self.opaque;
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: opts.label.unwrap_or_default(),
+                layout: &layout,
+                vertex_module: opts.shader,
+                vertex_entry: opts.vs_entry,
+                vertex_buffers: opts.vertex_layouts,
+                fragment: Some(crate::gpu::FragmentState {
+                    module: opts.shader,
+                    entry_point: Some(opts.fs_entry),
+                    targets: &[Some(crate::gpu::ColorTargetState {
+                        format: desc.color_format,
+                        blend: opts.color_blend,
+                        write_mask: crate::gpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: opts.primitive,
+                depth_stencil: Some(crate::resources::builders::depth_stencil(
+                    desc.depth_format,
+                    opts.depth_write,
+                    opts.depth_compare,
+                )),
+                multisample: crate::gpu::MultisampleState {
+                    count: desc.sample_count,
+                    ..Default::default()
+                },
+                cache: None,
+            },
+        )
+    }
+
+    /// See [`DeviceResources::build_foreground_pipeline`].
+    pub fn build_foreground_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        opts: &PluginPipelineOpts<'_>,
+    ) -> crate::gpu::RenderPipeline {
+        let layout = build_layout(
+            device,
+            opts.label,
+            &self.camera_bgl,
+            opts.extra_bind_group_layouts,
+        );
+        let desc = self.foreground;
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: opts.label.unwrap_or_default(),
+                layout: &layout,
+                vertex_module: opts.shader,
+                vertex_entry: opts.vs_entry,
+                vertex_buffers: opts.vertex_layouts,
+                fragment: Some(crate::gpu::FragmentState {
+                    module: opts.shader,
+                    entry_point: Some(opts.fs_entry),
+                    targets: &[Some(crate::gpu::ColorTargetState {
+                        format: desc.color_format,
+                        blend: opts.color_blend,
+                        write_mask: crate::gpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: opts.primitive,
+                depth_stencil: Some(crate::resources::builders::depth_stencil(
+                    desc.depth_format,
+                    opts.depth_write,
+                    opts.depth_compare,
+                )),
+                multisample: crate::gpu::MultisampleState {
+                    count: desc.sample_count,
+                    ..Default::default()
+                },
+                cache: None,
+            },
+        )
+    }
+
+    /// See [`DeviceResources::build_oit_pipeline`].
+    pub fn build_oit_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        opts: &PluginPipelineOpts<'_>,
+    ) -> crate::gpu::RenderPipeline {
+        let layout = build_layout(
+            device,
+            opts.label,
+            &self.camera_bgl,
+            opts.extra_bind_group_layouts,
+        );
+        let desc = self.oit;
         crate::resources::builders::render_pipeline(
             device,
             crate::resources::builders::RenderPipelineDesc {
@@ -512,28 +710,19 @@ impl DeviceResources {
         )
     }
 
-    /// Build a pipeline that draws into the read-only-depth pass.
-    ///
-    /// One colour target (the HDR scene buffer) with the caller's blend state,
-    /// and the scene depth attachment bound read-only: the pipeline tests
-    /// against opaque depth (`opts.depth_compare`, `LessEqual` by default) but
-    /// never writes it, since the pass binds depth read-only. Set
-    /// `opts.color_blend` to alpha blending for soft particles.
-    ///
-    /// The plugin lists its own bind group layouts in
-    /// `opts.extra_bind_group_layouts` as usual. The scene depth read is not a
-    /// fixed group: the plugin either adds
-    /// [`depth_read_bind_group_layout`](Self::depth_read_bind_group_layout) at a
-    /// spare slot, or folds the two depth bindings into one of its existing
-    /// layouts. It reconstructs depth through
-    /// [`SHARED_DEPTH_READ_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_READ_WGSL).
+    /// See [`DeviceResources::build_depth_read_pipeline`].
     pub fn build_depth_read_pipeline(
         &self,
         device: &crate::gpu::Device,
         opts: &PluginPipelineOpts<'_>,
     ) -> crate::gpu::RenderPipeline {
-        let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
-        let desc = self.depth_read_target_desc();
+        let layout = build_layout(
+            device,
+            opts.label,
+            &self.camera_bgl,
+            opts.extra_bind_group_layouts,
+        );
+        let desc = self.depth_read;
         crate::resources::builders::render_pipeline(
             device,
             crate::resources::builders::RenderPipelineDesc {
@@ -567,18 +756,19 @@ impl DeviceResources {
         )
     }
 
-    /// Build a pipeline for the outline-mask pass (R8 target).
-    ///
-    /// Fragment shader must write `1.0` at `@location(0)` for any covered
-    /// pixel; use [`SHARED_MASK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_MASK_WGSL).
-    /// Depth state: `LessEqual` test, no depth write.
+    /// See [`DeviceResources::build_mask_pipeline`].
     pub fn build_mask_pipeline(
         &self,
         device: &crate::gpu::Device,
         opts: &PluginPipelineOpts<'_>,
     ) -> crate::gpu::RenderPipeline {
-        let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
-        let desc = self.mask_target_desc();
+        let layout = build_layout(
+            device,
+            opts.label,
+            &self.camera_bgl,
+            opts.extra_bind_group_layouts,
+        );
+        let desc = self.mask;
         crate::resources::builders::render_pipeline(
             device,
             crate::resources::builders::RenderPipelineDesc {
@@ -612,20 +802,18 @@ impl DeviceResources {
         )
     }
 
-    /// Build a pipeline for the surface-mask pass, from the same options an
-    /// outline-mask pipeline takes.
-    ///
-    /// The pass has no colour target, so whatever the fragment stage outputs
-    /// is dropped: a type can hand over its outline-mask shader unchanged and
-    /// what matters is where it discards. See
-    /// [`build_surface_mask_pipeline`](crate::plugin_api::builders::build_surface_mask_pipeline)
-    /// for the depth and stencil state, which is the same here.
+    /// See [`DeviceResources::build_surface_mask_pipeline`].
     pub fn build_surface_mask_pipeline(
         &self,
         device: &crate::gpu::Device,
         opts: &PluginPipelineOpts<'_>,
     ) -> crate::gpu::RenderPipeline {
-        let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
+        let layout = build_layout(
+            device,
+            opts.label,
+            &self.camera_bgl,
+            opts.extra_bind_group_layouts,
+        );
         crate::resources::builders::render_pipeline(
             device,
             crate::resources::builders::RenderPipelineDesc {
@@ -648,22 +836,19 @@ impl DeviceResources {
         )
     }
 
-    /// Build a pipeline for the pick-id pass.
-    ///
-    /// The pass has three colour targets (object id, primitive id, depth) plus a
-    /// depth-stencil attachment; this matches the pipeline to all of them. The
-    /// fragment shader must write all three: the item's `PickId` at
-    /// `@location(0)`, a sub-object index (or 0) at `@location(1)`, and the
-    /// framebuffer `z` at `@location(2)`. Use
-    /// [`SHARED_PICK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_WGSL),
-    /// whose `viewport_pick_fs` produces exactly that output.
+    /// See [`DeviceResources::build_pick_pipeline`].
     pub fn build_pick_pipeline(
         &self,
         device: &crate::gpu::Device,
         opts: &PluginPipelineOpts<'_>,
     ) -> crate::gpu::RenderPipeline {
-        let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
-        let desc = self.pick_target_desc();
+        let layout = build_layout(
+            device,
+            opts.label,
+            &self.camera_bgl,
+            opts.extra_bind_group_layouts,
+        );
+        let desc = self.pick;
         // Integer and float single-channel targets, no blending: a fragment
         // either writes an exact id/depth or leaves the attachment at its clear
         // value. Order and formats mirror the internal pick pipeline.
@@ -707,20 +892,7 @@ impl DeviceResources {
         )
     }
 
-    /// Build a depth-only pipeline for the shadow-atlas pass.
-    ///
-    /// No fragment output. The fragment entry is optional; pass an empty
-    /// string to use a depth-only configuration with no fragment stage.
-    /// Standard depth state: `LessEqual` test, depth write on, with the
-    /// lib's standard depth bias.
-    ///
-    /// Group 0 is the shadow pass's own camera, not the scene bind group the
-    /// other builders use: the lib binds the cascade's light view-projection
-    /// as a single dynamic-offset uniform before calling
-    /// [`cast_shadow_pass`](crate::plugin_api::ItemTypePlugin::cast_shadow_pass).
-    /// Declare it in the shader with
-    /// [`SHARED_SHADOW_BINDINGS_WGSL`](crate::plugin_api::shared_wgsl::SHARED_SHADOW_BINDINGS_WGSL)
-    /// rather than `SHARED_BINDINGS_WGSL`.
+    /// See [`DeviceResources::build_shadow_pipeline`].
     pub fn build_shadow_pipeline(
         &self,
         device: &crate::gpu::Device,
@@ -731,10 +903,10 @@ impl DeviceResources {
         // not the scene bind group the other passes use.
         let mut bgls: Vec<&crate::gpu::BindGroupLayout> =
             Vec::with_capacity(1 + opts.extra_bind_group_layouts.len());
-        bgls.push(&self.shadow.camera_bgl);
+        bgls.push(&self.shadow_camera_bgl);
         bgls.extend(opts.extra_bind_group_layouts.iter().copied());
         let layout = crate::resources::builders::pipeline_layout(device, opts.label, &bgls);
-        let desc = self.shadow_target_desc();
+        let desc = self.shadow;
         let fragment = if opts.fs_entry.is_empty() {
             None
         } else {
@@ -772,32 +944,6 @@ impl DeviceResources {
                 },
                 cache: None,
             },
-        )
-    }
-
-    /// Build a fullscreen post-effect pipeline. Convenience alias for
-    /// [`plugin_api::post_effect::build_post_effect_pipeline`]
-    /// (a free function taking only the device, so it is also callable
-    /// from a post effect's `init_gpu` / `on_viewport_resized`, where no
-    /// `DeviceResources` is available).
-    ///
-    /// [`plugin_api::post_effect::build_post_effect_pipeline`]: crate::plugin_api::post_effect::build_post_effect_pipeline
-    pub fn build_post_effect_pipeline(
-        &self,
-        device: &crate::gpu::Device,
-        label: &str,
-        shader: &crate::gpu::ShaderModule,
-        bind_group_layout: &crate::gpu::BindGroupLayout,
-        target_format: crate::gpu::TextureFormat,
-        blend: Option<crate::gpu::BlendState>,
-    ) -> crate::gpu::RenderPipeline {
-        crate::plugin_api::post_effect::build_post_effect_pipeline(
-            device,
-            label,
-            shader,
-            bind_group_layout,
-            target_format,
-            blend,
         )
     }
 }
@@ -878,11 +1024,11 @@ impl<'a> PluginPipelineOpts<'a> {
 fn build_layout(
     device: &crate::gpu::Device,
     label: Option<&str>,
-    res: &DeviceResources,
+    camera_bgl: &crate::gpu::BindGroupLayout,
     extras: &[&crate::gpu::BindGroupLayout],
 ) -> crate::gpu::PipelineLayout {
     let mut bgls: Vec<&crate::gpu::BindGroupLayout> = Vec::with_capacity(1 + extras.len());
-    bgls.push(&res.binds.camera_bgl);
+    bgls.push(camera_bgl);
     bgls.extend(extras.iter().copied());
     crate::resources::builders::pipeline_layout(device, label, &bgls)
 }
