@@ -80,8 +80,17 @@ impl ViewportRenderer {
         // Skip the pass entirely when over budget and shadow reduction is allowed.
         // ------------------------------------------------------------------
         let skip_shadows = shadows_skipped;
+        // Item-type plugins cast into the cascades too, so a scene of plugin
+        // items alone still has casters.
+        let has_casters = !scene_items.is_empty()
+            || plugins.iter().any(|(name, _)| {
+                !crate::plugin_api::ItemCollections::new(
+                    crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+                )
+                .is_empty()
+            });
 
-        // When skipping the shadow pass (budget pressure or empty scene), clear the
+        // When skipping the shadow pass (budget pressure or no casters), clear the
         // atlas to max depth so that stale values from a previous frame or a previous
         // showcase don't produce phantom shadows.
         //
@@ -89,10 +98,7 @@ impl ViewportRenderer {
         // every frame is pure cost. An app that draws no casters at all (an
         // overlay-only consumer, or one whose scene is empty this frame) pays
         // for a 4096-square depth clear it never reads otherwise.
-        if lighting.shadows.enabled
-            && (skip_shadows || scene_items.is_empty())
-            && !shadow.atlas_cleared
-        {
+        if lighting.shadows.enabled && (skip_shadows || !has_casters) && !shadow.atlas_cleared {
             shadow.atlas_cleared = true;
             let mut enc = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                 label: Some("shadow_clear_encoder"),
@@ -121,7 +127,7 @@ impl ViewportRenderer {
         // carries cascade_count 0), so the atlas needs neither rendering nor a
         // clear.
         if lighting.shadows.enabled
-            && !scene_items.is_empty()
+            && has_casters
             && !skip_shadows
             && light.effective_cascade_count > 0
         {
