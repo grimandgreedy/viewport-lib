@@ -39,6 +39,26 @@ impl DeviceResources {
     // Target descriptors and SharedBindings accessor
     // ------------------------------------------------------------------
 
+    /// A set of `N` pipelines built on first read under this renderer's
+    /// compilation policy, for an item type's own pipelines. `ctx` carries
+    /// everything a build needs by value; `build` makes member `i` from it.
+    ///
+    /// An item type that keeps its pipelines here follows
+    /// `ViewportRenderer::set_pipeline_compilation` like the built-in ones:
+    /// under `Background` its draws skip until their pipeline is ready, and
+    /// its compiles count in `pipelines_pending`.
+    pub fn lazy_pipelines<C: Send + Sync + 'static, const N: usize>(
+        &self,
+        ctx: C,
+        build: fn(&C, usize) -> crate::gpu::RenderPipeline,
+    ) -> crate::plugin_api::LazyPipelines<C, N> {
+        crate::resources::pipeline_slot::LazyFamily::new(
+            ctx,
+            std::sync::Arc::clone(&self.pipeline_compiler),
+            build,
+        )
+    }
+
     /// Group-0 bind layout shared by every scene pipeline. Use as group 0
     /// when building a plugin pipeline layout.
     pub fn shared_bindings(&self) -> SharedBindings<'_> {
@@ -961,6 +981,38 @@ impl<'a> MeshDraw<'a> {
             .mesh_store
             .get(mesh_id)
             .and_then(|mesh| mesh.vector_attribute_buffers.get(name))
+        else {
+            return false;
+        };
+        pass.set_vertex_buffer(slot, buf.slice(..));
+        true
+    }
+
+    /// Bind one of the mesh's per-vertex scalar attributes as the vertex
+    /// buffer at `slot`.
+    ///
+    /// The attribute is one the mesh was uploaded with under `name` as
+    /// `AttributeData::Vertex`, or as `Cell` or `Edge`, which are averaged to
+    /// the vertices at upload: one float per vertex, in the same vertex order
+    /// as slot 0. `Face`, `Halfedge` and `Corner` attributes are stored per
+    /// triangle corner and are not reached by this. The pipeline declares it
+    /// with
+    /// [`scalar_attribute_layout`](crate::plugin_api::builders::scalar_attribute_layout).
+    ///
+    /// Returns `false` without touching the pass when the mesh is stale or
+    /// carries no per-vertex scalar attribute of that name.
+    pub fn bind_scalar_attribute(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        slot: u32,
+        mesh_id: MeshId,
+        name: &str,
+    ) -> bool {
+        let Some(buf) = self
+            .resources
+            .mesh_store
+            .get(mesh_id)
+            .and_then(|mesh| mesh.attribute_buffers.get(name))
         else {
             return false;
         };

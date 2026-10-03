@@ -82,7 +82,7 @@ mod polyline_key_tests {
 
 /// Polyline (screen-space thick line) pipelines and their layouts.
 ///
-/// This is the shared line substrate: besides the polyline item type, isolines,
+/// This is the shared line substrate: besides the polyline item type,
 /// scatter-volume bounds, volume bounding boxes, clip-object outlines and the
 /// splat and sprite wireframe overlays all render through it. The layouts are
 /// created up front because uploads bind against them; the pipelines are still

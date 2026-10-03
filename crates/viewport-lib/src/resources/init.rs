@@ -60,25 +60,22 @@ impl DeviceResources {
             .features()
             .contains(crate::gpu::Features::PIPELINE_CACHE)
         {
-            // One cache per device, shared by every renderer on it and found
-            // by every pipeline build through the registry. A second renderer
-            // on the device joins the existing cache and its data is ignored.
-            Some(crate::resources::builders::device_pipeline_cache::acquire(
-                device,
-                || unsafe {
-                    device.create_pipeline_cache(&crate::gpu::PipelineCacheDescriptor {
-                        label: Some("viewport_pipeline_cache"),
-                        data: pipeline_cache_data,
-                        fallback: true,
-                    })
-                },
-            ))
+            Some(unsafe {
+                device.create_pipeline_cache(&crate::gpu::PipelineCacheDescriptor {
+                    label: Some("viewport_pipeline_cache"),
+                    data: pipeline_cache_data,
+                    fallback: true,
+                })
+            })
         } else {
             None
         };
-        let pipeline_cache_lease = pipeline_cache
-            .as_ref()
-            .map(|_| crate::resources::builders::device_pipeline_cache::Lease(device.clone()));
+        // Registered with or without a cache: the lookup has to know about
+        // every renderer to tell when it cannot answer.
+        let pipeline_cache_lease = crate::resources::builders::device_pipeline_cache::register(
+            device,
+            pipeline_cache.as_ref(),
+        );
 
         // Cold-start instrumentation. Pipeline compilation and large depth-texture
         // allocation can dominate construction on some backends (notably Adreno
@@ -2002,16 +1999,7 @@ impl DeviceResources {
             pipeline_cache,
             pipeline_cache_lease,
             shader_modules: Default::default(),
-            scene: crate::resources::scene_pipelines::SceneCorePipelines {
-                solid: None,
-                solid_two_sided: None,
-                transparent: None,
-                wireframe: None,
-                hdr_opaque: None,
-                hdr_transparent: None,
-                hdr_wireframe: None,
-                hdr_overlay: None,
-            },
+            scene: crate::resources::scene_pipelines::SceneCorePipelines::default(),
             deform,
             shade_hooks: Vec::new(),
             material_plugins: std::collections::HashMap::new(),
@@ -2140,16 +2128,8 @@ impl DeviceResources {
                 edge_pipeline: None,
                 edge_bgl: outline_edge_bgl,
                 xray_pipeline: None,
-                colour_texture: None,
-                colour_view: None,
-                depth_texture: None,
-                depth_view: None,
-                target_size: [0, 0],
-                composite_pipeline_single: None,
-                composite_pipeline_msaa: None,
-                composite_pipeline_hdr: None,
+                composite: None,
                 composite_bgl: None,
-                composite_bind_group: None,
                 composite_sampler: None,
             },
             instancing: crate::resources::mesh::instancing::InstancingResources::default(),
@@ -2198,6 +2178,11 @@ impl DeviceResources {
             custom_data_builder: crate::resources::custom_data::CustomDataBuilder::default(),
             frame_upload_bytes: 0,
             frame_pipelines_built: std::sync::atomic::AtomicU32::new(0),
+            pipeline_compiler: std::sync::Arc::new(
+                crate::resources::pipeline_slot::PipelineCompiler::new(
+                    crate::resources::pipeline_slot::initial_policy(),
+                ),
+            ),
             resource_free_epoch: 0,
             resource_view_epoch: 0,
             retain_mesh_cpu_geometry: true,

@@ -88,11 +88,23 @@ pub(crate) fn fullscreen_pass(
     pass.draw(0..3, 0..1);
 }
 
+/// Whether a lazily built pass pipeline is in hand, starting its compile if
+/// it has not been asked for.
+fn ready(pipeline: &Option<super::LazyFullscreen>) -> bool {
+    pipeline.as_ref().is_some_and(|p| p.get(0).is_some())
+}
+
 /// A pre-tone-map effect that fills a composite input slot.
 pub(crate) trait PostProducer {
     /// Whether the effect is switched on this frame (settings only; the
     /// degradation throttle is applied by the caller at encode time).
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool;
+    /// Whether the producer's pipelines are built. Asking starts the compile
+    /// under the renderer's policy; while it runs the effect is treated as
+    /// off, so the composite never reads a target nothing wrote.
+    fn ready(&self) -> bool {
+        true
+    }
     /// Whether the degradation throttle may skip this producer's passes.
     /// Exposure returns `false`: skipping it would leave a stale multiplier
     /// in the state buffer the tone map always reads.
@@ -122,8 +134,8 @@ pub(crate) trait PostProducer {
 /// static noise texture and hemisphere kernel.
 #[derive(Default)]
 pub(crate) struct SsaoProducer {
-    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) blur_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) pipeline: Option<super::LazyFullscreen>,
+    pub(crate) blur_pipeline: Option<super::LazyFullscreen>,
     pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) blur_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) noise_texture: Option<crate::gpu::Texture>,
@@ -150,6 +162,10 @@ impl PostProducer for SsaoProducer {
         inputs.post.ssao
     }
 
+    fn ready(&self) -> bool {
+        ready(&self.pipeline) && ready(&self.blur_pipeline)
+    }
+
     fn upload(
         &self,
         queue: &crate::gpu::Queue,
@@ -173,12 +189,15 @@ impl PostProducer for SsaoProducer {
         _inputs: &ProducerFrameInputs<'_>,
         timing: &ProducerTiming<'_>,
     ) {
-        let Some(pipeline) = &self.pipeline else {
+        // Skipped until both pipelines are built; the composite then reads
+        // the occlusion target as it was cleared, which is "no occlusion".
+        let (Some(pipeline), Some(blur_pipeline)) = (
+            self.pipeline.as_ref().and_then(|p| p.get(0)),
+            self.blur_pipeline.as_ref().and_then(|p| p.get(0)),
+        ) else {
             return;
         };
-        // The SSAO slot begins on the occlusion pass and ends on the blur
-        // pass (or on the occlusion pass when there is no blur).
-        let has_blur = self.blur_pipeline.is_some();
+        // The SSAO slot begins on the occlusion pass and ends on the blur pass.
         fullscreen_pass(
             encoder,
             "ssao_pass",
@@ -186,19 +205,17 @@ impl PostProducer for SsaoProducer {
             crate::gpu::Color::WHITE,
             pipeline,
             &hdr.ssao.bg,
-            timing.writes(crate::renderer::GPU_TS_SSAO, true, !has_blur),
+            timing.writes(crate::renderer::GPU_TS_SSAO, true, false),
         );
-        if let Some(blur_pipeline) = &self.blur_pipeline {
-            fullscreen_pass(
-                encoder,
-                "ssao_blur_pass",
-                &hdr.ssao.blur_view,
-                crate::gpu::Color::WHITE,
-                blur_pipeline,
-                &hdr.ssao.blur_bg,
-                timing.writes(crate::renderer::GPU_TS_SSAO, false, true),
-            );
-        }
+        fullscreen_pass(
+            encoder,
+            "ssao_blur_pass",
+            &hdr.ssao.blur_view,
+            crate::gpu::Color::WHITE,
+            blur_pipeline,
+            &hdr.ssao.blur_bg,
+            timing.writes(crate::renderer::GPU_TS_SSAO, false, true),
+        );
     }
 }
 
@@ -207,7 +224,7 @@ impl PostProducer for SsaoProducer {
 /// Shared contact-shadow state: the screen-space march pipeline + layout.
 #[derive(Default)]
 pub(crate) struct ContactShadowProducer {
-    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) pipeline: Option<super::LazyFullscreen>,
     pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
@@ -224,6 +241,10 @@ pub(crate) struct ContactShadowViewport {
 impl PostProducer for ContactShadowProducer {
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         inputs.post.contact_shadows.enabled
+    }
+
+    fn ready(&self) -> bool {
+        ready(&self.pipeline)
     }
 
     fn upload(
@@ -277,7 +298,8 @@ impl PostProducer for ContactShadowProducer {
         _inputs: &ProducerFrameInputs<'_>,
         _timing: &ProducerTiming<'_>,
     ) {
-        let Some(pipeline) = &self.pipeline else {
+        // Skipped while the pipeline is on a worker.
+        let Some(pipeline) = self.pipeline.as_ref().and_then(|p| p.get(0)) else {
             return;
         };
         fullscreen_pass(
@@ -298,8 +320,8 @@ impl PostProducer for ContactShadowProducer {
 /// layout.
 #[derive(Default)]
 pub(crate) struct BloomProducer {
-    pub(crate) threshold_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) blur_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) threshold_pipeline: Option<super::LazyFullscreen>,
+    pub(crate) blur_pipeline: Option<super::LazyFullscreen>,
     pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
@@ -334,6 +356,10 @@ impl PostProducer for BloomProducer {
         inputs.post.bloom.enabled
     }
 
+    fn ready(&self) -> bool {
+        ready(&self.threshold_pipeline) && ready(&self.blur_pipeline)
+    }
+
     fn upload(
         &self,
         queue: &crate::gpu::Queue,
@@ -357,12 +383,16 @@ impl PostProducer for BloomProducer {
         _inputs: &ProducerFrameInputs<'_>,
         timing: &ProducerTiming<'_>,
     ) {
-        let Some(threshold_pipeline) = &self.threshold_pipeline else {
+        // Skipped until both pipelines are built; the composite then reads
+        // the bloom target as it was cleared, which is no glow.
+        let (Some(threshold_pipeline), Some(blur_pipeline)) = (
+            self.threshold_pipeline.as_ref().and_then(|p| p.get(0)),
+            self.blur_pipeline.as_ref().and_then(|p| p.get(0)),
+        ) else {
             return;
         };
         // The bloom slot begins on the threshold pass and ends on the last
-        // blur pass (or on the threshold pass when there is no blur).
-        let has_blur = self.blur_pipeline.is_some();
+        // blur pass.
         fullscreen_pass(
             encoder,
             "bloom_threshold_pass",
@@ -370,12 +400,12 @@ impl PostProducer for BloomProducer {
             crate::gpu::Color::BLACK,
             threshold_pipeline,
             &hdr.bloom.threshold_bg,
-            timing.writes(crate::renderer::GPU_TS_BLOOM, true, !has_blur),
+            timing.writes(crate::renderer::GPU_TS_BLOOM, true, false),
         );
 
         // 4 ping-pong H+V blur passes for a wide glow.
         // Pass 1: threshold -> ping -> pong. Passes 2-4: pong -> ping -> pong.
-        if let Some(blur_pipeline) = &self.blur_pipeline {
+        {
             const BLUR_ITERATIONS: usize = 4;
             for i in 0..BLUR_ITERATIONS {
                 // H pass: pass 0 reads threshold, subsequent passes read pong.
@@ -417,7 +447,7 @@ impl PostProducer for BloomProducer {
 /// Shared depth-of-field state: the gather pipeline + layout.
 #[derive(Default)]
 pub(crate) struct DofProducer {
-    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) pipeline: Option<super::LazyFullscreen>,
     pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
@@ -437,6 +467,10 @@ pub(crate) struct DofViewport {
 impl PostProducer for DofProducer {
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         inputs.post.dof.enabled
+    }
+
+    fn ready(&self) -> bool {
+        ready(&self.pipeline)
     }
 
     fn upload(
@@ -467,7 +501,8 @@ impl PostProducer for DofProducer {
         _inputs: &ProducerFrameInputs<'_>,
         _timing: &ProducerTiming<'_>,
     ) {
-        let Some(pipeline) = &self.pipeline else {
+        // Skipped while the pipeline is on a worker.
+        let Some(pipeline) = self.pipeline.as_ref().and_then(|p| p.get(0)) else {
             return;
         };
         fullscreen_pass(
@@ -578,7 +613,8 @@ impl PostProducer for crate::resources::gpu::exposure::ExposureResources {
 /// last enabled stage renders into the frame's final target (the upscale
 /// texture or the output view).
 pub(crate) trait PostStage {
-    /// Whether the stage runs this frame.
+    /// Whether the stage runs this frame. A stage whose pipeline is still
+    /// compiling says no, so the chain routes around it.
     fn enabled(&self, post: &crate::PostProcessSettings) -> bool;
     /// The stage's input texture: whoever runs before it renders into this.
     fn input_view<'a>(&self, hdr: &'a ViewportHdrState) -> &'a crate::gpu::TextureView;
@@ -595,7 +631,7 @@ pub(crate) trait PostStage {
 /// Shared FXAA state: the pipeline, its layout, and the dedicated sampler.
 #[derive(Default)]
 pub(crate) struct FxaaStage {
-    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) pipeline: Option<super::LazyFullscreen>,
     pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) sampler: Option<crate::gpu::Sampler>,
 }
@@ -612,7 +648,7 @@ pub(crate) struct FxaaViewport {
 
 impl PostStage for FxaaStage {
     fn enabled(&self, post: &crate::PostProcessSettings) -> bool {
-        post.fxaa
+        post.fxaa && ready(&self.pipeline)
     }
 
     fn input_view<'a>(&self, hdr: &'a ViewportHdrState) -> &'a crate::gpu::TextureView {
@@ -626,7 +662,8 @@ impl PostStage for FxaaStage {
         target: &crate::gpu::TextureView,
         timing: &ProducerTiming<'_>,
     ) {
-        let Some(pipeline) = &self.pipeline else {
+        // Skipped while the pipeline is on a worker.
+        let Some(pipeline) = self.pipeline.as_ref().and_then(|p| p.get(0)) else {
             return;
         };
         fullscreen_pass(

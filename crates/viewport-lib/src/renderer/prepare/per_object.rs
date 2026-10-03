@@ -1032,7 +1032,7 @@ impl ViewportRenderer {
             {
                 break 'plan None;
             }
-            if hdr && self.resources.scene.hdr_opaque.is_none() {
+            if hdr && self.resources.scene.hdr.is_none() {
                 break 'plan None;
             }
             use std::hash::{Hash, Hasher};
@@ -1108,6 +1108,25 @@ impl ViewportRenderer {
             self.per_object_bundle = None;
             return;
         };
+
+        // A bundle records its pipelines up front, so until both solids are
+        // built the items draw one by one (and skip while compiling).
+        let both_solids_ready = [false, true].iter().all(|&two_sided| {
+            let key = PipelineKey {
+                two_sided,
+                no_discard_eligible: no_discard,
+                ..PipelineKey::default()
+            };
+            if hdr {
+                self.resources.scene.hdr_opaque(key).is_some()
+            } else {
+                self.resources.scene.ldr_opaque(key).is_some()
+            }
+        });
+        if !both_solids_ready {
+            self.per_object_bundle = None;
+            return;
+        }
 
         // Churn gate. A single isolated change re-records immediately (the
         // measured cost of one re-record is a wash against immediate draws),
@@ -1198,22 +1217,21 @@ impl ViewportRenderer {
         } else {
             (resources.target_format, resources.sample_count)
         };
-        let (solid, solid_two_sided) = if hdr {
-            let hdr_opaque = self.resources.scene.hdr_opaque.as_ref().unwrap();
-            (
-                hdr_opaque.get(PipelineKey {
-                    no_discard_eligible: no_discard,
-                    ..PipelineKey::default()
-                }),
-                hdr_opaque.get(PipelineKey {
-                    two_sided: true,
-                    no_discard_eligible: no_discard,
-                    ..PipelineKey::default()
-                }),
-            )
-        } else {
-            (resources.scene.solid(), resources.scene.solid_two_sided())
+        // The caller checked both are built.
+        let opaque = |two_sided: bool| {
+            let key = PipelineKey {
+                two_sided,
+                no_discard_eligible: no_discard,
+                ..PipelineKey::default()
+            };
+            if hdr {
+                resources.scene.hdr_opaque(key)
+            } else {
+                resources.scene.ldr_opaque(key)
+            }
+            .expect("the bundle is only recorded once its pipelines are built")
         };
+        let (solid, solid_two_sided) = (opaque(false), opaque(true));
         let mut enc = crate::resources::builders::render_bundle_encoder(
             device,
             "per_object_bundle",

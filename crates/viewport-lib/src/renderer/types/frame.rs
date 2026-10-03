@@ -246,8 +246,6 @@ pub struct SceneFrame {
     pub generation: u64,
     /// Surface geometry submission (opaque and transparent meshes).
     pub surfaces: SurfaceSubmission,
-    /// Isoline (contour line) items to render on mesh surfaces.
-    pub isolines: Vec<crate::geometry::isoline::IsolineItem>,
     /// GPU compute filter items dispatched before the render pass.
     ///
     /// Each item references a pre-uploaded mesh and a compute kernel that
@@ -301,7 +299,6 @@ impl Default for SceneFrame {
         Self {
             generation: 0,
             surfaces: SurfaceSubmission::default(),
-            isolines: Vec::new(),
             compute_filter_items: Vec::new(),
             volume_meshes: Vec::new(),
             mesh_instances: Vec::new(),

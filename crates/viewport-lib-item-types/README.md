@@ -188,6 +188,14 @@ Line integral convolution: streaks along a vector field on a mesh, the dense cou
 
 `strength` is per item. `steps` and `step_size` come from the first visible item in the frame, because every flow surface is advected in one fullscreen pass. Only the HDR render path draws it, and it registers after decals so a decal on a flow surface takes the streaks too.
 
+### `surface_contour`
+
+`SurfaceContourItem`, with `ContourLevels`.
+
+Contour lines of a scalar field on a mesh, found per pixel in a fragment shader. The field is a per-vertex scalar attribute the mesh was uploaded with (`Vertex`, or `Cell` and `Edge` averaged to the vertices), named on the item, and it need not be the one that colours the surface. Submit the item beside the `SceneRenderItem` that draws the same `MeshId`, with the same transform; the lines are depth-tested against that surface. For a volume mesh, name its `boundary_mesh_id` and a `node_scalars` entry.
+
+`ContourLevels::Values` draws a line at each listed value, up to `MAX_CONTOUR_LEVELS` (32); `ContourLevels::Spaced` draws one every `interval` from `origin`, with no limit. `width` is in logical pixels. A static field costs one extra draw of the mesh a frame; a changing one is `replace_attribute` on the mesh. Draws on both render paths.
+
 ### `tensor_field`
 
 `TensorFieldItem`, with `TensorSource`, `TensorFieldRefItem` and `TensorFieldId`.

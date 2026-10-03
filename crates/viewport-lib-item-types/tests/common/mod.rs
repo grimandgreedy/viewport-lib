@@ -39,6 +39,9 @@ pub fn sub_object_pick_frame() -> FrameData {
 /// plugins now, not built into the renderer.
 pub fn renderer_with_item_types(device: &wgpu::Device) -> ViewportRenderer {
     let mut renderer = ViewportRenderer::new(device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // These tests read frames back at once, so nothing may be skipped while
+    // it compiles, whatever the platform's default.
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     viewport_lib_item_types::install(&mut renderer, device);
     renderer
 }

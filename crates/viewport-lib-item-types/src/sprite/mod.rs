@@ -425,7 +425,6 @@ impl SpritePlugin {
     ) {
         let Some(gpu) = &self.gpu else { return };
         for key in pipeline::SpriteKey::all() {
-            let dual = gpu.pipelines.get(key);
             let mut bound = false;
             for sprite in self.frame.iter().filter(|s| wanted(s)) {
                 if sprite.depth_write != key.depth_write
@@ -435,7 +434,11 @@ impl SpritePlugin {
                     continue;
                 }
                 if !bound {
-                    pass.set_pipeline(dual.for_format(hdr));
+                    // Still compiling: this key's sprites draw next frame.
+                    let Some(pl) = gpu.pipelines.get(pipeline::sprite_index(key, hdr)) else {
+                        break;
+                    };
+                    pass.set_pipeline(pl);
                     pass.set_bind_group(2, group2, &[]);
                     bound = true;
                 }
@@ -484,6 +487,20 @@ impl ItemTypePlugin for SpritePlugin {
         _shared: &viewport_lib::plugin_api::SharedBindings<'_>,
     ) {
         self.layouts = Some(SpriteLayouts::new(device));
+    }
+
+    fn warm(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        resources: &viewport_lib::DeviceResources,
+    ) {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| SpriteLayouts::new(device));
+        let gpu = self
+            .gpu
+            .get_or_insert_with(|| pipeline::SpriteGpu::new(device, resources, layouts));
+        gpu.pipelines.request_all();
     }
 
     fn resident_bytes(&self) -> u64 {

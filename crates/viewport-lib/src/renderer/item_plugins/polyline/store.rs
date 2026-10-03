@@ -6,7 +6,7 @@
 //!
 //! The payload and the builder that fills it are not here, and deliberately:
 //! [`PolylineGpuData`](crate::resources::PolylineGpuData) is the shared line
-//! substrate's output shape. Isolines, clip-object outlines, scatter bounds,
+//! substrate's output shape. Clip-object outlines, scatter bounds,
 //! volume boxes and four item types' wireframe overlays all render through the
 //! same pipelines and the same per-frame upload, so the substrate stays with
 //! the renderer. What is this item type's alone is the store of pre-uploaded

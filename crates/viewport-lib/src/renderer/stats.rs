@@ -548,6 +548,11 @@ pub struct FrameStats {
     /// Counts calls to the internal pipeline builders, so one increment can
     /// cover a small family of pipeline variants built together.
     pub pipelines_built_this_frame: u32,
+    /// Pipelines compiling on the workers when the frame ended, under
+    /// `PipelineCompilation::Background`. Whatever needed one of them was
+    /// skipped this frame and draws once it is ready. Always zero under
+    /// `Blocking`. The same number as `ViewportRenderer::pipelines_pending`.
+    pub pipelines_pending: u32,
     /// True when GPU-driven culling is active this frame.
     ///
     /// False when the device does not support `INDIRECT_FIRST_INSTANCE` or

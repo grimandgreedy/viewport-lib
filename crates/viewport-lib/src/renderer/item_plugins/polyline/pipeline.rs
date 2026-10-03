@@ -2,7 +2,7 @@
 //! layout, and the outline mask pipeline.
 //!
 //! The render pipelines are not here. Polylines are the shared line substrate:
-//! isolines, scatter-volume bounds, volume bounding boxes, clip-object outlines
+//! scatter-volume bounds, volume bounding boxes, clip-object outlines
 //! and the splat and sprite wireframe overlays all render through the same
 //! pipelines, and none of them are items. Those pipelines therefore stay in
 //! `resources`, and this plugin borrows a clone of them during `prepare` rather

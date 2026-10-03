@@ -5,6 +5,9 @@
 //! `resources::init`; the shadow pass in `renderer::prepare::shadow_pass` and the
 //! lit pass in `renderer::prepare::lighting` read these fields each frame.
 
+use crate::renderer::pipeline_key::PipelineKey;
+use crate::resources::pipeline_slot::LazyFamily;
+
 use crate::resources::builders::LoggedAlloc;
 
 /// Directional-cascade and point-light shadow resources.
@@ -46,7 +49,7 @@ pub(crate) struct ShadowResources {
     /// as the cascade shadow pipeline; writes linear distance-to-light.
     /// `None` until a frame has point-shadow faces to draw; see
     /// [`DeviceResources::ensure_point_shadow_pipeline`](crate::resources::DeviceResources::ensure_point_shadow_pipeline).
-    pub(crate) point_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) point_pipeline: Option<LazyFamily<ShadowRecipe, 1>>,
     /// Bind group layout for the point-shadow per-face uniform (group 0
     /// of the point shadow pass). Kept for pipeline rebuilds.
     #[allow(dead_code)]
@@ -73,7 +76,7 @@ pub(crate) struct ShadowResources {
     /// material instead of casting a solid silhouette.
     /// `None` until a frame rasterises casters into the atlas; see
     /// [`DeviceResources::ensure_cascade_shadow_pipelines`](crate::resources::DeviceResources::ensure_cascade_shadow_pipelines).
-    pub(crate) pipeline: Option<crate::renderer::pipeline_key::PipelineVariantSet>,
+    pub(crate) pipeline: Option<LazyFamily<ShadowRecipe, 4>>,
     /// Bind group layout for the shadow camera uniform (group 0 of the
     /// shadow pass). Kept so `register_deformer` can rebuild the shadow
     /// pipeline from a freshly composed shader module.
@@ -191,22 +194,48 @@ pub(crate) fn create_point_cube_array(
     (texture, cube_view, face_views)
 }
 
+/// What a per-object shadow pipeline build reads.
+pub(crate) struct ShadowRecipe {
+    pub(crate) device: crate::gpu::Device,
+    pub(crate) layout: crate::gpu::PipelineLayout,
+    pub(crate) shader: crate::gpu::ShaderModule,
+}
+
+/// Slot index of the cascade pipeline for `key`: bit 0 two-sided, bit 1 cutout.
+fn cascade_index(key: PipelineKey) -> usize {
+    key.two_sided as usize + 2 * key.cutout as usize
+}
+
+pub(crate) fn build_cascade(r: &ShadowRecipe, i: usize) -> crate::gpu::RenderPipeline {
+    let two_sided = i & 1 != 0;
+    let cutout = i & 2 != 0;
+    crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
+        &r.device,
+        &r.layout,
+        &r.shader,
+        (!two_sided).then_some(crate::gpu::Face::Front),
+        cutout,
+        None,
+    )
+}
+
+pub(crate) fn build_point(r: &ShadowRecipe, _i: usize) -> crate::gpu::RenderPipeline {
+    crate::resources::mesh::mesh_pipelines::build_shadow_point_pipeline(
+        &r.device, &r.layout, &r.shader, None,
+    )
+}
+
 impl ShadowResources {
-    /// The cascade depth pipelines. Built by
-    /// [`DeviceResources::ensure_cascade_shadow_pipelines`](crate::resources::DeviceResources::ensure_cascade_shadow_pipelines)
-    /// before anything draws into the atlas, so a caller inside the shadow pass
-    /// is past that point.
-    pub(crate) fn pipeline(&self) -> &crate::renderer::pipeline_key::PipelineVariantSet {
-        self.pipeline
-            .as_ref()
-            .expect("cascade shadow pipelines missing; the shadow prepare builds them")
+    /// The cascade depth pipeline for `key`'s facedness and cutout, or `None`
+    /// while a worker has it (or before the family is composed by
+    /// [`DeviceResources::ensure_cascade_shadow_pipelines`](crate::resources::DeviceResources::ensure_cascade_shadow_pipelines)).
+    pub(crate) fn cascade(&self, key: PipelineKey) -> Option<&crate::gpu::RenderPipeline> {
+        self.pipeline.as_ref()?.get(cascade_index(key))
     }
 
-    /// The point-shadow depth pipeline, built alongside the cube array.
-    pub(crate) fn point_pipeline(&self) -> &crate::gpu::RenderPipeline {
-        self.point_pipeline
-            .as_ref()
-            .expect("point shadow pipeline missing; the lighting prepare builds it")
+    /// The point-shadow depth pipeline, composed alongside the cube array.
+    pub(crate) fn point(&self) -> Option<&crate::gpu::RenderPipeline> {
+        self.point_pipeline.as_ref()?.get(0)
     }
 }
 
@@ -298,8 +327,7 @@ mod tests {
     /// and `postprocess::oit::tests::oit_pipeline_resolves_every_key_once_built`: every key in
     /// `PipelineKey::all()` must resolve through `get()` without panicking, including the
     /// `no_discard_eligible` combinations this family ignores (a depth-only pass has no
-    /// discard-free early-Z distinction). Built eagerly at construction (unlike the HDR/OIT
-    /// families, there is no lazy first-use gate), so a fresh renderer already has it.
+    /// discard-free early-Z distinction).
     #[test]
     fn shadow_pipeline_resolves_every_key_once_built() {
         let Some((device, _queue, mut res)) = crate::resources::test_support::try_make_resources()
@@ -307,9 +335,11 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
+        res.pipeline_compiler
+            .set_policy(crate::resources::PipelineCompilation::Blocking);
         res.ensure_cascade_shadow_pipelines(&device);
         for key in crate::renderer::pipeline_key::PipelineKey::all() {
-            let _ = res.shadow.pipeline().get(key);
+            assert!(res.shadow.cascade(key).is_some());
         }
     }
 }

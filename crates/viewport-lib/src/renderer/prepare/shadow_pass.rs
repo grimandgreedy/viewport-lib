@@ -45,8 +45,25 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        // The colour family the frame draws with; a caster whose colour
+        // pipeline is still compiling casts nothing until it is drawn.
+        colour_hdr: bool,
         sink: &mut crate::renderer::SubmitSink,
     ) {
+        let clipping_active = DeviceResources::clipping_active(frame);
+        // Which batches cast this frame, as a hash: a batch whose colour
+        // pipeline is still compiling is left out, and the cached shadow
+        // bundles have to be re-recorded when that changes.
+        let casters_hash = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            for batch in &instancing.batches {
+                resources
+                    .batch_colour_ready(batch, colour_hdr, clipping_active)
+                    .hash(&mut h);
+            }
+            h.finish()
+        };
         // Shadow-pass instrumentation. The stall reported on some mobile backends
         // shows up at `present` because the shadow depth work is GPU-bound and only
         // forced to completion later. When the `viewport_lib::shadow` target is
@@ -230,7 +247,7 @@ impl ViewportRenderer {
                 // per-cascade visibility buffers; only the index compaction
                 // moves to the CPU.
                 resources.ensure_cull_instance_pipelines(device);
-                if resources.cull.shadow_pipeline.is_some() {
+                if resources.cull.shadow.is_some() {
                     let instance_count = instancing.cached_instance_count as u32;
                     let batch_count = instancing.batches.len() as u32;
                     instancing
@@ -271,6 +288,10 @@ impl ViewportRenderer {
                             let start = indices.len() as u32;
                             let lo = batch.instance_offset as usize;
                             let hi = lo + batch.instance_count as usize;
+                            if !resources.batch_colour_ready(batch, colour_hdr, clipping_active) {
+                                batch_ranges.push((start, 0));
+                                continue;
+                            }
                             for (i, ia) in instancing.cached_aabbs[lo..hi].iter().enumerate() {
                                 if ia.cast_shadows == 0 {
                                     continue;
@@ -343,7 +364,7 @@ impl ViewportRenderer {
 
                 if instancing.use_instancing {
                     let use_shadow_indirect = instancing.gpu_culling_enabled
-                        && resources.cull.shadow_pipeline.is_some()
+                        && resources.cull.shadow.is_some()
                         && instancing.shadow_cull.shadow_vis_bufs[0].is_some();
 
                     // On backends with native multi-draw the per-cascade shadow
@@ -368,6 +389,7 @@ impl ViewportRenderer {
                             instancing.batches_gen,
                             instancing.shadow_cull.outputs_gen,
                             light.effective_cascade_count,
+                            casters_hash,
                         );
                         if !shadow_multi_draw
                             && instancing.shadow_cull.bundle_key != Some(bundle_key)
@@ -398,19 +420,13 @@ impl ViewportRenderer {
                                 }
                             }
 
+                            // A bundle records its pipelines, so one left out
+                            // while compiling keeps the bundle from being kept.
+                            let mut complete = true;
                             for cascade in 0..light.effective_cascade_count {
-                                let Some(pipeline) = resources.cull.shadow_pipeline.as_ref() else {
+                                if resources.cull.shadow.is_none() {
                                     continue;
-                                };
-                                let Some(pipeline_two_sided) =
-                                    resources.cull.shadow_two_sided_pipeline.as_ref()
-                                else {
-                                    continue;
-                                };
-                                let cutout_pipeline =
-                                    resources.cull.shadow_cutout_pipeline.as_ref();
-                                let cutout_pipeline_two_sided =
-                                    resources.cull.shadow_cutout_two_sided_pipeline.as_ref();
+                                }
                                 let Some(cascade_bg) =
                                     resources.instancing.shadow_cascade_bgs[cascade].as_ref()
                                 else {
@@ -457,7 +473,13 @@ impl ViewportRenderer {
                                 let mut draws = 0u32;
                                 let mut binds = 0u32;
                                 for (bi, batch) in instancing.batches.iter().enumerate() {
-                                    if batch.is_transparent {
+                                    if batch.is_transparent
+                                        || !resources.batch_colour_ready(
+                                            batch,
+                                            colour_hdr,
+                                            clipping_active,
+                                        )
+                                    {
                                         continue;
                                     }
                                     let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
@@ -481,16 +503,15 @@ impl ViewportRenderer {
                                     } else {
                                         None
                                     };
-                                    let use_cutout = cutout_bg.is_some()
-                                        && cutout_pipeline.is_some()
-                                        && cutout_pipeline_two_sided.is_some();
+                                    let use_cutout = cutout_bg.is_some();
 
                                     if cur_pipe != Some((two_sided, use_cutout)) {
-                                        let pipe = match (use_cutout, two_sided) {
-                                            (true, true) => cutout_pipeline_two_sided.unwrap(),
-                                            (true, false) => cutout_pipeline.unwrap(),
-                                            (false, true) => pipeline_two_sided,
-                                            (false, false) => pipeline,
+                                        let Some(pipe) =
+                                            resources.cull.shadow(two_sided, use_cutout)
+                                        else {
+                                            complete = false;
+                                            cur_pipe = None;
+                                            continue;
                                         };
                                         bundle_enc.set_pipeline(pipe);
                                         cur_pipe = Some((two_sided, use_cutout));
@@ -527,7 +548,9 @@ impl ViewportRenderer {
                                 instancing.shadow_cull.bundle_draws += draws;
                                 instancing.shadow_cull.bundle_binds += binds;
                             }
-                            instancing.shadow_cull.bundle_key = Some(bundle_key);
+                            if complete {
+                                instancing.shadow_cull.bundle_key = Some(bundle_key);
+                            }
                         }
 
                         if shadow_multi_draw {
@@ -539,6 +562,8 @@ impl ViewportRenderer {
                                 instancing,
                                 light,
                                 tile_px,
+                                colour_hdr,
+                                clipping_active,
                             );
                             shadow_draws += counts.batch_draws;
                             shadow_draw_cmds += counts.draw_commands;
@@ -585,11 +610,9 @@ impl ViewportRenderer {
                             shadow_draw_cmds += instancing.shadow_cull.bundle_draws;
                             shadow_binds += instancing.shadow_cull.bundle_binds;
                         }
-                    } else if let (Some(ranges), Some(pipeline), Some(pipeline_two_sided)) = (
-                        cpu_cull_ranges.as_ref(),
-                        resources.cull.shadow_pipeline.as_ref(),
-                        resources.cull.shadow_two_sided_pipeline.as_ref(),
-                    ) {
+                    } else if let (Some(ranges), true) =
+                        (cpu_cull_ranges.as_ref(), resources.cull.shadow.is_some())
+                    {
                         // CPU-culled direct path: same pipelines and bind groups
                         // as the indirect path, but each batch draws the
                         // compacted sub-range computed on the CPU above.
@@ -637,10 +660,6 @@ impl ViewportRenderer {
                                     a,
                                 );
                             }
-                            let cutout_pipeline = resources.cull.shadow_cutout_pipeline.as_ref();
-                            let cutout_pipeline_two_sided =
-                                resources.cull.shadow_cutout_two_sided_pipeline.as_ref();
-
                             let Some(cascade_bg) =
                                 resources.instancing.shadow_cascade_bgs[cascade].as_ref()
                             else {
@@ -657,7 +676,13 @@ impl ViewportRenderer {
                             let mut cur_group1_opaque = false;
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for (bi, batch) in instancing.batches.iter().enumerate() {
-                                if batch.is_transparent {
+                                if batch.is_transparent
+                                    || !resources.batch_colour_ready(
+                                        batch,
+                                        colour_hdr,
+                                        clipping_active,
+                                    )
+                                {
                                     continue;
                                 }
                                 let Some(&(start, count)) = ranges[cascade].get(bi) else {
@@ -682,16 +707,14 @@ impl ViewportRenderer {
                                 } else {
                                     None
                                 };
-                                let use_cutout = cutout_bg.is_some()
-                                    && cutout_pipeline.is_some()
-                                    && cutout_pipeline_two_sided.is_some();
+                                let use_cutout = cutout_bg.is_some();
 
                                 if cur_pipe != Some((two_sided, use_cutout)) {
-                                    let pipe = match (use_cutout, two_sided) {
-                                        (true, true) => cutout_pipeline_two_sided.unwrap(),
-                                        (true, false) => cutout_pipeline.unwrap(),
-                                        (false, true) => pipeline_two_sided,
-                                        (false, false) => pipeline,
+                                    // Still compiling: the batch casts next frame.
+                                    let Some(pipe) = resources.cull.shadow(two_sided, use_cutout)
+                                    else {
+                                        cur_pipe = None;
+                                        continue;
                                     };
                                     shadow_pass.set_pipeline(pipe);
                                     cur_pipe = Some((two_sided, use_cutout));
@@ -727,9 +750,8 @@ impl ViewportRenderer {
                                 shadow_draw_cmds += 1;
                             }
                         }
-                    } else if let (Some(pipeline), Some(pipeline_two_sided), Some(instance_bg)) = (
-                        &resources.instancing.shadow_pipeline,
-                        &resources.instancing.shadow_two_sided_pipeline,
+                    } else if let (true, Some(instance_bg)) = (
+                        resources.instancing.shadow.is_some(),
                         instancing.batches.first().and_then(|b| {
                             // Shadow depth draws only need the instance storage at
                             // binding 0; any matching bind group works, but the key
@@ -782,19 +804,19 @@ impl ViewportRenderer {
                             let cascade_bg = resources.instancing.shadow_cascade_bgs[cascade]
                                 .as_ref()
                                 .expect("shadow_instanced_cascade_bgs not allocated");
-                            let cutout_pipeline =
-                                resources.instancing.shadow_cutout_pipeline.as_ref();
-                            let cutout_pipeline_two_sided = resources
-                                .instancing
-                                .shadow_cutout_two_sided_pipeline
-                                .as_ref();
                             shadow_pass.set_bind_group(0, cascade_bg, &[]);
 
                             let mut cur_pipe: Option<(bool, bool)> = None;
                             let mut cur_group1_opaque = false;
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for batch in &instancing.batches {
-                                if batch.is_transparent {
+                                if batch.is_transparent
+                                    || !resources.batch_colour_ready(
+                                        batch,
+                                        colour_hdr,
+                                        clipping_active,
+                                    )
+                                {
                                     continue;
                                 }
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
@@ -820,16 +842,15 @@ impl ViewportRenderer {
                                 } else {
                                     None
                                 };
-                                let use_cutout = cutout_bg.is_some()
-                                    && cutout_pipeline.is_some()
-                                    && cutout_pipeline_two_sided.is_some();
+                                let use_cutout = cutout_bg.is_some();
 
                                 if cur_pipe != Some((two_sided, use_cutout)) {
-                                    let pipe = match (use_cutout, two_sided) {
-                                        (true, true) => cutout_pipeline_two_sided.unwrap(),
-                                        (true, false) => cutout_pipeline.unwrap(),
-                                        (false, true) => pipeline_two_sided,
-                                        (false, false) => pipeline,
+                                    // Still compiling: the batch casts next frame.
+                                    let Some(pipe) =
+                                        resources.instancing.shadow(two_sided, use_cutout)
+                                    else {
+                                        cur_pipe = None;
+                                        continue;
                                     };
                                     shadow_pass.set_pipeline(pipe);
                                     cur_pipe = Some((two_sided, use_cutout));
@@ -914,6 +935,7 @@ impl ViewportRenderer {
                             if item.settings.hidden
                                 || !item.settings.cast_shadows
                                 || item.settings.opacity < 1.0
+                                || !resources.item_colour_ready(item, colour_hdr, clipping_active)
                             {
                                 continue;
                             }
@@ -960,7 +982,11 @@ impl ViewportRenderer {
                                 ),
                                 ..PipelineKey::default()
                             };
-                            shadow_pass.set_pipeline(resources.shadow.pipeline().get(key));
+                            // Still compiling: the caster waits a frame.
+                            let Some(pl) = resources.shadow.cascade(key) else {
+                                continue;
+                            };
+                            shadow_pass.set_pipeline(pl);
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
                             bind_deform_group!(
                                 shadow_pass,
@@ -1019,7 +1045,9 @@ impl ViewportRenderer {
                             if !item.settings.cast_shadows {
                                 continue;
                             }
-                            if item.settings.opacity < 1.0 {
+                            if item.settings.opacity < 1.0
+                                || !resources.item_colour_ready(item, colour_hdr, clipping_active)
+                            {
                                 continue;
                             }
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
@@ -1043,7 +1071,11 @@ impl ViewportRenderer {
                                 ),
                                 ..PipelineKey::default()
                             };
-                            shadow_pass.set_pipeline(resources.shadow.pipeline().get(key));
+                            // Still compiling: the caster waits a frame.
+                            let Some(pl) = resources.shadow.cascade(key) else {
+                                continue;
+                            };
+                            shadow_pass.set_pipeline(pl);
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
                             bind_deform_group!(
                                 shadow_pass,
@@ -1132,10 +1164,16 @@ impl ViewportRenderer {
         // via `shadow_point_pipeline`. Per-face culling uses the standard
         // CPU frustum from the face's view-projection.
         // ----------------------------------------------------------------
+        // The slot hashes below record what was rendered, so while the
+        // pipeline is still on a worker the whole block waits rather than
+        // marking a cubemap up to date that was never drawn.
+        let point_pipeline = resources.shadow.point();
         if lighting.shadows.enabled
             && !scene_items.is_empty()
             && !light.point_shadow_faces.is_empty()
+            && point_pipeline.is_some()
         {
+            let point_pipeline = point_pipeline.expect("checked above");
             // Collect the caster list once: item filter, mesh lookup, and
             // world AABB are shared by every slot and face below instead of
             // being recomputed per (face, item).
@@ -1302,7 +1340,7 @@ impl ViewportRenderer {
                         timestamp_writes: ts_writes,
                         occlusion_query_set: None,
                     });
-                    pass.set_pipeline(resources.shadow.point_pipeline());
+                    pass.set_pipeline(point_pipeline);
                     let dyn_offset = layer * POINT_FACE_STRIDE as u32;
                     pass.set_bind_group(0, &resources.shadow.point_face_bind_group, &[dyn_offset]);
 
@@ -1378,15 +1416,12 @@ fn draw_shadow_cascades_multi_draw(
     instancing: &mut InstancingState,
     light: &LightingFrame,
     tile_px: f32,
+    colour_hdr: bool,
+    clipping_active: bool,
 ) -> ShadowDrawCounts {
-    let Some(pipeline) = resources.cull.shadow_pipeline.as_ref() else {
+    if resources.cull.shadow.is_none() {
         return ShadowDrawCounts::default();
-    };
-    let Some(pipeline_two_sided) = resources.cull.shadow_two_sided_pipeline.as_ref() else {
-        return ShadowDrawCounts::default();
-    };
-    let cutout_pipeline = resources.cull.shadow_cutout_pipeline.as_ref();
-    let cutout_pipeline_two_sided = resources.cull.shadow_cutout_two_sided_pipeline.as_ref();
+    }
     let multi_draw = instancing.multi_draw_active();
     let mut drawn = 0u32;
     let mut binds = 0u32;
@@ -1458,7 +1493,9 @@ fn draw_shadow_cascades_multi_draw(
         let mut run_len: u32 = 0;
 
         for (bi, batch) in instancing.batches.iter().enumerate() {
-            if batch.is_transparent {
+            if batch.is_transparent
+                || !resources.batch_colour_ready(batch, colour_hdr, clipping_active)
+            {
                 continue;
             }
             let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
@@ -1477,9 +1514,23 @@ fn draw_shadow_cascades_multi_draw(
             } else {
                 None
             };
-            let use_cutout = cutout_bg.is_some()
-                && cutout_pipeline.is_some()
-                && cutout_pipeline_two_sided.is_some();
+            let use_cutout = cutout_bg.is_some();
+            // Still compiling: the batch casts next frame. Checked before the
+            // run accounting so a skipped batch breaks the run like a gap.
+            let Some(pipe) = resources.cull.shadow(two_sided, use_cutout) else {
+                if run_len > 0 {
+                    draw_cmds += crate::renderer::render::emit_indirect_run(
+                        pass,
+                        shadow_indirect_buf,
+                        run_start,
+                        run_len,
+                        multi_draw,
+                    );
+                    run_len = 0;
+                }
+                cur_pipe = None;
+                continue;
+            };
             let group1: &crate::gpu::BindGroup = if use_cutout {
                 cutout_bg.unwrap()
             } else {
@@ -1510,12 +1561,6 @@ fn draw_shadow_cascades_multi_draw(
                 );
             }
             if cur_pipe != Some(pipe_key) {
-                let pipe = match (use_cutout, two_sided) {
-                    (true, true) => cutout_pipeline_two_sided.unwrap(),
-                    (true, false) => cutout_pipeline.unwrap(),
-                    (false, true) => pipeline_two_sided,
-                    (false, false) => pipeline,
-                };
                 pass.set_pipeline(pipe);
                 cur_pipe = Some(pipe_key);
             }

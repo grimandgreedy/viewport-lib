@@ -267,21 +267,34 @@ pub(crate) struct OutlineResources {
     pub(crate) edge_bgl: crate::gpu::BindGroupLayout,
     /// X-ray pipeline: draws selected objects through occluders (depth Always).
     pub(crate) xray_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Offscreen RGBA texture the outline stencil pass renders into.
-    pub(crate) colour_texture: Option<crate::gpu::Texture>,
-    pub(crate) colour_view: Option<crate::gpu::TextureView>,
-    /// Depth+stencil texture for the offscreen outline pass.
-    pub(crate) depth_texture: Option<crate::gpu::Texture>,
-    pub(crate) depth_view: Option<crate::gpu::TextureView>,
-    /// Size of the current outline offscreen textures.
-    pub(crate) target_size: [u32; 2],
-    /// Fullscreen composite pipelines: single-sample LDR, MSAA, HDR.
-    pub(crate) composite_pipeline_single: Option<crate::gpu::RenderPipeline>,
-    pub(crate) composite_pipeline_msaa: Option<crate::gpu::RenderPipeline>,
-    pub(crate) composite_pipeline_hdr: Option<crate::gpu::RenderPipeline>,
+    /// Fullscreen composite pipelines: single-sample LDR, MSAA, HDR, each
+    /// built when a pass first binds it.
+    pub(crate) composite: Option<
+        crate::resources::pipeline_slot::LazyFamily<
+            crate::resources::postprocess::OutlineCompositeRecipe,
+            3,
+        >,
+    >,
     pub(crate) composite_bgl: Option<crate::gpu::BindGroupLayout>,
-    pub(crate) composite_bind_group: Option<crate::gpu::BindGroup>,
     pub(crate) composite_sampler: Option<crate::gpu::Sampler>,
+}
+
+impl OutlineResources {
+    /// The composite pipeline for the LDR target at `sample_count`, or `None`
+    /// while a worker has it.
+    pub(crate) fn composite_ldr(&self, sample_count: u32) -> Option<&crate::gpu::RenderPipeline> {
+        self.composite.as_ref()?.get(if sample_count > 1 {
+            crate::resources::postprocess::OUTLINE_COMPOSITE_MSAA
+        } else {
+            crate::resources::postprocess::OUTLINE_COMPOSITE_SINGLE
+        })
+    }
+
+    pub(crate) fn composite_hdr(&self) -> Option<&crate::gpu::RenderPipeline> {
+        self.composite
+            .as_ref()?
+            .get(crate::resources::postprocess::OUTLINE_COMPOSITE_HDR)
+    }
 }
 
 /// Former name of [`DeviceResources`]. Renamed to reflect that this holds the
@@ -435,11 +448,10 @@ pub struct DeviceResources {
     /// across runs with `ViewportRenderer::pipeline_cache_data` to skip shader
     /// recompilation on later launches.
     pub(crate) pipeline_cache: Option<crate::gpu::PipelineCache>,
-    /// This renderer's claim on the device's registered pipeline cache,
-    /// released when the renderer is dropped.
+    /// This renderer's entry in the pipeline cache lookup, removed when the
+    /// renderer is dropped.
     #[allow(dead_code)]
-    pub(crate) pipeline_cache_lease:
-        Option<crate::resources::builders::device_pipeline_cache::Lease>,
+    pub(crate) pipeline_cache_lease: crate::resources::builders::device_pipeline_cache::Lease,
     /// Shader modules shared between the pipeline families compiled from the
     /// same source, keyed by the source text. The LDR and HDR mesh families
     /// compile one `mesh.wgsl`, and the LDR, HDR and culled instanced families
@@ -641,6 +653,10 @@ pub struct DeviceResources {
     /// Atomic because some builders run behind a shared reference, so an item
     /// type's plugin can trigger them from `prepare`.
     pub(crate) frame_pipelines_built: std::sync::atomic::AtomicU32,
+    /// The compilation policy every lazily built pipeline follows, and the
+    /// compiles in flight on the workers. Shared with each pipeline set so a
+    /// build can run off this thread.
+    pub(crate) pipeline_compiler: std::sync::Arc<crate::resources::pipeline_slot::PipelineCompiler>,
     /// Bumped by `free_texture` and `free_mesh`. The per-object draw cache
     /// holds bind groups that keep their referenced GPU resources alive; when
     /// this changes, the cache purges its stale entries so a freed resource's
@@ -885,9 +901,11 @@ pub(crate) struct ShadowCullState {
     /// still apply around bundle execution, so the per-cascade atlas tiles work
     /// unchanged.
     pub(crate) shadow_bundles: [Option<crate::gpu::RenderBundle>; 4],
-    /// (instance_gen, batches_gen, outputs_gen, cascade_count) the bundles were
-    /// recorded against; a mismatch re-records them.
-    pub(crate) bundle_key: Option<(u64, u64, u64, usize)>,
+    /// (instance_gen, batches_gen, outputs_gen, cascade_count, casters) the
+    /// bundles were recorded against; a mismatch re-records them. `casters`
+    /// hashes which batches cast, since one whose colour pipeline is still
+    /// compiling is left out until it draws.
+    pub(crate) bundle_key: Option<(u64, u64, u64, usize, u64)>,
     /// GPU draws recorded per cascade bundle, for FrameStats.
     pub(crate) bundle_draws: u32,
     /// Geometry buffer binds (`set_vertex_buffer` + `set_index_buffer`) recorded
@@ -1373,23 +1391,17 @@ impl DeviceResources {
         // front face is never compared against itself in the shadow map;
         // cull-none for two-sided materials, `BackfacePolicy::Identical`, with a
         // larger caster-side bias) and cutout (a fragment stage that discards
-        // below the caster's albedo alpha cutoff, for `AlphaMode::Mask`).
-        let set = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-            let cull_mode = if key.two_sided {
-                None
-            } else {
-                Some(crate::gpu::Face::Front)
-            };
-            crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
-                device,
-                &layout,
-                &shader,
-                cull_mode,
-                key.cutout,
-                self.pipeline_cache.as_ref(),
-            )
-        });
-        self.shadow.pipeline = Some(set);
+        // below the caster's albedo alpha cutoff, for `AlphaMode::Mask`). Each
+        // is built by the first caster that needs it.
+        self.shadow.pipeline = Some(crate::resources::pipeline_slot::LazyFamily::new(
+            crate::resources::shadow::ShadowRecipe {
+                device: device.clone(),
+                layout,
+                shader,
+            },
+            std::sync::Arc::clone(&self.pipeline_compiler),
+            crate::resources::shadow::build_cascade,
+        ));
     }
 
     /// Build the point-light cubemap shadow pipeline and its module. Called from
@@ -1422,13 +1434,15 @@ impl DeviceResources {
             "shadow_point_pipeline_layout",
             &bgls,
         );
-        let pipeline = crate::resources::mesh::mesh_pipelines::build_shadow_point_pipeline(
-            device,
-            &layout,
-            &shader,
-            self.pipeline_cache.as_ref(),
-        );
-        self.shadow.point_pipeline = Some(pipeline);
+        self.shadow.point_pipeline = Some(crate::resources::pipeline_slot::LazyFamily::new(
+            crate::resources::shadow::ShadowRecipe {
+                device: device.clone(),
+                layout,
+                shader,
+            },
+            std::sync::Arc::clone(&self.pipeline_compiler),
+            crate::resources::shadow::build_point,
+        ));
     }
 
     /// Promote the cascade shadow atlas from its 1x1 placeholder to the full

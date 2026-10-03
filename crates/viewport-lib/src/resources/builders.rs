@@ -526,43 +526,56 @@ pub fn build_dual_pipeline(
     device: &crate::gpu::Device,
     desc: &DualPipelineDesc,
 ) -> crate::resources::types::DualPipeline {
-    let make = |format: crate::gpu::TextureFormat| {
-        render_pipeline(
-            device,
-            RenderPipelineDesc {
-                label: desc.label,
-                layout: desc.layout,
-                vertex_module: desc.shader,
-                vertex_entry: desc.vertex_entry,
-                vertex_buffers: desc.vertex_buffers,
-                fragment: Some(crate::gpu::FragmentState {
-                    module: desc.shader,
-                    entry_point: Some(desc.fragment_entry),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format,
-                        blend: desc.blend,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: desc.topology,
-                    cull_mode: desc.cull_mode,
-                    ..Default::default()
-                },
-                depth_stencil: Some(scene_depth_stencil(desc.depth_write, desc.depth_compare)),
-                multisample: crate::gpu::MultisampleState {
-                    count: desc.sample_count,
-                    ..Default::default()
-                },
-                cache: None,
-            },
-        )
-    };
     crate::resources::types::DualPipeline {
-        ldr: make(desc.ldr_format),
-        hdr: make(crate::gpu::TextureFormat::Rgba16Float),
+        ldr: build_dual_pipeline_variant(device, desc, false),
+        hdr: build_dual_pipeline_variant(device, desc, true),
     }
+}
+
+/// One half of [`build_dual_pipeline`]: the HDR (`Rgba16Float`) pipeline when
+/// `hdr`, else the LDR one in `desc.ldr_format`. For a type that builds each
+/// on first use rather than both together.
+pub fn build_dual_pipeline_variant(
+    device: &crate::gpu::Device,
+    desc: &DualPipelineDesc,
+    hdr: bool,
+) -> crate::gpu::RenderPipeline {
+    let format = if hdr {
+        crate::gpu::TextureFormat::Rgba16Float
+    } else {
+        desc.ldr_format
+    };
+    render_pipeline(
+        device,
+        RenderPipelineDesc {
+            label: desc.label,
+            layout: desc.layout,
+            vertex_module: desc.shader,
+            vertex_entry: desc.vertex_entry,
+            vertex_buffers: desc.vertex_buffers,
+            fragment: Some(crate::gpu::FragmentState {
+                module: desc.shader,
+                entry_point: Some(desc.fragment_entry),
+                targets: &[Some(crate::gpu::ColorTargetState {
+                    format,
+                    blend: desc.blend,
+                    write_mask: crate::gpu::ColorWrites::ALL,
+                })],
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: crate::gpu::PrimitiveState {
+                topology: desc.topology,
+                cull_mode: desc.cull_mode,
+                ..Default::default()
+            },
+            depth_stencil: Some(scene_depth_stencil(desc.depth_write, desc.depth_compare)),
+            multisample: crate::gpu::MultisampleState {
+                count: desc.sample_count,
+                ..Default::default()
+            },
+            cache: None,
+        },
+    )
 }
 
 /// Build a full-screen pass pipeline: one triangle-list draw covering the
@@ -897,70 +910,113 @@ pub fn render_pipeline(
 ///
 /// wgpu takes the cache per pipeline descriptor, and pipelines are created all
 /// over the crate and by item-type plugins. Naming the cache at every site is
-/// how sites get missed, so the renderer registers one cache per device here
-/// and [`render_pipeline`] and [`compute_pipeline`] look it up. Every renderer
-/// on the same device shares the one cache, so the data any of them returns
-/// covers them all.
+/// how sites get missed, so each renderer registers its cache here and
+/// [`render_pipeline`] and [`compute_pipeline`] look it up by device.
 ///
-/// Only a device with `Features::PIPELINE_CACHE` has an entry; on any other the
-/// lookup finds nothing and pipelines are created uncached.
+/// The lookup answers only when it cannot be wrong. wgpu compares devices by
+/// an id that is unique within one wgpu instance and not across them, so two
+/// devices from two instances can compare equal, and a cache used with the
+/// other instance's device is a panic inside wgpu. Every renderer registers,
+/// with or without a cache, and a device that matches more than one
+/// registration gets no cache from the lookup: its pipelines are still built,
+/// uncached, unless the site names the cache itself. Two renderers on one
+/// device are indistinguishable from that case and are treated the same way.
 pub(crate) mod device_pipeline_cache {
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-    struct Entry {
-        device: crate::gpu::Device,
-        cache: crate::gpu::PipelineCache,
-        users: usize,
+    struct Entry<D, C> {
+        id: u64,
+        device: D,
+        cache: Option<C>,
     }
 
-    static CACHES: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
-
-    /// The cache for `device`, made with `create` if this is its first user.
-    /// Pair with [`release`].
-    pub(crate) fn acquire(
-        device: &crate::gpu::Device,
-        create: impl FnOnce() -> crate::gpu::PipelineCache,
-    ) -> crate::gpu::PipelineCache {
-        let mut caches = CACHES.lock().unwrap();
-        if let Some(entry) = caches.iter_mut().find(|e| e.device == *device) {
-            entry.users += 1;
-            return entry.cache.clone();
-        }
-        let cache = create();
-        caches.push(Entry {
-            device: device.clone(),
-            cache: cache.clone(),
-            users: 1,
-        });
-        cache
+    struct Registry<D, C> {
+        entries: Vec<Entry<D, C>>,
     }
 
-    /// Drop one user of `device`'s cache, and the entry with the last.
-    pub(crate) fn release(device: &crate::gpu::Device) {
-        let mut caches = CACHES.lock().unwrap();
-        if let Some(i) = caches.iter().position(|e| e.device == *device) {
-            caches[i].users -= 1;
-            if caches[i].users == 0 {
-                caches.swap_remove(i);
+    impl<D: PartialEq, C: Clone> Registry<D, C> {
+        fn get(&self, device: &D) -> Option<C> {
+            let mut matching = self.entries.iter().filter(|e| e.device == *device);
+            let only = matching.next()?;
+            if matching.next().is_some() {
+                return None;
             }
+            only.cache.clone()
         }
     }
 
-    /// The cache registered for `device`, if any.
-    pub(crate) fn get(device: &crate::gpu::Device) -> Option<crate::gpu::PipelineCache> {
-        let caches = CACHES.lock().unwrap();
-        caches
-            .iter()
-            .find(|e| e.device == *device)
-            .map(|e| e.cache.clone())
+    static CACHES: Mutex<Registry<crate::gpu::Device, crate::gpu::PipelineCache>> =
+        Mutex::new(Registry {
+            entries: Vec::new(),
+        });
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    /// Register a renderer on `device` and the cache it holds, if any. The
+    /// registration lasts as long as the returned lease.
+    pub(crate) fn register(
+        device: &crate::gpu::Device,
+        cache: Option<&crate::gpu::PipelineCache>,
+    ) -> Lease {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        CACHES.lock().unwrap().entries.push(Entry {
+            id,
+            device: device.clone(),
+            cache: cache.cloned(),
+        });
+        Lease(id)
     }
 
-    /// Holds one user's claim on a device's cache and gives it up when dropped.
-    pub(crate) struct Lease(pub(crate) crate::gpu::Device);
+    /// The cache to build `device`'s pipelines against, when exactly one
+    /// renderer is registered for it.
+    pub(crate) fn get(device: &crate::gpu::Device) -> Option<crate::gpu::PipelineCache> {
+        CACHES.lock().unwrap().get(device)
+    }
+
+    /// One renderer's registration, removed when dropped.
+    pub(crate) struct Lease(u64);
 
     impl Drop for Lease {
         fn drop(&mut self) {
-            release(&self.0);
+            let mut caches = CACHES.lock().unwrap();
+            caches.entries.retain(|e| e.id != self.0);
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{Entry, Registry};
+
+        fn registry(entries: &[(u32, Option<&'static str>)]) -> Registry<u32, &'static str> {
+            Registry {
+                entries: entries
+                    .iter()
+                    .enumerate()
+                    .map(|(id, (device, cache))| Entry {
+                        id: id as u64,
+                        device: *device,
+                        cache: *cache,
+                    })
+                    .collect(),
+            }
+        }
+
+        #[test]
+        fn a_device_registered_once_gets_its_cache() {
+            let r = registry(&[(1, Some("a")), (2, Some("b")), (3, None)]);
+            assert_eq!(r.get(&1), Some("a"));
+            assert_eq!(r.get(&2), Some("b"));
+            assert_eq!(r.get(&3), None);
+            assert_eq!(r.get(&4), None);
+        }
+
+        /// Two registrations that compare equal may be two devices, so neither
+        /// is handed the other's cache, whichever of them holds one.
+        #[test]
+        fn a_device_registered_twice_gets_no_cache() {
+            assert_eq!(registry(&[(1, Some("a")), (1, Some("b"))]).get(&1), None);
+            assert_eq!(registry(&[(1, Some("a")), (1, None)]).get(&1), None);
+            assert_eq!(registry(&[(1, None), (1, Some("b"))]).get(&1), None);
         }
     }
 }
@@ -989,13 +1045,15 @@ mod device_pipeline_cache_tests {
         .ok()
     }
 
-    /// A device with a pipeline cache registers it for as long as a renderer
-    /// on the device is alive, two renderers share the one cache, and the
-    /// lazily built pipelines land in it. A device without the feature
-    /// registers nothing.
+    /// Two renderers on one device each hold their own cache, and the lookup
+    /// answers for neither. A device without the feature gets no cache.
+    ///
+    /// Every test in this binary registers its renderers in the same
+    /// registry, and devices from different instances can compare equal, so
+    /// only what another test cannot change is asserted here.
     #[test]
-    fn a_device_has_one_cache_for_as_long_as_a_renderer_uses_it() {
-        let Some((device, queue)) = device() else {
+    fn two_renderers_on_one_device_keep_their_own_caches() {
+        let Some((device, _queue)) = device() else {
             eprintln!("skipping: no GPU adapter available");
             return;
         };
@@ -1003,34 +1061,22 @@ mod device_pipeline_cache_tests {
         let has_cache = device
             .features()
             .contains(crate::gpu::Features::PIPELINE_CACHE);
-        assert!(device_pipeline_cache::get(&device).is_none());
 
-        let mut first = crate::DeviceResources::new(&device, format, 1);
-        let second = crate::DeviceResources::new(&device, format, 1);
+        let first = crate::DeviceResources::new(&device, format, 1);
         assert_eq!(first.pipeline_cache.is_some(), has_cache);
-        assert_eq!(device_pipeline_cache::get(&device).is_some(), has_cache);
         if !has_cache {
-            eprintln!("this backend has no pipeline cache; checked that nothing is registered");
+            assert!(device_pipeline_cache::get(&device).is_none());
+            eprintln!("this backend has no pipeline cache; checked that none is handed out");
             return;
         }
-        assert!(
-            first.pipeline_cache == second.pipeline_cache,
-            "two renderers on one device share its cache"
-        );
 
-        // The post chain is built lazily and names no cache at its call sites.
-        let before = first.pipeline_cache.as_ref().unwrap().get_data();
-        first.ensure_hdr_pipelines(&device, &queue, format);
-        let after = first.pipeline_cache.as_ref().unwrap().get_data();
-        assert!(
-            after.map_or(0, |d| d.len()) > before.map_or(0, |d| d.len()),
-            "the lazily built pipelines were not added to the cache"
-        );
-
-        drop(first);
-        assert!(device_pipeline_cache::get(&device).is_some());
-        drop(second);
+        // Two renderers on one device: each holds its own cache and the
+        // lookup answers for neither.
+        let second = crate::DeviceResources::new(&device, format, 1);
+        assert!(first.pipeline_cache != second.pipeline_cache);
         assert!(device_pipeline_cache::get(&device).is_none());
+        drop(second);
+        drop(first);
     }
 }
 
@@ -1519,6 +1565,24 @@ pub fn mesh_vertex_layout() -> crate::gpu::VertexBufferLayout<'static> {
     crate::resources::types::Vertex::buffer_layout()
 }
 
+/// One single-attribute table per shader location 0 to 15, so an attribute
+/// layout can be handed out as `'static`.
+const fn attribute_location_table(
+    format: crate::gpu::VertexFormat,
+) -> [[crate::gpu::VertexAttribute; 1]; 16] {
+    let mut table = [[crate::gpu::VertexAttribute {
+        offset: 0,
+        shader_location: 0,
+        format,
+    }]; 16];
+    let mut i = 0;
+    while i < 16 {
+        table[i][0].shader_location = i as u32;
+        i += 1;
+    }
+    table
+}
+
 /// Vertex buffer layout of a mesh's per-vertex vector attribute: one
 /// `Float32x3` per vertex at `location`.
 ///
@@ -1530,20 +1594,8 @@ pub fn mesh_vertex_layout() -> crate::gpu::VertexBufferLayout<'static> {
 ///
 /// When `location` is 16 or more.
 pub fn vector_attribute_layout(location: u32) -> crate::gpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [[crate::gpu::VertexAttribute; 1]; 16] = {
-        let mut table = [[crate::gpu::VertexAttribute {
-            offset: 0,
-            shader_location: 0,
-            format: crate::gpu::VertexFormat::Float32x3,
-        }]; 16];
-        let mut i = 0;
-        while i < 16 {
-            table[i][0].shader_location = i as u32;
-            i += 1;
-        }
-        table
-    };
-    static TABLE: [[crate::gpu::VertexAttribute; 1]; 16] = ATTRIBUTES;
+    static TABLE: [[crate::gpu::VertexAttribute; 1]; 16] =
+        attribute_location_table(crate::gpu::VertexFormat::Float32x3);
     crate::gpu::VertexBufferLayout {
         array_stride: 12,
         step_mode: crate::gpu::VertexStepMode::Vertex,
@@ -1551,8 +1603,28 @@ pub fn vector_attribute_layout(location: u32) -> crate::gpu::VertexBufferLayout<
     }
 }
 
+/// Vertex buffer layout of a mesh's per-vertex scalar attribute: one
+/// `Float32` per vertex at `location`.
+///
+/// Pairs with
+/// [`MeshDraw::bind_scalar_attribute`](crate::resources::MeshDraw::bind_scalar_attribute),
+/// which binds the buffer this describes.
+///
+/// # Panics
+///
+/// When `location` is 16 or more.
+pub fn scalar_attribute_layout(location: u32) -> crate::gpu::VertexBufferLayout<'static> {
+    static TABLE: [[crate::gpu::VertexAttribute; 1]; 16] =
+        attribute_location_table(crate::gpu::VertexFormat::Float32);
+    crate::gpu::VertexBufferLayout {
+        array_stride: 4,
+        step_mode: crate::gpu::VertexStepMode::Vertex,
+        attributes: &TABLE[location as usize],
+    }
+}
+
 #[cfg(test)]
-mod vector_attribute_layout_tests {
+mod attribute_layout_tests {
     #[test]
     fn layout_carries_the_requested_location() {
         for location in [0, 1, 7, 15] {
@@ -1560,6 +1632,19 @@ mod vector_attribute_layout_tests {
             assert_eq!(layout.array_stride, 12);
             assert_eq!(layout.attributes.len(), 1);
             assert_eq!(layout.attributes[0].shader_location, location);
+            assert_eq!(
+                layout.attributes[0].format,
+                crate::gpu::VertexFormat::Float32x3
+            );
+
+            let layout = super::scalar_attribute_layout(location);
+            assert_eq!(layout.array_stride, 4);
+            assert_eq!(layout.attributes.len(), 1);
+            assert_eq!(layout.attributes[0].shader_location, location);
+            assert_eq!(
+                layout.attributes[0].format,
+                crate::gpu::VertexFormat::Float32
+            );
         }
     }
 }

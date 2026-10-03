@@ -181,8 +181,11 @@ impl ViewportRenderer {
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for (slot, mesh_id) in self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate()
                     {
-                        if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
-                            render_pass.set_pipeline(self.resources.scene.wireframe());
+                        if let (Some(mesh), Some(wf)) = (
+                            self.resources.mesh_store.get(*mesh_id),
+                            self.resources.scene.wireframe(),
+                        ) {
+                            render_pass.set_pipeline(wf);
                             bind_deform_group!(
                                 render_pass,
                                 self.resources,
@@ -325,12 +328,8 @@ impl ViewportRenderer {
                     });
                 render_pass.set_bind_group(0, &slot.foreground_camera_bind_group, &[]);
 
+                let family = resources.scene.ldr_family();
                 for (idx, item) in opaque.iter().chain(transparent.iter()) {
-                    let solid_pl = select_two_sided(
-                        PipelineKey::two_sided(item.material.is_two_sided()),
-                        resources.scene.solid(),
-                        resources.scene.solid_two_sided(),
-                    );
                     let obj_bg = slot
                         .foreground_objects
                         .get(*idx)
@@ -345,10 +344,7 @@ impl ViewportRenderer {
                         0,
                         false,
                         false,
-                        solid_pl,
-                        resources.scene.solid_two_sided(),
-                        resources.scene.transparent(),
-                        resources.scene.wireframe(),
+                        &family,
                         // Foreground items draw through the positional
                         // foreground_objects cache, which has no per-range
                         // entries; they render with the single item material.

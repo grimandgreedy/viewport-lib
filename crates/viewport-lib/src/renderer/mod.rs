@@ -17,6 +17,9 @@ use per_object_state::PerObjectState;
 mod shadow_state;
 use shadow_state::ShadowState;
 mod blit;
+mod colour_ready;
+mod warm;
+pub use warm::PipelineSet;
 mod paths;
 pub use blit::BlitTexture;
 pub use capture::{CapturedHdr, CapturedHdrGpu};
@@ -39,7 +42,7 @@ pub use readback::ExposureReadback;
 // Gaussian splat upload vocabulary lives in `resources`; re-exported here so the
 // public `renderer::GaussianSplat*` path and its doc links stay stable.
 pub(crate) mod pipeline_key;
-use pipeline_key::{PipelineKey, select_opaque_solid, select_two_sided};
+use pipeline_key::{PipelineKey, select_two_sided};
 mod point_shadow_pool;
 mod prepare;
 mod render;
@@ -127,7 +130,7 @@ use crate::resources::{
     BatchMeta, CLIP_VOLUME_MAX, CameraUniform, ClipPlanesUniform, ClipVolumeEntry,
     ClipVolumesUniform, DeviceResources, GridUniform, InstanceAabb, InstanceData, LightsUniform,
     ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, PickInstance,
-    ShadowAtlasUniform, SingleLightUniform,
+    PipelineCompilation, ShadowAtlasUniform, SingleLightUniform,
 };
 
 /// Per-frame selection-outline state for one viewport, rebuilt in prepare().
@@ -1319,11 +1322,56 @@ impl ViewportRenderer {
     /// - [`RuntimeMode::Capture`]: full quality, intended for screenshot/export workflows.
     pub fn set_runtime_mode(&mut self, mode: crate::renderer::stats::RuntimeMode) {
         self.runtime_mode = mode;
+        // A capture must have every pipeline it binds, so compiles block
+        // for as long as the mode is set, whatever the compilation policy.
+        self.resources
+            .pipeline_compiler
+            .set_capturing(mode == crate::renderer::stats::RuntimeMode::Capture);
     }
 
     /// Return the current runtime mode.
     pub fn runtime_mode(&self) -> crate::renderer::stats::RuntimeMode {
         self.runtime_mode
+    }
+
+    /// Set how a pipeline is compiled the first time a frame needs it.
+    ///
+    /// The default is [`PipelineCompilation::platform_default`]: on a
+    /// worker, with the draw skipped until it is ready, everywhere but
+    /// macOS, iOS and the web. Set [`PipelineCompilation::Blocking`] to
+    /// compile on the calling thread and never skip a draw, which is what a
+    /// frame that is read back right away needs. Takes effect for the next
+    /// compile; one already running on a worker finishes there.
+    /// [`RuntimeMode::Capture`](crate::RuntimeMode::Capture) compiles
+    /// blocking while it is set, whatever this says.
+    pub fn set_pipeline_compilation(&mut self, policy: PipelineCompilation) {
+        self.resources.pipeline_compiler.set_policy(policy);
+    }
+
+    /// The pipeline compilation policy as set. See
+    /// [`set_pipeline_compilation`](Self::set_pipeline_compilation).
+    pub fn pipeline_compilation(&self) -> PipelineCompilation {
+        self.resources.pipeline_compiler.configured_policy()
+    }
+
+    /// Pipelines handed to the workers that are not ready yet. Zero means
+    /// every pipeline a frame or a warm-up has asked for so far is built;
+    /// the next frame that uses one draws it. Always zero under
+    /// [`PipelineCompilation::Blocking`]. Also in
+    /// [`FrameStats::pipelines_pending`](crate::FrameStats::pipelines_pending).
+    pub fn pipelines_pending(&self) -> usize {
+        self.resources.pipeline_compiler.pending()
+    }
+
+    /// Block until [`pipelines_pending`](Self::pipelines_pending) is zero.
+    ///
+    /// A pending rebuild of the mesh pipelines (after a deformer
+    /// registration) is flushed first, so nothing is left for the next
+    /// frame to compile. Returns at once under `Blocking`. This is what a
+    /// loading screen waits on after a warm-up.
+    pub fn wait_for_pipelines(&mut self, device: &crate::gpu::Device) {
+        self.resources.flush_mesh_pipeline_rebuild(device);
+        self.resources.pipeline_compiler.wait();
     }
 
     /// True when the current render presents a frame the user sees, and so
@@ -2088,8 +2136,8 @@ impl ViewportRenderer {
     /// Collect every plugin's wireframe polylines and upload them into the
     /// shared line substrate.
     ///
-    /// Runs in scene prepare, right after the substrate's own producers
-    /// (isolines, clip outlines), so a plugin's wireframe draws in the same
+    /// Runs in scene prepare, right after the substrate is cleared, so a
+    /// plugin's wireframe draws in the same
     /// pass and the same order relative to scene geometry as before these
     /// moved behind the seam. Two phases because the context borrows
     /// `resources` while the upload needs it mutably.
@@ -3447,8 +3495,11 @@ impl ViewportRenderer {
             if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for (slot, mesh_id) in self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate() {
-                    if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
-                        render_pass.set_pipeline(self.resources.scene.wireframe());
+                    if let (Some(mesh), Some(wf)) = (
+                        self.resources.mesh_store.get(*mesh_id),
+                        self.resources.scene.wireframe(),
+                    ) {
+                        render_pass.set_pipeline(wf);
                         bind_deform_group!(
                             render_pass,
                             self.resources,

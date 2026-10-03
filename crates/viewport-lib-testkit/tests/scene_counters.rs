@@ -126,6 +126,12 @@ fn expected(name: &str) -> Option<Expected> {
         // One clipped block drawn as a surface; the transparent one is not a
         // mesh draw.
         "volume_mesh_node_scalars_cut" => e(1, 1, 1, 0, 1, 127),
+        // A wave grid and a sphere, both coloured; the contour items redraw
+        // their meshes in their own pass, which the counters do not see.
+        "surface_contours" => e(2, 2, 2, 0, 2, 20640),
+        // A contoured plane and a plain box, and a clipped block drawn as a
+        // surface.
+        "surface_contours_occluded" => e(3, 3, 3, 2, 1, 8331),
         // Tube, streamtube and ribbon under one decal. No mesh geometry: the
         // curve types are the whole scene.
         "decal_on_curves" => e(0, 0, 0, 0, 0, 0),

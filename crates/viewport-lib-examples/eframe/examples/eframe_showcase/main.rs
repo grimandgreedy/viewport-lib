@@ -129,14 +129,19 @@ fn main() -> eframe::Result {
 
             // sRGB render format so the tonemap encode happens; the offscreen
             // targets hand egui non-sRGB views so the encode survives the sample.
+            let start = std::time::Instant::now();
             let mut renderer =
                 ViewportRenderer::new(&device, OffscreenViewportTarget::render_format(format));
             viewport_lib_item_types::install(&mut renderer, &device);
-            // Compile the custom-shading plugin pipelines now, at startup,
-            // rather than on the frame that showcase opens: the ~45 pipeline
-            // builds would otherwise stall that frame. See
-            // prewarm_custom_shading_plugins.
-            showcase_54_custom_shading::prewarm_custom_shading_plugins(&device, &mut renderer);
+            report_builds("renderer and item types", start);
+            // Where pipelines compile on workers, ask for everything the
+            // showcases can draw with now, so switching pages never compiles
+            // on the frame. The top bar shows the count while it runs. Where
+            // compiles block (macOS, the web) this would freeze the launch,
+            // so there each page builds what it draws.
+            if renderer.pipeline_compilation() == vpl::PipelineCompilation::Background {
+                renderer.warm_pipelines(&device, &queue, &vpl::PipelineSet::all());
+            }
             wgpu_render_state
                 .renderer
                 .write()
@@ -146,6 +151,7 @@ fn main() -> eframe::Result {
             let box_mesh = vpl::primitives::cube(1.0);
 
             Ok(Box::new(App {
+                pipelines_pending: 0,
                 device,
                 queue,
                 cursor_viewport: glam::Vec2::ZERO,
@@ -331,6 +337,8 @@ pub(crate) struct Target {
 }
 
 pub(crate) struct App {
+    /// Pipelines still compiling on the workers after the last frame.
+    pipelines_pending: usize,
     // GPU handles (captured at startup for lazy mesh uploads).
     // wgpu::Device and Queue are internally ref-counted and implement Clone.
     device: eframe::wgpu::Device,
@@ -693,6 +701,13 @@ impl eframe::App for App {
                 if let Some(mode) = chosen {
                     self.switch_mode(mode);
                 }
+                if self.pipelines_pending > 0 {
+                    ui.separator();
+                    ui.weak(format!("compiling {} pipelines", self.pipelines_pending));
+                    // Keep drawing so the count, and what it holds back,
+                    // update as the workers finish.
+                    ctx.request_repaint();
+                }
             });
         });
 
@@ -982,6 +997,7 @@ impl eframe::App for App {
                     }
                     let tex_id = self.viewport_target.as_ref().unwrap().id;
                     if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                        let start = std::time::Instant::now();
                         let cmd = renderer.owned().render(
                             &self.device,
                             &self.queue,
@@ -989,6 +1005,8 @@ impl eframe::App for App {
                             &frame_data,
                         );
                         self.queue.submit(std::iter::once(cmd));
+                        report_builds("frame", start);
+                        self.pipelines_pending = renderer.pipelines_pending();
                         // Resolve any deferred click pick against the frame just
                         // drawn, using the unified GPU picker.
                         self.apply_pending_pick(renderer, &frame_data);
@@ -1174,7 +1192,32 @@ impl App {
             .get_mut::<ViewportRenderer>()
             .expect("ViewportRenderer must be registered");
 
-        self.mode.showcase().build(self, renderer)
+        let start = std::time::Instant::now();
+        self.mode.showcase().build(self, renderer);
+        report_builds("scene build", start);
+    }
+}
+
+/// With `VPL_BUILD_LOG` set, print what `what` compiled and how long it took,
+/// so a page that hitches when first opened can be read off the terminal.
+/// Silent when nothing was built.
+fn report_builds(what: &str, start: std::time::Instant) {
+    if !vpl::resources::build_log::enabled() {
+        return;
+    }
+    let took = start.elapsed().as_secs_f32() * 1000.0;
+    let mut builds = vpl::resources::build_log::drain();
+    if builds.is_empty() {
+        return;
+    }
+    let total: f32 = builds.iter().map(|(_, ms)| ms).sum();
+    eprintln!(
+        "{what}: {took:.1} ms, {} pipelines/modules built ({total:.1} ms)",
+        builds.len()
+    );
+    builds.sort_by(|a, b| b.1.total_cmp(&a.1));
+    for (label, ms) in builds.iter().take(12) {
+        eprintln!("    {label:<56} {ms:8.2} ms");
     }
 }
 

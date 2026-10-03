@@ -335,8 +335,11 @@ impl ViewportRenderer {
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for (slot, mesh_id) in self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate()
                     {
-                        if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
-                            render_pass.set_pipeline(self.resources.scene.wireframe());
+                        if let (Some(mesh), Some(wf)) = (
+                            self.resources.mesh_store.get(*mesh_id),
+                            self.resources.scene.wireframe(),
+                        ) {
+                            render_pass.set_pipeline(wf);
                             bind_deform_group!(
                                 render_pass,
                                 self.resources,
@@ -908,6 +911,7 @@ impl ViewportRenderer {
             .resources
             .frame_pipelines_built
             .swap(0, std::sync::atomic::Ordering::Relaxed);
+        self.last_stats.pipelines_pending = self.resources.pipeline_compiler.pending() as u32;
         cmd_buf
     }
 
@@ -1423,8 +1427,8 @@ impl crate::renderer::ViewportRenderer {
     /// GPU data `prepare()` built.
     ///
     /// Both are core rather than item-type plugins, and deliberately so: the
-    /// line substrate is shared machinery with several producers (isolines,
-    /// scatter and volume bounds, clip outlines, the splat and sprite
+    /// line substrate is shared machinery with several producers (scatter
+    /// and volume bounds, clip outlines, the splat and sprite
     /// wireframes), and a mesh-instance batch rides the scene graph's own
     /// instanced pipeline. Every item type that used to draw from here has
     /// moved to [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin).
@@ -1478,29 +1482,15 @@ impl crate::renderer::ViewportRenderer {
         // Mesh-instance pass: one draw call per host-built batch, routed by
         // blend mode. Reuses the scene-graph instanced mesh pipeline family.
         if !self.mesh_instance_gpu_data.is_empty() {
-            let mesh_buckets: [(
-                crate::renderer::SpriteBlend,
-                Option<&crate::gpu::RenderPipeline>,
-            ); 3] = [
-                (
-                    crate::renderer::SpriteBlend::AlphaBlend,
-                    self.resources.instancing.hdr_transparent_pipeline.as_ref(),
-                ),
-                (
-                    crate::renderer::SpriteBlend::Additive,
-                    self.resources.instancing.hdr_additive_pipeline.as_ref(),
-                ),
-                (
-                    crate::renderer::SpriteBlend::Premultiplied,
-                    self.resources
-                        .instancing
-                        .hdr_premultiplied_pipeline
-                        .as_ref(),
-                ),
-            ];
-            for (blend, pipeline) in mesh_buckets {
-                let Some(pipeline) = pipeline else { continue };
-                let mut set = false;
+            use crate::renderer::SpriteBlend;
+            for blend in [
+                SpriteBlend::AlphaBlend,
+                SpriteBlend::Additive,
+                SpriteBlend::Premultiplied,
+            ] {
+                // Resolved by the first batch that needs it, so a blend mode
+                // nothing uses never compiles.
+                let mut pipeline = None;
                 for batch in self.mesh_instance_gpu_data.iter() {
                     if batch.blend != blend {
                         continue;
@@ -1511,10 +1501,19 @@ impl crate::renderer::ViewportRenderer {
                     if mesh.index_count == 0 {
                         continue;
                     }
-                    if !set {
-                        render_pass.set_pipeline(pipeline);
+                    if pipeline.is_none() {
+                        let instancing = &self.resources.instancing;
+                        let Some(pl) = (match blend {
+                            SpriteBlend::AlphaBlend => instancing.hdr_transparent(),
+                            SpriteBlend::Additive => instancing.hdr_additive(),
+                            SpriteBlend::Premultiplied => instancing.hdr_premultiplied(),
+                        }) else {
+                            // Still compiling: this blend mode waits a frame.
+                            break;
+                        };
+                        render_pass.set_pipeline(pl);
                         render_pass.set_bind_group(0, camera_bg, &[]);
-                        set = true;
+                        pipeline = Some(pl);
                     }
                     render_pass.set_bind_group(1, &batch.bind_group, &[]);
                     // mesh_instanced.wgsl's pipeline layout includes the deform

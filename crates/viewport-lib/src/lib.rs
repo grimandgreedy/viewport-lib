@@ -234,7 +234,7 @@ pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, sr
 pub use vplt::data::texture::{TextureData, TexturePayload, TextureRole};
 
 pub use geometry::bvh::PickAccelerator;
-pub use geometry::isoline::{IsolineItem, extract_isolines};
+pub use geometry::isoline::{Isoline, extract_isolines, isoline_strips};
 pub use geometry::marching_cubes::{VolumeData, extract_isosurface};
 
 #[allow(deprecated)]
@@ -285,12 +285,14 @@ pub use interaction::select::selection::{NodeId, Selection};
 
 pub use interaction::widgets::axes_indicator::AxisView;
 
+pub use renderer::PipelineSet;
 pub use renderer::ShadowDebugStats;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{
     FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset, RuntimeMode,
 };
 pub use renderer::tuning::{RenderDiagnostics, RenderTuning};
+pub use resources::PipelineCompilation;
 // PathTrack is deprecated but still re-exported for compatibility.
 #[allow(deprecated)]
 pub use renderer::{

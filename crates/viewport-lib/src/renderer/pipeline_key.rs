@@ -66,104 +66,15 @@ impl PipelineKey {
         }
     }
 
-    /// Every axis combination, for eager cross-product construction
-    /// (`PipelineVariantSet::build`). A pass that does not vary on every axis
-    /// still sees all 8 during construction; its build closure just returns
-    /// the same pipeline for the axis it ignores.
+    /// Every axis combination, for a test that wants to resolve each key a
+    /// family offers.
+    #[cfg(test)]
     pub fn all() -> impl Iterator<Item = PipelineKey> {
         (0u8..8).map(|bits| PipelineKey {
             two_sided: bits & 1 != 0,
             cutout: bits & 2 != 0,
             no_discard_eligible: bits & 4 != 0,
         })
-    }
-
-    /// Dense index in `0..8`, stable across calls, for the hash-free array
-    /// lookup `PipelineVariantSet` uses.
-    fn slot(self) -> usize {
-        (self.two_sided as usize)
-            | (self.cutout as usize) << 1
-            | (self.no_discard_eligible as usize) << 2
-    }
-}
-
-/// A pipeline built for every reachable [`PipelineKey`], indexed for a
-/// hash-free draw-time lookup (`get`). Construction is eager: `build` runs
-/// once per key up front (typically from the same lazy first-HDR-use or
-/// deform-registration-changed trigger a family already rebuilds from), not
-/// per draw call.
-///
-/// `RenderPipeline` is a cheap reference-counted GPU handle, so a `build`
-/// closure that ignores an axis (e.g. OIT ignoring cutout, or shadow ignoring
-/// no-discard) can just return a clone of the same pipeline for both of that
-/// axis's values -- `PipelineVariantSet` does not force compiling 8 distinct
-/// GPU pipelines when a pass only has 2 or 4 real variants.
-pub(crate) struct PipelineVariantSet {
-    variants: [crate::gpu::RenderPipeline; 8],
-}
-
-impl PipelineVariantSet {
-    /// Build one pipeline per key, placing each at its own
-    /// [`slot`](PipelineKey::slot).
-    ///
-    /// `all()` and `slot()` happen to enumerate in the same order here, so
-    /// pushing in iteration order would work today. Placing by slot does not
-    /// depend on that: they are two separate expressions of the same key, and
-    /// the sibling sprite set shipped a bug where they drifted apart and every
-    /// draw resolved to a pipeline built for a different key.
-    pub fn build(mut build: impl FnMut(PipelineKey) -> crate::gpu::RenderPipeline) -> Self {
-        let mut slots: Vec<Option<crate::gpu::RenderPipeline>> = (0..8).map(|_| None).collect();
-        for key in PipelineKey::all() {
-            slots[key.slot()] = Some(build(key));
-        }
-        Self {
-            variants: slots
-                .into_iter()
-                .map(|v| v.unwrap_or_else(|| unreachable!("every slot is covered by all()")))
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap_or_else(|_| unreachable!("PipelineKey::all() yields exactly 8 keys")),
-        }
-    }
-
-    pub fn get(&self, key: PipelineKey) -> &crate::gpu::RenderPipeline {
-        &self.variants[key.slot()]
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// `PipelineVariantSet::build`'s closure returns a concrete
-    /// `RenderPipeline`, not an `Option`, so a migrated family cannot skip a
-    /// key -- completeness is a compile-time property, not something a
-    /// startup check needs to verify. What *can* still silently break is the
-    /// enumeration itself: if a future phase adds a fourth axis to
-    /// `PipelineKey` without widening `all()`/`slot()` past 3 bits, two
-    /// distinct keys would collide on the same array slot and `build` would
-    /// silently drop one of them. This test pins `all()` and `slot()` in
-    /// sync so that class of bug fails immediately instead of showing up as
-    /// a wrong pipeline at draw time.
-    #[test]
-    fn all_keys_are_distinct_and_densely_slotted() {
-        let keys: Vec<PipelineKey> = PipelineKey::all().collect();
-        assert_eq!(keys.len(), 8, "PipelineKey has 3 bool axes: 2^3 = 8 keys");
-
-        let mut seen_keys = std::collections::HashSet::new();
-        let mut seen_slots = std::collections::HashSet::new();
-        for key in keys {
-            assert!(
-                seen_keys.insert(key),
-                "all() yielded {key:?} more than once"
-            );
-            let slot = key.slot();
-            assert!(slot < 8, "{key:?} slotted out of range: {slot}");
-            assert!(
-                seen_slots.insert(slot),
-                "{key:?} collided with another key at slot {slot}"
-            );
-        }
     }
 }
 
@@ -177,24 +88,4 @@ pub(crate) fn select_two_sided<'p>(
     two_sided: &'p crate::gpu::RenderPipeline,
 ) -> &'p crate::gpu::RenderPipeline {
     if key.two_sided { two_sided } else { one_sided }
-}
-
-/// The opaque scene pass's four-way select: facedness x the discard-free
-/// early-Z twin. `nodiscard` / `nodiscard_two_sided` are `None` when the twin
-/// was not built for this pass (a legitimate capability fallback -- some
-/// backends skip it under storage-buffer pressure -- not a variant gap, so
-/// this never touches `missing_variant`).
-pub(crate) fn select_opaque_solid<'p>(
-    key: PipelineKey,
-    solid: &'p crate::gpu::RenderPipeline,
-    solid_two_sided: &'p crate::gpu::RenderPipeline,
-    nodiscard: Option<&'p crate::gpu::RenderPipeline>,
-    nodiscard_two_sided: Option<&'p crate::gpu::RenderPipeline>,
-) -> &'p crate::gpu::RenderPipeline {
-    if key.no_discard_eligible {
-        if let (Some(nd), Some(nd_two_sided)) = (nodiscard, nodiscard_two_sided) {
-            return if key.two_sided { nd_two_sided } else { nd };
-        }
-    }
-    select_two_sided(key, solid, solid_two_sided)
 }

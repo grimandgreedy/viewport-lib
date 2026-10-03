@@ -152,3 +152,84 @@ fn missing_attribute_or_hidden_item_draws_nothing() {
         assert_eq!(px, reference);
     }
 }
+
+/// A clip plane through the flow surface clips the streaks with it: where the
+/// cut shows what is behind, the streaks leave that alone.
+#[test]
+fn streaks_are_clipped_with_the_surface() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    let mesh = flow_quad(&mut renderer, &device);
+
+    // A larger plain quad behind the flow surface, exempt from the clip. The
+    // streaks multiply the scene colour, so over empty background they would
+    // be invisible whether clipped or not; over this they show.
+    let mut backdrop = surface(mesh, 0.5);
+    backdrop.model = (glam::Mat4::from_translation(glam::Vec3::new(0.5, 0.0, -0.5))
+        * glam::Mat4::from_scale(glam::Vec3::splat(2.0)))
+    .to_cols_array_2d();
+    backdrop.material = Material::from_colour([0.4, 0.5, 0.6]);
+    backdrop.settings.ignore_clip = true;
+
+    // Keep x <= 0.5: the flow quad at 0.5 loses its right half.
+    let frame = |items: Vec<SceneRenderItem>, lics: Vec<SurfaceLicItem>| {
+        let mut frame = base_frame();
+        frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+        *frame.scene.items_mut::<SurfaceLicItem>() = lics;
+        let mut clip = viewport_lib::ClipObject::default();
+        clip.shape = viewport_lib::ClipShape::Plane {
+            normal: [-1.0, 0.0, 0.0],
+            distance: 0.5,
+            cap_colour: None,
+        };
+        frame.effects.clip.objects.push(clip);
+        frame.effects.clip.cap_fill_enabled = false;
+        frame
+    };
+    let behind = renderer.render_offscreen(
+        &device,
+        &queue,
+        &frame(vec![backdrop.clone()], vec![]),
+        SIZE,
+        SIZE,
+    );
+    let surface_only = renderer.render_offscreen(
+        &device,
+        &queue,
+        &frame(vec![backdrop.clone(), surface(mesh, 0.5)], vec![]),
+        SIZE,
+        SIZE,
+    );
+    let streaked = renderer.render_offscreen(
+        &device,
+        &queue,
+        &frame(
+            vec![backdrop, surface(mesh, 0.5)],
+            vec![lic(mesh, 0.5, "flow", 2.0)],
+        ),
+        SIZE,
+        SIZE,
+    );
+
+    // Pixels where the clipped surface leaves the backdrop showing.
+    let cut_away = behind
+        .chunks_exact(4)
+        .zip(surface_only.chunks_exact(4))
+        .filter(|(b, s)| b == s)
+        .count();
+    let drawn_over = behind
+        .chunks_exact(4)
+        .zip(surface_only.chunks_exact(4))
+        .zip(streaked.chunks_exact(4))
+        .filter(|((b, s), l)| b == s && l != s)
+        .count();
+    assert!(cut_away > 0, "nothing shows behind the cut");
+    assert_ne!(streaked, surface_only, "the kept half lost its streaks");
+    assert_eq!(
+        drawn_over, 0,
+        "streaks drawn where the surface was clipped away"
+    );
+}

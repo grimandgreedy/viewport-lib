@@ -456,8 +456,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     // Upload the random texture pool on the main thread (GPU access),
     // then hand the ids to the background build so each box can pick
     // one. Each distinct texture is one instanced batch.
-    let texture_pool: Vec<vpl::TextureId> = (0
-        ..TEXTURE_POOL_SIZE)
+    let texture_pool: Vec<vpl::TextureId> = (0..TEXTURE_POOL_SIZE)
         .map(|i| {
             let (size, rgba) = make_box_texture(i);
             renderer
@@ -476,11 +475,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     let (tx, rx) = std::sync::mpsc::channel();
 
     std::thread::spawn(move || {
-        let result = build_perf_scene_threaded(
-            meshes,
-            texture_pool,
-            &progress_clone,
-        );
+        let result = build_perf_scene_threaded(meshes, texture_pool, &progress_clone);
         let _ = tx.send(result);
     });
 
@@ -542,11 +537,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
     if app.perf_state.occlusion_culling {
         fd.effects.display.mode = vpl::PipelineMode::Hdr;
     }
@@ -572,10 +563,8 @@ pub(crate) fn frame(
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
@@ -589,18 +578,13 @@ pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
 
 /// Handle drag gestures this showcase owns, before the camera controller runs.
 
-
 /// Advance this showcase's own camera animation or object motion for the frame.
-
 
 /// Update this showcase's interactive widgets for the frame.
 
-
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -641,7 +625,12 @@ impl crate::Showcase for ScPerformance {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
@@ -650,7 +639,12 @@ impl crate::Showcase for ScPerformance {
     fn on_click(&self, app: &mut crate::App, cx: &crate::ClickCtx) {
         on_click(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -659,7 +653,12 @@ impl crate::Showcase for ScPerformance {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_performance(app, ui)
     }
 }

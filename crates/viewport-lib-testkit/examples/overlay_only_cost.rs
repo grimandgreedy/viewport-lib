@@ -132,8 +132,14 @@ fn main() {
     // --------------------------------------------------------------------
     // Startup
     // --------------------------------------------------------------------
+    // With VPL_PIPELINE_CACHE_DIR set, the pipeline cache a previous run saved
+    // there is loaded, and this run's is written back at the end.
+    let cache_path = std::env::var_os("VPL_PIPELINE_CACHE_DIR")
+        .map(|dir| std::path::PathBuf::from(dir).join("overlay_only.bin"));
+    let cache_in = cache_path.as_ref().and_then(|p| std::fs::read(p).ok());
     let t_new = Instant::now();
-    let mut renderer = ViewportRenderer::new(&device, FORMAT);
+    let mut renderer =
+        ViewportRenderer::new_with_pipeline_cache(&device, FORMAT, cache_in.as_deref());
     let new_ms = t_new.elapsed().as_secs_f32() * 1000.0;
     let sections = collected.lock().unwrap().clone();
 
@@ -160,6 +166,12 @@ fn main() {
         "adapter: {:?} / {} ({:?})",
         info.backend, info.name, info.device_type
     );
+    if cache_path.is_some() {
+        match &cache_in {
+            Some(data) => println!("pipeline cache: loaded {} bytes", data.len()),
+            None => println!("pipeline cache: none to load"),
+        }
+    }
     println!();
     println!("startup");
     println!("  request_device            {device_ms:8.2} ms");
@@ -564,4 +576,14 @@ fn main() {
     let res = renderer.resident_bytes();
     println!();
     println!("resident gpu bytes after {FRAMES} overlay-only frames: {res:?}");
+
+    if let Some(path) = &cache_path {
+        match renderer.pipeline_cache_data() {
+            Some(data) => {
+                std::fs::write(path, &data).expect("write the pipeline cache");
+                println!("pipeline cache: saved {} bytes", data.len());
+            }
+            None => println!("pipeline cache: this device has none"),
+        }
+    }
 }

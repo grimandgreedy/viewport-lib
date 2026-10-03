@@ -25,7 +25,6 @@
 //! terminator bands the shadow edge because `light.shadow` arrives as its own
 //! factor.
 
-use crate::eframe;
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
@@ -121,37 +120,6 @@ impl Default for CustomShadingState {
 }
 
 // ---------------------------------------------------------------------------
-// Prewarm
-// ---------------------------------------------------------------------------
-
-/// Register the five shading plugins and build their pipeline sets up front.
-///
-/// Each plugin set is roughly nine render pipelines plus two shader-module
-/// compilations, all built synchronously. `build_custom_shading_scene` runs on
-/// the frame the showcase is opened, so compiling the sets there stalls that
-/// frame. Doing it here at startup, where the cost hides behind window
-/// creation, keeps opening the showcase smooth. Registration is idempotent per
-/// plugin name, so `build_custom_shading_scene` reuses these same plugins and
-/// their already-warm pipelines.
-pub(crate) fn prewarm_custom_shading_plugins(
-    device: &eframe::wgpu::Device,
-    renderer: &mut ViewportRenderer,
-) {
-    let resources = renderer.resources_mut();
-    let ids = [
-        resources.register_material_plugin(device, &ToonPlugin),
-        resources.register_material_plugin(device, &RimPlugin),
-        resources.register_material_plugin(device, &DetailLayerPlugin),
-        resources.register_material_plugin(device, &ParallaxPlugin),
-        resources.register_material_plugin(device, &DissolvePlugin),
-    ]
-    .into_iter()
-    .filter_map(Result::ok)
-    .collect::<Vec<_>>();
-    resources.warm_material_plugin_pipelines(device, &ids);
-}
-
-// ---------------------------------------------------------------------------
 // Build
 // ---------------------------------------------------------------------------
 
@@ -202,16 +170,9 @@ impl App {
             .register_material_plugin(&self.device, &DissolvePlugin)
             .expect("register dissolve plugin");
 
-        // Normally these sets are already built by the startup call to
-        // prewarm_custom_shading_plugins, so this is a cheap idempotent
-        // check. It still matters if the showcase is reached without that
-        // prewarm: building the sets here (rather than letting the first
-        // rendered frame pay for them a few at a time) avoids the cold
-        // plugins drawing built-in shading until their set is ready.
-        resources.warm_material_plugin_pipelines(
-            &self.device,
-            &[toon_a, rim, detail, parallax_default, dissolve],
-        );
+        // No warm-up: each plugin's pipelines are built by the first draw that
+        // selects them, so opening this page compiles the one or two variants
+        // each sphere uses and not the whole set.
 
         if self.cs_state.toon_b.is_none() {
             let s = &self.cs_state;
@@ -573,13 +534,7 @@ pub(crate) fn scene(
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
         let items = custom_shading_items(app);
-        (
-            items,
-            None,
-            custom_shading_lighting(),
-            0,
-            0,
-        )
+        (items, None, custom_shading_lighting(), 0, 0)
     };
     crate::SceneContents {
         items,
@@ -598,7 +553,6 @@ pub(crate) fn scene(
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
 
-
 // ---------------------------------------------------------------------------
 // Viewport overlay and per-frame tick
 // ---------------------------------------------------------------------------
@@ -606,30 +560,22 @@ pub(crate) fn scene(
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -670,10 +616,20 @@ impl crate::Showcase for ScCustomShading {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -682,7 +638,12 @@ impl crate::Showcase for ScCustomShading {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_custom_shading(app, ui)
     }
 }
