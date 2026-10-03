@@ -144,11 +144,27 @@ pub enum RtBackend {
 /// the compute traversal.
 pub fn pick_backend(device: &crate::gpu::Device) -> RtBackend {
     #[cfg(feature = "raytrace-hardware")]
-    if device.features().contains(crate::gpu::RAY_QUERY_FEATURE) {
+    if ray_queries_usable(device) {
         return RtBackend::Hardware;
     }
     let _ = device;
     RtBackend::Software
+}
+
+/// Whether the hardware kernel can run on `device`: it was created with ray
+/// queries, and it is not wgpu 29 on Metal, where a ray-query dispatch never
+/// completes and the stuck GPU can take the whole machine down. There the
+/// tracer uses the compute traversal even when the device has the feature.
+#[cfg(feature = "raytrace-hardware")]
+fn ray_queries_usable(device: &crate::gpu::Device) -> bool {
+    if !device.features().contains(crate::gpu::RAY_QUERY_FEATURE) {
+        return false;
+    }
+    #[cfg(wgpu29)]
+    if device.adapter_info().backend == crate::gpu::Backend::Metal {
+        return false;
+    }
+    true
 }
 
 /// Add what a device needs to trace in hardware to `desc`: the
@@ -172,7 +188,9 @@ pub fn pick_backend(device: &crate::gpu::Device) -> RtBackend {
 /// viewport_lib::raytrace::request_ray_queries(&adapter, &mut desc);
 /// ```
 ///
-/// wgpu 29 is left out on Metal: its hardware path hangs the GPU there.
+/// wgpu 29 is left out on Metal: a ray-query dispatch there never completes,
+/// and the stuck GPU can take the whole machine down. The [`Tracer`] refuses
+/// the hardware backend on that pairing too.
 pub fn request_ray_queries(
     adapter: &crate::gpu::Adapter,
     desc: &mut crate::gpu::DeviceDescriptor<'_>,
@@ -966,8 +984,9 @@ impl Tracer {
     /// Build the pipeline and upload `scene` for a specific traversal backend.
     ///
     /// [`RtBackend::Hardware`] falls back to [`RtBackend::Software`] when the
-    /// `raytrace-hardware` feature is off or the device does not advertise
-    /// [`RAY_QUERY_FEATURE`](crate::gpu::RAY_QUERY_FEATURE); [`backend`](Tracer::backend)
+    /// `raytrace-hardware` feature is off, the device does not advertise
+    /// [`RAY_QUERY_FEATURE`](crate::gpu::RAY_QUERY_FEATURE), or it is wgpu 29 on
+    /// Metal, whose ray-query dispatches hang; [`backend`](Tracer::backend)
     /// reports what was actually built. Forcing the software backend on a
     /// ray-query device is useful for comparing the two paths on one device.
     pub fn new_with_backend(
@@ -984,9 +1003,7 @@ impl Tracer {
         // software path builds the two-level TLAS/BLAS structure so instances
         // share their mesh's triangles.
         #[cfg(feature = "raytrace-hardware")]
-        let use_hw = backend == RtBackend::Hardware
-            && device.features().contains(crate::gpu::RAY_QUERY_FEATURE)
-            && has_geometry;
+        let use_hw = backend == RtBackend::Hardware && ray_queries_usable(device) && has_geometry;
         #[cfg(not(feature = "raytrace-hardware"))]
         let use_hw = {
             let _ = backend;

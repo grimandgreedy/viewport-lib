@@ -23,6 +23,7 @@ pub(crate) struct PendingReadback {
 
 impl PendingReadback {
     /// Copy the first `bytes` of `src` back.
+    #[cfg(feature = "raytrace")]
     pub(crate) fn buffer(
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
@@ -40,6 +41,7 @@ impl PendingReadback {
 
     /// Copy a `width` x `height` texture with `bytes_per_texel` back, without
     /// the row padding the copy needs.
+    #[cfg(feature = "bake")]
     pub(crate) fn texture(
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
