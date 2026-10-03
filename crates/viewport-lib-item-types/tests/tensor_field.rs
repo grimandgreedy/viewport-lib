@@ -15,6 +15,13 @@ use viewport_lib_item_types::{
     TENSOR_FIELD_TYPE_NAME, TensorFieldItem, TensorFieldPlugin, TensorFieldRefItem, TensorSource,
 };
 
+/// The build log is process-wide, so a test that reads it must not overlap
+/// another test building this type's pipelines.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// A unit sphere for the field to instance.
 fn sphere_mesh(renderer: &mut ViewportRenderer, device: &viewport_lib::wgpu::Device) -> MeshId {
     renderer
@@ -38,6 +45,7 @@ fn three_tensors(shape: MeshId) -> TensorFieldItem {
 
 #[test]
 fn gpu_pick_tensor_field_resolves_instance() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -73,6 +81,7 @@ fn gpu_pick_tensor_field_resolves_instance() {
 
 #[test]
 fn cpu_pick_tensor_field_resolves_instance() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -111,6 +120,7 @@ fn cpu_pick_tensor_field_resolves_instance() {
 /// backends.
 #[test]
 fn an_object_query_drops_the_instance_sub_object() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -149,6 +159,7 @@ fn an_object_query_drops_the_instance_sub_object() {
 
 #[test]
 fn rect_pick_collects_tensor_field_instances() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -196,6 +207,7 @@ fn rect_pick_collects_tensor_field_instances() {
 /// as an inline item, under the reference's own pick id.
 #[test]
 fn a_reference_item_picks_like_an_inline_one() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -236,6 +248,7 @@ fn a_reference_item_picks_like_an_inline_one() {
 /// A hidden reference item draws nothing and picks nothing.
 #[test]
 fn a_hidden_reference_item_is_skipped() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -287,6 +300,7 @@ fn sample_tensor_field(shape: MeshId) -> TensorFieldItem {
 
 #[test]
 fn an_uploaded_tensor_field_set_resolves_until_it_is_dropped() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -312,6 +326,7 @@ fn an_uploaded_tensor_field_set_resolves_until_it_is_dropped() {
 
 #[test]
 fn begin_upload_tensor_field_set_drains_to_a_handle() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -342,6 +357,7 @@ fn begin_upload_tensor_field_set_drains_to_a_handle() {
 /// A hidden item produces no draw data.
 #[test]
 fn hidden_items_produce_no_draw_data() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -377,6 +393,7 @@ fn hidden_items_produce_no_draw_data() {
 /// supplies an eigendecomposition and the store bakes the matrices.
 #[test]
 fn a_reserved_tensor_field_takes_ranged_sample_writes() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -426,4 +443,56 @@ fn a_reserved_tensor_field_takes_ranged_sample_writes() {
         .push(TensorFieldRefItem::new(id));
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     assert!(renderer.release(id));
+}
+
+/// Naming the tensor field type in a warm-up builds its pipelines, so the first
+/// frame that draws, outlines and picks a field, in either format, compiles
+/// none of them.
+#[test]
+fn a_warmed_tensor_field_type_builds_nothing_on_its_first_frame() {
+    let _serial = serial();
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    let shape = sphere_mesh(&mut renderer, &device);
+    renderer.warm_pipelines(
+        &device,
+        &queue,
+        &viewport_lib::PipelineSet::default().with_item_type::<TensorFieldPlugin>(),
+    );
+    renderer.wait_for_pipelines(&device);
+
+    viewport_lib::resources::build_log::enable();
+    let _ = viewport_lib::resources::build_log::drain();
+    for hdr in [true, false] {
+        let mut frame = sub_object_pick_frame();
+        if !hdr {
+            frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        }
+        frame.interaction.outline_selected = true;
+        let mut item = three_tensors(shape);
+        item.settings.pick_id = PickId(700);
+        item.settings.selected = true;
+        frame.scene.items_mut::<TensorFieldItem>().push(item);
+        let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        let _ = renderer.pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::INSTANCE,
+        );
+    }
+    let builds: Vec<String> = viewport_lib::resources::build_log::drain()
+        .into_iter()
+        .map(|(label, _)| label)
+        .filter(|l| l.starts_with("tensor_field") || l.starts_with("module tensor_field"))
+        .collect();
+    assert!(
+        builds.is_empty(),
+        "the first tensor field frames built pipelines after the warm-up: {builds:?}"
+    );
 }

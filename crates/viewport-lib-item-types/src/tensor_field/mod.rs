@@ -98,6 +98,20 @@ impl ItemTypePlugin for TensorFieldPlugin {
         self.layouts = Some(TensorFieldResources::new(device));
     }
 
+    fn warm(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        resources: &viewport_lib::DeviceResources,
+    ) {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| TensorFieldResources::new(device));
+        let gpu = self
+            .gpu
+            .get_or_insert_with(|| pipeline::TensorFieldGpu::new(device, resources, layouts));
+        gpu.pipelines.request_all();
+    }
+
     fn resident_bytes(&self) -> u64 {
         self.stored.allocated_bytes()
     }
@@ -199,7 +213,16 @@ impl ItemTypePlugin for TensorFieldPlugin {
                 continue;
             }
             if !bound {
-                pass.set_pipeline(gpu.pipeline.for_format(is_hdr));
+                // Still compiling: the fields draw next frame.
+                let colour = if is_hdr {
+                    pipeline::COLOUR_HDR
+                } else {
+                    pipeline::COLOUR_LDR
+                };
+                let Some(pl) = gpu.pipelines.get(colour) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             pass.set_bind_group(1, &entry.draw.uniform_bind_group, &[]);
@@ -219,14 +242,19 @@ impl ItemTypePlugin for TensorFieldPlugin {
         ctx: &OutlineMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        let Some(gpu) = &self.gpu else { return };
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         let mut bound = false;
         for entry in &self.frame {
             let Some(instance_filter) = &entry.outline else {
                 continue;
             };
             if !bound {
-                pass.set_pipeline(&gpu.mask_pipeline);
+                let Some(pl) = gpu.pipelines.get(pipeline::MASK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             pass.set_bind_group(1, &entry.draw.uniform_bind_group, &[]);
@@ -255,14 +283,19 @@ impl ItemTypePlugin for TensorFieldPlugin {
         ctx: &viewport_lib::plugin_api::SurfaceMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        let Some(gpu) = &self.gpu else { return };
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         let mut bound = false;
         for entry in &self.frame {
             let Some(value) = ctx.stamp_for(&entry.settings) else {
                 continue;
             };
             if !bound {
-                pass.set_pipeline(&gpu.surface_mask_pipeline);
+                let Some(pl) = gpu.pipelines.get(pipeline::SURFACE_MASK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             pass.set_stencil_reference(value);
@@ -386,7 +419,9 @@ impl ItemTypePlugin for TensorFieldPlugin {
         if !ctx.mask.intersects(PickMask::OBJECT | PickMask::INSTANCE) {
             return;
         }
-        let Some(gpu) = &self.gpu else { return };
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         let mut bound = false;
         for entry in &self.frame {
             let Some(pick_bg) = &entry.pick_bind_group else {
@@ -396,7 +431,10 @@ impl ItemTypePlugin for TensorFieldPlugin {
                 continue;
             }
             if !bound {
-                pass.set_pipeline(&gpu.pick_pipeline);
+                let Some(pl) = gpu.pipelines.get(pipeline::PICK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             pass.set_bind_group(1, pick_bg, &[]);
