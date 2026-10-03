@@ -3,6 +3,7 @@
 //! its own command encoder and returns the finished buffer.
 
 use super::*;
+use crate::resources::scene_pipelines::MeshColourFamily;
 
 /// Per-frame context shared by the HDR pass-group methods. Holds the
 /// preamble-computed values each pass needs. It borrows only frame-level
@@ -52,9 +53,10 @@ fn post_effect_ctx<'a>(
 /// material plugin (group 3), and deform (group 2) groups, pick the pipeline,
 /// and draw. `obj_bg_override` is the item's per-item bind group when one was
 /// prepared; `None` falls back to the mesh's shared object bind group. `hdr`
-/// selects the material-plugin pipeline family; the built-in pipelines are
-/// passed in by the caller. Shared by the HDR scene pass and the HDR/LDR
-/// foreground passes; group 0 must already be bound by the caller.
+/// selects the material-plugin pipeline family and `family` the built-in
+/// one. A draw whose pipeline is still compiling is skipped. Shared by the
+/// HDR scene pass and the HDR/LDR foreground passes; group 0 must already be
+/// bound by the caller.
 ///
 /// `submesh_bgs` carries the per-range bind groups for an item drawn with
 /// per-submesh materials; with it set the indexed path issues one draw per
@@ -75,10 +77,7 @@ pub(super) fn draw_mesh_item(
     obj_index: u32,
     wireframe_mode: bool,
     hdr: bool,
-    solid_pl: &crate::gpu::RenderPipeline,
-    solid_two_sided_pl: &crate::gpu::RenderPipeline,
-    trans_pl: &crate::gpu::RenderPipeline,
-    wf_pl: &crate::gpu::RenderPipeline,
+    family: &dyn MeshColourFamily,
     submesh_bgs: Option<&[Option<crate::gpu::BindGroup>]>,
     // Object-data indices parallel to `submesh_bgs`; a range with its own bind
     // group selects its element here.
@@ -107,8 +106,12 @@ pub(super) fn draw_mesh_item(
                 | crate::resources::AttributeKind::Corner
         )
     });
+    let item_key = PipelineKey::two_sided(item.material.is_two_sided());
     if wireframe_mode {
         if let Some(edge_buf) = &mesh.edge_index_buffer {
+            let Some(wf_pl) = family.wireframe() else {
+                return;
+            };
             render_pass.set_pipeline(wf_pl);
             bind_deform_group!(render_pass, resources, deform_bg);
             render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
@@ -117,7 +120,6 @@ pub(super) fn draw_mesh_item(
         }
     } else if is_face_attr {
         if let Some(ref fvb) = mesh.face_vertex_buffer {
-            let key = PipelineKey::two_sided(item.material.is_two_sided());
             let pl = if let Some((pp, _)) = plug {
                 if item.settings.opacity < 1.0 {
                     if hdr {
@@ -126,16 +128,16 @@ pub(super) fn draw_mesh_item(
                         pp.ldr_transparent()
                     }
                 } else if hdr {
-                    pp.hdr_opaque(key)
+                    pp.hdr_opaque(item_key)
                 } else {
-                    pp.ldr_opaque(key)
+                    pp.ldr_opaque(item_key)
                 }
             } else if item.settings.opacity < 1.0 {
-                Some(trans_pl)
+                family.transparent()
             } else {
-                Some(solid_pl)
+                family.opaque(item_key)
             };
-            // A plugin pipeline still compiling skips the draw this frame.
+            // A pipeline still compiling skips the draw this frame.
             let Some(pl) = pl else {
                 return;
             };
@@ -172,6 +174,9 @@ pub(super) fn draw_mesh_item(
                 }
                 let plug_r = resources.material_plugin_draw(mat.shading_plugin);
                 let range_key = PipelineKey::two_sided(mat.is_two_sided());
+                // A range draws two-sided when its own material or the item's
+                // says so.
+                let builtin_key = PipelineKey::two_sided(item_key.two_sided || range_key.two_sided);
                 let pl = if let Some((pp, _)) = plug_r {
                     if is_trans {
                         if hdr {
@@ -185,9 +190,9 @@ pub(super) fn draw_mesh_item(
                         pp.ldr_opaque(range_key)
                     }
                 } else if is_trans {
-                    Some(trans_pl)
+                    family.transparent()
                 } else {
-                    Some(select_two_sided(range_key, solid_pl, solid_two_sided_pl))
+                    family.opaque(builtin_key)
                 };
                 let Some(pl) = pl else {
                     continue;
@@ -216,14 +221,20 @@ pub(super) fn draw_mesh_item(
         } else {
             let pl = if let Some((pp, _)) = plug {
                 if item.settings.opacity < 1.0 {
-                    pp.hdr_transparent()
+                    if hdr {
+                        pp.hdr_transparent()
+                    } else {
+                        pp.ldr_transparent()
+                    }
+                } else if hdr {
+                    pp.hdr_opaque(item_key)
                 } else {
-                    pp.hdr_opaque(PipelineKey::two_sided(item.material.is_two_sided()))
+                    pp.ldr_opaque(item_key)
                 }
             } else if item.settings.opacity < 1.0 {
-                Some(trans_pl)
+                family.transparent()
             } else {
-                Some(solid_pl)
+                family.opaque(item_key)
             };
             let Some(pl) = pl else {
                 return;
@@ -245,7 +256,7 @@ pub(super) fn draw_mesh_item(
         }
     }
     if item.show_normals {
-        if let Some(ref nl_buf) = mesh.normal_line_buffer {
+        if let (Some(nl_buf), Some(wf_pl)) = (&mesh.normal_line_buffer, family.wireframe()) {
             if mesh.normal_line_count > 0 {
                 render_pass.set_pipeline(wf_pl);
                 bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
@@ -810,7 +821,7 @@ impl ViewportRenderer {
 
                     if !opaque_batches.is_empty() && !frame.viewport.wireframe_mode {
                         let use_indirect = self.instancing.gpu_culling_enabled
-                            && resources.cull.hdr_solid_pipeline.is_some()
+                            && resources.cull.hdr.is_some()
                             && cull0.indirect_args_buf.is_some();
 
                         // Early-Z fast path: when no clip object can discard a
@@ -825,18 +836,7 @@ impl ViewportRenderer {
                             .any(|o| o.enabled && o.clip_geometry);
 
                         if use_indirect {
-                            if let (Some(pipeline), Some(pipeline_two_sided), Some(indirect_buf)) = (
-                                &resources.cull.hdr_solid_pipeline,
-                                &resources.cull.hdr_solid_two_sided_pipeline,
-                                &cull0.indirect_args_buf,
-                            ) {
-                                let nodiscard_pipes = (
-                                    resources.cull.hdr_solid_nodiscard_pipeline.as_ref(),
-                                    resources
-                                        .cull
-                                        .hdr_solid_two_sided_nodiscard_pipeline
-                                        .as_ref(),
-                                );
+                            if let Some(indirect_buf) = &cull0.indirect_args_buf {
                                 bind_deform_group!(
                                     render_pass,
                                     resources,
@@ -880,13 +880,13 @@ impl ViewportRenderer {
                                                     no_discard_eligible: group.no_discard,
                                                     ..PipelineKey::default()
                                                 };
-                                                render_pass.set_pipeline(select_opaque_solid(
-                                                    key,
-                                                    pipeline,
-                                                    pipeline_two_sided,
-                                                    nodiscard_pipes.0,
-                                                    nodiscard_pipes.1,
-                                                ));
+                                                // Still compiling: the group waits a frame.
+                                                let Some(pl) = resources.cull.hdr_opaque(key)
+                                                else {
+                                                    cur_pipe = None;
+                                                    continue;
+                                                };
+                                                render_pass.set_pipeline(pl);
                                                 cur_pipe = Some(pipe_key);
                                             }
                                             let chunks = (group.vertex_chunk, group.index_chunk);
@@ -959,10 +959,7 @@ impl ViewportRenderer {
                                     else {
                                         continue;
                                     };
-                                    let no_discard = !clipping_active
-                                        && !batch.has_alpha_mask
-                                        && nodiscard_pipes.0.is_some()
-                                        && nodiscard_pipes.1.is_some();
+                                    let no_discard = !clipping_active && !batch.has_alpha_mask;
                                     let pipe_key = (batch.two_sided, no_discard);
                                     let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
                                     let bg_ptr = inst_tex_bg as *const crate::gpu::BindGroup;
@@ -986,6 +983,7 @@ impl ViewportRenderer {
                                         );
                                         self.frame_main_draw_commands
                                             .fetch_add(dc, std::sync::atomic::Ordering::Relaxed);
+                                        run_len = 0;
                                     }
                                     if cur_pipe != Some(pipe_key) {
                                         let key = PipelineKey {
@@ -993,13 +991,12 @@ impl ViewportRenderer {
                                             no_discard_eligible: no_discard,
                                             ..PipelineKey::default()
                                         };
-                                        render_pass.set_pipeline(select_opaque_solid(
-                                            key,
-                                            pipeline,
-                                            pipeline_two_sided,
-                                            nodiscard_pipes.0,
-                                            nodiscard_pipes.1,
-                                        ));
+                                        // Still compiling: the batch waits a frame.
+                                        let Some(pl) = resources.cull.hdr_opaque(key) else {
+                                            cur_pipe = None;
+                                            continue;
+                                        };
+                                        render_pass.set_pipeline(pl);
                                         cur_pipe = Some(pipe_key);
                                     }
                                     if cur_bg != Some(bg_ptr) {
@@ -1034,17 +1031,7 @@ impl ViewportRenderer {
                                         .fetch_add(dc, std::sync::atomic::Ordering::Relaxed);
                                 }
                             }
-                        } else if let (Some(pipeline), Some(pipeline_two_sided)) = (
-                            &resources.instancing.hdr_solid_pipeline,
-                            &resources.instancing.hdr_solid_two_sided_pipeline,
-                        ) {
-                            let nodiscard_pipes = (
-                                resources.instancing.hdr_solid_nodiscard_pipeline.as_ref(),
-                                resources
-                                    .instancing
-                                    .hdr_solid_two_sided_nodiscard_pipeline
-                                    .as_ref(),
-                            );
+                        } else if resources.instancing.hdr.is_some() {
                             bind_deform_group!(
                                 render_pass,
                                 resources,
@@ -1076,23 +1063,19 @@ impl ViewportRenderer {
                                 else {
                                     continue;
                                 };
-                                let no_discard = !clipping_active
-                                    && !batch.has_alpha_mask
-                                    && nodiscard_pipes.0.is_some()
-                                    && nodiscard_pipes.1.is_some();
+                                let no_discard = !clipping_active && !batch.has_alpha_mask;
                                 if cur_pipe != Some((batch.two_sided, no_discard)) {
                                     let key = PipelineKey {
                                         two_sided: batch.two_sided,
                                         no_discard_eligible: no_discard,
                                         ..PipelineKey::default()
                                     };
-                                    render_pass.set_pipeline(select_opaque_solid(
-                                        key,
-                                        pipeline,
-                                        pipeline_two_sided,
-                                        nodiscard_pipes.0,
-                                        nodiscard_pipes.1,
-                                    ));
+                                    // Still compiling: the batch waits a frame.
+                                    let Some(pl) = resources.instancing.hdr_opaque(key) else {
+                                        cur_pipe = None;
+                                        continue;
+                                    };
+                                    render_pass.set_pipeline(pl);
                                     cur_pipe = Some((batch.two_sided, no_discard));
                                 }
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
@@ -1145,7 +1128,7 @@ impl ViewportRenderer {
                             // count-multi-draw compaction, not the cull). Otherwise
                             // it draws every instance directly.
                             let plugin_indirect = (self.instancing.gpu_culling_enabled
-                                && resources.cull.hdr_solid_pipeline.is_some())
+                                && resources.cull.hdr.is_some())
                             .then(|| cull0.indirect_args_buf.as_ref())
                             .flatten();
                             let mut cur_chunks: Option<(u32, u32)> = None;
@@ -1246,7 +1229,7 @@ impl ViewportRenderer {
                     let _ = &transparent_batches; // suppress unused warning
 
                     if frame.viewport.wireframe_mode {
-                        if let Some(ref hdr_wf) = resources.scene.hdr_wireframe {
+                        if let Some(hdr_wf) = resources.scene.hdr_wireframe() {
                             let mut wf_idx = 0usize;
                             for item in scene_items {
                                 if item.settings.hidden {
@@ -1284,7 +1267,7 @@ impl ViewportRenderer {
                                 wf_idx += 1;
                             }
                         }
-                    } else if let Some(hdr_opaque) = &resources.scene.hdr_opaque {
+                    } else if resources.scene.hdr.is_some() {
                         // Clip geometry disables the discard-free early-Z twin
                         // (the clip discards would be stripped). Computed here
                         // because this per-object branch is the `else` of the
@@ -1332,7 +1315,7 @@ impl ViewportRenderer {
                             let pipeline = if let Some((pp, _)) = plug {
                                 pp.hdr_opaque(key)
                             } else {
-                                Some(hdr_opaque.get(key))
+                                resources.scene.hdr_opaque(key)
                             };
                             let Some(pipeline) = pipeline else {
                                 continue;
@@ -1403,7 +1386,7 @@ impl ViewportRenderer {
                                     let pl = if let Some((pp, _)) = plug_r {
                                         pp.hdr_opaque(range_key)
                                     } else {
-                                        Some(hdr_opaque.get(range_key))
+                                        resources.scene.hdr_opaque(range_key)
                                     };
                                     let Some(pl) = pl else {
                                         continue;
@@ -1447,8 +1430,10 @@ impl ViewportRenderer {
 
                     // Normal-line overlays for instanced items with show_normals set.
                     // Instanced batch draws skip per-item logic, so these are drawn
-                    // here after all batches finish.
-                    if let Some(hdr_wf) = &resources.scene.hdr_wireframe {
+                    // here after all batches finish. The wireframe pipeline is asked
+                    // for by the first item that needs it, so a frame without
+                    // normals never builds it.
+                    {
                         for item in scene_items
                             .iter()
                             .filter(|i| i.show_normals && !i.settings.hidden)
@@ -1456,7 +1441,9 @@ impl ViewportRenderer {
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
-                            if let Some(ref nl_buf) = mesh.normal_line_buffer {
+                            if let (Some(nl_buf), Some(hdr_wf)) =
+                                (&mesh.normal_line_buffer, resources.scene.hdr_wireframe())
+                            {
                                 if mesh.normal_line_count > 0 {
                                     render_pass.set_pipeline(hdr_wf);
                                     bind_deform_group!(
@@ -1535,15 +1522,9 @@ impl ViewportRenderer {
                     // NOTE: only opaque items are drawn here. Transparent items are
                     // routed to the OIT pass below.
                     let _ = &transparent; // suppress unused warning
-                    if let (Some(hdr_opaque), Some(hdr_trans), Some(hdr_wf)) = (
-                        &resources.scene.hdr_opaque,
-                        &resources.scene.hdr_transparent,
-                        &resources.scene.hdr_wireframe,
-                    ) {
-                        let hdr_solid_two_sided = hdr_opaque.get(PipelineKey::two_sided(true));
+                    if resources.scene.hdr.is_some() {
+                        let family = resources.scene.hdr_family();
                         for (item_idx, item) in &opaque {
-                            let solid_pl = hdr_opaque
-                                .get(PipelineKey::two_sided(item.material.is_two_sided()));
                             let obj_bg = per_item_bgs.get(*item_idx).and_then(|opt| opt.as_ref());
                             draw_mesh_item(
                                 resources,
@@ -1554,10 +1535,7 @@ impl ViewportRenderer {
                                 obj_bg.map_or(0, |_| self.mesh_uniforms.object_indices[*item_idx]),
                                 frame.viewport.wireframe_mode,
                                 true,
-                                solid_pl,
-                                hdr_solid_two_sided,
-                                hdr_trans,
-                                hdr_wf,
+                                &family,
                                 self.mesh_uniforms
                                     .submesh_bind_groups
                                     .get(item_idx)
@@ -1575,7 +1553,7 @@ impl ViewportRenderer {
 
             // Cap fill pass (HDR path : section view cross-section fill).
             if !slot.cap_buffers.is_empty() {
-                if let Some(ref hdr_overlay) = resources.scene.hdr_overlay {
+                if let Some(hdr_overlay) = resources.scene.hdr_overlay() {
                     render_pass.set_pipeline(hdr_overlay);
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.cap_buffers {
@@ -1599,7 +1577,7 @@ impl ViewportRenderer {
             if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
                 if let (Some(tvm_bg), Some(hdr_wf)) = (
                     &self.mesh_uniforms.tvm_wireframe_bg,
-                    &resources.scene.hdr_wireframe,
+                    resources.scene.hdr_wireframe(),
                 ) {
                     for (slot, mesh_id) in self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate()
                     {
@@ -2045,22 +2023,11 @@ impl ViewportRenderer {
                     // This viewport's own cull outputs.
                     let cull0 = &self.viewport_slots[vp_idx].cull;
                     let use_indirect_oit = self.instancing.gpu_culling_enabled
-                        && self.resources.cull.oit_pipeline.is_some()
+                        && self.resources.cull.oit.is_some()
                         && cull0.indirect_args_buf.is_some();
 
                     if use_indirect_oit {
-                        if let (Some(pipeline), Some(indirect_buf)) =
-                            (&self.resources.cull.oit_pipeline, &cull0.indirect_args_buf)
-                        {
-                            // Two-sided transparent batches draw through the
-                            // cull-none twin; fall back to the culled pipeline if
-                            // the twin is missing.
-                            let pipeline_two_sided = self
-                                .resources
-                                .cull
-                                .oit_two_sided_pipeline
-                                .as_ref()
-                                .unwrap_or(pipeline);
+                        if let Some(indirect_buf) = &cull0.indirect_args_buf {
                             bind_deform_group!(
                                 oit_pass,
                                 self.resources,
@@ -2086,11 +2053,16 @@ impl ViewportRenderer {
                                         // are drawn from the compacted buffer, so no
                                         // batch / mesh-store lookup is needed here.
                                         if cur_two_sided != Some(group.two_sided) {
-                                            oit_pass.set_pipeline(if group.two_sided {
-                                                pipeline_two_sided
-                                            } else {
-                                                pipeline
-                                            });
+                                            // Still compiling: the group waits a frame.
+                                            let Some(pl) = self
+                                                .resources
+                                                .cull
+                                                .oit(PipelineKey::two_sided(group.two_sided))
+                                            else {
+                                                cur_two_sided = None;
+                                                continue;
+                                            };
+                                            oit_pass.set_pipeline(pl);
                                             cur_two_sided = Some(group.two_sided);
                                         }
                                         let chunks = (group.vertex_chunk, group.index_chunk);
@@ -2198,13 +2170,19 @@ impl ViewportRenderer {
                                     );
                                     self.frame_main_draw_commands
                                         .fetch_add(dc, std::sync::atomic::Ordering::Relaxed);
+                                    run_len = 0;
                                 }
                                 if cur_two_sided != Some(batch.two_sided) {
-                                    oit_pass.set_pipeline(if batch.two_sided {
-                                        pipeline_two_sided
-                                    } else {
-                                        pipeline
-                                    });
+                                    // Still compiling: the batch waits a frame.
+                                    let Some(pl) = self
+                                        .resources
+                                        .cull
+                                        .oit(PipelineKey::two_sided(batch.two_sided))
+                                    else {
+                                        cur_two_sided = None;
+                                        continue;
+                                    };
+                                    oit_pass.set_pipeline(pl);
                                     cur_two_sided = Some(batch.two_sided);
                                 }
                                 if cur_bg != Some(bg_ptr) {
@@ -2239,15 +2217,7 @@ impl ViewportRenderer {
                                     .fetch_add(dc, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
-                    } else if let Some(ref pipeline) = self.resources.oit.instanced_pipeline {
-                        // Two-sided transparent batches draw through the cull-none
-                        // twin; fall back to the culled pipeline if it is missing.
-                        let pipeline_two_sided = self
-                            .resources
-                            .oit
-                            .instanced_pipeline_two_sided
-                            .as_ref()
-                            .unwrap_or(pipeline);
+                    } else if self.resources.oit.instanced.is_some() {
                         bind_deform_group!(
                             oit_pass,
                             self.resources,
@@ -2281,11 +2251,16 @@ impl ViewportRenderer {
                                 continue;
                             };
                             if cur_two_sided != Some(batch.two_sided) {
-                                oit_pass.set_pipeline(if batch.two_sided {
-                                    pipeline_two_sided
-                                } else {
-                                    pipeline
-                                });
+                                // Still compiling: the batch waits a frame.
+                                let Some(pl) = self
+                                    .resources
+                                    .oit
+                                    .instanced(PipelineKey::two_sided(batch.two_sided))
+                                else {
+                                    cur_two_sided = None;
+                                    continue;
+                                };
+                                oit_pass.set_pipeline(pl);
                                 cur_two_sided = Some(batch.two_sided);
                             }
                             oit_pass.set_bind_group(1, inst_tex_bg, &[]);
@@ -2332,7 +2307,7 @@ impl ViewportRenderer {
                         // through the plugin's `vs_main_cull` OIT pipeline when
                         // culling ran, else every instance directly.
                         let plugin_indirect = (self.instancing.gpu_culling_enabled
-                            && resources.cull.hdr_solid_pipeline.is_some())
+                            && resources.cull.hdr.is_some())
                         .then(|| cull0.indirect_args_buf.as_ref())
                         .flatten();
                         let mut cur_chunks: Option<(u32, u32)> = None;
@@ -2425,8 +2400,7 @@ impl ViewportRenderer {
                     // Transparent excluded items (two-sided, active attribute, matcap) are not
                     // in any instanced batch, so the instanced OIT loop above skips them.
                     // Render them here individually so they are not invisible at opacity < 1.
-                    if let Some(ref oit_variants) = self.resources.oit.pipeline {
-                        oit_pass.set_pipeline(oit_variants.get(PipelineKey::default()));
+                    if self.resources.oit.pipeline.is_some() {
                         for (item_idx, item) in scene_items.iter().enumerate() {
                             if item.settings.hidden
                                 || !crate::renderer::prepare::has_transparent_draws(
@@ -2494,7 +2468,11 @@ impl ViewportRenderer {
                                         // Two-sided per-range material draws back
                                         // faces through the cull-none OIT pipeline.
                                         None => {
-                                            oit_pass.set_pipeline(oit_variants.get(range_key));
+                                            let Some(pl) = self.resources.oit.per_object(range_key)
+                                            else {
+                                                continue;
+                                            };
+                                            oit_pass.set_pipeline(pl);
                                         }
                                     }
                                     let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
@@ -2533,15 +2511,17 @@ impl ViewportRenderer {
                                 // Select the two-sided OIT pipeline for a
                                 // non-`Cull` material so its back faces draw.
                                 None => {
-                                    oit_pass.set_pipeline(oit_variants.get(item_key));
+                                    let Some(pl) = self.resources.oit.per_object(item_key) else {
+                                        continue;
+                                    };
+                                    oit_pass.set_pipeline(pl);
                                 }
                             }
                             oit_pass.set_bind_group(1, obj_bg, &[]);
                             oit_pass.draw_indexed(0..mesh.index_count, 0, obj_inst..obj_inst + 1);
                         }
                     }
-                } else if let Some(ref oit_variants) = self.resources.oit.pipeline {
-                    oit_pass.set_pipeline(oit_variants.get(PipelineKey::default()));
+                } else if self.resources.oit.pipeline.is_some() {
                     for (item_idx, item) in scene_items.iter().enumerate() {
                         if item.settings.hidden
                             || !crate::renderer::prepare::has_transparent_draws(
@@ -2598,7 +2578,11 @@ impl ViewportRenderer {
                                     // Two-sided per-range material draws back
                                     // faces through the cull-none OIT pipeline.
                                     None => {
-                                        oit_pass.set_pipeline(oit_variants.get(range_key));
+                                        let Some(pl) = self.resources.oit.per_object(range_key)
+                                        else {
+                                            continue;
+                                        };
+                                        oit_pass.set_pipeline(pl);
                                     }
                                 }
                                 let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
@@ -2637,7 +2621,10 @@ impl ViewportRenderer {
                             // Select the two-sided OIT pipeline for a non-`Cull`
                             // material so its back faces draw.
                             None => {
-                                oit_pass.set_pipeline(oit_variants.get(item_key));
+                                let Some(pl) = self.resources.oit.per_object(item_key) else {
+                                    continue;
+                                };
+                                oit_pass.set_pipeline(pl);
                             }
                         }
                         oit_pass.set_bind_group(1, obj_bg, &[]);
@@ -2950,14 +2937,10 @@ impl ViewportRenderer {
         let Some(fg_depth_view) = slot_hdr.foreground_depth_view.as_ref() else {
             return;
         };
-        let (Some(hdr_opaque), Some(hdr_trans), Some(hdr_wf)) = (
-            &resources.scene.hdr_opaque,
-            &resources.scene.hdr_transparent,
-            &resources.scene.hdr_wireframe,
-        ) else {
+        if resources.scene.hdr.is_none() {
             return;
-        };
-        let hdr_solid_two_sided = hdr_opaque.get(PipelineKey::two_sided(true));
+        }
+        let family = resources.scene.hdr_family();
 
         let fg_camera = frame
             .camera
@@ -3032,7 +3015,6 @@ impl ViewportRenderer {
         render_pass.set_bind_group(0, &slot.foreground_camera_bind_group, &[]);
 
         for (idx, item) in opaque.iter().chain(transparent.iter()) {
-            let solid_pl = hdr_opaque.get(PipelineKey::two_sided(item.material.is_two_sided()));
             let obj_bg = slot
                 .foreground_objects
                 .get(*idx)
@@ -3047,10 +3029,7 @@ impl ViewportRenderer {
                 0,
                 false,
                 true,
-                solid_pl,
-                hdr_solid_two_sided,
-                hdr_trans,
-                hdr_wf,
+                &family,
                 // Foreground items draw through the positional
                 // foreground_objects cache, which has no per-range entries;
                 // they render with the single item material.

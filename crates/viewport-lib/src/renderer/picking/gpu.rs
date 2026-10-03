@@ -718,8 +718,17 @@ impl ViewportRenderer {
         // scene surfaces, plus volume-mesh boundaries (both opaque and
         // transparent, which render their boundary as a surface mesh). Items that
         // are hidden or have pick_id 0 are skipped; clear value 0 means "no hit".
-        let pickable =
-            |item: &SceneRenderItem| !item.settings.hidden && item.settings.pick_id != PickId::NONE;
+        // An item whose colour pipeline is still compiling is not on screen,
+        // so it is not under the cursor either.
+        let colour_hdr = self.draws_hdr(frame);
+        let clipping_active = crate::resources::DeviceResources::clipping_active(frame);
+        let pickable = |item: &SceneRenderItem| {
+            !item.settings.hidden
+                && item.settings.pick_id != PickId::NONE
+                && self
+                    .resources
+                    .item_colour_ready(item, colour_hdr, clipping_active)
+        };
         let to_instance = |item: &SceneRenderItem| {
             let m = item.model;
             PickInstance {

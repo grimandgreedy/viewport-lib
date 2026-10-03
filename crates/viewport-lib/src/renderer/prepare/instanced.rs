@@ -51,7 +51,7 @@ type BatchGroupKey = (
 /// mesh-store lookup.
 ///
 /// The group lists and their per-batch metadata are cached on
-/// `(batches_gen, clipping_active, nodiscard)`: while those hold the batch topology
+/// `(batches_gen, clipping_active)`: while those hold the batch topology
 /// is unchanged, so a steady frame skips the batch-list walk and the group-buffer
 /// upload entirely (only the per-viewport compaction sizing runs on the CPU, and
 /// the compaction itself on the GPU).
@@ -68,8 +68,7 @@ fn build_and_upload_draw_groups(
     // `multi_draw_supported` (native MULTI_DRAW_INDIRECT_COUNT), not
     // `multi_draw_active()`: the count variant cannot be emulated, so the
     // `multi_draw_forced` diagnostic override must not reach this path.
-    let active =
-        bindless && instancing.multi_draw_supported && resources.cull.hdr_solid_pipeline.is_some();
+    let active = bindless && instancing.multi_draw_supported && resources.cull.hdr.is_some();
     if !active {
         instancing.draw_groups.clear();
         instancing.oit_draw_groups.clear();
@@ -82,11 +81,6 @@ fn build_and_upload_draw_groups(
         .objects
         .iter()
         .any(|o| o.enabled && o.clip_geometry);
-    let nodiscard = resources.cull.hdr_solid_nodiscard_pipeline.is_some()
-        && resources
-            .cull
-            .hdr_solid_two_sided_nodiscard_pipeline
-            .is_some();
 
     let n = instancing.batches.len();
     // The group structure is a pure function of the batch list (`batches_gen`
@@ -96,7 +90,7 @@ fn build_and_upload_draw_groups(
     // so a topology-stable frame does no CPU group forming at all. The per-viewport
     // compaction buffers are still sized below (a new or grown viewport), and the
     // GPU compaction still runs each frame.
-    let want = (instancing.batches_gen, clipping_active, nodiscard);
+    let want = (instancing.batches_gen, clipping_active);
     let cached = instancing.draw_group_cache_key == Some(want)
         && instancing.group_id_buf.is_some()
         && (!instancing.draw_groups.is_empty() || !instancing.oit_draw_groups.is_empty());
@@ -135,7 +129,7 @@ fn build_and_upload_draw_groups(
             }
             let transparent = batch.is_transparent;
             // OIT has no discard-free variant; only the opaque pass keys on it.
-            let no_discard = !transparent && !clipping_active && !batch.has_alpha_mask && nodiscard;
+            let no_discard = !transparent && !clipping_active && !batch.has_alpha_mask;
             let vertex_chunk = mesh.vertex_span.chunk;
             let index_chunk = mesh.index_span.chunk;
             let key = (

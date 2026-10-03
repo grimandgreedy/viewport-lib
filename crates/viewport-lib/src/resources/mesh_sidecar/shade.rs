@@ -18,7 +18,7 @@
 //! the consumer-facing `MaterialPlugin` API build on top of it.
 
 use crate::error::{ViewportError, ViewportResult};
-use crate::resources::pipeline_slot::{PipelineCompiler, PipelineSlot};
+use crate::resources::pipeline_slot::{LazyFamily, PipelineCompiler};
 use crate::scene::material::MaterialPluginId;
 
 use super::registry;
@@ -608,9 +608,7 @@ struct PluginSetContext {
 /// compiles one or two pipelines, not the set. Every accessor returns `None`
 /// while its pipeline compiles on a worker; the draw is skipped until then.
 pub(crate) struct MaterialPluginPipelines {
-    ctx: std::sync::Arc<PluginSetContext>,
-    compiler: std::sync::Arc<PipelineCompiler>,
-    slots: [PipelineSlot; Self::COUNT as usize],
+    family: LazyFamily<PluginSetContext, { Self::COUNT as usize }>,
 }
 
 impl MaterialPluginPipelines {
@@ -630,9 +628,10 @@ impl MaterialPluginPipelines {
     /// Two slots: bit 0 is two-sided.
     const OIT: usize = 8;
 
-    fn slot(&self, i: usize) -> Option<&crate::gpu::RenderPipeline> {
-        let ctx = std::sync::Arc::clone(&self.ctx);
-        self.slots[i].get(&self.compiler, move || Self::build_slot(&ctx, i))
+    fn new(ctx: PluginSetContext, compiler: std::sync::Arc<PipelineCompiler>) -> Self {
+        Self {
+            family: LazyFamily::new(ctx, compiler, Self::build_slot),
+        }
     }
 
     fn build_slot(ctx: &PluginSetContext, i: usize) -> crate::gpu::RenderPipeline {
@@ -704,7 +703,7 @@ impl MaterialPluginPipelines {
     }
 
     pub(crate) fn ldr_transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.slot(Self::LDR_TRANSPARENT)
+        self.family.get(Self::LDR_TRANSPARENT)
     }
 
     /// The LDR solid pipeline for `key`'s facedness.
@@ -712,7 +711,7 @@ impl MaterialPluginPipelines {
         &self,
         key: crate::renderer::pipeline_key::PipelineKey,
     ) -> Option<&crate::gpu::RenderPipeline> {
-        self.slot(if key.two_sided {
+        self.family.get(if key.two_sided {
             Self::LDR_SOLID_TWO_SIDED
         } else {
             Self::LDR_SOLID
@@ -720,7 +719,7 @@ impl MaterialPluginPipelines {
     }
 
     pub(crate) fn hdr_transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.slot(Self::HDR_TRANSPARENT)
+        self.family.get(Self::HDR_TRANSPARENT)
     }
 
     /// The HDR opaque pipeline for `key`: facedness and discard-free
@@ -729,7 +728,8 @@ impl MaterialPluginPipelines {
         &self,
         key: crate::renderer::pipeline_key::PipelineKey,
     ) -> Option<&crate::gpu::RenderPipeline> {
-        self.slot(Self::HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize)
+        self.family
+            .get(Self::HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize)
     }
 
     /// The OIT accumulate pipeline for `key`, which varies on facedness only.
@@ -737,19 +737,33 @@ impl MaterialPluginPipelines {
         &self,
         key: crate::renderer::pipeline_key::PipelineKey,
     ) -> Option<&crate::gpu::RenderPipeline> {
-        self.slot(Self::OIT + key.two_sided as usize)
+        self.family.get(Self::OIT + key.two_sided as usize)
+    }
+
+    /// Whether the opaque pipeline for `key` in the `hdr` or LDR family is
+    /// built, without starting it.
+    pub(crate) fn opaque_ready(
+        &self,
+        hdr: bool,
+        key: crate::renderer::pipeline_key::PipelineKey,
+    ) -> bool {
+        self.family.is_ready(if hdr {
+            Self::HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize
+        } else if key.two_sided {
+            Self::LDR_SOLID_TWO_SIDED
+        } else {
+            Self::LDR_SOLID
+        })
     }
 
     /// Ask for every pipeline in the set: built now under `Blocking`, handed
     /// to the workers under `Background`.
     fn request_all(&self) {
-        for i in 0..self.slots.len() {
-            self.slot(i);
-        }
+        self.family.request_all();
     }
 
     fn built_count(&self) -> u32 {
-        self.slots.iter().filter(|s| s.is_ready()).count() as u32
+        self.family.ready_count() as u32
     }
 }
 
@@ -796,9 +810,7 @@ pub(crate) struct MaterialPluginVariantGpu {
 /// As with the per-object set, each pipeline and module is built by the first
 /// draw that selects it, and an accessor returns `None` while a worker has it.
 pub(crate) struct MaterialPluginInstancedPipelines {
-    ctx: std::sync::Arc<PluginSetContext>,
-    compiler: std::sync::Arc<PipelineCompiler>,
-    slots: [PipelineSlot; 13],
+    family: LazyFamily<PluginSetContext, 13>,
 }
 
 impl MaterialPluginInstancedPipelines {
@@ -815,9 +827,10 @@ impl MaterialPluginInstancedPipelines {
     const CULL: usize = 9;
     const OIT_CULL: usize = 11;
 
-    fn slot(&self, i: usize) -> Option<&crate::gpu::RenderPipeline> {
-        let ctx = std::sync::Arc::clone(&self.ctx);
-        self.slots[i].get(&self.compiler, move || Self::build_slot(&ctx, i))
+    fn new(ctx: PluginSetContext, compiler: std::sync::Arc<PipelineCompiler>) -> Self {
+        Self {
+            family: LazyFamily::new(ctx, compiler, Self::build_slot),
+        }
     }
 
     fn build_slot(ctx: &PluginSetContext, i: usize) -> crate::gpu::RenderPipeline {
@@ -903,7 +916,7 @@ impl MaterialPluginInstancedPipelines {
     }
 
     pub(crate) fn ldr_transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.slot(Self::LDR_TRANSPARENT)
+        self.family.get(Self::LDR_TRANSPARENT)
     }
 
     /// The LDR solid pipeline for `key`'s facedness.
@@ -911,7 +924,7 @@ impl MaterialPluginInstancedPipelines {
         &self,
         key: crate::renderer::pipeline_key::PipelineKey,
     ) -> Option<&crate::gpu::RenderPipeline> {
-        self.slot(if key.two_sided {
+        self.family.get(if key.two_sided {
             Self::LDR_SOLID_TWO_SIDED
         } else {
             Self::LDR_SOLID
@@ -924,7 +937,8 @@ impl MaterialPluginInstancedPipelines {
         &self,
         key: crate::renderer::pipeline_key::PipelineKey,
     ) -> Option<&crate::gpu::RenderPipeline> {
-        self.slot(Self::HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize)
+        self.family
+            .get(Self::HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize)
     }
 
     /// The OIT accumulate instanced pipeline for `key` (facedness only).
@@ -932,13 +946,13 @@ impl MaterialPluginInstancedPipelines {
         &self,
         key: crate::renderer::pipeline_key::PipelineKey,
     ) -> Option<&crate::gpu::RenderPipeline> {
-        self.slot(Self::OIT + key.two_sided as usize)
+        self.family.get(Self::OIT + key.two_sided as usize)
     }
 
     /// Whether the GPU-culled twins can be built. Check before [`cull`](Self::cull)
     /// or [`oit_cull`](Self::oit_cull).
     pub(crate) fn has_cull(&self) -> bool {
-        self.ctx.cull_layout.is_some()
+        self.family.context().cull_layout.is_some()
     }
 
     /// The GPU-culled twin of [`hdr_opaque`](Self::hdr_opaque) (facedness only).
@@ -946,7 +960,7 @@ impl MaterialPluginInstancedPipelines {
         &self,
         key: crate::renderer::pipeline_key::PipelineKey,
     ) -> Option<&crate::gpu::RenderPipeline> {
-        self.slot(Self::CULL + key.two_sided as usize)
+        self.family.get(Self::CULL + key.two_sided as usize)
     }
 
     /// The GPU-culled twin of [`oit`](Self::oit).
@@ -954,20 +968,39 @@ impl MaterialPluginInstancedPipelines {
         &self,
         key: crate::renderer::pipeline_key::PipelineKey,
     ) -> Option<&crate::gpu::RenderPipeline> {
-        self.slot(Self::OIT_CULL + key.two_sided as usize)
+        self.family.get(Self::OIT_CULL + key.two_sided as usize)
+    }
+
+    /// Whether an opaque batch's pipeline for `key` is built, without starting
+    /// it: the HDR solid or its GPU-culled twin (either serves the colour
+    /// pass), or the LDR solid.
+    pub(crate) fn opaque_ready(
+        &self,
+        hdr: bool,
+        key: crate::renderer::pipeline_key::PipelineKey,
+    ) -> bool {
+        if hdr {
+            self.family.is_ready(
+                Self::HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize,
+            ) || (self.has_cull() && self.family.is_ready(Self::CULL + key.two_sided as usize))
+        } else {
+            self.family.is_ready(if key.two_sided {
+                Self::LDR_SOLID_TWO_SIDED
+            } else {
+                Self::LDR_SOLID
+            })
+        }
     }
 
     /// Ask for every pipeline in the set: built now under `Blocking`, handed
     /// to the workers under `Background`.
     fn request_all(&self) {
         let end = if self.has_cull() {
-            self.slots.len()
+            Self::OIT_CULL + 2
         } else {
             Self::CULL
         };
-        for i in 0..end {
-            self.slot(i);
-        }
+        self.family.request(end);
     }
 }
 
@@ -1421,8 +1454,8 @@ impl crate::resources::DeviceResources {
                 &gpu.bind_group_layout,
             ],
         );
-        let pipelines = MaterialPluginPipelines {
-            ctx: std::sync::Arc::new(PluginSetContext {
+        let pipelines = MaterialPluginPipelines::new(
+            PluginSetContext {
                 device: device.clone(),
                 name,
                 layout,
@@ -1431,10 +1464,9 @@ impl crate::resources::DeviceResources {
                 sample_count: self.sample_count,
                 mesh: LazyModule::new(format!("material_plugin_{name}_mesh"), mesh_final_src),
                 oit_module: LazyModule::new(format!("material_plugin_{name}_oit"), oit_final_src),
-            }),
-            compiler: std::sync::Arc::clone(&self.pipeline_compiler),
-            slots: Default::default(),
-        };
+            },
+            std::sync::Arc::clone(&self.pipeline_compiler),
+        );
         self.material_plugins
             .get_mut(&id.plugin_index())
             .expect("checked above")
@@ -1557,8 +1589,8 @@ impl crate::resources::DeviceResources {
                 ],
             )
         });
-        let pipelines = MaterialPluginInstancedPipelines {
-            ctx: std::sync::Arc::new(PluginSetContext {
+        let pipelines = MaterialPluginInstancedPipelines::new(
+            PluginSetContext {
                 device: device.clone(),
                 name,
                 layout,
@@ -1573,10 +1605,9 @@ impl crate::resources::DeviceResources {
                     format!("material_plugin_{name}_oit_instanced"),
                     oit_final_src,
                 ),
-            }),
-            compiler: std::sync::Arc::clone(&self.pipeline_compiler),
-            slots: Default::default(),
-        };
+            },
+            std::sync::Arc::clone(&self.pipeline_compiler),
+        );
         self.material_plugins
             .get_mut(&id.plugin_index())
             .expect("checked above")
@@ -2124,17 +2155,21 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
             &resources.binds.object_bgl,
             Some(&resources.deform.bind_group_layout),
         );
-        let (_pipelines, captured) =
-            crate::resources::builders::capture_validation(&device, || {
-                crate::resources::mesh::mesh_pipelines::build_ldr_mesh_pipelines(
-                    &device,
-                    &layout,
-                    &module,
-                    crate::gpu::TextureFormat::Bgra8UnormSrgb,
-                    1,
-                    None,
-                )
-            });
+        let (_pipeline, captured) = crate::resources::builders::capture_validation(&device, || {
+            crate::resources::mesh::mesh_pipelines::ldr_mesh_pipeline(
+                &device,
+                &layout,
+                &module,
+                crate::gpu::TextureFormat::Bgra8UnormSrgb,
+                1,
+                None,
+                "solid_pipeline",
+                Some(crate::gpu::Face::Back),
+                None,
+                crate::gpu::PrimitiveTopology::TriangleList,
+                true,
+            )
+        });
         assert!(captured.is_none(), "pipeline validation: {captured:?}");
     }
 
@@ -2256,17 +2291,21 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
             &resources.binds.object_bgl,
             Some(&resources.deform.bind_group_layout),
         );
-        let (_pipelines, captured) =
-            crate::resources::builders::capture_validation(&device, || {
-                crate::resources::mesh::mesh_pipelines::build_ldr_mesh_pipelines(
-                    &device,
-                    &layout,
-                    &module,
-                    crate::gpu::TextureFormat::Bgra8UnormSrgb,
-                    1,
-                    None,
-                )
-            });
+        let (_pipeline, captured) = crate::resources::builders::capture_validation(&device, || {
+            crate::resources::mesh::mesh_pipelines::ldr_mesh_pipeline(
+                &device,
+                &layout,
+                &module,
+                crate::gpu::TextureFormat::Bgra8UnormSrgb,
+                1,
+                None,
+                "solid_pipeline",
+                Some(crate::gpu::Face::Back),
+                None,
+                crate::gpu::PrimitiveTopology::TriangleList,
+                true,
+            )
+        });
         assert!(captured.is_none(), "pipeline validation: {captured:?}");
     }
 }

@@ -325,8 +325,15 @@ impl ViewportRenderer {
         let mut outline_object_buffers: Vec<OutlineObjectBuffers> = Vec::new();
         if frame.interaction.outline_selected {
             let resources = &self.resources;
+            let colour_hdr = self.draws_hdr(frame);
+            let clipping_active = DeviceResources::clipping_active(frame);
             for item in scene_items {
-                if item.settings.hidden || !item.settings.selected {
+                // An item whose colour pipeline is still compiling is not on
+                // screen, so it gets no outline until it is.
+                if item.settings.hidden
+                    || !item.settings.selected
+                    || !resources.item_colour_ready(item, colour_hdr, clipping_active)
+                {
                     continue;
                 }
                 // Mirror the mesh's position-override binding so the mask

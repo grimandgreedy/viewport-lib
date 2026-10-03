@@ -248,6 +248,67 @@ impl<P: Send + 'static> PipelineSlot<P> {
     }
 }
 
+/// Pipelines built from one shared context, each on its own slot.
+///
+/// `C` holds by value what every build needs (the device, the layout, the
+/// shader modules, the formats), so a build can run on a worker. `build`
+/// makes member `i` from it. Reading a member starts its compile under the
+/// renderer's policy; nothing is built until something asks.
+pub(crate) struct LazyFamily<C, const N: usize> {
+    ctx: Arc<C>,
+    compiler: Arc<PipelineCompiler>,
+    slots: [PipelineSlot; N],
+    build: fn(&C, usize) -> crate::gpu::RenderPipeline,
+}
+
+impl<C: Send + Sync + 'static, const N: usize> LazyFamily<C, N> {
+    pub(crate) fn new(
+        ctx: C,
+        compiler: Arc<PipelineCompiler>,
+        build: fn(&C, usize) -> crate::gpu::RenderPipeline,
+    ) -> Self {
+        Self {
+            ctx: Arc::new(ctx),
+            compiler,
+            slots: std::array::from_fn(|_| PipelineSlot::new()),
+            build,
+        }
+    }
+
+    /// What the builds read.
+    pub(crate) fn context(&self) -> &C {
+        &self.ctx
+    }
+
+    /// Member `i`, or `None` while a worker has it.
+    pub(crate) fn get(&self, i: usize) -> Option<&crate::gpu::RenderPipeline> {
+        let ctx = Arc::clone(&self.ctx);
+        let build = self.build;
+        self.slots[i].get(&self.compiler, move || build(&ctx, i))
+    }
+
+    /// Whether member `i` is built, without starting anything.
+    pub(crate) fn is_ready(&self, i: usize) -> bool {
+        self.slots[i].is_ready()
+    }
+
+    /// Ask for members `0..end`: built now under `Blocking`, handed to the
+    /// workers under `Background`.
+    pub(crate) fn request(&self, end: usize) {
+        for i in 0..end.min(N) {
+            self.get(i);
+        }
+    }
+
+    pub(crate) fn request_all(&self) {
+        self.request(N);
+    }
+
+    pub(crate) fn ready_count(&self) -> usize {
+        self.slots.iter().filter(|s| s.is_ready()).count()
+    }
+}
+
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
 /// The process-wide worker pool pipeline compiles run on. Started on first

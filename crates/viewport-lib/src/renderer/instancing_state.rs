@@ -142,13 +142,13 @@ pub(crate) struct InstancingState {
     pub(crate) group_arg_base_buf: Option<crate::gpu::Buffer>,
     /// Capacity (in batches) of `group_id_buf` / `group_arg_base_buf`.
     pub(crate) group_buf_capacity: usize,
-    /// The `(batches_gen, clipping_active, nodiscard)` the current `draw_groups`,
+    /// The `(batches_gen, clipping_active)` the current `draw_groups`,
     /// `oit_draw_groups`, and `group_id_buf` / `group_arg_base_buf` were built for.
     /// While it holds, the GPU-driven submission is topology-stable: the CPU need
     /// not re-walk the batch list to re-form the groups or re-upload the per-batch
     /// group metadata (only the per-viewport compaction runs each frame, on the
     /// GPU). `None` when the groups are cold or the GPU-driven path is inactive.
-    pub(crate) draw_group_cache_key: Option<(u64, bool, bool)>,
+    pub(crate) draw_group_cache_key: Option<(u64, bool)>,
 }
 
 impl InstancingState {

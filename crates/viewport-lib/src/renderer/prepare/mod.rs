@@ -788,6 +788,7 @@ impl ViewportRenderer {
 
         // ------------------------------------------------------------------
         let shadow_start = web_time::Instant::now();
+        let colour_hdr = frame.effects.display.is_hdr() && !self.direct_paint;
         Self::prepare_shadow_pass(
             resources,
             &mut self.instancing,
@@ -805,6 +806,7 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            colour_hdr,
             sink,
         );
         let shadow_ms = shadow_start.elapsed().as_secs_f32() * 1000.0;

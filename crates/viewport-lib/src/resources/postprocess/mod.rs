@@ -1360,138 +1360,14 @@ impl DeviceResources {
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
-        self.oit.pipeline = Some(
-            crate::renderer::pipeline_key::PipelineVariantSet::build_distinct(
-                |key| key.two_sided,
-                |two_sided| {
-                    crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
-                        device, &layout, &shader, two_sided,
-                    )
-                },
-            ),
-        );
-    }
-
-    /// The HDR mesh family: opaque (with its discard-free twin), transparent,
-    /// wireframe, and the cap-fill overlay. Composed with the registered
-    /// deformers, so a registration made before the first HDR mesh frame is
-    /// picked up here.
-    pub(crate) fn ensure_hdr_mesh_pipelines(&mut self, device: &crate::gpu::Device) {
-        if self.scene.hdr_opaque.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let source = {
-            let base = if self.deform.enabled {
-                include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"))
-            } else {
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))
-            };
-            crate::resources::mesh_sidecar::registry::compose_shader(
-                base,
-                &self.deform.registrations,
-            )
-        };
-        // Materialised so the discard-free twin is stripped from the exact
-        // source the discarding module compiles.
-        let final_src = crate::resources::builders::builtin_hook_env(
-            crate::resources::builders::strip_debug_vis(source, self.debug_vis_shaders),
-        )
-        .into_owned();
-        // The LDR family compiles the same source, so the module is shared.
-        let shader = self.shared_module(device, "mesh_shader_hdr", &final_src);
-        // Early-Z twin: identical shading with every `discard;` removed, valid
-        // only for draws that would not have discarded (see the per-object gate
-        // in hdr_path.rs).
-        let shader_nodiscard = self.shared_module(
-            device,
-            "mesh_shader_hdr_nodiscard",
-            &crate::resources::builders::strip_discards(&final_src),
-        );
-        let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
-            device,
-            "hdr_mesh_pipeline_layout",
-            &self.binds.camera_bgl,
-            &self.binds.object_bgl,
-            self.deform
-                .enabled
-                .then_some(&self.deform.bind_group_layout),
-        );
-        let hdr = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
-            device, &layout, &shader,
-        );
-        // Only the two solid pipelines have a discard-free twin: transparency
-        // and wireframe do not benefit from early-Z. `cutout` is not a real
-        // axis here (the shader branches on a per-object uniform instead), so
-        // both its values map to the same pipeline.
-        let (nd_solid, nd_solid_two_sided) =
-            crate::resources::mesh::mesh_pipelines::build_hdr_solid_pipelines(
-                device,
-                &layout,
-                &shader_nodiscard,
-            );
-        let hdr_solid = hdr.solid;
-        let hdr_solid_two_sided = hdr.solid_two_sided;
-        self.scene.hdr_opaque = Some(crate::renderer::pipeline_key::PipelineVariantSet::build(
-            |key| {
-                let (solid, solid_two_sided) = if key.no_discard_eligible {
-                    (&nd_solid, &nd_solid_two_sided)
-                } else {
-                    (&hdr_solid, &hdr_solid_two_sided)
-                };
-                if key.two_sided {
-                    solid_two_sided.clone()
-                } else {
-                    solid.clone()
-                }
+        self.oit.pipeline = Some(crate::resources::pipeline_slot::LazyFamily::new(
+            oit::OitContext {
+                device: device.clone(),
+                layout,
+                shader,
             },
-        ));
-        self.scene.hdr_transparent = Some(hdr.transparent);
-        self.scene.hdr_wireframe = Some(hdr.wireframe);
-
-        let overlay_shader = crate::resources::builders::wgsl_module(
-            device,
-            "overlay_shader_hdr",
-            crate::resources::builders::wgsl_source!("overlay"),
-        );
-        let overlay_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "hdr_overlay_pipeline_layout",
-            &[&self.binds.camera_bgl, &self.guides.overlay_bgl],
-        );
-        self.scene.hdr_overlay = Some(crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "hdr_overlay_pipeline",
-                layout: &overlay_layout,
-                vertex_module: &overlay_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[OverlayVertex::buffer_layout()],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &overlay_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::Rgba16Float,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false,
-                    crate::gpu::CompareFunction::Less,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: 1,
-                    ..Default::default()
-                },
-                cache: None,
-            },
+            std::sync::Arc::clone(&self.pipeline_compiler),
+            oit::build_per_object,
         ));
     }
 

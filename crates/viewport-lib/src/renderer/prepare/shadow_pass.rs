@@ -45,8 +45,25 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        // The colour family the frame draws with; a caster whose colour
+        // pipeline is still compiling casts nothing until it is drawn.
+        colour_hdr: bool,
         sink: &mut crate::renderer::SubmitSink,
     ) {
+        let clipping_active = DeviceResources::clipping_active(frame);
+        // Which batches cast this frame, as a hash: a batch whose colour
+        // pipeline is still compiling is left out, and the cached shadow
+        // bundles have to be re-recorded when that changes.
+        let casters_hash = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            for batch in &instancing.batches {
+                resources
+                    .batch_colour_ready(batch, colour_hdr, clipping_active)
+                    .hash(&mut h);
+            }
+            h.finish()
+        };
         // Shadow-pass instrumentation. The stall reported on some mobile backends
         // shows up at `present` because the shadow depth work is GPU-bound and only
         // forced to completion later. When the `viewport_lib::shadow` target is
@@ -271,6 +288,10 @@ impl ViewportRenderer {
                             let start = indices.len() as u32;
                             let lo = batch.instance_offset as usize;
                             let hi = lo + batch.instance_count as usize;
+                            if !resources.batch_colour_ready(batch, colour_hdr, clipping_active) {
+                                batch_ranges.push((start, 0));
+                                continue;
+                            }
                             for (i, ia) in instancing.cached_aabbs[lo..hi].iter().enumerate() {
                                 if ia.cast_shadows == 0 {
                                     continue;
@@ -368,6 +389,7 @@ impl ViewportRenderer {
                             instancing.batches_gen,
                             instancing.shadow_cull.outputs_gen,
                             light.effective_cascade_count,
+                            casters_hash,
                         );
                         if !shadow_multi_draw
                             && instancing.shadow_cull.bundle_key != Some(bundle_key)
@@ -457,7 +479,13 @@ impl ViewportRenderer {
                                 let mut draws = 0u32;
                                 let mut binds = 0u32;
                                 for (bi, batch) in instancing.batches.iter().enumerate() {
-                                    if batch.is_transparent {
+                                    if batch.is_transparent
+                                        || !resources.batch_colour_ready(
+                                            batch,
+                                            colour_hdr,
+                                            clipping_active,
+                                        )
+                                    {
                                         continue;
                                     }
                                     let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
@@ -539,6 +567,8 @@ impl ViewportRenderer {
                                 instancing,
                                 light,
                                 tile_px,
+                                colour_hdr,
+                                clipping_active,
                             );
                             shadow_draws += counts.batch_draws;
                             shadow_draw_cmds += counts.draw_commands;
@@ -657,7 +687,13 @@ impl ViewportRenderer {
                             let mut cur_group1_opaque = false;
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for (bi, batch) in instancing.batches.iter().enumerate() {
-                                if batch.is_transparent {
+                                if batch.is_transparent
+                                    || !resources.batch_colour_ready(
+                                        batch,
+                                        colour_hdr,
+                                        clipping_active,
+                                    )
+                                {
                                     continue;
                                 }
                                 let Some(&(start, count)) = ranges[cascade].get(bi) else {
@@ -794,7 +830,13 @@ impl ViewportRenderer {
                             let mut cur_group1_opaque = false;
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for batch in &instancing.batches {
-                                if batch.is_transparent {
+                                if batch.is_transparent
+                                    || !resources.batch_colour_ready(
+                                        batch,
+                                        colour_hdr,
+                                        clipping_active,
+                                    )
+                                {
                                     continue;
                                 }
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
@@ -914,6 +956,7 @@ impl ViewportRenderer {
                             if item.settings.hidden
                                 || !item.settings.cast_shadows
                                 || item.settings.opacity < 1.0
+                                || !resources.item_colour_ready(item, colour_hdr, clipping_active)
                             {
                                 continue;
                             }
@@ -1019,7 +1062,9 @@ impl ViewportRenderer {
                             if !item.settings.cast_shadows {
                                 continue;
                             }
-                            if item.settings.opacity < 1.0 {
+                            if item.settings.opacity < 1.0
+                                || !resources.item_colour_ready(item, colour_hdr, clipping_active)
+                            {
                                 continue;
                             }
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
@@ -1378,6 +1423,8 @@ fn draw_shadow_cascades_multi_draw(
     instancing: &mut InstancingState,
     light: &LightingFrame,
     tile_px: f32,
+    colour_hdr: bool,
+    clipping_active: bool,
 ) -> ShadowDrawCounts {
     let Some(pipeline) = resources.cull.shadow_pipeline.as_ref() else {
         return ShadowDrawCounts::default();
@@ -1458,7 +1505,9 @@ fn draw_shadow_cascades_multi_draw(
         let mut run_len: u32 = 0;
 
         for (bi, batch) in instancing.batches.iter().enumerate() {
-            if batch.is_transparent {
+            if batch.is_transparent
+                || !resources.batch_colour_ready(batch, colour_hdr, clipping_active)
+            {
                 continue;
             }
             let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {

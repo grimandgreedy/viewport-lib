@@ -908,9 +908,11 @@ pub(crate) struct ShadowCullState {
     /// still apply around bundle execution, so the per-cascade atlas tiles work
     /// unchanged.
     pub(crate) shadow_bundles: [Option<crate::gpu::RenderBundle>; 4],
-    /// (instance_gen, batches_gen, outputs_gen, cascade_count) the bundles were
-    /// recorded against; a mismatch re-records them.
-    pub(crate) bundle_key: Option<(u64, u64, u64, usize)>,
+    /// (instance_gen, batches_gen, outputs_gen, cascade_count, casters) the
+    /// bundles were recorded against; a mismatch re-records them. `casters`
+    /// hashes which batches cast, since one whose colour pipeline is still
+    /// compiling is left out until it draws.
+    pub(crate) bundle_key: Option<(u64, u64, u64, usize, u64)>,
     /// GPU draws recorded per cascade bundle, for FrameStats.
     pub(crate) bundle_draws: u32,
     /// Geometry buffer binds (`set_vertex_buffer` + `set_index_buffer`) recorded

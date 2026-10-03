@@ -1843,12 +1843,12 @@ impl DeviceResources {
         // the registered deformers in, so there is one copy of each build. A
         // family that has not been built yet is left alone: its first use
         // builds it from the same composition.
-        if self.scene.solid.is_some() {
-            self.scene.solid = None;
+        if self.scene.ldr.is_some() {
+            self.scene.ldr = None;
             self.ensure_ldr_mesh_pipelines(device);
         }
-        if self.scene.hdr_opaque.is_some() {
-            self.scene.hdr_opaque = None;
+        if self.scene.hdr.is_some() {
+            self.scene.hdr = None;
             self.ensure_hdr_mesh_pipelines(device);
         }
         if self.oit.pipeline.is_some() {
@@ -1884,28 +1884,28 @@ impl DeviceResources {
             self.instancing.bind_group_layout = None;
             self.ensure_instanced_pipelines(device);
         }
-        if self.instancing.solid_pipeline.is_some() {
-            self.instancing.solid_pipeline = None;
+        if self.instancing.ldr.is_some() {
+            self.instancing.ldr = None;
             self.ensure_ldr_instanced_pipelines(device);
         }
-        if self.instancing.hdr_solid_pipeline.is_some() {
-            self.instancing.hdr_solid_pipeline = None;
+        if self.instancing.hdr.is_some() {
+            self.instancing.hdr = None;
             self.ensure_hdr_instanced_pipelines(device);
         }
-        if self.oit.instanced_pipeline.is_some() {
-            self.oit.instanced_pipeline = None;
+        if self.oit.instanced.is_some() {
+            self.oit.instanced = None;
             self.ensure_oit_instanced_pipeline(device);
         }
         if self.cull.bind_group_layout.is_some() {
             self.cull.bind_group_layout = None;
             self.ensure_cull_instance_pipelines(device);
         }
-        if self.cull.hdr_solid_pipeline.is_some() {
-            self.cull.hdr_solid_pipeline = None;
+        if self.cull.hdr.is_some() {
+            self.cull.hdr = None;
             self.ensure_hdr_cull_pipelines(device);
         }
-        if self.cull.oit_pipeline.is_some() {
-            self.cull.oit_pipeline = None;
+        if self.cull.oit.is_some() {
+            self.cull.oit = None;
             self.ensure_oit_cull_pipelines(device);
         }
     }
@@ -2079,8 +2079,8 @@ mod tests {
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
 
-        // Nothing has been drawn, so the base family is not built yet.
-        assert!(renderer.resources().scene.solid.is_none());
+        // Nothing has been drawn, so the base family is not composed yet.
+        assert!(renderer.resources().scene.ldr.is_none());
 
         let body = "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    if (deform_slot_stride(0u) > 0u) {\n        o.position.z = o.position.z + deform_read_f32(0u, v.vertex_index, 0u);\n    }\n    return o;\n}\n";
         let desc = DeformerDesc {
@@ -2100,12 +2100,15 @@ mod tests {
             .flush_mesh_pipeline_rebuild(&device);
 
         // Nothing has drawn a mesh, so there is still nothing to rebuild.
-        assert!(renderer.resources().scene.solid.is_none());
+        assert!(renderer.resources().scene.ldr.is_none());
 
-        // First use builds the family with the deformer composed in.
+        // First use composes the family with the deformer in, and under
+        // `Blocking` a read builds the member asked for.
+        renderer.set_pipeline_compilation(crate::PipelineCompilation::Blocking);
         renderer.resources_mut().ensure_ldr_mesh_pipelines(&device);
-        assert!(renderer.resources().scene.solid.is_some());
-        assert!(renderer.resources().scene.wireframe.is_some());
+        assert!(renderer.resources().scene.ldr.is_some());
+        assert!(renderer.resources().scene.solid().is_some());
+        assert!(renderer.resources().scene.wireframe().is_some());
     }
 
     #[test]

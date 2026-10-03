@@ -328,10 +328,7 @@ macro_rules! emit_draw_calls {
 
                     // Draw opaque instanced batches.
                     if !opaque_batches.is_empty() && !frame.viewport.wireframe_mode {
-                        if let (Some(pipeline), Some(pipeline_two_sided)) = (
-                            &resources.instancing.solid_pipeline,
-                            &resources.instancing.solid_two_sided_pipeline,
-                        ) {
+                        if resources.instancing.ldr.is_some() {
                             // Early-Z fast path: discard-free pipeline twin for
                             // opaque batches when no clip object or alpha-mask
                             // instance can discard this frame.
@@ -340,10 +337,6 @@ macro_rules! emit_draw_calls {
                                 .clip.objects
                                 .iter()
                                 .any(|o| o.enabled && o.clip_geometry);
-                            let nodiscard_pipes = (
-                                resources.instancing.solid_nodiscard_pipeline.as_ref(),
-                                resources.instancing.solid_two_sided_nodiscard_pipeline.as_ref(),
-                            );
                             bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
                             // Batches are sorted with two_sided in the key, so one- and
                             // two-sided runs are contiguous; switch pipeline on change.
@@ -369,17 +362,15 @@ macro_rules! emit_draw_calls {
                                 );
                                 // Combined (instance storage + texture) bind group, primed in prepare().
                                 let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
-                                let no_discard = !clipping_active
-                                    && !batch.has_alpha_mask
-                                    && nodiscard_pipes.0.is_some()
-                                    && nodiscard_pipes.1.is_some();
+                                let no_discard = !clipping_active && !batch.has_alpha_mask;
                                 if cur_pipe != Some((batch.two_sided, no_discard)) {
-                                    render_pass.set_pipeline(match (no_discard, batch.two_sided) {
-                                        (true, true) => nodiscard_pipes.1.unwrap(),
-                                        (true, false) => nodiscard_pipes.0.unwrap(),
-                                        (false, true) => pipeline_two_sided,
-                                        (false, false) => pipeline,
-                                    });
+                                    // A pipeline still compiling skips the batch this frame.
+                                    let Some(pipeline) = resources.instancing.ldr_opaque(PipelineKey {
+                                        two_sided: batch.two_sided,
+                                        no_discard_eligible: no_discard,
+                                        ..PipelineKey::default()
+                                    }) else { cur_pipe = None; continue };
+                                    render_pass.set_pipeline(pipeline);
                                     cur_pipe = Some((batch.two_sided, no_discard));
                                 }
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
@@ -452,7 +443,7 @@ macro_rules! emit_draw_calls {
 
                     // Draw transparent instanced batches.
                     if !transparent_batches.is_empty() && !frame.viewport.wireframe_mode {
-                        if let Some(ref pipeline) = resources.instancing.transparent_pipeline {
+                        if let Some(pipeline) = resources.instancing.ldr_transparent() {
                             render_pass.set_pipeline(pipeline);
                             bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
                             let mut cur_chunks: Option<(u32, u32)> = None;
@@ -541,7 +532,8 @@ macro_rules! emit_draw_calls {
                         for item in scene_items {
                             if item.settings.hidden { continue; }
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else { continue };
-                            render_pass.set_pipeline(resources.scene.wireframe());
+                            let Some(wf) = resources.scene.wireframe() else { continue };
+                            render_pass.set_pipeline(wf);
                             bind_deform_group!(
                                 render_pass,
                                 resources,
@@ -591,11 +583,11 @@ macro_rules! emit_draw_calls {
                                     pp.ldr_opaque(PipelineKey::two_sided(item.material.is_two_sided()))
                                 }
                             } else if is_blended {
-                                Some(resources.scene.transparent())
+                                resources.scene.transparent()
                             } else if item.material.is_two_sided() {
-                                Some(resources.scene.solid_two_sided())
+                                resources.scene.solid_two_sided()
                             } else {
-                                Some(resources.scene.solid())
+                                resources.scene.solid()
                             };
                             // A plugin pipeline still compiling skips the item this frame.
                             let Some(pipeline) = pipeline else { continue };
@@ -662,11 +654,11 @@ macro_rules! emit_draw_calls {
                                             pp.ldr_opaque(PipelineKey::two_sided(mat.is_two_sided()))
                                         }
                                     } else if blended_r {
-                                        Some(resources.scene.transparent())
+                                        resources.scene.transparent()
                                     } else if mat.is_two_sided() {
-                                        Some(resources.scene.solid_two_sided())
+                                        resources.scene.solid_two_sided()
                                     } else {
-                                        Some(resources.scene.solid())
+                                        resources.scene.solid()
                                     };
                                     let Some(pl) = pl else { continue };
                                     if cur_pipeline != Some(pl as *const _) {
@@ -827,8 +819,10 @@ macro_rules! emit_draw_calls {
                         });
 
                         if frame.viewport.wireframe_mode {
-                            if let Some(edge_buf) = &mesh.edge_index_buffer {
-                                set_pipeline_cached!(resources.scene.wireframe());
+                            if let (Some(edge_buf), Some(wf)) =
+                                (&mesh.edge_index_buffer, resources.scene.wireframe())
+                            {
+                                set_pipeline_cached!(wf);
                                 set_deform_cached!(deform_bg);
                                 render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                                 render_pass.set_index_buffer(
@@ -885,11 +879,11 @@ macro_rules! emit_draw_calls {
                                             pp.ldr_opaque(PipelineKey::two_sided(mat.is_two_sided()))
                                         }
                                     } else if blended_r {
-                                        Some(resources.scene.transparent())
+                                        resources.scene.transparent()
                                     } else if mat.is_two_sided() {
-                                        Some(resources.scene.solid_two_sided())
+                                        resources.scene.solid_two_sided()
                                     } else {
-                                        Some(resources.scene.solid())
+                                        resources.scene.solid()
                                     };
                                     let Some(pl) = pl else { continue };
                                     set_pipeline_cached!(pl);
@@ -953,9 +947,11 @@ macro_rules! emit_draw_calls {
                         }
 
                         if item.show_normals {
-                            if let Some(ref nl_buf) = mesh.normal_line_buffer {
+                            if let (Some(nl_buf), Some(wf)) =
+                                (&mesh.normal_line_buffer, resources.scene.wireframe())
+                            {
                                 if mesh.normal_line_count > 0 {
-                                    set_pipeline_cached!(resources.scene.wireframe());
+                                    set_pipeline_cached!(wf);
                                     set_deform_cached!(&resources.deform.dummy_bind_group);
                                     render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
                                     render_pass.set_vertex_buffer(0, nl_buf.slice(..));
@@ -972,9 +968,9 @@ macro_rules! emit_draw_calls {
                     let pl = if let Some((pp, _)) = plug {
                         pp.ldr_opaque(PipelineKey::two_sided(entry.1.material.is_two_sided()))
                     } else if entry.1.material.is_two_sided() {
-                        Some(resources.scene.solid_two_sided())
+                        resources.scene.solid_two_sided()
                     } else {
-                        Some(resources.scene.solid())
+                        resources.scene.solid()
                     };
                     // A plugin pipeline still compiling skips the item this frame.
                     let Some(pl) = pl else { continue };
@@ -986,7 +982,7 @@ macro_rules! emit_draw_calls {
                     {
                         pp.ldr_transparent()
                     } else {
-                        Some(resources.scene.transparent())
+                        resources.scene.transparent()
                     };
                     let Some(pl) = pl else { continue };
                     draw_item!((entry.0, entry.1), pl);

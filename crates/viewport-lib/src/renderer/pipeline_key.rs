@@ -198,23 +198,3 @@ pub(crate) fn select_two_sided<'p>(
 ) -> &'p crate::gpu::RenderPipeline {
     if key.two_sided { two_sided } else { one_sided }
 }
-
-/// The opaque scene pass's four-way select: facedness x the discard-free
-/// early-Z twin. `nodiscard` / `nodiscard_two_sided` are `None` when the twin
-/// was not built for this pass (a legitimate capability fallback -- some
-/// backends skip it under storage-buffer pressure -- not a variant gap, so
-/// this never touches `missing_variant`).
-pub(crate) fn select_opaque_solid<'p>(
-    key: PipelineKey,
-    solid: &'p crate::gpu::RenderPipeline,
-    solid_two_sided: &'p crate::gpu::RenderPipeline,
-    nodiscard: Option<&'p crate::gpu::RenderPipeline>,
-    nodiscard_two_sided: Option<&'p crate::gpu::RenderPipeline>,
-) -> &'p crate::gpu::RenderPipeline {
-    if key.no_discard_eligible {
-        if let (Some(nd), Some(nd_two_sided)) = (nodiscard, nodiscard_two_sided) {
-            return if key.two_sided { nd_two_sided } else { nd };
-        }
-    }
-    select_two_sided(key, solid, solid_two_sided)
-}

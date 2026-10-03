@@ -17,6 +17,7 @@ use per_object_state::PerObjectState;
 mod shadow_state;
 use shadow_state::ShadowState;
 mod blit;
+mod colour_ready;
 mod paths;
 pub use blit::BlitTexture;
 pub use capture::{CapturedHdr, CapturedHdrGpu};
@@ -39,7 +40,7 @@ pub use readback::ExposureReadback;
 // Gaussian splat upload vocabulary lives in `resources`; re-exported here so the
 // public `renderer::GaussianSplat*` path and its doc links stay stable.
 pub(crate) mod pipeline_key;
-use pipeline_key::{PipelineKey, select_opaque_solid, select_two_sided};
+use pipeline_key::{PipelineKey, select_two_sided};
 mod point_shadow_pool;
 mod prepare;
 mod render;
@@ -3500,8 +3501,10 @@ impl ViewportRenderer {
             if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for (slot, mesh_id) in self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate() {
-                    if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
-                        render_pass.set_pipeline(self.resources.scene.wireframe());
+                    if let (Some(mesh), Some(wf)) =
+                        (self.resources.mesh_store.get(*mesh_id), self.resources.scene.wireframe())
+                    {
+                        render_pass.set_pipeline(wf);
                         bind_deform_group!(
                             render_pass,
                             self.resources,
