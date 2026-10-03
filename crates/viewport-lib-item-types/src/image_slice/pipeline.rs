@@ -1,5 +1,6 @@
 //! GPU state for the image slice item type: the render, pick, and
-//! outline-mask pipelines and the per-frame per-item bind groups.
+//! outline-mask pipelines, each built the first time a draw needs it, and the
+//! per-frame per-item bind groups.
 
 use super::types::ImageSliceItem;
 use super::types::SliceAxis;
@@ -9,13 +10,97 @@ use viewport_lib::plugin_api::builders;
 use viewport_lib::renderer::PickId;
 use viewport_lib::resources::DeviceResources;
 
-/// Pipelines and layouts, built lazily on the first prepare with items.
+/// Members of [`ImageSlicePipelines`].
+pub(super) const COLOUR_LDR: usize = 0;
+pub(super) const COLOUR_HDR: usize = 1;
+pub(super) const PICK: usize = 2;
+pub(super) const MASK: usize = 3;
+
+/// What an image slice pipeline build reads.
+pub(super) struct ImageSliceRecipe {
+    device: gpu::Device,
+    builder: viewport_lib::plugin_api::PipelineBuilder,
+    layout: gpu::PipelineLayout,
+    shader: gpu::ShaderModule,
+    bgl: gpu::BindGroupLayout,
+    pick_shader: gpu::ShaderModule,
+    pick_id_bgl: gpu::BindGroupLayout,
+    mask_shader: gpu::ShaderModule,
+    sample_count: u32,
+    ldr_format: gpu::TextureFormat,
+}
+
+/// The render pipeline in both formats, the pick pipeline and the outline
+/// mask, each built the first time a draw needs it.
+pub(super) type ImageSlicePipelines = viewport_lib::plugin_api::LazyPipelines<ImageSliceRecipe, 4>;
+
+fn build(r: &ImageSliceRecipe, i: usize) -> gpu::RenderPipeline {
+    let primitive = gpu::PrimitiveState {
+        topology: gpu::PrimitiveTopology::TriangleList,
+        cull_mode: None,
+        ..Default::default()
+    };
+    match i {
+        COLOUR_LDR | COLOUR_HDR => builders::build_dual_pipeline_variant(
+            &r.device,
+            &builders::DualPipelineDesc {
+                label: "image_slice_pipeline",
+                layout: &r.layout,
+                shader: &r.shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[], // no vertex buffer: generates quad from vertex_index
+                blend: Some(gpu::BlendState::ALPHA_BLENDING),
+                topology: gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: false,
+                depth_compare: gpu::CompareFunction::LessEqual,
+                sample_count: r.sample_count,
+                ldr_format: r.ldr_format,
+            },
+            i == COLOUR_HDR,
+        ),
+        // Pick: same quad expansion (group 1 reuses the render bind group
+        // unchanged), object id at group 2, constant-0 primitive channel.
+        // Laid out against the shared group-0 camera, which the pick pass
+        // binds before plugin dispatch.
+        PICK => r.builder.build_pick_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive,
+                extra_bind_group_layouts: &[&r.bgl, &r.pick_id_bgl],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some("image_slice_pick_pipeline"),
+                    &r.pick_shader,
+                    "vs_main",
+                    "fs_main",
+                    &[],
+                )
+            },
+        ),
+        // Outline mask: the same quad rasterised into the R8 selection mask.
+        _ => r.builder.build_mask_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive,
+                extra_bind_group_layouts: &[&r.bgl],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some("image_slice_mask_pipeline"),
+                    &r.mask_shader,
+                    "vs_main",
+                    "fs_main",
+                    &[],
+                )
+            },
+        ),
+    }
+}
+
+/// Pipelines and layouts, made on the first prepare with items.
 pub(super) struct ImageSliceGpu {
     pub(super) bgl: gpu::BindGroupLayout,
-    pub(super) pipeline: builders::DualPipeline,
-    pub(super) pick_pipeline: gpu::RenderPipeline,
+    pub(super) pipelines: ImageSlicePipelines,
     pub(super) pick_id_bgl: gpu::BindGroupLayout,
-    pub(super) mask_pipeline: gpu::RenderPipeline,
     /// Linear clamp sampler for the 3D field; shared by every slice.
     pub(super) vol_sampler: gpu::Sampler,
 }
@@ -111,29 +196,7 @@ impl ImageSliceGpu {
             resources.shared_bindings().group0_layout,
             &bgl,
         );
-        let pipeline = builders::build_dual_pipeline(
-            device,
-            &builders::DualPipelineDesc {
-                label: "image_slice_pipeline",
-                layout: &layout,
-                shader: &shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[], // no vertex buffer: generates quad from vertex_index
-                blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                topology: gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                depth_write: false,
-                depth_compare: gpu::CompareFunction::LessEqual,
-                sample_count: resources.sample_count(),
-                ldr_format: resources.target_format(),
-            },
-        );
-
-        // Pick: same quad expansion (group 1 reuses the render bind group
-        // unchanged), object id at group 2, constant-0 primitive channel.
-        // Laid out against the shared group-0 camera, which the pick pass
-        // binds before plugin dispatch.
+        // Group 2 of the pick pipeline: the item's object id.
         let pick_id_bgl = device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
             label: Some("image_slice_pick_id_bgl"),
             entries: &[gpu::BindGroupLayoutEntry {
@@ -152,60 +215,42 @@ impl ImageSliceGpu {
             "image_slice_pick_shader",
             &scene_shader(&[], wgsl_source!("image_slice_pick")),
         );
-        let pick_pipeline = resources.build_pick_pipeline(
-            device,
-            &viewport_lib::resources::PluginPipelineOpts {
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                extra_bind_group_layouts: &[&bgl, &pick_id_bgl],
-                ..viewport_lib::resources::PluginPipelineOpts::new(
-                    Some("image_slice_pick_pipeline"),
-                    &pick_shader,
-                    "vs_main",
-                    "fs_main",
-                    &[],
-                )
-            },
-        );
-
-        // Outline mask: the same quad rasterised into the R8 selection mask.
         let mask_shader = builders::wgsl_module(
             device,
             "image_slice_mask_shader",
             &scene_shader(&[], wgsl_source!("image_slice_mask")),
         );
-        let mask_pipeline = resources.build_mask_pipeline(
-            device,
-            &viewport_lib::resources::PluginPipelineOpts {
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                extra_bind_group_layouts: &[&bgl],
-                ..viewport_lib::resources::PluginPipelineOpts::new(
-                    Some("image_slice_mask_pipeline"),
-                    &mask_shader,
-                    "vs_main",
-                    "fs_main",
-                    &[],
-                )
-            },
-        );
-
         let vol_sampler = builders::clamp_linear_sampler(device, "image_slice_vol_sampler");
+
+        let pipelines = resources.lazy_pipelines(
+            ImageSliceRecipe {
+                device: device.clone(),
+                builder: resources.pipeline_builder(),
+                layout,
+                shader,
+                bgl: bgl.clone(),
+                pick_shader,
+                pick_id_bgl: pick_id_bgl.clone(),
+                mask_shader,
+                sample_count: resources.sample_count(),
+                ldr_format: resources.target_format(),
+            },
+            build,
+        );
 
         Self {
             bgl,
-            pipeline,
-            pick_pipeline,
+            pipelines,
             pick_id_bgl,
-            mask_pipeline,
             vol_sampler,
         }
+    }
+
+    /// Whether the render pipeline can draw this frame in either format. The
+    /// mask and pick passes wait for it, so a slice is never outlined or
+    /// picked before it is drawn.
+    pub(super) fn drawn(&self) -> bool {
+        self.pipelines.available(COLOUR_LDR) || self.pipelines.available(COLOUR_HDR)
     }
 
     /// Build the per-item uniform + bind group, or `None` when the item's
