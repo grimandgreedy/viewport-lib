@@ -324,6 +324,21 @@ impl ItemTypePlugin for GpuParticlesPlugin {
         self.systems.allocated_bytes()
     }
 
+    /// Builds the compute pipelines and asks for every draw pipeline.
+    fn warm(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        resources: &viewport_lib::DeviceResources,
+    ) {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| ParticleLayouts::new(device));
+        let gpu = self
+            .gpu
+            .get_or_insert_with(|| pipeline::ParticleGpu::new(device, resources, layouts));
+        gpu.pipelines.request_all();
+    }
+
     fn on_device_recreated(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -480,20 +495,22 @@ impl ItemTypePlugin for GpuParticlesPlugin {
         for pd in &self.frame {
             match pd.route {
                 ParticleDrawRoute::Sprite { lit } => {
-                    let dual = match (pd.blend, lit) {
-                        (SpriteBlend::Additive, false) => &gpu.sprite_pipeline_additive,
-                        (SpriteBlend::Premultiplied, false) => &gpu.sprite_pipeline_premultiplied,
-                        (SpriteBlend::AlphaBlend, false) => &gpu.sprite_pipeline_alpha,
-                        (SpriteBlend::Additive, true) => &gpu.sprite_lit_pipeline_additive,
-                        (SpriteBlend::Premultiplied, true) => {
-                            &gpu.sprite_lit_pipeline_premultiplied
-                        }
-                        (SpriteBlend::AlphaBlend, true) => &gpu.sprite_lit_pipeline_alpha,
-                    };
                     let Some(draw_bg) = pd.draw_bg.as_ref() else {
                         continue;
                     };
-                    pass.set_pipeline(dual.for_format(hdr));
+                    let route = if lit {
+                        pipeline::SPRITE_LIT
+                    } else {
+                        pipeline::SPRITE
+                    };
+                    // Still compiling: this system draws next frame.
+                    let Some(pl) = gpu
+                        .pipelines
+                        .get(pipeline::draw_index(route, pd.blend, hdr))
+                    else {
+                        continue;
+                    };
+                    pass.set_pipeline(pl);
                     pass.set_bind_group(1, draw_bg, &[]);
                     if lit {
                         let normal_bg = pd
@@ -505,15 +522,16 @@ impl ItemTypePlugin for GpuParticlesPlugin {
                     pass.draw(0..6, 0..pd.capacity);
                 }
                 ParticleDrawRoute::Mesh { mesh_id } => {
-                    let dual = match pd.blend {
-                        SpriteBlend::Additive => &gpu.mesh_pipeline_additive,
-                        SpriteBlend::Premultiplied => &gpu.mesh_pipeline_premultiplied,
-                        SpriteBlend::AlphaBlend => &gpu.mesh_pipeline_alpha,
-                    };
                     let Some(draw_bg) = pd.draw_bg_mesh.as_ref() else {
                         continue;
                     };
-                    pass.set_pipeline(dual.for_format(hdr));
+                    let Some(pl) =
+                        gpu.pipelines
+                            .get(pipeline::draw_index(pipeline::MESH, pd.blend, hdr))
+                    else {
+                        continue;
+                    };
+                    pass.set_pipeline(pl);
                     pass.set_bind_group(1, draw_bg, &[]);
                     ctx.meshes
                         .draw_indexed_instanced(pass, mesh_id, pd.capacity);

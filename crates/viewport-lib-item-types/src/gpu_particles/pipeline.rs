@@ -1,31 +1,107 @@
 //! GPU state for the particle item type: the emit and sim compute pipelines,
 //! and the nine draw pipelines (three blend modes across the emissive sprite,
-//! lit sprite, and instanced mesh routes).
+//! lit sprite, and instanced mesh routes), each draw pipeline built in the
+//! format a draw needs the first time it needs it.
 //!
 //! The bind group layouts stay in `resources`, because
 //! `create_gpu_particle_system` is public API and builds each system's
 //! persistent bind groups over them; this module borrows them to build
 //! pipelines.
 
-use viewport_lib::plugin_api::builders::DualPipeline;
 use viewport_lib::plugin_api::builders::DualPipelineDesc;
+use viewport_lib::renderer::SpriteBlend;
 use viewport_lib::resources::DeviceResources;
 
-/// Every pipeline the particle hooks need, built on the first prepare that
-/// sees a system.
+/// Draw routes, the outer grouping of [`ParticlePipelines`] members.
+pub(super) const SPRITE: usize = 0;
+pub(super) const SPRITE_LIT: usize = 1;
+pub(super) const MESH: usize = 2;
+
+/// The member of [`ParticlePipelines`] for a route, blend mode and format.
+pub(super) fn draw_index(route: usize, blend: SpriteBlend, hdr: bool) -> usize {
+    let blend = match blend {
+        SpriteBlend::AlphaBlend => 0,
+        SpriteBlend::Additive => 1,
+        SpriteBlend::Premultiplied => 2,
+    };
+    (route * 3 + blend) * 2 + hdr as usize
+}
+
+/// What a particle draw pipeline build reads.
+pub(super) struct ParticleRecipe {
+    device: viewport_lib::gpu::Device,
+    draw_layout: viewport_lib::gpu::PipelineLayout,
+    sprite_shader: viewport_lib::gpu::ShaderModule,
+    lit_layout: viewport_lib::gpu::PipelineLayout,
+    lit_shader: viewport_lib::gpu::ShaderModule,
+    mesh_layout: viewport_lib::gpu::PipelineLayout,
+    mesh_shader: viewport_lib::gpu::ShaderModule,
+    sample_count: u32,
+    ldr_format: viewport_lib::gpu::TextureFormat,
+}
+
+/// Three routes by three blend modes by two formats.
+pub(super) type ParticlePipelines = viewport_lib::plugin_api::LazyPipelines<ParticleRecipe, 18>;
+
+fn build(r: &ParticleRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
+    let hdr = i % 2 == 1;
+    let route = i / 6;
+    let (blend, blend_name) = match (i / 2) % 3 {
+        0 => (viewport_lib::gpu::BlendState::ALPHA_BLENDING, "alpha"),
+        1 => (
+            viewport_lib::plugin_api::builders::ADDITIVE_BLEND,
+            "additive",
+        ),
+        _ => (
+            viewport_lib::plugin_api::builders::PREMULTIPLIED_BLEND,
+            "premultiplied",
+        ),
+    };
+    let mesh_buffers = [viewport_lib::plugin_api::builders::mesh_vertex_layout()];
+    // Sprites are billboards: no culling. Particle meshes are closed solids,
+    // so back-face culled. Neither writes depth, since particles draw
+    // transparently after the opaque pass.
+    let (route_name, layout, shader, vertex_buffers, cull_mode): (_, _, _, &[_], _) = match route {
+        SPRITE => ("sprite", &r.draw_layout, &r.sprite_shader, &[], None),
+        SPRITE_LIT => ("sprite_lit", &r.lit_layout, &r.lit_shader, &[], None),
+        _ => (
+            "mesh",
+            &r.mesh_layout,
+            &r.mesh_shader,
+            &mesh_buffers,
+            Some(viewport_lib::gpu::Face::Back),
+        ),
+    };
+    let label = format!("particle_{route_name}_{blend_name}");
+    viewport_lib::plugin_api::builders::build_dual_pipeline_variant(
+        &r.device,
+        &DualPipelineDesc {
+            label: &label,
+            layout,
+            shader,
+            vertex_entry: "vs_main",
+            fragment_entry: "fs_main",
+            vertex_buffers,
+            blend: Some(blend),
+            topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+            cull_mode,
+            depth_write: false,
+            depth_compare: viewport_lib::gpu::CompareFunction::Less,
+            sample_count: r.sample_count,
+            ldr_format: r.ldr_format,
+        },
+        hdr,
+    )
+}
+
+/// Every pipeline the particle hooks need, made on the first prepare that
+/// sees a system. The compute pipelines are built here; the draw pipelines on
+/// first use.
 pub(super) struct ParticleGpu {
     pub(super) emit_pipeline: viewport_lib::gpu::ComputePipeline,
     pub(super) sim_pipeline: viewport_lib::gpu::ComputePipeline,
-    pub(super) sprite_pipeline_alpha: DualPipeline,
-    pub(super) sprite_pipeline_additive: DualPipeline,
-    pub(super) sprite_pipeline_premultiplied: DualPipeline,
-    pub(super) sprite_lit_pipeline_alpha: DualPipeline,
-    pub(super) sprite_lit_pipeline_additive: DualPipeline,
-    pub(super) sprite_lit_pipeline_premultiplied: DualPipeline,
+    pub(super) pipelines: ParticlePipelines,
     pub(super) sprite_lit_fallback_bg: viewport_lib::gpu::BindGroup,
-    pub(super) mesh_pipeline_alpha: DualPipeline,
-    pub(super) mesh_pipeline_additive: DualPipeline,
-    pub(super) mesh_pipeline_premultiplied: DualPipeline,
 }
 
 impl ParticleGpu {
@@ -68,7 +144,6 @@ impl ParticleGpu {
             "sim_main",
         );
 
-        // Draw pipelines: three blend variants of the same shader.
         let sprite_shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
             "particle_sprite_shader",
@@ -81,39 +156,6 @@ impl ParticleGpu {
             resources.shared_bindings().group0_layout,
             &layouts.draw_bgl,
         );
-
-        let sample_count = resources.sample_count();
-        let ldr_format = resources.target_format();
-        let alpha = viewport_lib::gpu::BlendState::ALPHA_BLENDING;
-        let additive = viewport_lib::plugin_api::builders::ADDITIVE_BLEND;
-        let premul = viewport_lib::plugin_api::builders::PREMULTIPLIED_BLEND;
-
-        // Particle sprites are billboards: `Less` depth test, no depth write, no
-        // culling. Only the blend mode varies across the three variants.
-        let make_draw = |blend: viewport_lib::gpu::BlendState, label: &str| {
-            viewport_lib::plugin_api::builders::build_dual_pipeline(
-                device,
-                &DualPipelineDesc {
-                    label,
-                    layout: &draw_layout,
-                    shader: &sprite_shader,
-                    vertex_entry: "vs_main",
-                    fragment_entry: "fs_main",
-                    vertex_buffers: &[],
-                    blend: Some(blend),
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    depth_write: false,
-                    depth_compare: viewport_lib::gpu::CompareFunction::Less,
-                    sample_count,
-                    ldr_format,
-                },
-            )
-        };
-
-        let sprite_pipeline_alpha = make_draw(alpha, "particle_sprite_alpha");
-        let sprite_pipeline_additive = make_draw(additive, "particle_sprite_additive");
-        let sprite_pipeline_premultiplied = make_draw(premul, "particle_sprite_premultiplied");
 
         let lit_shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
@@ -130,32 +172,6 @@ impl ParticleGpu {
                 &layouts.sprite_lit_bgl,
             ],
         );
-
-        let make_lit_draw = |blend: viewport_lib::gpu::BlendState, label: &str| {
-            viewport_lib::plugin_api::builders::build_dual_pipeline(
-                device,
-                &DualPipelineDesc {
-                    label,
-                    layout: &lit_layout,
-                    shader: &lit_shader,
-                    vertex_entry: "vs_main",
-                    fragment_entry: "fs_main",
-                    vertex_buffers: &[],
-                    blend: Some(blend),
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    depth_write: false,
-                    depth_compare: viewport_lib::gpu::CompareFunction::Less,
-                    sample_count,
-                    ldr_format,
-                },
-            )
-        };
-
-        let sprite_lit_pipeline_alpha = make_lit_draw(alpha, "particle_sprite_lit_alpha");
-        let sprite_lit_pipeline_additive = make_lit_draw(additive, "particle_sprite_lit_additive");
-        let sprite_lit_pipeline_premultiplied =
-            make_lit_draw(premul, "particle_sprite_lit_premultiplied");
 
         let sprite_lit_fallback_bg =
             device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
@@ -190,46 +206,26 @@ impl ParticleGpu {
             &layouts.mesh_draw_bgl,
         );
 
-        // Particle meshes are closed solids, so back-face culled; still no depth
-        // write since particles draw transparently after the opaque pass.
-        let make_mesh_draw = |blend: viewport_lib::gpu::BlendState, label: &str| {
-            viewport_lib::plugin_api::builders::build_dual_pipeline(
-                device,
-                &DualPipelineDesc {
-                    label,
-                    layout: &mesh_layout,
-                    shader: &mesh_shader,
-                    vertex_entry: "vs_main",
-                    fragment_entry: "fs_main",
-                    vertex_buffers: &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
-                    blend: Some(blend),
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: Some(viewport_lib::gpu::Face::Back),
-                    depth_write: false,
-                    depth_compare: viewport_lib::gpu::CompareFunction::Less,
-                    sample_count,
-                    ldr_format,
-                },
-            )
-        };
-
-        let mesh_pipeline_alpha = make_mesh_draw(alpha, "particle_mesh_alpha");
-        let mesh_pipeline_additive = make_mesh_draw(additive, "particle_mesh_additive");
-        let mesh_pipeline_premultiplied = make_mesh_draw(premul, "particle_mesh_premultiplied");
+        let pipelines = resources.lazy_pipelines(
+            ParticleRecipe {
+                device: device.clone(),
+                draw_layout,
+                sprite_shader,
+                lit_layout,
+                lit_shader,
+                mesh_layout,
+                mesh_shader,
+                sample_count: resources.sample_count(),
+                ldr_format: resources.target_format(),
+            },
+            build,
+        );
 
         Self {
             emit_pipeline,
             sim_pipeline,
-            sprite_pipeline_alpha,
-            sprite_pipeline_additive,
-            sprite_pipeline_premultiplied,
-            sprite_lit_pipeline_alpha,
-            sprite_lit_pipeline_additive,
-            sprite_lit_pipeline_premultiplied,
+            pipelines,
             sprite_lit_fallback_bg,
-            mesh_pipeline_alpha,
-            mesh_pipeline_additive,
-            mesh_pipeline_premultiplied,
         }
     }
 }
