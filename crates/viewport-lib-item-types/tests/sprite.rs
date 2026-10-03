@@ -237,7 +237,8 @@ fn set_len_moves_the_sprite_draw_count() {
 }
 
 /// Naming the sprite type in a warm-up builds its pipelines, so the first
-/// frame that draws sprites, in either format, compiles none of them.
+/// frame that draws sprites, in either format, compiles none of them: not the
+/// colour variants, and not the OIT, refraction, outline or pick pipelines.
 #[test]
 fn a_warmed_sprite_type_builds_nothing_on_its_first_frame() {
     let Some((device, queue)) = headless_device() else {
@@ -260,8 +261,20 @@ fn a_warmed_sprite_type_builds_nothing_on_its_first_frame() {
         if !hdr {
             frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
         }
-        frame.scene.items_mut::<SpriteItem>().push(sample_sprites());
+        frame.interaction.outline_selected = true;
+        // Blended (OIT in HDR), depth-writing and selected, and refractive.
+        let mut opaque = sample_sprites();
+        opaque.depth_write = true;
+        opaque.settings.pick_id = PickId(1);
+        opaque.settings.selected = true;
+        let mut refractive = sample_sprites();
+        refractive.refraction_strength = Some(0.5);
+        frame
+            .scene
+            .items_mut::<SpriteItem>()
+            .extend([sample_sprites(), opaque, refractive]);
         let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        let _ = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     }
     let sprite_builds: Vec<String> = viewport_lib::resources::build_log::drain()
         .into_iter()

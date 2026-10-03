@@ -501,6 +501,7 @@ impl ItemTypePlugin for SpritePlugin {
             .gpu
             .get_or_insert_with(|| pipeline::SpriteGpu::new(device, resources, layouts));
         gpu.pipelines.request_all();
+        gpu.passes.request_all();
     }
 
     fn resident_bytes(&self) -> u64 {
@@ -680,17 +681,12 @@ impl ItemTypePlugin for SpritePlugin {
     ) {
         let Some(gpu) = &self.gpu else { return };
         for sprite in self.frame.iter().filter(|s| s.oit_eligible && !s.wireframe) {
-            let pipeline = match (sprite.lit, sprite.blend) {
-                (true, viewport_lib::renderer::SpriteBlend::Premultiplied) => {
-                    &gpu.oit_lit_pipeline_premultiplied
-                }
-                (true, _) => &gpu.oit_lit_pipeline,
-                (false, viewport_lib::renderer::SpriteBlend::Premultiplied) => {
-                    &gpu.oit_pipeline_premultiplied
-                }
-                (false, _) => &gpu.oit_pipeline,
+            // Still compiling: this batch draws next frame.
+            let member = pipeline::oit_index(sprite.lit, sprite.blend);
+            let Some(pl) = gpu.passes.get(member) else {
+                continue;
             };
-            pass.set_pipeline(pipeline);
+            pass.set_pipeline(pl);
             pass.set_bind_group(1, &sprite.bind_group, &[]);
             if sprite.lit {
                 let normal_bg = sprite
@@ -716,11 +712,17 @@ impl ItemTypePlugin for SpritePlugin {
         }
         // The billboard quads themselves go into the mask, so the outline
         // follows each sprite's shape and per-instance size.
-        pass.set_pipeline(&gpu.outline_mask_pipeline);
+        let Some(pl) = gpu.passes.get(pipeline::OUTLINE_MASK) else {
+            return;
+        };
+        pass.set_pipeline(pl);
         for outline in &self.outlines {
             let Some(sprite) = self.frame.get(outline.frame_index) else {
                 continue;
             };
+            if !gpu.drawn(sprite) {
+                continue;
+            }
             pass.set_bind_group(1, &sprite.bind_group, &[]);
             pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
             match &outline.instances {
@@ -744,14 +746,17 @@ impl ItemTypePlugin for SpritePlugin {
         let mut bound = false;
         // Only batches that wrote depth own pixels a decal could land on.
         for (sprite, settings) in self.frame.iter().zip(&self.frame_settings) {
-            if !is_opaque(sprite) {
+            if !is_opaque(sprite) || !gpu.drawn(sprite) {
                 continue;
             }
             let Some(value) = ctx.stamp_for(settings) else {
                 continue;
             };
             if !bound {
-                pass.set_pipeline(&gpu.surface_mask_pipeline);
+                let Some(pl) = gpu.passes.get(pipeline::SURFACE_MASK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 // The stencil being written shares a texture with the depth
                 // the soft fade would sample, so group 2 gets the fallback, as
                 // in the opaque pass.
@@ -783,6 +788,10 @@ impl ItemTypePlugin for SpritePlugin {
         {
             return;
         }
+        // Still compiling: the refractive sprites draw next frame.
+        let Some(refraction_pipeline) = gpu.passes.get(pipeline::REFRACTION) else {
+            return;
+        };
         // A pass cannot sample the colour target it is drawing into, so the
         // scene colour is copied aside first and the refractive sprites sample
         // the copy.
@@ -868,7 +877,7 @@ impl ItemTypePlugin for SpritePlugin {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        pass.set_pipeline(&gpu.refraction_pipeline);
+        pass.set_pipeline(refraction_pipeline);
         pass.set_bind_group(0, ctx.camera_bind_group, &[]);
         pass.set_bind_group(2, &bind_group, &[]);
         for sprite in &self.frame {
@@ -972,8 +981,14 @@ impl ItemTypePlugin for SpritePlugin {
         let mut bound = false;
         for (sprite, pick_bg) in self.frame.iter().zip(self.pick_bind_groups.iter()) {
             let Some(pick_bg) = pick_bg else { continue };
+            if !gpu.drawn(sprite) {
+                continue;
+            }
             if !bound {
-                pass.set_pipeline(&gpu.pick_pipeline);
+                let Some(pl) = gpu.passes.get(pipeline::PICK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             pass.set_bind_group(1, &sprite.bind_group, &[]);
