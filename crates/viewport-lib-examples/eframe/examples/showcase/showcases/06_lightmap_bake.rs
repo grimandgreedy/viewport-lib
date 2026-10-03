@@ -25,17 +25,15 @@
 //! baked atlas on a floating panel, and reports how many pages the multi-page hero
 //! spilled into.
 
-use viewport_lib::wgpu;
 use crate::eframe::egui;
 use glam::{Mat3, Mat4, Vec2, Vec3};
 use viewport_lib as vpl;
+use viewport_lib::wgpu;
 use viewport_lib_lightbake::denoise::{DenoiseParams, denoise, dilate};
 use viewport_lib_lightbake::encode::{Encoding, encode};
 use viewport_lib_lightbake::stitch::{StitchGeometry, StitchParams, stitch};
 use vpl::bake::{TexelGeometry, rasterize_texel_gbuffer};
-use vpl::raytrace::{
-    RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, bake_lightmap_directional,
-};
+use vpl::raytrace::{RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, Tracer};
 use vpl::resources::{LightmapData, LightmapMode, TextureId};
 use vpl::{
     BackfacePolicy, ItemSettings, LightKind, LightSource, Material, MeshData, MeshId, NodeId,
@@ -183,6 +181,7 @@ pub struct LightmapBakeShowcase {
     scene_pages: u32,
     scene_page_size: u32,
     bake_ms: u32,
+    timings: BakeTimings,
     directionality: f32,
     request_rebake: bool,
     /// The glowing ceiling panel shown (and emitting) in Emissive GI mode.
@@ -223,6 +222,7 @@ impl LightmapBakeShowcase {
             scene_pages: 0,
             scene_page_size: 0,
             bake_ms: 0,
+            timings: BakeTimings::default(),
             directionality: 0.0,
             request_rebake: false,
             emissive_panel: None,
@@ -346,6 +346,7 @@ impl LightmapBakeShowcase {
                     gn_pages.push(Vec::new());
                     continue;
                 }
+                let t = std::time::Instant::now();
                 let gbuf = rasterize_texel_gbuffer(
                     device,
                     queue,
@@ -359,7 +360,9 @@ impl LightmapBakeShowcase {
                     aw,
                     ah,
                 );
-                let bake = bake_lightmap_directional(
+                self.timings.gbuffer_ms += ms_since(t);
+                self.timings.gbuffers += 1;
+                let bake = timed_solve(
                     device,
                     queue,
                     &scene,
@@ -370,6 +373,7 @@ impl LightmapBakeShowcase {
                         world_normal: &gbuf.world_normal,
                     },
                     &settings,
+                    &mut self.timings,
                 );
                 irr_pages.push(to_rgba4(&bake.irradiance));
                 dir_pages.push(to_rgba4(&bake.direction));
@@ -399,6 +403,8 @@ impl LightmapBakeShowcase {
             if !self.pieces[i].baked || self.pieces[i].raw_irradiance.is_empty() {
                 continue;
             }
+            let piece_start = std::time::Instant::now();
+            let mut piece_upload_ms = 0.0f32;
             let (aw, ah) = (self.pieces[i].atlas_w, self.pieces[i].atlas_h);
             let atlas_count = self.pieces[i].atlas_count.max(1);
             let idx = self.pieces[i].idx.clone();
@@ -417,6 +423,7 @@ impl LightmapBakeShowcase {
                     denoised_pages.push(vec![[0.0f32; 4]; page_texels]);
                     continue;
                 }
+                let t = std::time::Instant::now();
                 let d = if self.denoise {
                     denoise(
                         raw,
@@ -429,6 +436,8 @@ impl LightmapBakeShowcase {
                 } else {
                     raw.clone()
                 };
+                self.timings.denoise_ms += ms_since(t);
+                self.timings.piece_texels += page_texels as u64;
                 denoised_pages.push(d);
             }
 
@@ -450,6 +459,7 @@ impl LightmapBakeShowcase {
                     [u.x, (u.y + page) * inv_p]
                 })
                 .collect();
+            let t = std::time::Instant::now();
             let stitched = stitch(
                 &stacked,
                 aw,
@@ -461,6 +471,7 @@ impl LightmapBakeShowcase {
                 },
                 &StitchParams::default(),
             );
+            self.timings.stitch_ms += ms_since(t);
 
             // Per page: dilate its band into the gutter, encode, and write its
             // layer. Radiance is concatenated layer-major (page 0, then page 1, ...)
@@ -475,7 +486,10 @@ impl LightmapBakeShowcase {
                     continue; // leaves this layer zeroed (no charts on this page)
                 }
                 let band = &stitched[page * page_texels..(page + 1) * page_texels];
+                let t = std::time::Instant::now();
                 let cleaned = dilate(band, aw, ah, 6);
+                self.timings.dilate_ms += ms_since(t);
+                let t = std::time::Instant::now();
                 // Encode into the neutral directional lightmap (exercises the
                 // encoder and yields the directionality stat); the display samples
                 // the radiance channel.
@@ -487,6 +501,7 @@ impl LightmapBakeShowcase {
                     &self.pieces[i].gbuf_nrm[page],
                     Encoding::DominantDirection,
                 );
+                self.timings.encode_ms += ms_since(t);
                 if let Some(dir) = lm.direction() {
                     for d in dir {
                         if d[3] > 0.0 {
@@ -530,6 +545,7 @@ impl LightmapBakeShowcase {
                             dirbuf[t * 4 + 2] = d[2];
                             dirbuf[t * 4 + 3] = d[3];
                         }
+                        let t = std::time::Instant::now();
                         dir_tex = Some(
                             ctx.session
                                 .resources_mut()
@@ -540,20 +556,29 @@ impl LightmapBakeShowcase {
                                 )
                                 .unwrap(),
                         );
+                        piece_upload_ms += ms_since(t);
                     }
                 }
             }
 
             // Single texture for single-page pieces; an N-layer texture array for
             // the multi-page hero, which set_lightmap_paged then samples per vertex.
+            let t = std::time::Instant::now();
             let res = ctx.session.resources_mut();
             let tex = if atlas_count > 1 {
                 res.upload_texture_hdr_layers(device, queue, aw, ah, atlas_count, &layers)
                     .unwrap()
             } else {
-                res.upload_texture(device, queue, vpl::TextureData::hdr(aw, ah, layers.to_vec()))
-                    .unwrap()
+                res.upload_texture(
+                    device,
+                    queue,
+                    vpl::TextureData::hdr(aw, ah, layers.to_vec()),
+                )
+                .unwrap()
             };
+            piece_upload_ms += ms_since(t);
+            self.timings.upload_ms += piece_upload_ms;
+            self.timings.cleanup_ms += ms_since(piece_start) - piece_upload_ms;
             self.pieces[i].tex = Some(tex);
             self.pieces[i].dir_tex = dir_tex;
         }
@@ -608,6 +633,16 @@ impl LightmapBakeShowcase {
                 )
                 .collect();
             let rt = self.build_rt_scene();
+            self.timings.scene_texels = prepared
+                .iter()
+                .map(|o| u64::from(o.width) * u64::from(o.height))
+                .sum();
+            // The orchestrator reports after each object and after packing; the
+            // GPU passes it called in between are subtracted to leave its CPU work.
+            let scene_gpu_ms = std::cell::Cell::new(0.0f32);
+            let mut mark = (std::time::Instant::now(), 0.0f32);
+            let mut object_ms = 0.0f32;
+            let mut pack_ms = 0.0f32;
             let mut passes = ScenePasses {
                 device,
                 queue,
@@ -618,6 +653,8 @@ impl LightmapBakeShowcase {
                     denoise: false,
                     seed: 0,
                 },
+                timings: &mut self.timings,
+                gpu_ms: &scene_gpu_ms,
             };
             // 1024 fits each hero's atlas (the torus packs to ~980), so no rect is
             // clamped; objects still spill to a second page, which the array handles.
@@ -627,7 +664,24 @@ impl LightmapBakeShowcase {
                 denoise: self.denoise,
                 ..Default::default()
             };
-            let bake = viewport_lib_lightbake::bake_scene_prepared(&prepared, &mut passes, &opts);
+            let bake = viewport_lib_lightbake::bake_scene_prepared_with_progress(
+                &prepared,
+                &mut passes,
+                &opts,
+                &mut |p| {
+                    let cpu = ms_since(mark.0) - (scene_gpu_ms.get() - mark.1);
+                    match p.stage {
+                        viewport_lib_lightbake::BakeStage::Packed => pack_ms += cpu,
+                        _ => object_ms += cpu,
+                    }
+                    mark = (std::time::Instant::now(), scene_gpu_ms.get());
+                    viewport_lib_lightbake::BakeControl::Continue
+                },
+            )
+            .expect("the bake is never cancelled");
+            self.timings.scene_object_ms += object_ms;
+            self.timings.scene_pack_ms += pack_ms;
+            let t = std::time::Instant::now();
             let tex = ctx
                 .session
                 .resources_mut()
@@ -640,6 +694,7 @@ impl LightmapBakeShowcase {
                     &bake.radiance,
                 )
                 .unwrap();
+            self.timings.upload_ms += ms_since(t);
             self.scene_atlas_tex = Some(tex);
             self.scene_objects = scene_pieces.len() as u32;
             self.scene_pages = bake.layers;
@@ -948,6 +1003,7 @@ impl Showcase for LightmapBakeShowcase {
         // later visit.
         self.baked_at = None;
         self.built = false;
+        self.timings = BakeTimings::default();
         self.applied = None;
         self.need_reencode = false;
 
@@ -977,6 +1033,7 @@ impl Showcase for LightmapBakeShowcase {
         let torus = primitives::torus(1.9, 0.7, 64, 32);
         let (mut torus_piece, torus_charts) = unwrap_piece(
             ctx,
+            &mut self.timings,
             &torus,
             Mat4::from_translation(Vec3::new(0.0, 1.0, 1.1)) * Mat4::from_rotation_x(0.35),
             TORUS_ALBEDO,
@@ -993,6 +1050,7 @@ impl Showcase for LightmapBakeShowcase {
         let sphere = primitives::icosphere(1.5, 4);
         let (mut sphere_piece, _) = unwrap_piece(
             ctx,
+            &mut self.timings,
             &sphere,
             Mat4::from_translation(Vec3::new(-4.6, -1.5, 1.5)),
             SPHERE_ALBEDO,
@@ -1004,6 +1062,7 @@ impl Showcase for LightmapBakeShowcase {
         let box_mesh = primitives::cuboid(2.4, 2.4, 2.4);
         let (box_piece, _) = unwrap_piece(
             ctx,
+            &mut self.timings,
             &box_mesh,
             Mat4::from_translation(Vec3::new(4.8, -1.2, 1.2)) * Mat4::from_rotation_z(0.5),
             BOX_ALBEDO,
@@ -1018,6 +1077,7 @@ impl Showcase for LightmapBakeShowcase {
         let knot = primitives::torus(1.3, 0.5, 96, 48);
         let (knot_piece, _) = unwrap_piece_multipage(
             ctx,
+            &mut self.timings,
             &knot,
             Mat4::from_translation(Vec3::new(0.0, -4.2, 1.35)) * Mat4::from_rotation_x(1.1),
             KNOT_ALBEDO,
@@ -1113,10 +1173,53 @@ impl Showcase for LightmapBakeShowcase {
                 || self.baked_kind != Some(self.bake_scene_variant());
             if need_trace {
                 self.request_rebake = false;
+                // Keep the setup-time unwrap figures; everything else is per bake.
+                self.timings = BakeTimings {
+                    unwrap_ms: self.timings.unwrap_ms,
+                    unwraps: self.timings.unwraps,
+                    ..Default::default()
+                };
+                if vpl::resources::build_log::enabled() {
+                    let _ = vpl::resources::build_log::drain();
+                }
                 let t0 = std::time::Instant::now();
                 self.trace_all(ctx);
                 self.encode_all(ctx);
                 self.bake_ms = t0.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
+                if vpl::resources::build_log::enabled() {
+                    let builds = vpl::resources::build_log::drain();
+                    self.timings.builds = builds.len() as u32;
+                    self.timings.build_ms = builds.iter().map(|(_, ms)| ms).sum();
+                }
+                let t = self.timings;
+                eprintln!(
+                    "lightmap bake: {} ms total | unwrap {:.0} ms ({}x, at setup) | gbuffer {:.0} ms ({}x) | \
+                     tracer setup {:.0} ms ({}x) | trace {:.0} ms | cleanup {:.0} ms (denoise {:.0}, stitch {:.0}, \
+                     dilate {:.0}, encode {:.0}; {:.2} Mtexel, {:.0} ms/Mtexel) | scene objects {:.0} ms \
+                     ({:.2} Mtexel, {:.0} ms/Mtexel) | scene pack {:.0} ms | upload {:.0} ms | builds {} ({:.0} ms)",
+                    self.bake_ms,
+                    t.unwrap_ms,
+                    t.unwraps,
+                    t.gbuffer_ms,
+                    t.gbuffers,
+                    t.tracer_ms,
+                    t.tracers,
+                    t.trace_ms,
+                    t.cleanup_ms,
+                    t.denoise_ms,
+                    t.stitch_ms,
+                    t.dilate_ms,
+                    t.encode_ms,
+                    t.piece_texels as f32 / 1.0e6,
+                    t.ms_per_mtexel().0,
+                    t.scene_object_ms,
+                    t.scene_texels as f32 / 1.0e6,
+                    t.ms_per_mtexel().1,
+                    t.scene_pack_ms,
+                    t.upload_ms,
+                    t.builds,
+                    t.build_ms,
+                );
                 self.need_reencode = false;
                 self.built = true;
                 self.baked_kind = Some(self.bake_scene_variant());
@@ -1265,12 +1368,97 @@ impl Showcase for LightmapBakeShowcase {
         ));
         ui.label(format!("Samples: {}", self.baked_at.unwrap_or(0)));
         ui.label(format!("Bake time: {} ms", self.bake_ms));
+        let t = &self.timings;
+        ui.label(format!(
+            "  unwrap (setup): {:.0} ms, {} calls",
+            t.unwrap_ms, t.unwraps
+        ));
+        ui.label(format!(
+            "  texel G-buffer: {:.0} ms, {} calls",
+            t.gbuffer_ms, t.gbuffers
+        ));
+        ui.label(format!(
+            "  tracer setup: {:.0} ms, {} tracers",
+            t.tracer_ms, t.tracers
+        ));
+        ui.label(format!("  trace: {:.0} ms", t.trace_ms));
+        ui.label(format!("  cleanup: {:.0} ms", t.cleanup_ms));
+        ui.label(format!(
+            "    denoise {:.0}, stitch {:.0}, dilate {:.0}, encode {:.0}",
+            t.denoise_ms, t.stitch_ms, t.dilate_ms, t.encode_ms
+        ));
+        ui.label(format!(
+            "  scene atlas: objects {:.0} ms, pack {:.0} ms",
+            t.scene_object_ms, t.scene_pack_ms
+        ));
+        ui.label(format!("  upload: {:.0} ms", t.upload_ms));
+        if vpl::resources::build_log::enabled() {
+            ui.label(format!(
+                "  builds: {} pipelines/modules, {:.0} ms",
+                t.builds, t.build_ms
+            ));
+        } else {
+            ui.label("  builds: set VPL_BUILD_LOG to count");
+        }
         ui.label(format!("Mean directionality: {:.2}", self.directionality));
         ui.add_space(8.0);
         ui.label(
             "Denoise off shows the raw Monte-Carlo noise; the atlas panel shows the \
              torus' baked lightmap in UV space.",
         );
+    }
+}
+
+/// Where a bake's time went, shown in the side panel and printed once per
+/// bake. Wall-clock on this thread; the GPU stages wait for their readback, so
+/// they include the GPU work.
+#[derive(Default, Clone, Copy)]
+struct BakeTimings {
+    /// xatlas, at setup.
+    unwrap_ms: f32,
+    unwraps: u32,
+    /// Texel G-buffer rasterisation, per piece and page.
+    gbuffer_ms: f32,
+    gbuffers: u32,
+    /// `Tracer::new`: kernel pipelines, scene upload and BVH, once per solve.
+    tracer_ms: f32,
+    tracers: u32,
+    /// The path-traced solve itself.
+    trace_ms: f32,
+    /// CPU cleanup of the per-piece atlases, and its stages.
+    cleanup_ms: f32,
+    denoise_ms: f32,
+    stitch_ms: f32,
+    dilate_ms: f32,
+    encode_ms: f32,
+    /// Texels the per-piece cleanup ran over.
+    piece_texels: u64,
+    /// The scene-atlas orchestrator's CPU work: per-object cleanup (the same
+    /// four stages) and packing. Its G-buffer and solve calls are counted above.
+    scene_object_ms: f32,
+    scene_pack_ms: f32,
+    scene_texels: u64,
+    upload_ms: f32,
+    /// Pipelines and shader modules built during the bake. Only counted when
+    /// the build log is on (`VPL_BUILD_LOG`).
+    builds: u32,
+    build_ms: f32,
+}
+
+impl BakeTimings {
+    /// CPU cleanup cost per million texels, per-piece path then scene path.
+    fn ms_per_mtexel(&self) -> (f32, f32) {
+        let rate = |ms: f32, texels: u64| {
+            if texels == 0 {
+                0.0
+            } else {
+                ms / (texels as f32 / 1.0e6)
+            }
+        };
+        (
+            rate(self.cleanup_ms, self.piece_texels),
+            rate(self.scene_object_ms, self.scene_texels),
+        )
     }
 }
 
@@ -1283,6 +1471,9 @@ struct ScenePasses<'a> {
     queue: &'a wgpu::Queue,
     scene: &'a RtScene,
     settings: RtSettings,
+    timings: &'a mut BakeTimings,
+    /// GPU pass time, readable while the orchestrator holds the passes.
+    gpu_ms: &'a std::cell::Cell<f32>,
 }
 
 impl viewport_lib_lightbake::SceneBakePasses for ScenePasses<'_> {
@@ -1292,6 +1483,7 @@ impl viewport_lib_lightbake::SceneBakePasses for ScenePasses<'_> {
         width: u32,
         height: u32,
     ) -> viewport_lib_lightbake::TexelGbuffer {
+        let t = std::time::Instant::now();
         let g = rasterize_texel_gbuffer(
             self.device,
             self.queue,
@@ -1305,6 +1497,9 @@ impl viewport_lib_lightbake::SceneBakePasses for ScenePasses<'_> {
             width,
             height,
         );
+        self.timings.gbuffer_ms += ms_since(t);
+        self.timings.gbuffers += 1;
+        self.gpu_ms.set(self.gpu_ms.get() + ms_since(t));
         viewport_lib_lightbake::TexelGbuffer {
             width: g.width,
             height: g.height,
@@ -1317,7 +1512,8 @@ impl viewport_lib_lightbake::SceneBakePasses for ScenePasses<'_> {
         &mut self,
         gbuffer: &viewport_lib_lightbake::TexelGbuffer,
     ) -> viewport_lib_lightbake::GiBake {
-        let bake = bake_lightmap_directional(
+        let t = std::time::Instant::now();
+        let bake = timed_solve(
             self.device,
             self.queue,
             self.scene,
@@ -1328,11 +1524,37 @@ impl viewport_lib_lightbake::SceneBakePasses for ScenePasses<'_> {
                 world_normal: &gbuffer.world_normal,
             },
             &self.settings,
+            self.timings,
         );
+        self.gpu_ms.set(self.gpu_ms.get() + ms_since(t));
         viewport_lib_lightbake::GiBake {
             irradiance: bake.irradiance,
         }
     }
+}
+
+fn ms_since(t: std::time::Instant) -> f32 {
+    t.elapsed().as_secs_f32() * 1000.0
+}
+
+/// `bake_lightmap_directional`, split so the tracer's construction and the
+/// solve are timed apart.
+fn timed_solve(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene: &RtScene,
+    surfaces: &TexelSurfaces<'_>,
+    settings: &RtSettings,
+    timings: &mut BakeTimings,
+) -> vpl::raytrace::DirectionalBake {
+    let t = std::time::Instant::now();
+    let mut tracer = Tracer::new(device, queue, scene);
+    timings.tracer_ms += ms_since(t);
+    timings.tracers += 1;
+    let t = std::time::Instant::now();
+    let bake = tracer.bake_directional(device, queue, surfaces, settings);
+    timings.trace_ms += ms_since(t);
+    bake
 }
 
 /// Upload a primitive as a baked-or-context [`Piece`], keeping its local geometry.
@@ -1390,8 +1612,10 @@ fn do_unwrap(
     mesh: &MeshData,
     resolution: u32,
     texels_per_unit: f32,
+    timings: &mut BakeTimings,
 ) -> viewport_lib_lightbake::UnwrapResult {
-    viewport_lib_lightbake::unwrap(
+    let t = std::time::Instant::now();
+    let result = viewport_lib_lightbake::unwrap(
         &viewport_lib_lightbake::UnwrapInput {
             positions: &mesh.positions,
             normals: Some(&mesh.normals),
@@ -1404,7 +1628,10 @@ fn do_unwrap(
             ..Default::default()
         },
     )
-    .expect("unwrap piece")
+    .expect("unwrap piece");
+    timings.unwrap_ms += ms_since(t);
+    timings.unwraps += 1;
+    result
 }
 
 /// Build a baked [`Piece`] from an unwrap result. `normal_tex` opts the piece
@@ -1474,12 +1701,13 @@ fn build_piece_from_unwrap(
 /// `normal_tex` opts the piece into normal mapping + a directional lightmap.
 fn unwrap_piece(
     ctx: &mut SetupCtx,
+    timings: &mut BakeTimings,
     mesh: &MeshData,
     xf: Mat4,
     albedo: [f32; 3],
     normal_tex: Option<TextureId>,
 ) -> (Piece, u32) {
-    let unwrapped = do_unwrap(mesh, ATLAS, 0.0);
+    let unwrapped = do_unwrap(mesh, ATLAS, 0.0, timings);
     build_piece_from_unwrap(ctx, mesh, xf, albedo, normal_tex, unwrapped)
 }
 
@@ -1491,13 +1719,14 @@ fn unwrap_piece(
 /// raised until the charts no longer fit one page and xatlas spills onto more.
 fn unwrap_piece_multipage(
     ctx: &mut SetupCtx,
+    timings: &mut BakeTimings,
     mesh: &MeshData,
     xf: Mat4,
     albedo: [f32; 3],
 ) -> (Piece, u32) {
     let mut tpu = 48.0f32;
     let unwrapped = loop {
-        let u = do_unwrap(mesh, ATLAS, tpu);
+        let u = do_unwrap(mesh, ATLAS, tpu, timings);
         if u.atlas_count >= 2 || tpu >= 320.0 {
             break u;
         }
