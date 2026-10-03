@@ -273,6 +273,8 @@ struct VertexOut {
     @location(11) @interpolate(flat) obj_idx: u32,
     // Second UV set (glTF TEXCOORD_1); vec2(0.0) for meshes without one.
     @location(12) uv1: vec2<f32>,
+    // Kept-surface value from deformers that define `keep`; see deform.wgsl.
+    // <viewport-deform-keep> @location(13) deform_keep: f32,
     // Plugin vertex-attribute varying: the composer adds a @location(8)
     // member here for hooks that read the per-vertex extension attribute.
     // <viewport-shade-slot:vertex-out>
@@ -309,6 +311,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     dv.position = world_pos4.xyz;
     dv.normal = normalize(model3 * dv.normal);
     dv = viewport_deform_world_space(dv, dctx);
+    // <viewport-deform-keep> out.deform_keep = viewport_deform_keep(dv, dctx);
     let world_pos = vec4<f32>(dv.position, 1.0);
     out.clip_pos = camera.view_proj * world_pos;
     out.colour = in.colour;
@@ -496,6 +499,9 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     let d_uv1_dy = dpdy(in.uv1);
     let d_wp_dx = dpdx(in.world_pos);
     let d_wp_dy = dpdy(in.world_pos);
+
+    // A deformer that defines `keep` removed the surface here.
+    // <viewport-deform-keep> if in.deform_keep < 0.0 { discard; }
 
     // Section view clipping. Items with ignore_clip stay fully visible.
     if objects[in.obj_idx].ignore_clip == 0u {

@@ -1314,7 +1314,10 @@ impl ViewportRenderer {
                                         crate::scene::material::AlphaMode::Opaque
                                     )
                                     && item.active_attribute.is_none()
-                                    && item.submesh_materials.is_none(),
+                                    && item.submesh_materials.is_none()
+                                    && !resources
+                                        .deform
+                                        .may_discard(item.mesh_id, item.deform_instance),
                                 ..PipelineKey::default()
                             };
                             let pipeline = if let Some((pp, _)) = plug {

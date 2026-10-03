@@ -130,3 +130,16 @@ fn viewport_deform_world_space(v: DeformVertex, ctx: DeformContext) -> DeformVer
     // </viewport-deform-slots:world>
     return out;
 }
+
+// Whether the surface at this vertex is kept, from every registered body that
+// defines the optional `fn keep(v: DeformVertex, ctx: DeformContext) -> f32`.
+// Called with the final world-space vertex, after both stages; negative removes
+// the surface there. Shaders call it only from lines carrying the
+// viewport-deform-keep tag, which the composer enables when some body defines
+// the hook.
+fn viewport_deform_keep(v: DeformVertex, ctx: DeformContext) -> f32 {
+    var keep = 1.0;
+    // <viewport-deform-slots:keep>
+    // </viewport-deform-slots:keep>
+    return keep;
+}

@@ -28,6 +28,26 @@ pub enum DeformStage {
 /// `deform_read_*` helpers in `deform.wgsl`, and read its slot's parameter
 /// region via `deform_header.slot_params[ctx.slot * 4 + k]`.
 ///
+/// # Removing surface
+///
+/// The body may also define
+///
+/// ```text
+/// fn keep(v: DeformVertex, ctx: DeformContext) -> f32 { ... }
+/// ```
+///
+/// Where it returns a negative value the surface is removed: its fragments
+/// are discarded in the mesh colour passes. It is called once per vertex with
+/// the final world-space vertex, after every deformer in both stages has run,
+/// so a cut sees the vertex wherever the other deformers moved it, whatever
+/// this deformer's own stage and priority. The value is interpolated across
+/// the triangle, so the edge of the removed region follows its zero line
+/// rather than whole triangles. When several deformers define `keep`, the
+/// lowest value wins. Like `deform`, it runs only for draws whose mesh or
+/// instance carries this slot's data, so a body that reads per-instance data
+/// should return a positive value when `deform_instance_slot_stride(ctx.slot)`
+/// is zero. Renderers with no registered `keep` compile no discard for it.
+///
 /// # Hook contract
 ///
 /// The shipped `deform.wgsl` declares:

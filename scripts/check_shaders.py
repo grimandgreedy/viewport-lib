@@ -186,6 +186,14 @@ def main():
     shaders = {p.name: p.read_text() for p in sorted(out_dir.glob("*.wgsl"))}
     if not shaders:
         raise SystemExit(f"no .wgsl files in {out_dir}")
+    # The mesh family carries lines that exist only once a deformer defines
+    # `keep`: the varying, its write and a fragment discard. They ship as
+    # comments, so check each such shader a second time with them enabled, the
+    # way the composer enables them. The keep hook itself stays empty.
+    keep_tag = "// <viewport-deform-keep> "
+    for name, source in list(shaders.items()):
+        if keep_tag in source:
+            shaders[f"{name}+keep"] = source.replace(keep_tag, "")
     # Namespaced, because a name can legitimately appear in both sets while a
     # type is mid-migration and the two copies are different sources.
     for name, source in item_type_shaders(repo_root, build=not args.no_build).items():

@@ -39,3 +39,7 @@ fn viewport_deform_world_space(v: DeformVertex, ctx: DeformContext) -> DeformVer
     // </viewport-deform-slots:world>
     return out;
 }
+
+fn viewport_deform_keep(v: DeformVertex, ctx: DeformContext) -> f32 {
+    return 1.0;
+}

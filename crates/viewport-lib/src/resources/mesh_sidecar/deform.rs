@@ -17,7 +17,7 @@ use crate::resources::DeviceResources;
 use crate::resources::mesh::mesh_store::MeshId;
 use crate::resources::mesh_sidecar::registry::{
     DeformerDesc, DeformerId, MESH_FAMILY_SHADERS, StoredDeformer, allocate_internal_slot,
-    allocate_slot, compose_shader, lookup_source, validate_name, validate_with_wgpu,
+    allocate_slot, compose_shader, defines_keep, lookup_source, validate_name, validate_with_wgpu,
 };
 
 /// Maximum number of registered deformer slots (host range + reserved
@@ -202,6 +202,10 @@ pub(crate) struct DeformationState {
     pub header_cpu: DeformHeader,
     /// Currently registered deformers, in registration order.
     pub registrations: Vec<StoredDeformer>,
+    /// Bit per slot whose registered body defines the optional `keep` hook.
+    /// Kept beside the registrations so the per-item early-Z check does not
+    /// re-scan WGSL every frame.
+    pub keep_slots: u32,
     /// Number of slots (per-mesh and per-instance, across all meshes) currently
     /// bound to an external buffer source. Lets the per-frame copy pass skip its
     /// encoder entirely when nothing is buffer-backed.
@@ -333,6 +337,7 @@ impl DeformationState {
             meshes: HashMap::new(),
             header_cpu,
             registrations: Vec::new(),
+            keep_slots: 0,
             external_source_count: 0,
             counters: DeformCounters::default(),
         }
@@ -386,6 +391,22 @@ impl DeformationState {
             .get(&mesh_id)
             .map(|m| m.flag_bits | m.instance_flag_bits_union)
             .unwrap_or(0)
+    }
+
+    /// Whether a draw of `(mesh_id, instance_id)` runs a deformer that defines
+    /// `keep`, and so may discard. Such a draw cannot take the discard-free
+    /// early-Z pipeline twin, which has every `discard` stripped.
+    pub(crate) fn may_discard(&self, mesh_id: MeshId, instance_id: Option<u32>) -> bool {
+        if self.keep_slots == 0 {
+            return false;
+        }
+        let Some(m) = self.meshes.get(&mesh_id) else {
+            return false;
+        };
+        let instance_bits = instance_id
+            .and_then(|id| m.instances.get(&id))
+            .map_or(0, |i| i.flag_bits);
+        (m.flag_bits | instance_bits) & self.keep_slots != 0
     }
 
     /// Whether `(mesh_id, instance_id)` has any per-instance deformer data
@@ -1719,6 +1740,9 @@ impl DeviceResources {
             validate_with_wgpu(device, &label, &composed)?;
         }
 
+        if defines_keep(&candidate) {
+            self.deform.keep_slots |= 1u32 << slot;
+        }
         self.deform.registrations.push(candidate);
         self.mesh_pipelines_dirty = true;
         Ok(DeformerId(slot))
@@ -1754,6 +1778,9 @@ impl DeviceResources {
             validate_with_wgpu(device, &label, &composed)?;
         }
 
+        if defines_keep(&candidate) {
+            self.deform.keep_slots |= 1u32 << slot;
+        }
         self.deform.registrations.push(candidate);
         self.mesh_pipelines_dirty = true;
         Ok(DeformerId(slot))
