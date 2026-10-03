@@ -446,6 +446,7 @@ impl ViewportRenderer {
         // gather boundary edges for items rendering through the projected-tet
         // path so they still get a wireframe overlay.
         self.mesh_uniforms.tvm_wireframe_draws.clear();
+        let mut tvm_wireframe_records: Vec<crate::resources::ObjectUniform> = Vec::new();
         for item in &frame.scene.volume_meshes {
             if item.settings.hidden || item.transparency.is_none() {
                 continue;
@@ -461,20 +462,24 @@ impl ViewportRenderer {
             self.mesh_uniforms
                 .tvm_wireframe_draws
                 .push(item.boundary_mesh_id);
+            let mut record: crate::resources::ObjectUniform = bytemuck::Zeroable::zeroed();
+            record.model = item.model;
+            record.colour = [0.75, 0.75, 0.75, 1.0];
+            record.wireframe = 1;
+            tvm_wireframe_records.push(record);
         }
-        if !self.mesh_uniforms.tvm_wireframe_draws.is_empty()
-            && self.mesh_uniforms.tvm_wireframe_bg.is_none()
-        {
-            use crate::gpu::util::DeviceExt;
-            let mut tvm_wf_uniform: crate::resources::ObjectUniform = bytemuck::Zeroable::zeroed();
-            tvm_wf_uniform.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-            tvm_wf_uniform.colour = [0.75, 0.75, 0.75, 1.0];
-            tvm_wf_uniform.wireframe = 1;
-            let buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+        // One record per draw, selected by instance index. The buffer and its
+        // bind group are rebuilt only when a frame needs more records than
+        // the buffer holds.
+        if tvm_wireframe_records.len() > self.mesh_uniforms.tvm_wireframe_capacity {
+            let capacity = tvm_wireframe_records.len().next_power_of_two();
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("tvm_wireframe_uniform"),
-                contents: bytemuck::cast_slice(&[tvm_wf_uniform]),
-                usage: crate::gpu::BufferUsages::STORAGE,
+                size: (capacity * std::mem::size_of::<crate::resources::ObjectUniform>()) as u64,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             });
+            self.mesh_uniforms.tvm_wireframe_capacity = capacity;
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("tvm_wireframe_bg"),
                 layout: &resources.binds.object_bgl,
@@ -595,6 +600,12 @@ impl ViewportRenderer {
             });
             self.mesh_uniforms.tvm_wireframe_buf = Some(buf);
             self.mesh_uniforms.tvm_wireframe_bg = Some(bg);
+        }
+        if let (Some(buf), false) = (
+            &self.mesh_uniforms.tvm_wireframe_buf,
+            tvm_wireframe_records.is_empty(),
+        ) {
+            queue.write_buffer(buf, 0, bytemuck::cast_slice(&tvm_wireframe_records));
         }
 
         let geometry_ms = geometry_start.elapsed().as_secs_f32() * 1000.0;

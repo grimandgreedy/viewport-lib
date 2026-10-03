@@ -80,6 +80,20 @@ pub struct VolumeMeshData {
     /// Automatically remapped to boundary face colours during upload, rendered
     /// via [`AttributeKind::FaceColour`](viewport_lib_types::data::attribute::AttributeKind::FaceColour).
     pub cell_colours: HashMap<String, Vec<[f32; 4]>>,
+
+    /// Named per-vertex scalar attributes (one `f32` per entry of `positions`).
+    ///
+    /// Carried onto the boundary surface as per-vertex values, so they
+    /// interpolate across each face and are visualised via
+    /// [`AttributeKind::Vertex`](viewport_lib_types::data::attribute::AttributeKind::Vertex).
+    /// A short array is padded with `0.0`. A name also present in
+    /// `cell_scalars` or `cell_colours` is skipped: the surface holds one
+    /// attribute per name, and the cell entry keeps it.
+    ///
+    /// In a clipped extraction the vertices a cut creates take the value
+    /// interpolated inside their cell. The transparent mode draws one value
+    /// per tet, so there a node scalar is the mean of the tet's four corners.
+    pub node_scalars: HashMap<String, Vec<f32>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -525,6 +539,17 @@ pub fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u32>) {
         attributes.insert(name.clone(), AttributeData::FaceColour(face_colours));
     }
 
+    // The surface is built over the volume's own vertex list, so a node array
+    // is already in its vertex order.
+    for (name, node_vals) in &data.node_scalars {
+        if attributes.contains_key(name) {
+            continue;
+        }
+        let mut values = node_vals.clone();
+        values.resize(n_verts, 0.0);
+        attributes.insert(name.clone(), AttributeData::Vertex(values));
+    }
+
     let face_to_cell: Vec<u32> = boundary.iter().map(|(ci, _)| *ci as u32).collect();
 
     (
@@ -867,6 +892,68 @@ fn fan_triangulate(poly: &[[f32; 3]]) -> Vec<[[f32; 3]; 3]> {
         .collect()
 }
 
+/// The tets a cell decomposes into, as local vertex slots.
+fn cell_tets(cell: &[u32; 8]) -> &'static [[usize; 4]] {
+    match cell_type(cell) {
+        CellType::Tet => &[[0, 1, 2, 3]],
+        CellType::Pyramid => &PYRAMID_TO_TETS,
+        CellType::Wedge => &WEDGE_TO_TETS,
+        CellType::Hex => &HEX_TO_TETS,
+    }
+}
+
+/// Barycentric coordinates of `p` in the tet `v`, or `None` when the tet has
+/// no volume.
+fn tet_barycentric(p: [f32; 3], v: [[f32; 3]; 4]) -> Option<[f32; 4]> {
+    let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let (e1, e2, e3) = (sub(v[1], v[0]), sub(v[2], v[0]), sub(v[3], v[0]));
+    let det = dot3(e1, cross3(e2, e3));
+    if det.abs() < 1e-20 {
+        return None;
+    }
+    let d = sub(p, v[0]);
+    let b1 = dot3(d, cross3(e2, e3)) / det;
+    let b2 = dot3(e1, cross3(d, e3)) / det;
+    let b3 = dot3(e1, cross3(e2, d)) / det;
+    Some([1.0 - b1 - b2 - b3, b1, b2, b3])
+}
+
+/// Where a node value at `p` comes from inside `cell`: four vertices and
+/// their weights, which sum to one.
+///
+/// The cell is split into the tets the transparent mode uses and `p` is
+/// interpolated linearly in the one that contains it. A point on a cell edge
+/// therefore takes the value linear along that edge, which is where every
+/// cut vertex of a section starts.
+fn node_weights_in_cell(
+    cell: &[u32; 8],
+    p: [f32; 3],
+    positions: &[[f32; 3]],
+) -> ([u32; 4], [f32; 4]) {
+    let mut best: Option<(f32, [u32; 4], [f32; 4])> = None;
+    for tet in cell_tets(cell) {
+        let ids = tet.map(|slot| cell[slot]);
+        let Some(bary) = tet_barycentric(p, ids.map(|i| positions[i as usize])) else {
+            continue;
+        };
+        // The containing tet is the one whose smallest coordinate is largest.
+        let inside = bary.iter().copied().fold(f32::INFINITY, f32::min);
+        if best.as_ref().is_none_or(|(b, _, _)| inside > *b) {
+            best = Some((inside, ids, bary));
+        }
+    }
+    match best {
+        Some((_, ids, bary)) => {
+            // Rounding can leave a point just outside; pull it back in.
+            let clamped = bary.map(|b| b.max(0.0));
+            let sum: f32 = clamped.iter().sum();
+            (ids, clamped.map(|b| b / sum))
+        }
+        // Every tet is flat: fall back to the cell's first corner.
+        None => ([cell[0]; 4], [1.0, 0.0, 0.0, 0.0]),
+    }
+}
+
 /// Generate section triangles for a single intersected cell across all clip planes.
 fn generate_section_tris(
     cell_idx: usize,
@@ -1092,12 +1179,22 @@ pub fn extract_clipped_volume_faces(
         pos_map.entry(key).or_insert(i as u32);
     }
 
+    // The cell that produced each vertex made by a cut, in the order those
+    // vertices were appended after the volume's own. A node scalar is
+    // evaluated there by interpolating inside that cell.
+    let n_original = data.positions.len();
+    let mut cut_vertex_cell: Vec<usize> = Vec::new();
+
     let mut indexed_tris: Vec<(usize, [u32; 3])> = Vec::with_capacity(out_tris.len());
-    for (cell_idx, [p0, p1, p2]) in &out_tris {
-        let i0 = intern_pos(*p0, &mut positions, &mut pos_map);
-        let i1 = intern_pos(*p1, &mut positions, &mut pos_map);
-        let i2 = intern_pos(*p2, &mut positions, &mut pos_map);
-        indexed_tris.push((*cell_idx, [i0, i1, i2]));
+    for (cell_idx, tri) in &out_tris {
+        let mut idx = [0u32; 3];
+        for (slot, p) in tri.iter().enumerate() {
+            idx[slot] = intern_pos(*p, &mut positions, &mut pos_map);
+            if positions.len() > n_original + cut_vertex_cell.len() {
+                cut_vertex_cell.push(*cell_idx);
+            }
+        }
+        indexed_tris.push((*cell_idx, idx));
     }
 
     let n_verts = positions.len();
@@ -1167,6 +1264,32 @@ pub fn extract_clipped_volume_faces(
         attributes.insert(name.clone(), AttributeData::FaceColour(face_colours));
     }
 
+    // Node scalars: the volume's own vertices keep their values, and each
+    // vertex made by a cut takes the value interpolated inside its cell.
+    if !data.node_scalars.is_empty() {
+        let cut_sources: Vec<([u32; 4], [f32; 4])> = cut_vertex_cell
+            .iter()
+            .enumerate()
+            .map(|(i, &ci)| {
+                node_weights_in_cell(&data.cells[ci], positions[n_original + i], &data.positions)
+            })
+            .collect();
+        for (name, node_vals) in &data.node_scalars {
+            if attributes.contains_key(name) {
+                continue;
+            }
+            let at = |vi: u32| node_vals.get(vi as usize).copied().unwrap_or(0.0);
+            let mut values = node_vals.clone();
+            values.resize(n_original, 0.0);
+            values.extend(
+                cut_sources
+                    .iter()
+                    .map(|(ids, w)| (0..4).map(|k| w[k] * at(ids[k])).sum::<f32>()),
+            );
+            attributes.insert(name.clone(), AttributeData::Vertex(values));
+        }
+    }
+
     let face_to_cell: Vec<u32> = indexed_tris.iter().map(|(ci, _)| *ci as u32).collect();
 
     (
@@ -1182,6 +1305,140 @@ pub fn extract_clipped_volume_faces(
         },
         face_to_cell,
     )
+}
+
+// ---------------------------------------------------------------------------
+// Grid cells
+// ---------------------------------------------------------------------------
+
+/// A volume mesh built from occupied cells of a regular grid, with the grid
+/// node each vertex sits on.
+///
+/// Returned by [`VolumeMeshData::from_grid_cells`].
+#[derive(Default, Clone)]
+pub struct GridCells {
+    /// One hex per occupied cell, in the order the cells were given, so
+    /// per-cell attributes parallel to that list go straight onto
+    /// `cell_scalars` and `cell_colours`.
+    pub data: VolumeMeshData,
+    /// The grid node `[i, j, k]` under each entry of `data.positions`. Node
+    /// `[i, j, k]` is the low corner of cell `[i, j, k]`.
+    pub vertex_nodes: Vec<[u32; 3]>,
+}
+
+impl GridCells {
+    /// Per-vertex values picked out of a dense array over the grid's nodes.
+    ///
+    /// `dense` is indexed `k * (dims[0] * dims[1]) + j * dims[0] + i`, where
+    /// `dims` is the node count on each axis (one more than the cell count).
+    /// A node outside `dims`, or past the end of `dense`, reads as `0.0`.
+    ///
+    /// The result is in vertex order, ready for
+    /// [`VolumeMeshData::node_scalars`].
+    pub fn node_values(&self, dense: &[f32], dims: [usize; 3]) -> Vec<f32> {
+        self.vertex_nodes
+            .iter()
+            .map(|&[i, j, k]| {
+                let (i, j, k) = (i as usize, j as usize, k as usize);
+                if i >= dims[0] || j >= dims[1] || k >= dims[2] {
+                    return 0.0;
+                }
+                dense
+                    .get(k * dims[0] * dims[1] + j * dims[0] + i)
+                    .copied()
+                    .unwrap_or(0.0)
+            })
+            .collect()
+    }
+}
+
+impl VolumeMeshData {
+    /// Build a hex mesh from the occupied cells of a regular grid.
+    ///
+    /// Cell `[i, j, k]` spans `origin + [i, j, k] * cell_size` to
+    /// `origin + [i + 1, j + 1, k + 1] * cell_size`. Neighbouring cells share
+    /// their corner vertices, so the face between two occupied cells is
+    /// interior and [`extract_boundary_faces`] keeps only the outer shell.
+    ///
+    /// A cell listed twice makes two coincident cells, whose faces then all
+    /// read as interior; the caller keeps the list free of duplicates.
+    pub fn from_grid_cells(
+        origin: [f32; 3],
+        cell_size: [f32; 3],
+        active_cells: &[[u32; 3]],
+    ) -> GridCells {
+        // Corner offsets in the module's hex vertex order.
+        const CORNERS: [[u32; 3]; 8] = [
+            [0, 0, 0],
+            [1, 0, 0],
+            [1, 0, 1],
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 1, 0],
+            [1, 1, 1],
+            [0, 1, 1],
+        ];
+
+        // Vertex index per grid node. A table over the cells' bounding box
+        // when that box is not much larger than the cell list, which is the
+        // common case and avoids hashing eight nodes per cell; a map when the
+        // cells are scattered over a large extent.
+        const UNSET: u32 = u32::MAX;
+        let mut lo = [u32::MAX; 3];
+        let mut hi = [0u32; 3];
+        for cell in active_cells {
+            for axis in 0..3 {
+                lo[axis] = lo[axis].min(cell[axis]);
+                hi[axis] = hi[axis].max(cell[axis]);
+            }
+        }
+        // Node counts per axis of the bounding box.
+        let dims = [0, 1, 2].map(|a| (hi[a].saturating_sub(lo[a])) as usize + 2);
+        let box_nodes = dims[0].saturating_mul(dims[1]).saturating_mul(dims[2]);
+        let mut table: Vec<u32> = if box_nodes <= active_cells.len().saturating_mul(64) {
+            vec![UNSET; box_nodes]
+        } else {
+            Vec::new()
+        };
+        let mut map: HashMap<[u32; 3], u32> = HashMap::new();
+
+        let mut positions: Vec<[f32; 3]> = Vec::new();
+        let mut vertex_nodes: Vec<[u32; 3]> = Vec::new();
+        let mut cells: Vec<[u32; 8]> = Vec::with_capacity(active_cells.len());
+
+        for &[ci, cj, ck] in active_cells {
+            let mut cell = [0u32; 8];
+            for (slot, [di, dj, dk]) in CORNERS.iter().enumerate() {
+                let node = [ci + di, cj + dj, ck + dk];
+                let entry = if table.is_empty() {
+                    map.entry(node).or_insert(UNSET)
+                } else {
+                    let [i, j, k] = [0, 1, 2].map(|a| (node[a] - lo[a]) as usize);
+                    &mut table[(k * dims[1] + j) * dims[0] + i]
+                };
+                if *entry == UNSET {
+                    *entry = positions.len() as u32;
+                    positions.push([
+                        origin[0] + node[0] as f32 * cell_size[0],
+                        origin[1] + node[1] as f32 * cell_size[1],
+                        origin[2] + node[2] as f32 * cell_size[2],
+                    ]);
+                    vertex_nodes.push(node);
+                }
+                cell[slot] = *entry;
+            }
+            cells.push(cell);
+        }
+
+        GridCells {
+            data: VolumeMeshData {
+                positions,
+                cells,
+                ..Default::default()
+            },
+            vertex_nodes,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1384,8 +1641,10 @@ const PYRAMID_TO_TETS: [[usize; 4]; 2] = [[0, 1, 2, 4], [0, 2, 3, 4]];
 /// Call `f` once per output tetrahedron across all cells in `data`.
 ///
 /// `f` receives the four world-space vertices and the scalar value for that tet.
-/// The scalar is taken from `data.cell_scalars[attribute]` at the parent cell index,
-/// or 0.0 when the attribute is absent or the cell index is out of range.
+/// The scalar is taken from `data.cell_scalars[attribute]` at the parent cell index.
+/// When the name is not a cell scalar but is in `data.node_scalars`, the tet takes
+/// the mean of its four corner values. It is 0.0 when the attribute is absent or
+/// an index is out of range.
 ///
 /// Cell decomposition:
 /// - Tet -> 1 tet
@@ -1397,26 +1656,49 @@ pub fn for_each_tet<F>(data: &VolumeMeshData, attribute: &str, mut f: F)
 where
     F: FnMut([[f32; 3]; 4], f32),
 {
-    let cell_scalars = data.cell_scalars.get(attribute);
+    let source = TetScalarSource::of(data, attribute);
     for (cell_idx, cell) in data.cells.iter().enumerate() {
-        let scalar = cell_scalars
-            .and_then(|v| v.get(cell_idx))
-            .copied()
-            .unwrap_or(0.0);
-        let tets: &[[usize; 4]] = match cell_type(cell) {
-            CellType::Tet => &[[0, 1, 2, 3]],
-            CellType::Pyramid => &PYRAMID_TO_TETS,
-            CellType::Wedge => &WEDGE_TO_TETS,
-            CellType::Hex => &HEX_TO_TETS,
-        };
-        for local in tets {
+        for local in cell_tets(cell) {
             let verts = [
                 data.positions[cell[local[0]] as usize],
                 data.positions[cell[local[1]] as usize],
                 data.positions[cell[local[2]] as usize],
                 data.positions[cell[local[3]] as usize],
             ];
-            f(verts, scalar);
+            f(verts, source.value(cell_idx, cell, local));
+        }
+    }
+}
+
+/// Where the transparent mode's per-tet scalar comes from.
+enum TetScalarSource<'a> {
+    Cell(&'a [f32]),
+    Node(&'a [f32]),
+    Absent,
+}
+
+impl<'a> TetScalarSource<'a> {
+    fn of(data: &'a VolumeMeshData, attribute: &str) -> Self {
+        if let Some(values) = data.cell_scalars.get(attribute) {
+            Self::Cell(values)
+        } else if let Some(values) = data.node_scalars.get(attribute) {
+            Self::Node(values)
+        } else {
+            Self::Absent
+        }
+    }
+
+    fn value(&self, cell_idx: usize, cell: &[u32; 8], tet: &[usize; 4]) -> f32 {
+        match self {
+            Self::Cell(values) => values.get(cell_idx).copied().unwrap_or(0.0),
+            Self::Node(values) => {
+                let sum: f32 = tet
+                    .iter()
+                    .map(|&slot| values.get(cell[slot] as usize).copied().unwrap_or(0.0))
+                    .sum();
+                sum / 4.0
+            }
+            Self::Absent => 0.0,
         }
     }
 }
@@ -1428,24 +1710,15 @@ where
 /// cell's scalar once per tet the cell decomposes into (tet -> 1, pyramid -> 2,
 /// wedge -> 3, hex -> 6), skipping all vertex lookups. The result aligns
 /// one-to-one with the tet geometry buffer, so it can be written straight into
-/// the parallel scalar buffer.
+/// the parallel scalar buffer. A node scalar gives each tet the mean of its
+/// corners, as [`for_each_tet`] does.
 #[doc(hidden)]
 pub fn tet_scalars(data: &VolumeMeshData, attribute: &str) -> Vec<f32> {
-    let cell_scalars = data.cell_scalars.get(attribute);
+    let source = TetScalarSource::of(data, attribute);
     let mut out = Vec::with_capacity(data.cells.len());
     for (cell_idx, cell) in data.cells.iter().enumerate() {
-        let scalar = cell_scalars
-            .and_then(|v| v.get(cell_idx))
-            .copied()
-            .unwrap_or(0.0);
-        let n = match cell_type(cell) {
-            CellType::Tet => 1,
-            CellType::Pyramid => 2,
-            CellType::Wedge => 3,
-            CellType::Hex => 6,
-        };
-        for _ in 0..n {
-            out.push(scalar);
+        for tet in cell_tets(cell) {
+            out.push(source.value(cell_idx, cell, tet));
         }
     }
     out
@@ -1481,6 +1754,182 @@ pub(crate) fn decompose_to_tetrahedra(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn block(n: u32) -> Vec<[u32; 3]> {
+        let mut cells = Vec::new();
+        for k in 0..n {
+            for j in 0..n {
+                for i in 0..n {
+                    cells.push([i, j, k]);
+                }
+            }
+        }
+        cells
+    }
+
+    #[test]
+    fn grid_single_cell_is_a_closed_box() {
+        let grid = VolumeMeshData::from_grid_cells([1.0, 2.0, 3.0], [2.0, 1.0, 0.5], &[[0, 0, 0]]);
+        assert_eq!(grid.data.positions.len(), 8);
+        assert_eq!(grid.vertex_nodes.len(), 8);
+        let (mesh, face_to_cell) = extract_boundary_faces(&grid.data);
+        assert_eq!(mesh.indices.len(), 36);
+        assert!(face_to_cell.iter().all(|&c| c == 0));
+        // The far corner is origin + cell_size.
+        assert!(mesh.positions.contains(&[3.0, 3.0, 3.5]));
+        // Every face normal points away from the box centre.
+        let centre = [2.0, 2.5, 3.25];
+        for tri in mesh.indices.chunks_exact(3) {
+            let [a, b, c] = [0, 1, 2].map(|i| mesh.positions[tri[i] as usize]);
+            let n = cross3(
+                [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+                [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+            );
+            let out = [a[0] - centre[0], a[1] - centre[1], a[2] - centre[2]];
+            assert!(dot3(n, out) > 0.0);
+        }
+    }
+
+    #[test]
+    fn grid_neighbours_share_corners_and_lose_their_common_face() {
+        let grid = VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &[[0, 0, 0], [1, 0, 0]]);
+        // Two boxes with one shared face: 12 corners, 10 outer quads.
+        assert_eq!(grid.data.positions.len(), 12);
+        let (mesh, face_to_cell) = extract_boundary_faces(&grid.data);
+        assert_eq!(mesh.indices.len() / 3, 20);
+        assert_eq!(face_to_cell.iter().filter(|&&c| c == 0).count(), 10);
+    }
+
+    #[test]
+    fn grid_solid_block_keeps_only_its_shell() {
+        let n = 4;
+        let grid = VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &block(n));
+        assert_eq!(grid.data.cells.len(), (n * n * n) as usize);
+        assert_eq!(
+            grid.data.positions.len(),
+            ((n + 1) * (n + 1) * (n + 1)) as usize
+        );
+        let (mesh, _) = extract_boundary_faces(&grid.data);
+        assert_eq!(mesh.indices.len() / 3, (12 * n * n) as usize);
+    }
+
+    #[test]
+    fn grid_cells_far_apart_take_the_same_form() {
+        // Two cells a long way apart: the bounding box is far larger than the
+        // cell list, so node lookup goes through the map.
+        let cells = [[0, 0, 0], [5000, 5000, 5000]];
+        let grid = VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &cells);
+        assert_eq!(grid.data.positions.len(), 16);
+        assert_eq!(grid.vertex_nodes[8], [5000, 5000, 5000]);
+        let (mesh, _) = extract_boundary_faces(&grid.data);
+        assert_eq!(mesh.indices.len() / 3, 24);
+        assert!(
+            VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &[])
+                .data
+                .cells
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn node_scalars_become_vertex_attributes() {
+        let mut grid = VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &[[0, 0, 0]]);
+        let heights: Vec<f32> = grid.data.positions.iter().map(|p| p[2]).collect();
+        grid.data
+            .node_scalars
+            .insert("height".into(), heights.clone());
+        // Shorter than the vertex list: padded.
+        grid.data.node_scalars.insert("short".into(), vec![7.0; 3]);
+        // Same name as a cell scalar: the cell entry keeps it.
+        grid.data.cell_scalars.insert("both".into(), vec![1.0]);
+        grid.data.node_scalars.insert("both".into(), vec![2.0; 8]);
+
+        let (mesh, _) = extract_boundary_faces(&grid.data);
+        match mesh.attributes.get("height") {
+            Some(AttributeData::Vertex(v)) => assert_eq!(*v, heights),
+            _ => panic!("height is not a vertex attribute"),
+        }
+        match mesh.attributes.get("short") {
+            Some(AttributeData::Vertex(v)) => {
+                assert_eq!(v.len(), 8);
+                assert_eq!(&v[..4], &[7.0, 7.0, 7.0, 0.0]);
+            }
+            _ => panic!("short is not a vertex attribute"),
+        }
+        assert!(matches!(
+            mesh.attributes.get("both"),
+            Some(AttributeData::Face(_))
+        ));
+    }
+
+    #[test]
+    fn node_scalars_interpolate_onto_cut_vertices() {
+        // A 2x2x2 block with a field linear in position, cut by a plane that
+        // passes through the middle of cells. A linear field is reproduced
+        // exactly by interpolation, so every output vertex must carry the
+        // field's value at its own position.
+        let mut grid = VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &block(2));
+        let field = |p: [f32; 3]| 2.0 * p[0] - 3.0 * p[1] + 0.5 * p[2] + 1.0;
+        let values: Vec<f32> = grid.data.positions.iter().map(|&p| field(p)).collect();
+        grid.data.node_scalars.insert("f".into(), values);
+
+        let planes = [[1.0, 0.25, 0.0, -0.7], [0.0, 0.0, -1.0, 1.4]];
+        let (mesh, _) = extract_clipped_volume_faces(&grid.data, &planes);
+        assert!(mesh.positions.len() > grid.data.positions.len(), "no cut");
+        let Some(AttributeData::Vertex(out)) = mesh.attributes.get("f") else {
+            panic!("f is not a vertex attribute");
+        };
+        assert_eq!(out.len(), mesh.positions.len());
+        for (value, &p) in out.iter().zip(&mesh.positions) {
+            assert!((value - field(p)).abs() < 1e-4, "{value} at {p:?}");
+        }
+    }
+
+    #[test]
+    fn node_scalar_gives_each_tet_the_mean_of_its_corners() {
+        let mut grid = VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &[[0, 0, 0]]);
+        let heights: Vec<f32> = grid.data.positions.iter().map(|p| p[1]).collect();
+        grid.data.node_scalars.insert("y".into(), heights);
+        grid.data.cell_scalars.insert("c".into(), vec![5.0]);
+
+        let per_tet = tet_scalars(&grid.data, "y");
+        assert_eq!(per_tet.len(), 6);
+        let mut seen = Vec::new();
+        for_each_tet(&grid.data, "y", |verts, scalar| {
+            let mean = verts.iter().map(|v| v[1]).sum::<f32>() / 4.0;
+            assert!((scalar - mean).abs() < 1e-6);
+            seen.push(scalar);
+        });
+        assert_eq!(seen, per_tet);
+        // A cell scalar is unchanged, and an unknown name reads zero.
+        assert_eq!(tet_scalars(&grid.data, "c"), vec![5.0; 6]);
+        assert_eq!(tet_scalars(&grid.data, "missing"), vec![0.0; 6]);
+    }
+
+    #[test]
+    fn grid_node_values_follow_vertex_order() {
+        let grid = VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &[[1, 0, 0]]);
+        // Nodes span i in 0..3, j and k in 0..2. Value = 100k + 10j + i.
+        let dims = [3usize, 2, 2];
+        let mut dense = vec![0.0; 12];
+        for k in 0..2 {
+            for j in 0..2 {
+                for i in 0..3 {
+                    dense[k * 6 + j * 3 + i] = (100 * k + 10 * j + i) as f32;
+                }
+            }
+        }
+        let values = grid.node_values(&dense, dims);
+        for (value, node) in values.iter().zip(&grid.vertex_nodes) {
+            assert_eq!(*value, (100 * node[2] + 10 * node[1] + node[0]) as f32);
+        }
+        // Out of range reads as zero.
+        assert!(
+            grid.node_values(&dense, [1, 1, 1])
+                .iter()
+                .all(|v| *v == 0.0)
+        );
+    }
 
     const TEST_TET_LOCAL: [[usize; 4]; 6] = [
         [0, 1, 5, 6],

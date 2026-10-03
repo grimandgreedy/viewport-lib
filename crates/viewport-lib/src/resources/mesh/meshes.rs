@@ -1611,7 +1611,9 @@ impl DeviceResources {
     /// pipeline. Interior faces (shared by two cells) are discarded; only
     /// boundary faces (belonging to exactly one cell) are kept. Per-cell scalar
     /// and colour attributes are remapped to per-face attributes so the
-    /// face-colouring path handles them automatically.
+    /// face-colouring path handles them automatically. Node scalars go on as
+    /// per-vertex attributes and interpolate across each face; select one with
+    /// `AttributeKind::Vertex`.
     ///
     /// The returned item has `transparency: None` and `projected_tet_id: None`;
     /// it renders as an opaque surface mesh. Use
@@ -1643,9 +1645,10 @@ impl DeviceResources {
     /// to `Some(VolumeTransparency { .. })`. Switching modes at runtime is free
     /// because both GPU artifacts are already resident.
     ///
-    /// `scalar_attribute` names a key in `data.cell_scalars`; cells without the
-    /// attribute receive scalar 0.0. The scalar range is auto-detected from the
-    /// data and stored in the per-volume uniform.
+    /// `scalar_attribute` names a key in `data.cell_scalars`, or failing that
+    /// in `data.node_scalars`, where each tet takes the mean of its corner
+    /// values. An unknown name gives every cell 0.0. The scalar range is
+    /// auto-detected from the data and stored in the per-volume uniform.
     pub fn upload_volume_mesh_with_transparency(
         &mut self,
         device: &crate::gpu::Device,
@@ -1680,6 +1683,27 @@ impl DeviceResources {
             crate::resources::volume::volume_mesh::extract_clipped_volume_faces(data, clip_planes);
         let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
         Ok(crate::VolumeMeshItem::new(mesh_id, face_to_cell))
+    }
+
+    /// Replace an existing boundary-mesh slot with the boundary of `data`,
+    /// returning the new `face_to_cell` map.
+    ///
+    /// For a volume whose cells changed: the surface is extracted again and
+    /// written into the same mesh slot, so the item's `boundary_mesh_id` stays
+    /// valid. Hand the returned map to
+    /// [`VolumeMeshItem::update_mesh`](crate::VolumeMeshItem::update_mesh).
+    /// When only the values changed, use
+    /// [`update_volume_mesh_scalar`](Self::update_volume_mesh_scalar) for a
+    /// cell scalar or [`replace_attribute`](Self::replace_attribute) for a
+    /// node scalar; neither extracts anything.
+    pub fn replace_volume_mesh(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        data: &crate::resources::volume::volume_mesh::VolumeMeshData,
+    ) -> crate::error::ViewportResult<Vec<u32>> {
+        self.replace_clipped_volume_mesh(device, queue, mesh_id, data, &[])
     }
 
     /// Replace an existing boundary-mesh slot with a freshly-extracted clipped
@@ -1721,6 +1745,10 @@ impl DeviceResources {
     /// retains from upload) and written to the named per-face scalar buffer
     /// only: no boundary re-extraction, no vertex/index touch, no new mesh slot.
     /// Cost is O(boundary faces) instead of O(total cells).
+    ///
+    /// This is for a cell scalar. A node scalar on an unclipped boundary mesh
+    /// is already in the mesh's vertex order, so it is updated with
+    /// [`replace_attribute`](Self::replace_attribute) directly.
     ///
     /// `face_to_cell` and the boundary must be the ones the mesh was uploaded
     /// with (unchanged since); only the scalar values may differ. The scalar
@@ -1813,40 +1841,6 @@ impl DeviceResources {
         );
 
         Ok(())
-    }
-
-    /// Replace a previously uploaded sparse voxel grid in place.
-    ///
-    /// Equivalent to calling [`upload_sparse_volume_grid_data`](Self::upload_sparse_volume_grid_data)
-    /// and then [`replace_mesh_data`](Self::replace_mesh_data), but without allocating a new slot.
-    /// Use this for per-frame or per-interaction updates (e.g. voxel paint) to avoid leaking GPU memory.
-    pub fn replace_sparse_volume_grid_data(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        mesh_id: crate::resources::mesh::mesh_store::MeshId,
-        data: &crate::resources::volume::sparse_volume::SparseVolumeGridData,
-    ) -> crate::error::ViewportResult<()> {
-        let mesh_data = crate::resources::volume::sparse_volume::extract_sparse_boundary(data);
-        self.replace_mesh_data(device, queue, mesh_id, &mesh_data)
-    }
-
-    /// Upload a sparse voxel grid by extracting its boundary surface and uploading
-    /// the result via [`upload_mesh_data`](Self::upload_mesh_data).
-    ///
-    /// Only quad faces not shared between two active cells are kept.  Per-cell
-    /// scalars and colours are remapped to per-face attributes, and per-node
-    /// scalars are averaged over the 4 quad corners to produce per-face scalars.
-    ///
-    /// Returns the `MeshId`.  Reference cell and node attributes via
-    /// [`AttributeRef { kind: AttributeKind::Face, .. }`](crate::resources::AttributeRef).
-    pub fn upload_sparse_volume_grid_data(
-        &mut self,
-        device: &crate::gpu::Device,
-        data: &crate::resources::volume::sparse_volume::SparseVolumeGridData,
-    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
-        let mesh_data = crate::resources::volume::sparse_volume::extract_sparse_boundary(data);
-        self.upload_mesh_data(device, &mesh_data)
     }
 
     /// Start an asynchronous boundary-only volume mesh upload.
@@ -2004,75 +1998,6 @@ impl DeviceResources {
             Some((mesh_id, face_to_cell)) => {
                 map.remove(&id);
                 Ok(crate::VolumeMeshItem::new(mesh_id, face_to_cell))
-            }
-            None => Err(crate::error::ViewportError::JobNotReady),
-        }
-    }
-
-    /// Start an asynchronous sparse voxel grid upload.
-    pub fn begin_upload_sparse_volume_grid_data(
-        &mut self,
-        device: &crate::gpu::Device,
-        data: crate::resources::volume::sparse_volume::SparseVolumeGridData,
-    ) -> crate::resources::JobId {
-        let slot =
-            crate::resources::ResultSlot::<crate::resources::mesh::mesh_store::MeshId>::new();
-        let slot_for_apply = slot.clone();
-        let device_for_apply = device.clone();
-
-        let retain_cpu = self.retain_mesh_cpu_geometry;
-        let id = {
-            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
-            runner.submit_cpu(move |progress| {
-                progress.set(0.1);
-                let mesh_data =
-                    crate::resources::volume::sparse_volume::extract_sparse_boundary(&data);
-                progress.set(0.5);
-                mesh_ops::validate_mesh_data(&mesh_data)?;
-                let prep = DeviceResources::prep_mesh_data(&mesh_data, retain_cpu);
-                progress.set(0.95);
-                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut DeviceResources| {
-                        let mesh_id =
-                            resources.assemble_mesh_data(&device_for_apply, &mesh_data, prep);
-                        slot_for_apply.set(mesh_id);
-                    }),
-                ))
-            })
-        };
-
-        self.job_results
-            .sparse_volume_grid
-            .lock()
-            .expect("sparse volume grid result map poisoned")
-            .insert(id, slot);
-        id
-    }
-
-    /// Take the [`MeshId`](crate::resources::mesh::mesh_store::MeshId) produced by a completed
-    /// [`begin_upload_sparse_volume_grid_data`](Self::begin_upload_sparse_volume_grid_data)
-    /// job.
-    pub fn upload_result_sparse_volume_grid(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
-        let mut map = self
-            .job_results
-            .sparse_volume_grid
-            .lock()
-            .expect("sparse volume grid result map poisoned");
-        let slot = match map.get(&id) {
-            Some(s) => s.clone(),
-            None => {
-                return Err(crate::error::ViewportError::JobResultMissing {
-                    reason: "unknown id or wrong upload type",
-                });
-            }
-        };
-        match slot.take() {
-            Some(mesh_id) => {
-                map.remove(&id);
-                Ok(mesh_id)
             }
             None => Err(crate::error::ViewportError::JobNotReady),
         }
@@ -3670,6 +3595,7 @@ impl DeviceResources {
         };
 
         let initial_uniform = crate::resources::types::ProjectedTetUniform {
+            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             density: 1.0,
             scalar_min: scalar_range.0,
             scalar_max: scalar_range.1,
@@ -4644,7 +4570,7 @@ mod async_upload_tests {
 mod c4_volume_mesh_tests {
     use crate::DeviceResources;
     use crate::resources::volume::volume_mesh::VolumeMeshData;
-    use crate::resources::{CELL_SENTINEL, SparseVolumeGridData, UploadStatus};
+    use crate::resources::{CELL_SENTINEL, UploadStatus};
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
         let instance = crate::gpu::default_instance();
@@ -4704,14 +4630,6 @@ mod c4_volume_mesh_tests {
         v
     }
 
-    fn single_cell_sparse() -> SparseVolumeGridData {
-        let mut g = SparseVolumeGridData::default();
-        g.active_cells = vec![[0, 0, 0]];
-        g.cell_size = 1.0;
-        g.origin = [0.0, 0.0, 0.0];
-        g
-    }
-
     #[test]
     fn begin_upload_volume_mesh_drains_to_pair() {
         let Some((device, queue)) = try_make_device() else {
@@ -4752,22 +4670,6 @@ mod c4_volume_mesh_tests {
     }
 
     #[test]
-    fn begin_upload_sparse_volume_grid_drains_to_handle() {
-        let Some((device, queue)) = try_make_device() else {
-            eprintln!("skipping: no wgpu adapter available");
-            return;
-        };
-        let mut resources =
-            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let job = resources.begin_upload_sparse_volume_grid_data(&device, single_cell_sparse());
-        drive_until_ready(&mut resources, &device, &queue, job, "sparse_volume_grid");
-        let mesh_id = resources
-            .upload_result_sparse_volume_grid(job)
-            .expect("ready");
-        assert!(resources.mesh_store.get(mesh_id).is_some());
-    }
-
-    #[test]
     fn begin_upload_projected_tet_drains_to_triple() {
         let Some((device, queue)) = try_make_device() else {
             eprintln!("skipping: no wgpu adapter available");
@@ -4797,9 +4699,6 @@ mod c4_volume_mesh_tests {
         let _item2 = resources
             .upload_clipped_volume_mesh(&device, &vol, &[])
             .expect("clipped sync ok");
-        let _grid_id = resources
-            .upload_sparse_volume_grid_data(&device, &single_cell_sparse())
-            .expect("sparse sync ok");
     }
 
     #[test]

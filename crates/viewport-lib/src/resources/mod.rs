@@ -133,7 +133,6 @@ pub use self::types::PickInstance;
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;
 pub use self::upload_jobs::{FrameBudget, JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
-pub use self::volume::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]
 pub use self::volume::tetmesh::{TetMesh, TetMeshAttributes};
 pub use self::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};

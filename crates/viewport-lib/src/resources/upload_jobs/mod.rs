@@ -72,10 +72,6 @@ pub(crate) struct JobResults {
             ResultSlot<(crate::resources::mesh::mesh_store::MeshId, Vec<u32>)>,
         >,
     >,
-    /// Async sparse-volume-grid uploads.
-    pub sparse_volume_grid: std::sync::Mutex<
-        std::collections::HashMap<JobId, ResultSlot<crate::resources::mesh::mesh_store::MeshId>>,
-    >,
     /// Async projected-tet-mesh uploads: tet id plus packed scalar range.
     pub projected_tet: std::sync::Mutex<
         std::collections::HashMap<JobId, ResultSlot<(super::ProjectedTetId, f32, f32)>>,

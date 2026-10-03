@@ -111,6 +111,8 @@ pub struct BuiltScene {
     pub surface_lics: Vec<viewport_lib_item_types::SurfaceLicItem>,
     /// Mesh-instance batch items.
     pub mesh_instances: Vec<MeshInstanceItem>,
+    /// Volume mesh items.
+    pub volume_meshes: Vec<viewport_lib::VolumeMeshItem>,
     /// Scatter pass settings override. Scenes with scatter volumes pin these
     /// so the still image is deterministic (no temporal blend, no jitter).
     pub scatter_settings: Option<ScatterSettings>,
@@ -224,6 +226,7 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     *sf.items_mut::<DecalItem>() = scene.decals.clone();
     *sf.items_mut::<viewport_lib_item_types::SurfaceLicItem>() = scene.surface_lics.clone();
     sf.mesh_instances = scene.mesh_instances.clone();
+    sf.volume_meshes = scene.volume_meshes.clone();
     let mut fd = FrameData::new(CameraFrame::from_camera(camera, viewport_size), sf);
     fd.effects.lighting = scene.lighting.clone();
     if let Some(scatter) = scene.scatter_settings.clone() {
