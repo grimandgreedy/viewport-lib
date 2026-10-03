@@ -14,8 +14,16 @@ use viewport_lib::{ColourSource, SizeSource};
 use viewport_lib_item_types::channels::point_cloud as pc;
 use viewport_lib_item_types::*;
 
+/// The build log is process-wide, so a test that reads it must not overlap
+/// another test building this type's pipelines.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[test]
 fn gpu_pick_point_cloud_resolves_point() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -58,6 +66,7 @@ fn gpu_pick_point_cloud_resolves_point() {
 
 #[test]
 fn gpu_pick_rect_resolves_point_cloud_elements() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -105,6 +114,7 @@ fn gpu_pick_rect_resolves_point_cloud_elements() {
 
 #[test]
 fn cpu_pick_hits_point_cloud() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -137,6 +147,7 @@ fn cpu_pick_hits_point_cloud() {
 /// backends.
 #[test]
 fn an_object_query_drops_the_point_sub_object() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -172,6 +183,7 @@ fn an_object_query_drops_the_point_sub_object() {
 /// as an inline item.
 #[test]
 fn a_reference_item_picks_like_an_inline_one() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -205,6 +217,7 @@ fn a_reference_item_picks_like_an_inline_one() {
 /// A hidden reference item draws nothing and picks nothing.
 #[test]
 fn a_hidden_reference_item_is_skipped() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -252,6 +265,7 @@ fn sample_point_cloud() -> PointCloudItem {
 
 #[test]
 fn an_uploaded_cloud_resolves_until_it_is_dropped() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -285,6 +299,7 @@ fn an_uploaded_cloud_resolves_until_it_is_dropped() {
 
 #[test]
 fn begin_upload_point_cloud_drains_to_a_handle() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -323,6 +338,7 @@ fn begin_upload_point_cloud_drains_to_a_handle() {
 /// the handle. The ids and views now exist from construction.
 #[test]
 fn an_upload_before_the_first_frame_still_gets_a_real_colourmap() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -354,6 +370,7 @@ fn an_upload_before_the_first_frame_still_gets_a_real_colourmap() {
 /// submission itself.
 #[test]
 fn hidden_items_produce_no_draw_data() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -391,6 +408,7 @@ fn hidden_items_produce_no_draw_data() {
 /// reallocation and no replace.
 #[test]
 fn a_reserved_cloud_takes_ranged_writes_without_reallocating() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -450,6 +468,7 @@ fn a_reserved_cloud_takes_ranged_writes_without_reallocating() {
 /// than one dirty region has.
 #[test]
 fn write_spans_covers_disjoint_sectors() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -495,6 +514,7 @@ fn write_spans_covers_disjoint_sectors() {
 /// A released handle stops taking writes, the same way `replace` refuses one.
 #[test]
 fn a_stale_handle_is_refused_by_every_write_call() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -526,6 +546,7 @@ fn a_stale_handle_is_refused_by_every_write_call() {
 /// which is what lets a shrinking feed grow again for free.
 #[test]
 fn set_len_hides_points_without_freeing_them() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -559,6 +580,7 @@ fn set_len_hides_points_without_freeing_them() {
 /// device hands its buffer over and no bytes move at all.
 #[test]
 fn a_channel_can_be_drawn_from_a_caller_owned_buffer() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -602,6 +624,7 @@ fn a_channel_can_be_drawn_from_a_caller_owned_buffer() {
 /// failure on a binding takes the device down and a returned error does not.
 #[test]
 fn a_source_is_refused_for_the_wrong_usage_or_size() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -660,6 +683,7 @@ fn a_source_is_refused_for_the_wrong_usage_or_size() {
 /// cloud's own storage.
 #[test]
 fn a_source_survives_a_reserve() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -687,5 +711,56 @@ fn a_source_survives_a_reserve() {
         renderer.has_source(pc::Transparencies, id),
         Some(true),
         "a grow rebuilds the bind group and must rebuild it with the source"
+    );
+}
+
+/// Naming the point cloud type in a warm-up builds its pipelines, so the first
+/// frame that draws, outlines and picks a cloud, in either format, compiles
+/// none of them.
+#[test]
+fn a_warmed_point_cloud_type_builds_nothing_on_its_first_frame() {
+    let _serial = serial();
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    renderer.warm_pipelines(
+        &device,
+        &queue,
+        &viewport_lib::PipelineSet::default().with_item_type::<PointCloudPlugin>(),
+    );
+    renderer.wait_for_pipelines(&device);
+
+    viewport_lib::resources::build_log::enable();
+    let _ = viewport_lib::resources::build_log::drain();
+    for hdr in [true, false] {
+        let mut frame = sub_object_pick_frame();
+        if !hdr {
+            frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        }
+        frame.interaction.outline_selected = true;
+        let mut cloud = sample_point_cloud();
+        cloud.settings.pick_id = PickId(444);
+        cloud.settings.selected = true;
+        frame.scene.items_mut::<PointCloudItem>().push(cloud);
+        let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        let _ = renderer.pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::CLOUD_POINT,
+        );
+    }
+    let builds: Vec<String> = viewport_lib::resources::build_log::drain()
+        .into_iter()
+        .map(|(label, _)| label)
+        .filter(|l| l.starts_with("point_cloud") || l.starts_with("module point_cloud"))
+        .collect();
+    assert!(
+        builds.is_empty(),
+        "the first point cloud frames built pipelines after the warm-up: {builds:?}"
     );
 }
