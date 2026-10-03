@@ -20,14 +20,19 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use viewport_lib as vpl;
 use viewport_lib::plugin_api::Uploads;
-use viewport_lib_item_types::VolumeItem;
-use viewport_lib_item_types::{GaussianSplatData, GaussianSplatId};
-use viewport_lib_item_types::{PointCloudId, PointCloudItem, PointCloudRefItem};
-use viewport_lib_item_types::{
-    RibbonId, RibbonItem, RibbonRefItem, SpriteInstanceSetId, SpriteInstanceUploads, SpriteItem,
-    SpriteSetId, StreamtubeId, StreamtubeItem, StreamtubeRefItem, TensorFieldId, TensorFieldItem,
-    TensorFieldRefItem, TensorSource, TubeId, TubeItem, TubeRefItem, VectorFieldId,
-    VectorFieldItem, VectorFieldRefItem,
+use viewport_lib_plugins::item_types::gaussian_splat::{GaussianSplatData, GaussianSplatId};
+use viewport_lib_plugins::item_types::point_cloud::{
+    PointCloudId, PointCloudItem, PointCloudRefItem,
+};
+use viewport_lib_plugins::item_types::volume::VolumeItem;
+use viewport_lib_plugins::item_types::{
+    curves::{
+        RibbonId, RibbonItem, RibbonRefItem, StreamtubeId, StreamtubeItem, StreamtubeRefItem,
+        TubeId, TubeItem, TubeRefItem,
+    },
+    sprite::{SpriteInstanceSetId, SpriteInstanceUploads, SpriteItem, SpriteSetId},
+    tensor_field::{TensorFieldId, TensorFieldItem, TensorFieldRefItem, TensorSource},
+    vector_field::{VectorFieldId, VectorFieldItem, VectorFieldRefItem},
 };
 
 use crate::eframe::egui;
@@ -1950,21 +1955,21 @@ pub(crate) fn submit_async_uploads_items(app: &mut crate::App, fd: &mut vpl::Fra
         let mut ref_item = StreamtubeRefItem::new(id);
         ref_item.model = translate(-2.4, 2.4);
         fd.scene
-            .items_mut::<viewport_lib_item_types::StreamtubeRefItem>()
+            .items_mut::<viewport_lib_plugins::item_types::curves::StreamtubeRefItem>()
             .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_tube_id {
         let mut ref_item = TubeRefItem::new(id);
         ref_item.model = translate(2.4, 2.4);
         fd.scene
-            .items_mut::<viewport_lib_item_types::TubeRefItem>()
+            .items_mut::<viewport_lib_plugins::item_types::curves::TubeRefItem>()
             .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_ribbon_id {
         let mut ref_item = RibbonRefItem::new(id);
         ref_item.model = translate(0.0, 4.8);
         fd.scene
-            .items_mut::<viewport_lib_item_types::RibbonRefItem>()
+            .items_mut::<viewport_lib_plugins::item_types::curves::RibbonRefItem>()
             .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_point_cloud_id {
@@ -1981,7 +1986,7 @@ pub(crate) fn submit_async_uploads_items(app: &mut crate::App, fd: &mut vpl::Fra
         let mut ref_item = TensorFieldRefItem::new(id);
         ref_item.model = translate(-2.4, 4.8);
         fd.scene
-            .items_mut::<viewport_lib_item_types::TensorFieldRefItem>()
+            .items_mut::<viewport_lib_plugins::item_types::tensor_field::TensorFieldRefItem>()
             .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_volume_id {
@@ -1995,7 +2000,7 @@ pub(crate) fn submit_async_uploads_items(app: &mut crate::App, fd: &mut vpl::Fra
         item.bbox_min = [4.0, -1.5, -1.5];
         item.bbox_max = [7.0, 1.5, 1.5];
         fd.scene
-            .items_mut::<viewport_lib_item_types::VolumeItem>()
+            .items_mut::<viewport_lib_plugins::item_types::volume::VolumeItem>()
             .push(item);
     }
 }

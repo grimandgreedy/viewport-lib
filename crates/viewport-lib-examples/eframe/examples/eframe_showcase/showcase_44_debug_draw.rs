@@ -15,7 +15,7 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
-use viewport_lib_item_types::PointCloudItem;
+use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
 use vpl::{
     Aabb, DebugDraw, DebugLayer, DebugPrim, FixedTimestep, Material, MeshId, RuntimeFrameContext,
     RuntimePlugin, RuntimeStepContext, SceneRenderItem, ViewportRuntime,

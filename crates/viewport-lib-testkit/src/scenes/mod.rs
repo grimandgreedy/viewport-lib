@@ -28,16 +28,20 @@ use viewport_lib::{
     MeshInstanceItem, PolylineItem, ScatterSettings, SceneFrame, SceneRenderItem, ViewportRenderer,
     primitives,
 };
-use viewport_lib_item_types::DecalItem;
-use viewport_lib_item_types::GpuMarchingCubesItem;
-use viewport_lib_item_types::PointCloudItem;
-use viewport_lib_item_types::ScatterVolumeItem;
-use viewport_lib_item_types::VolumeItem;
-use viewport_lib_item_types::{
-    GaussianSplatItem, GpuImplicitItem, ImageSliceItem, VolumeSurfaceSliceItem,
+use viewport_lib_plugins::item_types::decal::DecalItem;
+use viewport_lib_plugins::item_types::gpu_marching_cubes::GpuMarchingCubesItem;
+use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
+use viewport_lib_plugins::item_types::scatter_volume::ScatterVolumeItem;
+use viewport_lib_plugins::item_types::volume::VolumeItem;
+use viewport_lib_plugins::item_types::{
+    curves::{RibbonItem, StreamtubeItem, TubeItem},
+    sprite::SpriteItem,
+    tensor_field::TensorFieldItem,
+    vector_field::VectorFieldItem,
 };
-use viewport_lib_item_types::{
-    RibbonItem, SpriteItem, StreamtubeItem, TensorFieldItem, TubeItem, VectorFieldItem,
+use viewport_lib_plugins::item_types::{
+    gaussian_splat::GaussianSplatItem, gpu_implicit::GpuImplicitItem, image_slice::ImageSliceItem,
+    volume_surface_slice::VolumeSurfaceSliceItem,
 };
 
 /// Resources a scene's `build` function may upload into.
@@ -90,7 +94,8 @@ pub struct BuiltScene {
     /// only reproducible because the emit RNG is seeded from a frame counter
     /// rather than from the clock, and the harness pumps a fixed number of
     /// frames.
-    pub gpu_particle_systems: Vec<viewport_lib_item_types::GpuParticleSystemItem>,
+    pub gpu_particle_systems:
+        Vec<viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystemItem>,
     /// Ray-marched volume items.
     pub volumes: Vec<VolumeItem>,
     /// Gaussian splat items.
@@ -108,9 +113,10 @@ pub struct BuiltScene {
     /// Decal items.
     pub decals: Vec<DecalItem>,
     /// Surface LIC items.
-    pub surface_lics: Vec<viewport_lib_item_types::SurfaceLicItem>,
+    pub surface_lics: Vec<viewport_lib_plugins::item_types::surface_lic::SurfaceLicItem>,
     /// Surface contour items.
-    pub surface_contours: Vec<viewport_lib_item_types::SurfaceContourItem>,
+    pub surface_contours:
+        Vec<viewport_lib_plugins::item_types::surface_contour::SurfaceContourItem>,
     /// Mesh-instance batch items.
     pub mesh_instances: Vec<MeshInstanceItem>,
     /// Volume mesh items.
@@ -210,15 +216,21 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     sf.generation = scene.generation;
     *sf.items_mut::<PointCloudItem>() = scene.point_clouds.clone();
     *sf.items_mut::<viewport_lib::PolylineItem>() = scene.polylines.clone();
-    *sf.items_mut::<viewport_lib_item_types::VectorFieldItem>() = scene.vector_fields.clone();
-    *sf.items_mut::<viewport_lib_item_types::TensorFieldItem>() = scene.tensor_fields.clone();
-    *sf.items_mut::<viewport_lib_item_types::TubeItem>() = scene.tube_items.clone();
-    *sf.items_mut::<viewport_lib_item_types::StreamtubeItem>() = scene.streamtube_items.clone();
-    *sf.items_mut::<viewport_lib_item_types::RibbonItem>() = scene.ribbon_items.clone();
-    *sf.items_mut::<viewport_lib_item_types::SpriteItem>() = scene.sprite_items.clone();
-    *sf.items_mut::<viewport_lib_item_types::GpuParticleSystemItem>() =
+    *sf.items_mut::<viewport_lib_plugins::item_types::vector_field::VectorFieldItem>() =
+        scene.vector_fields.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::tensor_field::TensorFieldItem>() =
+        scene.tensor_fields.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::curves::TubeItem>() =
+        scene.tube_items.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::curves::StreamtubeItem>() =
+        scene.streamtube_items.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::curves::RibbonItem>() =
+        scene.ribbon_items.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::sprite::SpriteItem>() =
+        scene.sprite_items.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystemItem>() =
         scene.gpu_particle_systems.clone();
-    *sf.items_mut::<viewport_lib_item_types::VolumeItem>() = scene.volumes.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::volume::VolumeItem>() = scene.volumes.clone();
     *sf.items_mut::<GaussianSplatItem>() = scene.gaussian_splats.clone();
     *sf.items_mut::<ImageSliceItem>() = scene.image_slices.clone();
     *sf.items_mut::<VolumeSurfaceSliceItem>() = scene.volume_surface_slices.clone();
@@ -226,8 +238,10 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     *sf.items_mut::<GpuMarchingCubesItem>() = scene.gpu_mc_items.clone();
     *sf.items_mut::<ScatterVolumeItem>() = scene.scatter_volumes.clone();
     *sf.items_mut::<DecalItem>() = scene.decals.clone();
-    *sf.items_mut::<viewport_lib_item_types::SurfaceLicItem>() = scene.surface_lics.clone();
-    *sf.items_mut::<viewport_lib_item_types::SurfaceContourItem>() = scene.surface_contours.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::surface_lic::SurfaceLicItem>() =
+        scene.surface_lics.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::surface_contour::SurfaceContourItem>() =
+        scene.surface_contours.clone();
     sf.mesh_instances = scene.mesh_instances.clone();
     sf.volume_meshes = scene.volume_meshes.clone();
     let mut fd = FrameData::new(CameraFrame::from_camera(camera, viewport_size), sf);

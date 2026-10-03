@@ -13,9 +13,9 @@ mod showcase;
 mod showcases;
 mod ui;
 
-pub use viewport_lib_examples_eframe::eframe;
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::from_egui;
 use vpl::{
     ManipulationController, Modifiers, OffscreenViewportTarget, ViewportContext, ViewportEvent,
@@ -64,10 +64,12 @@ fn main() -> eframe::Result {
             // attached (idle when nothing is selected).
             // sRGB render format so the tonemap encode happens; the offscreen
             // target hands egui a non-sRGB view so the encode survives its sample.
-            let mut session =
-                ViewportInstance::new(&rs.device, OffscreenViewportTarget::render_format(rs.target_format))
-                    .with_manipulation(ManipulationController::new());
-            viewport_lib_item_types::install(session.renderer_mut(), &rs.device);
+            let mut session = ViewportInstance::new(
+                &rs.device,
+                OffscreenViewportTarget::render_format(rs.target_format),
+            )
+            .with_manipulation(ManipulationController::new());
+            viewport_lib_plugins::item_types::install(session.renderer_mut(), &rs.device);
 
             let mut list = showcases::all();
             let mut setup = SetupCtx {
@@ -174,7 +176,11 @@ impl eframe::App for App {
                     (rect.height() * ppp).round().max(1.0) as u32,
                 ];
 
-                if self.target.as_ref().map_or(true, |t| t.inner.size() != size) {
+                if self
+                    .target
+                    .as_ref()
+                    .map_or(true, |t| t.inner.size() != size)
+                {
                     let inner = OffscreenViewportTarget::new(&rs.device, rs.target_format, size);
                     let id = rs.renderer.write().register_native_texture(
                         &rs.device,

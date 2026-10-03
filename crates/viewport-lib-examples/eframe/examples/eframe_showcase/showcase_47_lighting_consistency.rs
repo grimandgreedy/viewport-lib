@@ -24,14 +24,17 @@
 use crate::eframe::egui;
 use viewport_lib as vpl;
 use viewport_lib::plugin_api::Uploads;
-use viewport_lib_item_types::PointCloudItem;
-use viewport_lib_item_types::VolumeItem;
-use viewport_lib_item_types::{
-    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
-    ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
+use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
+use viewport_lib_plugins::item_types::volume::VolumeItem;
+use viewport_lib_plugins::item_types::{
+    curves::{RibbonItem, StreamtubeItem, TubeItem},
+    tensor_field::{TensorFieldItem, TensorSource},
+    vector_field::VectorFieldItem,
 };
-use viewport_lib_item_types::{
-    RibbonItem, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem, VectorFieldItem,
+use viewport_lib_plugins::item_types::{
+    gaussian_splat::{GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree},
+    gpu_implicit::{GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive},
+    volume_surface_slice::VolumeSurfaceSliceItem,
 };
 use vpl::{
     ColourmapId, FrameData, ItemSettings, LightSource, LightingSettings, Material, MeshId,
@@ -494,7 +497,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         tg.tensors = TensorSource::Components(components);
         broadcast(s, &mut tg.settings);
         fd.scene
-            .items_mut::<viewport_lib_item_types::TensorFieldItem>()
+            .items_mut::<viewport_lib_plugins::item_types::tensor_field::TensorFieldItem>()
             .push(tg);
     }
 
@@ -538,7 +541,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         st.radius = 0.08;
         broadcast(s, &mut st.settings);
         fd.scene
-            .items_mut::<viewport_lib_item_types::StreamtubeItem>()
+            .items_mut::<viewport_lib_plugins::item_types::curves::StreamtubeItem>()
             .push(st);
     }
 
@@ -564,7 +567,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         tb.colour = [0.62, 0.08, 0.35, 1.0].into();
         broadcast(s, &mut tb.settings);
         fd.scene
-            .items_mut::<viewport_lib_item_types::TubeItem>()
+            .items_mut::<viewport_lib_plugins::item_types::curves::TubeItem>()
             .push(tb);
     }
 
@@ -591,7 +594,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         rb.colour = [0.60, 0.35, 0.08, 1.0].into();
         broadcast(s, &mut rb.settings);
         fd.scene
-            .items_mut::<viewport_lib_item_types::RibbonItem>()
+            .items_mut::<viewport_lib_plugins::item_types::curves::RibbonItem>()
             .push(rb);
     }
 
@@ -649,7 +652,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             .to_cols_array_2d();
         broadcast(s, &mut v.settings);
         fd.scene
-            .items_mut::<viewport_lib_item_types::VolumeItem>()
+            .items_mut::<viewport_lib_plugins::item_types::volume::VolumeItem>()
             .push(v);
     }
 

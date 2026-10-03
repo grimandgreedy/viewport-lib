@@ -6,9 +6,9 @@
 
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
-use viewport_lib_item_types::DecalItem;
-use viewport_lib_item_types::VolumeItem;
-use viewport_lib_item_types::{PointCloudItem, PointCloudRefItem};
+use viewport_lib_plugins::item_types::decal::DecalItem;
+use viewport_lib_plugins::item_types::point_cloud::{PointCloudItem, PointCloudRefItem};
+use viewport_lib_plugins::item_types::volume::VolumeItem;
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
 fn mesh_frame(item: SceneRenderItem, size: [f32; 2]) -> FrameData {
@@ -165,7 +165,7 @@ fn volume_pipelines_are_owned_by_the_plugin() {
     let mut with_volume = mesh_frame(item, [200.0, 150.0]);
     with_volume
         .scene
-        .items_mut::<viewport_lib_item_types::VolumeItem>()
+        .items_mut::<viewport_lib_plugins::item_types::volume::VolumeItem>()
         .push(volume);
     let _ = h.render(&with_volume, 200, 150);
     assert_eq!(
@@ -226,7 +226,7 @@ fn curve_pipelines_are_owned_by_the_plugins() {
     let base = mesh_frame(item.clone(), [200.0, 150.0]);
     let _ = h.render_two_frames(&base, 200, 150);
 
-    let mut ribbon = viewport_lib_item_types::RibbonItem::default();
+    let mut ribbon = viewport_lib_plugins::item_types::curves::RibbonItem::default();
     ribbon.positions = vec![[-1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
     ribbon.strip_lengths = vec![3];
     ribbon.width = 0.5;
@@ -244,21 +244,21 @@ fn curve_pipelines_are_owned_by_the_plugins() {
     let mut with_curves = mesh_frame(item, [200.0, 150.0]);
     with_curves
         .scene
-        .items_mut::<viewport_lib_item_types::RibbonRefItem>()
-        .push(viewport_lib_item_types::RibbonRefItem::new(source));
-    let mut streamtube = viewport_lib_item_types::StreamtubeItem::default();
+        .items_mut::<viewport_lib_plugins::item_types::curves::RibbonRefItem>()
+        .push(viewport_lib_plugins::item_types::curves::RibbonRefItem::new(source));
+    let mut streamtube = viewport_lib_plugins::item_types::curves::StreamtubeItem::default();
     streamtube.positions = vec![[-1.0, 0.5, 0.0], [0.0, 0.5, 0.0], [1.0, 0.5, 0.0]];
     streamtube.strip_lengths = vec![3];
     with_curves
         .scene
-        .items_mut::<viewport_lib_item_types::StreamtubeItem>()
+        .items_mut::<viewport_lib_plugins::item_types::curves::StreamtubeItem>()
         .push(streamtube);
-    let mut tube = viewport_lib_item_types::TubeItem::default();
+    let mut tube = viewport_lib_plugins::item_types::curves::TubeItem::default();
     tube.positions = vec![[-1.0, -0.5, 0.0], [0.0, -0.5, 0.0], [1.0, -0.5, 0.0]];
     tube.strip_lengths = vec![3];
     with_curves
         .scene
-        .items_mut::<viewport_lib_item_types::TubeItem>()
+        .items_mut::<viewport_lib_plugins::item_types::curves::TubeItem>()
         .push(tube);
     let _ = h.render(&with_curves, 200, 150);
     assert_eq!(

@@ -14,7 +14,7 @@ use crate::App;
 use crate::eframe::egui;
 use std::f32::consts::TAU;
 use viewport_lib as vpl;
-use viewport_lib_item_types::VectorFieldItem;
+use viewport_lib_plugins::item_types::vector_field::VectorFieldItem;
 use vpl::{
     BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, SceneRenderItem,
 };

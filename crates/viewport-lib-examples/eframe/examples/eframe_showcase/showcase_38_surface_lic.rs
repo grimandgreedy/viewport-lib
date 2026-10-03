@@ -27,7 +27,7 @@ use crate::App;
 use crate::eframe::egui;
 use std::collections::HashMap;
 use viewport_lib as vpl;
-use viewport_lib_item_types::{SurfaceLicConfig, SurfaceLicItem};
+use viewport_lib_plugins::item_types::surface_lic::{SurfaceLicConfig, SurfaceLicItem};
 use vpl::{
     AttributeData, BackfacePolicy, FrameData, Material, MeshData, MeshId, ViewportRenderer,
     scene::Scene,

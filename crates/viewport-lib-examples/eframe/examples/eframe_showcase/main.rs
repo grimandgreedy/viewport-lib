@@ -132,7 +132,7 @@ fn main() -> eframe::Result {
             let start = std::time::Instant::now();
             let mut renderer =
                 ViewportRenderer::new(&device, OffscreenViewportTarget::render_format(format));
-            viewport_lib_item_types::install(&mut renderer, &device);
+            viewport_lib_plugins::item_types::install(&mut renderer, &device);
             report_builds("renderer and item types", start);
             // Where pipelines compile on workers, ask for everything the
             // showcases can draw with now, so switching pages never compiles

@@ -29,7 +29,7 @@ jobs:
 
       # Publish bottom-up in dependency order: the pure-data types crate first,
       # then the geometry and input crates that depend on it, then the renderer
-      # that depends on all three, then the item types which are an ordinary
+      # that depends on all three, then the plugins, which are an ordinary
       # consumer of the renderer, and finally the testkit, which depends on both
       # of the last two. Each is skipped if that exact version is already on
       # crates.io, so a release that only bumped one crate does not fail on the
@@ -68,7 +68,7 @@ jobs:
           publish_if_new viewport-lib-geometry crates/viewport-lib-geometry/Cargo.toml
           publish_if_new viewport-lib-input    crates/viewport-lib-input/Cargo.toml
           publish_if_new viewport-lib          crates/viewport-lib/Cargo.toml
-          publish_if_new viewport-lib-item-types crates/viewport-lib-item-types/Cargo.toml
+          publish_if_new viewport-lib-plugins  crates/viewport-lib-plugins/Cargo.toml
           publish_if_new viewport-lib-testkit  crates/viewport-lib-testkit/Cargo.toml
 
       # `cargo publish` unpacks each crate into `target/package/<name>-<version>/`

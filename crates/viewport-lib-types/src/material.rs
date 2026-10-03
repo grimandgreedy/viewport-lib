@@ -90,7 +90,7 @@ pub struct ItemSettings {
     ///
     /// For decals this is honoured by mesh surfaces and by the item types
     /// that stamp the surface mask: every depth-writing type in
-    /// `viewport-lib-item-types` does. A type that writes depth and does not
+    /// `viewport-lib-plugins` does. A type that writes depth and does not
     /// stamp it takes every decal whatever its mask; one that writes no depth
     /// takes none.
     pub visibility_mask: u32,

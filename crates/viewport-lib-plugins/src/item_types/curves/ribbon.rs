@@ -1,0 +1,1063 @@
+//! The ribbon item type as an [`ItemTypePlugin`]: polyline strips swept into
+//! flat, two-sided quad strips. Consumers submit [`RibbonItem`]s with
+//! `frame.scene.submit::<RibbonItem>(..)`, or [`RibbonRefItem`]s to draw a
+//! ribbon uploaded once through
+//! [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload). Both forms
+//! arrive at this plugin under the one type name.
+//!
+//! Ribbons carry more of the render surface than the other two curve types:
+//! the blend mode selects a pipeline variant, transparent ribbons route through
+//! the OIT pass, and they cast shadows.
+
+use super::cpu_pick::{self, CurveLevels, RectAccumulator, strips_or_single};
+use super::draw::{
+    build_frame_with, outline_mask_curve_mesh, radius_in_pixels, render_pick_curve_mesh,
+    resolve_curve_sub_object, surface_mask_curve_mesh,
+};
+use super::pipeline::{CurveFrame, CurvePickGpu, draw_mesh, draw_solid_indexed};
+use super::types::RibbonId;
+use super::types::{RibbonItem, RibbonRefItem};
+use viewport_lib::plugin_api::shared_wgsl;
+
+/// The catalogue sections `ribbon.wgsl` and `ribbon_oit.wgsl` need on top of
+/// the clustered lighting one: they declare their own group-0 bindings, so the
+/// clip-volume test and the cascade sampler come across as standalone
+/// sections rather than with the shared binding block.
+const RIBBON_LIT_EXTRA: &[&str] = &[
+    shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
+    shared_wgsl::SHARED_CSM_WGSL,
+];
+use viewport_lib::plugin_api::pick_helpers::{project_to_screen, ray_triangle, segment_in_rect};
+use viewport_lib::plugin_api::{
+    ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
+    PickContext, PickPassContext, PickRay, RectPickContext, ShadowCastContext,
+};
+use viewport_lib::renderer::{
+    PickHit, PickId, PickMask, PickRectResult, SpriteBlend, SubObjectRef,
+};
+use viewport_lib::resources::{DeviceResources, HDR_COLOR_FORMAT};
+
+/// Stable name this item type submits and registers under.
+pub const TYPE_NAME: &str = "vpl.ribbon";
+
+/// Ribbon pipeline variant axes: blend mode and thin-wireframe vs solid-triangle
+/// geometry. Both axes select the same shader and bind group layout : only the
+/// blend state, depth-write flag, and topology change : so this is closer in
+/// shape to the mesh family's own `PipelineKey` than to `PolylineKey`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) struct RibbonKey {
+    pub blend: SpriteBlend,
+    pub wireframe: bool,
+    /// Whether the variant writes depth. An `AlphaBlend` or `Premultiplied`
+    /// ribbon that does draws with the opaque scene; one that does not is
+    /// routed to OIT instead and never reaches this set. `Additive` never
+    /// writes depth whatever the item asks for, since accumulating is the
+    /// point of that blend.
+    pub depth_write: bool,
+}
+
+/// Number of [`RibbonKey`] slots.
+const KEY_COUNT: usize = 12;
+
+impl RibbonKey {
+    const BLENDS: [SpriteBlend; 3] = [
+        SpriteBlend::AlphaBlend,
+        SpriteBlend::Additive,
+        SpriteBlend::Premultiplied,
+    ];
+
+    fn blend_index(self) -> usize {
+        match self.blend {
+            SpriteBlend::AlphaBlend => 0,
+            SpriteBlend::Additive => 1,
+            SpriteBlend::Premultiplied => 2,
+        }
+    }
+
+    fn slot(self) -> usize {
+        self.blend_index() + 3 * (self.wireframe as usize) + 6 * (self.depth_write as usize)
+    }
+
+    /// The key at `slot`, the inverse of [`slot`](Self::slot).
+    fn from_slot(slot: usize) -> Self {
+        Self {
+            blend: Self::BLENDS[slot % 3],
+            wireframe: (slot / 3) % 2 == 1,
+            depth_write: slot >= 6,
+        }
+    }
+
+    /// The key a ribbon's draw data selects.
+    fn of(gd: &super::store::StreamtubeGpuData) -> Self {
+        Self {
+            blend: gd.blend,
+            wireframe: gd.wireframe,
+            depth_write: gd.depth_write,
+        }
+    }
+}
+
+/// The member of [`RibbonPipelines`] that draws `key` in one format: two per
+/// [`RibbonKey`] slot, LDR then HDR. The OIT and shadow members follow them.
+fn variant(key: RibbonKey, hdr: bool) -> usize {
+    key.slot() * 2 + hdr as usize
+}
+const OIT: usize = KEY_COUNT * 2;
+const OIT_PREMULTIPLIED: usize = OIT + 1;
+const SHADOW: usize = OIT + 2;
+
+/// The OIT member a ribbon of this blend draws with.
+fn oit_member(blend: SpriteBlend) -> usize {
+    match blend {
+        SpriteBlend::Premultiplied => OIT_PREMULTIPLIED,
+        _ => OIT,
+    }
+}
+
+/// What a ribbon pipeline build reads.
+struct RibbonRecipe {
+    device: viewport_lib::gpu::Device,
+    builder: viewport_lib::plugin_api::PipelineBuilder,
+    layout: viewport_lib::gpu::PipelineLayout,
+    shader: viewport_lib::gpu::ShaderModule,
+    oit_shader: viewport_lib::gpu::ShaderModule,
+    shadow_shader: viewport_lib::gpu::ShaderModule,
+    bgl: viewport_lib::gpu::BindGroupLayout,
+    sample_count: u32,
+    ldr_format: viewport_lib::gpu::TextureFormat,
+}
+
+/// Every blend, topology and depth-write variant in both formats, the two OIT
+/// pipelines and the shadow pipeline, each built the first time a draw needs
+/// it.
+type RibbonPipelines = viewport_lib::plugin_api::LazyPipelines<RibbonRecipe, { SHADOW + 1 }>;
+
+fn build(r: &RibbonRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
+    match i {
+        OIT | OIT_PREMULTIPLIED => build_oit(r, i == OIT_PREMULTIPLIED),
+        SHADOW => build_shadow(r),
+        _ => build_variant(r, RibbonKey::from_slot(i / 2), i % 2 == 1),
+    }
+}
+
+fn build_variant(r: &RibbonRecipe, key: RibbonKey, hdr: bool) -> viewport_lib::gpu::RenderPipeline {
+    use viewport_lib::plugin_api::builders::{DualPipelineDesc, build_dual_pipeline_variant};
+
+    let additive_blend = viewport_lib::gpu::BlendState {
+        color: viewport_lib::gpu::BlendComponent {
+            src_factor: viewport_lib::gpu::BlendFactor::One,
+            dst_factor: viewport_lib::gpu::BlendFactor::One,
+            operation: viewport_lib::gpu::BlendOperation::Add,
+        },
+        alpha: viewport_lib::gpu::BlendComponent {
+            src_factor: viewport_lib::gpu::BlendFactor::One,
+            dst_factor: viewport_lib::gpu::BlendFactor::One,
+            operation: viewport_lib::gpu::BlendOperation::Add,
+        },
+    };
+    let premultiplied_blend = viewport_lib::gpu::BlendState {
+        color: viewport_lib::gpu::BlendComponent {
+            src_factor: viewport_lib::gpu::BlendFactor::One,
+            dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
+            operation: viewport_lib::gpu::BlendOperation::Add,
+        },
+        alpha: viewport_lib::gpu::BlendComponent {
+            src_factor: viewport_lib::gpu::BlendFactor::One,
+            dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
+            operation: viewport_lib::gpu::BlendOperation::Add,
+        },
+    };
+
+    let blend = match key.blend {
+        SpriteBlend::AlphaBlend => viewport_lib::gpu::BlendState::ALPHA_BLENDING,
+        SpriteBlend::Additive => additive_blend,
+        SpriteBlend::Premultiplied => premultiplied_blend,
+    };
+    // Additive never writes depth: successive segments accumulate rather than
+    // clipping each other where they overlap.
+    let depth_write = key.depth_write && !matches!(key.blend, SpriteBlend::Additive);
+    build_dual_pipeline_variant(
+        &r.device,
+        &DualPipelineDesc {
+            label: "ribbon_pipeline_variant",
+            layout: &r.layout,
+            shader: &r.shader,
+            vertex_entry: "vs_main",
+            fragment_entry: "fs_main",
+            vertex_buffers: &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
+            blend: Some(blend),
+            topology: if key.wireframe {
+                viewport_lib::gpu::PrimitiveTopology::LineList
+            } else {
+                viewport_lib::gpu::PrimitiveTopology::TriangleList
+            },
+            cull_mode: None,
+            depth_write,
+            depth_compare: viewport_lib::gpu::CompareFunction::Less,
+            sample_count: r.sample_count,
+            ldr_format: r.ldr_format,
+        },
+        hdr,
+    )
+}
+
+/// Weighted-blended OIT, HDR-only. The same layout as the solid draw, so the
+/// same bind group is bound again; only the accum / reveal targets differ.
+/// Straight and premultiplied alpha share one module and differ only in
+/// fragment entry point.
+fn build_oit(r: &RibbonRecipe, premultiplied: bool) -> viewport_lib::gpu::RenderPipeline {
+    let (entry, label) = if premultiplied {
+        ("fs_oit_premultiplied", "ribbon_oit_pipeline_premultiplied")
+    } else {
+        ("fs_oit", "ribbon_oit_pipeline")
+    };
+    viewport_lib::plugin_api::builders::render_pipeline(
+        &r.device,
+        viewport_lib::plugin_api::builders::RenderPipelineDesc {
+            label,
+            layout: &r.layout,
+            vertex_module: &r.oit_shader,
+            vertex_entry: "vs_main",
+            vertex_buffers: &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
+            fragment: Some(viewport_lib::gpu::FragmentState {
+                module: &r.oit_shader,
+                entry_point: Some(entry),
+                targets: &[
+                    Some(viewport_lib::gpu::ColorTargetState {
+                        format: viewport_lib::gpu::TextureFormat::Rgba16Float,
+                        blend: Some(viewport_lib::plugin_api::target_desc::OIT_ACCUM_BLEND),
+                        write_mask: viewport_lib::gpu::ColorWrites::ALL,
+                    }),
+                    Some(viewport_lib::gpu::ColorTargetState {
+                        format: viewport_lib::gpu::TextureFormat::R8Unorm,
+                        blend: Some(viewport_lib::plugin_api::target_desc::OIT_REVEAL_BLEND),
+                        write_mask: viewport_lib::gpu::ColorWrites::RED,
+                    }),
+                ],
+                compilation_options: viewport_lib::gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: viewport_lib::gpu::PrimitiveState {
+                topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
+                false,
+                viewport_lib::gpu::CompareFunction::LessEqual,
+            )),
+            multisample: viewport_lib::gpu::MultisampleState {
+                count: r.sample_count,
+                ..Default::default()
+            },
+            cache: None,
+        },
+    )
+}
+
+/// Depth-only shadow-cast pipeline. One pipeline covers every ribbon: geometry
+/// is always the thin, two-sided expanded quad strip, so there is no cutout or
+/// two-sided axis to key on the way the mesh family has. Group 0 is the shadow
+/// pass's own dynamic-offset camera; group 1 reuses the ribbon bind group built
+/// for the solid draw.
+fn build_shadow(r: &RibbonRecipe) -> viewport_lib::gpu::RenderPipeline {
+    let shadow_vertex_layouts = [super::pipeline::position_only_layout()];
+    let mut shadow_opts = viewport_lib::resources::PluginPipelineOpts::new(
+        Some("ribbon_shadow_pipeline"),
+        &r.shadow_shader,
+        "vs_main",
+        "",
+        &shadow_vertex_layouts,
+    );
+    let shadow_extra: [&viewport_lib::gpu::BindGroupLayout; 1] = [&r.bgl];
+    shadow_opts.extra_bind_group_layouts = &shadow_extra;
+    shadow_opts.primitive.cull_mode = None;
+    shadow_opts.depth_compare = viewport_lib::gpu::CompareFunction::Less;
+    // A ribbon is a thin open surface, so it self-shadows badly under the mild
+    // default. Same bias the lib uses where the shadow pass does not cull.
+    shadow_opts.depth_bias = Some(viewport_lib::plugin_api::builders::CSM_SHADOW_BIAS_TWO_SIDED);
+    r.builder.build_shadow_pipeline(&r.device, &shadow_opts)
+}
+
+/// The ribbon render, OIT, shadow, pick and mask pipelines.
+struct RibbonGpu {
+    pipelines: RibbonPipelines,
+    pick: CurvePickGpu,
+}
+
+impl RibbonGpu {
+    fn new(
+        device: &viewport_lib::gpu::Device,
+        resources: &DeviceResources,
+        layouts: &super::store::RibbonResources,
+    ) -> Self {
+        use viewport_lib::plugin_api::builders::{standard_scene_layout, wgsl_module};
+
+        let shader = wgsl_module(
+            device,
+            "ribbon_shader",
+            &crate::item_types::shader::lit_shader(
+                RIBBON_LIT_EXTRA,
+                crate::item_types::shader::wgsl_source!("ribbon"),
+            ),
+        );
+        let oit_shader = wgsl_module(
+            device,
+            "ribbon_oit_shader",
+            &crate::item_types::shader::lit_shader(
+                RIBBON_LIT_EXTRA,
+                crate::item_types::shader::wgsl_source!("ribbon_oit"),
+            ),
+        );
+        let shadow_shader = wgsl_module(
+            device,
+            "ribbon_shadow_shader",
+            crate::item_types::shader::wgsl_source!("ribbon_shadow"),
+        );
+        let layout = standard_scene_layout(
+            device,
+            "ribbon_pipeline_layout",
+            resources.shared_bindings().group0_layout,
+            &layouts.bgl,
+        );
+        let pipelines = resources.lazy_pipelines(
+            RibbonRecipe {
+                device: device.clone(),
+                builder: resources.pipeline_builder(),
+                layout,
+                shader,
+                oit_shader,
+                shadow_shader,
+                bgl: layouts.bgl.clone(),
+                sample_count: resources.sample_count(),
+                ldr_format: resources.target_format(),
+            },
+            build,
+        );
+        Self {
+            pipelines,
+            pick: CurvePickGpu::new(device, resources, "ribbon", true),
+        }
+    }
+
+    /// Whether a ribbon's colour pipeline can draw this frame in either format,
+    /// counting the OIT pipeline for one that routes there. The mask, pick and
+    /// shadow passes wait for it, so a ribbon is never outlined, picked or cast
+    /// before it is drawn.
+    fn drawn(&self, entry: &CurveFrame) -> bool {
+        let gd = &entry.gpu;
+        let key = RibbonKey::of(gd);
+        self.pipelines.available(variant(key, false))
+            || self.pipelines.available(variant(key, true))
+            || (gd.oit_eligible && self.pipelines.available(oit_member(gd.blend)))
+    }
+}
+
+#[derive(Default)]
+pub struct RibbonPlugin {
+    /// The pre-uploaded ribbons, owned by the type that draws them.
+    stored: super::store::RibbonStore,
+    /// The group-1 layout every upload builds its bind group against. Created
+    /// on registration, because an upload can arrive before the first frame.
+    layouts: Option<super::store::RibbonResources>,
+    /// Resource epochs the store was last revalidated against. A stored ribbon
+    /// that draws with a streak texture holds its view in a bind group, so a
+    /// free or a replace since the last frame means it has to be rebound.
+    deps_gate: viewport_lib::resources::ResourceGate,
+    gpu: Option<RibbonGpu>,
+    /// Per drawn item, rebuilt each prepare: the inline items first, then the
+    /// references.
+    frame: Vec<CurveFrame>,
+    /// Every inline item from the last prepared frame. Reference items are not
+    /// here: their geometry lives on the GPU, so they answer the GPU pick only.
+    pick_items: Vec<RibbonItem>,
+}
+
+impl RibbonPlugin {
+    /// Rebind stored ribbons whose streak texture was freed or swapped since
+    /// the last frame.
+    ///
+    /// A ribbon is the host's content, held until the host drops the handle, so
+    /// the answer to a freed texture is to rebind against the fallback, never
+    /// to discard the ribbon: the geometry stays, it stops being textured.
+    /// Leaving it alone instead would keep the freed texture alive through the
+    /// bind group and go on sampling it, so the memory the host asked to
+    /// release is never released.
+    ///
+    /// A replace swaps the view behind a live id, which no per-ribbon liveness
+    /// check can see, so every stored ribbon that names a texture is rebound.
+    fn revalidate_store(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        resources: &viewport_lib::resources::DeviceResources,
+    ) {
+        use viewport_lib::resources::Revalidate;
+        let action = self.deps_gate.poll(resources);
+        if action == Revalidate::Valid {
+            return;
+        }
+        let Some(layouts) = self.layouts.as_ref() else {
+            return;
+        };
+        for (_, gpu) in self.stored.iter_mut() {
+            let Some(texture_id) = gpu.rebind.as_ref().map(|r| r.texture_id) else {
+                continue;
+            };
+            let live = resources.has_texture(texture_id);
+            if action == Revalidate::CheckEach && live {
+                continue;
+            }
+            let binds = super::store::resolve_ribbon_texture(resources, layouts, Some(texture_id));
+            super::store::rebind_ribbon(device, queue, &binds, gpu);
+            // A freed id never comes back: ids are generational, so whatever
+            // takes the slot next resolves through a different one. Forget the
+            // ribbon's rebind record, and it stops being re-checked on every
+            // later free.
+            if !live {
+                gpu.rebind = None;
+            }
+        }
+    }
+}
+
+impl ItemTypePlugin for RibbonPlugin {
+    fn type_name(&self) -> &'static str {
+        TYPE_NAME
+    }
+
+    fn init_gpu(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        _shared: &viewport_lib::plugin_api::SharedBindings<'_>,
+    ) {
+        self.layouts = Some(super::store::RibbonResources::new(device));
+    }
+
+    fn warm(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        resources: &viewport_lib::DeviceResources,
+    ) {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| super::store::RibbonResources::new(device));
+        let gpu = self
+            .gpu
+            .get_or_insert_with(|| RibbonGpu::new(device, resources, layouts));
+        gpu.pipelines.request_all();
+        gpu.pick.request_all();
+    }
+
+    fn resident_bytes(&self) -> u64 {
+        self.stored.allocated_bytes()
+    }
+
+    fn on_device_recreated(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        _queue: &viewport_lib::gpu::Queue,
+    ) {
+        self.layouts = Some(super::store::RibbonResources::new(device));
+        self.gpu = None;
+        self.frame.clear();
+    }
+
+    fn prepare(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        ctx: &ItemFrameContext<'_>,
+        items: &ItemCollections<'_>,
+    ) -> Vec<viewport_lib::gpu::CommandBuffer> {
+        self.frame.clear();
+        self.revalidate_store(device, queue, ctx.resources);
+        let items = items.of::<RibbonItem>();
+        let refs = ctx.refs_of::<RibbonRefItem>();
+        self.pick_items.clear();
+        self.pick_items.extend_from_slice(items);
+        if items.is_empty() && refs.is_empty() {
+            return Vec::new();
+        }
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| super::store::RibbonResources::new(device));
+        let stored = &self.stored;
+        let gpu = self
+            .gpu
+            .get_or_insert_with(|| RibbonGpu::new(device, ctx.resources, layouts));
+
+        for item in items {
+            if item.settings.hidden || item.positions.is_empty() || item.strip_lengths.is_empty() {
+                continue;
+            }
+            let wireframe = ctx.wireframe_mode || item.settings.wireframe;
+            let binds = super::store::resolve_ribbon_bindings(ctx.resources, layouts, item);
+            let mut gpu_data = super::store::build_ribbon(device, queue, &binds, item, wireframe);
+            if gpu_data.index_count == 0 {
+                continue;
+            }
+            gpu_data.pick_id = item.settings.pick_id;
+            gpu_data.model = item.model;
+            gpu_data.cast_shadows = item.settings.cast_shadows;
+            self.frame.push(build_frame_with(
+                device,
+                queue,
+                &gpu.pick,
+                gpu_data,
+                ctx.outline_selected && item.settings.selected,
+                item.settings,
+            ));
+        }
+
+        // Pre-uploaded references: the payload lives in the store, the model
+        // matrix and pick id come from the reference, so one stored ribbon can
+        // be drawn twice at two places under two ids.
+        for ref_item in refs {
+            if ref_item.settings.hidden {
+                continue;
+            }
+            let Some(entry) = stored.get(ref_item.source) else {
+                continue;
+            };
+            let mut gpu_data = entry.clone();
+            if gpu_data.index_count == 0 {
+                continue;
+            }
+            queue.write_buffer(
+                &gpu_data._uniform_buf,
+                0,
+                bytemuck::bytes_of(&ref_item.model),
+            );
+            gpu_data.pick_id = ref_item.settings.pick_id;
+            gpu_data.model = ref_item.model;
+            gpu_data.wireframe = ctx.wireframe_mode || ref_item.settings.wireframe;
+            gpu_data.cast_shadows = ref_item.settings.cast_shadows;
+            self.frame.push(build_frame_with(
+                device,
+                queue,
+                &gpu.pick,
+                gpu_data,
+                ctx.outline_selected && ref_item.settings.selected,
+                ref_item.settings,
+            ));
+        }
+        Vec::new()
+    }
+
+    fn paint(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        ctx: &PaintContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
+        for entry in &self.frame {
+            let gd = &entry.gpu;
+            if gd.index_count == 0 && gd.edge_index_count == 0 {
+                continue;
+            }
+            // OIT-eligible ribbons draw in `paint_transparent` instead. That
+            // pass is HDR-only, so on the LDR path they still draw here: there
+            // is no OIT pass to route them to.
+            if is_hdr && gd.oit_eligible {
+                continue;
+            }
+            // Still compiling: the ribbon draws next frame.
+            let Some(pl) = gpu.pipelines.get(variant(RibbonKey::of(gd), is_hdr)) else {
+                continue;
+            };
+            pass.set_pipeline(pl);
+            draw_mesh(pass, gd);
+        }
+    }
+
+    fn draws_ldr(&self) -> bool {
+        true
+    }
+
+    fn paint_transparent(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        _ctx: &PaintContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        for entry in self.frame.iter().filter(|f| f.gpu.oit_eligible) {
+            let Some(pl) = gpu.pipelines.get(oit_member(entry.gpu.blend)) else {
+                continue;
+            };
+            pass.set_pipeline(pl);
+            pass.set_bind_group(1, &entry.gpu.uniform_bind_group, &[]);
+            draw_solid_indexed(pass, &entry.gpu);
+        }
+    }
+
+    fn cast_shadow_pass(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        _ctx: &ShadowCastContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        // No per-item cascade-frustum cull: the uploaded data carries no world
+        // AABB, so every visible ribbon casts into every cascade its distance
+        // would put it in. Group 1 reuses each ribbon's own solid-draw bind
+        // group; only the leading `model` field is read by `ribbon_shadow.wgsl`.
+        let mut bound = false;
+        for entry in &self.frame {
+            if !entry.gpu.cast_shadows || entry.gpu.index_count == 0 || !gpu.drawn(entry) {
+                continue;
+            }
+            if !bound {
+                let Some(pl) = gpu.pipelines.get(SHADOW) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
+                bound = true;
+            }
+            pass.set_bind_group(1, &entry.gpu.uniform_bind_group, &[]);
+            draw_solid_indexed(pass, &entry.gpu);
+        }
+    }
+
+    fn outline_mask(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        _ctx: &OutlineMaskContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        outline_mask_curve_mesh(pass, &gpu.pick, |e| gpu.drawn(e), &self.frame);
+    }
+
+    fn surface_mask(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        ctx: &viewport_lib::plugin_api::SurfaceMaskContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        surface_mask_curve_mesh(pass, ctx, &gpu.pick, |e| gpu.drawn(e), &self.frame);
+    }
+
+    /// Node proximity plus a ray test against the reconstructed swept quads, so
+    /// a click anywhere on the ribbon surface registers, not only near its
+    /// centre line.
+    fn pick(&self, ray: &PickRay, ctx: &PickContext<'_>) -> Option<(f32, PickHit)> {
+        let levels = CurveLevels::from_mask(ctx.mask);
+        if levels.is_empty() {
+            return None;
+        }
+        let mut best: Option<(f32, PickHit)> = None;
+        let mut consider = |toi: f32, hit: PickHit| {
+            if best.as_ref().is_none_or(|(t, _)| toi < *t) {
+                best = Some((toi, hit));
+            }
+        };
+        for item in &self.pick_items {
+            if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
+                continue;
+            }
+            if levels.node || levels.strip || levels.object {
+                let radius_px = radius_in_pixels(&item.positions, item.width * 0.5, ctx);
+                if let Some(hit) = cpu_pick::node_hit(
+                    levels,
+                    ctx.click_pos,
+                    item.settings.pick_id,
+                    &item.positions,
+                    &item.strip_lengths,
+                    ctx.view_proj,
+                    ctx.viewport_size,
+                    radius_px.max(8.0),
+                ) {
+                    let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+                    consider(toi, hit);
+                }
+            }
+            if levels.segment || levels.strip || levels.object {
+                let mut best_t = f32::MAX;
+                let mut best_seg: Option<(u32, glam::Vec3)> = None;
+                for_each_quad(item, |seg_idx, c0, c1, c2, c3| {
+                    // Both triangles, both faces: a ribbon is flat and has no
+                    // front side.
+                    let t = ray_triangle(ray.origin, ray.direction, c0, c1, c2)
+                        .or_else(|| ray_triangle(ray.origin, ray.direction, c1, c3, c2))
+                        .or_else(|| ray_triangle(ray.origin, ray.direction, c2, c1, c0))
+                        .or_else(|| ray_triangle(ray.origin, ray.direction, c2, c3, c1));
+                    if let Some(t) = t {
+                        if t < best_t {
+                            best_t = t;
+                            best_seg = Some((seg_idx, ray.origin + ray.direction * t));
+                        }
+                    }
+                    true
+                });
+                if let Some((seg_idx, world_pos)) = best_seg {
+                    consider(
+                        best_t,
+                        cpu_pick::hit_for_segment(
+                            levels,
+                            item.settings.pick_id,
+                            seg_idx,
+                            world_pos,
+                            &item.strip_lengths,
+                        ),
+                    );
+                }
+            }
+        }
+        best
+    }
+
+    fn pick_rect(&self, ctx: &RectPickContext<'_>) -> PickRectResult {
+        let levels = CurveLevels::from_mask(ctx.mask);
+        let mut result = PickRectResult::default();
+        if levels.is_empty() {
+            return result;
+        }
+        let in_rect = |p: glam::Vec2| {
+            p.x >= ctx.rect_min.x
+                && p.x <= ctx.rect_max.x
+                && p.y >= ctx.rect_min.y
+                && p.y <= ctx.rect_max.y
+        };
+        let proj = |p: glam::Vec3| project_to_screen(p, ctx.view_proj, ctx.viewport_size);
+        for item in &self.pick_items {
+            if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
+                continue;
+            }
+            let mut acc = RectAccumulator::new(levels, item.settings.pick_id);
+
+            if levels.node || levels.strip || levels.object {
+                for (node_idx, pos) in item.positions.iter().enumerate() {
+                    let inside = proj(glam::Vec3::from(*pos)).is_some_and(in_rect);
+                    if inside && !acc.node(&mut result, node_idx as u32, &item.strip_lengths) {
+                        break;
+                    }
+                }
+            }
+
+            // Every quad edge against the rectangle, which also catches a quad
+            // corner inside it through `segment_in_rect`'s endpoint test.
+            if levels.segment || levels.strip || levels.object {
+                let edge_hit = |a: Option<glam::Vec2>, b: Option<glam::Vec2>| match (a, b) {
+                    (Some(a), Some(b)) => segment_in_rect(a, b, ctx.rect_min, ctx.rect_max),
+                    (Some(a), None) => in_rect(a),
+                    (None, Some(b)) => in_rect(b),
+                    (None, None) => false,
+                };
+                for_each_quad(item, |seg_idx, c0, c1, c2, c3| {
+                    let (s0, s1, s2, s3) = (proj(c0), proj(c1), proj(c2), proj(c3));
+                    let hit = edge_hit(s0, s1)
+                        || edge_hit(s2, s3)
+                        || edge_hit(s0, s2)
+                        || edge_hit(s1, s3);
+                    if !hit {
+                        return true;
+                    }
+                    acc.segment(&mut result, seg_idx, &item.strip_lengths)
+                });
+            }
+
+            acc.finish(&mut result);
+        }
+        result
+    }
+
+    fn render_pick(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        ctx: &PickPassContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        render_pick_curve_mesh(pass, ctx, &gpu.pick, |e| gpu.drawn(e), &self.frame);
+    }
+
+    fn resolve_sub_object(
+        &self,
+        pick_id: PickId,
+        primitive_index: u32,
+        _world_pos: glam::Vec3,
+        mask: PickMask,
+    ) -> Option<SubObjectRef> {
+        resolve_curve_sub_object(&self.frame, pick_id, primitive_index, mask)
+    }
+    fn sub_object_position(
+        &self,
+        items: &ItemCollections<'_>,
+        pick_id: PickId,
+        sub_object: SubObjectRef,
+    ) -> Option<glam::Vec3> {
+        viewport_lib::plugin_api::pick_helpers::inline_point_position(
+            items,
+            pick_id,
+            sub_object,
+            |item: &RibbonItem| (item.settings.pick_id, &item.positions, &item.model),
+        )
+    }
+}
+
+/// Walk the swept quads of a ribbon, calling `f(segment, c0, c1, c2, c3)` with
+/// the corners of each: `c0`/`c1` left and right at the segment start, `c2`/`c3`
+/// at its end. Stops early when `f` returns `false`.
+fn for_each_quad(
+    item: &RibbonItem,
+    mut f: impl FnMut(u32, glam::Vec3, glam::Vec3, glam::Vec3, glam::Vec3) -> bool,
+) {
+    let frames = lateral_frames(
+        &item.positions,
+        &item.strip_lengths,
+        item.width,
+        item.width_attribute.as_deref(),
+        item.twist_attribute.as_deref(),
+    );
+    let strips = strips_or_single(&item.positions, &item.strip_lengths);
+    let mut node_off = 0usize;
+    let mut seg_off = 0u32;
+    for &slen in &strips {
+        let slen = slen as usize;
+        for k in 0..slen.saturating_sub(1) {
+            let (ia, ib) = (node_off + k, node_off + k + 1);
+            let pa = glam::Vec3::from(item.positions[ia]);
+            let pb = glam::Vec3::from(item.positions[ib]);
+            let (ua, wa) = frames[ia];
+            let (ub, wb) = frames[ib];
+            if !f(
+                seg_off + k as u32,
+                pa + ua * wa,
+                pa - ua * wa,
+                pb + ub * wb,
+                pb - ub * wb,
+            ) {
+                return;
+            }
+        }
+        seg_off += slen.saturating_sub(1) as u32;
+        node_off += slen;
+    }
+}
+
+/// Reconstruct per-vertex (lateral direction, half-width) for a ribbon.
+///
+/// Replicates the parallel-transport frame the upload builds, so click and rect
+/// picking test the actual swept quad rather than a midpoint proxy.
+fn lateral_frames(
+    positions: &[[f32; 3]],
+    strip_lengths: &[u32],
+    width: f32,
+    width_attribute: Option<&[f32]>,
+    twist_attribute: Option<&[[f32; 3]]>,
+) -> Vec<(glam::Vec3, f32)> {
+    // Initialise with a sentinel so any unvisited vertex has zero width.
+    let mut frames: Vec<(glam::Vec3, f32)> = vec![(glam::Vec3::X, 0.0); positions.len()];
+    let strips = strips_or_single(positions, strip_lengths);
+
+    let mut node_off = 0usize;
+    for &slen in &strips {
+        let slen = slen as usize;
+        if slen < 2 {
+            node_off += slen;
+            continue;
+        }
+
+        let pts: Vec<glam::Vec3> = positions[node_off..node_off + slen]
+            .iter()
+            .map(|&p| glam::Vec3::from(p))
+            .collect();
+
+        let t0 = (pts[1] - pts[0]).normalize_or_zero();
+        if t0.length_squared() < 1e-10 {
+            node_off += slen;
+            continue;
+        }
+        let ref_v = if t0.x.abs() < 0.9 {
+            glam::Vec3::X
+        } else {
+            glam::Vec3::Y
+        };
+        let mut u = t0.cross(ref_v).normalize();
+
+        for k in 0..slen {
+            let tangent = if k + 1 < slen {
+                (pts[k + 1] - pts[k]).normalize_or_zero()
+            } else {
+                (pts[k] - pts[k - 1]).normalize_or_zero()
+            };
+
+            // Parallel transport: rotate u to stay perpendicular to the new
+            // tangent.
+            if k > 0 {
+                let t_prev = (pts[k] - pts[k - 1]).normalize_or_zero();
+                let axis = t_prev.cross(tangent);
+                let sin_a = axis.length().min(1.0);
+                if sin_a > 1e-6 {
+                    let cos_a = t_prev.dot(tangent).clamp(-1.0, 1.0);
+                    let ax = axis / sin_a;
+                    u = u * cos_a + ax.cross(u) * sin_a + ax * ax.dot(u) * (1.0 - cos_a);
+                    u = u.normalize_or_zero();
+                }
+            }
+
+            // Apply per-point twist if supplied.
+            let mut lateral = u;
+            if let Some(twist) = twist_attribute {
+                if let Some(&tv) = twist.get(node_off + k) {
+                    let tv = glam::Vec3::from(tv);
+                    let proj = tv - tangent * tangent.dot(tv);
+                    if proj.length_squared() > 1e-10 {
+                        lateral = proj.normalize();
+                    }
+                }
+            }
+
+            let half_w = width_attribute
+                .and_then(|w| w.get(node_off + k).copied())
+                .unwrap_or(width)
+                * 0.5;
+            frames[node_off + k] = (lateral, half_w);
+        }
+        node_off += slen;
+    }
+    frames
+}
+
+impl RibbonPlugin {
+    /// Build one curve's GPU data against the plugin's layout.
+    fn build(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        resources: &viewport_lib::resources::DeviceResources,
+        item: &RibbonItem,
+    ) -> super::store::StreamtubeGpuData {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| super::store::RibbonResources::new(device));
+        let binds = super::store::resolve_ribbon_bindings(resources, layouts, item);
+        super::store::build_ribbon(device, queue, &binds, item, false)
+    }
+
+    /// Pre-upload a curve and return its handle.
+    pub(crate) fn upload(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        resources: &viewport_lib::resources::DeviceResources,
+        item: &RibbonItem,
+    ) -> RibbonId {
+        let gpu = self.build(device, queue, resources, item);
+        self.stored.insert_sized(gpu)
+    }
+
+    /// Drop a stored curve. `false` when the handle does not resolve.
+    pub(crate) fn drop_stored(&mut self, id: RibbonId) -> bool {
+        self.stored.remove(id).is_some()
+    }
+
+    /// Replace the geometry behind a live handle, keeping the handle.
+    pub(crate) fn replace(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        resources: &viewport_lib::resources::DeviceResources,
+        id: RibbonId,
+        item: &RibbonItem,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        if !self.stored.contains(id) {
+            return Err(self.stored.stale(id));
+        }
+        let gpu = self.build(device, queue, resources, item);
+        self.stored.replace_sized(id, gpu);
+        Ok(())
+    }
+
+    /// Sweep the curve mesh on a worker thread. The handle is minted when
+    /// [`take_upload_result`](Self::take_upload_result) collects the job.
+    ///
+    /// The layout and the colourmap the upload binds are resolved here and
+    /// cloned into the worker: they are the renderer's and a worker has no
+    /// `DeviceResources` borrow.
+    pub(crate) fn begin_upload(
+        &mut self,
+        jobs: &viewport_lib::resources::Jobs<'_>,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        resources: &viewport_lib::resources::DeviceResources,
+        item: RibbonItem,
+    ) -> viewport_lib::resources::JobId {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| super::store::RibbonResources::new(device));
+        let item = item;
+        let binds = super::store::resolve_ribbon_bindings(resources, layouts, &&item);
+        let device = device.clone();
+        let queue = queue.clone();
+        jobs.submit_cpu(move || super::store::build_ribbon(&device, &queue, &binds, &item, false))
+    }
+
+    /// Store the curve a finished job built and hand back its handle.
+    pub(crate) fn take_upload_result(
+        &mut self,
+        jobs: &viewport_lib::resources::Jobs<'_>,
+        id: viewport_lib::resources::JobId,
+    ) -> viewport_lib::error::ViewportResult<RibbonId> {
+        match jobs.status(id) {
+            viewport_lib::resources::UploadStatus::Pending { .. } => {
+                Err(viewport_lib::error::ViewportError::JobNotReady)
+            }
+            viewport_lib::resources::UploadStatus::Failed(e) => Err(e),
+            _ => match jobs.take::<super::store::StreamtubeGpuData>(id) {
+                Some(gpu) => Ok(self.stored.insert_sized(gpu)),
+                None => Err(viewport_lib::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                }),
+            },
+        }
+    }
+
+    /// Number of items the last `prepare` produced draw data for.
+    pub fn drawn_count(&self) -> usize {
+        self.frame.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every slot maps back to a key that maps to it, so `build` makes for
+    /// each member the variant the draw asks for. A mismatch hands out a
+    /// pipeline belonging to a different key: an opaque ribbon drew through
+    /// the additive wireframe pipeline and rendered as a zigzag of lines.
+    #[test]
+    fn every_slot_round_trips_through_its_key() {
+        let mut keys = std::collections::HashSet::new();
+        for slot in 0..KEY_COUNT {
+            let key = RibbonKey::from_slot(slot);
+            assert_eq!(key.slot(), slot, "{key:?} does not map back to slot {slot}");
+            assert!(keys.insert(key), "{key:?} appears at two slots");
+        }
+        assert_eq!(
+            keys.len(),
+            3 * 2 * 2,
+            "blend(3) x wireframe x depth_write keys"
+        );
+    }
+
+    /// The variant members fill the range below the OIT and shadow members
+    /// without overlapping them.
+    #[test]
+    fn variant_members_sit_below_the_oit_and_shadow_members() {
+        let mut members = std::collections::HashSet::new();
+        for slot in 0..KEY_COUNT {
+            for hdr in [false, true] {
+                let m = variant(RibbonKey::from_slot(slot), hdr);
+                assert!(m < OIT, "variant member {m} overlaps the OIT members");
+                assert!(members.insert(m), "member {m} used twice");
+            }
+        }
+        assert_eq!(members.len(), OIT);
+    }
+}

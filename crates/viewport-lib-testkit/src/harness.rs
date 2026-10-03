@@ -103,7 +103,7 @@ impl Harness {
         // The item types viewport-lib ships with live in their own crate and
         // register like any other plugin, so a harness that renders them has
         // to install them the way a consumer does.
-        viewport_lib_item_types::install(&mut renderer, &device);
+        viewport_lib_plugins::item_types::install(&mut renderer, &device);
         Self {
             device,
             queue,

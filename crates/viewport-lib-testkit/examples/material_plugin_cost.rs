@@ -89,7 +89,7 @@ fn main() {
 
     let t = Instant::now();
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
-    viewport_lib_item_types::install(&mut renderer, &device);
+    viewport_lib_plugins::item_types::install(&mut renderer, &device);
     report("new + install", ms(t));
 
     let t = Instant::now();

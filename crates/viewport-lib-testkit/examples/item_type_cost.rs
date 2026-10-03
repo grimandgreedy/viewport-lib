@@ -19,7 +19,7 @@ use std::time::Instant;
 
 use viewport_lib::resources::build_log;
 use viewport_lib::{ViewportRenderer, wgpu};
-use viewport_lib_item_types as types;
+use viewport_lib_plugins::item_types as types;
 use viewport_lib_testkit::{
     DeviceProfile, Harness, frame_for, headless_device_with, scene_by_name,
 };
@@ -111,24 +111,24 @@ fn main() {
         )*};
     }
     register!(
-        "image slice" => types::ImageSlicePlugin,
-        "volume surface slice" => types::VolumeSurfaceSlicePlugin,
-        "point cloud" => types::PointCloudPlugin,
-        "gaussian splat" => types::GaussianSplatPlugin,
-        "gpu implicit" => types::GpuImplicitPlugin,
-        "gpu marching cubes" => types::GpuMarchingCubesPlugin,
-        "volume" => types::VolumePlugin,
-        "streamtube" => types::StreamtubePlugin,
-        "tube" => types::TubePlugin,
-        "tensor field" => types::TensorFieldPlugin,
-        "vector field" => types::VectorFieldPlugin,
-        "ribbon" => types::RibbonPlugin,
-        "external instances" => types::ExternalInstancesPlugin,
-        "sprite" => types::SpritePlugin,
-        "gpu particles" => types::GpuParticlesPlugin,
-        "scatter volume" => types::ScatterVolumePlugin,
-        "decal" => types::DecalPlugin,
-        "surface lic" => types::SurfaceLicPlugin,
+        "image slice" => types::image_slice::ImageSlicePlugin,
+        "volume surface slice" => types::volume_surface_slice::VolumeSurfaceSlicePlugin,
+        "point cloud" => types::point_cloud::PointCloudPlugin,
+        "gaussian splat" => types::gaussian_splat::GaussianSplatPlugin,
+        "gpu implicit" => types::gpu_implicit::GpuImplicitPlugin,
+        "gpu marching cubes" => types::gpu_marching_cubes::GpuMarchingCubesPlugin,
+        "volume" => types::volume::VolumePlugin,
+        "streamtube" => types::curves::StreamtubePlugin,
+        "tube" => types::curves::TubePlugin,
+        "tensor field" => types::tensor_field::TensorFieldPlugin,
+        "vector field" => types::vector_field::VectorFieldPlugin,
+        "ribbon" => types::curves::RibbonPlugin,
+        "external instances" => types::external_instances::ExternalInstancesPlugin,
+        "sprite" => types::sprite::SpritePlugin,
+        "gpu particles" => types::gpu_particles::GpuParticlesPlugin,
+        "scatter volume" => types::scatter_volume::ScatterVolumePlugin,
+        "decal" => types::decal::DecalPlugin,
+        "surface lic" => types::surface_lic::SurfaceLicPlugin,
     );
     println!("  {:<22} {total:6.3} ms", "all eighteen");
     drop(renderer);

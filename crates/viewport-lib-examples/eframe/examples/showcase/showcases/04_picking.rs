@@ -17,17 +17,22 @@ use std::sync::Arc;
 use viewport_lib as vpl;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{ColourSource, SizeSource};
-use viewport_lib_item_types::DecalItem;
-use viewport_lib_item_types::PointCloudItem;
-use viewport_lib_item_types::VolumeItem;
-use viewport_lib_item_types::{
-    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
-    ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
+use viewport_lib_plugins::item_types::decal::DecalItem;
+use viewport_lib_plugins::item_types::gpu_marching_cubes::{
+    GpuMarchingCubesItem, McVolumeId, McVolumes,
 };
-use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
-use viewport_lib_item_types::{
-    RibbonItem, SpriteItem, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem,
-    VectorFieldItem,
+use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
+use viewport_lib_plugins::item_types::volume::VolumeItem;
+use viewport_lib_plugins::item_types::{
+    curves::{RibbonItem, StreamtubeItem, TubeItem},
+    sprite::SpriteItem,
+    tensor_field::{TensorFieldItem, TensorSource},
+    vector_field::VectorFieldItem,
+};
+use viewport_lib_plugins::item_types::{
+    gaussian_splat::{GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree},
+    gpu_implicit::{GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive},
+    volume_surface_slice::VolumeSurfaceSliceItem,
 };
 
 use crate::eframe::egui;
@@ -244,31 +249,31 @@ impl PickingShowcase {
         let mut tensor = self.tensor.clone();
         tensor.settings.selected = sel(TENSOR);
         fd.scene
-            .items_mut::<viewport_lib_item_types::TensorFieldItem>()
+            .items_mut::<viewport_lib_plugins::item_types::tensor_field::TensorFieldItem>()
             .push(tensor);
 
         // Sprites.
         let mut sprites = self.sprites.clone();
         sprites.settings.selected = sel(SPRITE);
         fd.scene
-            .items_mut::<viewport_lib_item_types::SpriteItem>()
+            .items_mut::<viewport_lib_plugins::item_types::sprite::SpriteItem>()
             .push(sprites);
 
         // Streamtube / tube / ribbon.
         let mut st = self.streamtube.clone();
         st.settings.selected = sel(STREAMTUBE);
         fd.scene
-            .items_mut::<viewport_lib_item_types::StreamtubeItem>()
+            .items_mut::<viewport_lib_plugins::item_types::curves::StreamtubeItem>()
             .push(st);
         let mut tb = self.tube.clone();
         tb.settings.selected = sel(TUBE);
         fd.scene
-            .items_mut::<viewport_lib_item_types::TubeItem>()
+            .items_mut::<viewport_lib_plugins::item_types::curves::TubeItem>()
             .push(tb);
         let mut rb = self.ribbon.clone();
         rb.settings.selected = sel(RIBBON);
         fd.scene
-            .items_mut::<viewport_lib_item_types::RibbonItem>()
+            .items_mut::<viewport_lib_plugins::item_types::curves::RibbonItem>()
             .push(rb);
 
         // Ray-marched volume.
@@ -288,7 +293,7 @@ impl PickingShowcase {
             vol.settings.selected = sel(VOLUME);
             vol.volume_data = Some(data.clone());
             fd.scene
-                .items_mut::<viewport_lib_item_types::VolumeItem>()
+                .items_mut::<viewport_lib_plugins::item_types::volume::VolumeItem>()
                 .push(vol);
         }
 

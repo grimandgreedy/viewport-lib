@@ -13,22 +13,28 @@ use viewport_lib::{
     Aabb, ColourmapId, Material, MeshInstanceItem, PickId, ScatterQuality, ScatterSettings,
     SpriteBlend, TextureData, VolumeData, primitives,
 };
-use viewport_lib_item_types::GpuParticleSystems;
-use viewport_lib_item_types::VolumeItem;
-use viewport_lib_item_types::{
-    ContourLevels, DecalBlendMode, DecalItem, SurfaceContourItem, SurfaceLicItem,
+use viewport_lib_plugins::item_types::gpu_marching_cubes::{GpuMarchingCubesItem, McVolumes};
+use viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystems;
+use viewport_lib_plugins::item_types::scatter_volume::{ScatterVolume, ScatterVolumeItem};
+use viewport_lib_plugins::item_types::volume::VolumeItem;
+use viewport_lib_plugins::item_types::{
+    curves::{RibbonItem, StreamtubeItem, TubeItem},
+    sprite::{SpriteItem, SpriteSizeMode},
+    tensor_field::{TensorFieldItem, TensorSource},
+    vector_field::VectorFieldItem,
 };
-use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumes};
-use viewport_lib_item_types::{
-    RibbonItem, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorFieldItem, TensorSource,
-    TubeItem, VectorFieldItem,
+use viewport_lib_plugins::item_types::{
+    decal::{DecalBlendMode, DecalItem},
+    surface_contour::{ContourLevels, SurfaceContourItem},
+    surface_lic::SurfaceLicItem,
 };
-use viewport_lib_item_types::{ScatterVolume, ScatterVolumeItem};
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, orbit_camera, rigs, standard_cameras};
-use viewport_lib_item_types::{
-    GaussianSplatData, GaussianSplatItem, GpuImplicitItem, ImageSliceItem, ImplicitBlendMode,
-    ImplicitPrimitive, ShDegree, SliceAxis, VolumeSurfaceSliceItem,
+use viewport_lib_plugins::item_types::{
+    gaussian_splat::{GaussianSplatData, GaussianSplatItem, ShDegree},
+    gpu_implicit::{GpuImplicitItem, ImplicitBlendMode, ImplicitPrimitive},
+    image_slice::{ImageSliceItem, SliceAxis},
+    volume_surface_slice::VolumeSurfaceSliceItem,
 };
 
 /// The item-type scenes appended to the main catalogue.
@@ -673,9 +679,10 @@ fn build_supersampled_sprite_refraction(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// and the image would pin almost nothing.
 fn build_gpu_particles(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let tex = checker_texture(ctx, [255, 170, 60], [90, 40, 150]);
-    let mut config = viewport_lib_item_types::GpuParticleSystemConfig::default();
+    let mut config =
+        viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystemConfig::default();
     config.capacity = 2048;
-    config.render = viewport_lib_item_types::ParticleRender::Sprite {
+    config.render = viewport_lib_plugins::item_types::gpu_particles::ParticleRender::Sprite {
         texture_id: Some(tex),
         blend: SpriteBlend::AlphaBlend,
         size_mode: SpriteSizeMode::WorldSpace,
@@ -688,21 +695,24 @@ fn build_gpu_particles(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .renderer
         .create_gpu_particle_system(ctx.device, ctx.queue, &config);
 
-    let mut item = viewport_lib_item_types::GpuParticleSystemItem::new(system, 0.4);
+    let mut item =
+        viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystemItem::new(system, 0.4);
     item.emitter.rate = 400.0;
     item.emitter.lifetime = (4.0, 6.0);
     item.emitter.size = 0.3;
     item.emitter.colour = [1.0, 1.0, 1.0, 0.9].into();
-    item.emitter.spawn_shape = viewport_lib_item_types::SpawnShape::Sphere {
-        center: [0.0, 0.0, -1.8],
-        radius: 0.25,
-    };
-    item.emitter.initial_velocity = viewport_lib_item_types::VelocityDist::UniformCone {
-        axis: [0.0, 0.0, 1.0],
-        half_angle: 0.6,
-        min_speed: 2.5,
-        max_speed: 5.5,
-    };
+    item.emitter.spawn_shape =
+        viewport_lib_plugins::item_types::gpu_particles::SpawnShape::Sphere {
+            center: [0.0, 0.0, -1.8],
+            radius: 0.25,
+        };
+    item.emitter.initial_velocity =
+        viewport_lib_plugins::item_types::gpu_particles::VelocityDist::UniformCone {
+            axis: [0.0, 0.0, 1.0],
+            half_angle: 0.6,
+            min_speed: 2.5,
+            max_speed: 5.5,
+        };
     item.settings.pick_id = PickId(1609);
 
     BuiltScene {
@@ -1053,10 +1063,14 @@ fn build_scatter_layered(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // it in the wrong order is obvious rather than subtle.
     let mut core = ScatterVolume::sphere_uniform([-0.8, 0.6, 1.3], 1.5, 0.9, [1.0, 0.72, 0.4]);
     core.anisotropy = 0.6;
-    core.density_remap = viewport_lib_item_types::DensityRemap::Smoothstep { lo: 0.0, hi: 0.8 };
-    core.emission = viewport_lib_item_types::Emission::Strength {
+    core.density_remap =
+        viewport_lib_plugins::item_types::scatter_volume::DensityRemap::Smoothstep {
+            lo: 0.0,
+            hi: 0.8,
+        };
+    core.emission = viewport_lib_plugins::item_types::scatter_volume::Emission::Strength {
         strength: 0.8,
-        curve: viewport_lib_item_types::EmissionCurve::Power(2.0),
+        curve: viewport_lib_plugins::item_types::scatter_volume::EmissionCurve::Power(2.0),
     };
 
     let mut fog_item = ScatterVolumeItem::new(fog);
@@ -1109,8 +1123,13 @@ fn build_scatter_textured(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         [1.0, 1.0, 1.0],
     );
     textured.density_texture = Some(vid);
-    textured.colour = viewport_lib_item_types::ColourSource::Ramp(ColourmapId(0));
-    textured.density_remap = viewport_lib_item_types::DensityRemap::Smoothstep { lo: 0.1, hi: 0.7 };
+    textured.colour =
+        viewport_lib_plugins::item_types::scatter_volume::ColourSource::Ramp(ColourmapId(0));
+    textured.density_remap =
+        viewport_lib_plugins::item_types::scatter_volume::DensityRemap::Smoothstep {
+            lo: 0.1,
+            hi: 0.7,
+        };
 
     // Static noise: scroll velocity and time scale are both zero, so the
     // field does not move and a still frame repeats exactly.
@@ -1122,7 +1141,7 @@ fn build_scatter_textured(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         0.85,
         [0.55, 0.85, 1.0],
     );
-    let mut noise = viewport_lib_item_types::NoiseDriver::default();
+    let mut noise = viewport_lib_plugins::item_types::scatter_volume::NoiseDriver::default();
     noise.scale = 1.4;
     noise.octaves = 4;
     noise.scroll_velocity = [0.0; 3];
@@ -1194,7 +1213,7 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         0.9,
         [0.72, 0.76, 0.85],
     );
-    let mut noise = viewport_lib_item_types::NoiseDriver::default();
+    let mut noise = viewport_lib_plugins::item_types::scatter_volume::NoiseDriver::default();
     noise.scale = 1.1;
     noise.octaves = 3;
     noise.scroll_velocity = [0.9, 0.0, 0.35];
@@ -1211,7 +1230,8 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         0.35,
         [1.0, 0.85, 0.7],
     );
-    let mut refraction = viewport_lib_item_types::RefractionParams::default();
+    let mut refraction =
+        viewport_lib_plugins::item_types::scatter_volume::RefractionParams::default();
     refraction.strength = 0.035;
     refraction.density_threshold = 0.0;
     refraction.noise_scale = 1.6;

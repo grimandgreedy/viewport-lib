@@ -7,7 +7,7 @@
 //! draw nothing. Decals are the clearest victim, and the cheapest to assert on.
 
 use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem, TextureData};
-use viewport_lib_item_types::DecalItem;
+use viewport_lib_plugins::item_types::decal::DecalItem;
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
 const W: u32 = 200;

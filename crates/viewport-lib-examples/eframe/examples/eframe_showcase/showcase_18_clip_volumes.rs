@@ -11,7 +11,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
-use viewport_lib_item_types::VolumeItem;
+use viewport_lib_plugins::item_types::volume::VolumeItem;
 use vpl::{
     AlphaMode, BackfacePolicy, BuiltinColourmap, ClipObject, ColourmapId, FrameData, Gizmo,
     ItemSettings, LightKind, LightSource, LightingSettings, Material, MeshId, SceneRenderItem,
@@ -622,7 +622,7 @@ pub(crate) fn submit_clipvol_items(app: &mut App, fd: &mut FrameData) {
     if app.clipvol_state.scene_mode == SceneMode::Volume {
         if let Some(vol) = app.make_clipvol_volume_item() {
             fd.scene
-                .items_mut::<viewport_lib_item_types::VolumeItem>()
+                .items_mut::<viewport_lib_plugins::item_types::volume::VolumeItem>()
                 .push(vol);
         }
     }

@@ -19,16 +19,21 @@ use crate::eframe;
 use std::collections::HashMap;
 use viewport_lib as vpl;
 use viewport_lib::plugin_api::Uploads;
-use viewport_lib_item_types::DecalItem;
-use viewport_lib_item_types::PointCloudItem;
-use viewport_lib_item_types::{
-    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
-    ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
+use viewport_lib_plugins::item_types::decal::DecalItem;
+use viewport_lib_plugins::item_types::gpu_marching_cubes::{
+    GpuMarchingCubesItem, McVolumeId, McVolumes,
 };
-use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
-use viewport_lib_item_types::{
-    RibbonItem, SpriteItem, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem,
-    VectorFieldItem,
+use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
+use viewport_lib_plugins::item_types::{
+    curves::{RibbonItem, StreamtubeItem, TubeItem},
+    sprite::SpriteItem,
+    tensor_field::{TensorFieldItem, TensorSource},
+    vector_field::VectorFieldItem,
+};
+use viewport_lib_plugins::item_types::{
+    gaussian_splat::{GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree},
+    gpu_implicit::{GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive},
+    volume_surface_slice::VolumeSurfaceSliceItem,
 };
 
 use crate::eframe::egui;
@@ -1059,7 +1064,8 @@ impl App {
                     .volume_id
                     .zip(self.pl_state.volume_data.as_ref())
                     .and_then(|(vol_id, vol_data)| {
-                        let mut item = viewport_lib_item_types::VolumeItem::default();
+                        let mut item =
+                            viewport_lib_plugins::item_types::volume::VolumeItem::default();
                         item.volume_id = vol_id;
                         item.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
                             .to_cols_array_2d();
@@ -1317,7 +1323,7 @@ impl App {
                 if let (Some(vol_id), Some(vol_data)) =
                     (self.pl_state.volume_id, self.pl_state.volume_data.as_ref())
                 {
-                    let mut item = viewport_lib_item_types::VolumeItem::default();
+                    let mut item = viewport_lib_plugins::item_types::volume::VolumeItem::default();
                     item.volume_id = vol_id;
                     item.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
                         .to_cols_array_2d();
@@ -2018,7 +2024,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     }
     // Volume (pick_id=20).
     if let Some(vol_id) = app.pl_state.volume_id {
-        let mut vol = viewport_lib_item_types::VolumeItem::default();
+        let mut vol = viewport_lib_plugins::item_types::volume::VolumeItem::default();
         vol.volume_id = vol_id;
         vol.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0)).to_cols_array_2d();
         vol.bbox_min = [0.0, 0.0, 0.0];
@@ -2037,7 +2043,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             .as_ref()
             .map(|d| std::sync::Arc::new(d.clone()));
         fd.scene
-            .items_mut::<viewport_lib_item_types::VolumeItem>()
+            .items_mut::<viewport_lib_plugins::item_types::volume::VolumeItem>()
             .push(vol);
     }
     // Polyline: 3 spiral strips (pick_id=30).
@@ -2083,7 +2089,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         tg.settings.selected = app.pl_state.selection.contains(32);
         tg.settings.unlit = false;
         fd.scene
-            .items_mut::<viewport_lib_item_types::TensorFieldItem>()
+            .items_mut::<viewport_lib_plugins::item_types::tensor_field::TensorFieldItem>()
             .push(tg);
     }
     // Sprites: arc of 8 (pick_id=33).
@@ -2105,7 +2111,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         s.settings.selected = app.pl_state.selection.contains(33);
         s.settings.unlit = false;
         fd.scene
-            .items_mut::<viewport_lib_item_types::SpriteItem>()
+            .items_mut::<viewport_lib_plugins::item_types::sprite::SpriteItem>()
             .push(s);
     }
     // XO sprites (pick_id=34).
@@ -2127,7 +2133,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         s.settings.selected = app.pl_state.selection.contains(34);
         s.settings.unlit = false;
         fd.scene
-            .items_mut::<viewport_lib_item_types::SpriteItem>()
+            .items_mut::<viewport_lib_plugins::item_types::sprite::SpriteItem>()
             .push(s);
     }
     // Streamtube (pick_id=40).
@@ -2141,7 +2147,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         st.settings.selected = app.pl_state.selection.contains(40);
         st.settings.unlit = false;
         fd.scene
-            .items_mut::<viewport_lib_item_types::StreamtubeItem>()
+            .items_mut::<viewport_lib_plugins::item_types::curves::StreamtubeItem>()
             .push(st);
     }
     // Tube (pick_id=41).
@@ -2155,7 +2161,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         tb.settings.selected = app.pl_state.selection.contains(41);
         tb.settings.unlit = false;
         fd.scene
-            .items_mut::<viewport_lib_item_types::TubeItem>()
+            .items_mut::<viewport_lib_plugins::item_types::curves::TubeItem>()
             .push(tb);
     }
     // Ribbon (pick_id=42).
@@ -2169,7 +2175,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         rb.settings.selected = app.pl_state.selection.contains(42);
         rb.settings.unlit = false;
         fd.scene
-            .items_mut::<viewport_lib_item_types::RibbonItem>()
+            .items_mut::<viewport_lib_plugins::item_types::curves::RibbonItem>()
             .push(rb);
     }
     // Volume surface slice (pick_id=51): plane tilted 60 degrees inside the volume bbox.

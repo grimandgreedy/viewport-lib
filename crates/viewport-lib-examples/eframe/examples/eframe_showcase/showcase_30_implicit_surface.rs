@@ -18,10 +18,12 @@ use crate::eframe::egui;
 use crate::{App, MeshId};
 use glam::Vec3;
 use viewport_lib as vpl;
-use viewport_lib_item_types::{
+use viewport_lib_plugins::item_types::gpu_implicit::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
 };
-use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
+use viewport_lib_plugins::item_types::gpu_marching_cubes::{
+    GpuMarchingCubesItem, McVolumeId, McVolumes,
+};
 use vpl::{
     Camera, LightKind, LightSource, LightingSettings, Material, SceneRenderItem, VolumeData,
     extract_isosurface, primitives,

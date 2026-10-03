@@ -157,7 +157,7 @@ fn main() {
     let mut install_total = 0.0;
     if install_all {
         let t = Instant::now();
-        viewport_lib_item_types::install(&mut renderer, &device);
+        viewport_lib_plugins::item_types::install(&mut renderer, &device);
         install_total = t.elapsed().as_secs_f32() * 1000.0;
     }
     // Drained here so a type that builds at registration is not counted

@@ -19,7 +19,9 @@
 
 use glam::Vec3;
 use viewport_lib::{Aabb, Material, ScatterQuality, ScatterSettings, primitives};
-use viewport_lib_item_types::{RefractionParams, ScatterVolume, ScatterVolumeItem};
+use viewport_lib_plugins::item_types::scatter_volume::{
+    RefractionParams, ScatterVolume, ScatterVolumeItem,
+};
 use viewport_lib_testkit::{Harness, scenes::BuiltScene};
 
 const W: u32 = 200;

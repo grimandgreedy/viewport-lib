@@ -135,19 +135,19 @@ def out_dir_from_cargo(repo_root, build):
 
 
 def item_type_shaders(repo_root, build):
-    """The item-type crates compose their shaders in Rust, so ask them.
+    """The plugins crate composes its shaders in Rust, so ask them.
 
     A body under `src/` is a fragment: it declares no group-0 bindings and
     calls helpers it does not define. Only the crate knows what the pipeline
     actually compiles, so it prints the composed set.
     """
-    cmd = ["cargo", "run", "-q", "-p", "viewport-lib-item-types", "--example", "dump_shaders"]
+    cmd = ["cargo", "run", "-q", "-p", "viewport-lib-plugins", "--example", "dump_shaders"]
     if not build:
         cmd.append("--offline")
     result = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True)
     if result.returncode != 0:
         sys.stderr.write(result.stderr)
-        raise SystemExit("dumping the item-type shaders failed")
+        raise SystemExit("dumping the plugin shaders failed")
     return json.loads(result.stdout)
 
 
@@ -189,7 +189,7 @@ def main():
     # Namespaced, because a name can legitimately appear in both sets while a
     # type is mid-migration and the two copies are different sources.
     for name, source in item_type_shaders(repo_root, build=not args.no_build).items():
-        shaders[f"item-types/{name}"] = source
+        shaders[f"plugins/{name}"] = source
     print(f"checking {len(shaders)} shaders from {out_dir}")
 
     page_dir = pathlib.Path(tempfile.mkdtemp(prefix="vpl-shader-check-"))
