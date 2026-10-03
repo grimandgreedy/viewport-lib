@@ -69,7 +69,8 @@ impl TexelGBuffer {
 /// An empty mesh (no indices) returns an all-empty buffer without touching the
 /// GPU.
 ///
-/// Blocks until the result is read back. [`begin_texel_gbuffer`] does the same
+/// Blocks until the result is read back, for a minute at most; a GPU that has
+/// not finished by then leaves every texel empty. [`begin_texel_gbuffer`] does the same
 /// work without waiting, for a bake that runs while the application draws.
 pub fn rasterize_texel_gbuffer(
     device: &crate::gpu::Device,
@@ -110,7 +111,8 @@ impl TexelGBufferJob {
         Some(self.take())
     }
 
-    /// Block until the G-buffer is back.
+    /// Block until the G-buffer is back, or for a minute at most, after which
+    /// every texel is empty.
     pub fn wait(mut self, device: &crate::gpu::Device) -> TexelGBuffer {
         if let Some((pos, nrm)) = &self.readback {
             pos.wait(device);

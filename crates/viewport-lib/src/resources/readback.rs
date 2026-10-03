@@ -11,6 +11,9 @@ const PENDING: u8 = 0;
 const MAPPED: u8 = 1;
 const FAILED: u8 = 2;
 
+/// Longest [`PendingReadback::wait`] blocks for.
+const WAIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// A buffer or texture copied into a staging buffer that is being mapped.
 pub(crate) struct PendingReadback {
     staging: crate::gpu::Buffer,
@@ -110,12 +113,23 @@ impl PendingReadback {
         self.state.load(Ordering::Acquire) != PENDING
     }
 
-    /// Block until the data has arrived.
+    /// Block until the data has arrived, or give up after [`WAIT_LIMIT`]: a GPU
+    /// job that never finishes must not hold the caller forever. After giving
+    /// up, [`take_as`](Self::take_as) returns `None`, as for a failed map.
     pub(crate) fn wait(&self, device: &crate::gpu::Device) {
+        let deadline = std::time::Instant::now() + WAIT_LIMIT;
         while self.state.load(Ordering::Acquire) == PENDING {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                tracing::warn!(
+                    "GPU readback did not complete within {} s; giving up",
+                    WAIT_LIMIT.as_secs()
+                );
+                return;
+            }
             let _ = device.poll(crate::gpu::PollType::Wait {
                 submission_index: None,
-                timeout: Some(std::time::Duration::from_secs(60)),
+                timeout: Some(left),
             });
         }
     }

@@ -1693,8 +1693,9 @@ impl Tracer {
     /// Same solve as [`bake`](Self::bake), but also reads back the running mean of
     /// the luminance-weighted incoming-light direction per texel, so a later
     /// encode stage can produce a directional lightmap. See [`DirectionalBake`]
-    /// for the layout. Returns all-black atlases if the scene has no geometry or
-    /// the surface slices are the wrong length.
+    /// for the layout. Returns all-black atlases if the scene has no geometry,
+    /// the surface slices are the wrong length, or the GPU has not finished
+    /// within a minute.
     ///
     /// Blocks until the result is read back; [`begin_directional`](Self::begin_directional)
     /// runs the same solve a few samples at a time.
@@ -2128,7 +2129,8 @@ impl DirectionalBakeJob {
         Some(self.take())
     }
 
-    /// Submit whatever is left and block until the result is back.
+    /// Submit whatever is left and block until the result is back, or for a
+    /// minute at most, after which the result is black.
     pub fn wait(
         mut self,
         device: &crate::gpu::Device,
