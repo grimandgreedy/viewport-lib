@@ -526,43 +526,56 @@ pub fn build_dual_pipeline(
     device: &crate::gpu::Device,
     desc: &DualPipelineDesc,
 ) -> crate::resources::types::DualPipeline {
-    let make = |format: crate::gpu::TextureFormat| {
-        render_pipeline(
-            device,
-            RenderPipelineDesc {
-                label: desc.label,
-                layout: desc.layout,
-                vertex_module: desc.shader,
-                vertex_entry: desc.vertex_entry,
-                vertex_buffers: desc.vertex_buffers,
-                fragment: Some(crate::gpu::FragmentState {
-                    module: desc.shader,
-                    entry_point: Some(desc.fragment_entry),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format,
-                        blend: desc.blend,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: desc.topology,
-                    cull_mode: desc.cull_mode,
-                    ..Default::default()
-                },
-                depth_stencil: Some(scene_depth_stencil(desc.depth_write, desc.depth_compare)),
-                multisample: crate::gpu::MultisampleState {
-                    count: desc.sample_count,
-                    ..Default::default()
-                },
-                cache: None,
-            },
-        )
-    };
     crate::resources::types::DualPipeline {
-        ldr: make(desc.ldr_format),
-        hdr: make(crate::gpu::TextureFormat::Rgba16Float),
+        ldr: build_dual_pipeline_variant(device, desc, false),
+        hdr: build_dual_pipeline_variant(device, desc, true),
     }
+}
+
+/// One half of [`build_dual_pipeline`]: the HDR (`Rgba16Float`) pipeline when
+/// `hdr`, else the LDR one in `desc.ldr_format`. For a type that builds each
+/// on first use rather than both together.
+pub fn build_dual_pipeline_variant(
+    device: &crate::gpu::Device,
+    desc: &DualPipelineDesc,
+    hdr: bool,
+) -> crate::gpu::RenderPipeline {
+    let format = if hdr {
+        crate::gpu::TextureFormat::Rgba16Float
+    } else {
+        desc.ldr_format
+    };
+    render_pipeline(
+        device,
+        RenderPipelineDesc {
+            label: desc.label,
+            layout: desc.layout,
+            vertex_module: desc.shader,
+            vertex_entry: desc.vertex_entry,
+            vertex_buffers: desc.vertex_buffers,
+            fragment: Some(crate::gpu::FragmentState {
+                module: desc.shader,
+                entry_point: Some(desc.fragment_entry),
+                targets: &[Some(crate::gpu::ColorTargetState {
+                    format,
+                    blend: desc.blend,
+                    write_mask: crate::gpu::ColorWrites::ALL,
+                })],
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: crate::gpu::PrimitiveState {
+                topology: desc.topology,
+                cull_mode: desc.cull_mode,
+                ..Default::default()
+            },
+            depth_stencil: Some(scene_depth_stencil(desc.depth_write, desc.depth_compare)),
+            multisample: crate::gpu::MultisampleState {
+                count: desc.sample_count,
+                ..Default::default()
+            },
+            cache: None,
+        },
+    )
 }
 
 /// Build a full-screen pass pipeline: one triangle-list draw covering the

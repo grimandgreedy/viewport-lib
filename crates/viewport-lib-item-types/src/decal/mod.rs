@@ -120,13 +120,14 @@ impl ItemTypePlugin for DecalPlugin {
     /// marks, scorches), so a lazy build would stall that frame by the compile
     /// cost (~8 ms measured on a desktop GPU). The outline pipelines stay
     /// lazy: they are only needed by scenes that select a decal.
-    fn init_gpu(
+    fn warm(
         &mut self,
         device: &viewport_lib::gpu::Device,
-        shared: &viewport_lib::plugin_api::SharedBindings<'_>,
+        resources: &viewport_lib::DeviceResources,
     ) {
         self.gpu.ensure_shared(device);
-        self.gpu.ensure_pipeline(device, shared.group0_layout);
+        self.gpu
+            .ensure_pipeline(device, resources.shared_bindings().group0_layout);
     }
 
     fn prepare(

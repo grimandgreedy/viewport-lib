@@ -7,7 +7,6 @@
 //! upload that builds bind groups against them; this module borrows them to
 //! build pipelines over them.
 
-use viewport_lib::plugin_api::builders::DualPipeline;
 use viewport_lib::plugin_api::builders::DualPipelineDesc;
 use viewport_lib::plugin_api::shared_wgsl;
 use viewport_lib::resources::DeviceResources;
@@ -34,8 +33,7 @@ impl SpriteKey {
         }
     }
 
-    /// Every axis combination, for eager cross-product construction
-    /// (`SpriteVariantSet::build`).
+    /// Every axis combination.
     pub fn all() -> impl Iterator<Item = SpriteKey> {
         [
             viewport_lib::renderer::SpriteBlend::AlphaBlend,
@@ -54,55 +52,100 @@ impl SpriteKey {
         })
     }
 
-    /// Dense index in `0..12`, stable across calls, for the hash-free array
-    /// lookup `SpriteVariantSet` uses.
+    /// Dense index in `0..12`, stable across calls.
     fn slot(self) -> usize {
         self.depth_write as usize + 2 * self.blend_index() + 6 * (self.lit as usize)
     }
-}
 
-/// A `DualPipeline` built for every reachable [`SpriteKey`], indexed for a
-/// hash-free draw-time lookup (`get`). Construction is eager: `build` runs
-/// once per key when `ensure_sprite_pipelines` first runs, not per draw call.
-pub(crate) struct SpriteVariantSet {
-    variants: [DualPipeline; 12],
-}
-
-/// Build one value per [`SpriteKey`] and place each at its own
-/// [`slot`](SpriteKey::slot), which is *not* the order `all()` yields them in.
-/// Collecting in iteration order instead puts variants under the wrong keys, so
-/// `get` hands back a pipeline belonging to a different blend or lit-ness: an
-/// unlit draw handed a lit pipeline fails validation, because the unlit draw
-/// path never binds the lit pipeline's group-3 normal map.
-fn place_by_slot<T>(mut build: impl FnMut(SpriteKey) -> T) -> Vec<T> {
-    let mut slots: Vec<Option<T>> = (0..12).map(|_| None).collect();
-    for key in SpriteKey::all() {
-        slots[key.slot()] = Some(build(key));
-    }
-    slots
-        .into_iter()
-        .map(|v| v.unwrap_or_else(|| unreachable!("every slot is covered by all()")))
-        .collect()
-}
-
-impl SpriteVariantSet {
-    pub fn build(build: impl FnMut(SpriteKey) -> DualPipeline) -> Self {
+    /// The key at `slot`; the inverse of [`slot`](Self::slot).
+    fn from_slot(slot: usize) -> Self {
         Self {
-            variants: place_by_slot(build)
-                .try_into()
-                .unwrap_or_else(|_| unreachable!("SpriteKey::all() yields exactly 12 keys")),
+            depth_write: slot & 1 != 0,
+            blend: match (slot / 2) % 3 {
+                0 => viewport_lib::renderer::SpriteBlend::AlphaBlend,
+                1 => viewport_lib::renderer::SpriteBlend::Additive,
+                _ => viewport_lib::renderer::SpriteBlend::Premultiplied,
+            },
+            lit: slot >= 6,
         }
     }
+}
 
-    pub fn get(&self, key: SpriteKey) -> &DualPipeline {
-        &self.variants[key.slot()]
-    }
+/// What a sprite colour pipeline build reads: the unlit and lit shader and
+/// layout pairs, and the LDR target.
+pub(super) struct SpriteRecipe {
+    device: viewport_lib::gpu::Device,
+    layout: viewport_lib::gpu::PipelineLayout,
+    shader: viewport_lib::gpu::ShaderModule,
+    lit_layout: viewport_lib::gpu::PipelineLayout,
+    lit_shader: viewport_lib::gpu::ShaderModule,
+    sample_count: u32,
+    ldr_format: viewport_lib::gpu::TextureFormat,
+}
+
+/// The 24 sprite colour pipelines: each [`SpriteKey`] in the LDR and HDR
+/// formats, built the first time a draw selects it.
+pub(super) type SpritePipelines = viewport_lib::plugin_api::LazyPipelines<SpriteRecipe, 24>;
+
+/// Member index of `key` in the `hdr` or LDR format.
+pub(super) fn sprite_index(key: SpriteKey, hdr: bool) -> usize {
+    key.slot() * 2 + hdr as usize
+}
+
+fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
+    let key = SpriteKey::from_slot(i / 2);
+    let hdr = i % 2 == 1;
+    let vert_attrs = [viewport_lib::gpu::VertexAttribute {
+        offset: 0,
+        shader_location: 0,
+        format: viewport_lib::gpu::VertexFormat::Float32x3,
+    }];
+    let vertex_buffers = [viewport_lib::gpu::VertexBufferLayout {
+        array_stride: 12,
+        step_mode: viewport_lib::gpu::VertexStepMode::Instance,
+        attributes: &vert_attrs,
+    }];
+    let blend = match key.blend {
+        viewport_lib::renderer::SpriteBlend::AlphaBlend => {
+            viewport_lib::gpu::BlendState::ALPHA_BLENDING
+        }
+        viewport_lib::renderer::SpriteBlend::Additive => {
+            viewport_lib::plugin_api::builders::ADDITIVE_BLEND
+        }
+        viewport_lib::renderer::SpriteBlend::Premultiplied => {
+            viewport_lib::plugin_api::builders::PREMULTIPLIED_BLEND
+        }
+    };
+    let (layout, shader, label) = if key.lit {
+        (&r.lit_layout, &r.lit_shader, "sprite_lit_pipeline_variant")
+    } else {
+        (&r.layout, &r.shader, "sprite_pipeline_variant")
+    };
+    viewport_lib::plugin_api::builders::build_dual_pipeline_variant(
+        &r.device,
+        &DualPipelineDesc {
+            label,
+            layout,
+            shader,
+            vertex_entry: "vs_main",
+            fragment_entry: "fs_main",
+            vertex_buffers: &vertex_buffers,
+            blend: Some(blend),
+            topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+            cull_mode: None,
+            depth_write: key.depth_write,
+            depth_compare: viewport_lib::gpu::CompareFunction::Less,
+            sample_count: r.sample_count,
+            ldr_format: r.ldr_format,
+        },
+        hdr,
+    )
 }
 
 /// Every pipeline and layout the sprite draw hooks need, built on the first
 /// prepare that sees an item.
 pub(super) struct SpriteGpu {
-    pub(super) pipelines: SpriteVariantSet,
+    pub(super) pipelines: SpritePipelines,
     pub(super) refraction_pipeline: viewport_lib::gpu::RenderPipeline,
     pub(super) refraction_bgl: viewport_lib::gpu::BindGroupLayout,
     pub(super) refraction_sampler: viewport_lib::gpu::Sampler,
@@ -207,29 +250,6 @@ impl SpriteGpu {
 
         let sample_count = resources.sample_count();
         let ldr_format = resources.target_format();
-        // Sprites are billboards drawn with `Less` depth test, no culling. Each
-        // variant differs only in blend mode and whether it writes depth.
-        let make_sprite = |depth_write: bool, blend: viewport_lib::gpu::BlendState, label: &str| {
-            viewport_lib::plugin_api::builders::build_dual_pipeline(
-                device,
-                &DualPipelineDesc {
-                    label,
-                    layout: &layout,
-                    shader: &shader,
-                    vertex_entry: "vs_main",
-                    fragment_entry: "fs_main",
-                    vertex_buffers: &vertex_buffers,
-                    blend: Some(blend),
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    depth_write,
-                    depth_compare: viewport_lib::gpu::CompareFunction::Less,
-                    sample_count,
-                    ldr_format,
-                },
-            )
-        };
-
         let surface_mask_pipeline = viewport_lib::plugin_api::builders::build_surface_mask_pipeline(
             device,
             "sprite_surface_mask_pipeline",
@@ -240,10 +260,6 @@ impl SpriteGpu {
         );
 
         let lit_bgl = &layouts.lit_bgl;
-
-        let alpha = viewport_lib::gpu::BlendState::ALPHA_BLENDING;
-        let additive = viewport_lib::plugin_api::builders::ADDITIVE_BLEND;
-        let premultiplied = viewport_lib::plugin_api::builders::PREMULTIPLIED_BLEND;
 
         // -----------------------------------------------------------------
         // Refractive sprite pipeline.
@@ -354,42 +370,21 @@ impl SpriteGpu {
             ],
         );
 
-        let make_lit = |depth_write: bool, blend: viewport_lib::gpu::BlendState, label: &str| {
-            viewport_lib::plugin_api::builders::build_dual_pipeline(
-                device,
-                &DualPipelineDesc {
-                    label,
-                    layout: &lit_layout,
-                    shader: &lit_shader,
-                    vertex_entry: "vs_main",
-                    fragment_entry: "fs_main",
-                    vertex_buffers: &vertex_buffers,
-                    blend: Some(blend),
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    depth_write,
-                    depth_compare: viewport_lib::gpu::CompareFunction::Less,
-                    sample_count,
-                    ldr_format,
-                },
-            )
-        };
-
-        // One PipelineVariantSet-style build covers all 12 (depth_write x
-        // blend x lit) combinations: the same closure picks the unlit or lit
-        // shader/layout pair and the blend state for every key up front.
-        let pipelines = SpriteVariantSet::build(|key| {
-            let blend = match key.blend {
-                viewport_lib::renderer::SpriteBlend::AlphaBlend => alpha,
-                viewport_lib::renderer::SpriteBlend::Additive => additive,
-                viewport_lib::renderer::SpriteBlend::Premultiplied => premultiplied,
-            };
-            if key.lit {
-                make_lit(key.depth_write, blend, "sprite_lit_pipeline_variant")
-            } else {
-                make_sprite(key.depth_write, blend, "sprite_pipeline_variant")
-            }
-        });
+        // The 12 (depth_write x blend x lit) keys in both formats. Sprites are
+        // billboards drawn with a `Less` depth test and no culling; each is
+        // built the first time a draw selects it.
+        let pipelines: SpritePipelines = resources.lazy_pipelines(
+            SpriteRecipe {
+                device: device.clone(),
+                layout: layout.clone(),
+                shader: shader.clone(),
+                lit_layout: lit_layout.clone(),
+                lit_shader: lit_shader.clone(),
+                sample_count,
+                ldr_format,
+            },
+            build_sprite,
+        );
 
         // The fallback bind group reuses the crate-wide `fallback_normal_map`,
         // already populated with `(128, 128, 255, 255)` for tangent-space `(0, 0, 1)`.
@@ -712,10 +707,9 @@ impl SpriteGpu {
 mod tests {
     use super::*;
 
-    /// The variant set is built by iterating `SpriteKey::all()` and read by
-    /// `SpriteKey::slot()`. Those are two separate expressions of the same key
-    /// and they do not enumerate in the same order, so building into a vector
-    /// in iteration order files every variant under the wrong key.
+    /// A draw reads a variant by `SpriteKey::slot()` and the build decodes the
+    /// key back with `SpriteKey::from_slot()`. The two have to agree, or every
+    /// variant is built for the wrong key.
     ///
     /// The visible symptom was a validation failure rather than a wrong-looking
     /// sprite: an unlit Additive batch resolved to an AlphaBlend *lit*
@@ -723,13 +717,11 @@ mod tests {
     /// that pipeline's layout requires.
     #[test]
     fn every_key_resolves_to_the_variant_built_for_it() {
-        // Build with the identity, so each slot holds the key it was built for.
-        let placed = place_by_slot(|key| key);
         for key in SpriteKey::all() {
             assert_eq!(
-                placed[key.slot()],
+                SpriteKey::from_slot(key.slot()),
                 key,
-                "slot {} holds the variant built for a different key",
+                "slot {} builds the variant for a different key",
                 key.slot()
             );
         }

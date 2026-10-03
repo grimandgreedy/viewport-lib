@@ -830,6 +830,15 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// for the binding inventory.
     fn init_gpu(&mut self, _device: &crate::gpu::Device, _shared: &SharedBindings<'_>) {}
 
+    /// Build, or ask for, every pipeline this type can draw with. Called by
+    /// `ViewportRenderer::warm_pipelines` when the type is named in the
+    /// [`PipelineSet`](crate::PipelineSet) or the set is `PipelineSet::all()`.
+    /// The default does nothing, so the type's pipelines are built by its
+    /// first frame as before. A type whose pipelines live in
+    /// [`LazyPipelines`](crate::plugin_api::LazyPipelines) calls
+    /// `request_all` on them here.
+    fn warm(&mut self, _device: &crate::gpu::Device, _resources: &crate::DeviceResources) {}
+
     /// Lights this item type contributes to the scene this frame.
     ///
     /// An item type that emits light changes how *every other* item type is

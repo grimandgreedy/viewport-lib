@@ -235,3 +235,41 @@ fn set_len_moves_the_sprite_draw_count() {
         "past the capacity is an error rather than a grow"
     );
 }
+
+/// Naming the sprite type in a warm-up builds its pipelines, so the first
+/// frame that draws sprites, in either format, compiles none of them.
+#[test]
+fn a_warmed_sprite_type_builds_nothing_on_its_first_frame() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    renderer.warm_pipelines(
+        &device,
+        &queue,
+        &viewport_lib::PipelineSet::default()
+            .with_item_type::<viewport_lib_item_types::SpritePlugin>(),
+    );
+    renderer.wait_for_pipelines(&device);
+
+    viewport_lib::resources::build_log::enable();
+    let _ = viewport_lib::resources::build_log::drain();
+    for hdr in [true, false] {
+        let mut frame = sub_object_pick_frame();
+        if !hdr {
+            frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        }
+        frame.scene.items_mut::<SpriteItem>().push(sample_sprites());
+        let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    }
+    let sprite_builds: Vec<String> = viewport_lib::resources::build_log::drain()
+        .into_iter()
+        .map(|(label, _)| label)
+        .filter(|l| l.starts_with("sprite") || l.starts_with("module sprite"))
+        .collect();
+    assert!(
+        sprite_builds.is_empty(),
+        "the first sprite frames built pipelines after the warm-up: {sprite_builds:?}"
+    );
+}

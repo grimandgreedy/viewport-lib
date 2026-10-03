@@ -7,7 +7,7 @@ use crate::renderer::types::{EffectsFrame, GroundPlaneMode};
 ///
 /// Start from [`for_effects`](Self::for_effects) with the effect settings the
 /// application renders with, add what a frame's settings cannot say
-/// (transparency, outlines, shadows, the `Direct` path), or take
+/// (transparency, outlines, shadows, the `Direct` path, item types), or take
 /// [`all`](Self::all). An empty set builds nothing.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PipelineSet {
@@ -27,6 +27,8 @@ pub struct PipelineSet {
     ground_plane: bool,
     skybox: bool,
     material_plugins: bool,
+    item_types: Vec<std::any::TypeId>,
+    all_item_types: bool,
 }
 
 impl PipelineSet {
@@ -52,8 +54,8 @@ impl PipelineSet {
         }
     }
 
-    /// Everything the renderer can draw with and every registered material
-    /// plugin.
+    /// Everything the renderer can draw with, every registered material
+    /// plugin, and every registered item type.
     pub fn all() -> Self {
         Self {
             hdr: true,
@@ -72,6 +74,8 @@ impl PipelineSet {
             ground_plane: true,
             skybox: true,
             material_plugins: true,
+            item_types: Vec::new(),
+            all_item_types: true,
         }
     }
 
@@ -117,6 +121,13 @@ impl PipelineSet {
         self.material_plugins = true;
         self
     }
+
+    /// Everything the registered item type `T` can draw with, through its
+    /// `ItemTypePlugin::warm`.
+    pub fn with_item_type<T: 'static>(mut self) -> Self {
+        self.item_types.push(std::any::TypeId::of::<T>());
+        self
+    }
 }
 
 impl ViewportRenderer {
@@ -136,8 +147,8 @@ impl ViewportRenderer {
     ///
     /// A pipeline whose key depends on something the set cannot name is not
     /// covered: the depth upscale of a frame rendered below native scale, the
-    /// foreground depth stamp, and the pipelines of item types, which build
-    /// their own.
+    /// foreground depth stamp, and whatever an item type's `warm` leaves to
+    /// its first frame.
     pub fn warm_pipelines(
         &mut self,
         device: &crate::gpu::Device,
@@ -293,6 +304,14 @@ impl ViewportRenderer {
         }
         if set.material_plugins {
             r.warm_all_material_plugin_pipelines(device);
+        }
+        if set.all_item_types || !set.item_types.is_empty() {
+            for plugin in self.item_type_plugins.values_mut() {
+                let id = plugin.as_any_plugin().type_id();
+                if set.all_item_types || set.item_types.contains(&id) {
+                    plugin.warm(device, &self.resources);
+                }
+            }
         }
     }
 }

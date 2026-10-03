@@ -103,7 +103,7 @@ impl Pending {
 
 /// Shared by every slot one renderer owns: the policy its slots follow and the
 /// compiles they have running.
-pub(crate) struct PipelineCompiler {
+pub struct PipelineCompiler {
     policy: AtomicU8,
     /// Set while the renderer captures: every read blocks whatever the
     /// policy, so a captured frame has nothing missing.
@@ -248,13 +248,18 @@ impl<P: Send + 'static> PipelineSlot<P> {
     }
 }
 
-/// Pipelines built from one shared context, each on its own slot.
+/// `N` pipelines built from one shared context, each the first time something
+/// reads it.
 ///
-/// `C` holds by value what every build needs (the device, the layout, the
-/// shader modules, the formats), so a build can run on a worker. `build`
-/// makes member `i` from it. Reading a member starts its compile under the
-/// renderer's policy; nothing is built until something asks.
-pub(crate) struct LazyFamily<C, const N: usize> {
+/// `C` holds by value what every build needs (the device, layouts, shader
+/// modules, formats), so a build can run on a worker thread. `build` makes
+/// member `i` from it. Reading a member with [`get`](Self::get) starts its
+/// compile under the renderer's [`PipelineCompilation`] policy and returns
+/// `None` while a worker has it; the draw that wanted it skips that frame.
+/// Compiles in flight count towards `ViewportRenderer::pipelines_pending`.
+///
+/// Make one with [`DeviceResources::lazy_pipelines`](crate::resources::DeviceResources::lazy_pipelines).
+pub struct LazyFamily<C, const N: usize> {
     ctx: Arc<C>,
     compiler: Arc<PipelineCompiler>,
     slots: [PipelineSlot; N],
@@ -276,35 +281,37 @@ impl<C: Send + Sync + 'static, const N: usize> LazyFamily<C, N> {
     }
 
     /// What the builds read.
-    pub(crate) fn context(&self) -> &C {
+    pub fn context(&self) -> &C {
         &self.ctx
     }
 
     /// Member `i`, or `None` while a worker has it.
-    pub(crate) fn get(&self, i: usize) -> Option<&crate::gpu::RenderPipeline> {
+    pub fn get(&self, i: usize) -> Option<&crate::gpu::RenderPipeline> {
         let ctx = Arc::clone(&self.ctx);
         let build = self.build;
         self.slots[i].get(&self.compiler, move || build(&ctx, i))
     }
 
     /// Whether member `i` is built, without starting anything.
-    pub(crate) fn is_ready(&self, i: usize) -> bool {
+    pub fn is_ready(&self, i: usize) -> bool {
         self.slots[i].is_ready()
     }
 
     /// Ask for members `0..end`: built now under `Blocking`, handed to the
     /// workers under `Background`.
-    pub(crate) fn request(&self, end: usize) {
+    pub fn request(&self, end: usize) {
         for i in 0..end.min(N) {
             self.get(i);
         }
     }
 
-    pub(crate) fn request_all(&self) {
+    /// Ask for every member.
+    pub fn request_all(&self) {
         self.request(N);
     }
 
-    pub(crate) fn ready_count(&self) -> usize {
+    /// How many members are built.
+    pub fn ready_count(&self) -> usize {
         self.slots.iter().filter(|s| s.is_ready()).count()
     }
 }
