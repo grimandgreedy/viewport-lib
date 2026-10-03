@@ -3,8 +3,9 @@
 Plugins for [`viewport-lib`](https://github.com/grimandgreedy/viewport-lib), built against its public plugin API. Each module holds one kind of plugin, and nothing is re-exported at the crate root: a type is always named by the module it belongs to.
 
 - `item_types`: the item types viewport-lib ships with: point clouds, sprites, volumes, curves, fields, splats and the rest.
+- `deformers`: deformers, bodies the renderer splices into every mesh pass. One so far: `cut`, which removes part of a mesh.
 
-The rest of this README covers `item_types`.
+Most of this README covers `item_types`; [Deformers](#deformers) covers the cut.
 
 Every item type is an `ItemTypePlugin` built against viewport-lib's public API, on the same footing as a plugin you write yourself. The renderer does not know these types exist. They own their item structs, their handles, their shaders and their GPU storage, and they register and submit the way any other plugin does, so the crate doubles as the worked example for writing one.
 
@@ -250,6 +251,43 @@ Each type's WGSL holds only what it owns: its own bind groups, its structs, its 
 
 `viewport_lib_plugins::shader_sources()` returns every shader the crate compiles as `(name, source)`, assembled the way the pipelines assemble them, for a validation pass that wants what `create_shader_module` actually sees. The `dump_shaders` example prints them as JSON, which is what the browser shader check reads.
 
+## Deformers
+
+### `deformers::cut`
+
+`CutDeformer` and `Cut`, with `MAX_CUTS`.
+
+Removes part of a mesh per item: a plane, an axis-aligned or oriented box, a sphere, or a range of a per-vertex scalar, up to eight per item, each `flipped()` to keep the other side. The item keeps what every cut keeps. Because it is a deformer, the removed part is gone from every pass the mesh is drawn in: it is not drawn, casts no shadow, gets no selection outline and is not hit by a GPU pick, which passes through to what is behind.
+
+```rust
+use viewport_lib_plugins::deformers::cut::{Cut, CutDeformer};
+
+// Once.
+let cut = CutDeformer::install(renderer.resources_mut(), &device)?;
+
+// When the cut changes: keep the part of the mesh above z = 0.5.
+cut.set(renderer.resources_mut(), &device, &queue, mesh_id, 1, &[Cut::plane([0.0, 0.0, 1.0], 0.5)]);
+
+// Each item that should be cut selects it.
+item.deform_instance = Some(1);
+```
+
+Cuts are stored per mesh and deform instance, so two items sharing a mesh can be cut differently. Shapes are in world space, tested after every other deformer has moved the mesh. A range needs a field on the mesh: `set_field` from values, `set_field_source` from a buffer you write, or `set_field_from_attribute` from a scalar attribute the mesh already carries. Things to know:
+
+- The cut leaves an open shell: there are no caps.
+- The edge follows the cut through each triangle, so a plane or box face is exact and a sphere or curved field is followed as closely as the per-vertex values allow.
+- A cut item draws on its own rather than in an instanced batch.
+- CPU picking ignores the cut.
+- `install` needs a device created with `ViewportRenderer::recommended_device_limits`, and takes one of the renderer's deformer slots.
+
+For a section through the whole scene rather than one object, use clip objects on `EffectsFrame`.
+
 ## Features
 
 One wgpu leg, matching the viewport-lib the crate is built against: `wgpu27` (the default), `wgpu29` or `wgpu30`. The renderer re-exports its wgpu as `viewport_lib::gpu` and everything here names types through that path, so selecting the leg is the whole of it. `serde` forwards to viewport-lib's.
+
+One feature per module, both on by default: `item-types` and `deformers`. A dependent on a non-default wgpu leg turns default features off, so it names the modules it wants beside the leg:
+
+```toml
+viewport-lib-plugins = { version = "0.1", default-features = false, features = ["wgpu29", "item-types", "deformers"] }
+```
