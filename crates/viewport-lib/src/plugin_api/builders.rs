@@ -14,9 +14,9 @@ pub use crate::resources::builders::{
     ADDITIVE_BLEND, PREMULTIPLIED_BLEND, RenderPipelineDesc, build_outline_mask_pipeline,
     clamp_linear_mip_sampler, clamp_linear_sampler, clamp_nearest_sampler, compute_pipeline,
     dcompare, depth_stencil, dmipmap, dwrite, mesh_vertex_layout, pipeline_layout, render_pipeline,
-    repeat_linear_sampler, sampler_entry, scene_depth_stencil, standard_scene_layout,
-    texture_entry, texture_sampler_bgl, uniform_bgl, uniform_entry, uniform_texture_sampler_bgl,
-    vector_attribute_layout, wgsl_module, write_mapped,
+    repeat_linear_sampler, sampler_entry, scalar_attribute_layout, scene_depth_stencil,
+    standard_scene_layout, texture_entry, texture_sampler_bgl, uniform_bgl, uniform_entry,
+    uniform_texture_sampler_bgl, vector_attribute_layout, wgsl_module, write_mapped,
 };
 pub use crate::resources::builders::{
     DualPipelineDesc, build_dual_pipeline, build_dual_pipeline_variant, build_fullscreen_pipeline,

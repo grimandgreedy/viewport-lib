@@ -988,6 +988,38 @@ impl<'a> MeshDraw<'a> {
         true
     }
 
+    /// Bind one of the mesh's per-vertex scalar attributes as the vertex
+    /// buffer at `slot`.
+    ///
+    /// The attribute is one the mesh was uploaded with under `name` as
+    /// `AttributeData::Vertex`, or as `Cell` or `Edge`, which are averaged to
+    /// the vertices at upload: one float per vertex, in the same vertex order
+    /// as slot 0. `Face`, `Halfedge` and `Corner` attributes are stored per
+    /// triangle corner and are not reached by this. The pipeline declares it
+    /// with
+    /// [`scalar_attribute_layout`](crate::plugin_api::builders::scalar_attribute_layout).
+    ///
+    /// Returns `false` without touching the pass when the mesh is stale or
+    /// carries no per-vertex scalar attribute of that name.
+    pub fn bind_scalar_attribute(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        slot: u32,
+        mesh_id: MeshId,
+        name: &str,
+    ) -> bool {
+        let Some(buf) = self
+            .resources
+            .mesh_store
+            .get(mesh_id)
+            .and_then(|mesh| mesh.attribute_buffers.get(name))
+        else {
+            return false;
+        };
+        pass.set_vertex_buffer(slot, buf.slice(..));
+        true
+    }
+
     /// Index count of an uploaded mesh, or `None` when the id is stale.
     pub fn index_count(&self, mesh_id: MeshId) -> Option<u32> {
         self.resources

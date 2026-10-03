@@ -2210,7 +2210,9 @@ impl DeviceResources {
         )
     }
 
-    /// Allocate and fill a STORAGE buffer from a slice of `f32` values.
+    /// Allocate and fill a STORAGE buffer from a slice of `f32` values. It is
+    /// also a vertex buffer, so an item type can bind a per-vertex scalar
+    /// through `MeshDraw::bind_scalar_attribute`.
     fn create_storage_buffer_f32(
         device: &crate::gpu::Device,
         label: &str,
@@ -2219,7 +2221,9 @@ impl DeviceResources {
         let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some(label),
             size: (std::mem::size_of::<f32>() * data.len()) as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE
+                | crate::gpu::BufferUsages::VERTEX
+                | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(buf.slice(..), bytemuck::cast_slice(data));

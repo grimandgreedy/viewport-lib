@@ -1565,6 +1565,24 @@ pub fn mesh_vertex_layout() -> crate::gpu::VertexBufferLayout<'static> {
     crate::resources::types::Vertex::buffer_layout()
 }
 
+/// One single-attribute table per shader location 0 to 15, so an attribute
+/// layout can be handed out as `'static`.
+const fn attribute_location_table(
+    format: crate::gpu::VertexFormat,
+) -> [[crate::gpu::VertexAttribute; 1]; 16] {
+    let mut table = [[crate::gpu::VertexAttribute {
+        offset: 0,
+        shader_location: 0,
+        format,
+    }]; 16];
+    let mut i = 0;
+    while i < 16 {
+        table[i][0].shader_location = i as u32;
+        i += 1;
+    }
+    table
+}
+
 /// Vertex buffer layout of a mesh's per-vertex vector attribute: one
 /// `Float32x3` per vertex at `location`.
 ///
@@ -1576,20 +1594,8 @@ pub fn mesh_vertex_layout() -> crate::gpu::VertexBufferLayout<'static> {
 ///
 /// When `location` is 16 or more.
 pub fn vector_attribute_layout(location: u32) -> crate::gpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [[crate::gpu::VertexAttribute; 1]; 16] = {
-        let mut table = [[crate::gpu::VertexAttribute {
-            offset: 0,
-            shader_location: 0,
-            format: crate::gpu::VertexFormat::Float32x3,
-        }]; 16];
-        let mut i = 0;
-        while i < 16 {
-            table[i][0].shader_location = i as u32;
-            i += 1;
-        }
-        table
-    };
-    static TABLE: [[crate::gpu::VertexAttribute; 1]; 16] = ATTRIBUTES;
+    static TABLE: [[crate::gpu::VertexAttribute; 1]; 16] =
+        attribute_location_table(crate::gpu::VertexFormat::Float32x3);
     crate::gpu::VertexBufferLayout {
         array_stride: 12,
         step_mode: crate::gpu::VertexStepMode::Vertex,
@@ -1597,8 +1603,28 @@ pub fn vector_attribute_layout(location: u32) -> crate::gpu::VertexBufferLayout<
     }
 }
 
+/// Vertex buffer layout of a mesh's per-vertex scalar attribute: one
+/// `Float32` per vertex at `location`.
+///
+/// Pairs with
+/// [`MeshDraw::bind_scalar_attribute`](crate::resources::MeshDraw::bind_scalar_attribute),
+/// which binds the buffer this describes.
+///
+/// # Panics
+///
+/// When `location` is 16 or more.
+pub fn scalar_attribute_layout(location: u32) -> crate::gpu::VertexBufferLayout<'static> {
+    static TABLE: [[crate::gpu::VertexAttribute; 1]; 16] =
+        attribute_location_table(crate::gpu::VertexFormat::Float32);
+    crate::gpu::VertexBufferLayout {
+        array_stride: 4,
+        step_mode: crate::gpu::VertexStepMode::Vertex,
+        attributes: &TABLE[location as usize],
+    }
+}
+
 #[cfg(test)]
-mod vector_attribute_layout_tests {
+mod attribute_layout_tests {
     #[test]
     fn layout_carries_the_requested_location() {
         for location in [0, 1, 7, 15] {
@@ -1606,6 +1632,19 @@ mod vector_attribute_layout_tests {
             assert_eq!(layout.array_stride, 12);
             assert_eq!(layout.attributes.len(), 1);
             assert_eq!(layout.attributes[0].shader_location, location);
+            assert_eq!(
+                layout.attributes[0].format,
+                crate::gpu::VertexFormat::Float32x3
+            );
+
+            let layout = super::scalar_attribute_layout(location);
+            assert_eq!(layout.array_stride, 4);
+            assert_eq!(layout.attributes.len(), 1);
+            assert_eq!(layout.attributes[0].shader_location, location);
+            assert_eq!(
+                layout.attributes[0].format,
+                crate::gpu::VertexFormat::Float32
+            );
         }
     }
 }
