@@ -19,8 +19,8 @@
 //! plain Moller-Trumbore triangle test) to find the hit point, then blends the
 //! brush colour into every vertex within the brush radius.
 
-use crate::eframe;
 use crate::App;
+use crate::eframe;
 use crate::eframe::egui;
 use viewport_lib as vpl;
 use vpl::{
@@ -418,8 +418,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.camera = vpl::Camera {
         center: glam::Vec3::ZERO,
         distance: 16.0,
-        orientation: glam::Quat::from_rotation_z(0.4)
-            * glam::Quat::from_rotation_x(1.15),
+        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.15),
         ..vpl::Camera::default()
     };
 }
@@ -437,13 +436,7 @@ pub(crate) fn scene(
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
         let items = vcol_scene_items(app);
-        (
-            items,
-            None,
-            vcol_lighting(),
-            0,
-            0,
-        )
+        (items, None, vcol_lighting(), 0, 0)
     };
     crate::SceneContents {
         items,
@@ -462,14 +455,12 @@ pub(crate) fn scene(
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
 
-
 // ---------------------------------------------------------------------------
 // Viewport overlay and per-frame tick
 // ---------------------------------------------------------------------------
 
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
-
 
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
@@ -494,19 +485,10 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
         let mut guard = rs.renderer.write();
         if let Some(renderer) = guard.callback_resources.get_mut::<vpl::ViewportRenderer>() {
             if do_clear {
-                vcol_clear_paint(
-                    &mut app.vcol_state,
-                    renderer,
-                    &queue,
-                );
+                vcol_clear_paint(&mut app.vcol_state, renderer, &queue);
             }
             if animate {
-                vcol_animate(
-                    &mut app.vcol_state,
-                    renderer,
-                    &queue,
-                    dt,
-                );
+                vcol_animate(&mut app.vcol_state, renderer, &queue, dt);
             }
             if do_paint {
                 vcol_paint(
@@ -531,21 +513,15 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -566,8 +542,7 @@ pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> b
 /// Whether the orbit controller should resolve without moving the camera this
 /// frame, because this showcase is using the drag for something of its own.
 pub(crate) fn suppress_orbit(app: &crate::App, cx: &crate::ViewportCtx) -> bool {
-    app.vcol_state.paint_mode
-        && (cx.response.dragged() || cx.response.drag_started())
+    app.vcol_state.paint_mode && (cx.response.dragged() || cx.response.drag_started())
 }
 
 // ---------------------------------------------------------------------------
@@ -587,13 +562,23 @@ impl crate::Showcase for ScVertexColours {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn tick(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
         tick(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -602,7 +587,12 @@ impl crate::Showcase for ScVertexColours {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_vertex_colour(app, ui)
     }
 }
