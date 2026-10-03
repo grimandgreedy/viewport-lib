@@ -1359,6 +1359,26 @@ impl ViewportRenderer {
         self.resources.pipeline_compiler.configured_policy()
     }
 
+    /// Pipelines handed to the workers that are not ready yet. Zero means
+    /// every pipeline a frame or a warm-up has asked for so far is built;
+    /// the next frame that uses one draws it. Always zero under
+    /// [`PipelineCompilation::Blocking`]. Also in
+    /// [`FrameStats::pipelines_pending`](crate::FrameStats::pipelines_pending).
+    pub fn pipelines_pending(&self) -> usize {
+        self.resources.pipeline_compiler.pending()
+    }
+
+    /// Block until [`pipelines_pending`](Self::pipelines_pending) is zero.
+    ///
+    /// A pending rebuild of the mesh pipelines (after a deformer
+    /// registration) is flushed first, so nothing is left for the next
+    /// frame to compile. Returns at once under `Blocking`. This is what a
+    /// loading screen waits on after a warm-up.
+    pub fn wait_for_pipelines(&mut self, device: &crate::gpu::Device) {
+        self.resources.flush_mesh_pipeline_rebuild(device);
+        self.resources.pipeline_compiler.wait();
+    }
+
     /// True when the current render presents a frame the user sees, and so
     /// should advance per-frame state (upload pipeline, frame counter, HiZ
     /// prev-depth, stats, plugin `prepare` / `cull`). False for a `Derivative`

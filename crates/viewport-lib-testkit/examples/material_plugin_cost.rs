@@ -11,6 +11,11 @@
 //!
 //! `VPL_NO_WARM=1` skips the warm-up, so the first frames show the cost of
 //! building the sets on demand. `VPL_DETAIL=1` lists every object built.
+//! `VPL_PIPELINE_COMPILATION=background` runs the plugin compiles on the
+//! workers: the frames report how many are still pending, and a last step
+//! waits for them and draws once more. The build log is process-wide, so a
+//! worker's builds are listed under whichever step was running when they
+//! finished.
 
 use std::time::Instant;
 
@@ -150,6 +155,19 @@ fn main() {
     for i in 0..4 {
         let t = Instant::now();
         let _ = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
-        report(&format!("frame {i}"), ms(t));
+        report(
+            &format!("frame {i} ({} pending)", renderer.pipelines_pending()),
+            ms(t),
+        );
+    }
+    // Under `Background` the frames above skipped what the workers still
+    // had; wait for them and draw once more with nothing left to build.
+    if renderer.pipeline_compilation() == viewport_lib::PipelineCompilation::Background {
+        let t = Instant::now();
+        renderer.wait_for_pipelines(&device);
+        report("wait for the workers", ms(t));
+        let t = Instant::now();
+        let _ = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+        report("frame after the wait", ms(t));
     }
 }

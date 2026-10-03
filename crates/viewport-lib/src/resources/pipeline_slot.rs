@@ -10,7 +10,7 @@
 //! compiles in flight, so an application can wait for them.
 
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, mpsc};
 
 /// How the renderer compiles a pipeline the first time a frame needs it.
 ///
@@ -73,10 +73,13 @@ pub(crate) fn initial_policy() -> PipelineCompilation {
         .unwrap_or_else(PipelineCompilation::platform_default)
 }
 
-/// The compiles a renderer has in flight.
+/// The compiles a renderer has in flight: a count, and a signal when one
+/// finishes.
 #[derive(Default)]
 struct Pending {
     count: AtomicUsize,
+    lock: Mutex<()>,
+    finished: Condvar,
 }
 
 impl Pending {
@@ -85,7 +88,16 @@ impl Pending {
     }
 
     fn finish(&self) {
+        let _guard = self.lock.lock().unwrap();
         self.count.fetch_sub(1, Ordering::SeqCst);
+        self.finished.notify_all();
+    }
+
+    fn wait(&self) {
+        let mut guard = self.lock.lock().unwrap();
+        while self.count.load(Ordering::SeqCst) > 0 {
+            guard = self.finished.wait(guard).unwrap();
+        }
     }
 }
 
@@ -128,6 +140,16 @@ impl PipelineCompiler {
 
     pub(crate) fn set_capturing(&self, capturing: bool) {
         self.capturing.store(capturing, Ordering::Relaxed);
+    }
+
+    /// Compiles handed to the workers that have not finished.
+    pub(crate) fn pending(&self) -> usize {
+        self.pending.count.load(Ordering::SeqCst)
+    }
+
+    /// Block until no compile is running on the workers.
+    pub(crate) fn wait(&self) {
+        self.pending.wait();
     }
 
     fn spawn(&self, job: impl FnOnce() + Send + 'static) {
@@ -284,19 +306,11 @@ mod tests {
     }
 
     fn pending(compiler: &PipelineCompiler) -> usize {
-        compiler.pending.count.load(Ordering::SeqCst)
+        compiler.pending()
     }
 
-    /// Poll until no compile is running.
     fn wait(compiler: &PipelineCompiler) {
-        let start = std::time::Instant::now();
-        while pending(compiler) > 0 {
-            assert!(
-                start.elapsed() < Duration::from_secs(5),
-                "workers never finished"
-            );
-            std::thread::sleep(Duration::from_millis(1));
-        }
+        compiler.wait();
     }
 
     /// Poll `slot` until the worker's result is in.

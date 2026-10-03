@@ -1045,3 +1045,74 @@ fn a_plugin_compiled_in_the_background_is_skipped_then_drawn() {
         1
     );
 }
+
+/// A warm-up under `Background` is counted in `pipelines_pending`, and
+/// after `wait_for_pipelines` the first frame has nothing left to build.
+#[test]
+fn a_background_warm_up_is_counted_then_waited_for() {
+    struct Tint;
+    impl viewport_lib::MaterialPlugin for Tint {
+        fn name(&self) -> &'static str {
+            "tint_pending"
+        }
+        fn wgsl_body(&self) -> String {
+            "fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {\n\
+             \x20   return surf.base_colour * vec3<f32>(0.2, 0.9, 0.3) * light.shadow;\n\
+             }\n"
+            .to_string()
+        }
+    }
+
+    let Some((device, queue)) = headless_device_recommended_limits() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Background);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let plugin = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &Tint)
+        .expect("register material plugin");
+    assert_eq!(renderer.pipelines_pending(), 0);
+
+    renderer
+        .resources_mut()
+        .warm_material_plugin_pipelines(&device, &[plugin]);
+    let pending = renderer.pipelines_pending();
+    assert!(pending > 0, "the warm-up handed nothing to the workers");
+
+    renderer.wait_for_pipelines(&device);
+    assert_eq!(renderer.pipelines_pending(), 0);
+
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.material.shading_plugin = Some(plugin);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    // The built-in pipelines this frame binds still compile on this thread;
+    // the plugin's own must not.
+    viewport_lib::resources::build_log::enable();
+    let _ = viewport_lib::resources::build_log::drain();
+    let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    let plugin_builds: Vec<String> = viewport_lib::resources::build_log::drain()
+        .into_iter()
+        .map(|(label, _)| label)
+        .filter(|label| label.contains("tint_pending"))
+        .collect();
+    assert!(
+        plugin_builds.is_empty(),
+        "the frame built plugin pipelines after the warm-up: {plugin_builds:?}"
+    );
+    assert_eq!(renderer.last_frame_stats().pipelines_pending, 0);
+    assert!(renderer.resources().material_plugin_stats()[0].pipelines_built >= 1);
+}

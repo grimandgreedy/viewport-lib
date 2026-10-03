@@ -912,6 +912,7 @@ impl ViewportRenderer {
             .resources
             .frame_pipelines_built
             .swap(0, std::sync::atomic::Ordering::Relaxed);
+        self.last_stats.pipelines_pending = self.resources.pipeline_compiler.pending() as u32;
         cmd_buf
     }
 

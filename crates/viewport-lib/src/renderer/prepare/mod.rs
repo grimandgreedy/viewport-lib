@@ -1415,6 +1415,7 @@ impl ViewportRenderer {
             missed_budget,
             upload_bytes,
             pipelines_built_this_frame,
+            pipelines_pending: self.resources.pipeline_compiler.pending() as u32,
             shadows_skipped: self.degradation_shadows_skipped,
             volume_quality_reduced: self.degradation_volume_quality_reduced,
             // effects_throttled is set by the render path; carry forward here so
