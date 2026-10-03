@@ -7,6 +7,8 @@
 //!
 //! One file per item type, so a type's coverage travels with it.
 
+#![cfg(feature = "item-types")]
+
 use viewport_lib::plugin_api::Handles;
 use viewport_lib::plugin_api::{Uploads, Writes};
 use viewport_lib_plugins::item_types::gaussian_splat::channels as gs;

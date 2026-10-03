@@ -2,7 +2,7 @@
 name = "viewport-lib-plugins"
 version = "0.1.0"
 edition = "2024"
-description = "Plugins for viewport-lib: the built-in item types (point clouds, sprites, curves, volumes, vector and tensor fields and the rest)"
+description = "Plugins for viewport-lib: the built-in item types (point clouds, sprites, curves, volumes, vector and tensor fields and the rest) and deformers such as a cut for section views and thresholds"
 readme = "README.md"
 license = "GPL-3.0-only"
 repository = "https://github.com/grimandgreedy/viewport-lib"
@@ -13,21 +13,25 @@ publish = true
 
 [dependencies]
 viewport-lib = { path = "../viewport-lib", version = "0.22", default-features = false }
-viewport-lib-types = { path = "../viewport-lib-types", version = "0.2" }
+viewport-lib-types = { path = "../viewport-lib-types", version = "0.2", optional = true }
 # Marching-cubes tables, the trilinear sampler and the primitive builders
 # the volume family reaches for, from the crate that owns them.
-viewport-lib-geometry = { path = "../viewport-lib-geometry", version = "0.2" }
+viewport-lib-geometry = { path = "../viewport-lib-geometry", version = "0.2", optional = true }
 glam = { workspace = true }
 bytemuck = { version = "1.25", features = ["derive"] }
 # Ray/trimesh cast for the volume-surface-slice CPU pick, the same version
 # viewport-lib uses so the two agree on hit geometry.
-parry3d = "0.26"
+parry3d = { version = "0.26", optional = true }
 
 [dev-dependencies]
 viewport-lib-testkit = { path = "../viewport-lib-testkit", default-features = false, features = ["core"] }
 
 [features]
-default = ["wgpu27"]
+default = ["wgpu27", "item-types", "deformers"]
+# One feature per module. A dependent on a non-default wgpu leg turns default
+# features off, so it names the modules it wants alongside the leg.
+item-types = ["dep:viewport-lib-types", "dep:viewport-lib-geometry", "dep:parry3d"]
+deformers = []
 # One leg, matching the viewport-lib the crate is built against. The renderer
 # re-exports its wgpu as `viewport_lib::gpu`, and everything here names types
 # through that path, so selecting the leg here is the whole of it.

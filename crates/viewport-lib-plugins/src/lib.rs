@@ -1,9 +1,16 @@
 //! Plugins for viewport-lib, built against its public plugin API.
 //!
-//! Each module holds one kind of plugin. [`item_types`] is the set of item
-//! types viewport-lib ships with: point clouds, sprites, curves, volumes,
-//! vector and tensor fields and the rest. Nothing is re-exported at the crate
-//! root; a type is named by the module it belongs to.
+//! Each module holds one kind of plugin, behind a Cargo feature of the same
+//! name (both on by default):
+//!
+//! - `item_types` (`item-types`): the item types viewport-lib ships with:
+//!   point clouds, sprites, curves, volumes, vector and tensor fields and the
+//!   rest.
+//! - `deformers` (`deformers`): deformers, such as a cut for section views and
+//!   thresholds.
+//!
+//! Nothing is re-exported at the crate root; a type is named by the module it
+//! belongs to.
 //!
 //! ```no_run
 //! use viewport_lib_plugins::item_types::{self, point_cloud::PointCloudItem};
@@ -35,6 +42,9 @@ const _: () = assert!(
      feature it gives viewport-lib."
 );
 
+#[cfg(feature = "deformers")]
+pub mod deformers;
+#[cfg(feature = "item-types")]
 pub mod item_types;
 
 /// Every shader this crate compiles, as `(name, source)`, with the shared
@@ -43,6 +53,13 @@ pub mod item_types;
 /// A body on its own does not compile: it declares no group-0 bindings and
 /// calls helpers it does not define. This returns what the pipelines actually
 /// hand to `create_shader_module`, which is what a validation pass wants.
+///
+/// Deformer bodies are not here: the renderer splices them into its own mesh
+/// shaders and validates the result when the deformer registers.
 pub fn shader_sources() -> Vec<(&'static str, String)> {
-    item_types::shader_sources()
+    #[allow(unused_mut)]
+    let mut all = Vec::new();
+    #[cfg(feature = "item-types")]
+    all.extend(item_types::shader_sources());
+    all
 }

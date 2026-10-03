@@ -2221,9 +2221,12 @@ impl DeviceResources {
         let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some(label),
             size: (std::mem::size_of::<f32>() * data.len()) as u64,
+            // COPY_SRC so a deformer slot can take the attribute as its per-mesh
+            // source (`set_deform_slot_source_attribute`).
             usage: crate::gpu::BufferUsages::STORAGE
                 | crate::gpu::BufferUsages::VERTEX
-                | crate::gpu::BufferUsages::COPY_DST,
+                | crate::gpu::BufferUsages::COPY_DST
+                | crate::gpu::BufferUsages::COPY_SRC,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(buf.slice(..), bytemuck::cast_slice(data));

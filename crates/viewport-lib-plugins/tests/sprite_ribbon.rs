@@ -18,6 +18,8 @@
 //! Each test renders once, changes the texture, renders again, and checks the
 //! framebuffer moved. A byte-identical pair means the change was dropped.
 
+#![cfg(feature = "item-types")]
+
 mod common;
 use common::*;
 use viewport_lib::plugin_api::Handles;

@@ -1,6 +1,8 @@
 //! GPU-pick and draw coverage for the item types in this crate that a single
 //! per-type file does not already cover.
 
+#![cfg(feature = "item-types")]
+
 use viewport_lib::gpu;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib_plugins::item_types::{

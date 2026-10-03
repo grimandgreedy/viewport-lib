@@ -2,6 +2,8 @@
 //!
 //! One file per item type, so a type's coverage travels with it.
 
+#![cfg(feature = "item-types")]
+
 use viewport_lib::renderer::SpriteBlend;
 use viewport_lib_plugins::item_types::gpu_particles::{
     GpuParticleSystemConfig, GpuParticleSystemItem, GpuParticleSystems, GpuParticlesPlugin,

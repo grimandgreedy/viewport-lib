@@ -3,6 +3,8 @@
 //!
 //! One file per item type, so a type's coverage travels with it.
 
+#![cfg(feature = "item-types")]
+
 mod common;
 use common::*;
 use viewport_lib::{AttributeData, Material, MeshId, SceneRenderItem, SurfaceSubmission};

@@ -1533,6 +1533,36 @@ impl DeviceResources {
         Ok(())
     }
 
+    /// Feed a deformer slot's per-mesh data from one of the mesh's own per-vertex
+    /// scalar attributes, one `f32` per vertex (stride 4), by name.
+    ///
+    /// The attribute is copied into the slot each frame, like any buffer source,
+    /// so a `replace_attribute` on the mesh reaches the deformer with no further
+    /// call. Use it for a deformer that reads a field the mesh already carries,
+    /// rather than uploading the same values again. Returns
+    /// [`ViewportError::AttributeNotFound`] when the mesh has no scalar attribute
+    /// of that name.
+    ///
+    /// [`ViewportError::AttributeNotFound`]: crate::error::ViewportError::AttributeNotFound
+    pub fn set_deform_slot_source_attribute(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh_id: MeshId,
+        slot: usize,
+        name: &str,
+    ) -> ViewportResult<()> {
+        let buffer = self
+            .mesh_store
+            .get(mesh_id)
+            .and_then(|mesh| mesh.attribute_buffers.get(name))
+            .cloned()
+            .ok_or_else(|| crate::error::ViewportError::AttributeNotFound {
+                mesh_id: mesh_id.index(),
+                name: name.to_string(),
+            })?;
+        self.set_deform_slot_source_buffer(device, mesh_id, slot, buffer, 4)
+    }
+
     /// As [`set_deform_slot_source_buffer`](Self::set_deform_slot_source_buffer),
     /// but copies only `slice.element_count` elements starting at
     /// `slice.base_element` (element = `stride_bytes`). Addresses one host

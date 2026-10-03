@@ -4,6 +4,8 @@
 //!
 //! One file per item type, so a type's coverage travels with it.
 
+#![cfg(feature = "item-types")]
+
 use viewport_lib::gpu;
 use viewport_lib::plugin_api::Uploads;
 

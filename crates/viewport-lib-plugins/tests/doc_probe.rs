@@ -3,6 +3,8 @@
 //!
 //! Nothing is called: the point is that the paths resolve.
 
+#![cfg(feature = "item-types")]
+
 #![allow(unused_imports)]
 
 use viewport_lib_plugins::item_types::{
