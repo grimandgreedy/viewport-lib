@@ -236,3 +236,194 @@ fn a_keep_hook_cuts_transparent_items() {
         "the removed half shows the backdrop untinted, got {removed:?}"
     );
 }
+
+/// A renderer with the plane cut registered and `(n, d)` attached to instance 1
+/// of `quad`. `None` when there is no adapter or no deformer support.
+fn cut_scene(plane: [f32; 4]) -> Option<(wgpu::Device, wgpu::Queue, ViewportRenderer, MeshId)> {
+    let (device, queue) = headless_device_recommended_limits()?;
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let quad = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &viewport_lib::primitives::plane(1.0, 1.0))
+        .unwrap();
+    let id = renderer
+        .resources_mut()
+        .register_deformer(&device, plane_cut())
+        .ok()?;
+    renderer.resources_mut().attach_deform_slot_instance(
+        &device,
+        &queue,
+        quad,
+        1,
+        id.slot(),
+        16,
+        bytemuck::cast_slice(&plane),
+    );
+    Some((device, queue, renderer, quad))
+}
+
+fn bare_frame(rc: &RenderCamera, items: Vec<SceneRenderItem>) -> FrameData {
+    let mut frame = FrameData::new(
+        CameraFrame::new(rc.clone(), [W as f32, H as f32]),
+        SceneFrame::from_surface_items(items),
+    );
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame
+}
+
+fn screen_of(rc: &RenderCamera, world: glam::Vec3) -> glam::Vec2 {
+    let clip = rc.view_proj() * world.extend(1.0);
+    let ndc = clip.truncate() / clip.w;
+    glam::Vec2::new(
+        (ndc.x * 0.5 + 0.5) * W as f32,
+        (0.5 - ndc.y * 0.5) * H as f32,
+    )
+}
+
+fn luma(p: [u8; 4]) -> i32 {
+    p[0] as i32 + p[1] as i32 + p[2] as i32
+}
+
+/// The removed half of a caster casts no shadow, from a directional light (the
+/// cascade pass) or a point light (the cube pass): the floor under it is as
+/// bright as with no caster at all. Without the cut reaching the shadow passes,
+/// the floor there sits in the shadow of a surface nobody can see.
+#[test]
+fn a_cut_caster_casts_no_shadow_from_its_removed_half() {
+    let Some((device, queue, mut renderer, quad)) = cut_scene([-1.0, 0.0, 0.0, 0.0]) else {
+        eprintln!("skipping: no GPU adapter or no deformer support");
+        return;
+    };
+    let floor_mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &viewport_lib::primitives::plane(4.0, 4.0))
+        .unwrap();
+
+    let mut floor = SceneRenderItem::default();
+    floor.mesh_id = floor_mesh;
+    floor.material = Material::from_colour(viewport_lib::Colour::linear_rgb(0.8, 0.8, 0.8));
+    let mut caster = SceneRenderItem::default();
+    caster.mesh_id = quad;
+    caster.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).to_cols_array_2d();
+    caster.material = Material::from_colour(viewport_lib::Colour::linear_rgb(0.2, 0.2, 0.8));
+    caster.material.backface_policy = BackfacePolicy::Identical;
+    caster.deform_instance = Some(1);
+
+    let mut sun = LightSource::default();
+    sun.kind = LightKind::Directional {
+        direction: [0.0, 0.0, 1.0],
+    };
+    let bulb = LightSource::point_candela([0.0, 0.0, 3.0], viewport_lib::Candela(40.0), 20.0, 0.05);
+
+    let rc = top_down();
+    // Seen from above, this floor point lies under the removed half for both
+    // lights: the camera ray and both light rays cross the caster's plane at
+    // x > 0.
+    let floor_point = glam::Vec3::new(0.3, 0.2, 0.0);
+    for (name, light) in [("directional", sun), ("point", bulb)] {
+        let render = |renderer: &mut ViewportRenderer, items: Vec<SceneRenderItem>| {
+            let mut frame = bare_frame(&rc, items);
+            frame.effects.lighting.lights = vec![light.clone()];
+            frame.effects.lighting.hemisphere_intensity = 0.05;
+            let img = renderer.render_offscreen(&device, &queue, &frame, W, H);
+            pixel_at(&img, &rc, floor_point)
+        };
+        let with_cut_caster = render(&mut renderer, vec![floor.clone(), caster.clone()]);
+        let no_caster = render(&mut renderer, vec![floor.clone()]);
+        assert!(
+            (luma(with_cut_caster) - luma(no_caster)).abs() < 30,
+            "{name}: floor under the removed half {with_cut_caster:?} should be lit as with no caster {no_caster:?}"
+        );
+    }
+}
+
+/// The selection outline rings what is drawn: no outline along the far edge of
+/// the removed half, while the kept half's outer edge keeps its ring.
+#[test]
+fn the_outline_follows_the_cut() {
+    let Some((device, queue, mut renderer, quad)) = cut_scene([-1.0, 0.0, 0.0, 0.0]) else {
+        eprintln!("skipping: no GPU adapter or no deformer support");
+        return;
+    };
+    let mut cut = flat(quad, glam::Mat4::IDENTITY, [0.2, 0.2, 0.8]);
+    cut.deform_instance = Some(1);
+    cut.settings.selected = true;
+    let backdrop = flat(
+        quad,
+        glam::Mat4::from_scale_rotation_translation(
+            glam::Vec3::splat(4.0),
+            glam::Quat::IDENTITY,
+            glam::Vec3::new(0.0, 0.0, -0.5),
+        ),
+        [1.0, 0.0, 0.0],
+    );
+    let rc = top_down();
+    let mut frame = bare_frame(&rc, vec![backdrop, cut]);
+    frame.interaction.outline_selected = true;
+    frame.interaction.outline_colour = [0.0, 1.0, 0.0, 1.0].into();
+    frame.interaction.outline_width_px = 3.0;
+    let img = renderer.render_offscreen(&device, &queue, &frame, W, H);
+
+    // Any green in a short run just outside an edge.
+    let ring_beyond = |edge_x: f32, step: f32| {
+        (1..=6).any(|i| {
+            let p = pixel_at(
+                &img,
+                &rc,
+                glam::Vec3::new(edge_x + step * i as f32, 0.25, 0.0),
+            );
+            p[1] > 150 && p[0] < 120
+        })
+    };
+    assert!(
+        ring_beyond(-0.5, -0.01),
+        "the kept half's outer edge is outlined"
+    );
+    assert!(
+        !ring_beyond(0.5, 0.01),
+        "the removed half's outer edge carries no outline"
+    );
+}
+
+/// A GPU pick over the removed half passes through to what is behind.
+#[test]
+fn a_pick_on_the_removed_half_hits_what_is_behind() {
+    let Some((device, queue, mut renderer, quad)) = cut_scene([-1.0, 0.0, 0.0, 0.0]) else {
+        eprintln!("skipping: no GPU adapter or no deformer support");
+        return;
+    };
+    let mut cut = flat(quad, glam::Mat4::IDENTITY, [0.2, 0.2, 0.8]);
+    cut.deform_instance = Some(1);
+    cut.settings.pick_id = PickId(1);
+    let mut backdrop = flat(
+        quad,
+        glam::Mat4::from_scale_rotation_translation(
+            glam::Vec3::splat(4.0),
+            glam::Quat::IDENTITY,
+            glam::Vec3::new(0.0, 0.0, -0.5),
+        ),
+        [1.0, 0.0, 0.0],
+    );
+    backdrop.settings.pick_id = PickId(2);
+    let rc = top_down();
+    let frame = bare_frame(&rc, vec![backdrop, cut]);
+    let _ = renderer.render_offscreen(&device, &queue, &frame, W, H);
+
+    let pick = |renderer: &mut ViewportRenderer, x: f32| {
+        let at = screen_of(&rc, glam::Vec3::new(x, 0.25, 0.0));
+        renderer
+            .pick_scene_gpu(&device, &queue, at, &frame)
+            .map(|h| h.object_id)
+    };
+    assert_eq!(
+        pick(&mut renderer, -0.3),
+        Some(PickId(1)),
+        "the kept half picks the cut item"
+    );
+    assert_eq!(
+        pick(&mut renderer, 0.3),
+        Some(PickId(2)),
+        "the removed half picks what is behind it"
+    );
+}

@@ -88,6 +88,8 @@ var<private> object: Object;
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) world_pos:      vec3<f32>,
+    // Kept-surface value from deformers that define `keep`; see deform.wgsl.
+    // <viewport-deform-keep> @location(1) deform_keep: f32,
 };
 
 @vertex
@@ -118,6 +120,7 @@ fn vs_main(
     dv.position = world_pos4.xyz;
     dv = viewport_deform_world_space(dv, dctx);
     var out: VsOut;
+    // <viewport-deform-keep> out.deform_keep = viewport_deform_keep(dv, dctx);
     out.world_pos = dv.position;
     out.clip_pos = face.view_proj * vec4<f32>(dv.position, 1.0);
     return out;
@@ -125,6 +128,7 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VsOut) -> @builtin(frag_depth) f32 {
+    // <viewport-deform-keep> if in.deform_keep < 0.0 { discard; }
     let d = length(in.world_pos - face.light_pos.xyz) / max(face.light_pos.w, 1e-5);
     return clamp(d, 0.0, 1.0);
 }

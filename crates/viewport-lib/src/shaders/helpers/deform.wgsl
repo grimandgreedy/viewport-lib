@@ -117,6 +117,19 @@ fn deform_read_instance_mat4(slot: u32, element_index: u32) -> mat4x4<f32> {
     return mat4x4<f32>(c0, c1, c2, c3);
 }
 
+// The slot flags for a draw that has no `deform_flags` of its own (the GPU
+// pick pass): a slot is live when the bound mesh or instance carries data for
+// it, which is what the per-object flags record for the other passes.
+fn deform_bound_flags() -> u32 {
+    var flags = 0u;
+    for (var slot = 0u; slot < 8u; slot++) {
+        if deform_slot_stride(slot) != 0u || deform_instance_slot_stride(slot) != 0u {
+            flags = flags | (1u << slot);
+        }
+    }
+    return flags;
+}
+
 fn viewport_deform_object_space(v: DeformVertex, ctx: DeformContext) -> DeformVertex {
     var out = v;
     // <viewport-deform-slots:object>

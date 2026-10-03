@@ -1897,6 +1897,9 @@ impl DeviceResources {
             self.outline.mask_pipeline = None;
             self.ensure_outline_pipelines(device);
         }
+        // The object pick deforms too, so a deformed mesh is picked where it is
+        // drawn. Rebuilt on the next pick; its layouts are kept.
+        self.pick.pipeline = None;
 
         // Instanced families (LDR / HDR / OIT / cull) rebuild through the
         // bindless-aware `ensure_*` functions instead of a second copy of their

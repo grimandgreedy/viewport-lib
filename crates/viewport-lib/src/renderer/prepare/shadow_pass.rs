@@ -982,10 +982,14 @@ impl ViewportRenderer {
                             // silhouette.
                             let key = PipelineKey {
                                 two_sided: item.material.is_two_sided() && !mesh.closed,
+                                // A caster a deformer can cut needs the
+                                // cutout pipeline's fragment stage to discard in.
                                 cutout: matches!(
                                     item.material.alpha_mode,
                                     crate::scene::material::AlphaMode::Mask(_)
-                                ),
+                                ) || resources
+                                    .deform
+                                    .may_discard(item.mesh_id, item.deform_instance),
                                 ..PipelineKey::default()
                             };
                             // Still compiling: the caster waits a frame.
@@ -1071,10 +1075,14 @@ impl ViewportRenderer {
                             // path above.
                             let key = PipelineKey {
                                 two_sided: item.material.is_two_sided() && !mesh.closed,
+                                // A caster a deformer can cut needs the
+                                // cutout pipeline's fragment stage to discard in.
                                 cutout: matches!(
                                     item.material.alpha_mode,
                                     crate::scene::material::AlphaMode::Mask(_)
-                                ),
+                                ) || resources
+                                    .deform
+                                    .may_discard(item.mesh_id, item.deform_instance),
                                 ..PipelineKey::default()
                             };
                             // Still compiling: the caster waits a frame.

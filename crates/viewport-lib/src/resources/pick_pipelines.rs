@@ -19,65 +19,31 @@ impl DeviceResources {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
+        // The layouts outlive the pipeline: registering a deformer drops only the
+        // pipeline, so the VERTEX / EDGE variants built against these layouts
+        // stay compatible with the bind groups made from them.
+        if self.pick.camera_bgl.is_none() {
+            self.create_pick_layouts(device);
+        }
 
-        // --- group 0: pick camera bind group layout ---
-        // Includes binding 0 (CameraUniform) and binding 6 (ClipVolumesUniform).
-        // The full camera_bind_group_layout has many more bindings; a separate
-        // minimal layout is cleaner and avoids binding unused resources.
-        let pick_camera_bgl =
-            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-                label: Some("pick_camera_bgl"),
-                entries: &[
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: crate::gpu::ShaderStages::VERTEX,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 6,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-
-        // --- group 1: PickInstance storage buffer ---
-        // Visible to both stages: the object-id pipeline reads it in the vertex
-        // stage, and the per-pixel VERTEX / NODE variants also read the model
-        // matrix in the fragment stage to place the hit primitive's corners.
-        let pick_instance_bgl =
-            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-                label: Some("pick_instance_bgl"),
-                entries: &[crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
+        // The object pick runs the registered deformers, so a deformed mesh is
+        // picked where it is drawn and a deformer's `keep` removes surface from
+        // the pick as it does from the colour pass. Composed like the other mesh
+        // shaders, from the stub build on a device without the deform group.
+        let base_src = crate::resources::mesh_sidecar::registry::compose_shader(
+            if self.deform.enabled {
+                include_str!(concat!(env!("OUT_DIR"), "/pick_id.wgsl"))
+            } else {
+                include_str!(concat!(env!("OUT_DIR"), "/pick_id_noop.wgsl"))
+            },
+            &self.deform.registrations,
+        );
         // The default fragment writes a constant `0u` into the primitive-id
         // channel. When the device supports SHADER_PRIMITIVE_INDEX, rewrite it to
         // read `@builtin(primitive_index)` and write the hit triangle index, which
         // sub-object readback maps to a face / cell / tube segment. The builtin
         // requires the feature, so it can only appear in the module on a device
         // that has it; otherwise shader-module validation would reject it.
-        let base_src = crate::resources::builders::wgsl_source!("pick_id");
         let shader = if device
             .features()
             .contains(crate::gpu::PRIMITIVE_INDEX_FEATURE)
@@ -97,11 +63,18 @@ impl DeviceResources {
             crate::resources::builders::wgsl_module(device, "pick_id_shader", base_src)
         };
 
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            "pick_pipeline_layout",
-            &[&pick_camera_bgl, &pick_instance_bgl],
-        );
+        let mut bgls = vec![
+            self.pick.camera_bgl.as_ref().expect("pick camera bgl"),
+            self.pick
+                .bind_group_layout_1
+                .as_ref()
+                .expect("pick instance bgl"),
+        ];
+        if self.deform.enabled {
+            bgls.push(&self.deform.bind_group_layout);
+        }
+        let layout =
+            crate::resources::builders::pipeline_layout(device, "pick_pipeline_layout", &bgls);
 
         // Vertex layout: reuse the 64-byte Vertex stride but only declare position (location 0).
         let pick_vertex_layout = crate::gpu::VertexBufferLayout {
@@ -165,9 +138,64 @@ impl DeviceResources {
             },
         );
 
+        self.pick.pipeline = Some(pipeline);
+    }
+
+    /// The group 0 and group 1 layouts every surface pick pipeline shares.
+    fn create_pick_layouts(&mut self, device: &crate::gpu::Device) {
+        // --- group 0: pick camera bind group layout ---
+        // Includes binding 0 (CameraUniform) and binding 6 (ClipVolumesUniform).
+        // The full camera_bind_group_layout has many more bindings; a separate
+        // minimal layout is cleaner and avoids binding unused resources.
+        let pick_camera_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("pick_camera_bgl"),
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::VERTEX,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        // --- group 1: PickInstance storage buffer ---
+        // Visible to both stages: the object-id pipeline reads it in the vertex
+        // stage, and the per-pixel VERTEX / NODE variants also read the model
+        // matrix in the fragment stage to place the hit primitive's corners.
+        let pick_instance_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("pick_instance_bgl"),
+                entries: &[crate::gpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: crate::gpu::ShaderStages::VERTEX
+                        | crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
         self.pick.camera_bgl = Some(pick_camera_bgl);
         self.pick.bind_group_layout_1 = Some(pick_instance_bgl);
-        self.pick.pipeline = Some(pipeline);
     }
 
     /// Build the surface VERTEX pick pipeline (writes the nearest corner's global

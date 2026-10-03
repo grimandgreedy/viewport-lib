@@ -149,6 +149,9 @@ fn build_surface_pick_meta(frame: &FrameData) -> SurfacePickMeta {
 /// pixel or a whole rect region back, only which types answer `mask`.
 struct PickDrawSet {
     draws: Vec<(crate::resources::mesh::mesh_store::MeshId, PickInstance)>,
+    /// The deform instance each of `draws` selects, aligned with it, so the pick
+    /// draw binds the same deformer data the colour pass does.
+    deform_instances: Vec<Option<u32>>,
     /// Whether any registered plugin has pickable geometry this frame. Plugin
     /// draws are not collected here; they are issued directly from
     /// `dispatch_plugin_pick` during `record_pick_pass_draws`.
@@ -751,6 +754,7 @@ impl ViewportRenderer {
         };
 
         let mut draws: Vec<(crate::resources::mesh::mesh_store::MeshId, PickInstance)> = Vec::new();
+        let mut deform_instances: Vec<Option<u32>> = Vec::new();
 
         // Surfaces and volume-mesh boundaries draw through the Surface pipeline;
         // skip building their instance data when the mask asks for none of the
@@ -758,6 +762,7 @@ impl ViewportRenderer {
         if PickItemType::Surface.satisfies(mask) {
             for item in scene_items.iter().filter(|i| pickable(i)) {
                 draws.push((item.mesh_id, to_instance(item)));
+                deform_instances.push(item.deform_instance);
             }
             for ri in frame
                 .scene
@@ -767,6 +772,7 @@ impl ViewportRenderer {
                 .filter(pickable)
             {
                 draws.push((ri.mesh_id, to_instance(&ri)));
+                deform_instances.push(None);
             }
         }
 
@@ -807,6 +813,7 @@ impl ViewportRenderer {
 
         PickDrawSet {
             draws,
+            deform_instances,
             has_plugin_pick,
             kinds,
             surface_meta,
@@ -994,6 +1001,18 @@ impl ViewportRenderer {
                     pick_pass.set_pipeline(default_pipeline);
                     pick_pass.set_bind_group(0, pick_camera_bg, &[]);
                     pick_pass.set_bind_group(1, pick_instance_bg, &[]);
+                    let deform_instance = draw_set
+                        .deform_instances
+                        .get(instance_slot)
+                        .copied()
+                        .flatten();
+                    bind_deform_group!(
+                        pick_pass,
+                        self.resources,
+                        self.resources
+                            .deform
+                            .instance_bind_group_for(*mesh_id, deform_instance)
+                    );
                 }
             }
             pick_pass.set_vertex_buffer(0, self.resources.geometry.vertex_slice(mesh.vertex_span));
