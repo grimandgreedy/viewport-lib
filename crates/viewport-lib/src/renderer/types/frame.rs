@@ -232,43 +232,6 @@ impl Default for SurfaceSubmission {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Surface LIC
-// ---------------------------------------------------------------------------
-
-/// Configuration for Surface Line Integral Convolution.
-///
-/// Controls the advection quality and visual strength of the LIC effect.
-/// All fields have sensible defaults via [`SurfaceLICConfig::default`].
-///
-/// The noise texture is viewport-sized (one independent random value per screen pixel).
-/// Advection kernel length is `steps * step_size` pixels in each direction. Longer kernels
-/// produce clearer, smoother streaks; shorter kernels give more contrast at lower GPU cost.
-#[non_exhaustive]
-#[derive(Debug, Clone)]
-pub struct SurfaceLICConfig {
-    /// Number of advection steps taken in each direction (forward and backward) from each pixel.
-    /// More steps produce longer, clearer streaks at the cost of GPU time. Default: 20.
-    pub steps: u32,
-    /// Distance advanced per step, in screen pixels. Together with `steps`, controls total
-    /// streak length: `steps * step_size` pixels each way. Default: 1.5.
-    pub step_size: f32,
-    /// How strongly the LIC intensity modulates the surface colour. At 0 there is no effect;
-    /// at 1.0 the surface colour is scaled by up to 2x brighter or darkened to black depending
-    /// on the local LIC value. Values above 1.0 increase contrast further. Default: 1.0.
-    pub strength: f32,
-}
-
-impl Default for SurfaceLICConfig {
-    fn default() -> Self {
-        Self {
-            steps: 20,
-            step_size: 1.5,
-            strength: 1.0,
-        }
-    }
-}
-
 /// World-space scene content for one frame.
 ///
 /// Groups all renderable world-space content submitted to the renderer.

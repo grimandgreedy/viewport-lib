@@ -85,20 +85,20 @@ pub use self::types::{
     DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentSettings, ExposureMode,
     ExposureSettings, FillRule, FilterMode, ForegroundPass, ForegroundProjection, FrameData,
     GlyphRunItem, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
-    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind,
-    LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux,
-    MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
-    OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
-    OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
-    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
-    OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment,
-    PathTrack, PipelineMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem,
-    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
-    ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
-    ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceLICConfig,
-    SurfaceSubmission, TextureTransform, TileMode, ToneMapping, TriangleDirection, ViewportEffects,
-    ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline,
-    obb_wireframe_polyline, sphere_wireframe_polyline,
+    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
+    LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS,
+    MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS,
+    OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill,
+    OverlayFrame, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape,
+    OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId,
+    OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment, PathTrack, PipelineMode,
+    PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph,
+    PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality,
+    ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer,
+    ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission, TextureTransform,
+    TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, VignetteSettings,
+    VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline,
+    sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -382,12 +382,6 @@ pub struct ViewportRenderer {
     last_stats: crate::renderer::stats::FrameStats,
     /// Per-frame polyline GPU data, rebuilt in prepare(), consumed in paint().
     polyline_gpu_data: Vec<crate::resources::PolylineGpuData>,
-    /// Per-frame general tube GPU data, rebuilt in prepare(), consumed in paint().
-    /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint().
-    lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
-    /// Step count and step size for this frame's LIC advect pass, when any
-    /// LIC item was prepared.
-    lic_advect_params: Option<(u32, f32)>,
     /// Whether the frame being prepared may be painted straight into the
     /// caller's render pass, which binds the LDR pipelines whatever display
     /// mode the frame asks for. Set by each entry point before it prepares;
@@ -941,8 +935,6 @@ impl ViewportRenderer {
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
             polyline_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
-            lic_gpu_data: Vec::new(),
-            lic_advect_params: None,
             direct_paint: true,
             surface_mask: surface_mask::SurfaceMaskState::new(),
             label_gpu_data: None,

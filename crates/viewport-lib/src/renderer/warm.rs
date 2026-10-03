@@ -21,7 +21,6 @@ pub struct PipelineSet {
     contact_shadows: bool,
     dof: bool,
     fxaa: bool,
-    lic: bool,
     ssaa: bool,
     auto_exposure: bool,
     ground_plane: bool,
@@ -68,7 +67,6 @@ impl PipelineSet {
             contact_shadows: true,
             dof: true,
             fxaa: true,
-            lic: true,
             ssaa: true,
             auto_exposure: true,
             ground_plane: true,
@@ -107,12 +105,6 @@ impl PipelineSet {
     /// The HDR families, effects infrastructure and tone map.
     pub fn with_hdr(mut self) -> Self {
         self.hdr = true;
-        self
-    }
-
-    /// The surface LIC pipelines.
-    pub fn with_lic(mut self) -> Self {
-        self.lic = true;
         self
     }
 
@@ -254,15 +246,6 @@ impl ViewportRenderer {
             if set.fxaa {
                 r.ensure_fxaa_pipeline(device, format);
                 if let Some(f) = &r.post.fxaa.pipeline {
-                    f.request_all();
-                }
-            }
-            if set.lic {
-                r.ensure_lic_pipelines(device);
-                if let Some(f) = &r.lic.surface_pipeline {
-                    f.request_all();
-                }
-                if let Some(f) = &r.lic.advect_pipeline {
                     f.request_all();
                 }
             }

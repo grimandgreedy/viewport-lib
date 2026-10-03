@@ -272,7 +272,7 @@ fn main() {
 
 /// Effect groups a per-viewport target can belong to. `scene` is the HDR
 /// colour and depth pair; `other` catches a label this list does not know.
-const GROUPS: [&str; 11] = [
+const GROUPS: [&str; 10] = [
     "scene",
     "bloom",
     "ssao",
@@ -280,7 +280,6 @@ const GROUPS: [&str; 11] = [
     "contact shadow",
     "fxaa",
     "outline",
-    "lic",
     "ssaa",
     "render scale",
     "other",
@@ -301,8 +300,6 @@ fn group_of(label: &str) -> usize {
         "fxaa"
     } else if label.starts_with("outline") {
         "outline"
-    } else if label.starts_with("lic") {
-        "lic"
     } else if label.starts_with("ssaa") {
         "ssaa"
     } else if label.starts_with("upscale") || label.starts_with("output_depth") {

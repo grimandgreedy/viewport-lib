@@ -1564,3 +1564,48 @@ pub fn mesh_vertex_layout() -> crate::gpu::VertexBufferLayout<'static> {
     use crate::resources::types::VertexBufferLayoutExt as _;
     crate::resources::types::Vertex::buffer_layout()
 }
+
+/// Vertex buffer layout of a mesh's per-vertex vector attribute: one
+/// `Float32x3` per vertex at `location`.
+///
+/// Pairs with
+/// [`MeshDraw::bind_vector_attribute`](crate::resources::MeshDraw::bind_vector_attribute),
+/// which binds the buffer this describes.
+///
+/// # Panics
+///
+/// When `location` is 16 or more.
+pub fn vector_attribute_layout(location: u32) -> crate::gpu::VertexBufferLayout<'static> {
+    const ATTRIBUTES: [[crate::gpu::VertexAttribute; 1]; 16] = {
+        let mut table = [[crate::gpu::VertexAttribute {
+            offset: 0,
+            shader_location: 0,
+            format: crate::gpu::VertexFormat::Float32x3,
+        }]; 16];
+        let mut i = 0;
+        while i < 16 {
+            table[i][0].shader_location = i as u32;
+            i += 1;
+        }
+        table
+    };
+    static TABLE: [[crate::gpu::VertexAttribute; 1]; 16] = ATTRIBUTES;
+    crate::gpu::VertexBufferLayout {
+        array_stride: 12,
+        step_mode: crate::gpu::VertexStepMode::Vertex,
+        attributes: &TABLE[location as usize],
+    }
+}
+
+#[cfg(test)]
+mod vector_attribute_layout_tests {
+    #[test]
+    fn layout_carries_the_requested_location() {
+        for location in [0, 1, 7, 15] {
+            let layout = super::vector_attribute_layout(location);
+            assert_eq!(layout.array_stride, 12);
+            assert_eq!(layout.attributes.len(), 1);
+            assert_eq!(layout.attributes[0].shader_location, location);
+        }
+    }
+}

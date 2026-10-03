@@ -70,7 +70,6 @@ fn build_everything(
 
 struct Meshes {
     cube: crate::MeshId,
-    flow_quad: crate::MeshId,
 }
 
 fn upload(renderer: &mut ViewportRenderer, device: &crate::gpu::Device) -> Meshes {
@@ -78,24 +77,7 @@ fn upload(renderer: &mut ViewportRenderer, device: &crate::gpu::Device) -> Meshe
         .resources_mut()
         .upload_mesh_data(device, &crate::geometry::primitives::cube(1.0))
         .unwrap();
-    let mut quad = crate::resources::MeshData::default();
-    quad.positions = vec![
-        [-0.5, -0.5, 0.6],
-        [0.5, -0.5, 0.6],
-        [0.5, 0.5, 0.6],
-        [-0.5, 0.5, 0.6],
-    ];
-    quad.normals = vec![[0.0, 0.0, 1.0]; 4];
-    quad.indices = vec![0, 1, 2, 0, 2, 3];
-    quad.attributes.insert(
-        "flow".to_string(),
-        crate::AttributeData::VertexVector(vec![[1.0, 0.0, 0.0]; 4]),
-    );
-    let flow_quad = renderer
-        .resources_mut()
-        .upload_mesh_data(device, &quad)
-        .unwrap();
-    Meshes { cube, flow_quad }
+    Meshes { cube }
 }
 
 fn cube_item(meshes: &Meshes, x: f32, colour: [f32; 3]) -> SceneRenderItem {
@@ -399,32 +381,6 @@ fn selection_outline() {
     }
     check("selection outline", setup, plain);
     check_mid_session("selection outline", plain, setup);
-}
-
-#[test]
-fn surface_lic() {
-    fn setup(meshes: &Meshes, _: &mut ViewportRenderer) -> FrameData {
-        let mut frame = base_frame(meshes);
-        let mut item = SceneRenderItem::default();
-        item.mesh_id = meshes.flow_quad;
-        item.material = Material::from_colour([0.7, 0.7, 0.7]);
-        item.settings.unlit = true;
-        let mut lic = crate::LicOverlay::new("flow", crate::SurfaceLICConfig::default());
-        lic.config.strength = 2.0;
-        item.lic = Some(lic);
-        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        frame
-    }
-    fn without(meshes: &Meshes, r: &mut ViewportRenderer) -> FrameData {
-        let mut frame = setup(meshes, r);
-        let crate::SurfaceSubmission::Flat(items) = &frame.scene.surfaces;
-        let mut items = items.to_vec();
-        items[0].lic = None;
-        frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
-        frame
-    }
-    check("surface lic", setup, without);
-    check_mid_session("surface lic", plain, setup);
 }
 
 /// The custom-data buffer starts small and grows when a frame interns more

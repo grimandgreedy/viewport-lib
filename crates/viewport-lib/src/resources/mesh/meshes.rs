@@ -2176,7 +2176,8 @@ impl DeviceResources {
                 }
                 AttributeData::VertexVector(v) => {
                     // Flatten [f32; 3] -> [f32] with 12-byte per-vertex stride.
-                    // Bound as vertex buffer 1 in the LIC surface pass (location 1).
+                    // An item type binds it as a vertex buffer; the material warp
+                    // reads it as storage.
                     if v.is_empty() {
                         continue;
                     }

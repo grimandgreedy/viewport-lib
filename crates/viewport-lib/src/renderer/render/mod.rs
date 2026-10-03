@@ -796,16 +796,12 @@ impl ViewportRenderer {
             use crate::resources::TargetGroups as G;
             if frame.effects.display.is_hdr() {
                 let pp = &frame.effects.post_process;
-                let lic = scene_items
-                    .iter()
-                    .any(|i| i.lic.is_some() && !i.settings.hidden);
                 G::SCENE
                     | G::when(G::BLOOM, pp.bloom.enabled)
                     | G::when(G::SSAO, pp.ssao)
                     | G::when(G::DOF, pp.dof.enabled)
                     | G::when(G::CONTACT_SHADOW, pp.contact_shadows.enabled)
                     | G::when(G::FXAA, pp.fxaa)
-                    | G::when(G::LIC, lic)
             } else {
                 G::LDR_DEPTH
             }

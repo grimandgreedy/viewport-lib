@@ -3,13 +3,12 @@
 //! Holds [`PostProcessResources`] (FXAA/SSAA, bloom, SSAO, tone-map, DoF,
 //! contact shadows, depth blit, and dynamic-resolution upscale) and the
 //! `impl DeviceResources` methods that build and drive those passes. The
-//! post-effect uniforms live in `uniforms`, the Surface LIC pipelines in
-//! `lic`, and the order-independent transparency pipelines in `oit`.
+//! post-effect uniforms live in `uniforms` and the order-independent
+//! transparency pipelines in `oit`.
 
 use super::*;
 
 pub(crate) mod composite;
-pub(crate) mod lic;
 pub(crate) mod oit;
 pub(crate) mod producer;
 pub(crate) mod targets;
@@ -18,7 +17,6 @@ pub(crate) mod uniforms;
 pub(crate) use self::targets::TargetGroups;
 use self::targets::{TargetSize, ViewportTargetAllocator};
 
-pub(crate) use self::lic::LicResources;
 pub(crate) use self::oit::OitResources;
 
 /// Shared post-processing pipelines, layouts, samplers, and static textures:
@@ -231,19 +229,6 @@ impl DeviceResources {
     // Per-viewport HDR state : shared infrastructure
     // -----------------------------------------------------------------------
 
-    /// Create the LIC surface bind group layout (group 1): the object uniform
-    /// only. Flow vectors are passed as vertex buffer 1, not a storage binding.
-    pub(crate) fn ensure_lic_surface_bgl(&mut self, device: &crate::gpu::Device) {
-        if self.lic.surface_bgl.is_none() {
-            let bgl = crate::resources::builders::uniform_bgl(
-                device,
-                "lic_surface_bgl",
-                crate::gpu::ShaderStages::VERTEX_FRAGMENT,
-            );
-            self.lic.surface_bgl = Some(bgl);
-        }
-    }
-
     /// Create the shared post-process infrastructure that per-viewport HDR state
     /// is built against: samplers, bind group layouts, placeholder textures, the
     /// SSAO noise texture and its kernel buffer. Builds no pipelines and compiles
@@ -370,17 +355,6 @@ impl DeviceResources {
                 1,
             );
             self.post.cs_placeholder_view = Some(cv);
-
-            // LIC placeholder: 1x1 R8Unorm, 128 = 0.5 -> lic_factor = 1.0 (no modulation).
-            let (_lt, lv) = make_placeholder(
-                device,
-                queue,
-                "lic_placeholder",
-                crate::gpu::TextureFormat::R8Unorm,
-                &[128u8],
-                1,
-            );
-            self.lic.placeholder_view = Some(lv);
 
             // Foreground depth placeholder: 1x1 depth at 1.0 = no coverage.
             // Depth16Unorm is the only depth format write_texture accepts,
@@ -770,63 +744,6 @@ impl DeviceResources {
         self.post.ssaa_resolve_bgl = Some(ssaa_resolve_bgl);
         self.post.dof.bgl = Some(dof_bgl);
 
-        // --- Surface LIC shared resources ---
-        if self.lic.noise_sampler.is_none() {
-            // Bilinear sampler used for lic_vector_texture in the advect pass.
-            let samp =
-                crate::resources::builders::clamp_linear_sampler(device, "lic_linear_sampler");
-            self.lic.noise_sampler = Some(samp);
-        }
-
-        self.ensure_lic_surface_bgl(device);
-
-        // LIC advect BGL (fullscreen): params uniform, vector tex, noise tex, sampler x2.
-        if self.lic.advect_bgl.is_none() {
-            let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-                label: Some("lic_advect_bgl"),
-                entries: &[
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: crate::gpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: crate::gpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Sampler(
-                            crate::gpu::SamplerBindingType::Filtering,
-                        ),
-                        count: None,
-                    },
-                ],
-            });
-            self.lic.advect_bgl = Some(bgl);
-        }
         // --- Depth blit bind group layout ---
         // The blit copies a scene-resolution depth texture to a native-resolution
         // depth-only target, for when render_scale < 1.0.
@@ -960,7 +877,6 @@ impl DeviceResources {
         self.ensure_hdr_mesh_pipelines(device);
         self.ensure_outline_composite_pipelines(device);
         self.ensure_ssaa_resolve_pipelines(device);
-        self.ensure_lic_pipelines(device);
         self.ensure_depth_blit_pipeline(device);
         self.ensure_foreground_stamp_pipeline(device);
     }
@@ -1418,56 +1334,6 @@ impl DeviceResources {
         ));
     }
 
-    /// The two surface LIC pipelines: the mesh pass into the `Rgba8Unorm`
-    /// vector target and the full-screen advect into the `R8Unorm` output.
-    /// Needs `ensure_hdr_infra` for the advect layout.
-    pub(crate) fn ensure_lic_pipelines(&mut self, device: &crate::gpu::Device) {
-        self.ensure_lic_surface_bgl(device);
-        if self.lic.surface_pipeline.is_none() {
-            self.note_pipeline_built(concat!(file!(), ":", line!()));
-            let surface_bgl = self.lic.surface_bgl.clone().expect("just ensured");
-            let shader = crate::resources::builders::wgsl_module(
-                device,
-                "lic_surface_shader",
-                crate::resources::builders::wgsl_source!("lic_surface"),
-            );
-            // Group 0 is the camera, group 1 the LIC object uniform.
-            let layout = crate::resources::builders::pipeline_layout(
-                device,
-                "lic_surface_layout",
-                &[&self.binds.camera_bgl, &surface_bgl],
-            );
-            self.lic.surface_pipeline = Some(LazyFamily::new(
-                lic::LicSurfaceRecipe {
-                    device: device.clone(),
-                    layout,
-                    shader,
-                },
-                std::sync::Arc::clone(&self.pipeline_compiler),
-                lic::build_surface,
-            ));
-        }
-        if self.lic.advect_pipeline.is_none() {
-            let advect_bgl = self
-                .lic
-                .advect_bgl
-                .clone()
-                .expect("ensure_hdr_infra not called");
-            let shader = crate::resources::builders::wgsl_module(
-                device,
-                "lic_advect_shader",
-                crate::resources::builders::wgsl_source!("lic_advect"),
-            );
-            self.lic.advect_pipeline = Some(self.fullscreen_pass_pipeline(
-                device,
-                "lic_advect_pipeline",
-                shader,
-                &advect_bgl,
-                crate::gpu::TextureFormat::R8Unorm,
-            ));
-        }
-    }
-
     /// Create a fresh [`ViewportHdrState`] for the given viewport dimensions.
     ///
     /// `w, h` are the native output dimensions. `scene_w, scene_h` are the effective
@@ -1921,15 +1787,6 @@ impl DeviceResources {
                     resource: crate::gpu::BindingResource::TextureView(&hdr_depth_only_view),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: composite::slot::LIC,
-                    resource: crate::gpu::BindingResource::TextureView(
-                        self.lic
-                            .placeholder_view
-                            .as_ref()
-                            .expect("ensure_hdr_infra not called"),
-                    ),
-                },
-                crate::gpu::BindGroupEntry {
                     binding: composite::slot::FOREGROUND_DEPTH,
                     resource: crate::gpu::BindingResource::TextureView(
                         self.post
@@ -2313,117 +2170,6 @@ impl DeviceResources {
             (None, None, None, None, None, None, None, None)
         };
 
-        // --- Surface LIC per-viewport textures and bind group -- at scene resolution ---
-        let (
-            (lic_vector_tex, lic_vector_view),
-            (lic_output_tex, lic_output_view),
-            (lic_noise_tex, lic_noise_view),
-        ) = match kept(TargetGroups::LIC) {
-            Some(old) => (
-                (old.lic_vector_texture.clone(), old.lic_vector_view.clone()),
-                (old.lic_output_texture.clone(), old.lic_output_view.clone()),
-                (old.lic_noise_texture.clone(), old.lic_noise_view.clone()),
-            ),
-            None => {
-                let size = groups.size(TargetGroups::LIC, TargetSize::Scene);
-                let vector = alloc.colour(
-                    "lic_vector",
-                    crate::gpu::TextureFormat::Rgba8Unorm,
-                    size,
-                    crate::gpu::TextureUsages::empty(),
-                );
-                let output = alloc.colour(
-                    "lic_output",
-                    crate::gpu::TextureFormat::R8Unorm,
-                    size,
-                    crate::gpu::TextureUsages::empty(),
-                );
-                // Per-pixel white noise at scene resolution, or one texel while
-                // the group waits for its first LIC item.
-                let [noise_w, noise_h] = if groups.contains(TargetGroups::LIC) {
-                    [scene_w, scene_h]
-                } else {
-                    [1, 1]
-                };
-                let noise_data: Vec<u8> = (0u32..noise_w * noise_h)
-                    .map(|i| {
-                        // xorshift32 mix of pixel index -- uniform [0,255] distribution.
-                        let mut v = i.wrapping_add(1).wrapping_mul(2246822519);
-                        v ^= v >> 13;
-                        v ^= v << 17;
-                        v ^= v >> 5;
-                        v as u8
-                    })
-                    .collect();
-                let noise = alloc.texture(
-                    "lic_noise",
-                    crate::gpu::TextureFormat::R8Unorm,
-                    size,
-                    crate::gpu::TextureUsages::TEXTURE_BINDING
-                        | crate::gpu::TextureUsages::COPY_DST,
-                );
-                queue.write_texture(
-                    crate::gpu::TexelCopyTextureInfo {
-                        texture: &noise.0,
-                        mip_level: 0,
-                        origin: crate::gpu::Origin3d::ZERO,
-                        aspect: crate::gpu::TextureAspect::All,
-                    },
-                    &noise_data,
-                    crate::gpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(noise_w),
-                        rows_per_image: Some(noise_h),
-                    },
-                    crate::gpu::Extent3d {
-                        width: noise_w,
-                        height: noise_h,
-                        depth_or_array_layers: 1,
-                    },
-                );
-                (vector, output, noise)
-            }
-        };
-
-        let lic_uniform_buf = uniform(
-            reuse.map(|o| &o.lic_uniform_buf),
-            "lic_advect_uniform",
-            std::mem::size_of::<crate::resources::types::LicAdvectUniform>(),
-        );
-
-        let lic_advect_bgl = self
-            .lic
-            .advect_bgl
-            .as_ref()
-            .expect("ensure_hdr_infra not called");
-        let lic_advect_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("lic_advect_bg"),
-            layout: lic_advect_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: lic_uniform_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::TextureView(&lic_vector_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: crate::gpu::BindingResource::TextureView(&lic_noise_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 3,
-                    resource: crate::gpu::BindingResource::Sampler(
-                        self.lic
-                            .noise_sampler
-                            .as_ref()
-                            .expect("ensure_hdr_infra not called"),
-                    ),
-                },
-            ],
-        });
-
         // Output-resolution depth for post-tone-map passes.
         // When render scale = 1.0 (scene == output), reuse hdr_depth as a second view.
         // When render scale < 1.0, allocate a separate native-res texture and create a
@@ -2577,14 +2323,6 @@ impl DeviceResources {
             exposure_histogram_buf,
             exposure_params_buf,
             exposure_bind_group,
-            lic_vector_texture: lic_vector_tex,
-            lic_vector_view,
-            lic_output_texture: lic_output_tex,
-            lic_output_view,
-            lic_noise_texture: lic_noise_tex,
-            lic_noise_view,
-            lic_advect_bind_group,
-            lic_uniform_buf,
             output_size: [w, h],
             scene_size: [scene_w, scene_h],
             groups,
@@ -2671,12 +2409,6 @@ impl DeviceResources {
                 cs_placeholder
             },
         );
-        let lic_view =
-            overridden(crate::plugin_api::PostEffectSlot::SurfaceLic).unwrap_or(if inputs.lic {
-                &hdr.lic_output_view
-            } else {
-                self.lic.placeholder_view.as_ref().unwrap_or(cs_placeholder)
-            });
 
         let tone_map_hdr_input: &crate::gpu::TextureView = if inputs.dof {
             &hdr.dof.view
@@ -2714,10 +2446,6 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: composite::slot::SCENE_DEPTH,
                     resource: crate::gpu::BindingResource::TextureView(&hdr.hdr_depth_only_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: composite::slot::LIC,
-                    resource: crate::gpu::BindingResource::TextureView(lic_view),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: composite::slot::FOREGROUND_DEPTH,

@@ -53,6 +53,7 @@ const SCENES: &[(&str, &str)] = &[
     ("scatter volume", "scatter_volume"),
     ("polyline (built in)", "polyline"),
     ("decal", "decals"),
+    ("surface lic", "surface_lic"),
 ];
 
 fn ms(t: Instant) -> f32 {
@@ -125,8 +126,9 @@ fn main() {
         "gpu particles" => types::GpuParticlesPlugin,
         "scatter volume" => types::ScatterVolumePlugin,
         "decal" => types::DecalPlugin,
+        "surface lic" => types::SurfaceLicPlugin,
     );
-    println!("  {:<22} {total:6.3} ms", "all seventeen");
+    println!("  {:<22} {total:6.3} ms", "all eighteen");
     drop(renderer);
 
     // ---- First use, per type, each on a fresh harness.

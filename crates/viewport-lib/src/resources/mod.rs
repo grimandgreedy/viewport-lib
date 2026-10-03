@@ -100,7 +100,6 @@ pub use self::types::ViewportGpuResources;
 // though their current consumers reference them through their domain modules.
 #[allow(unused_imports)]
 pub(crate) use self::postprocess::composite::CompositeInputs;
-pub(crate) use self::postprocess::lic::LIC_STRENGTH_ENCODE_MAX;
 pub(crate) use self::postprocess::producer::{
     PostProducer, PostStage, ProducerFrameInputs, ProducerTiming,
 };
@@ -108,11 +107,11 @@ pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
     ContactShadowUniform, DofUniform, DualPipeline, FrustumPlane, FrustumUniform,
     GpuProjectedTetMesh, GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData,
-    LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, MeshInstanceGpuData, ObjectUniform,
-    OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu, OverlayShapeGpuData,
-    OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex, OverlayTextVertex,
-    ProjectedTetUniform, SHADOW_ATLAS_SIZE, ShadowAtlasUniform, ShadowCullState, SsaoUniform,
-    SubHighlightGpuData, ToneMapUniform, ViewportCullState, ViewportHdrState,
+    MeshInstanceGpuData, ObjectUniform, OutlineObjectBuffers, OutlineUniform,
+    OverlayShadowLayerGpu, OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex,
+    OverlayShapeVertex, OverlayTextVertex, ProjectedTetUniform, SHADOW_ATLAS_SIZE,
+    ShadowAtlasUniform, ShadowCullState, SsaoUniform, SubHighlightGpuData, ToneMapUniform,
+    ViewportCullState, ViewportHdrState,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,

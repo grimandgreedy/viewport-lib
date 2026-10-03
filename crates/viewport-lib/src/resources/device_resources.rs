@@ -29,22 +29,6 @@ pub(crate) struct ViewportHdrState {
     pub contact_shadow: crate::resources::postprocess::producer::ContactShadowViewport,
     pub dof: crate::resources::postprocess::producer::DofViewport,
 
-    // --- Surface LIC ---
-    /// Encodes screen-space flow vector per surface pixel (Rgba8Unorm, viewport-sized).
-    pub lic_vector_texture: crate::gpu::Texture,
-    pub lic_vector_view: crate::gpu::TextureView,
-    /// LIC intensity after advection (R8Unorm, viewport-sized). Read by tone_map.wgsl binding 7.
-    pub lic_output_texture: crate::gpu::Texture,
-    pub lic_output_view: crate::gpu::TextureView,
-    /// Per-pixel white noise (R8Unorm, viewport-sized). One independent random value per pixel.
-    /// Sampled with textureLoad (nearest) in lic_advect.wgsl to produce directional LIC contrast.
-    pub lic_noise_texture: crate::gpu::Texture,
-    pub lic_noise_view: crate::gpu::TextureView,
-    /// Bind group for the LIC advect render pass (reads lic_vector_texture + lic_noise_texture).
-    pub lic_advect_bind_group: crate::gpu::BindGroup,
-    /// Uniform buffer for LicAdvectUniform (steps, step_size, viewport dims).
-    pub lic_uniform_buf: crate::gpu::Buffer,
-
     // --- FXAA (post-composite stage) ---
     pub fxaa: crate::resources::postprocess::producer::FxaaViewport,
 
@@ -565,10 +549,6 @@ pub struct DeviceResources {
     /// The cull OUTPUTS (visibility indices, indirect args, batch counters) are
     /// per-viewport and live in `ViewportCullState` on each `ViewportSlot`, not here.
     pub(crate) cull: crate::resources::mesh::instancing::CullResources,
-
-    // --- Surface LIC shared resources ---
-    /// Surface LIC pipelines and layouts (surface + advect passes).
-    pub(crate) lic: crate::resources::postprocess::LicResources,
 
     // --- Sprite billboard pipelines (lazily created) ---
     /// Sprite (emissive + lit) pipelines, layouts, refraction, and soft-particle fallbacks.
