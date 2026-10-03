@@ -11,8 +11,16 @@ use viewport_lib::wgpu;
 use viewport_lib::{ItemSettings, Material};
 use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
 
+/// One test renders at a time. The warm-up test reads the process-wide build
+/// log, which the other tests' fresh renderers would write into.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[test]
 fn gpu_pick_hits_marching_cubes() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -66,6 +74,7 @@ fn gpu_pick_hits_marching_cubes() {
 /// it is GPU-pickable but not CPU-pickable.
 #[test]
 fn cpu_pick_hits_marching_cubes() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -102,6 +111,7 @@ fn cpu_pick_hits_marching_cubes() {
 
 #[test]
 fn rect_pick_hits_marching_cubes() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -208,6 +218,7 @@ fn scalar_buffer(device: &wgpu::Device, bytes: u64, usage: wgpu::BufferUsages) -
 
 #[test]
 fn a_stale_mc_volume_handle_does_not_alias_after_slot_reuse() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -238,6 +249,7 @@ fn a_stale_mc_volume_handle_does_not_alias_after_slot_reuse() {
 
 #[test]
 fn mc_volumes_are_reported_and_reclaimed() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -263,6 +275,7 @@ fn mc_volumes_are_reported_and_reclaimed() {
 
 #[test]
 fn the_mc_scalar_source_round_trips_and_rejects_bad_inputs() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -315,6 +328,7 @@ fn the_mc_scalar_source_round_trips_and_rejects_bad_inputs() {
 
 #[test]
 fn begin_upload_volume_for_mc_drains_to_a_handle() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -358,6 +372,7 @@ fn begin_upload_volume_for_mc_drains_to_a_handle() {
 /// per-frame cadence.
 #[test]
 fn mc_external_scalar_drives_isosurface() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -472,5 +487,87 @@ fn mc_external_scalar_drives_isosurface() {
         0,
         "rewriting the external buffer with an all-above-iso field must \
          remove the surface on the next frame"
+    );
+}
+
+/// Warming the type builds its compute pipelines and every render pipeline,
+/// so the first frames of a selected, shadow-casting surface and a wireframe
+/// item build nothing in either format, picking included.
+#[test]
+fn a_warmed_mc_type_builds_nothing_on_its_first_frame() {
+    let _serial = serial();
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    let volume_id = renderer
+        .upload_volume_for_mc(&device, &queue, &radial_field())
+        .expect("mc volume upload");
+    // The shadow pass only runs with a regular surface in the scene, so one
+    // sits inside the isosurface.
+    let box_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    renderer.warm_pipelines(
+        &device,
+        &queue,
+        &viewport_lib::PipelineSet::default()
+            .with_item_type::<viewport_lib_item_types::GpuMarchingCubesPlugin>(),
+    );
+    renderer.wait_for_pipelines(&device);
+
+    viewport_lib::resources::build_log::enable();
+    let _ = viewport_lib::resources::build_log::drain();
+    for hdr in [true, false] {
+        let mut frame = sub_object_pick_frame();
+        if !hdr {
+            frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        }
+        frame.interaction.outline_selected = true;
+        let mut light = viewport_lib::LightSource::default();
+        light.kind = viewport_lib::LightKind::Directional {
+            direction: [0.2, 0.3, 1.0],
+        };
+        frame.effects.lighting.lights = vec![light];
+        frame.effects.lighting.shadows.enabled = true;
+        let mut inner = viewport_lib::SceneRenderItem::default();
+        inner.mesh_id = box_id;
+        frame.scene.surfaces = viewport_lib::SurfaceSubmission::Flat(vec![inner].into());
+
+        let mut surface = GpuMarchingCubesItem {
+            volume_id,
+            isovalue: 1.5,
+            material: Material::default(),
+            settings: ItemSettings::default(),
+            cpu_data: None,
+        };
+        surface.settings.pick_id = PickId(720);
+        surface.settings.selected = true;
+        surface.settings.cast_shadows = true;
+        let mut wire = surface.clone();
+        wire.isovalue = 1.0;
+        wire.settings.pick_id = PickId::NONE;
+        wire.settings.selected = false;
+        wire.settings.wireframe = true;
+        frame
+            .scene
+            .items_mut::<GpuMarchingCubesItem>()
+            .extend([surface, wire]);
+
+        let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
+        assert_eq!(hit.map(|h| h.object_id), Some(PickId(720)));
+    }
+    let builds: Vec<String> = viewport_lib::resources::build_log::drain()
+        .into_iter()
+        .map(|(label, _)| label)
+        .filter(|l| l.starts_with("mc_") || l.starts_with("module mc_"))
+        .collect();
+    assert!(
+        builds.is_empty(),
+        "the first marching cubes frames built pipelines after the warm-up: {builds:?}"
     );
 }

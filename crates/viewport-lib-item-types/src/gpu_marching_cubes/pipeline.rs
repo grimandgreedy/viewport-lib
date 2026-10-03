@@ -1,7 +1,7 @@
 //! GPU state for the GPU marching cubes item type: the three compute
 //! pipelines that extract the isosurface, the surface and wireframe render
-//! pipelines, the shadow, outline-mask and pick pipelines, and the shared case
-//! tables.
+//! pipelines, the shadow, outline-mask and pick pipelines (each render
+//! pipeline built the first time a draw needs it), and the shared case tables.
 //!
 //! The uploaded volumes live beside this module in `store.rs`. This module
 //! reads that store each prepare and clones the per-slab buffer handles it
@@ -41,22 +41,164 @@ pub(super) struct McFrame {
     pub(super) settings: viewport_lib::ItemSettings,
 }
 
-/// Pipelines, layouts, and case tables, built lazily on the first prepare with
-/// items.
+/// Members of [`McPipelines`].
+pub(super) const SURFACE_LDR: usize = 0;
+pub(super) const SURFACE_HDR: usize = 1;
+pub(super) const WIREFRAME_LDR: usize = 2;
+pub(super) const WIREFRAME_HDR: usize = 3;
+pub(super) const SHADOW: usize = 4;
+pub(super) const MASK: usize = 5;
+pub(super) const SURFACE_MASK: usize = 6;
+pub(super) const PICK: usize = 7;
+
+/// What a marching cubes render pipeline build reads.
+pub(super) struct McRecipe {
+    device: viewport_lib::gpu::Device,
+    builder: viewport_lib::plugin_api::PipelineBuilder,
+    surface_layout: viewport_lib::gpu::PipelineLayout,
+    surface_shader: viewport_lib::gpu::ShaderModule,
+    wireframe_layout: viewport_lib::gpu::PipelineLayout,
+    wireframe_shader: viewport_lib::gpu::ShaderModule,
+    shadow_shader: viewport_lib::gpu::ShaderModule,
+    mask_shader: viewport_lib::gpu::ShaderModule,
+    pick_shader: viewport_lib::gpu::ShaderModule,
+    pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
+    ldr_format: viewport_lib::gpu::TextureFormat,
+}
+
+/// The surface and wireframe pipelines in both formats, the shadow caster,
+/// the two masks and the pick pipeline.
+pub(super) type McPipelines = viewport_lib::plugin_api::LazyPipelines<McRecipe, 8>;
+
+fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
+    use viewport_lib::plugin_api::builders::{DualPipelineDesc, build_dual_pipeline_variant};
+    let primitive = viewport_lib::gpu::PrimitiveState {
+        topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+        cull_mode: None,
+        ..Default::default()
+    };
+    match i {
+        SURFACE_LDR | SURFACE_HDR => build_dual_pipeline_variant(
+            &r.device,
+            &DualPipelineDesc {
+                label: "mc_surface_pipeline",
+                layout: &r.surface_layout,
+                shader: &r.surface_shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[MC_SURFACE_VERTEX_LAYOUT],
+                blend: Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
+                topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: viewport_lib::gpu::CompareFunction::LessEqual,
+                sample_count: 1,
+                ldr_format: r.ldr_format,
+            },
+            i == SURFACE_HDR,
+        ),
+        WIREFRAME_LDR | WIREFRAME_HDR => build_dual_pipeline_variant(
+            &r.device,
+            &DualPipelineDesc {
+                label: "mc_wireframe_pipeline",
+                layout: &r.wireframe_layout,
+                shader: &r.wireframe_shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[], // positions read from storage buffer
+                blend: Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
+                topology: viewport_lib::gpu::PrimitiveTopology::LineList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: viewport_lib::gpu::CompareFunction::LessEqual,
+                sample_count: 1,
+                ldr_format: r.ldr_format,
+            },
+            i == WIREFRAME_HDR,
+        ),
+        // Depth-only shadow caster. MC vertices are already world-space (no
+        // per-item model matrix anywhere in the MC path), so there is no
+        // group-1 bind group at all: just the shadow pass's camera layout at
+        // group 0. The surface draws with `cull_mode: None` (open isosurfaces
+        // are expected), so the caster matches with `cull_mode: None` and the
+        // two-sided caster bias, the same convention Ribbon's caster uses.
+        SHADOW => {
+            let mut opts = viewport_lib::resources::PluginPipelineOpts::new(
+                Some("mc_shadow_pipeline"),
+                &r.shadow_shader,
+                "vs_main",
+                "",
+                &[MC_SURFACE_VERTEX_LAYOUT],
+            );
+            opts.primitive.cull_mode = None;
+            opts.depth_compare = viewport_lib::gpu::CompareFunction::Less;
+            // The isosurface is an open, thin shell, so it self-shadows badly
+            // under the mild default. Same bias the lib uses where the shadow
+            // pass does not cull.
+            opts.depth_bias = Some(viewport_lib::plugin_api::builders::CSM_SHADOW_BIAS_TWO_SIDED);
+            r.builder.build_shadow_pipeline(&r.device, &opts)
+        }
+        // Outline mask: the generated vertex buffer rasterised into the R8
+        // mask. MC vertices are world-space, so there is no model transform
+        // and no group-1 data at all. LessEqual matches the surface pipeline
+        // so the mask marks the surface's own front pixels instead of
+        // rejecting them at equal depth.
+        MASK => r.builder.build_mask_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive,
+                extra_bind_group_layouts: &[],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some("mc_outline_mask_pipeline"),
+                    &r.mask_shader,
+                    "vs_main",
+                    "fs_main",
+                    &[MC_VERTEX_LAYOUT],
+                )
+            },
+        ),
+        // The surface mask stamps the same generated geometry into the scene
+        // stencil.
+        SURFACE_MASK => r.builder.build_surface_mask_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive,
+                extra_bind_group_layouts: &[],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some("mc_surface_mask_pipeline"),
+                    &r.mask_shader,
+                    "vs_main",
+                    "fs_main",
+                    &[MC_VERTEX_LAYOUT],
+                )
+            },
+        ),
+        // Pick: the same generated vertex buffer, writing the item's object
+        // id. Group 1 is the per-item object-id uniform.
+        _ => r.builder.build_pick_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive,
+                extra_bind_group_layouts: &[&r.pick_id_bgl],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some("mc_pick_pipeline"),
+                    &r.pick_shader,
+                    "vs_main",
+                    "fs_main",
+                    &[MC_VERTEX_LAYOUT],
+                )
+            },
+        ),
+    }
+}
+
+/// Pipelines, layouts, and case tables, made on the first prepare with items.
+/// The compute pipelines are built here; the render pipelines on first use.
 pub(super) struct McGpu {
     classify_pipeline: viewport_lib::gpu::ComputePipeline,
     prefix_sum_pipeline: viewport_lib::gpu::ComputePipeline,
     generate_pipeline: viewport_lib::gpu::ComputePipeline,
-    pub(super) surface_pipeline: viewport_lib::plugin_api::builders::DualPipeline,
-    pub(super) wireframe_pipeline: viewport_lib::plugin_api::builders::DualPipeline,
-    /// Depth-only shadow-cast pipeline. MC vertices are already world-space
-    /// (no per-item model matrix anywhere in the MC path), so there is no
-    /// group-1 bind group at all: just the shadow pass's camera layout at
-    /// group 0.
-    pub(super) shadow_pipeline: viewport_lib::gpu::RenderPipeline,
-    pub(super) mask_pipeline: viewport_lib::gpu::RenderPipeline,
-    pub(super) surface_mask_pipeline: viewport_lib::gpu::RenderPipeline,
-    pub(super) pick_pipeline: viewport_lib::gpu::RenderPipeline,
+    pub(super) pipelines: McPipelines,
     pub(super) pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
     wireframe_render_bgl: viewport_lib::gpu::BindGroupLayout,
     classify_bgl: viewport_lib::gpu::BindGroupLayout,
@@ -212,50 +354,11 @@ impl McGpu {
             &render_bgl,
         );
 
-        let vertex_attrs = [
-            viewport_lib::gpu::VertexAttribute {
-                format: viewport_lib::gpu::VertexFormat::Float32x3,
-                offset: 0,
-                shader_location: 0,
-            },
-            viewport_lib::gpu::VertexAttribute {
-                format: viewport_lib::gpu::VertexFormat::Float32x3,
-                offset: 12,
-                shader_location: 1,
-            },
-        ];
-        let vertex_layout = viewport_lib::gpu::VertexBufferLayout {
-            array_stride: 24,
-            step_mode: viewport_lib::gpu::VertexStepMode::Vertex,
-            attributes: &vertex_attrs,
-        };
-
-        // ----------------------------------------------------------------
-        // Shadow-cast pipeline. `mc_surface_pipeline` draws with
-        // `cull_mode: None` (open isosurfaces are expected), so the caster
-        // matches with `cull_mode: None` and the two-sided caster bias --
-        // the same convention Ribbon's shadow caster uses.
-        // ----------------------------------------------------------------
-        let mc_shadow_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let shadow_shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
             "mc_shadow_shader",
             wgsl_source!("mc_shadow"),
         );
-        let mut mc_shadow_opts = viewport_lib::resources::PluginPipelineOpts::new(
-            Some("mc_shadow_pipeline"),
-            &mc_shadow_shader,
-            "vs_main",
-            "",
-            std::slice::from_ref(&vertex_layout),
-        );
-        mc_shadow_opts.primitive.cull_mode = None;
-        mc_shadow_opts.depth_compare = viewport_lib::gpu::CompareFunction::Less;
-        // The isosurface is an open, thin shell, so it self-shadows badly under
-        // the mild default. Same bias the lib uses where the shadow pass does
-        // not cull.
-        mc_shadow_opts.depth_bias =
-            Some(viewport_lib::plugin_api::builders::CSM_SHADOW_BIAS_TWO_SIDED);
-        let mc_shadow_pipeline = resources.build_shadow_pipeline(device, &mc_shadow_opts);
 
         // ----------------------------------------------------------------
         // Wireframe render pipeline.
@@ -286,86 +389,13 @@ impl McGpu {
             resources.shared_bindings().group0_layout,
             &wireframe_render_bgl,
         );
-        // ----------------------------------------------------------------
-        // Commit all resources.
-        // ----------------------------------------------------------------
-        let case_count_buf = mc_case_count_buf;
-        let case_table_buf = mc_case_table_buf;
-        let shadow_pipeline = mc_shadow_pipeline;
-        let surface_pipeline = viewport_lib::plugin_api::builders::build_dual_pipeline(
-            device,
-            &viewport_lib::plugin_api::builders::DualPipelineDesc {
-                label: "mc_surface_pipeline",
-                layout: &surface_layout,
-                shader: &surface_shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[vertex_layout.clone()],
-                blend: Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
-                topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                depth_write: true,
-                depth_compare: viewport_lib::gpu::CompareFunction::LessEqual,
-                sample_count: 1,
-                ldr_format: resources.target_format(),
-            },
-        );
-        let wireframe_pipeline = viewport_lib::plugin_api::builders::build_dual_pipeline(
-            device,
-            &viewport_lib::plugin_api::builders::DualPipelineDesc {
-                label: "mc_wireframe_pipeline",
-                layout: &wireframe_layout,
-                shader: &wireframe_shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[], // positions read from storage buffer
-                blend: Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
-                topology: viewport_lib::gpu::PrimitiveTopology::LineList,
-                cull_mode: None,
-                depth_write: true,
-                depth_compare: viewport_lib::gpu::CompareFunction::LessEqual,
-                sample_count: 1,
-                ldr_format: resources.target_format(),
-            },
-        );
-        // Outline mask: the generated vertex buffer rasterised into the R8
-        // mask. MC vertices are world-space, so there is no model transform
-        // and no group-1 data at all. LessEqual matches the surface pipeline
-        // so the mask marks the surface's own front pixels instead of
-        // rejecting them at equal depth.
         let mask_shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
             "mc_outline_mask_shader",
             &scene_shader(&[], wgsl_source!("mc_outline_mask")),
         );
-        let mask_opts = viewport_lib::resources::PluginPipelineOpts {
-            primitive: viewport_lib::gpu::PrimitiveState {
-                topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            extra_bind_group_layouts: &[],
-            ..viewport_lib::resources::PluginPipelineOpts::new(
-                Some("mc_outline_mask_pipeline"),
-                &mask_shader,
-                "vs_main",
-                "fs_main",
-                &[MC_VERTEX_LAYOUT],
-            )
-        };
-        let mask_pipeline = resources.build_mask_pipeline(device, &mask_opts);
-        // The surface mask stamps the same generated geometry into the scene
-        // stencil.
-        let surface_mask_pipeline = resources.build_surface_mask_pipeline(
-            device,
-            &viewport_lib::resources::PluginPipelineOpts {
-                label: Some("mc_surface_mask_pipeline"),
-                ..mask_opts
-            },
-        );
 
-        // Pick: the same generated vertex buffer, writing the item's object id.
-        // Group 1 is the per-item object-id uniform.
+        // Group 1 of the pick pipeline: the per-item object-id uniform.
         let pick_id_bgl =
             device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
                 label: Some("mc_pick_id_bgl"),
@@ -385,44 +415,44 @@ impl McGpu {
             "mc_pick_shader",
             &scene_shader(&[], wgsl_source!("mc_pick")),
         );
-        let pick_pipeline = resources.build_pick_pipeline(
-            device,
-            &viewport_lib::resources::PluginPipelineOpts {
-                primitive: viewport_lib::gpu::PrimitiveState {
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                extra_bind_group_layouts: &[&pick_id_bgl],
-                ..viewport_lib::resources::PluginPipelineOpts::new(
-                    Some("mc_pick_pipeline"),
-                    &pick_shader,
-                    "vs_main",
-                    "fs_main",
-                    &[MC_VERTEX_LAYOUT],
-                )
+        let pipelines = resources.lazy_pipelines(
+            McRecipe {
+                device: device.clone(),
+                builder: resources.pipeline_builder(),
+                surface_layout,
+                surface_shader,
+                wireframe_layout,
+                wireframe_shader,
+                shadow_shader,
+                mask_shader,
+                pick_shader,
+                pick_id_bgl: pick_id_bgl.clone(),
+                ldr_format: resources.target_format(),
             },
+            build,
         );
 
         Self {
             classify_pipeline,
             prefix_sum_pipeline,
             generate_pipeline,
-            surface_pipeline,
-            wireframe_pipeline,
-            shadow_pipeline,
-            mask_pipeline,
-            surface_mask_pipeline,
-            pick_pipeline,
+            pipelines,
             pick_id_bgl,
             wireframe_render_bgl,
             classify_bgl,
             prefix_sum_bgl,
             generate_bgl,
             render_bgl,
-            case_count_buf,
-            case_table_buf,
+            case_count_buf: mc_case_count_buf,
+            case_table_buf: mc_case_table_buf,
         }
+    }
+
+    /// Whether the surface pipeline can draw this frame in either format. The
+    /// shadow, mask and pick passes wait for it, so a surface is never cast,
+    /// outlined or picked before it is drawn.
+    pub(super) fn drawn(&self) -> bool {
+        self.pipelines.available(SURFACE_LDR) || self.pipelines.available(SURFACE_HDR)
     }
 
     /// Object-id uniform + bind group for the GPU pick pass, or `None` when
@@ -816,7 +846,28 @@ impl McGpu {
     }
 }
 
-/// The MC compute output vertex layout: position at offset 0, normal at 12.
+/// The MC compute output vertex layout as the surface and shadow caster read
+/// it: position at offset 0, normal at 12.
+const MC_SURFACE_VERTEX_LAYOUT: viewport_lib::gpu::VertexBufferLayout<'static> =
+    viewport_lib::gpu::VertexBufferLayout {
+        array_stride: 24,
+        step_mode: viewport_lib::gpu::VertexStepMode::Vertex,
+        attributes: &[
+            viewport_lib::gpu::VertexAttribute {
+                format: viewport_lib::gpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            },
+            viewport_lib::gpu::VertexAttribute {
+                format: viewport_lib::gpu::VertexFormat::Float32x3,
+                offset: 12,
+                shader_location: 1,
+            },
+        ],
+    };
+
+/// The same layout with the position only, for the passes that ignore the
+/// normal.
 const MC_VERTEX_LAYOUT: viewport_lib::gpu::VertexBufferLayout<'static> =
     viewport_lib::gpu::VertexBufferLayout {
         array_stride: 24,

@@ -100,6 +100,18 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         self.volumes.allocated_bytes()
     }
 
+    /// Builds the compute pipelines and asks for every render pipeline.
+    fn warm(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        resources: &viewport_lib::DeviceResources,
+    ) {
+        let gpu = self
+            .gpu
+            .get_or_insert_with(|| pipeline::McGpu::new(device, resources));
+        gpu.pipelines.request_all();
+    }
+
     fn on_device_recreated(
         &mut self,
         _device: &viewport_lib::gpu::Device,
@@ -165,14 +177,31 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
             if entry.hidden {
                 continue;
             }
+            // A pipeline still compiling skips the item; it draws next frame.
             if entry.wireframe || self.wireframe_mode {
-                pass.set_pipeline(gpu.wireframe_pipeline.for_format(is_hdr));
+                let member = if is_hdr {
+                    pipeline::WIREFRAME_HDR
+                } else {
+                    pipeline::WIREFRAME_LDR
+                };
+                let Some(pl) = gpu.pipelines.get(member) else {
+                    continue;
+                };
+                pass.set_pipeline(pl);
                 for (slab, wire_bg) in entry.slabs.iter().zip(entry.wire_slab_bgs.iter()) {
                     pass.set_bind_group(1, wire_bg, &[]);
                     pass.draw_indirect(&slab.wire_indirect_buf, 0);
                 }
             } else {
-                pass.set_pipeline(gpu.surface_pipeline.for_format(is_hdr));
+                let member = if is_hdr {
+                    pipeline::SURFACE_HDR
+                } else {
+                    pipeline::SURFACE_LDR
+                };
+                let Some(pl) = gpu.pipelines.get(member) else {
+                    continue;
+                };
+                pass.set_pipeline(pl);
                 pass.set_bind_group(1, &entry.render_bg, &[]);
                 for slab in &entry.slabs {
                     pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
@@ -196,14 +225,19 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         _ctx: &ShadowCastContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        let Some(gpu) = &self.gpu else { return };
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         let mut bound = false;
         for entry in &self.frame {
             if entry.hidden || !entry.cast_shadows {
                 continue;
             }
             if !bound {
-                pass.set_pipeline(&gpu.shadow_pipeline);
+                let Some(pl) = gpu.pipelines.get(pipeline::SHADOW) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             for slab in &entry.slabs {
@@ -219,7 +253,9 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         _ctx: &OutlineMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        let Some(gpu) = &self.gpu else { return };
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         if !self.outline_active {
             return;
         }
@@ -229,7 +265,10 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
                 continue;
             }
             if !bound {
-                pass.set_pipeline(&gpu.mask_pipeline);
+                let Some(pl) = gpu.pipelines.get(pipeline::MASK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             for slab in &entry.slabs {
@@ -245,7 +284,9 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         ctx: &viewport_lib::plugin_api::SurfaceMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        let Some(gpu) = &self.gpu else { return };
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         let mut bound = false;
         for entry in &self.frame {
             // A wireframe item drew lines, not the surface the stamp covers:
@@ -257,7 +298,10 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
                 continue;
             };
             if !bound {
-                pass.set_pipeline(&gpu.surface_mask_pipeline);
+                let Some(pl) = gpu.pipelines.get(pipeline::SURFACE_MASK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             pass.set_stencil_reference(value);
@@ -366,7 +410,9 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         if !ctx.mask.intersects(PickMask::OBJECT) {
             return;
         }
-        let Some(gpu) = &self.gpu else { return };
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         let mut bound = false;
         for (entry, pick) in self.frame.iter().zip(self.pick_bgs.iter()) {
             if entry.hidden {
@@ -374,7 +420,10 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
             }
             let Some((_, pick_bg)) = pick else { continue };
             if !bound {
-                pass.set_pipeline(&gpu.pick_pipeline);
+                let Some(pl) = gpu.pipelines.get(pipeline::PICK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             pass.set_bind_group(1, pick_bg, &[]);
