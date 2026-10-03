@@ -134,6 +134,14 @@ fn main() -> eframe::Result {
                 ViewportRenderer::new(&device, OffscreenViewportTarget::render_format(format));
             viewport_lib_item_types::install(&mut renderer, &device);
             report_builds("renderer and item types", start);
+            // Where pipelines compile on workers, ask for everything the
+            // showcases can draw with now, so switching pages never compiles
+            // on the frame. The top bar shows the count while it runs. Where
+            // compiles block (macOS, the web) this would freeze the launch,
+            // so there each page builds what it draws.
+            if renderer.pipeline_compilation() == vpl::PipelineCompilation::Background {
+                renderer.warm_pipelines(&device, &queue, &vpl::PipelineSet::all());
+            }
             wgpu_render_state
                 .renderer
                 .write()
@@ -143,6 +151,7 @@ fn main() -> eframe::Result {
             let box_mesh = vpl::primitives::cube(1.0);
 
             Ok(Box::new(App {
+                pipelines_pending: 0,
                 device,
                 queue,
                 cursor_viewport: glam::Vec2::ZERO,
@@ -328,6 +337,8 @@ pub(crate) struct Target {
 }
 
 pub(crate) struct App {
+    /// Pipelines still compiling on the workers after the last frame.
+    pipelines_pending: usize,
     // GPU handles (captured at startup for lazy mesh uploads).
     // wgpu::Device and Queue are internally ref-counted and implement Clone.
     device: eframe::wgpu::Device,
@@ -690,6 +701,13 @@ impl eframe::App for App {
                 if let Some(mode) = chosen {
                     self.switch_mode(mode);
                 }
+                if self.pipelines_pending > 0 {
+                    ui.separator();
+                    ui.weak(format!("compiling {} pipelines", self.pipelines_pending));
+                    // Keep drawing so the count, and what it holds back,
+                    // update as the workers finish.
+                    ctx.request_repaint();
+                }
             });
         });
 
@@ -988,6 +1006,7 @@ impl eframe::App for App {
                         );
                         self.queue.submit(std::iter::once(cmd));
                         report_builds("frame", start);
+                        self.pipelines_pending = renderer.pipelines_pending();
                         // Resolve any deferred click pick against the frame just
                         // drawn, using the unified GPU picker.
                         self.apply_pending_pick(renderer, &frame_data);
