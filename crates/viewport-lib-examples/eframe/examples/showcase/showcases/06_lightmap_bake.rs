@@ -1030,57 +1030,76 @@ impl Showcase for LightmapBakeShowcase {
         // and the bumps catch the raked light. The cuboid gets the normal map (not
         // the sphere) because its per-face charts meet at real geometric edges, so
         // the directional atlas has no smooth-surface seams to show.
+        //
+        // Icosphere, not a UV sphere: a UV sphere's pole collapses many triangles
+        // to one point with degenerate UVs, leaving an uncovered (black) texel
+        // patch at the pole. The icosphere has uniform triangles and no pole.
+        //
+        // Multi-page hero: a finely tessellated torus with enough chart area that
+        // its unwrap spills across several atlas pages. Its lightmap loads as a
+        // texture array and is sampled with a per-vertex page index : the case the
+        // single-atlas heroes never reach.
         let torus = primitives::torus(1.9, 0.7, 64, 32);
-        let (mut torus_piece, torus_charts) = unwrap_piece(
-            ctx,
+        let sphere = primitives::icosphere(1.5, 4);
+        let box_mesh = primitives::cuboid(2.4, 2.4, 2.4);
+        let knot = primitives::torus(1.3, 0.5, 96, 48);
+
+        // The four unwraps are independent xatlas runs, so they run together and
+        // the batch takes about as long as the slowest (the fine torus).
+        let mut unwrapped = unwrap_batch(
+            &[
+                (&torus, 0.0),
+                (&sphere, 0.0),
+                (&box_mesh, 0.0),
+                (&knot, MULTIPAGE_START_DENSITY),
+            ],
             &mut self.timings,
+        )
+        .into_iter();
+        let mut next = || unwrapped.next().expect("one unwrap per hero");
+
+        let (mut torus_piece, torus_charts) = build_piece_from_unwrap(
+            ctx,
             &torus,
             Mat4::from_translation(Vec3::new(0.0, 1.0, 1.1)) * Mat4::from_rotation_x(0.35),
             TORUS_ALBEDO,
             None,
+            next(),
         );
         self.torus_charts = torus_charts;
         self.torus_atlas = (torus_piece.atlas_w, torus_piece.atlas_h);
         torus_piece.scene_atlas = true;
         pieces.push(torus_piece);
 
-        // Icosphere, not a UV sphere: a UV sphere's pole collapses many triangles
-        // to one point with degenerate UVs, leaving an uncovered (black) texel
-        // patch at the pole. The icosphere has uniform triangles and no pole.
-        let sphere = primitives::icosphere(1.5, 4);
-        let (mut sphere_piece, _) = unwrap_piece(
+        let (mut sphere_piece, _) = build_piece_from_unwrap(
             ctx,
-            &mut self.timings,
             &sphere,
             Mat4::from_translation(Vec3::new(-4.6, -1.5, 1.5)),
             SPHERE_ALBEDO,
             None,
+            next(),
         );
         sphere_piece.scene_atlas = true;
         pieces.push(sphere_piece);
 
-        let box_mesh = primitives::cuboid(2.4, 2.4, 2.4);
-        let (box_piece, _) = unwrap_piece(
+        let (box_piece, _) = build_piece_from_unwrap(
             ctx,
-            &mut self.timings,
             &box_mesh,
             Mat4::from_translation(Vec3::new(4.8, -1.2, 1.2)) * Mat4::from_rotation_z(0.5),
             BOX_ALBEDO,
             Some(bump),
+            next(),
         );
         pieces.push(box_piece);
 
-        // Multi-page hero: a finely tessellated torus with enough chart area that
-        // its unwrap spills across several atlas pages. Its lightmap loads as a
-        // texture array and is sampled with a per-vertex page index : the case the
-        // single-atlas heroes never reach.
-        let knot = primitives::torus(1.3, 0.5, 96, 48);
-        let (knot_piece, _) = unwrap_piece_multipage(
+        let knot_unwrap = spill_to_pages(&knot, next(), &mut self.timings);
+        let (knot_piece, _) = build_piece_from_unwrap(
             ctx,
-            &mut self.timings,
             &knot,
             Mat4::from_translation(Vec3::new(0.0, -4.2, 1.35)) * Mat4::from_rotation_x(1.1),
             KNOT_ALBEDO,
+            None,
+            knot_unwrap,
         );
         self.knot_pages = knot_piece.atlas_count;
         self.knot_atlas = (knot_piece.atlas_w, knot_piece.atlas_h);
@@ -1603,35 +1622,68 @@ fn make_piece(
     }
 }
 
-/// Unwrap a primitive with xatlas. `resolution` fixes the atlas (page) size in
-/// texels; `texels_per_unit` sets the lightmap density (0 lets xatlas estimate a
-/// density that fits one page). A fixed page size plus a high density makes the
-/// charts overflow one page and spill onto more, which is how the multi-page
-/// hero is produced.
-fn do_unwrap(
+/// Unwrap options for a hero: a fixed `ATLAS` page size and `texels_per_unit`
+/// density (0 lets xatlas estimate a density that fits one page). A fixed page
+/// size plus a high density makes the charts overflow one page and spill onto
+/// more, which is how the multi-page hero is produced.
+fn hero_unwrap_options(texels_per_unit: f32) -> viewport_lib_lightbake::UnwrapOptions {
+    viewport_lib_lightbake::UnwrapOptions {
+        resolution: ATLAS,
+        texels_per_unit,
+        padding: 6,
+        ..Default::default()
+    }
+}
+
+/// Unwrap several primitives at once, each at its own density, results in
+/// order.
+fn unwrap_batch(
+    meshes: &[(&MeshData, f32)],
+    timings: &mut BakeTimings,
+) -> Vec<viewport_lib_lightbake::UnwrapResult> {
+    let jobs: Vec<_> = meshes
+        .iter()
+        .map(|(mesh, tpu)| {
+            (
+                viewport_lib_lightbake::UnwrapInput {
+                    positions: &mesh.positions,
+                    normals: Some(&mesh.normals),
+                    indices: &mesh.indices,
+                },
+                hero_unwrap_options(*tpu),
+            )
+        })
+        .collect();
+    let t = std::time::Instant::now();
+    let results = viewport_lib_lightbake::unwrap_many(&jobs)
+        .into_iter()
+        .map(|r| r.expect("unwrap piece"))
+        .collect();
+    timings.unwrap_ms += ms_since(t);
+    timings.unwraps += jobs.len() as u32;
+    results
+}
+
+/// Starting density for the multi-page hero. The pages are the same full size
+/// as every other hero (`ATLAS`) and the density starts high, so each page is as
+/// sharp as the single-page bakes; only the page count is contrived.
+const MULTIPAGE_START_DENSITY: f32 = 48.0;
+
+/// Make sure the multi-page hero really spans two or more pages: starting from
+/// its unwrap at [`MULTIPAGE_START_DENSITY`], raise the density until the charts
+/// no longer fit one page and xatlas spills onto more.
+fn spill_to_pages(
     mesh: &MeshData,
-    resolution: u32,
-    texels_per_unit: f32,
+    first: viewport_lib_lightbake::UnwrapResult,
     timings: &mut BakeTimings,
 ) -> viewport_lib_lightbake::UnwrapResult {
-    let t = std::time::Instant::now();
-    let result = viewport_lib_lightbake::unwrap(
-        &viewport_lib_lightbake::UnwrapInput {
-            positions: &mesh.positions,
-            normals: Some(&mesh.normals),
-            indices: &mesh.indices,
-        },
-        &viewport_lib_lightbake::UnwrapOptions {
-            resolution,
-            texels_per_unit,
-            padding: 6,
-            ..Default::default()
-        },
-    )
-    .expect("unwrap piece");
-    timings.unwrap_ms += ms_since(t);
-    timings.unwraps += 1;
-    result
+    let mut tpu = MULTIPAGE_START_DENSITY;
+    let mut u = first;
+    while u.atlas_count < 2 && tpu < 320.0 {
+        tpu *= 1.3;
+        u = unwrap_batch(&[(mesh, tpu)], timings).remove(0);
+    }
+    u
 }
 
 /// Build a baked [`Piece`] from an unwrap result. `normal_tex` opts the piece
@@ -1695,44 +1747,6 @@ fn build_piece_from_unwrap(
         dir_tex: None,
     };
     (piece, charts)
-}
-
-/// Unwrap a primitive with xatlas and build a baked [`Piece`] from the result.
-/// `normal_tex` opts the piece into normal mapping + a directional lightmap.
-fn unwrap_piece(
-    ctx: &mut SetupCtx,
-    timings: &mut BakeTimings,
-    mesh: &MeshData,
-    xf: Mat4,
-    albedo: [f32; 3],
-    normal_tex: Option<TextureId>,
-) -> (Piece, u32) {
-    let unwrapped = do_unwrap(mesh, ATLAS, 0.0, timings);
-    build_piece_from_unwrap(ctx, mesh, xf, albedo, normal_tex, unwrapped)
-}
-
-/// Unwrap a primitive deliberately into two or more atlas pages, so the piece
-/// exercises the multi-page load path. The trick is only to make a small object
-/// spill: the pages are the same full size as every other hero (`ATLAS`) and the
-/// density starts high, so each page is as sharp as the single-page bakes. Only
-/// the page count is contrived here, never the per-page quality. The density is
-/// raised until the charts no longer fit one page and xatlas spills onto more.
-fn unwrap_piece_multipage(
-    ctx: &mut SetupCtx,
-    timings: &mut BakeTimings,
-    mesh: &MeshData,
-    xf: Mat4,
-    albedo: [f32; 3],
-) -> (Piece, u32) {
-    let mut tpu = 48.0f32;
-    let unwrapped = loop {
-        let u = do_unwrap(mesh, ATLAS, tpu, timings);
-        if u.atlas_count >= 2 || tpu >= 320.0 {
-            break u;
-        }
-        tpu *= 1.3;
-    };
-    build_piece_from_unwrap(ctx, mesh, xf, albedo, None, unwrapped)
 }
 
 /// Indices of the triangles whose vertices sit on atlas `page`. All three

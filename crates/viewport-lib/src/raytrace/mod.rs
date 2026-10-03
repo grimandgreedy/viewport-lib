@@ -42,9 +42,9 @@ use glam::{Mat3, Mat4, Vec3};
 ///
 /// Everything except the traversal is shared: this swaps the `rt-traversal`
 /// region (the compute `closest_hit` / `any_hit` BVH walk) for `rayQuery`
-/// versions over an `acceleration_structure` declared at group 0, binding 13.
-/// WGSL's `rayQuery` type needs no enable-directive (naga recognises it
-/// directly), so nothing is prepended. The `Hit` layout the rest of the kernel
+/// versions over an `acceleration_structure` declared at group 0, binding 13,
+/// and prepends the `enable` directive ray queries need on the active wgpu leg
+/// ([`RAY_QUERY_ENABLE_WGSL`]). The `Hit` layout the rest of the kernel
 /// reads is identical, so shading, sampling, the integrator, and both entry
 /// points are untouched.
 ///
@@ -52,6 +52,14 @@ use glam::{Mat3, Mat4, Vec3};
 /// directly (the BLAS is built in `tris` order), and the barycentrics use the
 /// same vertex-1/vertex-2 convention as the Moller-Trumbore path, so normals and
 /// front-face orientation match the software backend.
+/// Module directive a ray-query shader needs, per wgpu leg: naga 29 and 30
+/// only accept `ray_query` and `acceleration_structure` in a module that starts
+/// with `enable wgpu_ray_query;`, and naga 27 rejects the directive.
+#[cfg(all(feature = "raytrace-hardware", wgpu27))]
+const RAY_QUERY_ENABLE_WGSL: &str = "";
+#[cfg(all(feature = "raytrace-hardware", any(wgpu29, wgpu30)))]
+const RAY_QUERY_ENABLE_WGSL: &str = "enable wgpu_ray_query;\n";
+
 #[cfg(feature = "raytrace-hardware")]
 fn compose_hw_kernel(src: &str) -> String {
     const OPEN: &str = "// <rt-traversal>";
@@ -102,7 +110,9 @@ fn any_hit(o: vec3<f32>, d: vec3<f32>, max_t: f32) -> bool {
 }
 "#;
 
-    let mut out = String::with_capacity(src.len() + HW_TRAVERSAL.len());
+    let mut out =
+        String::with_capacity(RAY_QUERY_ENABLE_WGSL.len() + src.len() + HW_TRAVERSAL.len());
+    out.push_str(RAY_QUERY_ENABLE_WGSL);
     out.push_str(&src[..start]);
     out.push_str(HW_TRAVERSAL);
     out.push_str(&src[end..]);
