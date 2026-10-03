@@ -3,6 +3,7 @@
 //! its own command encoder and returns the finished buffer.
 
 use super::*;
+use crate::resources::PostProducer;
 use crate::resources::scene_pipelines::MeshColourFamily;
 
 /// Per-frame context shared by the HDR pass-group methods. Holds the
@@ -339,7 +340,7 @@ impl ViewportRenderer {
             .and_then(|t| t.texture.as_ref())
             .map(|t| t.height() as f32)
             .unwrap_or(0.0);
-        let composite_inputs = crate::resources::CompositeInputs {
+        let mut composite_inputs = crate::resources::CompositeInputs {
             bloom: pp.bloom.enabled,
             ssao: pp.ssao,
             contact_shadows: pp.contact_shadows.enabled,
@@ -351,41 +352,6 @@ impl ViewportRenderer {
             grade_lut,
         };
 
-        // Upload tone map uniform into the per-viewport buffer.
-        let mode = match frame.effects.display.operator {
-            crate::renderer::ToneMapping::Reinhard => 0u32,
-            crate::renderer::ToneMapping::Aces => 1u32,
-            crate::renderer::ToneMapping::KhronosNeutral => 2u32,
-        };
-        let tm_uniform = crate::resources::ToneMapUniform {
-            // Exposure is applied from the per-viewport exposure state buffer
-            // (the composite's exposure slot), not this field; kept at 1.0 for
-            // layout stability.
-            exposure: 1.0,
-            mode,
-            bloom_enabled: composite_inputs.bloom as u32,
-            ssao_enabled: composite_inputs.ssao as u32,
-            contact_shadows_enabled: composite_inputs.contact_shadows as u32,
-            edl_enabled: if pp.edl.enabled { 1 } else { 0 },
-            edl_radius: pp.edl.radius,
-            edl_strength: pp.edl.strength,
-            background_colour: bg_colour,
-            near_plane: frame.camera.render_camera.near,
-            far_plane: frame.camera.render_camera.far,
-            lic_enabled: composite_inputs.lic as u32,
-            _pad_lic: 0.0,
-            foreground_enabled: composite_inputs.foreground as u32,
-            vignette_amount: if pp.vignette.enabled {
-                pp.vignette.amount.clamp(0.0, 1.0)
-            } else {
-                0.0
-            },
-            vignette_radius: pp.vignette.radius,
-            vignette_softness: pp.vignette.softness,
-            grade_enabled: composite_inputs.grade_lut.is_some() as u32,
-            grade_lut_size,
-            _pad: [0; 2],
-        };
         // Build what this frame binds and nothing else. Each group is built by
         // the first frame that asks for it, on the same condition its pass
         // tests below, so an effect that stays off never compiles.
@@ -456,6 +422,52 @@ impl ViewportRenderer {
                 res.ensure_hdr_cull_pipelines(device);
             }
         }
+        // An effect whose pipelines are still compiling is off for the frame,
+        // so the composite does not read a target nothing wrote. Asking also
+        // starts the compile; under `Blocking` the block above built them.
+        {
+            let post = &self.resources.post;
+            composite_inputs.bloom &= post.bloom.ready();
+            composite_inputs.ssao &= post.ssao.ready();
+            composite_inputs.contact_shadows &= post.contact_shadow.ready();
+            composite_inputs.dof &= post.dof.ready();
+        }
+
+        // Upload tone map uniform into the per-viewport buffer.
+        let mode = match frame.effects.display.operator {
+            crate::renderer::ToneMapping::Reinhard => 0u32,
+            crate::renderer::ToneMapping::Aces => 1u32,
+            crate::renderer::ToneMapping::KhronosNeutral => 2u32,
+        };
+        let tm_uniform = crate::resources::ToneMapUniform {
+            // Exposure is applied from the per-viewport exposure state buffer
+            // (the composite's exposure slot), not this field; kept at 1.0 for
+            // layout stability.
+            exposure: 1.0,
+            mode,
+            bloom_enabled: composite_inputs.bloom as u32,
+            ssao_enabled: composite_inputs.ssao as u32,
+            contact_shadows_enabled: composite_inputs.contact_shadows as u32,
+            edl_enabled: if pp.edl.enabled { 1 } else { 0 },
+            edl_radius: pp.edl.radius,
+            edl_strength: pp.edl.strength,
+            background_colour: bg_colour,
+            near_plane: frame.camera.render_camera.near,
+            far_plane: frame.camera.render_camera.far,
+            lic_enabled: composite_inputs.lic as u32,
+            _pad_lic: 0.0,
+            foreground_enabled: composite_inputs.foreground as u32,
+            vignette_amount: if pp.vignette.enabled {
+                pp.vignette.amount.clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
+            vignette_radius: pp.vignette.radius,
+            vignette_softness: pp.vignette.softness,
+            grade_enabled: composite_inputs.grade_lut.is_some() as u32,
+            grade_lut_size,
+            _pad: [0; 2],
+        };
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             queue.write_buffer(
@@ -3082,7 +3094,10 @@ impl ViewportRenderer {
             written_mask: &self.ts_written_mask,
         };
         for producer in self.resources.post_producers() {
-            if producer.enabled(&inputs) && (!throttle_effects || !producer.throttleable()) {
+            if producer.enabled(&inputs)
+                && producer.ready()
+                && (!throttle_effects || !producer.throttleable())
+            {
                 producer.encode(slot_hdr, encoder, &inputs, &timing);
             }
         }

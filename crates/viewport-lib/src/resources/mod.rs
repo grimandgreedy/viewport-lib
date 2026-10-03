@@ -101,7 +101,9 @@ pub use self::types::ViewportGpuResources;
 #[allow(unused_imports)]
 pub(crate) use self::postprocess::composite::CompositeInputs;
 pub(crate) use self::postprocess::lic::LIC_STRENGTH_ENCODE_MAX;
-pub(crate) use self::postprocess::producer::{PostStage, ProducerFrameInputs, ProducerTiming};
+pub(crate) use self::postprocess::producer::{
+    PostProducer, PostStage, ProducerFrameInputs, ProducerTiming,
+};
 pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
     ContactShadowUniform, DofUniform, DualPipeline, FrustumPlane, FrustumUniform,

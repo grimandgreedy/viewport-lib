@@ -285,13 +285,14 @@ pub use interaction::select::selection::{NodeId, Selection};
 
 pub use interaction::widgets::axes_indicator::AxisView;
 
+pub use renderer::PipelineSet;
 pub use renderer::ShadowDebugStats;
 pub use renderer::shader_hashes::ShaderValidation;
-pub use resources::PipelineCompilation;
 pub use renderer::stats::{
     FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset, RuntimeMode,
 };
 pub use renderer::tuning::{RenderDiagnostics, RenderTuning};
+pub use resources::PipelineCompilation;
 // PathTrack is deprecated but still re-exported for compatibility.
 #[allow(deprecated)]
 pub use renderer::{

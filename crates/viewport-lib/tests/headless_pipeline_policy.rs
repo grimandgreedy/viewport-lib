@@ -184,9 +184,9 @@ fn a_compiling_item_casts_no_shadow() {
     }
 }
 
-/// Switching an effect on mid-session under `Background` compiles nothing on
-/// the frame; the effect appears once its pipelines are built, and the image
-/// then matches a `Blocking` renderer's.
+/// Switching an effect on mid-session under `Background` draws that frame
+/// without the effect instead of compiling; the effect appears once its
+/// pipelines are built, and the image then matches a `Blocking` renderer's.
 #[test]
 fn an_effect_switched_on_under_background_catches_up() {
     let _guard = LOG_LOCK.lock().unwrap();
@@ -196,6 +196,8 @@ fn an_effect_switched_on_under_background_catches_up() {
     };
     let with_effects = |frame: &mut FrameData| {
         frame.effects.post_process.bloom.enabled = true;
+        frame.effects.post_process.bloom.threshold = 0.1;
+        frame.effects.post_process.bloom.intensity = 1.0;
         frame.effects.post_process.ssao = true;
         frame.effects.post_process.fxaa = true;
     };
@@ -204,34 +206,38 @@ fn an_effect_switched_on_under_background_catches_up() {
     blocking.set_pipeline_compilation(PipelineCompilation::Blocking);
     let mut frame = scene(&mut blocking, &device, true);
     let _ = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
+    let plain = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
     with_effects(&mut frame);
     let _ = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
     let expected = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert!(
+        plain != expected,
+        "the effects have to be visible to be told apart"
+    );
 
     let mut background = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     background.set_pipeline_compilation(PipelineCompilation::Background);
     let mut frame = scene(&mut background, &device, true);
     let _ = background.render_offscreen(&device, &queue, &frame, 64, 64);
     background.wait_for_pipelines(&device);
-    let _ = background.render_offscreen(&device, &queue, &frame, 64, 64);
+    let start = std::time::Instant::now();
+    loop {
+        if background.render_offscreen(&device, &queue, &frame, 64, 64) == plain {
+            break;
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(30),
+            "the background renderer never drew the plain frame"
+        );
+    }
 
     // The frame that switches the effects on hands their pipelines to the
-    // workers and compiles none of them itself.
-    viewport_lib::resources::build_log::enable();
-    let _ = pipelines_built();
+    // workers and draws without them, however quickly the workers finish.
     with_effects(&mut frame);
-    let _ = background.render_offscreen(&device, &queue, &frame, 64, 64);
-    let on_thread: Vec<String> = pipelines_built()
-        .into_iter()
-        .filter(|l| l.contains("bloom") || l.contains("ssao") || l.contains("fxaa"))
-        .collect();
-    let pending = background.last_frame_stats().pipelines_pending;
-    // The workers may already have finished one; what matters is that none
-    // was built on the calling thread, which the count tells apart: a build
-    // on this thread never raises it.
+    let first = background.render_offscreen(&device, &queue, &frame, 64, 64);
     assert!(
-        pending > 0 || on_thread.is_empty(),
-        "the frame built effect pipelines itself: {on_thread:?}"
+        first == plain,
+        "the frame that switched the effects on drew them, so it compiled them itself"
     );
 
     background.wait_for_pipelines(&device);
@@ -246,5 +252,72 @@ fn an_effect_switched_on_under_background_catches_up() {
             "the effects never matched the blocking renderer"
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// After `warm_pipelines(PipelineSet::all())` and a wait, frames that use
+/// every feature the set covers compile nothing: the promise a loading screen
+/// relies on.
+#[test]
+fn a_warmed_renderer_compiles_nothing_afterwards() {
+    let _guard = LOG_LOCK.lock().unwrap();
+    let Some((device, queue)) = headless_device_recommended_limits() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    for policy in [
+        PipelineCompilation::Background,
+        PipelineCompilation::Blocking,
+    ] {
+        let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+        renderer.set_pipeline_compilation(policy);
+        renderer.warm_pipelines(&device, &queue, &viewport_lib::PipelineSet::all());
+        renderer.wait_for_pipelines(&device);
+
+        // Every feature the set names, in both display modes: the box is
+        // selected and so outlined, the sphere is transparent, and a third
+        // item of the box mesh makes an instanced batch of two.
+        let mut frames = Vec::new();
+        for hdr in [true, false] {
+            let mut frame = scene(&mut renderer, &device, hdr);
+            frame.interaction.outline_selected = true;
+            let mut sun = viewport_lib::LightSource::default();
+            sun.kind = viewport_lib::LightKind::Directional {
+                direction: [0.3, 0.2, 1.0],
+            };
+            frame.effects.lighting.lights = vec![sun];
+            frame.effects.lighting.shadows.enabled = true;
+            frame.effects.ground_plane.mode = viewport_lib::GroundPlaneMode::Tile;
+            frame.effects.post_process.bloom.enabled = true;
+            frame.effects.post_process.ssao = true;
+            frame.effects.post_process.contact_shadows.enabled = true;
+            frame.effects.post_process.dof.enabled = true;
+            frame.effects.post_process.fxaa = true;
+            if let SurfaceSubmission::Flat(items) = &mut frame.scene.surfaces {
+                let mut items: Vec<SceneRenderItem> = items.iter().cloned().collect();
+                items[0].settings.selected = true;
+                let mut third = items[0].clone();
+                third.settings.selected = false;
+                third.model =
+                    glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.5)).to_cols_array_2d();
+                items.push(third);
+                frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+            }
+            frames.push(frame);
+        }
+
+        viewport_lib::resources::build_log::enable();
+        let _ = viewport_lib::resources::build_log::drain();
+        for frame in &frames {
+            for _ in 0..3 {
+                let _ = renderer.render_offscreen(&device, &queue, frame, 64, 64);
+            }
+        }
+        let built = viewport_lib::resources::build_log::drain();
+        assert!(
+            built.is_empty(),
+            "{policy:?}: the frames built after the warm-up: {built:?}"
+        );
+        assert_eq!(renderer.pipelines_pending(), 0);
     }
 }

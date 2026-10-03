@@ -88,11 +88,23 @@ pub(crate) fn fullscreen_pass(
     pass.draw(0..3, 0..1);
 }
 
+/// Whether a lazily built pass pipeline is in hand, starting its compile if
+/// it has not been asked for.
+fn ready(pipeline: &Option<super::LazyFullscreen>) -> bool {
+    pipeline.as_ref().is_some_and(|p| p.get(0).is_some())
+}
+
 /// A pre-tone-map effect that fills a composite input slot.
 pub(crate) trait PostProducer {
     /// Whether the effect is switched on this frame (settings only; the
     /// degradation throttle is applied by the caller at encode time).
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool;
+    /// Whether the producer's pipelines are built. Asking starts the compile
+    /// under the renderer's policy; while it runs the effect is treated as
+    /// off, so the composite never reads a target nothing wrote.
+    fn ready(&self) -> bool {
+        true
+    }
     /// Whether the degradation throttle may skip this producer's passes.
     /// Exposure returns `false`: skipping it would leave a stale multiplier
     /// in the state buffer the tone map always reads.
@@ -148,6 +160,10 @@ pub(crate) struct SsaoViewport {
 impl PostProducer for SsaoProducer {
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         inputs.post.ssao
+    }
+
+    fn ready(&self) -> bool {
+        ready(&self.pipeline) && ready(&self.blur_pipeline)
     }
 
     fn upload(
@@ -225,6 +241,10 @@ pub(crate) struct ContactShadowViewport {
 impl PostProducer for ContactShadowProducer {
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         inputs.post.contact_shadows.enabled
+    }
+
+    fn ready(&self) -> bool {
+        ready(&self.pipeline)
     }
 
     fn upload(
@@ -336,6 +356,10 @@ impl PostProducer for BloomProducer {
         inputs.post.bloom.enabled
     }
 
+    fn ready(&self) -> bool {
+        ready(&self.threshold_pipeline) && ready(&self.blur_pipeline)
+    }
+
     fn upload(
         &self,
         queue: &crate::gpu::Queue,
@@ -443,6 +467,10 @@ pub(crate) struct DofViewport {
 impl PostProducer for DofProducer {
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         inputs.post.dof.enabled
+    }
+
+    fn ready(&self) -> bool {
+        ready(&self.pipeline)
     }
 
     fn upload(
@@ -585,7 +613,8 @@ impl PostProducer for crate::resources::gpu::exposure::ExposureResources {
 /// last enabled stage renders into the frame's final target (the upscale
 /// texture or the output view).
 pub(crate) trait PostStage {
-    /// Whether the stage runs this frame.
+    /// Whether the stage runs this frame. A stage whose pipeline is still
+    /// compiling says no, so the chain routes around it.
     fn enabled(&self, post: &crate::PostProcessSettings) -> bool;
     /// The stage's input texture: whoever runs before it renders into this.
     fn input_view<'a>(&self, hdr: &'a ViewportHdrState) -> &'a crate::gpu::TextureView;
@@ -619,7 +648,7 @@ pub(crate) struct FxaaViewport {
 
 impl PostStage for FxaaStage {
     fn enabled(&self, post: &crate::PostProcessSettings) -> bool {
-        post.fxaa
+        post.fxaa && ready(&self.pipeline)
     }
 
     fn input_view<'a>(&self, hdr: &'a ViewportHdrState) -> &'a crate::gpu::TextureView {

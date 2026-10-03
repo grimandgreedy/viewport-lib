@@ -18,6 +18,8 @@ mod shadow_state;
 use shadow_state::ShadowState;
 mod blit;
 mod colour_ready;
+mod warm;
+pub use warm::PipelineSet;
 mod paths;
 pub use blit::BlitTexture;
 pub use capture::{CapturedHdr, CapturedHdrGpu};
@@ -3501,9 +3503,10 @@ impl ViewportRenderer {
             if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for (slot, mesh_id) in self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate() {
-                    if let (Some(mesh), Some(wf)) =
-                        (self.resources.mesh_store.get(*mesh_id), self.resources.scene.wireframe())
-                    {
+                    if let (Some(mesh), Some(wf)) = (
+                        self.resources.mesh_store.get(*mesh_id),
+                        self.resources.scene.wireframe(),
+                    ) {
                         render_pass.set_pipeline(wf);
                         bind_deform_group!(
                             render_pass,
