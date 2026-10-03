@@ -297,6 +297,14 @@ impl<C: Send + Sync + 'static, const N: usize> LazyFamily<C, N> {
         self.slots[i].is_ready()
     }
 
+    /// Whether [`get`](Self::get) would return member `i` this frame: it is
+    /// built, or the policy is `Blocking` and `get` would build it. Starts
+    /// nothing. A pass that should wait for another member (an outline or a
+    /// pick waiting for the colour pipeline) checks the other one with this.
+    pub fn available(&self, i: usize) -> bool {
+        self.slots[i].is_ready() || self.compiler.policy() == PipelineCompilation::Blocking
+    }
+
     /// Ask for members `0..end`: built now under `Blocking`, handed to the
     /// workers under `Background`.
     pub fn request(&self, end: usize) {

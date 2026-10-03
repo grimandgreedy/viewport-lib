@@ -1,21 +1,114 @@
 //! GPU state for the vector field item type: the scene pipeline, the pick
-//! pipeline and its object-id layout, and the instanced outline mask pipeline.
+//! pipeline and its object-id layout, and the instanced outline mask pipeline,
+//! each built the first time a draw needs it.
 //!
 //! The group-1 / group-2 bind group layouts and the field store live in
 //! `store`, beside the upload that builds bind groups against them; this module
 //! borrows them to build pipelines over.
 
 use super::store::VectorFieldDraw;
-use viewport_lib::plugin_api::builders::{DualPipeline, DualPipelineDesc};
+use viewport_lib::plugin_api::builders::DualPipelineDesc;
 use viewport_lib::resources::DeviceResources;
 
-/// Pipelines and layouts, built on the first prepare with items.
+/// Members of [`VectorFieldPipelines`].
+pub(super) const COLOUR_LDR: usize = 0;
+pub(super) const COLOUR_HDR: usize = 1;
+pub(super) const PICK: usize = 2;
+pub(super) const MASK: usize = 3;
+pub(super) const SURFACE_MASK: usize = 4;
+
+/// What a vector field pipeline build reads.
+pub(super) struct VectorFieldRecipe {
+    device: viewport_lib::gpu::Device,
+    builder: viewport_lib::plugin_api::PipelineBuilder,
+    layout: viewport_lib::gpu::PipelineLayout,
+    shader: viewport_lib::gpu::ShaderModule,
+    pick_shader: viewport_lib::gpu::ShaderModule,
+    pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
+    instance_bgl: viewport_lib::gpu::BindGroupLayout,
+    mask_layout: viewport_lib::gpu::PipelineLayout,
+    mask_shader: viewport_lib::gpu::ShaderModule,
+    sample_count: u32,
+    ldr_format: viewport_lib::gpu::TextureFormat,
+}
+
+/// The scene pipeline in both formats, the pick pipeline and the two masks,
+/// each built the first time a draw needs it.
+pub(super) type VectorFieldPipelines =
+    viewport_lib::plugin_api::LazyPipelines<VectorFieldRecipe, 5>;
+
+fn build(r: &VectorFieldRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
+    let vertex_buffers = [viewport_lib::plugin_api::builders::mesh_vertex_layout()];
+    match i {
+        COLOUR_LDR | COLOUR_HDR => viewport_lib::plugin_api::builders::build_dual_pipeline_variant(
+            &r.device,
+            &DualPipelineDesc {
+                label: "vector_field_pipeline",
+                layout: &r.layout,
+                shader: &r.shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &vertex_buffers,
+                blend: Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
+                topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(viewport_lib::gpu::Face::Back),
+                depth_write: true,
+                depth_compare: viewport_lib::gpu::CompareFunction::Less,
+                sample_count: r.sample_count,
+                ldr_format: r.ldr_format,
+            },
+            i == COLOUR_HDR,
+        ),
+        PICK => r.builder.build_pick_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive: viewport_lib::gpu::PrimitiveState {
+                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                    front_face: viewport_lib::gpu::FrontFace::Ccw,
+                    // Samples are viewed from any direction; pick both faces the
+                    // way the surface pick pipeline does.
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                extra_bind_group_layouts: &[&r.pick_id_bgl, &r.instance_bgl],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some("vector_field_pick_pipeline"),
+                    &r.pick_shader,
+                    "vs_main",
+                    "fs_main",
+                    &vertex_buffers,
+                )
+            },
+        ),
+        // Outline mask: the shape again, so the outline follows the drawn
+        // geometry rather than a bounding proxy.
+        MASK => viewport_lib::plugin_api::builders::build_outline_mask_pipeline(
+            &r.device,
+            "vector_field_outline_mask_pipeline",
+            &r.mask_layout,
+            &r.mask_shader,
+            viewport_lib::gpu::TextureFormat::R8Unorm,
+            &vertex_buffers,
+            Some(viewport_lib::gpu::Face::Back),
+            true,
+            viewport_lib::gpu::CompareFunction::Less,
+        ),
+        // The surface mask stamps the same shapes into the scene stencil.
+        _ => viewport_lib::plugin_api::builders::build_surface_mask_pipeline(
+            &r.device,
+            "vector_field_surface_mask_pipeline",
+            &r.mask_layout,
+            &r.mask_shader,
+            &vertex_buffers,
+            Some(viewport_lib::gpu::Face::Back),
+        ),
+    }
+}
+
+/// Pipelines and layouts, made on the first prepare with items.
 pub(super) struct VectorFieldGpu {
-    pub(super) pipeline: DualPipeline,
-    pub(super) pick_pipeline: viewport_lib::gpu::RenderPipeline,
+    pub(super) pipelines: VectorFieldPipelines,
     pub(super) pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
-    pub(super) mask_pipeline: viewport_lib::gpu::RenderPipeline,
-    pub(super) surface_mask_pipeline: viewport_lib::gpu::RenderPipeline,
 }
 
 /// One field's draw state for this frame.
@@ -52,25 +145,6 @@ impl VectorFieldGpu {
             "vector_field_pipeline_layout",
             &[resources.shared_bindings().group0_layout, bgl, instance_bgl],
         );
-        let pipeline = viewport_lib::plugin_api::builders::build_dual_pipeline(
-            device,
-            &DualPipelineDesc {
-                label: "vector_field_pipeline",
-                layout: &layout,
-                shader: &shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
-                blend: Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
-                topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(viewport_lib::gpu::Face::Back),
-                depth_write: true,
-                depth_compare: viewport_lib::gpu::CompareFunction::Less,
-                sample_count: resources.sample_count(),
-                ldr_format: resources.target_format(),
-            },
-        );
-
         // Group 1 for the pick pass: the field's own uniform at binding 0 (the
         // vertex stage needs the model matrix and the global scale) and the
         // object id at binding 3.
@@ -105,30 +179,6 @@ impl VectorFieldGpu {
             "vector_field_pick_shader",
             &crate::shader::scene_shader(&[], crate::shader::wgsl_source!("vector_field_pick")),
         );
-        let pick_pipeline = resources.build_pick_pipeline(
-            device,
-            &viewport_lib::resources::PluginPipelineOpts {
-                primitive: viewport_lib::gpu::PrimitiveState {
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    front_face: viewport_lib::gpu::FrontFace::Ccw,
-                    // Samples are viewed from any direction; pick both faces the
-                    // way the surface pick pipeline does.
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                extra_bind_group_layouts: &[&pick_id_bgl, instance_bgl],
-                ..viewport_lib::resources::PluginPipelineOpts::new(
-                    Some("vector_field_pick_pipeline"),
-                    &pick_shader,
-                    "vs_main",
-                    "fs_main",
-                    &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
-                )
-            },
-        );
-
-        // Outline mask: the shape again, so the outline follows the drawn
-        // geometry rather than a bounding proxy.
         let mask_shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
             "vector_field_outline_mask_shader",
@@ -142,35 +192,34 @@ impl VectorFieldGpu {
             "vector_field_outline_mask_pipeline_layout",
             &[resources.shared_bindings().group0_layout, bgl, instance_bgl],
         );
-        let mask_pipeline = viewport_lib::plugin_api::builders::build_outline_mask_pipeline(
-            device,
-            "vector_field_outline_mask_pipeline",
-            &mask_layout,
-            &mask_shader,
-            viewport_lib::gpu::TextureFormat::R8Unorm,
-            &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
-            Some(viewport_lib::gpu::Face::Back),
-            true,
-            viewport_lib::gpu::CompareFunction::Less,
-        );
-
-        // The surface mask stamps the same shapes into the scene stencil.
-        let surface_mask_pipeline = viewport_lib::plugin_api::builders::build_surface_mask_pipeline(
-            device,
-            "vector_field_surface_mask_pipeline",
-            &mask_layout,
-            &mask_shader,
-            &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
-            Some(viewport_lib::gpu::Face::Back),
+        let pipelines = resources.lazy_pipelines(
+            VectorFieldRecipe {
+                device: device.clone(),
+                builder: resources.pipeline_builder(),
+                layout,
+                shader,
+                pick_shader,
+                pick_id_bgl: pick_id_bgl.clone(),
+                instance_bgl: instance_bgl.clone(),
+                mask_layout,
+                mask_shader,
+                sample_count: resources.sample_count(),
+                ldr_format: resources.target_format(),
+            },
+            build,
         );
 
         Self {
-            pipeline,
-            pick_pipeline,
+            pipelines,
             pick_id_bgl,
-            mask_pipeline,
-            surface_mask_pipeline,
         }
+    }
+
+    /// Whether the scene pipeline can draw this frame in either format. The
+    /// mask and pick passes wait for it, so a field is never outlined or
+    /// picked before it is drawn.
+    pub(super) fn drawn(&self) -> bool {
+        self.pipelines.available(COLOUR_LDR) || self.pipelines.available(COLOUR_HDR)
     }
 
     /// Build the group-1 pick bind group for one pickable field: its uniform
