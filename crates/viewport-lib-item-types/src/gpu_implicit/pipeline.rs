@@ -1,5 +1,6 @@
 //! GPU state for the GPU implicit surface item type: the render, pick, and
-//! outline-mask pipelines and the per-frame per-item uniform bind groups.
+//! outline-mask pipelines, each built the first time a draw needs it, and the
+//! per-frame per-item uniform bind groups.
 
 use super::types::{GpuImplicitItem, ImplicitBlendMode, ImplicitPrimitive};
 use crate::shader::{lit_shader, scene_shader, wgsl_source};
@@ -8,13 +9,116 @@ use viewport_lib::plugin_api::builders;
 use viewport_lib::renderer::PickId;
 use viewport_lib::resources::DeviceResources;
 
-/// Pipelines and layouts, built lazily on the first prepare with items.
+/// Members of [`GpuImplicitPipelines`].
+pub(super) const COLOUR_LDR: usize = 0;
+pub(super) const COLOUR_HDR: usize = 1;
+pub(super) const MASK: usize = 2;
+pub(super) const SURFACE_MASK: usize = 3;
+pub(super) const PICK: usize = 4;
+
+/// What a GPU implicit pipeline build reads.
+pub(super) struct GpuImplicitRecipe {
+    device: gpu::Device,
+    builder: viewport_lib::plugin_api::PipelineBuilder,
+    bgl: gpu::BindGroupLayout,
+    pick_id_bgl: gpu::BindGroupLayout,
+    layout: gpu::PipelineLayout,
+    shader: gpu::ShaderModule,
+    mask_shader: gpu::ShaderModule,
+    pick_shader: gpu::ShaderModule,
+    ldr_format: gpu::TextureFormat,
+}
+
+/// The render pipeline in both formats, the two masks and the pick pipeline.
+pub(super) type GpuImplicitPipelines =
+    viewport_lib::plugin_api::LazyPipelines<GpuImplicitRecipe, 5>;
+
+fn build(r: &GpuImplicitRecipe, i: usize) -> gpu::RenderPipeline {
+    let primitive = gpu::PrimitiveState {
+        topology: gpu::PrimitiveTopology::TriangleList,
+        cull_mode: None,
+        ..Default::default()
+    };
+    match i {
+        // depth_write is on so later depth-tested passes occlude against the
+        // surface.
+        COLOUR_LDR | COLOUR_HDR => builders::build_dual_pipeline_variant(
+            &r.device,
+            &builders::DualPipelineDesc {
+                label: "implicit_pipeline",
+                layout: &r.layout,
+                shader: &r.shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[],
+                blend: Some(gpu::BlendState::ALPHA_BLENDING),
+                topology: gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: gpu::CompareFunction::LessEqual,
+                sample_count: 1,
+                ldr_format: r.ldr_format,
+            },
+            i == COLOUR_HDR,
+        ),
+        // Outline mask: the same ray-march, writing white on hit and
+        // discarding on miss.
+        MASK => r.builder.build_mask_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive,
+                extra_bind_group_layouts: &[&r.bgl],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some("implicit_outline_mask_pipeline"),
+                    &r.mask_shader,
+                    "vs_main",
+                    "fs_main",
+                    &[],
+                )
+            },
+        ),
+        // The surface mask marches again, writing the hit depth so the stamp
+        // lands only where this surface is the visible one.
+        SURFACE_MASK => r.builder.build_surface_mask_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive,
+                extra_bind_group_layouts: &[&r.bgl],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some("implicit_surface_mask_pipeline"),
+                    &r.mask_shader,
+                    "vs_main",
+                    "fs_stamp",
+                    &[],
+                )
+            },
+        ),
+        // Pick: the same ray-march writing the item's object id and the hit
+        // depth. Group 1 reuses the render bind group, group 2 is the object
+        // id. Laid out against the shared group-0 camera, which the pick pass
+        // binds before plugin dispatch; the fragment reads `inv_view_proj` to
+        // reconstruct the ray and `view_proj` to project the hit depth.
+        _ => r.builder.build_pick_pipeline(
+            &r.device,
+            &viewport_lib::resources::PluginPipelineOpts {
+                primitive,
+                extra_bind_group_layouts: &[&r.bgl, &r.pick_id_bgl],
+                ..viewport_lib::resources::PluginPipelineOpts::new(
+                    Some("implicit_pick_pipeline"),
+                    &r.pick_shader,
+                    "vs_main",
+                    "fs_pick",
+                    &[],
+                )
+            },
+        ),
+    }
+}
+
+/// Pipelines and layouts, made on the first prepare with items.
 pub(super) struct GpuImplicitGpu {
     bgl: gpu::BindGroupLayout,
-    pub(super) pipeline: builders::DualPipeline,
-    pub(super) mask_pipeline: gpu::RenderPipeline,
-    pub(super) surface_mask_pipeline: gpu::RenderPipeline,
-    pub(super) pick_pipeline: gpu::RenderPipeline,
+    pub(super) pipelines: GpuImplicitPipelines,
     pick_id_bgl: gpu::BindGroupLayout,
 }
 
@@ -63,65 +167,11 @@ impl GpuImplicitGpu {
             resources.shared_bindings().group0_layout,
             &bgl,
         );
-        // depth_write is on so later depth-tested passes occlude against the surface.
-        let pipeline = builders::build_dual_pipeline(
-            device,
-            &builders::DualPipelineDesc {
-                label: "implicit_pipeline",
-                layout: &layout,
-                shader: &shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[],
-                blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                topology: gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                depth_write: true,
-                depth_compare: gpu::CompareFunction::LessEqual,
-                sample_count: 1,
-                ldr_format: resources.target_format(),
-            },
-        );
-
-        // Outline mask: the same ray-march, writing white on hit and
-        // discarding on miss.
         let mask_shader = builders::wgsl_module(
             device,
             "implicit_outline_mask_shader",
             &scene_shader(&[], wgsl_source!("implicit_outline_mask")),
         );
-        let mask_opts = viewport_lib::resources::PluginPipelineOpts {
-            primitive: gpu::PrimitiveState {
-                topology: gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            extra_bind_group_layouts: &[&bgl],
-            ..viewport_lib::resources::PluginPipelineOpts::new(
-                Some("implicit_outline_mask_pipeline"),
-                &mask_shader,
-                "vs_main",
-                "fs_main",
-                &[],
-            )
-        };
-        let mask_pipeline = resources.build_mask_pipeline(device, &mask_opts);
-        // The surface mask marches again, writing the hit depth so the stamp
-        // lands only where this surface is the visible one.
-        let surface_mask_pipeline = resources.build_surface_mask_pipeline(
-            device,
-            &viewport_lib::resources::PluginPipelineOpts {
-                label: Some("implicit_surface_mask_pipeline"),
-                fs_entry: "fs_stamp",
-                ..mask_opts
-            },
-        );
-
-        // Pick: the same ray-march writing the item's object id and the hit
-        // depth. Group 1 reuses the render bind group, group 2 is the object
-        // id. Laid out against the shared group-0 camera, which the pick pass
-        // binds before plugin dispatch; the fragment reads `inv_view_proj` to
-        // reconstruct the ray and `view_proj` to project the hit depth.
         let pick_id_bgl = device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
             label: Some("implicit_pick_id_bgl"),
             entries: &[gpu::BindGroupLayoutEntry {
@@ -140,33 +190,33 @@ impl GpuImplicitGpu {
             "implicit_pick_shader",
             &scene_shader(&[], wgsl_source!("implicit_pick")),
         );
-        let pick_pipeline = resources.build_pick_pipeline(
-            device,
-            &viewport_lib::resources::PluginPipelineOpts {
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                extra_bind_group_layouts: &[&bgl, &pick_id_bgl],
-                ..viewport_lib::resources::PluginPipelineOpts::new(
-                    Some("implicit_pick_pipeline"),
-                    &pick_shader,
-                    "vs_main",
-                    "fs_pick",
-                    &[],
-                )
+        let pipelines = resources.lazy_pipelines(
+            GpuImplicitRecipe {
+                device: device.clone(),
+                builder: resources.pipeline_builder(),
+                bgl: bgl.clone(),
+                pick_id_bgl: pick_id_bgl.clone(),
+                layout,
+                shader,
+                mask_shader,
+                pick_shader,
+                ldr_format: resources.target_format(),
             },
+            build,
         );
 
         Self {
             bgl,
-            pipeline,
-            mask_pipeline,
-            surface_mask_pipeline,
-            pick_pipeline,
+            pipelines,
             pick_id_bgl,
         }
+    }
+
+    /// Whether the render pipeline can draw this frame in either format. The
+    /// mask and pick passes wait for it, so a surface is never outlined or
+    /// picked before it is drawn.
+    pub(super) fn drawn(&self) -> bool {
+        self.pipelines.available(COLOUR_LDR) || self.pipelines.available(COLOUR_HDR)
     }
 
     /// Build the per-item uniform + bind group.

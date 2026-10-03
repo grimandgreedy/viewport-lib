@@ -72,6 +72,13 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         TYPE_NAME
     }
 
+    fn warm(&mut self, device: &gpu::Device, resources: &viewport_lib::DeviceResources) {
+        let gpu = self
+            .gpu
+            .get_or_insert_with(|| pipeline::GpuImplicitGpu::new(device, resources));
+        gpu.pipelines.request_all();
+    }
+
     fn on_device_recreated(&mut self, _device: &gpu::Device, _queue: &gpu::Queue) {
         self.gpu = None;
         self.frame.clear();
@@ -124,10 +131,16 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         if self.frame.is_empty() {
             return;
         }
-        pass.set_pipeline(
-            gpu.pipeline
-                .for_format(ctx.target_format == HDR_COLOR_FORMAT),
-        );
+        let colour = if ctx.target_format == HDR_COLOR_FORMAT {
+            pipeline::COLOUR_HDR
+        } else {
+            pipeline::COLOUR_LDR
+        };
+        // Still compiling: the surfaces draw next frame.
+        let Some(pl) = gpu.pipelines.get(colour) else {
+            return;
+        };
+        pass.set_pipeline(pl);
         for entry in &self.frame {
             pass.set_bind_group(1, &entry.bind_group, &[]);
             pass.draw(0..6, 0..1);
@@ -144,7 +157,9 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         _ctx: &OutlineMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        let Some(gpu) = &self.gpu else { return };
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         if !self.outline_active {
             return;
         }
@@ -154,7 +169,10 @@ impl ItemTypePlugin for GpuImplicitPlugin {
                 continue;
             }
             if !bound {
-                pass.set_pipeline(&gpu.mask_pipeline);
+                let Some(pl) = gpu.pipelines.get(pipeline::MASK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             pass.set_bind_group(1, &entry.bind_group, &[]);
@@ -168,14 +186,19 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         ctx: &viewport_lib::plugin_api::SurfaceMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        let Some(gpu) = &self.gpu else { return };
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         let mut bound = false;
         for entry in &self.frame {
             let Some(value) = ctx.stamp_for(&entry.settings) else {
                 continue;
             };
             if !bound {
-                pass.set_pipeline(&gpu.surface_mask_pipeline);
+                let Some(pl) = gpu.pipelines.get(pipeline::SURFACE_MASK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             pass.set_stencil_reference(value);
@@ -279,14 +302,19 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         if !ctx.mask.intersects(PickMask::OBJECT) {
             return;
         }
-        let Some(gpu) = &self.gpu else { return };
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         let mut bound = false;
         for entry in &self.frame {
             let Some((_, pick_bg)) = &entry.pick else {
                 continue;
             };
             if !bound {
-                pass.set_pipeline(&gpu.pick_pipeline);
+                let Some(pl) = gpu.pipelines.get(pipeline::PICK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 bound = true;
             }
             pass.set_bind_group(1, &entry.bind_group, &[]);
