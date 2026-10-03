@@ -19,12 +19,13 @@
 //! atlas. The traversal, shading, and environment code are shared; only the
 //! primary-ray source differs.
 //!
-//! [`pick_backend`] reports whether a hardware ray-query traversal is available
-//! (Vulkan/DX12 with the `raytrace-hardware` feature). When it is, the tracer
-//! builds an acceleration structure and compiles the `rayQuery` variant of the
-//! kernel, which swaps only the traversal (`closest_hit` / `any_hit`); all
-//! shading is shared with the compute path. Metal and the web have no ray query,
-//! so they always run the portable compute traversal.
+//! [`pick_backend`] reports whether a hardware ray-query traversal is available:
+//! the `raytrace-hardware` feature and a device created with ray queries, which
+//! [`request_ray_queries`] asks for (Vulkan and DX12, and Metal from wgpu 30).
+//! When it is, the tracer builds an acceleration structure and compiles the
+//! `rayQuery` variant of the kernel, which swaps only the traversal
+//! (`closest_hit` / `any_hit`); all shading is shared with the compute path.
+//! Everywhere else, the web included, it runs the portable compute traversal.
 //!
 //! Not handled yet: a two-level BVH, and importance sampling of the environment
 //! (it is sampled on miss but not used for next-event estimation, so pure-IBL
@@ -122,14 +123,15 @@ fn any_hit(o: vec3<f32>, d: vec3<f32>, max_t: f32) -> bool {
 /// Which traversal backend the tracer would use for a device.
 ///
 /// The compute traversal is portable and always available. The hardware backend
-/// needs the `raytrace-hardware` feature and a device that advertises
-/// [`RAY_QUERY_FEATURE`](crate::gpu::RAY_QUERY_FEATURE) (Vulkan/DX12); it is
-/// unsupported on Metal and the web.
+/// needs the `raytrace-hardware` feature and a device created with
+/// [`RAY_QUERY_FEATURE`](crate::gpu::RAY_QUERY_FEATURE), which
+/// [`request_ray_queries`] adds where the adapter offers it: Vulkan and DX12 on
+/// every wgpu version, Metal from wgpu 30. It is unsupported on the web.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RtBackend {
     /// Portable compute traversal over the crate's own BVH.
     Software,
-    /// Hardware ray-query traversal (Vulkan/DX12 only).
+    /// Hardware ray-query traversal.
     Hardware,
 }
 
@@ -147,6 +149,64 @@ pub fn pick_backend(device: &crate::gpu::Device) -> RtBackend {
     }
     let _ = device;
     RtBackend::Software
+}
+
+/// Add what a device needs to trace in hardware to `desc`: the
+/// [`RAY_QUERY_FEATURE`](crate::gpu::RAY_QUERY_FEATURE), the adapter's
+/// acceleration-structure limits (which default to zero, so `create_blas`
+/// fails without them), and wgpu's experimental-feature opt-in, which ray
+/// queries sit behind. Returns whether it did. It does nothing, and returns
+/// `false`, without the `raytrace-hardware` feature or when the adapter does
+/// not offer ray queries; the [`Tracer`] then uses the software backend.
+///
+/// Apply it to a descriptor already built from
+/// [`recommended_device_features`](crate::ViewportRenderer::recommended_device_features)
+/// and [`recommended_device_limits`](crate::ViewportRenderer::recommended_device_limits):
+///
+/// ```ignore
+/// let mut desc = wgpu::DeviceDescriptor {
+///     required_features: ViewportRenderer::recommended_device_features(&adapter),
+///     required_limits: ViewportRenderer::recommended_device_limits(&adapter),
+///     ..Default::default()
+/// };
+/// viewport_lib::raytrace::request_ray_queries(&adapter, &mut desc);
+/// ```
+///
+/// wgpu 29 is left out on Metal: its hardware path hangs the GPU there.
+pub fn request_ray_queries(
+    adapter: &crate::gpu::Adapter,
+    desc: &mut crate::gpu::DeviceDescriptor<'_>,
+) -> bool {
+    #[cfg(feature = "raytrace-hardware")]
+    {
+        if !adapter.features().contains(crate::gpu::RAY_QUERY_FEATURE) {
+            return false;
+        }
+        #[cfg(wgpu29)]
+        if adapter.get_info().backend == crate::gpu::Backend::Metal {
+            return false;
+        }
+        let offered = adapter.limits();
+        desc.required_features |= crate::gpu::RAY_QUERY_FEATURE;
+        let limits = &mut desc.required_limits;
+        limits.max_blas_primitive_count = offered.max_blas_primitive_count;
+        limits.max_blas_geometry_count = offered.max_blas_geometry_count;
+        limits.max_tlas_instance_count = offered.max_tlas_instance_count;
+        limits.max_acceleration_structures_per_shader_stage =
+            offered.max_acceleration_structures_per_shader_stage;
+        // SAFETY: wgpu gates ray queries behind this opt-in because its
+        // validation of them is incomplete, so a malformed acceleration
+        // structure or query could reach the driver. The tracer builds its
+        // acceleration structures from validated scene data and queries them
+        // only from its own kernel.
+        desc.experimental_features = unsafe { crate::gpu::ExperimentalFeatures::enabled() };
+        true
+    }
+    #[cfg(not(feature = "raytrace-hardware"))]
+    {
+        let _ = (adapter, desc);
+        false
+    }
 }
 
 /// Surface material for the tracer. A subset of the rasteriser's `Material`:
@@ -2164,11 +2224,11 @@ fn frame_seed(done: u32, seed: u32) -> u32 {
         .wrapping_add(1)
 }
 
-// The hardware kernel targets a ray-query device, which Metal (the dev platform)
-// is not, so it cannot be dispatched here. It can still be validated: naga
+// The hardware kernel only dispatches on a device created with ray queries,
+// which a plain test device is not. It can still be validated: naga
 // (a dev-dependency) parses and validates the composed WGSL with the RAY_QUERY
 // capability, which is what a ray-query driver would compile. This catches a
-// broken splice or a stale `rayQuery` API without a Vulkan/DX12 GPU.
+// broken splice or a stale `rayQuery` API without a ray-query device.
 #[cfg(all(test, feature = "raytrace-hardware"))]
 mod hw_tests {
     // The naga matching this build's wgpu leg; on 27 the crate keeps its own

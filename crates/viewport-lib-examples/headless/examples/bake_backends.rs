@@ -7,8 +7,8 @@
 //!   cargo run --release -p viewport-lib-examples-headless --example bake-backends \
 //!       --features raytrace-hardware
 //!
-//! Without `raytrace-hardware`, or on a device without ray queries, only the
-//! software backend runs.
+//! Without `raytrace-hardware`, or where `request_ray_queries` does not add ray
+//! queries to the device, only the software backend runs.
 
 use glam::Vec3;
 use std::time::Instant;
@@ -48,35 +48,18 @@ fn main() {
         ..Default::default()
     }))
     .expect("no GPU adapter");
-    let offers_ray_query = adapter.features().contains(vpl::gpu::RAY_QUERY_FEATURE);
+    let mut desc = vpl::gpu::DeviceDescriptor {
+        required_features: vpl::ViewportRenderer::recommended_device_features(&adapter),
+        required_limits: vpl::ViewportRenderer::recommended_device_limits(&adapter),
+        ..Default::default()
+    };
+    let ray_queries = vpl::raytrace::request_ray_queries(&adapter, &mut desc);
     println!(
-        "{} ({:?}), ray queries offered: {offers_ray_query}",
+        "{} ({:?}), ray queries requested: {ray_queries}",
         adapter.get_info().name,
         adapter.get_info().backend
     );
-    let features = if offers_ray_query {
-        vpl::gpu::RAY_QUERY_FEATURE
-    } else {
-        vpl::gpu::Features::empty()
-    };
-    let (device, queue) = pollster::block_on(adapter.request_device(&vpl::gpu::DeviceDescriptor {
-        required_features: features,
-        // Ray queries also need the acceleration-structure limits, which
-        // default to zero; ask for everything the adapter has.
-        required_limits: if offers_ray_query {
-            adapter.limits()
-        } else {
-            vpl::gpu::Limits::default()
-        },
-        // Ray queries are an experimental wgpu feature and have to be opted into.
-        experimental_features: if offers_ray_query {
-            unsafe { vpl::gpu::ExperimentalFeatures::enabled() }
-        } else {
-            vpl::gpu::ExperimentalFeatures::default()
-        },
-        ..Default::default()
-    }))
-    .expect("no device");
+    let (device, queue) = pollster::block_on(adapter.request_device(&desc)).expect("no device");
 
     // A Z-up room: floor, two walls, and a few objects to bounce between.
     let mut scene = RtScene::new();
@@ -147,7 +130,7 @@ fn main() {
     };
 
     let mut backends = vec![RtBackend::Software];
-    if cfg!(feature = "raytrace-hardware") && offers_ray_query {
+    if ray_queries {
         backends.push(RtBackend::Hardware);
     }
     for backend in backends {
