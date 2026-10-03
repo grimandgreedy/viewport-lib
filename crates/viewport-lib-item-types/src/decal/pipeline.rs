@@ -1,4 +1,6 @@
-//! Screen-space decal pipeline: the projection pass and its normal mapping.
+//! Screen-space decal pipelines: the projection pass and its normal mapping,
+//! the selection outline and the pick pass, each built the first time a draw
+//! needs it.
 
 use crate::shader::{lit_shader, scene_shader, wgsl_source};
 use viewport_lib::gpu::util::DeviceExt as _;
@@ -259,44 +261,155 @@ pub(crate) fn hash_decal_item(
 }
 
 // ---------------------------------------------------------------------------
-// Cluster resources
+// Pipelines
 // ---------------------------------------------------------------------------
 
-/// Screen-space decal pipelines and their bind group layouts.
-///
-/// All fields are lazily built: the render pipelines and item BGL by
-/// `ensure_pipeline`, and `depth_bgl` / `sampler` by `ensure_shared`.
-#[derive(Default)]
+/// Members of [`DecalPipelines`]. Every decal pass draws into the HDR scene,
+/// so there is no LDR variant.
+pub(crate) const REPLACE: usize = 0;
+pub(crate) const MULTIPLY: usize = 1;
+pub(crate) const ADDITIVE: usize = 2;
+pub(crate) const OUTLINE_MASK: usize = 3;
+pub(crate) const OUTLINE_EDGE: usize = 4;
+pub(crate) const PICK: usize = 5;
+
+/// The colour member a decal with `blend` draws through.
+pub(crate) fn colour_index(blend: super::types::DecalBlendMode) -> usize {
+    match blend {
+        super::types::DecalBlendMode::Replace => REPLACE,
+        super::types::DecalBlendMode::Multiply => MULTIPLY,
+        super::types::DecalBlendMode::Additive => ADDITIVE,
+    }
+}
+
+/// What a decal pipeline build reads.
+pub(crate) struct DecalRecipe {
+    device: viewport_lib::gpu::Device,
+    builder: viewport_lib::plugin_api::PipelineBuilder,
+    layout: viewport_lib::gpu::PipelineLayout,
+    shader: viewport_lib::gpu::ShaderModule,
+    mask_layout: viewport_lib::gpu::PipelineLayout,
+    mask_shader: viewport_lib::gpu::ShaderModule,
+    edge_layout: viewport_lib::gpu::PipelineLayout,
+    edge_shader: viewport_lib::gpu::ShaderModule,
+    pick_bgl: viewport_lib::gpu::BindGroupLayout,
+    pick_shader: viewport_lib::gpu::ShaderModule,
+}
+
+/// The three projection blends, the outline mask and edge pipelines, and the
+/// pick pipeline, each built the first time a draw needs it.
+pub(crate) type DecalPipelines = viewport_lib::plugin_api::LazyPipelines<DecalRecipe, 6>;
+
+fn build(r: &DecalRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
+    match i {
+        // No depth attachment: decals read depth as a texture, they do not
+        // write to the depth buffer. Blend mode is the only thing that varies.
+        REPLACE | MULTIPLY | ADDITIVE => {
+            let blend = match i {
+                REPLACE => viewport_lib::gpu::BlendState::ALPHA_BLENDING,
+                // Multiply: result.rgb = dst.rgb * src.rgb; result.a = dst.a.
+                MULTIPLY => viewport_lib::gpu::BlendState {
+                    color: viewport_lib::gpu::BlendComponent {
+                        src_factor: viewport_lib::gpu::BlendFactor::Zero,
+                        dst_factor: viewport_lib::gpu::BlendFactor::Src,
+                        operation: viewport_lib::gpu::BlendOperation::Add,
+                    },
+                    alpha: viewport_lib::gpu::BlendComponent {
+                        src_factor: viewport_lib::gpu::BlendFactor::Zero,
+                        dst_factor: viewport_lib::gpu::BlendFactor::One,
+                        operation: viewport_lib::gpu::BlendOperation::Add,
+                    },
+                },
+                // Additive: result.rgb = dst.rgb + src.rgb * src.a; result.a =
+                // dst.a. src.a modulates the contribution so alpha still
+                // controls intensity.
+                _ => viewport_lib::gpu::BlendState {
+                    color: viewport_lib::gpu::BlendComponent {
+                        src_factor: viewport_lib::gpu::BlendFactor::SrcAlpha,
+                        dst_factor: viewport_lib::gpu::BlendFactor::One,
+                        operation: viewport_lib::gpu::BlendOperation::Add,
+                    },
+                    alpha: viewport_lib::gpu::BlendComponent {
+                        src_factor: viewport_lib::gpu::BlendFactor::Zero,
+                        dst_factor: viewport_lib::gpu::BlendFactor::One,
+                        operation: viewport_lib::gpu::BlendOperation::Add,
+                    },
+                },
+            };
+            viewport_lib::plugin_api::builders::build_fullscreen_pipeline(
+                &r.device,
+                "decal_pipeline",
+                &r.layout,
+                &r.shader,
+                viewport_lib::gpu::TextureFormat::Rgba16Float,
+                Some(blend),
+            )
+        }
+        // Stamp the decal footprint into an R8 mask.
+        OUTLINE_MASK => viewport_lib::plugin_api::builders::build_fullscreen_pipeline(
+            &r.device,
+            "decal_outline_mask_pipeline",
+            &r.mask_layout,
+            &r.mask_shader,
+            viewport_lib::resources::MASK_COLOR_FORMAT,
+            None,
+        ),
+        // Ring edge-detect over the mask, blended onto HDR.
+        OUTLINE_EDGE => viewport_lib::plugin_api::builders::build_fullscreen_pipeline(
+            &r.device,
+            "decal_outline_edge_pipeline",
+            &r.edge_layout,
+            &r.edge_shader,
+            viewport_lib::gpu::TextureFormat::Rgba16Float,
+            Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
+        ),
+        // Object ids: rasterise each decal's projection box.
+        _ => {
+            const POS_ATTRS: [viewport_lib::gpu::VertexAttribute; 1] =
+                [viewport_lib::gpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: viewport_lib::gpu::VertexFormat::Float32x3,
+                }];
+            let vertex_layout = viewport_lib::gpu::VertexBufferLayout {
+                array_stride: 12,
+                step_mode: viewport_lib::gpu::VertexStepMode::Vertex,
+                attributes: &POS_ATTRS,
+            };
+            let mut opts = viewport_lib::resources::PluginPipelineOpts::new(
+                Some("decal_pick_pipeline"),
+                &r.pick_shader,
+                "vs_main",
+                "fs_main",
+                std::slice::from_ref(&vertex_layout),
+            );
+            // Two-sided: the camera can sit inside a decal's projection box,
+            // and a click from in there still selects it.
+            opts.primitive.cull_mode = None;
+            let extra: [&viewport_lib::gpu::BindGroupLayout; 1] = [&r.pick_bgl];
+            opts.extra_bind_group_layouts = &extra;
+            r.builder.build_pick_pipeline(&r.device, &opts)
+        }
+    }
+}
+
+/// Screen-space decal pipelines, their bind group layouts, the sampler, and
+/// the unit cube the pick pass rasterises.
 pub(crate) struct DecalGpu {
-    /// Replace-blend decal pipeline (LDR + HDR). None until first decal is submitted.
-    pub(crate) replace_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
-    /// Multiply-blend decal pipeline (LDR + HDR). None until first decal is submitted.
-    pub(crate) multiply_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
-    /// Additive-blend decal pipeline (LDR + HDR). None until first decal is submitted.
-    pub(crate) additive_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
-    /// BGL for group 1 of the decal pass: depth texture + stencil texture bindings.
-    pub(crate) depth_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
-    /// BGL for group 2 of the decal pass: uniform buffer + albedo texture + sampler.
-    pub(crate) item_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
-    /// Linear-clamp sampler used by the decal fragment shader.
-    pub(crate) sampler: Option<viewport_lib::gpu::Sampler>,
-    /// Pipeline that stamps a selected decal's footprint into the R8 outline
-    /// mask. Reuses the decal colour pass's bind groups (camera, depth+stencil,
-    /// per-decal uniform). None until first selected decal is submitted.
-    pub(crate) outline_mask_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
-    /// Fullscreen edge-detect pipeline that traces the outline ring from the
-    /// decal outline mask onto the HDR colour target with alpha blending.
-    pub(crate) outline_edge_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
-    /// BGL for the edge-detect pass: mask texture + sampler + edge uniform.
-    pub(crate) outline_edge_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
-    /// Object-id pick pipeline: rasterises each decal's projection box.
-    /// Built on the first frame a pickable decal is submitted.
-    pub(crate) pick_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
+    pub(crate) pipelines: DecalPipelines,
+    /// Group 1 of the decal pass: depth texture + stencil texture bindings.
+    depth_bgl: viewport_lib::gpu::BindGroupLayout,
+    /// Group 2 of the decal pass: uniform buffer + albedo texture + sampler.
+    item_bgl: viewport_lib::gpu::BindGroupLayout,
+    /// Repeat-address sampler used by the decal fragment shader.
+    sampler: viewport_lib::gpu::Sampler,
+    /// The edge-detect pass's layout: mask texture + sampler + edge uniform.
+    outline_edge_bgl: viewport_lib::gpu::BindGroupLayout,
     /// Group 1 of the pick pass: one `DecalProxyUniform` per decal.
-    pub(crate) pick_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
+    pick_bgl: viewport_lib::gpu::BindGroupLayout,
     /// The unit cube every decal's projection box is a transform of. Positions
     /// only: the pick pass needs no normals or uvs.
-    pub(crate) pick_cube: Option<(viewport_lib::gpu::Buffer, viewport_lib::gpu::Buffer)>,
+    pub(crate) pick_cube: (viewport_lib::gpu::Buffer, viewport_lib::gpu::Buffer),
 }
 
 /// Persistent GPU resources for the decal outline pass, keyed by viewport size.
@@ -315,80 +428,51 @@ pub(crate) struct DecalOutlineTargets {
     pub(crate) edge_bind_group: viewport_lib::gpu::BindGroup,
 }
 
-// ---------------------------------------------------------------------------
-// Pipeline init and upload (impl DeviceResources)
-// ---------------------------------------------------------------------------
-
 impl DecalGpu {
-    /// Create the decal depth bind group layout and sampler if missing. These
-    /// carry no target-size state, so they can be built at renderer creation.
-    pub(crate) fn ensure_shared(&mut self, device: &viewport_lib::gpu::Device) {
-        if self.depth_bgl.is_none() {
-            let bgl =
-                device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
-                    label: Some("decal_depth_bgl"),
-                    entries: &[
-                        viewport_lib::gpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
-                            ty: viewport_lib::gpu::BindingType::Texture {
-                                sample_type: viewport_lib::gpu::TextureSampleType::Depth,
-                                view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        viewport_lib::gpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
-                            ty: viewport_lib::gpu::BindingType::Texture {
-                                sample_type: viewport_lib::gpu::TextureSampleType::Uint,
-                                view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                    ],
-                });
-            self.depth_bgl = Some(bgl);
-        }
-        if self.sampler.is_none() {
-            // Repeat address mode so UV scroll animation tiles correctly.
-            let sampler = viewport_lib::plugin_api::builders::repeat_linear_sampler(
-                device,
-                "decal_sampler",
-                viewport_lib::gpu::FilterMode::Nearest,
-            );
-            self.sampler = Some(sampler);
-        }
-    }
-
-    /// Create the decal render pipelines and item bind group layout.
-    ///
-    /// No-op if already created. Requires `decal_depth_bgl` to exist (created
-    /// by [`ensure_decal_shared`](Self::ensure_decal_shared)). Called at
-    /// renderer creation so the first decal in a scene does not pay a pipeline
-    /// compile mid-session.
-    pub(crate) fn ensure_pipeline(
-        &mut self,
+    /// Make the layouts, shaders and pick cube; the pipelines build on first
+    /// use. `None` on a device with fewer than three bind groups (for example
+    /// a WebGL2-portable one), where the decal pass cannot be built and
+    /// decals do not render.
+    pub(crate) fn new(
         device: &viewport_lib::gpu::Device,
-        camera_bgl: &viewport_lib::gpu::BindGroupLayout,
-    ) {
-        if self.replace_pipeline.is_some() {
-            return;
-        }
-        // Decals need a third bind group (group 2: per-item uniforms + textures).
-        // On limited devices (max_bind_groups < 3, e.g. iced's WebGL2-portable
-        // device) the pipeline cannot be created. Leave it None; every decal draw
-        // path already guards on the Option, so decals simply do not render.
+        resources: &DeviceResources,
+    ) -> Option<Self> {
         if device.limits().max_bind_groups < 3 {
-            return;
+            return None;
         }
+        let camera_bgl = resources.shared_bindings().group0_layout;
 
-        let shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let depth_bgl =
+            device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
+                label: Some("decal_depth_bgl"),
+                entries: &[
+                    viewport_lib::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                        ty: viewport_lib::gpu::BindingType::Texture {
+                            sample_type: viewport_lib::gpu::TextureSampleType::Depth,
+                            view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    viewport_lib::gpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                        ty: viewport_lib::gpu::BindingType::Texture {
+                            sample_type: viewport_lib::gpu::TextureSampleType::Uint,
+                            view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        // Repeat address mode so UV scroll animation tiles correctly.
+        let sampler = viewport_lib::plugin_api::builders::repeat_linear_sampler(
             device,
-            "decal_shader",
-            &decal_source(),
+            "decal_sampler",
+            viewport_lib::gpu::FilterMode::Nearest,
         );
 
         let tex2d_entry = |binding: u32| viewport_lib::gpu::BindGroupLayoutEntry {
@@ -440,100 +524,19 @@ impl DecalGpu {
                 ],
             });
 
-        let depth_bgl = self
-            .depth_bgl
-            .as_ref()
-            .expect("decal_depth_bgl must exist before ensure_decal_pipeline");
-
+        let shader = viewport_lib::plugin_api::builders::wgsl_module(
+            device,
+            "decal_shader",
+            &decal_source(),
+        );
         let layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "decal_pipeline_layout",
-            &[camera_bgl, depth_bgl, &item_bgl],
+            &[camera_bgl, &depth_bgl, &item_bgl],
         );
 
-        // No depth attachment: decals read depth as a texture, they do not write
-        // to the depth buffer. Blend mode is the only thing that varies.
-        let make = |fmt: viewport_lib::gpu::TextureFormat, blend: viewport_lib::gpu::BlendState| {
-            viewport_lib::plugin_api::builders::build_fullscreen_pipeline(
-                device,
-                "decal_pipeline",
-                &layout,
-                &shader,
-                fmt,
-                Some(blend),
-            )
-        };
-
-        let replace_blend = viewport_lib::gpu::BlendState::ALPHA_BLENDING;
-        // Multiply: result.rgb = dst.rgb * src.rgb; result.a = dst.a.
-        let multiply_blend = viewport_lib::gpu::BlendState {
-            color: viewport_lib::gpu::BlendComponent {
-                src_factor: viewport_lib::gpu::BlendFactor::Zero,
-                dst_factor: viewport_lib::gpu::BlendFactor::Src,
-                operation: viewport_lib::gpu::BlendOperation::Add,
-            },
-            alpha: viewport_lib::gpu::BlendComponent {
-                src_factor: viewport_lib::gpu::BlendFactor::Zero,
-                dst_factor: viewport_lib::gpu::BlendFactor::One,
-                operation: viewport_lib::gpu::BlendOperation::Add,
-            },
-        };
-        // Additive: result.rgb = dst.rgb + src.rgb * src.a; result.a = dst.a.
-        // src.a modulates the additive contribution so alpha still controls intensity.
-        let additive_blend = viewport_lib::gpu::BlendState {
-            color: viewport_lib::gpu::BlendComponent {
-                src_factor: viewport_lib::gpu::BlendFactor::SrcAlpha,
-                dst_factor: viewport_lib::gpu::BlendFactor::One,
-                operation: viewport_lib::gpu::BlendOperation::Add,
-            },
-            alpha: viewport_lib::gpu::BlendComponent {
-                src_factor: viewport_lib::gpu::BlendFactor::Zero,
-                dst_factor: viewport_lib::gpu::BlendFactor::One,
-                operation: viewport_lib::gpu::BlendOperation::Add,
-            },
-        };
-
-        // HDR only: decals are composited between the opaque scene and the
-        // transparency passes, which exist on the HDR path alone.
-        self.item_bgl = Some(item_bgl);
-        self.replace_pipeline = Some(make(
-            viewport_lib::gpu::TextureFormat::Rgba16Float,
-            replace_blend,
-        ));
-        self.multiply_pipeline = Some(make(
-            viewport_lib::gpu::TextureFormat::Rgba16Float,
-            multiply_blend,
-        ));
-        self.additive_pipeline = Some(make(
-            viewport_lib::gpu::TextureFormat::Rgba16Float,
-            additive_blend,
-        ));
-    }
-
-    /// Lazily create the decal outline mask + edge-detect pipelines.
-    ///
-    /// No-op if already created. Requires `ensure_decal_pipeline` to have run
-    /// first (it creates `item_bgl`) and `depth_bgl` to exist (created by
-    /// `ensure_hdr_pipelines`). The mask pipeline reuses the decal colour pass's
-    /// three bind groups, so no new per-decal resources are needed.
-    pub(crate) fn ensure_outline_pipelines(
-        &mut self,
-        device: &viewport_lib::gpu::Device,
-        camera_bgl: &viewport_lib::gpu::BindGroupLayout,
-    ) {
-        if self.outline_mask_pipeline.is_some() {
-            return;
-        }
-
-        if self.depth_bgl.is_none() || self.item_bgl.is_none() {
-            return;
-        }
-        let (Some(depth_bgl), Some(item_bgl)) = (self.depth_bgl.as_ref(), self.item_bgl.as_ref())
-        else {
-            return;
-        };
-
-        // Mask pipeline: stamp the decal footprint into an R8 mask.
+        // The outline mask reuses the colour pass's three bind groups, so it
+        // needs no per-decal resources of its own.
         let mask_shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
             "decal_outline_mask_shader",
@@ -542,24 +545,15 @@ impl DecalGpu {
         let mask_layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "decal_outline_mask_layout",
-            &[camera_bgl, depth_bgl, item_bgl],
-        );
-        let mask_pipeline = viewport_lib::plugin_api::builders::build_fullscreen_pipeline(
-            device,
-            "decal_outline_mask_pipeline",
-            &mask_layout,
-            &mask_shader,
-            viewport_lib::resources::MASK_COLOR_FORMAT,
-            None,
+            &[camera_bgl, &depth_bgl, &item_bgl],
         );
 
-        // Edge pipeline: ring edge-detect over the mask, blended onto HDR.
         let edge_shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
             "decal_outline_edge_shader",
             shared_wgsl::SHARED_OUTLINE_EDGE_WGSL,
         );
-        let edge_bgl =
+        let outline_edge_bgl =
             device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
                 label: Some("decal_outline_edge_bgl"),
                 entries: &[
@@ -580,27 +574,87 @@ impl DecalGpu {
         let edge_layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "decal_outline_edge_layout",
-            &[&edge_bgl],
-        );
-        let edge_pipeline = viewport_lib::plugin_api::builders::build_fullscreen_pipeline(
-            device,
-            "decal_outline_edge_pipeline",
-            &edge_layout,
-            &edge_shader,
-            viewport_lib::gpu::TextureFormat::Rgba16Float,
-            Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
+            &[&outline_edge_bgl],
         );
 
-        self.outline_mask_pipeline = Some(mask_pipeline);
-        self.outline_edge_pipeline = Some(edge_pipeline);
-        self.outline_edge_bgl = Some(edge_bgl);
+        let pick_bgl =
+            device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
+                label: Some("decal_pick_bgl"),
+                entries: &[viewport_lib::plugin_api::builders::uniform_entry(
+                    0,
+                    viewport_lib::gpu::ShaderStages::VERTEX
+                        | viewport_lib::gpu::ShaderStages::FRAGMENT,
+                )],
+            });
+        let pick_shader = viewport_lib::plugin_api::builders::wgsl_module(
+            device,
+            "decal_pick_shader",
+            &pick_source(),
+        );
+
+        let positions: [[f32; 3]; 8] = [
+            [-0.5, -0.5, -0.5],
+            [0.5, -0.5, -0.5],
+            [0.5, 0.5, -0.5],
+            [-0.5, 0.5, -0.5],
+            [-0.5, -0.5, 0.5],
+            [0.5, -0.5, 0.5],
+            [0.5, 0.5, 0.5],
+            [-0.5, 0.5, 0.5],
+        ];
+        let indices: [u32; 36] = [
+            0, 1, 2, 2, 3, 0, 4, 6, 5, 6, 4, 7, 0, 3, 7, 7, 4, 0, 1, 5, 6, 6, 2, 1, 3, 2, 6, 6, 7,
+            3, 0, 4, 5, 5, 1, 0,
+        ];
+        let vbuf = device.create_buffer_init(&viewport_lib::gpu::util::BufferInitDescriptor {
+            label: Some("decal_pick_cube_vbuf"),
+            contents: bytemuck::cast_slice(&positions),
+            usage: viewport_lib::gpu::BufferUsages::VERTEX,
+        });
+        let ibuf = device.create_buffer_init(&viewport_lib::gpu::util::BufferInitDescriptor {
+            label: Some("decal_pick_cube_ibuf"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: viewport_lib::gpu::BufferUsages::INDEX,
+        });
+
+        let pipelines = resources.lazy_pipelines(
+            DecalRecipe {
+                device: device.clone(),
+                builder: resources.pipeline_builder(),
+                layout,
+                shader,
+                mask_layout,
+                mask_shader,
+                edge_layout,
+                edge_shader,
+                pick_bgl: pick_bgl.clone(),
+                pick_shader,
+            },
+            build,
+        );
+
+        Some(Self {
+            pipelines,
+            depth_bgl,
+            item_bgl,
+            sampler,
+            outline_edge_bgl,
+            pick_bgl,
+            pick_cube: (vbuf, ibuf),
+        })
+    }
+
+    /// Whether the colour pipeline a decal with `blend` draws through can draw
+    /// this frame. The outline and pick passes wait for it, so a decal is
+    /// never outlined or picked before it is drawn.
+    pub(crate) fn drawn(&self, blend: super::types::DecalBlendMode) -> bool {
+        self.pipelines.available(colour_index(blend))
     }
 
     /// Ensure the persistent decal-outline mask target and edge bind group exist
     /// at `(w, h)`, rebuilding only when the size changes. This keeps the outline
     /// pass allocation-free per frame: only the edge uniform contents are
-    /// refreshed (by the caller, via `queue.write_buffer`). Call after
-    /// `ensure_decal_outline_pipelines`.
+    /// refreshed (by the caller, via `queue.write_buffer`).
     pub(crate) fn ensure_outline_targets(
         &self,
         device: &viewport_lib::gpu::Device,
@@ -613,11 +667,6 @@ impl DecalGpu {
                 return;
             }
         }
-        let (Some(edge_bgl), Some(sampler)) =
-            (self.outline_edge_bgl.as_ref(), self.sampler.as_ref())
-        else {
-            return;
-        };
 
         let mask_tex = device.create_texture(&viewport_lib::gpu::TextureDescriptor {
             label: Some("decal_outline_mask_tex"),
@@ -644,7 +693,7 @@ impl DecalGpu {
         });
         let edge_bind_group = device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
             label: Some("decal_outline_edge_bg"),
-            layout: edge_bgl,
+            layout: &self.outline_edge_bgl,
             entries: &[
                 viewport_lib::gpu::BindGroupEntry {
                     binding: 0,
@@ -652,7 +701,7 @@ impl DecalGpu {
                 },
                 viewport_lib::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: viewport_lib::gpu::BindingResource::Sampler(sampler),
+                    resource: viewport_lib::gpu::BindingResource::Sampler(&self.sampler),
                 },
                 viewport_lib::gpu::BindGroupEntry {
                     binding: 2,
@@ -680,13 +729,9 @@ impl DecalGpu {
         depth_only_view: &viewport_lib::gpu::TextureView,
         stencil_only_view: &viewport_lib::gpu::TextureView,
     ) -> viewport_lib::gpu::BindGroup {
-        let bgl = self
-            .depth_bgl
-            .as_ref()
-            .expect("decal_depth_bgl not created");
         device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
             label: Some("decal_depth_bg"),
-            layout: bgl,
+            layout: &self.depth_bgl,
             entries: &[
                 viewport_lib::gpu::BindGroupEntry {
                     binding: 0,
@@ -701,8 +746,6 @@ impl DecalGpu {
     }
 
     /// Upload one [`DecalItem`](super::types::DecalItem) to GPU and return the per-draw data.
-    ///
-    /// Panics if called before `ensure_decal_pipeline`.
     pub(crate) fn upload_item(
         &self,
         device: &viewport_lib::gpu::Device,
@@ -731,16 +774,9 @@ impl DecalGpu {
         let metallic_view = resolve_tex(item.metallic_texture_id);
         let emissive_view = resolve_tex(item.emissive_texture_id);
 
-        let bgl = self
-            .item_bgl
-            .as_ref()
-            .expect("ensure_decal_pipeline not called");
-
-        let sampler = self.sampler.as_ref().expect("decal_sampler not created");
-
         let bind_group = device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
             label: Some("decal_item_bg"),
-            layout: bgl,
+            layout: &self.item_bgl,
             entries: &[
                 viewport_lib::gpu::BindGroupEntry {
                     binding: 0,
@@ -752,7 +788,7 @@ impl DecalGpu {
                 },
                 viewport_lib::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: viewport_lib::gpu::BindingResource::Sampler(sampler),
+                    resource: viewport_lib::gpu::BindingResource::Sampler(&self.sampler),
                 },
                 viewport_lib::gpu::BindGroupEntry {
                     binding: 3,
@@ -776,8 +812,7 @@ impl DecalGpu {
         // Group 1 of the pick pass. Built only for a pickable decal: an
         // unpickable one contributes nothing to the id pass.
         let pick = (item.settings.pick_id != viewport_lib::PickId::NONE)
-            .then(|| self.pick_binding(device, model, item.settings.pick_id))
-            .flatten();
+            .then(|| self.pick_binding(device, model, item.settings.pick_id));
 
         DecalGpuItem {
             blend_mode: item.blend_mode,
@@ -790,15 +825,13 @@ impl DecalGpu {
     }
 
     /// Build one decal's pick binding: its projection-box transform and pick
-    /// id. `None` before [`ensure_pick`](Self::ensure_pick) has run.
+    /// id.
     fn pick_binding(
         &self,
         device: &viewport_lib::gpu::Device,
         model: glam::Mat4,
         pick_id: viewport_lib::PickId,
-    ) -> Option<DecalPickBinding> {
-        use viewport_lib::gpu::util::DeviceExt as _;
-        let bgl = self.pick_bgl.as_ref()?;
+    ) -> DecalPickBinding {
         let raw = DecalProxyUniform {
             model: model.to_cols_array_2d(),
             object_id: pick_id.0 as u32,
@@ -812,94 +845,16 @@ impl DecalGpu {
             });
         let bind_group = device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
             label: Some("decal_pick_bg"),
-            layout: bgl,
+            layout: &self.pick_bgl,
             entries: &[viewport_lib::gpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buf.as_entire_binding(),
             }],
         });
-        Some(DecalPickBinding {
+        DecalPickBinding {
             _uniform_buf: uniform_buf,
             bind_group,
-        })
-    }
-
-    /// Lazily build the object-id pick pipeline, its group-1 layout, and the
-    /// shared unit cube every decal's projection box is a transform of.
-    pub(crate) fn ensure_pick(
-        &mut self,
-        device: &viewport_lib::gpu::Device,
-        resources: &viewport_lib::resources::DeviceResources,
-    ) {
-        if self.pick_pipeline.is_some() {
-            return;
         }
-        use viewport_lib::gpu::util::DeviceExt as _;
-        let bgl = device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
-            label: Some("decal_pick_bgl"),
-            entries: &[viewport_lib::plugin_api::builders::uniform_entry(
-                0,
-                viewport_lib::gpu::ShaderStages::VERTEX | viewport_lib::gpu::ShaderStages::FRAGMENT,
-            )],
-        });
-        let shader = viewport_lib::plugin_api::builders::wgsl_module(
-            device,
-            "decal_pick_shader",
-            &pick_source(),
-        );
-        const POS_ATTRS: [viewport_lib::gpu::VertexAttribute; 1] =
-            [viewport_lib::gpu::VertexAttribute {
-                offset: 0,
-                shader_location: 0,
-                format: viewport_lib::gpu::VertexFormat::Float32x3,
-            }];
-        let vertex_layout = viewport_lib::gpu::VertexBufferLayout {
-            array_stride: 12,
-            step_mode: viewport_lib::gpu::VertexStepMode::Vertex,
-            attributes: &POS_ATTRS,
-        };
-        let mut opts = viewport_lib::resources::PluginPipelineOpts::new(
-            Some("decal_pick_pipeline"),
-            &shader,
-            "vs_main",
-            "fs_main",
-            std::slice::from_ref(&vertex_layout),
-        );
-        // Two-sided: the camera can sit inside a decal's projection box, and a
-        // click from in there still selects it.
-        opts.primitive.cull_mode = None;
-        let extra: [&viewport_lib::gpu::BindGroupLayout; 1] = [&bgl];
-        opts.extra_bind_group_layouts = &extra;
-        let pipeline = resources.build_pick_pipeline(device, &opts);
-
-        let positions: [[f32; 3]; 8] = [
-            [-0.5, -0.5, -0.5],
-            [0.5, -0.5, -0.5],
-            [0.5, 0.5, -0.5],
-            [-0.5, 0.5, -0.5],
-            [-0.5, -0.5, 0.5],
-            [0.5, -0.5, 0.5],
-            [0.5, 0.5, 0.5],
-            [-0.5, 0.5, 0.5],
-        ];
-        let indices: [u32; 36] = [
-            0, 1, 2, 2, 3, 0, 4, 6, 5, 6, 4, 7, 0, 3, 7, 7, 4, 0, 1, 5, 6, 6, 2, 1, 3, 2, 6, 6, 7,
-            3, 0, 4, 5, 5, 1, 0,
-        ];
-        let vbuf = device.create_buffer_init(&viewport_lib::gpu::util::BufferInitDescriptor {
-            label: Some("decal_pick_cube_vbuf"),
-            contents: bytemuck::cast_slice(&positions),
-            usage: viewport_lib::gpu::BufferUsages::VERTEX,
-        });
-        let ibuf = device.create_buffer_init(&viewport_lib::gpu::util::BufferInitDescriptor {
-            label: Some("decal_pick_cube_ibuf"),
-            contents: bytemuck::cast_slice(&indices),
-            usage: viewport_lib::gpu::BufferUsages::INDEX,
-        });
-
-        self.pick_bgl = Some(bgl);
-        self.pick_pipeline = Some(pipeline);
-        self.pick_cube = Some((vbuf, ibuf));
     }
 }
 

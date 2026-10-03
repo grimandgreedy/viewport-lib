@@ -78,7 +78,9 @@ type BoundTextures = [Option<TextureId>; 5];
 /// or through [`install`](crate::install) with the rest of this crate.
 #[derive(Default)]
 pub struct DecalPlugin {
-    gpu: pipeline::DecalGpu,
+    /// Layouts and pipelines, made by `warm` or the first prepare with a
+    /// decal. Stays `None` on a device that cannot build the decal pass.
+    gpu: Option<pipeline::DecalGpu>,
     /// This frame's draw list, in `sort_key` order, built in `prepare`.
     draws: Vec<pipeline::DecalGpuItem>,
     /// GPU resources cached across frames, keyed by decal content hash, so an
@@ -115,19 +117,21 @@ impl ItemTypePlugin for DecalPlugin {
         TYPE_NAME
     }
 
-    /// Build the projection pipelines at registration rather than on the first
-    /// frame that submits a decal. Decals tend to appear mid-session (impact
-    /// marks, scorches), so a lazy build would stall that frame by the compile
-    /// cost (~8 ms measured on a desktop GPU). The outline pipelines stay
-    /// lazy: they are only needed by scenes that select a decal.
+    /// Request every decal pipeline ahead of the first frame that submits a
+    /// decal. Decals tend to appear mid-session (impact marks, scorches), so
+    /// without a warm-up that frame would wait on the compile or go without
+    /// its decals.
     fn warm(
         &mut self,
         device: &viewport_lib::gpu::Device,
         resources: &viewport_lib::DeviceResources,
     ) {
-        self.gpu.ensure_shared(device);
-        self.gpu
-            .ensure_pipeline(device, resources.shared_bindings().group0_layout);
+        if self.gpu.is_none() {
+            self.gpu = pipeline::DecalGpu::new(device, resources);
+        }
+        if let Some(gpu) = &self.gpu {
+            gpu.pipelines.request_all();
+        }
     }
 
     fn prepare(
@@ -145,22 +149,13 @@ impl ItemTypePlugin for DecalPlugin {
         let mut uploads = 0u32;
         let mut reused = 0u32;
 
+        if !decals.is_empty() && self.gpu.is_none() {
+            self.gpu = pipeline::DecalGpu::new(device, res);
+        }
         if decals.is_empty() {
             // No decals this frame: drop any cached GPU resources.
             self.cache.clear();
-        } else {
-            self.gpu.ensure_shared(device);
-            self.gpu
-                .ensure_pipeline(device, res.shared_bindings().group0_layout);
-            // The pick pipeline and the shared unit cube, built once. A decal
-            // answers object picks by rasterising its projection box, so this
-            // has to exist before the per-decal pick bindings below.
-            if decals
-                .iter()
-                .any(|d| !d.settings.hidden && d.settings.pick_id != PickId::NONE)
-            {
-                self.gpu.ensure_pick(device, res);
-            }
+        } else if let Some(decal_gpu) = &self.gpu {
             // Cached entries hold bind groups over texture views, so a free or
             // a replace since the last frame invalidates them: a free drops
             // only the entries whose deps no longer resolve, a replace drops
@@ -219,7 +214,7 @@ impl ItemTypePlugin for DecalPlugin {
                             effective.emissive_texture_id,
                             TextureSlot::DecalEmissive,
                         );
-                        let gpu = self.gpu.upload_item(device, res, &effective);
+                        let gpu = decal_gpu.upload_item(device, res, &effective);
                         let bound = [
                             Some(effective.texture_id),
                             effective.normal_texture_id,
@@ -240,14 +235,6 @@ impl ItemTypePlugin for DecalPlugin {
         }
         self.uploads = uploads;
         self.reused = reused;
-
-        // The outline pipelines are cheap to hold and the outline pass runs
-        // from a shared borrow, so build them here the first frame a decal is
-        // selected rather than inside `encode`.
-        if self.draws.iter().any(|g| g.selected) {
-            self.gpu
-                .ensure_outline_pipelines(device, res.shared_bindings().group0_layout);
-        }
 
         Vec::new()
     }
@@ -277,6 +264,7 @@ impl ItemTypePlugin for DecalPlugin {
         ctx: &EncoderScopeContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
+        let Some(gpu) = &self.gpu else { return };
         if self.draws.is_empty() {
             return;
         }
@@ -287,11 +275,10 @@ impl ItemTypePlugin for DecalPlugin {
         // HDR attachments can be reallocated at the same size, which would
         // leave a cached bind group pointing at a dead view.
         let depth_bg =
-            self.gpu
-                .create_depth_bg(ctx.device, ctx.scene_depth_only, ctx.scene_stencil_only);
+            gpu.create_depth_bg(ctx.device, ctx.scene_depth_only, ctx.scene_stencil_only);
 
-        self.encode_colour(encoder, ctx, &depth_bg);
-        self.encode_outline(encoder, ctx, &depth_bg);
+        self.encode_colour(gpu, encoder, ctx, &depth_bg);
+        self.encode_outline(gpu, encoder, ctx, &depth_bg);
     }
 
     /// Rasterise each pickable decal's projection box into the shared id
@@ -307,23 +294,26 @@ impl ItemTypePlugin for DecalPlugin {
         if !ctx.mask.intersects(PickMask::OBJECT) {
             return;
         }
-        let (Some(pipeline), Some((vbuf, ibuf))) =
-            (self.gpu.pick_pipeline.as_ref(), self.gpu.pick_cube.as_ref())
-        else {
-            return;
-        };
+        let Some(gpu) = &self.gpu else { return };
+        let (vbuf, ibuf) = &gpu.pick_cube;
         let mut bound = false;
         for entry in &self.draws {
             let Some(pick) = entry.pick.as_ref() else {
                 continue;
             };
+            if !gpu.drawn(entry.blend_mode) {
+                continue;
+            }
             // Degenerate transforms have no box to rasterise; the CPU pick
             // skips them the same way.
             if entry.model.determinant().abs() < 1e-12 {
                 continue;
             }
             if !bound {
-                pass.set_pipeline(pipeline);
+                let Some(pl) = gpu.pipelines.get(pipeline::PICK) else {
+                    return;
+                };
+                pass.set_pipeline(pl);
                 pass.set_vertex_buffer(0, vbuf.slice(..));
                 pass.set_index_buffer(ibuf.slice(..), viewport_lib::gpu::IndexFormat::Uint32);
                 bound = true;
@@ -418,18 +408,12 @@ impl DecalPlugin {
     /// texture, so the pass has no depth attachment of its own.
     fn encode_colour(
         &self,
+        decal_gpu: &pipeline::DecalGpu,
         encoder: &mut viewport_lib::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
         depth_bg: &viewport_lib::gpu::BindGroup,
     ) {
         if self.draws.is_empty() {
-            return;
-        }
-        let replace_pipeline = self.gpu.replace_pipeline.as_ref();
-        let multiply_pipeline = self.gpu.multiply_pipeline.as_ref();
-        let additive_pipeline = self.gpu.additive_pipeline.as_ref();
-        if replace_pipeline.is_none() && multiply_pipeline.is_none() && additive_pipeline.is_none()
-        {
             return;
         }
         let [target_w, target_h] = ctx.scene_size;
@@ -454,12 +438,13 @@ impl DecalPlugin {
         pass.set_bind_group(1, depth_bg, &[]);
         let view_proj = ctx.camera.view_proj();
         for gpu in &self.draws {
-            let pipeline = match gpu.blend_mode {
-                DecalBlendMode::Replace => replace_pipeline,
-                DecalBlendMode::Multiply => multiply_pipeline,
-                DecalBlendMode::Additive => additive_pipeline,
+            // Still compiling: this decal draws next frame.
+            let Some(pl) = decal_gpu
+                .pipelines
+                .get(pipeline::colour_index(gpu.blend_mode))
+            else {
+                continue;
             };
-            let Some(pl) = pipeline else { continue };
             // Confine each decal's fullscreen quad to its screen footprint to
             // avoid fullscreen overdraw per decal.
             match pipeline::decal_scissor(&gpu.model, &view_proj, target_w, target_h) {
@@ -484,24 +469,30 @@ impl DecalPlugin {
     /// when no decal is selected, so the common case pays no cost.
     fn encode_outline(
         &self,
+        decal_gpu: &pipeline::DecalGpu,
         encoder: &mut viewport_lib::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
         depth_bg: &viewport_lib::gpu::BindGroup,
     ) {
-        if !self.draws.iter().any(|g| g.selected) {
+        if !self
+            .draws
+            .iter()
+            .any(|g| g.selected && decal_gpu.drawn(g.blend_mode))
+        {
             return;
         }
+        let (Some(mask_pl), Some(edge_pl)) = (
+            decal_gpu.pipelines.get(pipeline::OUTLINE_MASK),
+            decal_gpu.pipelines.get(pipeline::OUTLINE_EDGE),
+        ) else {
+            return;
+        };
         let [target_w, target_h] = ctx.scene_size;
         let (target_w, target_h) = (target_w.max(1), target_h.max(1));
 
         let mut targets = self.outline_targets.lock().unwrap();
-        self.gpu
-            .ensure_outline_targets(ctx.device, &mut targets, target_w, target_h);
-        let (Some(mask_pl), Some(edge_pl), Some(targets)) = (
-            self.gpu.outline_mask_pipeline.as_ref(),
-            self.gpu.outline_edge_pipeline.as_ref(),
-            targets.as_ref(),
-        ) else {
+        decal_gpu.ensure_outline_targets(ctx.device, &mut targets, target_w, target_h);
+        let Some(targets) = targets.as_ref() else {
             return;
         };
 
@@ -553,7 +544,7 @@ impl DecalPlugin {
             pass.set_bind_group(1, depth_bg, &[]);
             let view_proj = ctx.camera.view_proj();
             for gpu in &self.draws {
-                if !gpu.selected {
+                if !gpu.selected || !decal_gpu.drawn(gpu.blend_mode) {
                     continue;
                 }
                 match pipeline::decal_scissor(&gpu.model, &view_proj, target_w, target_h) {
