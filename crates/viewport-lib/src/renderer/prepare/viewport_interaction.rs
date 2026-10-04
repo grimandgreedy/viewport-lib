@@ -3,6 +3,8 @@
 //! offscreen edge-detection pass, and sub-object highlight geometry.
 
 use super::*;
+use crate::renderer::overlay_buffers::OverlayGeometrySlot;
+use crate::resources::overlay::highlight::OutlineBinding;
 
 impl ViewportRenderer {
     pub(super) fn prepare_clip_uniforms(
@@ -322,6 +324,17 @@ impl ViewportRenderer {
         let vp_idx = frame.camera.viewport_index;
 
         // Outline mask buffers for selected objects (one per selected object).
+        // Last frame's buffers are reused position by position.
+        let mut old_outlines = std::mem::take(
+            &mut self.viewport_slots[vp_idx]
+                .selection_outlines
+                .outline_object_buffers,
+        )
+        .into_iter()
+        .map(|b| b.mask);
+        let mut old_xray = std::mem::take(&mut self.viewport_slots[vp_idx].xray_object_buffers)
+            .into_iter()
+            .map(|(_, b)| b);
         let mut outline_object_buffers: Vec<OutlineObjectBuffers> = Vec::new();
         if frame.interaction.outline_selected {
             let resources = &self.resources;
@@ -351,35 +364,20 @@ impl ViewportRenderer {
                     deform_flags: resources.deform.flag_bits(item.mesh_id),
                     _deform_pad: [0; 3],
                 };
-                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("outline_mask_uniform_buf"),
-                    size: std::mem::size_of::<OutlineUniform>() as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
-                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("outline_mask_object_bg"),
-                    layout: &resources.outline.bind_group_layout,
-                    entries: &[
-                        crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: buf.as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 1,
-                            resource: override_buf
-                                .unwrap_or(&resources.content.fallback_position_override_buf)
-                                .as_entire_binding(),
-                        },
-                    ],
-                });
+                let mask = OutlineBinding::reuse_or_new(
+                    old_outlines.next(),
+                    device,
+                    queue,
+                    &resources.outline.bind_group_layout,
+                    uniform,
+                    override_buf.unwrap_or(&resources.content.fallback_position_override_buf),
+                    "outline_mask_object_bg",
+                );
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id: item.mesh_id,
                     two_sided: item.material.is_two_sided(),
                     deform_instance: item.deform_instance,
-                    _mask_uniform_buf: buf,
-                    mask_bind_group: bg,
+                    mask,
                 });
             }
             // Selected volume meshes: rasterise the boundary surface into the
@@ -403,36 +401,20 @@ impl ViewportRenderer {
                     deform_flags: 0,
                     _deform_pad: [0; 3],
                 };
-                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("outline_mask_uniform_buf"),
-                    size: std::mem::size_of::<OutlineUniform>() as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
-                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("outline_mask_object_bg"),
-                    layout: &resources.outline.bind_group_layout,
-                    entries: &[
-                        crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: buf.as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 1,
-                            resource: resources
-                                .content
-                                .fallback_position_override_buf
-                                .as_entire_binding(),
-                        },
-                    ],
-                });
+                let mask = OutlineBinding::reuse_or_new(
+                    old_outlines.next(),
+                    device,
+                    queue,
+                    &resources.outline.bind_group_layout,
+                    uniform,
+                    &resources.content.fallback_position_override_buf,
+                    "outline_mask_object_bg",
+                );
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id: item.boundary_mesh_id,
                     two_sided: false,
                     deform_instance: None,
-                    _mask_uniform_buf: buf,
-                    mask_bind_group: bg,
+                    mask,
                 });
             }
         }
@@ -440,8 +422,7 @@ impl ViewportRenderer {
         // X-ray buffers for selected objects.
         let mut xray_object_buffers: Vec<(
             crate::resources::mesh::mesh_store::MeshId,
-            crate::gpu::Buffer,
-            crate::gpu::BindGroup,
+            OutlineBinding,
         )> = Vec::new();
         if frame.interaction.xray_selected {
             let resources = &self.resources;
@@ -459,39 +440,40 @@ impl ViewportRenderer {
                     deform_flags: 0,
                     _deform_pad: [0; 3],
                 };
-                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("xray_uniform_buf"),
-                    size: std::mem::size_of::<OutlineUniform>() as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
-                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("xray_object_bg"),
-                    layout: &resources.outline.bind_group_layout,
-                    entries: &[
-                        crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: buf.as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 1,
-                            resource: resources
-                                .content
-                                .fallback_position_override_buf
-                                .as_entire_binding(),
-                        },
-                    ],
-                });
-                xray_object_buffers.push((item.mesh_id, buf, bg));
+                let binding = OutlineBinding::reuse_or_new(
+                    old_xray.next(),
+                    device,
+                    queue,
+                    &resources.outline.bind_group_layout,
+                    uniform,
+                    &resources.content.fallback_position_override_buf,
+                    "xray_object_bg",
+                );
+                xray_object_buffers.push((item.mesh_id, binding));
             }
         }
 
         // Constraint guide lines.
+        let mut constraint_line_pool =
+            std::mem::take(&mut self.viewport_slots[vp_idx].constraint_line_pool);
         let mut constraint_line_buffers = Vec::new();
-        for overlay in &frame.interaction.constraint_overlays {
-            constraint_line_buffers.push(self.resources.create_constraint_overlay(device, overlay));
+        for (i, overlay) in frame.interaction.constraint_overlays.iter().enumerate() {
+            if i == constraint_line_pool.len() {
+                constraint_line_pool.push(OverlayGeometrySlot::new());
+            }
+            let (vertices, colour) =
+                crate::resources::overlay::overlays::constraint_overlay_geometry(overlay);
+            let indices: Vec<u32> = (0..vertices.len() as u32).collect();
+            constraint_line_buffers.push(constraint_line_pool[i].write(
+                device,
+                queue,
+                &self.resources.guides.overlay_bgl,
+                &vertices,
+                &indices,
+                colour,
+            ));
         }
+        constraint_line_pool.truncate(constraint_line_buffers.len());
 
         // Clip-object visuals (outlines and the plane fill) are no longer drawn by
         // the renderer. The host builds them from `clip_plane::visual` and submits
@@ -501,6 +483,7 @@ impl ViewportRenderer {
         // the section cap fill below.
 
         // Cap geometry for section-view cross-section fill.
+        let mut cap_pool = std::mem::take(&mut self.viewport_slots[vp_idx].cap_pool);
         let mut cap_buffers = Vec::new();
         if viewport_fx.clip.cap_fill_enabled {
             for obj in viewport_fx.clip.objects.iter().filter(|o| o.enabled) {
@@ -530,8 +513,23 @@ impl ViewportRenderer {
                         ) {
                             let bc = item.material.base_colour.to_linear_rgb();
                             let colour = cap_colour.unwrap_or([bc[0], bc[1], bc[2], 1.0]);
-                            let buf = self.resources.upload_cap_geometry(device, &cap, colour);
-                            cap_buffers.push(buf);
+                            let i = cap_buffers.len();
+                            if i == cap_pool.len() {
+                                cap_pool.push(OverlayGeometrySlot::new());
+                            }
+                            let vertices: Vec<crate::resources::OverlayVertex> = cap
+                                .positions
+                                .iter()
+                                .map(|p| crate::resources::OverlayVertex { position: *p })
+                                .collect();
+                            cap_buffers.push(cap_pool[i].write(
+                                device,
+                                queue,
+                                &self.resources.guides.overlay_bgl,
+                                &vertices,
+                                &cap.indices,
+                                colour,
+                            ));
                         }
                     }
                 }
@@ -554,6 +552,9 @@ impl ViewportRenderer {
             slot.xray_object_buffers = xray_object_buffers;
             slot.constraint_line_buffers = constraint_line_buffers;
             slot.cap_buffers = cap_buffers;
+            cap_pool.truncate(slot.cap_buffers.len());
+            slot.constraint_line_pool = constraint_line_pool;
+            slot.cap_pool = cap_pool;
         }
     }
 
@@ -715,7 +716,7 @@ impl ViewportRenderer {
                         self.resources.outline.mask_pipeline()
                     };
                     pass.set_pipeline(pipeline);
-                    pass.set_bind_group(1, &outlined.mask_bind_group, &[]);
+                    pass.set_bind_group(1, &outlined.mask.bind_group, &[]);
                     bind_deform_group!(
                         pass,
                         self.resources,

@@ -1807,7 +1807,33 @@ impl ViewportRenderer {
         if !self.any_plugin_draws_depth_read(frame) {
             return;
         }
-        let device = ctx.device;
+        // Prebuilt group handed to plugins that have a spare bind group. Plugins
+        // at the four-group limit ignore it and bake the same depth-only view +
+        // sampler into a group of their own.
+        let depth_bg = {
+            let resources = &self.resources;
+            let hdr = self.viewport_slots[ctx.vp_idx].hdr.as_mut().unwrap();
+            let view = hdr.hdr_depth_only_view.clone();
+            hdr.depth_read_bg.get(view.clone(), || {
+                ctx.device
+                    .create_bind_group(&crate::gpu::BindGroupDescriptor {
+                        label: Some("plugin_depth_read_bg"),
+                        layout: &resources.material.depth_read_bgl,
+                        entries: &[
+                            crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: crate::gpu::BindingResource::TextureView(&view),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 1,
+                                resource: crate::gpu::BindingResource::Sampler(
+                                    &resources.material.depth_read_sampler,
+                                ),
+                            },
+                        ],
+                    })
+            })
+        };
         let vp_idx = ctx.vp_idx;
         let resources = &self.resources;
         let slot = &self.viewport_slots[vp_idx];
@@ -1823,26 +1849,6 @@ impl ViewportRenderer {
         let colour_view = &slot_hdr.hdr_view;
         let depth_view = &slot_hdr.hdr_depth_view;
         let depth_only_view = &slot_hdr.hdr_depth_only_view;
-
-        // Prebuilt group handed to plugins that have a spare bind group. Plugins
-        // at the four-group limit ignore it and bake the same depth-only view +
-        // sampler into a group of their own.
-        let depth_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("plugin_depth_read_bg"),
-            layout: &resources.material.depth_read_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(depth_only_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(
-                        &resources.material.depth_read_sampler,
-                    ),
-                },
-            ],
-        });
 
         // Depth attachment read-only (`depth_ops: None`) so `depth_only_view`,
         // a depth-aspect view of the same buffer, can be sampled in the pass.
@@ -3210,22 +3216,24 @@ impl ViewportRenderer {
         // (at scale 1.0 output_depth_view aliases the scene depth, which the
         // tone map pass has already consumed).
         if self.foreground_active(ctx.frame) {
-            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
             if let (Some(fg_view), Some(pipeline), Some(bgl)) = (
-                slot_hdr.foreground_depth_only_view.as_ref(),
+                hdr.foreground_depth_only_view.clone(),
                 self.resources.post.foreground_stamp_pipeline.as_ref(),
                 self.resources.post.foreground_stamp_bgl.as_ref(),
             ) {
-                let stamp_bg = ctx
-                    .device
-                    .create_bind_group(&crate::gpu::BindGroupDescriptor {
-                        label: Some("foreground_stamp_bg"),
-                        layout: bgl,
-                        entries: &[crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: crate::gpu::BindingResource::TextureView(fg_view),
-                        }],
-                    });
+                let stamp_bg = hdr.foreground_stamp_bg.get(fg_view.clone(), || {
+                    ctx.device
+                        .create_bind_group(&crate::gpu::BindGroupDescriptor {
+                            label: Some("foreground_stamp_bg"),
+                            layout: bgl,
+                            entries: &[crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: crate::gpu::BindingResource::TextureView(&fg_view),
+                            }],
+                        })
+                });
+                let slot_hdr = &*hdr;
                 let mut stamp_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                     #[cfg(any(wgpu29, wgpu30))]
                     multiview_mask: None,
@@ -3388,11 +3396,11 @@ impl ViewportRenderer {
                         self.resources,
                         &self.resources.deform.dummy_bind_group
                     );
-                    for (mesh_id, _buf, bg) in &slot.xray_object_buffers {
+                    for (mesh_id, xray) in &slot.xray_object_buffers {
                         let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
                             continue;
                         };
-                        overlay_pass.set_bind_group(1, bg, &[]);
+                        overlay_pass.set_bind_group(1, &xray.bind_group, &[]);
                         overlay_pass.set_vertex_buffer(
                             0,
                             resources.geometry.vertex_slice(mesh.vertex_span),

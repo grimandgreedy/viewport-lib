@@ -533,20 +533,30 @@ impl ViewportRenderer {
             let bs = self.backdrop_blur_state.as_ref().unwrap();
             let blit_bgl = self.resources.post.dyn_res_upscale_bgl.as_ref().unwrap();
             let blit_sampler = self.resources.post.dyn_res_linear_sampler.as_ref().unwrap();
-            let blit_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some("backdrop_blit_bg"),
-                layout: blit_bgl,
-                entries: &[
-                    crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: crate::gpu::BindingResource::TextureView(&bs.intermediate_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 1,
-                        resource: crate::gpu::BindingResource::Sampler(blit_sampler),
-                    },
-                ],
-            });
+            let blit_bg = bs
+                .binds
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .blit
+                .get_or_insert_with(|| {
+                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                        label: Some("backdrop_blit_bg"),
+                        layout: blit_bgl,
+                        entries: &[
+                            crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: crate::gpu::BindingResource::TextureView(
+                                    &bs.intermediate_view,
+                                ),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 1,
+                                resource: crate::gpu::BindingResource::Sampler(blit_sampler),
+                            },
+                        ],
+                    })
+                })
+                .clone();
             let mut blit_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,

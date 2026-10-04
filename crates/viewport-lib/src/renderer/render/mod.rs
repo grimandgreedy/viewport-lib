@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::util::DeviceExt;
 
 /// Default background #3b3b40, in linear light: the renderer outputs linear and
 /// the sRGB target encodes on write.
@@ -1224,6 +1223,7 @@ impl ViewportRenderer {
             blur_b_view,
             size: [w, h],
             format,
+            binds: Default::default(),
         });
     }
 
@@ -1234,7 +1234,7 @@ impl ViewportRenderer {
         &self,
         encoder: &mut crate::gpu::CommandEncoder,
         device: &crate::gpu::Device,
-        _queue: &crate::gpu::Queue,
+        queue: &crate::gpu::Queue,
         source_view: &crate::gpu::TextureView,
         spread: f32,
     ) -> crate::gpu::BindGroup {
@@ -1252,78 +1252,131 @@ impl ViewportRenderer {
         let blit_bgl = self.resources.post.dyn_res_upscale_bgl.as_ref().unwrap();
         let blit_sampler = self.resources.post.dyn_res_linear_sampler.as_ref().unwrap();
 
-        // Step 1: downsample source -> blur_a (half-res) using bilinear blit.
-        let downsample_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("backdrop_downsample_bg"),
-            layout: blit_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(source_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(blit_sampler),
-                },
-            ],
-        });
-        {
-            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(any(wgpu29, wgpu30))]
-                multiview_mask: None,
-                label: Some("backdrop_downsample"),
-                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                    view: &bs.blur_a_view,
-                    resolve_target: None,
-                    ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color::BLACK),
-                        store: crate::gpu::StoreOp::Store,
+        let mut binds = bs.binds.lock().unwrap_or_else(|e| e.into_inner());
+        if binds.downsample.as_ref().map(|(v, _)| v) != Some(source_view) {
+            let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                label: Some("backdrop_downsample_bg"),
+                layout: blit_bgl,
+                entries: &[
+                    crate::gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: crate::gpu::BindingResource::TextureView(source_view),
                     },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
+                    crate::gpu::BindGroupEntry {
+                        binding: 1,
+                        resource: crate::gpu::BindingResource::Sampler(blit_sampler),
+                    },
+                ],
             });
-            pass.set_pipeline(blit_pipeline);
-            pass.set_bind_group(0, &downsample_bg, &[]);
-            pass.draw(0..3, 0..1);
+            binds.downsample = Some((source_view.clone(), bg));
         }
 
         // Spread scaled for half-res: each texel covers 2 screen pixels.
         let effective_spread = (spread / 2.0).max(1.0);
+        let fixed = binds.fixed.get_or_insert_with(|| {
+            let uniform = |label| {
+                device.create_buffer(&crate::gpu::BufferDescriptor {
+                    label: Some(label),
+                    size: 16,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                })
+            };
+            let blur_bg = |label, view, uniform: &crate::gpu::Buffer| {
+                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                    label: Some(label),
+                    layout: blur_bgl,
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: crate::gpu::BindingResource::TextureView(view),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: crate::gpu::BindingResource::Sampler(blur_sampler),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 2,
+                            resource: uniform.as_entire_binding(),
+                        },
+                    ],
+                })
+            };
+            let h_uniform = uniform("blur_h_uniform");
+            let v_uniform = uniform("blur_v_uniform");
+            // Blur shapes draw with the overlay texture pipeline, so this uses
+            // its layout (texture + sampler).
+            let tex_bgl = self.resources.overlay_shape.tex_bgl.as_ref().unwrap();
+            let tex_sampler = self.resources.overlay_shape.tex_sampler.as_ref().unwrap();
+            let overlay_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                label: Some("backdrop_blur_overlay_bg"),
+                layout: tex_bgl,
+                entries: &[
+                    crate::gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: crate::gpu::BindingResource::TextureView(&bs.blur_a_view),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: 1,
+                        resource: crate::gpu::BindingResource::Sampler(tex_sampler),
+                    },
+                ],
+            });
+            crate::resources::overlay::overlays::BackdropBlurFixed {
+                h_bg: blur_bg("blur_h_bg", &bs.blur_a_view, &h_uniform),
+                v_bg: blur_bg("blur_v_bg", &bs.blur_b_view, &v_uniform),
+                h_uniform,
+                v_uniform,
+                overlay_bg,
+                spread: f32::NAN,
+            }
+        });
+        if fixed.spread != effective_spread {
+            let bits = effective_spread.to_bits();
+            queue.write_buffer(
+                &fixed.h_uniform,
+                0,
+                bytemuck::cast_slice(&[1u32, bits, 0, 0]),
+            );
+            queue.write_buffer(
+                &fixed.v_uniform,
+                0,
+                bytemuck::cast_slice(&[0u32, bits, 0, 0]),
+            );
+            fixed.spread = effective_spread;
+        }
+        let fixed = binds.fixed.as_ref().unwrap();
+        let downsample_bg = &binds.downsample.as_ref().unwrap().1;
 
-        // Step 2: horizontal blur: blur_a -> blur_b.
-        let h_uniform = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-            label: Some("blur_h_uniform"),
-            contents: bytemuck::cast_slice(&[1u32, effective_spread.to_bits(), 0u32, 0u32]),
-            usage: crate::gpu::BufferUsages::UNIFORM,
-        });
-        let h_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("blur_h_bg"),
-            layout: blur_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(&bs.blur_a_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(blur_sampler),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: h_uniform.as_entire_binding(),
-                },
-            ],
-        });
-        {
+        // Downsample source -> blur_a (half-res) with a bilinear blit, blur
+        // horizontally into blur_b, then vertically back into blur_a.
+        let passes = [
+            (
+                "backdrop_downsample",
+                &bs.blur_a_view,
+                blit_pipeline,
+                downsample_bg,
+            ),
+            (
+                "backdrop_blur_h",
+                &bs.blur_b_view,
+                blur_pipeline,
+                &fixed.h_bg,
+            ),
+            (
+                "backdrop_blur_v",
+                &bs.blur_a_view,
+                blur_pipeline,
+                &fixed.v_bg,
+            ),
+        ];
+        for (label, view, pipeline, bg) in passes {
             let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
-                label: Some("backdrop_blur_h"),
+                label: Some(label),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                    view: &bs.blur_b_view,
+                    view,
                     resolve_target: None,
                     ops: crate::gpu::Operations {
                         load: crate::gpu::LoadOp::Clear(crate::gpu::Color::BLACK),
@@ -1335,77 +1388,11 @@ impl ViewportRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(blur_pipeline);
-            pass.set_bind_group(0, &h_bg, &[]);
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, bg, &[]);
             pass.draw(0..3, 0..1);
         }
-
-        // Step 3: vertical blur: blur_b -> blur_a.
-        let v_uniform = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-            label: Some("blur_v_uniform"),
-            contents: bytemuck::cast_slice(&[0u32, effective_spread.to_bits(), 0u32, 0u32]),
-            usage: crate::gpu::BufferUsages::UNIFORM,
-        });
-        let v_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("blur_v_bg"),
-            layout: blur_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(&bs.blur_b_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(blur_sampler),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: v_uniform.as_entire_binding(),
-                },
-            ],
-        });
-        {
-            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(any(wgpu29, wgpu30))]
-                multiview_mask: None,
-                label: Some("backdrop_blur_v"),
-                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                    view: &bs.blur_a_view,
-                    resolve_target: None,
-                    ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color::BLACK),
-                        store: crate::gpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(blur_pipeline);
-            pass.set_bind_group(0, &v_bg, &[]);
-            pass.draw(0..3, 0..1);
-        }
-
-        // Build the bind group for overlay shape drawing. Uses the overlay_shape_tex
-        // bind group layout (texture + sampler) so blur shapes can be drawn with the
-        // existing texture pipeline.
-        let tex_bgl = self.resources.overlay_shape.tex_bgl.as_ref().unwrap();
-        let tex_sampler = self.resources.overlay_shape.tex_sampler.as_ref().unwrap();
-        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("backdrop_blur_overlay_bg"),
-            layout: tex_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(&bs.blur_a_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(tex_sampler),
-                },
-            ],
-        })
+        fixed.overlay_bg.clone()
     }
 
     /// Returns true if the current frame has overlay shapes that need backdrop blur.

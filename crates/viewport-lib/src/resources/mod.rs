@@ -1,6 +1,7 @@
 /// Shared constructors for common wgpu bind-group-layout, sampler, and
 /// pipeline-layout descriptors, used by the per-feature `ensure_*` methods.
 pub(crate) mod builders;
+pub(crate) mod cached_bind_group;
 /// Opt-in record of what each pipeline and shader module cost to create, for
 /// attributing startup time. See [`builders::build_log`].
 pub use builders::build_log;

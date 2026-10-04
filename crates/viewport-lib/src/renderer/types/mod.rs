@@ -1007,9 +1007,9 @@ macro_rules! emit_draw_calls {
                 // part of it whenever deformers are enabled. X-ray draws the
                 // undeformed mesh, so the dummy group is what it wants.
                 bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
-                for (mesh_id, _buf, bg) in &slot.xray_object_buffers {
+                for (mesh_id, xray) in &slot.xray_object_buffers {
                     let Some(mesh) = resources.mesh_store.get(*mesh_id) else { continue };
-                    render_pass.set_bind_group(1, bg, &[]);
+                    render_pass.set_bind_group(1, &xray.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                     render_pass.set_index_buffer(resources.geometry.index_slice(mesh.index_span), crate::gpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);

@@ -2320,6 +2320,10 @@ impl DeviceResources {
             outline_edge_uniform_buf,
             outline_composite_bind_group,
             tone_map_bind_group,
+            tone_map_bg_views: None,
+            dof_bg_foreground: None,
+            depth_read_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
+            foreground_stamp_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
             tone_map_uniform_buf,
             exposure_state_buf,
             exposure_histogram_buf,
@@ -2417,63 +2421,77 @@ impl DeviceResources {
         } else {
             &hdr.hdr_view
         };
-        hdr.tone_map_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("tone_map_bg"),
-            layout: bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: composite::slot::HDR_COLOUR,
-                    resource: crate::gpu::BindingResource::TextureView(tone_map_hdr_input),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: composite::slot::SAMPLER,
-                    resource: crate::gpu::BindingResource::Sampler(sampler),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: composite::slot::PARAMS,
-                    resource: hdr.tone_map_uniform_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: composite::slot::BLOOM,
-                    resource: crate::gpu::BindingResource::TextureView(bloom_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: composite::slot::AO,
-                    resource: crate::gpu::BindingResource::TextureView(ao_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: composite::slot::CONTACT_SHADOW,
-                    resource: crate::gpu::BindingResource::TextureView(cs_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: composite::slot::SCENE_DEPTH,
-                    resource: crate::gpu::BindingResource::TextureView(&hdr.hdr_depth_only_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: composite::slot::FOREGROUND_DEPTH,
-                    resource: crate::gpu::BindingResource::TextureView(foreground_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: composite::slot::EXPOSURE,
-                    resource: hdr.exposure_state_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: composite::slot::GRADE_LUT,
-                    resource: crate::gpu::BindingResource::TextureView(
-                        inputs
-                            .grade_lut
-                            .and_then(|id| self.content.textures.get(id))
-                            .map(|t| &t.view)
-                            .unwrap_or(ao_placeholder),
-                    ),
-                },
-            ],
-        });
+        let grade_lut_view = inputs
+            .grade_lut
+            .and_then(|id| self.content.textures.get(id))
+            .map(|t| &t.view)
+            .unwrap_or(ao_placeholder);
+        let views = [
+            tone_map_hdr_input.clone(),
+            bloom_view.clone(),
+            ao_view.clone(),
+            cs_view.clone(),
+            hdr.hdr_depth_only_view.clone(),
+            foreground_view.clone(),
+            grade_lut_view.clone(),
+        ];
+        if hdr.tone_map_bg_views.as_ref() != Some(&views) {
+            hdr.tone_map_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                label: Some("tone_map_bg"),
+                layout: bgl,
+                entries: &[
+                    crate::gpu::BindGroupEntry {
+                        binding: composite::slot::HDR_COLOUR,
+                        resource: crate::gpu::BindingResource::TextureView(tone_map_hdr_input),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: composite::slot::SAMPLER,
+                        resource: crate::gpu::BindingResource::Sampler(sampler),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: composite::slot::PARAMS,
+                        resource: hdr.tone_map_uniform_buf.as_entire_binding(),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: composite::slot::BLOOM,
+                        resource: crate::gpu::BindingResource::TextureView(bloom_view),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: composite::slot::AO,
+                        resource: crate::gpu::BindingResource::TextureView(ao_view),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: composite::slot::CONTACT_SHADOW,
+                        resource: crate::gpu::BindingResource::TextureView(cs_view),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: composite::slot::SCENE_DEPTH,
+                        resource: crate::gpu::BindingResource::TextureView(
+                            &hdr.hdr_depth_only_view,
+                        ),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: composite::slot::FOREGROUND_DEPTH,
+                        resource: crate::gpu::BindingResource::TextureView(foreground_view),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: composite::slot::EXPOSURE,
+                        resource: hdr.exposure_state_buf.as_entire_binding(),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: composite::slot::GRADE_LUT,
+                        resource: crate::gpu::BindingResource::TextureView(grade_lut_view),
+                    },
+                ],
+            });
+            hdr.tone_map_bg_views = Some(views);
+        }
 
         // The DOF gather pass also reads the foreground coverage mask; rebuild
         // its bind group so the mask view matches this frame.
-        if inputs.dof {
+        if inputs.dof && hdr.dof_bg_foreground.as_ref() != Some(foreground_view) {
             if let Some(dof_bgl) = &self.post.dof.bgl {
+                let foreground_view = foreground_view.clone();
                 hdr.dof.bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("dof_bg"),
                     layout: dof_bgl,
@@ -2498,10 +2516,11 @@ impl DeviceResources {
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 4,
-                            resource: crate::gpu::BindingResource::TextureView(foreground_view),
+                            resource: crate::gpu::BindingResource::TextureView(&foreground_view),
                         },
                     ],
                 });
+                hdr.dof_bg_foreground = Some(foreground_view);
             }
         }
     }

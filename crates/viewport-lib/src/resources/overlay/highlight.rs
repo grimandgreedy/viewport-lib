@@ -661,8 +661,78 @@ pub(crate) struct OutlineObjectBuffers {
     /// drawn with that bind group so the selection halo tracks the deformed
     /// silhouette.
     pub deform_instance: Option<u32>,
-    pub _mask_uniform_buf: crate::gpu::Buffer,
-    pub mask_bind_group: crate::gpu::BindGroup,
+    pub mask: OutlineBinding,
+}
+
+/// A uniform buffer and bind group over the outline layout for one mask or
+/// x-ray draw, kept across frames: the next frame's draw at the same position
+/// rewrites the uniform only when it changed and rebuilds the bind group only
+/// when the position-override buffer did.
+pub(crate) struct OutlineBinding {
+    pub bind_group: crate::gpu::BindGroup,
+    buf: crate::gpu::Buffer,
+    uniform: OutlineUniform,
+    override_buf: crate::gpu::Buffer,
+}
+
+impl OutlineBinding {
+    pub(crate) fn reuse_or_new(
+        old: Option<Self>,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        layout: &crate::gpu::BindGroupLayout,
+        uniform: OutlineUniform,
+        override_buf: &crate::gpu::Buffer,
+        label: &'static str,
+    ) -> Self {
+        if let Some(mut old) = old {
+            if bytemuck::bytes_of(&old.uniform) != bytemuck::bytes_of(&uniform) {
+                queue.write_buffer(&old.buf, 0, bytemuck::bytes_of(&uniform));
+                old.uniform = uniform;
+            }
+            if old.override_buf != *override_buf {
+                old.bind_group = Self::bind_group(device, layout, &old.buf, override_buf, label);
+                old.override_buf = override_buf.clone();
+            }
+            return old;
+        }
+        let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some(label),
+            size: std::mem::size_of::<OutlineUniform>() as u64,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buf, 0, bytemuck::bytes_of(&uniform));
+        Self {
+            bind_group: Self::bind_group(device, layout, &buf, override_buf, label),
+            buf,
+            uniform,
+            override_buf: override_buf.clone(),
+        }
+    }
+
+    fn bind_group(
+        device: &crate::gpu::Device,
+        layout: &crate::gpu::BindGroupLayout,
+        buf: &crate::gpu::Buffer,
+        override_buf: &crate::gpu::Buffer,
+        label: &'static str,
+    ) -> crate::gpu::BindGroup {
+        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some(label),
+            layout,
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 1,
+                    resource: override_buf.as_entire_binding(),
+                },
+            ],
+        })
+    }
 }
 
 /// Uniform for the fullscreen outline edge-detection pass (32 bytes), the

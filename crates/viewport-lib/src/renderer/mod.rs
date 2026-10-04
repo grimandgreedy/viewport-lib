@@ -61,6 +61,8 @@ mod deform_shadow_tests;
 #[cfg(test)]
 mod deform_stats_tests;
 #[cfg(test)]
+mod frame_reuse_tests;
+#[cfg(test)]
 mod hidden_tests;
 #[cfg(test)]
 mod lazy_pipeline_tests;
@@ -202,25 +204,16 @@ pub(crate) struct ViewportSlot {
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(
         crate::resources::mesh::mesh_store::MeshId,
-        crate::gpu::Buffer,
-        crate::gpu::BindGroup,
+        crate::resources::overlay::highlight::OutlineBinding,
     )>,
-    /// Per-frame constraint guide line buffers, rebuilt in prepare().
-    pub constraint_line_buffers: Vec<(
-        crate::gpu::Buffer,
-        crate::gpu::Buffer,
-        u32,
-        crate::gpu::Buffer,
-        crate::gpu::BindGroup,
-    )>,
-    /// Per-frame cap geometry buffers (section view cross-section fill), rebuilt in prepare().
-    pub cap_buffers: Vec<(
-        crate::gpu::Buffer,
-        crate::gpu::Buffer,
-        u32,
-        crate::gpu::Buffer,
-        crate::gpu::BindGroup,
-    )>,
+    /// Per-frame constraint guide line draws, rebuilt in prepare().
+    pub constraint_line_buffers: Vec<overlay_buffers::OverlayGeometryDraw>,
+    /// Per-frame cap geometry draws (section view cross-section fill), rebuilt in prepare().
+    pub cap_buffers: Vec<overlay_buffers::OverlayGeometryDraw>,
+    /// The buffers behind `constraint_line_buffers` and `cap_buffers`, kept
+    /// across frames.
+    pub constraint_line_pool: Vec<overlay_buffers::OverlayGeometrySlot>,
+    pub cap_pool: Vec<overlay_buffers::OverlayGeometrySlot>,
     // --- Sub-object highlight (per-viewport, generation-cached) ---
     /// Per-viewport dynamic resolution intermediate render target.
     /// `None` when render_scale == 1.0 or not yet initialised.
@@ -426,11 +419,10 @@ pub struct ViewportRenderer {
     /// Per-frame retained overlay shape-stream draws (SDF shapes), referenced by
     /// `OverlayDrawSource::RetainedShape { draw_index }`.
     overlay_retained_shape_draws: Vec<overlay_buffers::RetainedShapeDraw>,
-    /// Shared per-draw instance buffer for the overlay pass: slot 0 identity plus
-    /// one per retained group. Bound by both the text pipeline (label bind group)
-    /// and the shape pipeline (shadow bind group). Rebuilt each frame.
-    overlay_instances_buf: Option<crate::gpu::Buffer>,
-    /// Set once the label prepare has written `overlay_instances_buf` this frame,
+    /// The overlay pass's clip, instance and shadow-layer storage buffers and
+    /// the bind groups over them, reused across frames.
+    overlay_bindings: overlay_buffers::OverlayBindings,
+    /// Set once the label prepare has written the overlay instances this frame,
     /// so the shape prepare reuses it instead of building an identity-only fallback.
     overlay_instances_ready: bool,
     /// Retained-overlay counters for the frame being prepared. Reset at the start
@@ -944,7 +936,7 @@ impl ViewportRenderer {
             overlay_retained_counters: OverlayRetainedCounters::default(),
             overlay_retained_draws: Vec::new(),
             overlay_retained_shape_draws: Vec::new(),
-            overlay_instances_buf: None,
+            overlay_bindings: overlay_buffers::OverlayBindings::new(),
             overlay_instances_ready: false,
             overlay_draw_segments: Vec::new(),
             overlay_uses_zorder: false,
@@ -3326,6 +3318,8 @@ impl ViewportRenderer {
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),
+                constraint_line_pool: Vec::new(),
+                cap_pool: Vec::new(),
                 sub_highlight: None,
                 sub_highlight_generation: u64::MAX,
                 dyn_res: None,
