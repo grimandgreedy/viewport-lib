@@ -756,6 +756,7 @@ impl ViewportRenderer {
         vp_idx: usize,
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
+        self.check_output_format(output_view);
         // Draw the LOD-resolved surfaces from prepare (level mesh chosen,
         // culled items hidden), extended with the boundary draws contributed
         // by opaque volume meshes (see the matching construction in
@@ -931,9 +932,35 @@ impl ViewportRenderer {
         cmd_buf
     }
 
+    /// Panic, naming both formats, when `output_view`'s texture cannot be drawn
+    /// by pipelines compiled for the renderer's format. Without this the first
+    /// pass to bind a pipeline fails wgpu validation with a message about that
+    /// pass, not about the target.
+    ///
+    /// A view does not expose its own format, only its texture's, so one
+    /// reinterpretation is allowed: a linear texture rendered through an sRGB
+    /// view by a renderer created for the sRGB format.
+    fn check_output_format(&self, output_view: &crate::gpu::TextureView) {
+        let texture = output_view.texture().format();
+        let target = self.resources.target_format;
+        if texture != target && texture.add_srgb_suffix() != target {
+            panic!(
+                "viewport-lib: the output view's texture is {texture:?}, but this renderer was \
+                 created for {target:?} and every pipeline is compiled for that format. Create \
+                 the renderer with the format of the target it draws into, or draw into a \
+                 texture of the renderer's format."
+            );
+        }
+    }
+
     /// Render a frame into `output_view` and submit it, without reading anything
     /// back. `output_view` must be a `RENDER_ATTACHMENT` view in the format the
     /// renderer was created with, sized to `frame.camera.viewport_size`.
+    ///
+    /// # Panics
+    ///
+    /// When `output_view`'s texture is not in the renderer's format (a linear
+    /// texture viewed as the renderer's sRGB format is allowed).
     ///
     /// Unlike [`render_offscreen`](Self::render_offscreen), this neither copies
     /// the result to the CPU nor blocks on the GPU, so the caller can reuse one
