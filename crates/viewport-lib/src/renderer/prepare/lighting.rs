@@ -2,6 +2,7 @@
 //! cascades, shadow atlas uniform, clustered-light build).
 
 use super::*;
+use crate::renderer::shadow_state::LightingWrites;
 
 impl ViewportRenderer {
     /// Compute this frame's lighting: cull and pack lights, allocate point-light
@@ -604,19 +605,22 @@ impl ViewportRenderer {
                 pcss_light_radius: lighting.shadows.pcss_light_radius,
                 atlas_rects,
             };
-            queue.write_buffer(
-                &resources.shadow.info_buf,
-                0,
-                bytemuck::cast_slice(&[shadow_atlas_uniform]),
-            );
-            // Write to all per-viewport slot buffers so each viewport's bind group
-            // references correctly populated shadow info.
-            for slot in viewport_slots {
+            // The shared buffer and every per-viewport copy, only when the
+            // contents changed. A slot made later is seeded from the cache
+            // below, so it never misses a write.
+            if LightingWrites::changed(&mut shadow.written.shadow_info, shadow_atlas_uniform) {
                 queue.write_buffer(
-                    &slot.shadow_info_buf,
+                    &resources.shadow.info_buf,
                     0,
                     bytemuck::cast_slice(&[shadow_atlas_uniform]),
                 );
+                for slot in viewport_slots {
+                    queue.write_buffer(
+                        &slot.shadow_info_buf,
+                        0,
+                        bytemuck::cast_slice(&[shadow_atlas_uniform]),
+                    );
+                }
             }
             // Cache for viewport slots created later in the frame: a new slot's
             // buffer is seeded from this so its first frame does not sample
@@ -681,15 +685,19 @@ impl ViewportRenderer {
             env_zone_count: resources.ibl.env_zone_count,
             _pad_dbg: [0u32; 2],
         };
-        queue.write_buffer(
-            &resources.lighting.uniform_buf,
-            0,
-            bytemuck::cast_slice(&[lights_uniform]),
-        );
+        if LightingWrites::changed(&mut shadow.written.lights, lights_uniform) {
+            queue.write_buffer(
+                &resources.lighting.uniform_buf,
+                0,
+                bytemuck::cast_slice(&[lights_uniform]),
+            );
+        }
         // Upload the per-light array to the storage buffer at binding 13.
         // Slots past `count` are left as-is; the shader bounds its loop on
         // `lights_uniform.count` so stale tail entries are never sampled.
-        if !lights_packed.is_empty() {
+        if !lights_packed.is_empty()
+            && LightingWrites::slice_changed(&mut shadow.written.light_storage, &lights_packed)
+        {
             queue.write_buffer(
                 &resources.lighting.storage_buf,
                 0,
@@ -807,7 +815,9 @@ impl ViewportRenderer {
                 proj_scale: [tan_half_fov_x, tan_half_fov_y, 0.0, 0.0],
                 view: view_mat.to_cols_array_2d(),
             };
-            resources.clustered.write_grid_uniform(queue, &grid_uniform);
+            if LightingWrites::changed(&mut shadow.written.cluster_grid, grid_uniform) {
+                resources.clustered.write_grid_uniform(queue, &grid_uniform);
+            }
 
             // Build the view-space ActiveLight array. Order matches
             // `lights_packed` / `light_storage_buf` so light_indices[j] from
@@ -850,14 +860,12 @@ impl ViewportRenderer {
                     }
                 })
                 .collect();
-            resources
-                .clustered
-                .write_active_lights(queue, &active_lights);
+            if LightingWrites::slice_changed(&mut shadow.written.active_lights, &active_lights) {
+                resources
+                    .clustered
+                    .write_active_lights(queue, &active_lights);
+            }
 
-            let mut encoder =
-                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-                    label: Some("cluster_frame_encoder"),
-                });
             // Pass 0 when below threshold so dispatch_frame runs the clear
             // (keeping the buffers in a defined state) but skips the build.
             let build_count = if use_clusters { active_count } else { 0 };
@@ -872,10 +880,17 @@ impl ViewportRenderer {
             } else {
                 None
             };
-            resources
-                .clustered
-                .dispatch_frame(&mut encoder, build_count, cluster_ts);
-            sink.push(encoder.finish());
+            // Nothing to build and nothing to clear: no command buffer.
+            if build_count > 0 || resources.clustered.grid_dirty() {
+                let mut encoder =
+                    device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                        label: Some("cluster_frame_encoder"),
+                    });
+                resources
+                    .clustered
+                    .dispatch_frame(&mut encoder, build_count, cluster_ts);
+                sink.push(encoder.finish());
+            }
 
             // Optional host readback for the debug stats panel. Synchronous;
             // off by default.
@@ -893,11 +908,14 @@ impl ViewportRenderer {
         // cascade slots up-front; the cascade loop then selects per-slot via dynamic offset.
         const SHADOW_SLOT_STRIDE: u64 = 256;
         for c in 0..4usize {
-            queue.write_buffer(
-                &resources.shadow.uniform_buf,
-                c as u64 * SHADOW_SLOT_STRIDE,
-                bytemuck::cast_slice(&cascade_view_projs[c].to_cols_array_2d()),
-            );
+            let m = cascade_view_projs[c].to_cols_array_2d();
+            if LightingWrites::changed(&mut shadow.written.cascades[c], m) {
+                queue.write_buffer(
+                    &resources.shadow.uniform_buf,
+                    c as u64 * SHADOW_SLOT_STRIDE,
+                    bytemuck::cast_slice(&m),
+                );
+            }
         }
 
         LightingFrame {

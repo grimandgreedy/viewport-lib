@@ -659,6 +659,10 @@ pub struct DeviceResources {
     /// depth for occlusion culling.
     pub(crate) hiz_pipelines:
         std::sync::OnceLock<std::sync::Arc<crate::resources::gpu::hiz::HizPipelines>>,
+    /// The material table and instance custom data as last uploaded, so an
+    /// unchanged table is not written again.
+    pub(crate) material_gpu_written: Vec<u8>,
+    pub(crate) custom_data_written: Vec<u8>,
     /// Cancels and waits for this renderer's compiles when it is dropped.
     pub(crate) pipeline_compiler_shutdown: crate::resources::pipeline_slot::CompilerShutdown,
     /// Bumped by `free_texture` and `free_mesh`. The per-object draw cache
@@ -1037,12 +1041,17 @@ impl DeviceResources {
         let n = entries
             .len()
             .min(crate::resources::material_gpu::MATERIAL_GPU_CAPACITY);
-        queue.write_buffer(
-            &self.material_gpu_buf,
-            0,
-            bytemuck::cast_slice(&entries[..n]),
-        );
-        let bytes = (n * std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>()) as u64;
+        // Prepare runs this once for the scene and again per viewport, and a
+        // static scene's table does not change between frames: write only
+        // what differs from the last upload.
+        let data: &[u8] = bytemuck::cast_slice(&entries[..n]);
+        if self.material_gpu_written.as_slice() == data {
+            return;
+        }
+        queue.write_buffer(&self.material_gpu_buf, 0, data);
+        self.material_gpu_written.clear();
+        self.material_gpu_written.extend_from_slice(data);
+        let bytes = data.len() as u64;
         if self.material_gpu_builder.overflowed {
             tracing::warn!(
                 capacity = crate::resources::material_gpu::MATERIAL_GPU_CAPACITY,
@@ -1094,15 +1103,19 @@ impl DeviceResources {
             self.instance_custom_data_buf = Self::create_custom_data_buffer(device, capacity);
             self.instance_custom_data_capacity = capacity;
             self.camera_bind_groups_dirty = true;
+            self.custom_data_written.clear();
         }
         let entries = self.custom_data_builder.entries();
-        queue.write_buffer(
-            &self.instance_custom_data_buf,
-            0,
-            bytemuck::cast_slice(&entries[..n]),
-        );
-        let bytes =
-            (n * std::mem::size_of::<crate::resources::custom_data::InstanceCustomData>()) as u64;
+        // Unchanged since the last upload: nothing to write (see
+        // `upload_material_gpu`).
+        let data: &[u8] = bytemuck::cast_slice(&entries[..n]);
+        if self.custom_data_written.as_slice() == data {
+            return;
+        }
+        queue.write_buffer(&self.instance_custom_data_buf, 0, data);
+        self.custom_data_written.clear();
+        self.custom_data_written.extend_from_slice(data);
+        let bytes = data.len() as u64;
         if self.custom_data_builder.overflowed {
             tracing::warn!(
                 capacity = crate::resources::custom_data::CUSTOM_DATA_CAPACITY,

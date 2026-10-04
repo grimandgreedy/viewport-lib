@@ -2949,6 +2949,7 @@ impl DeviceResources {
             normal_line_buffer: None,
             normal_line_count: 0,
             object_uniform_buf,
+            last_object_uniform: std::sync::Mutex::new(None),
             object_bind_group,
             last_tex_key: (
                 u64::MAX,

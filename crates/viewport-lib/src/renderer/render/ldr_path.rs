@@ -167,7 +167,7 @@ impl ViewportRenderer {
                 // truncated off). When those boundaries are appended to
                 // `scene_items` the bundle no longer covers the full list, so
                 // fall back to the per-item draw path that walks every item.
-                if scene_items.len() == self.prepared_surfaces.len() {
+                if scene_items.len() == self.prepared_surface_count {
                     self.per_object_bundle.as_ref()
                 } else {
                     None

@@ -753,6 +753,39 @@ impl ViewportRenderer {
         vp_idx: usize,
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
+        // Draw the LOD-resolved surfaces from prepare (level mesh chosen,
+        // culled items hidden), extended with the boundary draws contributed
+        // by opaque volume meshes (see the matching construction in
+        // `prepare.rs`). Reading the resolved list rather than the raw
+        // `frame.scene.surfaces` is what carries the LOD swap and cull into
+        // the scene pass. The list is moved out for the frame rather than
+        // cloned, then trimmed back and returned.
+        let mut items = std::mem::take(&mut self.prepared_surfaces);
+        let prepared = items.len();
+        items.extend(
+            frame
+                .scene
+                .volume_meshes
+                .iter()
+                .filter(|item| item.transparency.is_none())
+                .map(|item| item.to_render_item()),
+        );
+        self.prepared_surface_count = prepared;
+        let cmd = self.render_frame_body(device, queue, output_view, vp_idx, frame, &items);
+        items.truncate(prepared);
+        self.prepared_surfaces = items;
+        cmd
+    }
+
+    fn render_frame_body(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        output_view: &crate::gpu::TextureView,
+        vp_idx: usize,
+        frame: &FrameData,
+        scene_items: &[SceneRenderItem],
+    ) -> crate::gpu::CommandBuffer {
         let paint_start = web_time::Instant::now();
         // Reset the per-frame main-pass draw counters; the instanced draw loops
         // bump them through `&self` during encode and they are latched into
@@ -761,25 +794,6 @@ impl ViewportRenderer {
             .store(0, std::sync::atomic::Ordering::Relaxed);
         self.frame_main_draw_commands
             .store(0, std::sync::atomic::Ordering::Relaxed);
-        // Take the LOD-resolved surfaces from prepare (level mesh chosen, culled
-        // items hidden), then extend with the boundary draws contributed by
-        // opaque volume meshes (see the matching construction in `prepare.rs`).
-        // Reading the resolved list rather than the raw `frame.scene.surfaces`
-        // is what carries the LOD swap and cull into the HDR scene pass.
-        let scene_items_owned: Vec<SceneRenderItem> = {
-            let extra = frame
-                .scene
-                .volume_meshes
-                .iter()
-                .filter(|item| item.transparency.is_none())
-                .map(|item| item.to_render_item());
-            self.prepared_surfaces
-                .iter()
-                .cloned()
-                .chain(extra)
-                .collect()
-        };
-        let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
         let bg_colour = background_premultiplied(frame);
         let ppp = frame.camera.pixels_per_point;
@@ -1471,8 +1485,7 @@ impl crate::renderer::ViewportRenderer {
                     }
                     continue;
                 }
-                if let Some(pipeline) = polyline_pipelines.and_then(|ps| ps.get(key, is_hdr))
-                {
+                if let Some(pipeline) = polyline_pipelines.and_then(|ps| ps.get(key, is_hdr)) {
                     render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     render_pass.set_bind_group(1, &pl.bind_group, &[]);

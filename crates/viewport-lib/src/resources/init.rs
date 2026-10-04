@@ -2180,6 +2180,8 @@ impl DeviceResources {
             frame_pipelines_built: std::sync::atomic::AtomicU32::new(0),
             pipeline_compiler: std::sync::Arc::clone(&pipeline_compiler),
             hiz_pipelines: std::sync::OnceLock::new(),
+            material_gpu_written: Vec::new(),
+            custom_data_written: Vec::new(),
             pipeline_compiler_shutdown: crate::resources::pipeline_slot::CompilerShutdown(
                 pipeline_compiler,
             ),

@@ -120,6 +120,9 @@ pub(crate) struct PerObjectState {
     /// 0 of every per-object group-1 bind group. Grown (reallocated) when the
     /// per-frame object count exceeds its capacity.
     pub(crate) object_data_buf: Option<crate::gpu::Buffer>,
+    /// `object_data_buf`'s contents as last written; cleared when the buffer
+    /// is replaced. A static scene's array is not written again.
+    pub(crate) object_data_written: Vec<u8>,
     /// Capacity of `object_data_buf` in `ObjectUniform` elements.
     pub(crate) object_data_capacity: usize,
     /// Bumped whenever `object_data_buf` is reallocated. A change clears
@@ -168,6 +171,7 @@ impl PerObjectState {
         Self {
             material_bind_groups: HashMap::new(),
             object_data_buf: None,
+            object_data_written: Vec::new(),
             object_data_capacity: 0,
             object_data_gen: 0,
             object_indices: Vec::new(),

@@ -24,6 +24,7 @@ fn ensure_object_data_buffer(
         mapped_at_creation: false,
     });
     state.object_data_buf = Some(buf);
+    state.object_data_written.clear();
     state.object_data_capacity = new_cap;
     state.object_data_gen += 1;
     // The previously built bind groups reference the old buffer at binding 0.
@@ -553,12 +554,20 @@ impl ViewportRenderer {
                 // caster case was already a shared-buffer approximation).
                 if shared_written.insert(item.mesh_id) {
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                        queue.write_buffer(
-                            &mesh.object_uniform_buf,
-                            0,
-                            bytemuck::cast_slice(&[obj_uniform]),
-                        );
-                        resources.frame_upload_bytes += std::mem::size_of::<ObjectUniform>() as u64;
+                        let mut last = mesh.last_object_uniform.lock().unwrap();
+                        let unchanged = last.as_ref().is_some_and(|u| {
+                            bytemuck::bytes_of(u) == bytemuck::bytes_of(&obj_uniform)
+                        });
+                        if !unchanged {
+                            queue.write_buffer(
+                                &mesh.object_uniform_buf,
+                                0,
+                                bytemuck::cast_slice(&[obj_uniform]),
+                            );
+                            *last = Some(obj_uniform);
+                            resources.frame_upload_bytes +=
+                                std::mem::size_of::<ObjectUniform>() as u64;
+                        }
                     }
                 }
 
@@ -612,10 +621,14 @@ impl ViewportRenderer {
             // bind groups against it (deduped by mesh+material fingerprint).
             ensure_object_data_buffer(mesh_uniforms, device, object_data.len());
             if !object_data.is_empty() {
-                if let Some(buf) = mesh_uniforms.object_data_buf.as_ref() {
-                    queue.write_buffer(buf, 0, bytemuck::cast_slice(&object_data));
-                    resources.frame_upload_bytes +=
-                        (object_data.len() * std::mem::size_of::<ObjectUniform>()) as u64;
+                let data: &[u8] = bytemuck::cast_slice(&object_data);
+                if let Some(buf) = mesh_uniforms.object_data_buf.as_ref()
+                    && mesh_uniforms.object_data_written.as_slice() != data
+                {
+                    queue.write_buffer(buf, 0, data);
+                    resources.frame_upload_bytes += data.len() as u64;
+                    mesh_uniforms.object_data_written.clear();
+                    mesh_uniforms.object_data_written.extend_from_slice(data);
                 }
             }
             let data_gen = mesh_uniforms.object_data_gen;

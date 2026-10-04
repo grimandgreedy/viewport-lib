@@ -63,14 +63,10 @@ impl ViewportRenderer {
             }
             h.finish()
         };
-        // Shadow-pass instrumentation. The stall reported on some mobile backends
-        // shows up at `present` because the shadow depth work is GPU-bound and only
-        // forced to completion later. When the `viewport_lib::shadow` target is
-        // enabled at debug level, bracket the pass and poll the device to completion
-        // so the shadow GPU cost is attributed here instead of hiding inside present.
-        // The poll is skipped entirely (zero overhead) when the target is off.
-        // Enable with `RUST_LOG=viewport_lib::shadow=debug`. For non-perturbing
-        // timing in shipping builds, use GPU timestamp queries instead.
+        // Shadow-pass instrumentation: with the `viewport_lib::shadow` target
+        // at debug level, log the pass's CPU encode time and counts
+        // (`RUST_LOG=viewport_lib::shadow=debug`). Its GPU time is in the GPU
+        // timestamps.
         let shadow_instrument =
             tracing::enabled!(target: "viewport_lib::shadow", tracing::Level::DEBUG);
         let shadow_start = web_time::Instant::now();
@@ -1295,6 +1291,9 @@ impl ViewportRenderer {
                         0,
                         bytemuck::cast_slice(&c.item.model),
                     );
+                    // The per-object prepare's record of this buffer no
+                    // longer holds.
+                    *c.mesh.last_object_uniform.lock().unwrap() = None;
                 }
             }
 
@@ -1383,16 +1382,9 @@ impl ViewportRenderer {
         }
 
         if shadow_instrument && lighting.shadows.enabled {
-            // Force the just-submitted shadow work to finish so the measured time
-            // reflects shadow GPU execution rather than landing later at present.
-            // Other work submitted before this point in prepare is minor, so this
-            // is a good attribution of the shadow cost.
-            device
-                .poll(crate::gpu::PollType::Wait {
-                    submission_index: None,
-                    timeout: Some(std::time::Duration::from_millis(2000)),
-                })
-                .ok();
+            // CPU encode time only. The pass's GPU time is in the frame's GPU
+            // timestamps; waiting on the device here to measure it would stall
+            // every frame for anyone with a permissive subscriber.
             tracing::debug!(
                 target: "viewport_lib::shadow",
                 ms = shadow_start.elapsed().as_secs_f32() * 1000.0,
@@ -1400,7 +1392,7 @@ impl ViewportRenderer {
                 atlas = resources.shadow.atlas_size,
                 draws = last_stats.shadow_draw_calls,
                 point_faces = light.point_shadow_faces.len(),
-                "shadow pass + gpu completion"
+                "shadow pass encoded"
             );
         }
     }
