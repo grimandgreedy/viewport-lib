@@ -95,6 +95,7 @@
 
 ### Fixed
 
+- **Mesh uploads no longer stall on large meshes** - the closed-surface check that picks a mesh's shadow caster mode welded vertices in time proportional to the square of a flat face's vertex count, so a 120k-triangle hex boundary took 18 s to upload and a 1.3M-triangle mesh 300 ms. It is now linear (about 56 ms for 1.3M triangles) and runs on the worker thread for `begin_upload_mesh_data` and the volume mesh uploads.
 - **A material plugin with more than one texture no longer fails to build its pipelines** - `recommended_device_limits` now requests the adapter's sampled-texture limit. The scene and per-object bind groups use 15 of the default 16 fragment-stage textures, so a plugin binding two textures exceeded it on a device made with the recommended limits.
 
 - **Opaque and translucent copies of a mesh no longer share an instanced batch** - a batch was drawn opaque or through OIT according to its first item, so mixing opacities on one mesh drew either the opaque copies blended or the translucent ones solid, depending on sort order. Opacity below 1 now splits the batch.
