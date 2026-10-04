@@ -102,7 +102,7 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         self.volumes.allocated_bytes()
     }
 
-    /// Builds the compute pipelines and asks for every render pipeline.
+    /// Asks for the compute pipelines and every render pipeline.
     fn warm(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -111,6 +111,7 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::McGpu::new(device, resources));
+        gpu.request_compute();
         gpu.pipelines.request_all();
     }
 

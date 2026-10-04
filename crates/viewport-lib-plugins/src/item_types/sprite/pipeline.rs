@@ -94,9 +94,9 @@ fn position_layout() -> viewport_lib::gpu::VertexBufferLayout<'static> {
 pub(super) struct SpriteRecipe {
     device: viewport_lib::gpu::Device,
     layout: viewport_lib::gpu::PipelineLayout,
-    shader: viewport_lib::gpu::ShaderModule,
+    shader: viewport_lib::plugin_api::LazyModule,
     lit_layout: viewport_lib::gpu::PipelineLayout,
-    lit_shader: viewport_lib::gpu::ShaderModule,
+    lit_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
 }
@@ -126,9 +126,13 @@ fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline
         }
     };
     let (layout, shader, label) = if key.lit {
-        (&r.lit_layout, &r.lit_shader, "sprite_lit_pipeline_variant")
+        (
+            &r.lit_layout,
+            r.lit_shader.get(),
+            "sprite_lit_pipeline_variant",
+        )
     } else {
-        (&r.layout, &r.shader, "sprite_pipeline_variant")
+        (&r.layout, r.shader.get(), "sprite_pipeline_variant")
     };
     viewport_lib::plugin_api::builders::build_dual_pipeline_variant(
         &r.device,
@@ -176,17 +180,17 @@ pub(super) fn oit_index(lit: bool, blend: viewport_lib::renderer::SpriteBlend) -
 pub(super) struct SpritePassRecipe {
     device: viewport_lib::gpu::Device,
     layout: viewport_lib::gpu::PipelineLayout,
-    shader: viewport_lib::gpu::ShaderModule,
+    shader: viewport_lib::plugin_api::LazyModule,
     refraction_layout: viewport_lib::gpu::PipelineLayout,
-    refraction_shader: viewport_lib::gpu::ShaderModule,
+    refraction_shader: viewport_lib::plugin_api::LazyModule,
     oit_layout: viewport_lib::gpu::PipelineLayout,
-    oit_shader: viewport_lib::gpu::ShaderModule,
+    oit_shader: viewport_lib::plugin_api::LazyModule,
     oit_lit_layout: viewport_lib::gpu::PipelineLayout,
-    oit_lit_shader: viewport_lib::gpu::ShaderModule,
+    oit_lit_shader: viewport_lib::plugin_api::LazyModule,
     mask_layout: viewport_lib::gpu::PipelineLayout,
-    mask_shader: viewport_lib::gpu::ShaderModule,
+    mask_shader: viewport_lib::plugin_api::LazyModule,
     pick_layout: viewport_lib::gpu::PipelineLayout,
-    pick_shader: viewport_lib::gpu::ShaderModule,
+    pick_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
 }
 
@@ -204,11 +208,11 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
             viewport_lib::plugin_api::builders::RenderPipelineDesc {
                 label: "sprite_refraction_pipeline",
                 layout: &r.refraction_layout,
-                vertex_module: &r.refraction_shader,
+                vertex_module: r.refraction_shader.get(),
                 vertex_entry: "vs_main",
                 vertex_buffers: &vertex_buffers,
                 fragment: Some(viewport_lib::gpu::FragmentState {
-                    module: &r.refraction_shader,
+                    module: r.refraction_shader.get(),
                     entry_point: Some("fs_main"),
                     targets: &[Some(viewport_lib::gpu::ColorTargetState {
                         format: viewport_lib::gpu::TextureFormat::Rgba16Float,
@@ -238,11 +242,11 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
             viewport_lib::plugin_api::builders::RenderPipelineDesc {
                 label: "sprite_pick_pipeline",
                 layout: &r.pick_layout,
-                vertex_module: &r.pick_shader,
+                vertex_module: r.pick_shader.get(),
                 vertex_entry: "vs_main",
                 vertex_buffers: &vertex_buffers,
                 fragment: Some(viewport_lib::gpu::FragmentState {
-                    module: &r.pick_shader,
+                    module: r.pick_shader.get(),
                     entry_point: Some("fs_main"),
                     targets: &[
                         Some(viewport_lib::gpu::ColorTargetState {
@@ -283,7 +287,7 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
             &r.device,
             "sprite_outline_mask_pipeline",
             &r.mask_layout,
-            &r.mask_shader,
+            r.mask_shader.get(),
             viewport_lib::gpu::TextureFormat::R8Unorm,
             &vertex_buffers,
             None,
@@ -297,7 +301,7 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
             &r.device,
             "sprite_surface_mask_pipeline",
             &r.layout,
-            &r.shader,
+            r.shader.get(),
             &vertex_buffers,
             None,
         ),
@@ -308,25 +312,25 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
             let (layout, shader, entry, label) = match i {
                 OIT => (
                     &r.oit_layout,
-                    &r.oit_shader,
+                    r.oit_shader.get(),
                     "fs_oit",
                     "sprite_oit_pipeline",
                 ),
                 OIT_PREMULTIPLIED => (
                     &r.oit_layout,
-                    &r.oit_shader,
+                    r.oit_shader.get(),
                     "fs_oit_premultiplied",
                     "sprite_oit_pipeline_premultiplied",
                 ),
                 OIT_LIT => (
                     &r.oit_lit_layout,
-                    &r.oit_lit_shader,
+                    r.oit_lit_shader.get(),
                     "fs_oit",
                     "sprite_lit_oit_pipeline",
                 ),
                 _ => (
                     &r.oit_lit_layout,
-                    &r.oit_lit_shader,
+                    r.oit_lit_shader.get(),
                     "fs_oit_premultiplied",
                     "sprite_lit_oit_pipeline_premultiplied",
                 ),
@@ -450,7 +454,7 @@ impl SpriteGpu {
             ],
         });
 
-        let shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let shader = resources.lazy_module(
             device,
             "sprite_shader",
             &crate::item_types::shader::scene_shader(
@@ -474,7 +478,7 @@ impl SpriteGpu {
             device,
             "sprite_refraction_sampler",
         );
-        let refraction_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let refraction_shader = resources.lazy_module(
             device,
             "sprite_refraction_shader",
             &crate::item_types::shader::scene_shader(
@@ -491,7 +495,7 @@ impl SpriteGpu {
         // Lit sprites. Group 0 already carries the lights; group 2 is the
         // soft-particle depth, as for the unlit path, and group 3 the optional
         // normal map.
-        let lit_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let lit_shader = resources.lazy_module(
             device,
             "sprite_lit_shader",
             &crate::item_types::shader::lit_shader(
@@ -534,7 +538,7 @@ impl SpriteGpu {
         // `SpriteGpuData::oit_eligible`); everything else keeps drawing through
         // the colour variants. Each OIT shader exposes `fs_oit` and
         // `fs_oit_premultiplied` from one module.
-        let oit_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let oit_shader = resources.lazy_module(
             device,
             "sprite_oit_shader",
             &crate::item_types::shader::scene_shader(
@@ -542,7 +546,7 @@ impl SpriteGpu {
                 crate::item_types::shader::wgsl_source!("sprite_oit"),
             ),
         );
-        let oit_lit_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let oit_lit_shader = resources.lazy_module(
             device,
             "sprite_lit_oit_shader",
             &crate::item_types::shader::lit_shader(
@@ -564,7 +568,7 @@ impl SpriteGpu {
             &[group0, bgl, lit_bgl],
         );
 
-        let mask_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let mask_shader = resources.lazy_module(
             device,
             "sprite_outline_mask_shader",
             &crate::item_types::shader::scene_shader(
@@ -593,7 +597,7 @@ impl SpriteGpu {
                     count: None,
                 }],
             });
-        let pick_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let pick_shader = resources.lazy_module(
             device,
             "sprite_pick_shader",
             &crate::item_types::shader::scene_shader(

@@ -287,13 +287,13 @@ pub(crate) struct DecalRecipe {
     device: viewport_lib::gpu::Device,
     builder: viewport_lib::plugin_api::PipelineBuilder,
     layout: viewport_lib::gpu::PipelineLayout,
-    shader: viewport_lib::gpu::ShaderModule,
+    shader: viewport_lib::plugin_api::LazyModule,
     mask_layout: viewport_lib::gpu::PipelineLayout,
-    mask_shader: viewport_lib::gpu::ShaderModule,
+    mask_shader: viewport_lib::plugin_api::LazyModule,
     edge_layout: viewport_lib::gpu::PipelineLayout,
-    edge_shader: viewport_lib::gpu::ShaderModule,
+    edge_shader: viewport_lib::plugin_api::LazyModule,
     pick_bgl: viewport_lib::gpu::BindGroupLayout,
-    pick_shader: viewport_lib::gpu::ShaderModule,
+    pick_shader: viewport_lib::plugin_api::LazyModule,
 }
 
 /// The three projection blends, the outline mask and edge pipelines, and the
@@ -340,7 +340,7 @@ fn build(r: &DecalRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 &r.device,
                 "decal_pipeline",
                 &r.layout,
-                &r.shader,
+                r.shader.get(),
                 viewport_lib::gpu::TextureFormat::Rgba16Float,
                 Some(blend),
             )
@@ -350,7 +350,7 @@ fn build(r: &DecalRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &r.device,
             "decal_outline_mask_pipeline",
             &r.mask_layout,
-            &r.mask_shader,
+            r.mask_shader.get(),
             viewport_lib::resources::MASK_COLOR_FORMAT,
             None,
         ),
@@ -359,7 +359,7 @@ fn build(r: &DecalRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &r.device,
             "decal_outline_edge_pipeline",
             &r.edge_layout,
-            &r.edge_shader,
+            r.edge_shader.get(),
             viewport_lib::gpu::TextureFormat::Rgba16Float,
             Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
         ),
@@ -378,7 +378,7 @@ fn build(r: &DecalRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             };
             let mut opts = viewport_lib::resources::PluginPipelineOpts::new(
                 Some("decal_pick_pipeline"),
-                &r.pick_shader,
+                r.pick_shader.get(),
                 "vs_main",
                 "fs_main",
                 std::slice::from_ref(&vertex_layout),
@@ -524,11 +524,7 @@ impl DecalGpu {
                 ],
             });
 
-        let shader = viewport_lib::plugin_api::builders::wgsl_module(
-            device,
-            "decal_shader",
-            &decal_source(),
-        );
+        let shader = resources.lazy_module(device, "decal_shader", &decal_source());
         let layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "decal_pipeline_layout",
@@ -537,18 +533,15 @@ impl DecalGpu {
 
         // The outline mask reuses the colour pass's three bind groups, so it
         // needs no per-decal resources of its own.
-        let mask_shader = viewport_lib::plugin_api::builders::wgsl_module(
-            device,
-            "decal_outline_mask_shader",
-            &outline_mask_source(),
-        );
+        let mask_shader =
+            resources.lazy_module(device, "decal_outline_mask_shader", &outline_mask_source());
         let mask_layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "decal_outline_mask_layout",
             &[camera_bgl, &depth_bgl, &item_bgl],
         );
 
-        let edge_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let edge_shader = resources.lazy_module(
             device,
             "decal_outline_edge_shader",
             shared_wgsl::SHARED_OUTLINE_EDGE_WGSL,
@@ -586,11 +579,7 @@ impl DecalGpu {
                         | viewport_lib::gpu::ShaderStages::FRAGMENT,
                 )],
             });
-        let pick_shader = viewport_lib::plugin_api::builders::wgsl_module(
-            device,
-            "decal_pick_shader",
-            &pick_source(),
-        );
+        let pick_shader = resources.lazy_module(device, "decal_pick_shader", &pick_source());
 
         let positions: [[f32; 3]; 8] = [
             [-0.5, -0.5, -0.5],

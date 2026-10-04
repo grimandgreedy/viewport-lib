@@ -119,9 +119,9 @@ struct RibbonRecipe {
     device: viewport_lib::gpu::Device,
     builder: viewport_lib::plugin_api::PipelineBuilder,
     layout: viewport_lib::gpu::PipelineLayout,
-    shader: viewport_lib::gpu::ShaderModule,
-    oit_shader: viewport_lib::gpu::ShaderModule,
-    shadow_shader: viewport_lib::gpu::ShaderModule,
+    shader: viewport_lib::plugin_api::LazyModule,
+    oit_shader: viewport_lib::plugin_api::LazyModule,
+    shadow_shader: viewport_lib::plugin_api::LazyModule,
     bgl: viewport_lib::gpu::BindGroupLayout,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
@@ -181,7 +181,7 @@ fn build_variant(r: &RibbonRecipe, key: RibbonKey, hdr: bool) -> viewport_lib::g
         &DualPipelineDesc {
             label: "ribbon_pipeline_variant",
             layout: &r.layout,
-            shader: &r.shader,
+            shader: r.shader.get(),
             vertex_entry: "vs_main",
             fragment_entry: "fs_main",
             vertex_buffers: &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
@@ -216,11 +216,11 @@ fn build_oit(r: &RibbonRecipe, premultiplied: bool) -> viewport_lib::gpu::Render
         viewport_lib::plugin_api::builders::RenderPipelineDesc {
             label,
             layout: &r.layout,
-            vertex_module: &r.oit_shader,
+            vertex_module: r.oit_shader.get(),
             vertex_entry: "vs_main",
             vertex_buffers: &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
             fragment: Some(viewport_lib::gpu::FragmentState {
-                module: &r.oit_shader,
+                module: r.oit_shader.get(),
                 entry_point: Some(entry),
                 targets: &[
                     Some(viewport_lib::gpu::ColorTargetState {
@@ -263,7 +263,7 @@ fn build_shadow(r: &RibbonRecipe) -> viewport_lib::gpu::RenderPipeline {
     let shadow_vertex_layouts = [super::pipeline::position_only_layout()];
     let mut shadow_opts = viewport_lib::resources::PluginPipelineOpts::new(
         Some("ribbon_shadow_pipeline"),
-        &r.shadow_shader,
+        r.shadow_shader.get(),
         "vs_main",
         "",
         &shadow_vertex_layouts,
@@ -290,9 +290,9 @@ impl RibbonGpu {
         resources: &DeviceResources,
         layouts: &super::store::RibbonResources,
     ) -> Self {
-        use viewport_lib::plugin_api::builders::{standard_scene_layout, wgsl_module};
+        use viewport_lib::plugin_api::builders::standard_scene_layout;
 
-        let shader = wgsl_module(
+        let shader = resources.lazy_module(
             device,
             "ribbon_shader",
             &crate::item_types::shader::lit_shader(
@@ -300,7 +300,7 @@ impl RibbonGpu {
                 crate::item_types::shader::wgsl_source!("ribbon"),
             ),
         );
-        let oit_shader = wgsl_module(
+        let oit_shader = resources.lazy_module(
             device,
             "ribbon_oit_shader",
             &crate::item_types::shader::lit_shader(
@@ -308,7 +308,7 @@ impl RibbonGpu {
                 crate::item_types::shader::wgsl_source!("ribbon_oit"),
             ),
         );
-        let shadow_shader = wgsl_module(
+        let shadow_shader = resources.lazy_module(
             device,
             "ribbon_shadow_shader",
             crate::item_types::shader::wgsl_source!("ribbon_shadow"),

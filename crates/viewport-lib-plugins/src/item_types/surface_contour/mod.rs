@@ -183,7 +183,7 @@ fn level_spacing(levels: &mut [f32]) -> f32 {
 struct ContourRecipe {
     device: viewport_lib::gpu::Device,
     layout: viewport_lib::gpu::PipelineLayout,
-    shader: viewport_lib::gpu::ShaderModule,
+    shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
 }
@@ -213,11 +213,11 @@ fn build_contour(r: &ContourRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
         builders::RenderPipelineDesc {
             label: "surface_contour_pipeline",
             layout: &r.layout,
-            vertex_module: &r.shader,
+            vertex_module: r.shader.get(),
             vertex_entry: "vs_main",
             vertex_buffers: &[position_layout, builders::scalar_attribute_layout(1)],
             fragment: Some(viewport_lib::gpu::FragmentState {
-                module: &r.shader,
+                module: r.shader.get(),
                 entry_point: Some("fs_main"),
                 targets: &[Some(viewport_lib::gpu::ColorTargetState {
                     format,
@@ -277,7 +277,7 @@ impl ContourGpu {
             "surface_contour_layout",
             &[resources.shared_bindings().group0_layout, &bgl],
         );
-        let shader = builders::wgsl_module(device, "surface_contour", &shader_source());
+        let shader = resources.lazy_module(device, "surface_contour", &shader_source());
         let pipelines = resources.lazy_pipelines(
             ContourRecipe {
                 device: device.clone(),

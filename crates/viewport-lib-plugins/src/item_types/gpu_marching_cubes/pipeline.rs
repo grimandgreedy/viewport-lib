@@ -56,12 +56,12 @@ pub(super) struct McRecipe {
     device: viewport_lib::gpu::Device,
     builder: viewport_lib::plugin_api::PipelineBuilder,
     surface_layout: viewport_lib::gpu::PipelineLayout,
-    surface_shader: viewport_lib::gpu::ShaderModule,
+    surface_shader: viewport_lib::plugin_api::LazyModule,
     wireframe_layout: viewport_lib::gpu::PipelineLayout,
-    wireframe_shader: viewport_lib::gpu::ShaderModule,
-    shadow_shader: viewport_lib::gpu::ShaderModule,
-    mask_shader: viewport_lib::gpu::ShaderModule,
-    pick_shader: viewport_lib::gpu::ShaderModule,
+    wireframe_shader: viewport_lib::plugin_api::LazyModule,
+    shadow_shader: viewport_lib::plugin_api::LazyModule,
+    mask_shader: viewport_lib::plugin_api::LazyModule,
+    pick_shader: viewport_lib::plugin_api::LazyModule,
     pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
     ldr_format: viewport_lib::gpu::TextureFormat,
 }
@@ -83,7 +83,7 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &DualPipelineDesc {
                 label: "mc_surface_pipeline",
                 layout: &r.surface_layout,
-                shader: &r.surface_shader,
+                shader: r.surface_shader.get(),
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[MC_SURFACE_VERTEX_LAYOUT],
@@ -102,7 +102,7 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &DualPipelineDesc {
                 label: "mc_wireframe_pipeline",
                 layout: &r.wireframe_layout,
-                shader: &r.wireframe_shader,
+                shader: r.wireframe_shader.get(),
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[], // positions read from storage buffer
@@ -125,7 +125,7 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
         SHADOW => {
             let mut opts = viewport_lib::resources::PluginPipelineOpts::new(
                 Some("mc_shadow_pipeline"),
-                &r.shadow_shader,
+                r.shadow_shader.get(),
                 "vs_main",
                 "",
                 &[MC_SURFACE_VERTEX_LAYOUT],
@@ -150,7 +150,7 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 extra_bind_group_layouts: &[],
                 ..viewport_lib::resources::PluginPipelineOpts::new(
                     Some("mc_outline_mask_pipeline"),
-                    &r.mask_shader,
+                    r.mask_shader.get(),
                     "vs_main",
                     "fs_main",
                     &[MC_VERTEX_LAYOUT],
@@ -166,7 +166,7 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 extra_bind_group_layouts: &[],
                 ..viewport_lib::resources::PluginPipelineOpts::new(
                     Some("mc_surface_mask_pipeline"),
-                    &r.mask_shader,
+                    r.mask_shader.get(),
                     "vs_main",
                     "fs_main",
                     &[MC_VERTEX_LAYOUT],
@@ -182,7 +182,7 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 extra_bind_group_layouts: &[&r.pick_id_bgl],
                 ..viewport_lib::resources::PluginPipelineOpts::new(
                     Some("mc_pick_pipeline"),
-                    &r.pick_shader,
+                    r.pick_shader.get(),
                     "vs_main",
                     "fs_main",
                     &[MC_VERTEX_LAYOUT],
@@ -192,12 +192,41 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
     }
 }
 
+/// What the three compute builds read: a layout and a module per stage.
+pub(super) struct McComputeRecipe {
+    device: viewport_lib::gpu::Device,
+    stages: [(
+        &'static str,
+        viewport_lib::gpu::PipelineLayout,
+        viewport_lib::plugin_api::LazyModule,
+    ); 3],
+}
+
+const CLASSIFY: usize = 0;
+const PREFIX_SUM: usize = 1;
+const GENERATE: usize = 2;
+
+fn build_compute(r: &McComputeRecipe, i: usize) -> viewport_lib::gpu::ComputePipeline {
+    let (label, layout, shader) = &r.stages[i];
+    viewport_lib::plugin_api::builders::compute_pipeline(
+        &r.device,
+        label,
+        layout,
+        shader.get(),
+        "main",
+    )
+}
+
 /// Pipelines, layouts, and case tables, made on the first prepare with items.
-/// The compute pipelines are built here; the render pipelines on first use.
+/// Every pipeline is built the first time a frame needs it.
 pub(super) struct McGpu {
-    classify_pipeline: viewport_lib::gpu::ComputePipeline,
-    prefix_sum_pipeline: viewport_lib::gpu::ComputePipeline,
-    generate_pipeline: viewport_lib::gpu::ComputePipeline,
+    /// Classify, prefix sum and generate. Until all three are built a frame
+    /// extracts and draws nothing, since the draw reads what they write.
+    compute: viewport_lib::plugin_api::LazyPipelines<
+        McComputeRecipe,
+        3,
+        viewport_lib::gpu::ComputePipeline,
+    >,
     pub(super) pipelines: McPipelines,
     pub(super) pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
     wireframe_render_bgl: viewport_lib::gpu::BindGroupLayout,
@@ -285,25 +314,15 @@ impl McGpu {
         // ----------------------------------------------------------------
         // Compute pipelines.
         // ----------------------------------------------------------------
-        let classify_shader = viewport_lib::plugin_api::builders::wgsl_module(
-            device,
-            "mc_classify_shader",
-            wgsl_source!("mc_classify"),
-        );
+        let classify_shader =
+            resources.lazy_module(device, "mc_classify_shader", wgsl_source!("mc_classify"));
         let classify_layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "mc_classify_layout",
             &[&classify_bgl],
         );
-        let classify_pipeline = viewport_lib::plugin_api::builders::compute_pipeline(
-            device,
-            "mc_classify_pipeline",
-            &classify_layout,
-            &classify_shader,
-            "main",
-        );
 
-        let prefix_sum_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let prefix_sum_shader = resources.lazy_module(
             device,
             "mc_prefix_sum_shader",
             wgsl_source!("mc_prefix_sum"),
@@ -313,36 +332,35 @@ impl McGpu {
             "mc_prefix_sum_layout",
             &[&prefix_sum_bgl],
         );
-        let prefix_sum_pipeline = viewport_lib::plugin_api::builders::compute_pipeline(
-            device,
-            "mc_prefix_sum_pipeline",
-            &prefix_sum_layout,
-            &prefix_sum_shader,
-            "main",
-        );
 
-        let generate_shader = viewport_lib::plugin_api::builders::wgsl_module(
-            device,
-            "mc_generate_shader",
-            wgsl_source!("mc_generate"),
-        );
+        let generate_shader =
+            resources.lazy_module(device, "mc_generate_shader", wgsl_source!("mc_generate"));
         let generate_layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "mc_generate_layout",
             &[&generate_bgl],
         );
-        let generate_pipeline = viewport_lib::plugin_api::builders::compute_pipeline(
-            device,
-            "mc_generate_pipeline",
-            &generate_layout,
-            &generate_shader,
-            "main",
+
+        let compute = resources.lazy_compute_pipelines(
+            McComputeRecipe {
+                device: device.clone(),
+                stages: [
+                    ("mc_classify_pipeline", classify_layout, classify_shader),
+                    (
+                        "mc_prefix_sum_pipeline",
+                        prefix_sum_layout,
+                        prefix_sum_shader,
+                    ),
+                    ("mc_generate_pipeline", generate_layout, generate_shader),
+                ],
+            },
+            build_compute,
         );
 
         // ----------------------------------------------------------------
         // Surface render pipeline.
         // ----------------------------------------------------------------
-        let surface_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let surface_shader = resources.lazy_module(
             device,
             "mc_surface_shader",
             &lit_shader(&[shared_wgsl::SHARED_CSM_WGSL], wgsl_source!("mc_surface")),
@@ -354,11 +372,8 @@ impl McGpu {
             &render_bgl,
         );
 
-        let shadow_shader = viewport_lib::plugin_api::builders::wgsl_module(
-            device,
-            "mc_shadow_shader",
-            wgsl_source!("mc_shadow"),
-        );
+        let shadow_shader =
+            resources.lazy_module(device, "mc_shadow_shader", wgsl_source!("mc_shadow"));
 
         // ----------------------------------------------------------------
         // Wireframe render pipeline.
@@ -378,7 +393,7 @@ impl McGpu {
                 }],
             });
 
-        let wireframe_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let wireframe_shader = resources.lazy_module(
             device,
             "mc_wireframe_shader",
             &scene_shader(&[], wgsl_source!("mc_wireframe")),
@@ -389,7 +404,7 @@ impl McGpu {
             resources.shared_bindings().group0_layout,
             &wireframe_render_bgl,
         );
-        let mask_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let mask_shader = resources.lazy_module(
             device,
             "mc_outline_mask_shader",
             &scene_shader(&[], wgsl_source!("mc_outline_mask")),
@@ -410,7 +425,7 @@ impl McGpu {
                     count: None,
                 }],
             });
-        let pick_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let pick_shader = resources.lazy_module(
             device,
             "mc_pick_shader",
             &scene_shader(&[], wgsl_source!("mc_pick")),
@@ -433,9 +448,7 @@ impl McGpu {
         );
 
         Self {
-            classify_pipeline,
-            prefix_sum_pipeline,
-            generate_pipeline,
+            compute,
             pipelines,
             pick_id_bgl,
             wireframe_render_bgl,
@@ -486,6 +499,11 @@ impl McGpu {
         Some((buf, bg))
     }
 
+    /// Ask for the three compute pipelines, for a warm-up.
+    pub(super) fn request_compute(&self) {
+        self.compute.request_all();
+    }
+
     /// Dispatch the three compute passes for every submitted item and build
     /// the per-item draw data. Returns the encoded work for the lib's
     /// deferred-submit sink alongside it.
@@ -499,9 +517,14 @@ impl McGpu {
             return (Vec::new(), None);
         }
 
-        let classify_pipeline = &self.classify_pipeline;
-        let prefix_sum_pipeline = &self.prefix_sum_pipeline;
-        let generate_pipeline = &self.generate_pipeline;
+        let (Some(classify_pipeline), Some(prefix_sum_pipeline), Some(generate_pipeline)) = (
+            self.compute.get(CLASSIFY),
+            self.compute.get(PREFIX_SUM),
+            self.compute.get(GENERATE),
+        ) else {
+            // Still compiling: no extraction, so no draw, this frame.
+            return (Vec::new(), None);
+        };
         let classify_bgl = &self.classify_bgl;
         let prefix_sum_bgl = &self.prefix_sum_bgl;
         let generate_bgl = &self.generate_bgl;

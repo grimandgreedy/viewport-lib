@@ -575,3 +575,64 @@ fn a_warmed_mc_type_builds_nothing_on_its_first_frame() {
         "the first marching cubes frames built pipelines after the warm-up: {builds:?}"
     );
 }
+
+/// Under `Background` the isosurface waits for its compute pipelines: a frame
+/// before they are built extracts and draws nothing, and once they are the
+/// image matches a `Blocking` renderer's.
+#[test]
+fn the_isosurface_waits_for_its_compute_under_background() {
+    let _serial = serial();
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let scene = |renderer: &mut viewport_lib::ViewportRenderer, with_item: bool| {
+        let mut frame = sub_object_pick_frame();
+        if with_item {
+            let volume_id = renderer
+                .upload_volume_for_mc(&device, &queue, &radial_field())
+                .expect("mc volume upload");
+            frame
+                .scene
+                .items_mut::<GpuMarchingCubesItem>()
+                .push(GpuMarchingCubesItem {
+                    volume_id,
+                    isovalue: 1.5,
+                    material: Material::default(),
+                    settings: ItemSettings::default(),
+                    cpu_data: None,
+                });
+        }
+        frame
+    };
+
+    let mut blocking = renderer_with_item_types(&device);
+    let frame = scene(&mut blocking, true);
+    let expected = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
+    let mut empty = renderer_with_item_types(&device);
+    let empty_frame = scene(&mut empty, false);
+    let nothing = empty.render_offscreen(&device, &queue, &empty_frame, 64, 64);
+    assert!(expected != nothing, "the isosurface has to be visible");
+
+    let mut background = renderer_with_item_types(&device);
+    background.set_pipeline_compilation(viewport_lib::PipelineCompilation::Background);
+    let frame = scene(&mut background, true);
+    let first = render_presented(&mut background, &device, &queue, &frame, 64, 64);
+    assert!(
+        first == nothing,
+        "the first frame drew an isosurface before its compute was built"
+    );
+
+    background.wait_for_pipelines(&device);
+    let start = std::time::Instant::now();
+    loop {
+        if render_presented(&mut background, &device, &queue, &frame, 64, 64) == expected {
+            break;
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(30),
+            "the background renderer never drew the blocking isosurface"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}

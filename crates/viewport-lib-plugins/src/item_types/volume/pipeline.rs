@@ -17,9 +17,9 @@ pub(super) struct VolumeRecipe {
     device: viewport_lib::gpu::Device,
     builder: viewport_lib::plugin_api::PipelineBuilder,
     layout: viewport_lib::gpu::PipelineLayout,
-    shader: viewport_lib::gpu::ShaderModule,
-    mask_shader: viewport_lib::gpu::ShaderModule,
-    pick_shader: viewport_lib::gpu::ShaderModule,
+    shader: viewport_lib::plugin_api::LazyModule,
+    mask_shader: viewport_lib::plugin_api::LazyModule,
+    pick_shader: viewport_lib::plugin_api::LazyModule,
     bgl: viewport_lib::gpu::BindGroupLayout,
     pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
     sample_count: u32,
@@ -36,7 +36,7 @@ fn build(r: &VolumeRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &viewport_lib::plugin_api::builders::DualPipelineDesc {
                 label: "volume_pipeline",
                 layout: &r.layout,
-                shader: &r.shader,
+                shader: r.shader.get(),
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[CUBE_VERTEX_LAYOUT],
@@ -74,7 +74,7 @@ fn build(r: &VolumeRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 extra_bind_group_layouts: &[&r.bgl],
                 ..viewport_lib::resources::PluginPipelineOpts::new(
                     Some("volume_outline_mask_pipeline"),
-                    &r.mask_shader,
+                    r.mask_shader.get(),
                     "vs_main",
                     "fs_main",
                     &[CUBE_VERTEX_LAYOUT],
@@ -97,7 +97,7 @@ fn build(r: &VolumeRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 extra_bind_group_layouts: &[&r.bgl, &r.pick_id_bgl],
                 ..viewport_lib::resources::PluginPipelineOpts::new(
                     Some("volume_pick_pipeline"),
-                    &r.pick_shader,
+                    r.pick_shader.get(),
                     "vs_main",
                     "fs_pick",
                     &[CUBE_VERTEX_LAYOUT],
@@ -224,7 +224,7 @@ impl VolumeGpu {
             ],
         });
 
-        let shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let shader = resources.lazy_module(
             device,
             "volume_shader",
             &crate::item_types::shader::scene_shader(
@@ -238,7 +238,7 @@ impl VolumeGpu {
             resources.shared_bindings().group0_layout,
             &bgl,
         );
-        let mask_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let mask_shader = resources.lazy_module(
             device,
             "volume_outline_mask_shader",
             &crate::item_types::shader::scene_shader(
@@ -261,7 +261,7 @@ impl VolumeGpu {
                     count: None,
                 }],
             });
-        let pick_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let pick_shader = resources.lazy_module(
             device,
             "volume_pick_shader",
             &crate::item_types::shader::scene_shader(

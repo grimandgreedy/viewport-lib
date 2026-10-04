@@ -801,3 +801,82 @@ fn multi_draw_collapse_is_pixel_identical() {
         stats.shadow_draw_calls,
     );
 }
+
+/// An opaque and a translucent copy of one mesh draw as each does alone,
+/// whichever is submitted first. They used to share a batch whose
+/// transparency came from its first item, so one of the two was drawn wrong.
+#[test]
+fn opaque_and_translucent_copies_of_a_mesh_draw_independently() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    const W: u32 = 128;
+    const H: u32 = 64;
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let at = |x: f32, opacity: f32| {
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        item.settings.opacity = opacity;
+        item
+    };
+    let opaque = at(-1.2, 1.0);
+    let translucent = at(1.2, 0.5);
+    let mut generation = 0;
+    let mut draw = |items: Vec<SceneRenderItem>| {
+        let mut frame = FrameData::default();
+        frame.camera.render_camera = {
+            let mut rc = RenderCamera::from_camera(&Camera {
+                distance: 6.0,
+                ..Camera::default()
+            });
+            rc.aspect = W as f32 / H as f32;
+            rc
+        };
+        frame.camera.viewport_size = [W as f32, H as f32];
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame.effects.lighting.shadows.enabled = false;
+        generation += 1;
+        frame.scene.generation = generation;
+        frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+        renderer.render_offscreen(&device, &queue, &frame, W, H)
+    };
+    // Rows of the left (x < W/2) or right half of an RGBA image.
+    let half = |img: &[u8], left: bool| -> Vec<u8> {
+        img.chunks_exact((W * 4) as usize)
+            .flat_map(|row| {
+                let (l, r) = row.split_at((W / 2 * 4) as usize);
+                if left { l } else { r }.to_vec()
+            })
+            .collect()
+    };
+
+    // Each item alone, with a second copy far off-screen so the frame takes
+    // the instanced path the mixed frames take.
+    let opaque_alone = draw(vec![opaque.clone(), at(100.0, 1.0)]);
+    let translucent_alone = draw(vec![translucent.clone(), at(100.0, 0.5)]);
+    for (name, items) in [
+        ("opaque first", vec![opaque.clone(), translucent.clone()]),
+        (
+            "translucent first",
+            vec![translucent.clone(), opaque.clone()],
+        ),
+    ] {
+        let mixed = draw(items);
+        assert!(
+            half(&mixed, true) == half(&opaque_alone, true),
+            "{name}: the opaque copy did not draw as it does alone"
+        );
+        assert!(
+            half(&mixed, false) == half(&translucent_alone, false),
+            "{name}: the translucent copy did not draw as it does alone"
+        );
+    }
+}

@@ -46,16 +46,16 @@ pub(crate) struct ScatterRecipe {
     device: viewport_lib::gpu::Device,
     builder: viewport_lib::plugin_api::PipelineBuilder,
     march_layout: viewport_lib::gpu::PipelineLayout,
-    march_shader: viewport_lib::gpu::ShaderModule,
+    march_shader: viewport_lib::plugin_api::LazyModule,
     composite_layout: viewport_lib::gpu::PipelineLayout,
-    composite_shader: viewport_lib::gpu::ShaderModule,
+    composite_shader: viewport_lib::plugin_api::LazyModule,
     temporal_layout: viewport_lib::gpu::PipelineLayout,
-    temporal_shader: viewport_lib::gpu::ShaderModule,
+    temporal_shader: viewport_lib::plugin_api::LazyModule,
     refraction_layout: viewport_lib::gpu::PipelineLayout,
-    refraction_shader: viewport_lib::gpu::ShaderModule,
+    refraction_shader: viewport_lib::plugin_api::LazyModule,
     blit_layout: viewport_lib::gpu::PipelineLayout,
-    blit_shader: viewport_lib::gpu::ShaderModule,
-    pick_shader: viewport_lib::gpu::ShaderModule,
+    blit_shader: viewport_lib::plugin_api::LazyModule,
+    pick_shader: viewport_lib::plugin_api::LazyModule,
     pick_bgl: viewport_lib::gpu::BindGroupLayout,
 }
 
@@ -90,11 +90,11 @@ fn build(r: &ScatterRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             viewport_lib::plugin_api::builders::RenderPipelineDesc {
                 label: "scatter_volume_pipeline",
                 layout: &r.march_layout,
-                vertex_module: &r.march_shader,
+                vertex_module: r.march_shader.get(),
                 vertex_entry: "vs_main",
                 vertex_buffers: &[],
                 fragment: Some(viewport_lib::gpu::FragmentState {
-                    module: &r.march_shader,
+                    module: r.march_shader.get(),
                     entry_point: Some("fs_main"),
                     targets: &[Some(viewport_lib::gpu::ColorTargetState {
                         format: hdr,
@@ -120,7 +120,7 @@ fn build(r: &ScatterRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &r.device,
             "scatter_composite_pipeline",
             &r.composite_layout,
-            &r.composite_shader,
+            r.composite_shader.get(),
             hdr,
             Some(PREMULTIPLIED_OVER),
         ),
@@ -130,7 +130,7 @@ fn build(r: &ScatterRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &r.device,
             "scatter_temporal_resolve_pipeline",
             &r.temporal_layout,
-            &r.temporal_shader,
+            r.temporal_shader.get(),
             viewport_lib::gpu::TextureFormat::Rgba16Float,
             None,
         ),
@@ -140,7 +140,7 @@ fn build(r: &ScatterRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &r.device,
             "scatter_refraction_pipeline",
             &r.refraction_layout,
-            &r.refraction_shader,
+            r.refraction_shader.get(),
             hdr,
             None,
         ),
@@ -150,7 +150,7 @@ fn build(r: &ScatterRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &r.device,
             "scatter_refraction_blit_pipeline",
             &r.blit_layout,
-            &r.blit_shader,
+            r.blit_shader.get(),
             hdr,
             None,
         ),
@@ -168,7 +168,7 @@ fn build(r: &ScatterRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             };
             let mut opts = viewport_lib::resources::PluginPipelineOpts::new(
                 Some("scatter_pick_pipeline"),
-                &r.pick_shader,
+                r.pick_shader.get(),
                 "vs_main",
                 "fs_main",
                 std::slice::from_ref(&vertex_layout),
@@ -651,9 +651,7 @@ impl ScatterGpu {
             return;
         };
         let camera_bgl = resources.shared_bindings().group0_layout;
-        let module = |label, source: &str| {
-            viewport_lib::plugin_api::builders::wgsl_module(device, label, source)
-        };
+        let module = |label, source: &str| resources.lazy_module(device, label, source);
         let layout = |label, bgls: &[&viewport_lib::gpu::BindGroupLayout]| {
             viewport_lib::plugin_api::builders::pipeline_layout(device, label, bgls)
         };

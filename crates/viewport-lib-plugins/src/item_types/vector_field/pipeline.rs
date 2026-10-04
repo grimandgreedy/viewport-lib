@@ -22,12 +22,12 @@ pub(super) struct VectorFieldRecipe {
     device: viewport_lib::gpu::Device,
     builder: viewport_lib::plugin_api::PipelineBuilder,
     layout: viewport_lib::gpu::PipelineLayout,
-    shader: viewport_lib::gpu::ShaderModule,
-    pick_shader: viewport_lib::gpu::ShaderModule,
+    shader: viewport_lib::plugin_api::LazyModule,
+    pick_shader: viewport_lib::plugin_api::LazyModule,
     pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
     instance_bgl: viewport_lib::gpu::BindGroupLayout,
     mask_layout: viewport_lib::gpu::PipelineLayout,
-    mask_shader: viewport_lib::gpu::ShaderModule,
+    mask_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
 }
@@ -45,7 +45,7 @@ fn build(r: &VectorFieldRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &DualPipelineDesc {
                 label: "vector_field_pipeline",
                 layout: &r.layout,
-                shader: &r.shader,
+                shader: r.shader.get(),
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &vertex_buffers,
@@ -73,7 +73,7 @@ fn build(r: &VectorFieldRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 extra_bind_group_layouts: &[&r.pick_id_bgl, &r.instance_bgl],
                 ..viewport_lib::resources::PluginPipelineOpts::new(
                     Some("vector_field_pick_pipeline"),
-                    &r.pick_shader,
+                    r.pick_shader.get(),
                     "vs_main",
                     "fs_main",
                     &vertex_buffers,
@@ -86,7 +86,7 @@ fn build(r: &VectorFieldRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &r.device,
             "vector_field_outline_mask_pipeline",
             &r.mask_layout,
-            &r.mask_shader,
+            r.mask_shader.get(),
             viewport_lib::gpu::TextureFormat::R8Unorm,
             &vertex_buffers,
             Some(viewport_lib::gpu::Face::Back),
@@ -98,7 +98,7 @@ fn build(r: &VectorFieldRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &r.device,
             "vector_field_surface_mask_pipeline",
             &r.mask_layout,
-            &r.mask_shader,
+            r.mask_shader.get(),
             &vertex_buffers,
             Some(viewport_lib::gpu::Face::Back),
         ),
@@ -132,7 +132,7 @@ impl VectorFieldGpu {
         let bgl = &layouts.bgl;
         let instance_bgl = &layouts.instance_bgl;
 
-        let shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let shader = resources.lazy_module(
             device,
             "vector_field_shader",
             &crate::item_types::shader::lit_shader(
@@ -174,7 +174,7 @@ impl VectorFieldGpu {
                     },
                 ],
             });
-        let pick_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let pick_shader = resources.lazy_module(
             device,
             "vector_field_pick_shader",
             &crate::item_types::shader::scene_shader(
@@ -182,7 +182,7 @@ impl VectorFieldGpu {
                 crate::item_types::shader::wgsl_source!("vector_field_pick"),
             ),
         );
-        let mask_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let mask_shader = resources.lazy_module(
             device,
             "vector_field_outline_mask_shader",
             &crate::item_types::shader::scene_shader(

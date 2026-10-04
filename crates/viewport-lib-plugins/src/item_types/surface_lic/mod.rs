@@ -157,9 +157,9 @@ const ADVECT: usize = 1;
 struct LicRecipe {
     device: viewport_lib::gpu::Device,
     vector_layout: viewport_lib::gpu::PipelineLayout,
-    vector_shader: viewport_lib::gpu::ShaderModule,
+    vector_shader: viewport_lib::plugin_api::LazyModule,
     advect_layout: viewport_lib::gpu::PipelineLayout,
-    advect_shader: viewport_lib::gpu::ShaderModule,
+    advect_shader: viewport_lib::plugin_api::LazyModule,
 }
 
 /// The vector pass and the advect pass, each built the first time a frame
@@ -186,7 +186,7 @@ fn build(r: &LicRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &r.device,
             "surface_lic_advect_pipeline",
             &r.advect_layout,
-            &r.advect_shader,
+            r.advect_shader.get(),
             viewport_lib::resources::HDR_COLOR_FORMAT,
             Some(modulate),
         );
@@ -213,7 +213,7 @@ fn build(r: &LicRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
         builders::RenderPipelineDesc {
             label: "surface_lic_vector_pipeline",
             layout: &r.vector_layout,
-            vertex_module: &r.vector_shader,
+            vertex_module: r.vector_shader.get(),
             vertex_entry: "vs_main",
             vertex_buffers: &[
                 position_layout,
@@ -221,7 +221,7 @@ fn build(r: &LicRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 instance_layout,
             ],
             fragment: Some(viewport_lib::gpu::FragmentState {
-                module: &r.vector_shader,
+                module: r.vector_shader.get(),
                 entry_point: Some("fs_main"),
                 targets: &[Some(viewport_lib::gpu::ColorTargetState {
                     format: VECTOR_FORMAT,
@@ -255,14 +255,14 @@ impl LicGpu {
         device: &viewport_lib::gpu::Device,
         resources: &viewport_lib::resources::DeviceResources,
     ) -> Self {
-        let vector_shader = builders::wgsl_module(device, "surface_lic_vector", &vector_source());
+        let vector_shader = resources.lazy_module(device, "surface_lic_vector", &vector_source());
         let vector_layout = builders::pipeline_layout(
             device,
             "surface_lic_vector_layout",
             &[resources.shared_bindings().group0_layout],
         );
 
-        let advect_shader = builders::wgsl_module(
+        let advect_shader = resources.lazy_module(
             device,
             "surface_lic_advect",
             wgsl_source!("surface_lic_advect"),

@@ -335,20 +335,21 @@ impl<P: Send + 'static> PipelineSlot<P> {
 /// `None` while a worker has it; the draw that wanted it skips that frame.
 /// Compiles in flight count towards `ViewportRenderer::pipelines_pending`.
 ///
-/// Make one with [`DeviceResources::lazy_pipelines`](crate::resources::DeviceResources::lazy_pipelines).
-pub struct LazyFamily<C, const N: usize> {
+/// `P` is a render pipeline unless named: a set of compute pipelines is
+/// `LazyFamily<C, N, ComputePipeline>`, and a dispatch whose pipeline is not
+/// ready is skipped the same way a draw is.
+///
+/// Make one with [`DeviceResources::lazy_pipelines`](crate::resources::DeviceResources::lazy_pipelines)
+/// or [`DeviceResources::lazy_compute_pipelines`](crate::resources::DeviceResources::lazy_compute_pipelines).
+pub struct LazyFamily<C, const N: usize, P = crate::gpu::RenderPipeline> {
     ctx: Arc<C>,
     compiler: Arc<PipelineCompiler>,
-    slots: [PipelineSlot; N],
-    build: fn(&C, usize) -> crate::gpu::RenderPipeline,
+    slots: [PipelineSlot<P>; N],
+    build: fn(&C, usize) -> P,
 }
 
-impl<C: Send + Sync + 'static, const N: usize> LazyFamily<C, N> {
-    pub(crate) fn new(
-        ctx: C,
-        compiler: Arc<PipelineCompiler>,
-        build: fn(&C, usize) -> crate::gpu::RenderPipeline,
-    ) -> Self {
+impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, N, P> {
+    pub(crate) fn new(ctx: C, compiler: Arc<PipelineCompiler>, build: fn(&C, usize) -> P) -> Self {
         Self {
             ctx: Arc::new(ctx),
             compiler,
@@ -363,7 +364,7 @@ impl<C: Send + Sync + 'static, const N: usize> LazyFamily<C, N> {
     }
 
     /// Member `i`, or `None` while a worker has it.
-    pub fn get(&self, i: usize) -> Option<&crate::gpu::RenderPipeline> {
+    pub fn get(&self, i: usize) -> Option<&P> {
         let ctx = Arc::clone(&self.ctx);
         let build = self.build;
         self.slots[i].get(&self.compiler, move || build(&ctx, i))
@@ -406,13 +407,14 @@ impl<C: Send + Sync + 'static, const N: usize> LazyFamily<C, N> {
 pub(crate) type ModuleCell = Arc<OnceLock<crate::gpu::ShaderModule>>;
 
 /// A shader module that compiles the first time a pipeline build asks for it.
+/// Make one with [`DeviceResources::lazy_module`](crate::resources::DeviceResources::lazy_module).
 ///
 /// A family's context holds these instead of compiled modules, so the module
 /// compile (milliseconds for the mesh shaders) runs inside the first member's
 /// build, on a worker under `Background`, and not in the `ensure_*` that
 /// composed the family. Handles made from the same source share one compile.
 #[derive(Clone)]
-pub(crate) struct LazyModule(Arc<LazyModuleInner>);
+pub struct LazyModule(Arc<LazyModuleInner>);
 
 struct LazyModuleInner {
     device: crate::gpu::Device,
@@ -437,7 +439,7 @@ impl LazyModule {
     }
 
     /// The module, compiled on the calling thread if nothing has compiled it.
-    pub(crate) fn get(&self) -> &crate::gpu::ShaderModule {
+    pub fn get(&self) -> &crate::gpu::ShaderModule {
         let m = &self.0;
         m.cell
             .get_or_init(|| crate::resources::builders::wgsl_module(&m.device, &m.label, &m.source))

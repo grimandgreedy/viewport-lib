@@ -146,6 +146,7 @@ pub mod writes;
 
 pub use crate::resources::PipelineBuilder;
 pub use crate::resources::pipeline_slot::LazyFamily as LazyPipelines;
+pub use crate::resources::pipeline_slot::LazyModule;
 pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
 pub use install::{PluginInstallCtx, PluginInstaller, install_plugin};
 pub use item_type::{

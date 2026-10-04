@@ -50,12 +50,12 @@ pub(super) struct SplatRecipe {
     device: gpu::Device,
     builder: viewport_lib::plugin_api::PipelineBuilder,
     render_layout: gpu::PipelineLayout,
-    render_shader: gpu::ShaderModule,
+    render_shader: viewport_lib::plugin_api::LazyModule,
     bgl: gpu::BindGroupLayout,
-    pick_shader: gpu::ShaderModule,
+    pick_shader: viewport_lib::plugin_api::LazyModule,
     pick_id_bgl: gpu::BindGroupLayout,
     mask_layout: gpu::PipelineLayout,
-    mask_shader: gpu::ShaderModule,
+    mask_shader: viewport_lib::plugin_api::LazyModule,
     ldr_format: gpu::TextureFormat,
 }
 
@@ -71,7 +71,7 @@ fn build(r: &SplatRecipe, i: usize) -> gpu::RenderPipeline {
             &builders::DualPipelineDesc {
                 label: "gaussian_splat_pipeline",
                 layout: &r.render_layout,
-                shader: &r.render_shader,
+                shader: r.render_shader.get(),
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[],
@@ -100,7 +100,7 @@ fn build(r: &SplatRecipe, i: usize) -> gpu::RenderPipeline {
                 extra_bind_group_layouts: &[&r.bgl, &r.pick_id_bgl],
                 ..viewport_lib::resources::PluginPipelineOpts::new(
                     Some("gaussian_splat_pick_pipeline"),
-                    &r.pick_shader,
+                    r.pick_shader.get(),
                     "vs_main",
                     "fs_main",
                     &[],
@@ -126,7 +126,7 @@ fn build(r: &SplatRecipe, i: usize) -> gpu::RenderPipeline {
                 builders::RenderPipelineDesc {
                     label: "point_disc_mask_pipeline",
                     layout: &r.mask_layout,
-                    vertex_module: &r.mask_shader,
+                    vertex_module: r.mask_shader.get(),
                     vertex_entry: "vs_main",
                     vertex_buffers: &[
                         gpu::VertexBufferLayout {
@@ -141,7 +141,7 @@ fn build(r: &SplatRecipe, i: usize) -> gpu::RenderPipeline {
                         },
                     ],
                     fragment: Some(gpu::FragmentState {
-                        module: &r.mask_shader,
+                        module: r.mask_shader.get(),
                         entry_point: Some("fs_main"),
                         targets: &[Some(gpu::ColorTargetState {
                             format: gpu::TextureFormat::R8Unorm,
@@ -170,17 +170,51 @@ fn build(r: &SplatRecipe, i: usize) -> gpu::RenderPipeline {
     }
 }
 
-/// Pipelines and layouts, made on the first prepare with items. The sort
-/// compute pipelines are built here, blocking.
+/// What the depth and sort compute builds read: both come from one module.
+pub(super) struct SplatComputeRecipe {
+    device: gpu::Device,
+    depth_layout: gpu::PipelineLayout,
+    sort_layout: gpu::PipelineLayout,
+    shader: viewport_lib::plugin_api::LazyModule,
+}
+
+const DEPTH: usize = 0;
+const SORT_INIT: usize = 1;
+const SORT_CLEAR: usize = 2;
+const SORT_HISTOGRAM: usize = 3;
+const SORT_PREFIX: usize = 4;
+const SORT_SCATTER: usize = 5;
+const COMPUTE_COUNT: usize = 6;
+
+fn build_compute(r: &SplatComputeRecipe, i: usize) -> gpu::ComputePipeline {
+    let (label, entry) = match i {
+        DEPTH => ("gaussian_splat_depth_pipeline", "compute_depths"),
+        SORT_INIT => ("gaussian_splat_sort_init_pipeline", "init_indices"),
+        SORT_CLEAR => ("gaussian_splat_sort_clear_pipeline", "clear_histogram"),
+        SORT_HISTOGRAM => ("gaussian_splat_sort_histogram_pipeline", "histogram_pass"),
+        SORT_PREFIX => ("gaussian_splat_sort_prefix_pipeline", "prefix_sum_pass"),
+        _ => ("gaussian_splat_sort_scatter_pipeline", "scatter_pass"),
+    };
+    let layout = if i == DEPTH {
+        &r.depth_layout
+    } else {
+        &r.sort_layout
+    };
+    builders::compute_pipeline(&r.device, label, layout, r.shader.get(), entry)
+}
+
+/// Pipelines and layouts, made on the first prepare with items. Every
+/// pipeline is built the first time a frame needs it.
 pub(super) struct SplatGpu {
     pub(super) bgl: gpu::BindGroupLayout,
     pub(super) pipelines: SplatPipelines,
-    depth_pipeline: gpu::ComputePipeline,
-    sort_init_pipeline: gpu::ComputePipeline,
-    sort_clear_pipeline: gpu::ComputePipeline,
-    sort_histogram_pipeline: gpu::ComputePipeline,
-    sort_prefix_pipeline: gpu::ComputePipeline,
-    sort_scatter_pipeline: gpu::ComputePipeline,
+    /// The depth pass and the radix sort. Until all are built a frame sorts
+    /// and draws no splats, since the draw reads the sorted indices.
+    compute: viewport_lib::plugin_api::LazyPipelines<
+        SplatComputeRecipe,
+        COMPUTE_COUNT,
+        gpu::ComputePipeline,
+    >,
     depth_bgl: gpu::BindGroupLayout,
     sort_bgl: gpu::BindGroupLayout,
     pub(super) pick_id_bgl: gpu::BindGroupLayout,
@@ -250,7 +284,7 @@ impl SplatGpu {
             ],
         });
 
-        let render_shader = builders::wgsl_module(
+        let render_shader = resources.lazy_module(
             device,
             "gaussian_splat_shader",
             &scene_shader(&[], wgsl_source!("gaussian_splat")),
@@ -262,7 +296,7 @@ impl SplatGpu {
             &bgl,
         );
         // Sort compute pipelines.
-        let sort_shader = builders::wgsl_module(
+        let sort_shader = resources.lazy_module(
             device,
             "gaussian_splat_sort_shader",
             wgsl_source!("gaussian_splat_sort"),
@@ -305,13 +339,6 @@ impl SplatGpu {
         });
         let depth_layout =
             builders::pipeline_layout(device, "gaussian_splat_depth_layout", &[&depth_bgl]);
-        let depth_pipeline = builders::compute_pipeline(
-            device,
-            "gaussian_splat_depth_pipeline",
-            &depth_layout,
-            &sort_shader,
-            "compute_depths",
-        );
 
         // Sort BGL: SortUniform (b0), keys ping/pong (b1/b2), vals ping/pong
         // (b3/b4), histogram (b5).
@@ -347,16 +374,15 @@ impl SplatGpu {
         });
         let sort_layout =
             builders::pipeline_layout(device, "gaussian_splat_sort_layout", &[&sort_bgl]);
-        let compute = |label: &str, entry: &str| {
-            builders::compute_pipeline(device, label, &sort_layout, &sort_shader, entry)
-        };
-        let sort_init_pipeline = compute("gaussian_splat_sort_init_pipeline", "init_indices");
-        let sort_clear_pipeline = compute("gaussian_splat_sort_clear_pipeline", "clear_histogram");
-        let sort_histogram_pipeline =
-            compute("gaussian_splat_sort_histogram_pipeline", "histogram_pass");
-        let sort_prefix_pipeline =
-            compute("gaussian_splat_sort_prefix_pipeline", "prefix_sum_pass");
-        let sort_scatter_pipeline = compute("gaussian_splat_sort_scatter_pipeline", "scatter_pass");
+        let compute = resources.lazy_compute_pipelines(
+            SplatComputeRecipe {
+                device: device.clone(),
+                depth_layout,
+                sort_layout,
+                shader: sort_shader,
+            },
+            build_compute,
+        );
 
         // Group 2 of the pick pipeline: the set's object id.
         let pick_id_bgl = device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
@@ -372,14 +398,14 @@ impl SplatGpu {
                 count: None,
             }],
         });
-        let pick_shader = builders::wgsl_module(
+        let pick_shader = resources.lazy_module(
             device,
             "gaussian_splat_pick_shader",
             &scene_shader(&[], wgsl_source!("gaussian_splat_pick")),
         );
         // Outline mask: a group-1 layout holding the single uniform
         // `point_disc_mask.wgsl` reads.
-        let mask_shader = builders::wgsl_module(
+        let mask_shader = resources.lazy_module(
             device,
             "point_disc_mask_shader",
             &scene_shader(&[], wgsl_source!("point_disc_mask")),
@@ -415,12 +441,7 @@ impl SplatGpu {
         Self {
             bgl,
             pipelines,
-            depth_pipeline,
-            sort_init_pipeline,
-            sort_clear_pipeline,
-            sort_histogram_pipeline,
-            sort_prefix_pipeline,
-            sort_scatter_pipeline,
+            compute,
             depth_bgl,
             sort_bgl,
             pick_id_bgl,
@@ -528,6 +549,25 @@ impl SplatGpu {
     /// Encode the depth compute + 4-pass radix sort for one set / viewport,
     /// and write the viewport's `SplatUniform`.
     #[allow(clippy::too_many_arguments)]
+    /// Sort pipeline `i`, which the caller has checked with
+    /// [`sort_ready`](Self::sort_ready).
+    fn built(&self, i: usize) -> &gpu::ComputePipeline {
+        self.compute
+            .get(i)
+            .expect("encode_sort runs only once sort_ready")
+    }
+
+    /// Whether every sort pipeline is built, asking for any that is not.
+    /// [`encode_sort`](Self::encode_sort) needs all of them.
+    pub(super) fn sort_ready(&self) -> bool {
+        (0..COMPUTE_COUNT).fold(true, |ready, i| self.compute.get(i).is_some() && ready)
+    }
+
+    /// Ask for every sort pipeline, for a warm-up.
+    pub(super) fn request_sort(&self) {
+        self.compute.request_all();
+    }
+
     pub(super) fn encode_sort(
         &self,
         device: &gpu::Device,
@@ -593,7 +633,7 @@ impl SplatGpu {
                 label: Some("splat_depth_pass"),
                 timestamp_writes: None,
             });
-            cpass.set_pipeline(&self.depth_pipeline);
+            cpass.set_pipeline(self.built(DEPTH));
             cpass.set_bind_group(0, &depth_bg, &[]);
             cpass.dispatch_workgroups(workgroups, 1, 1);
         }
@@ -658,16 +698,12 @@ impl SplatGpu {
                 cpass.dispatch_workgroups(wg, 1, 1);
             };
             if pass == 0 {
-                dispatch("splat_init_pass", &self.sort_init_pipeline, workgroups);
+                dispatch("splat_init_pass", self.built(SORT_INIT), workgroups);
             }
-            dispatch("splat_clear_hist", &self.sort_clear_pipeline, 1);
-            dispatch("splat_hist_pass", &self.sort_histogram_pipeline, workgroups);
-            dispatch("splat_prefix_pass", &self.sort_prefix_pipeline, 1);
-            dispatch(
-                "splat_scatter_pass",
-                &self.sort_scatter_pipeline,
-                workgroups,
-            );
+            dispatch("splat_clear_hist", self.built(SORT_CLEAR), 1);
+            dispatch("splat_hist_pass", self.built(SORT_HISTOGRAM), workgroups);
+            dispatch("splat_prefix_pass", self.built(SORT_PREFIX), 1);
+            dispatch("splat_scatter_pass", self.built(SORT_SCATTER), workgroups);
         }
     }
 }

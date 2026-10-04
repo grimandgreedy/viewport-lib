@@ -25,12 +25,12 @@ pub(super) struct PointCloudRecipe {
     device: gpu::Device,
     builder: viewport_lib::plugin_api::PipelineBuilder,
     layout: gpu::PipelineLayout,
-    shader: gpu::ShaderModule,
+    shader: viewport_lib::plugin_api::LazyModule,
     bgl: gpu::BindGroupLayout,
-    pick_shader: gpu::ShaderModule,
+    pick_shader: viewport_lib::plugin_api::LazyModule,
     pick_id_bgl: gpu::BindGroupLayout,
     mask_layout: gpu::PipelineLayout,
-    mask_shader: gpu::ShaderModule,
+    mask_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: gpu::TextureFormat,
 }
@@ -46,7 +46,7 @@ fn build(r: &PointCloudRecipe, i: usize) -> gpu::RenderPipeline {
             &builders::DualPipelineDesc {
                 label: "point_cloud_pipeline",
                 layout: &r.layout,
-                shader: &r.shader,
+                shader: r.shader.get(),
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[position_layout()],
@@ -74,7 +74,7 @@ fn build(r: &PointCloudRecipe, i: usize) -> gpu::RenderPipeline {
                 extra_bind_group_layouts: &[&r.bgl, &r.pick_id_bgl],
                 ..viewport_lib::resources::PluginPipelineOpts::new(
                     Some("point_cloud_pick_pipeline"),
-                    &r.pick_shader,
+                    r.pick_shader.get(),
                     "vs_main",
                     "fs_main",
                     &[position_layout()],
@@ -95,7 +95,7 @@ fn build(r: &PointCloudRecipe, i: usize) -> gpu::RenderPipeline {
                 builders::RenderPipelineDesc {
                     label: "point_cloud_outline_mask_pipeline",
                     layout: &r.mask_layout,
-                    vertex_module: &r.mask_shader,
+                    vertex_module: r.mask_shader.get(),
                     vertex_entry: "vs_main",
                     vertex_buffers: &[
                         position_layout(),
@@ -106,7 +106,7 @@ fn build(r: &PointCloudRecipe, i: usize) -> gpu::RenderPipeline {
                         },
                     ],
                     fragment: Some(gpu::FragmentState {
-                        module: &r.mask_shader,
+                        module: r.mask_shader.get(),
                         entry_point: Some("fs_main"),
                         targets: &[Some(gpu::ColorTargetState {
                             format: gpu::TextureFormat::R8Unorm,
@@ -138,7 +138,7 @@ fn build(r: &PointCloudRecipe, i: usize) -> gpu::RenderPipeline {
             &r.device,
             "point_cloud_surface_mask_pipeline",
             &r.layout,
-            &r.shader,
+            r.shader.get(),
             &[position_layout()],
             None,
         ),
@@ -194,7 +194,7 @@ impl PointCloudGpu {
         resources: &DeviceResources,
         bgl: &gpu::BindGroupLayout,
     ) -> Self {
-        let shader = builders::wgsl_module(
+        let shader = resources.lazy_module(
             device,
             "point_cloud_shader",
             &scene_shader(&[], wgsl_source!("point_cloud")),
@@ -219,14 +219,14 @@ impl PointCloudGpu {
                 count: None,
             }],
         });
-        let pick_shader = builders::wgsl_module(
+        let pick_shader = resources.lazy_module(
             device,
             "point_cloud_pick_shader",
             &scene_shader(&[], wgsl_source!("point_cloud_pick")),
         );
         // Outline mask: a group-1 layout of our own, holding the single uniform
         // `point_disc_mask.wgsl` reads.
-        let mask_shader = builders::wgsl_module(
+        let mask_shader = resources.lazy_module(
             device,
             "point_cloud_outline_mask_shader",
             &scene_shader(&[], wgsl_source!("point_disc_mask")),

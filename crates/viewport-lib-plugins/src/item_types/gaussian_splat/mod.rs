@@ -118,6 +118,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::SplatGpu::new(device, resources));
+        gpu.request_sort();
         gpu.pipelines.request_all();
     }
 
@@ -165,6 +166,10 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::SplatGpu::new(device, ctx.resources));
+        if !gpu.sort_ready() {
+            // The sort is compiling: no splats drawn this frame.
+            return Vec::new();
+        }
 
         let vp_idx = ctx.viewport_index;
         let eye = ctx.camera.eye_position;

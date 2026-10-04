@@ -31,11 +31,11 @@ pub(super) fn draw_index(route: usize, blend: SpriteBlend, hdr: bool) -> usize {
 pub(super) struct ParticleRecipe {
     device: viewport_lib::gpu::Device,
     draw_layout: viewport_lib::gpu::PipelineLayout,
-    sprite_shader: viewport_lib::gpu::ShaderModule,
+    sprite_shader: viewport_lib::plugin_api::LazyModule,
     lit_layout: viewport_lib::gpu::PipelineLayout,
-    lit_shader: viewport_lib::gpu::ShaderModule,
+    lit_shader: viewport_lib::plugin_api::LazyModule,
     mesh_layout: viewport_lib::gpu::PipelineLayout,
-    mesh_shader: viewport_lib::gpu::ShaderModule,
+    mesh_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
 }
@@ -62,12 +62,12 @@ fn build(r: &ParticleRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
     // so back-face culled. Neither writes depth, since particles draw
     // transparently after the opaque pass.
     let (route_name, layout, shader, vertex_buffers, cull_mode): (_, _, _, &[_], _) = match route {
-        SPRITE => ("sprite", &r.draw_layout, &r.sprite_shader, &[], None),
-        SPRITE_LIT => ("sprite_lit", &r.lit_layout, &r.lit_shader, &[], None),
+        SPRITE => ("sprite", &r.draw_layout, r.sprite_shader.get(), &[], None),
+        SPRITE_LIT => ("sprite_lit", &r.lit_layout, r.lit_shader.get(), &[], None),
         _ => (
             "mesh",
             &r.mesh_layout,
-            &r.mesh_shader,
+            r.mesh_shader.get(),
             &mesh_buffers,
             Some(viewport_lib::gpu::Face::Back),
         ),
@@ -94,12 +94,42 @@ fn build(r: &ParticleRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
     )
 }
 
+/// What the emit and simulate compute builds read.
+pub(super) struct ParticleComputeRecipe {
+    device: viewport_lib::gpu::Device,
+    layout: viewport_lib::gpu::PipelineLayout,
+    emit_shader: viewport_lib::plugin_api::LazyModule,
+    sim_shader: viewport_lib::plugin_api::LazyModule,
+}
+
+pub(super) const EMIT: usize = 0;
+pub(super) const SIM: usize = 1;
+
+fn build_compute(r: &ParticleComputeRecipe, i: usize) -> viewport_lib::gpu::ComputePipeline {
+    let (label, shader, entry) = match i {
+        EMIT => ("particle_emit_pipeline", &r.emit_shader, "emit_main"),
+        _ => ("particle_sim_pipeline", &r.sim_shader, "sim_main"),
+    };
+    viewport_lib::plugin_api::builders::compute_pipeline(
+        &r.device,
+        label,
+        &r.layout,
+        shader.get(),
+        entry,
+    )
+}
+
 /// Every pipeline the particle hooks need, made on the first prepare that
-/// sees a system. The compute pipelines are built here; the draw pipelines on
-/// first use.
+/// sees a system. Each is built the first time a frame needs it.
 pub(super) struct ParticleGpu {
-    pub(super) emit_pipeline: viewport_lib::gpu::ComputePipeline,
-    pub(super) sim_pipeline: viewport_lib::gpu::ComputePipeline,
+    /// Emit and simulate. Until both are built a frame neither steps nor
+    /// draws the systems, so they start late rather than drawing a state that
+    /// was never simulated.
+    pub(super) compute: viewport_lib::plugin_api::LazyPipelines<
+        ParticleComputeRecipe,
+        2,
+        viewport_lib::gpu::ComputePipeline,
+    >,
     pub(super) pipelines: ParticlePipelines,
     pub(super) sprite_lit_fallback_bg: viewport_lib::gpu::BindGroup,
 }
@@ -111,12 +141,12 @@ impl ParticleGpu {
         layouts: &super::store::ParticleLayouts,
     ) -> Self {
         // Compute pipelines.
-        let emit_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let emit_shader = resources.lazy_module(
             device,
             "particle_emit_shader",
             crate::item_types::shader::wgsl_source!("particle_emit"),
         );
-        let sim_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let sim_shader = resources.lazy_module(
             device,
             "particle_sim_shader",
             crate::item_types::shader::wgsl_source!("particle_sim"),
@@ -128,23 +158,17 @@ impl ParticleGpu {
             &[&layouts.params_bgl, &layouts.sim_bgl],
         );
 
-        let emit_pipeline = viewport_lib::plugin_api::builders::compute_pipeline(
-            device,
-            "particle_emit_pipeline",
-            &compute_layout,
-            &emit_shader,
-            "emit_main",
+        let compute = resources.lazy_compute_pipelines(
+            ParticleComputeRecipe {
+                device: device.clone(),
+                layout: compute_layout,
+                emit_shader,
+                sim_shader,
+            },
+            build_compute,
         );
 
-        let sim_pipeline = viewport_lib::plugin_api::builders::compute_pipeline(
-            device,
-            "particle_sim_pipeline",
-            &compute_layout,
-            &sim_shader,
-            "sim_main",
-        );
-
-        let sprite_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let sprite_shader = resources.lazy_module(
             device,
             "particle_sprite_shader",
             &crate::item_types::shader::scene_shader(
@@ -160,7 +184,7 @@ impl ParticleGpu {
             &layouts.draw_bgl,
         );
 
-        let lit_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let lit_shader = resources.lazy_module(
             device,
             "particle_sprite_lit_shader",
             &crate::item_types::shader::lit_shader(
@@ -199,7 +223,7 @@ impl ParticleGpu {
                 ],
             });
 
-        let mesh_shader = viewport_lib::plugin_api::builders::wgsl_module(
+        let mesh_shader = resources.lazy_module(
             device,
             "particle_mesh_shader",
             &crate::item_types::shader::scene_shader(
@@ -231,8 +255,7 @@ impl ParticleGpu {
         );
 
         Self {
-            emit_pipeline,
-            sim_pipeline,
+            compute,
             pipelines,
             sprite_lit_fallback_bg,
         }

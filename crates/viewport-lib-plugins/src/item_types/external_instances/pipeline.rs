@@ -18,7 +18,7 @@ pub(super) const COLOUR_HDR: usize = 1;
 pub(super) struct ExternalInstancesRecipe {
     device: gpu::Device,
     layout: gpu::PipelineLayout,
-    shader: gpu::ShaderModule,
+    shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: gpu::TextureFormat,
 }
@@ -35,7 +35,7 @@ fn build(r: &ExternalInstancesRecipe, i: usize) -> gpu::RenderPipeline {
         &builders::DualPipelineDesc {
             label: "external_instances_pipeline",
             layout: &r.layout,
-            shader: &r.shader,
+            shader: r.shader.get(),
             vertex_entry: "vs_main",
             fragment_entry: "fs_main",
             vertex_buffers: &[builders::mesh_vertex_layout()],
@@ -61,7 +61,7 @@ impl ExternalInstancesGpu {
         resources: &DeviceResources,
         bgl: &gpu::BindGroupLayout,
     ) -> Self {
-        let shader = builders::wgsl_module(
+        let shader = resources.lazy_module(
             device,
             "external_instances_shader",
             &scene_shader(&[], wgsl_source!("external_instances")),

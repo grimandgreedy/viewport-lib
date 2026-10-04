@@ -59,6 +59,35 @@ impl DeviceResources {
         )
     }
 
+    /// [`lazy_pipelines`](Self::lazy_pipelines) for compute pipelines. A
+    /// dispatch whose pipeline is still compiling is skipped, along with
+    /// whatever reads its output that frame.
+    pub fn lazy_compute_pipelines<C: Send + Sync + 'static, const N: usize>(
+        &self,
+        ctx: C,
+        build: fn(&C, usize) -> crate::gpu::ComputePipeline,
+    ) -> crate::plugin_api::LazyPipelines<C, N, crate::gpu::ComputePipeline> {
+        crate::resources::pipeline_slot::LazyFamily::new(
+            ctx,
+            std::sync::Arc::clone(&self.pipeline_compiler),
+            build,
+        )
+    }
+
+    /// A shader module compiled the first time a pipeline build asks for it,
+    /// so it can sit in a [`LazyPipelines`](crate::plugin_api::LazyPipelines)
+    /// context and compile on the worker with the first member that reads
+    /// it. Handles made from the same source share one compile, with each
+    /// other and with the renderer's own.
+    pub fn lazy_module(
+        &self,
+        device: &crate::gpu::Device,
+        label: &str,
+        source: impl AsRef<str>,
+    ) -> crate::plugin_api::LazyModule {
+        self.shared_module(device, label, source.as_ref())
+    }
+
     /// The pipeline builders' inputs, by value, for a build that runs later
     /// or on another thread.
     pub fn pipeline_builder(&self) -> PipelineBuilder {

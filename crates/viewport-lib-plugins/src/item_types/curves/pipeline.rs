@@ -17,7 +17,6 @@ use crate::item_types::shader::{lit_shader, scene_shader, wgsl_source};
 use viewport_lib::plugin_api::builders::Vertex;
 use viewport_lib::plugin_api::builders::{
     DualPipelineDesc, build_dual_pipeline_variant, pipeline_layout, standard_scene_layout,
-    wgsl_module,
 };
 use viewport_lib::plugin_api::shared_wgsl;
 use viewport_lib::resources::DeviceResources;
@@ -90,12 +89,12 @@ pub(super) struct CurvePickRecipe {
     builder: viewport_lib::plugin_api::PipelineBuilder,
     instance_bgl: viewport_lib::gpu::BindGroupLayout,
     node_bgl: viewport_lib::gpu::BindGroupLayout,
-    pick_shader: viewport_lib::gpu::ShaderModule,
+    pick_shader: viewport_lib::plugin_api::LazyModule,
     /// `None` on a device without the primitive-index feature: the pick then
     /// stays object-level, matching the built-in surfaces.
-    node_shader: Option<viewport_lib::gpu::ShaderModule>,
+    node_shader: Option<viewport_lib::plugin_api::LazyModule>,
     mask_layout: viewport_lib::gpu::PipelineLayout,
-    mask_shader: viewport_lib::gpu::ShaderModule,
+    mask_shader: viewport_lib::plugin_api::LazyModule,
     mask_cull: Option<viewport_lib::gpu::Face>,
     label: String,
 }
@@ -120,7 +119,7 @@ fn build_pick(r: &CurvePickRecipe, i: usize) -> viewport_lib::gpu::RenderPipelin
                 extra_bind_group_layouts: &[&r.instance_bgl],
                 ..viewport_lib::resources::PluginPipelineOpts::new(
                     Some(&format!("{}_pick_pipeline", r.label)),
-                    &r.pick_shader,
+                    r.pick_shader.get(),
                     "vs_main",
                     "fs_main",
                     &vertex_buffers,
@@ -140,7 +139,8 @@ fn build_pick(r: &CurvePickRecipe, i: usize) -> viewport_lib::gpu::RenderPipelin
                     Some(&format!("{}_pick_node_pipeline", r.label)),
                     r.node_shader
                         .as_ref()
-                        .expect("the node pick is only asked for with primitive index"),
+                        .expect("the node pick is only asked for with primitive index")
+                        .get(),
                     "vs_main",
                     "fs_main",
                     &vertex_buffers,
@@ -151,7 +151,7 @@ fn build_pick(r: &CurvePickRecipe, i: usize) -> viewport_lib::gpu::RenderPipelin
             &r.device,
             &format!("{}_outline_mask_pipeline", r.label),
             &r.mask_layout,
-            &r.mask_shader,
+            r.mask_shader.get(),
             viewport_lib::gpu::TextureFormat::R8Unorm,
             &vertex_buffers,
             r.mask_cull,
@@ -163,7 +163,7 @@ fn build_pick(r: &CurvePickRecipe, i: usize) -> viewport_lib::gpu::RenderPipelin
             &r.device,
             &format!("{}_surface_mask_pipeline", r.label),
             &r.mask_layout,
-            &r.mask_shader,
+            r.mask_shader.get(),
             &vertex_buffers,
             r.mask_cull,
         ),
@@ -210,16 +210,16 @@ impl CurvePickGpu {
                     "fn fs_main(in: VertexOut, @builtin(primitive_index) prim_index: u32) -> FragOut {",
                 )
                 .replace("out.primitive_id = 0u;", "out.primitive_id = prim_index;");
-            wgsl_module(
+            resources.lazy_module(
                 device,
                 &pick_shader_label,
                 viewport_lib::plugin_api::builders::with_primitive_index_enable(&src),
             )
         } else {
-            wgsl_module(device, &pick_shader_label, &pick_src)
+            resources.lazy_module(device, &pick_shader_label, &pick_src)
         };
         let node_shader = has_prim.then(|| {
-            wgsl_module(
+            resources.lazy_module(
                 device,
                 &node_shader_label,
                 viewport_lib::plugin_api::builders::with_primitive_index_enable(&scene_shader(
@@ -229,7 +229,7 @@ impl CurvePickGpu {
             )
         });
 
-        let mask_shader = wgsl_module(
+        let mask_shader = resources.lazy_module(
             device,
             &mask_shader_label,
             &scene_shader(&[], wgsl_source!("curve_outline_mask")),
@@ -347,7 +347,7 @@ const WIREFRAME_HDR: usize = 3;
 pub(super) struct CurveMeshRecipe {
     device: viewport_lib::gpu::Device,
     layout: viewport_lib::gpu::PipelineLayout,
-    shader: viewport_lib::gpu::ShaderModule,
+    shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
     solid_label: String,
@@ -372,7 +372,7 @@ fn build_mesh(r: &CurveMeshRecipe, i: usize) -> viewport_lib::gpu::RenderPipelin
                 &r.solid_label
             },
             layout: &r.layout,
-            shader: &r.shader,
+            shader: r.shader.get(),
             vertex_entry: "vs_main",
             fragment_entry: "fs_main",
             vertex_buffers: &[viewport_lib::plugin_api::builders::mesh_vertex_layout()],
@@ -408,7 +408,7 @@ impl CurveMeshGpu {
         layouts: &super::store::StreamtubeResources,
         label: &str,
     ) -> Self {
-        let shader = wgsl_module(
+        let shader = resources.lazy_module(
             device,
             &format!("{label}_shader"),
             &lit_shader(

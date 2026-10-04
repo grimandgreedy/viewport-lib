@@ -327,8 +327,8 @@ impl ItemTypePlugin for GpuParticlesPlugin {
         self.systems.allocated_bytes()
     }
 
-    /// Builds the compute pipelines and asks for every HDR draw pipeline; the
-    /// type does not draw into the LDR pass.
+    /// Asks for the compute pipelines and every HDR draw pipeline; the type
+    /// does not draw into the LDR pass.
     fn warm(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -340,6 +340,7 @@ impl ItemTypePlugin for GpuParticlesPlugin {
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::ParticleGpu::new(device, resources, layouts));
+        gpu.compute.request_all();
         for route in [pipeline::SPRITE, pipeline::SPRITE_LIT, pipeline::MESH] {
             for blend in [
                 viewport_lib::renderer::SpriteBlend::AlphaBlend,
@@ -380,6 +381,14 @@ impl ItemTypePlugin for GpuParticlesPlugin {
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::ParticleGpu::new(device, ctx.resources, layouts));
+        // Both compute pipelines, or none of the systems this frame: nothing
+        // is staged, so no spawn is lost while they compile.
+        if let (None, _) | (_, None) = (
+            gpu.compute.get(pipeline::EMIT),
+            gpu.compute.get(pipeline::SIM),
+        ) {
+            return Vec::new();
+        }
 
         // Stage every system's uniform writes first, then encode all the
         // dispatches into one compute pass. Params buffers and bind groups are
@@ -473,15 +482,21 @@ impl ItemTypePlugin for GpuParticlesPlugin {
                 label: Some("particle_compute_pass"),
                 timestamp_writes: None,
             });
+            let (Some(emit), Some(sim)) = (
+                gpu.compute.get(pipeline::EMIT),
+                gpu.compute.get(pipeline::SIM),
+            ) else {
+                unreachable!("checked before staging");
+            };
             if staged.iter().any(|s| s.spawn) {
-                pass.set_pipeline(&gpu.emit_pipeline);
+                pass.set_pipeline(emit);
                 for s in staged.iter().filter(|s| s.spawn) {
                     pass.set_bind_group(0, &s.emit_params_bg, &[]);
                     pass.set_bind_group(1, &s.sim_bg, &[]);
                     pass.dispatch_workgroups(s.workgroups, 1, 1);
                 }
             }
-            pass.set_pipeline(&gpu.sim_pipeline);
+            pass.set_pipeline(sim);
             for s in &staged {
                 pass.set_bind_group(0, &s.sim_params_bg, &[]);
                 pass.set_bind_group(1, &s.sim_bg, &[]);
@@ -570,6 +585,9 @@ mod emission_tests {
         )?;
         let mut renderer =
             ViewportRenderer::new(&device, viewport_lib::gpu::TextureFormat::Rgba8UnormSrgb);
+        // Every frame steps the systems: under `Background` the first ones
+        // would skip while the compute pipelines compile.
+        renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
         crate::item_types::install(&mut renderer, &device);
         Some((device, queue, renderer))
     }
@@ -773,6 +791,9 @@ mod revalidation_tests {
         )?;
         let mut renderer =
             ViewportRenderer::new(&device, viewport_lib::gpu::TextureFormat::Rgba8UnormSrgb);
+        // Every frame steps the systems: under `Background` the first ones
+        // would skip while the compute pipelines compile.
+        renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
         crate::item_types::install(&mut renderer, &device);
         Some((device, queue, renderer))
     }

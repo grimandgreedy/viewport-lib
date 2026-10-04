@@ -23,9 +23,9 @@ pub(super) struct GpuImplicitRecipe {
     bgl: gpu::BindGroupLayout,
     pick_id_bgl: gpu::BindGroupLayout,
     layout: gpu::PipelineLayout,
-    shader: gpu::ShaderModule,
-    mask_shader: gpu::ShaderModule,
-    pick_shader: gpu::ShaderModule,
+    shader: viewport_lib::plugin_api::LazyModule,
+    mask_shader: viewport_lib::plugin_api::LazyModule,
+    pick_shader: viewport_lib::plugin_api::LazyModule,
     ldr_format: gpu::TextureFormat,
 }
 
@@ -47,7 +47,7 @@ fn build(r: &GpuImplicitRecipe, i: usize) -> gpu::RenderPipeline {
             &builders::DualPipelineDesc {
                 label: "implicit_pipeline",
                 layout: &r.layout,
-                shader: &r.shader,
+                shader: r.shader.get(),
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[],
@@ -70,7 +70,7 @@ fn build(r: &GpuImplicitRecipe, i: usize) -> gpu::RenderPipeline {
                 extra_bind_group_layouts: &[&r.bgl],
                 ..viewport_lib::resources::PluginPipelineOpts::new(
                     Some("implicit_outline_mask_pipeline"),
-                    &r.mask_shader,
+                    r.mask_shader.get(),
                     "vs_main",
                     "fs_main",
                     &[],
@@ -86,7 +86,7 @@ fn build(r: &GpuImplicitRecipe, i: usize) -> gpu::RenderPipeline {
                 extra_bind_group_layouts: &[&r.bgl],
                 ..viewport_lib::resources::PluginPipelineOpts::new(
                     Some("implicit_surface_mask_pipeline"),
-                    &r.mask_shader,
+                    r.mask_shader.get(),
                     "vs_main",
                     "fs_stamp",
                     &[],
@@ -105,7 +105,7 @@ fn build(r: &GpuImplicitRecipe, i: usize) -> gpu::RenderPipeline {
                 extra_bind_group_layouts: &[&r.bgl, &r.pick_id_bgl],
                 ..viewport_lib::resources::PluginPipelineOpts::new(
                     Some("implicit_pick_pipeline"),
-                    &r.pick_shader,
+                    r.pick_shader.get(),
                     "vs_main",
                     "fs_pick",
                     &[],
@@ -155,7 +155,7 @@ impl GpuImplicitGpu {
         // Group 1: single uniform buffer containing ImplicitUniformRaw.
         let bgl = builders::uniform_bgl(device, "implicit_bgl", gpu::ShaderStages::FRAGMENT);
 
-        let shader = builders::wgsl_module(
+        let shader = resources.lazy_module(
             device,
             "implicit_shader",
             lit_shader(&[], wgsl_source!("implicit")),
@@ -167,7 +167,7 @@ impl GpuImplicitGpu {
             resources.shared_bindings().group0_layout,
             &bgl,
         );
-        let mask_shader = builders::wgsl_module(
+        let mask_shader = resources.lazy_module(
             device,
             "implicit_outline_mask_shader",
             &scene_shader(&[], wgsl_source!("implicit_outline_mask")),
@@ -185,7 +185,7 @@ impl GpuImplicitGpu {
                 count: None,
             }],
         });
-        let pick_shader = builders::wgsl_module(
+        let pick_shader = resources.lazy_module(
             device,
             "implicit_pick_shader",
             &scene_shader(&[], wgsl_source!("implicit_pick")),

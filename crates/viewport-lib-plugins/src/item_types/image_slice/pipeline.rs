@@ -21,11 +21,11 @@ pub(super) struct ImageSliceRecipe {
     device: gpu::Device,
     builder: viewport_lib::plugin_api::PipelineBuilder,
     layout: gpu::PipelineLayout,
-    shader: gpu::ShaderModule,
+    shader: viewport_lib::plugin_api::LazyModule,
     bgl: gpu::BindGroupLayout,
-    pick_shader: gpu::ShaderModule,
+    pick_shader: viewport_lib::plugin_api::LazyModule,
     pick_id_bgl: gpu::BindGroupLayout,
-    mask_shader: gpu::ShaderModule,
+    mask_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: gpu::TextureFormat,
 }
@@ -46,7 +46,7 @@ fn build(r: &ImageSliceRecipe, i: usize) -> gpu::RenderPipeline {
             &builders::DualPipelineDesc {
                 label: "image_slice_pipeline",
                 layout: &r.layout,
-                shader: &r.shader,
+                shader: r.shader.get(),
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[], // no vertex buffer: generates quad from vertex_index
@@ -71,7 +71,7 @@ fn build(r: &ImageSliceRecipe, i: usize) -> gpu::RenderPipeline {
                 extra_bind_group_layouts: &[&r.bgl, &r.pick_id_bgl],
                 ..viewport_lib::resources::PluginPipelineOpts::new(
                     Some("image_slice_pick_pipeline"),
-                    &r.pick_shader,
+                    r.pick_shader.get(),
                     "vs_main",
                     "fs_main",
                     &[],
@@ -86,7 +86,7 @@ fn build(r: &ImageSliceRecipe, i: usize) -> gpu::RenderPipeline {
                 extra_bind_group_layouts: &[&r.bgl],
                 ..viewport_lib::resources::PluginPipelineOpts::new(
                     Some("image_slice_mask_pipeline"),
-                    &r.mask_shader,
+                    r.mask_shader.get(),
                     "vs_main",
                     "fs_main",
                     &[],
@@ -185,7 +185,7 @@ impl ImageSliceGpu {
             ],
         });
 
-        let shader = builders::wgsl_module(
+        let shader = resources.lazy_module(
             device,
             "image_slice_shader",
             &scene_shader(&[], wgsl_source!("image_slice")),
@@ -210,12 +210,12 @@ impl ImageSliceGpu {
                 count: None,
             }],
         });
-        let pick_shader = builders::wgsl_module(
+        let pick_shader = resources.lazy_module(
             device,
             "image_slice_pick_shader",
             &scene_shader(&[], wgsl_source!("image_slice_pick")),
         );
-        let mask_shader = builders::wgsl_module(
+        let mask_shader = resources.lazy_module(
             device,
             "image_slice_mask_shader",
             &scene_shader(&[], wgsl_source!("image_slice_mask")),
