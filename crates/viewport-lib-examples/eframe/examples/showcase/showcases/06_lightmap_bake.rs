@@ -1658,6 +1658,7 @@ impl viewport_lib_lightbake::SceneBakeJobPasses for LivePasses {
 struct PieceInput {
     piece: usize,
     pos: Vec<[f32; 3]>,
+    nrm: Vec<[f32; 3]>,
     uv1: Vec<Vec2>,
     idx: Vec<u32>,
     pages: Vec<u32>,
@@ -1677,6 +1678,7 @@ impl PieceInput {
         Self {
             piece,
             pos: p.pos.clone(),
+            nrm: p.nrm.clone(),
             uv1: p.uv1.clone(),
             idx: p.idx.clone(),
             pages: p.pages.clone(),
@@ -1773,6 +1775,7 @@ fn encode_piece(input: &PieceInput, denoise_on: bool) -> PieceEncoded {
             positions: &input.pos,
             uv1: &uv_stacked,
             indices: &input.idx,
+            normals: Some(&input.nrm),
         },
         &StitchParams::default(),
     );
