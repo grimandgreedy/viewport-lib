@@ -31,15 +31,15 @@ pub enum PipelineCompilation {
 }
 
 impl PipelineCompilation {
-    /// The default for this platform: `Blocking` on macOS, iOS and the web,
-    /// `Background` everywhere else. A worker thread compiling under Metal
-    /// stalls the thread that renders, and the web has no threads.
+    /// The default for this platform: `Background`, except `Blocking` on the
+    /// web, which has no threads, and on macOS and iOS when built against
+    /// wgpu 27. wgpu 27's Metal backend holds one device-wide lock for the
+    /// whole of a pipeline compile, and every buffer and texture allocation
+    /// takes it too, so a worker compile stalls the thread that renders for
+    /// as long as the compile lasts. wgpu 29 and 30 dropped that lock.
     pub fn platform_default() -> Self {
-        if cfg!(any(
-            target_os = "macos",
-            target_os = "ios",
-            target_family = "wasm"
-        )) {
+        let apple = cfg!(any(target_os = "macos", target_os = "ios"));
+        if cfg!(target_family = "wasm") || (apple && cfg!(feature = "wgpu27")) {
             Self::Blocking
         } else {
             Self::Background
@@ -705,12 +705,9 @@ mod tests {
     }
 
     #[test]
-    fn the_platform_default_is_blocking_only_on_apple_and_the_web() {
-        let expected = if cfg!(any(
-            target_os = "macos",
-            target_os = "ios",
-            target_family = "wasm"
-        )) {
+    fn the_platform_default_is_blocking_only_on_the_web_and_apple_on_wgpu27() {
+        let apple = cfg!(any(target_os = "macos", target_os = "ios"));
+        let expected = if cfg!(target_family = "wasm") || (apple && cfg!(feature = "wgpu27")) {
             PipelineCompilation::Blocking
         } else {
             PipelineCompilation::Background

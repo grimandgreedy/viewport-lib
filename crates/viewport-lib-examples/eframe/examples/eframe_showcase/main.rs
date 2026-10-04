@@ -138,7 +138,7 @@ fn main() -> eframe::Result {
             // Where pipelines compile on workers, ask for everything the
             // showcases can draw with now, so switching pages never compiles
             // on the frame. The top bar shows the count while it runs. Where
-            // compiles block (macOS, the web) this would freeze the launch,
+            // compiles block (the web, or Apple on wgpu 27) this would freeze the launch,
             // so there each page builds what it draws.
             if renderer.pipeline_compilation() == vpl::PipelineCompilation::Background {
                 renderer.warm_pipelines(&device, &queue, &vpl::PipelineSet::all());

@@ -1331,8 +1331,8 @@ impl ViewportRenderer {
     /// Set how a pipeline is compiled the first time a frame needs it.
     ///
     /// The default is [`PipelineCompilation::platform_default`]: on a
-    /// worker, with the draw skipped until it is ready, everywhere but
-    /// macOS, iOS and the web. Set [`PipelineCompilation::Blocking`] to
+    /// worker, with the draw skipped until it is ready, everywhere but the
+    /// web and, on wgpu 27, macOS and iOS. Set [`PipelineCompilation::Blocking`] to
     /// compile on the calling thread and never skip a draw, which is what a
     /// frame that is read back right away needs. Takes effect for the next
     /// compile; one already running on a worker finishes there.
