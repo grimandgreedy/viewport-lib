@@ -368,7 +368,8 @@ impl ViewportRenderer {
             // Manual and physical-camera exposure write the state buffer
             // directly; only automatic exposure dispatches the metering passes.
             if frame.effects.display.exposure.manual_multiplier().is_none() {
-                res.exposure.ensure_pipelines(device);
+                res.exposure
+                    .ensure_pipelines(device, &res.pipeline_compiler);
             }
             let slot = &self.viewport_slots[vp_idx];
             if slot
@@ -1617,6 +1618,7 @@ impl ViewportRenderer {
             .render_camera
             .view_proj()
             .to_cols_array_2d();
+        let hiz = self.resources.hiz_pipelines(ctx.device);
         // Borrow the slot mutably and split its fields: the depth view is read
         // from `hdr` while the pyramid is written into `cull`.
         let slot = &mut self.viewport_slots[ctx.vp_idx];
@@ -1637,7 +1639,7 @@ impl ViewportRenderer {
         let w = depth_tex.width();
         let h = depth_tex.height();
         slot.cull
-            .store_hiz_prev_depth(ctx.device, encoder, depth_view, w, h, view_proj);
+            .store_hiz_prev_depth(ctx.device, &hiz, encoder, depth_view, w, h, view_proj);
     }
 
     fn hdr_ssaa_refraction(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {

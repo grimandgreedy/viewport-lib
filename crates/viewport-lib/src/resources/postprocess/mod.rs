@@ -80,7 +80,7 @@ pub(crate) struct FullscreenRecipe {
     device: crate::gpu::Device,
     label: &'static str,
     layout: crate::gpu::PipelineLayout,
-    shader: crate::gpu::ShaderModule,
+    shader: crate::resources::pipeline_slot::LazyModule,
     target: Option<(crate::gpu::TextureFormat, Option<crate::gpu::BlendState>)>,
     depth_stencil: Option<crate::gpu::DepthStencilState>,
     sample_count: u32,
@@ -99,11 +99,11 @@ fn build_fullscreen(r: &FullscreenRecipe, _i: usize) -> crate::gpu::RenderPipeli
         crate::resources::builders::RenderPipelineDesc {
             label: r.label,
             layout: &r.layout,
-            vertex_module: &r.shader,
+            vertex_module: r.shader.get(),
             vertex_entry: "vs_main",
             vertex_buffers: &[],
             fragment: Some(crate::gpu::FragmentState {
-                module: &r.shader,
+                module: r.shader.get(),
                 entry_point: Some("fs_main"),
                 targets: targets.as_slice(),
                 compilation_options: crate::gpu::PipelineCompilationOptions::default(),
@@ -128,7 +128,7 @@ fn build_fullscreen(r: &FullscreenRecipe, _i: usize) -> crate::gpu::RenderPipeli
 pub(crate) struct OutlineCompositeRecipe {
     device: crate::gpu::Device,
     layout: crate::gpu::PipelineLayout,
-    shader: crate::gpu::ShaderModule,
+    shader: crate::resources::pipeline_slot::LazyModule,
     target_format: crate::gpu::TextureFormat,
     sample_count: u32,
 }
@@ -168,11 +168,11 @@ fn build_outline_composite(r: &OutlineCompositeRecipe, i: usize) -> crate::gpu::
         crate::resources::builders::RenderPipelineDesc {
             label,
             layout: &r.layout,
-            vertex_module: &r.shader,
+            vertex_module: r.shader.get(),
             vertex_entry: "vs_main",
             vertex_buffers: &[],
             fragment: Some(crate::gpu::FragmentState {
-                module: &r.shader,
+                module: r.shader.get(),
                 entry_point: Some("fs_main"),
                 targets: &[Some(crate::gpu::ColorTargetState {
                     format,
@@ -830,7 +830,7 @@ impl DeviceResources {
         self.note_pipeline_built(concat!(file!(), ":", line!()));
         self.ensure_outline_composite_bgl(device);
         let bgl = self.outline.composite_bgl.clone().expect("just ensured");
-        let shader = crate::resources::builders::wgsl_module(
+        let shader = self.shared_module(
             device,
             "outline_composite_shader",
             crate::resources::builders::wgsl_source!("outline_composite"),
@@ -866,7 +866,8 @@ impl DeviceResources {
     ) {
         self.ensure_hdr_infra(device, queue);
         self.ensure_tone_map_pipeline(device, output_format);
-        self.exposure.ensure_pipelines(device);
+        self.exposure
+            .ensure_pipelines(device, &self.pipeline_compiler);
         self.ensure_bloom_pipelines(device);
         self.ensure_ssao_pipelines(device);
         self.ensure_contact_shadow_pipeline(device);
@@ -887,7 +888,7 @@ impl DeviceResources {
         &self,
         device: &crate::gpu::Device,
         label: &'static str,
-        shader: crate::gpu::ShaderModule,
+        shader: crate::resources::pipeline_slot::LazyModule,
         bgl: &crate::gpu::BindGroupLayout,
         format: crate::gpu::TextureFormat,
     ) -> LazyFullscreen {
@@ -902,7 +903,7 @@ impl DeviceResources {
         &self,
         device: &crate::gpu::Device,
         label: &'static str,
-        shader: crate::gpu::ShaderModule,
+        shader: crate::resources::pipeline_slot::LazyModule,
         bgl: &crate::gpu::BindGroupLayout,
         target: Option<(crate::gpu::TextureFormat, Option<crate::gpu::BlendState>)>,
         depth_stencil: Option<crate::gpu::DepthStencilState>,
@@ -944,7 +945,7 @@ impl DeviceResources {
             .tone_map_bgl
             .clone()
             .expect("ensure_hdr_infra not called");
-        let shader = crate::resources::builders::wgsl_module(
+        let shader = self.shared_module(
             device,
             "tone_map_shader",
             crate::resources::builders::wgsl_source!("tone_map"),
@@ -959,7 +960,7 @@ impl DeviceResources {
             device,
             "tone_map_pipeline",
             &layout,
-            &shader,
+            shader.get(),
             output_format,
             None,
         ));
@@ -977,12 +978,12 @@ impl DeviceResources {
             .bgl
             .clone()
             .expect("ensure_hdr_infra not called");
-        let threshold_shader = crate::resources::builders::wgsl_module(
+        let threshold_shader = self.shared_module(
             device,
             "bloom_threshold_shader",
             crate::resources::builders::wgsl_source!("bloom_threshold"),
         );
-        let blur_shader = crate::resources::builders::wgsl_module(
+        let blur_shader = self.shared_module(
             device,
             "bloom_blur_shader",
             crate::resources::builders::wgsl_source!("bloom_blur"),
@@ -1012,12 +1013,12 @@ impl DeviceResources {
         let missing = "ensure_hdr_infra not called";
         let bgl = self.post.ssao.bgl.clone().expect(missing);
         let blur_bgl = self.post.ssao.blur_bgl.clone().expect(missing);
-        let shader = crate::resources::builders::wgsl_module(
+        let shader = self.shared_module(
             device,
             "ssao_shader",
             crate::resources::builders::wgsl_source!("ssao"),
         );
-        let blur_shader = crate::resources::builders::wgsl_module(
+        let blur_shader = self.shared_module(
             device,
             "ssao_blur_shader",
             crate::resources::builders::wgsl_source!("ssao_blur"),
@@ -1050,7 +1051,7 @@ impl DeviceResources {
             .bgl
             .clone()
             .expect("ensure_hdr_infra not called");
-        let shader = crate::resources::builders::wgsl_module(
+        let shader = self.shared_module(
             device,
             "contact_shadow_shader",
             crate::resources::builders::wgsl_source!("contact_shadow"),
@@ -1080,7 +1081,7 @@ impl DeviceResources {
             .bgl
             .clone()
             .expect("ensure_hdr_infra not called");
-        let shader = crate::resources::builders::wgsl_module(
+        let shader = self.shared_module(
             device,
             "fxaa_shader",
             crate::resources::builders::wgsl_source!("fxaa"),
@@ -1106,7 +1107,7 @@ impl DeviceResources {
             .bgl
             .clone()
             .expect("ensure_hdr_infra not called");
-        let shader = crate::resources::builders::wgsl_module(
+        let shader = self.shared_module(
             device,
             "dof_shader",
             crate::resources::builders::wgsl_source!("dof"),
@@ -1133,7 +1134,7 @@ impl DeviceResources {
             .composite_bgl
             .clone()
             .expect("ensure_hdr_infra not called");
-        let shader = crate::resources::builders::wgsl_module(
+        let shader = self.shared_module(
             device,
             "oit_composite_shader",
             crate::resources::builders::wgsl_source!("oit_composite"),
@@ -1219,7 +1220,7 @@ impl DeviceResources {
         self.note_pipeline_built(concat!(file!(), ":", line!()));
         let missing = "ensure_hdr_infra not called";
         let resolve_bgl = self.post.ssaa_resolve_bgl.clone().expect(missing);
-        let shader = crate::resources::builders::wgsl_module(
+        let shader = self.shared_module(
             device,
             "ssaa_resolve_shader",
             crate::resources::builders::wgsl_source!("ssaa_resolve"),
@@ -1234,7 +1235,7 @@ impl DeviceResources {
                 device,
                 "ssaa_resolve_pipeline",
                 &layout,
-                &shader,
+                shader.get(),
                 crate::gpu::TextureFormat::Rgba16Float,
                 None,
             ));

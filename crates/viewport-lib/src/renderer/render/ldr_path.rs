@@ -363,6 +363,7 @@ impl ViewportRenderer {
         // the slot.
         if store_scene_depth {
             let view_proj = frame.camera.render_camera.view_proj().to_cols_array_2d();
+            let hiz = self.resources.hiz_pipelines(device);
             let slot = &mut self.viewport_slots[vp_idx];
             let (depth_only_view, dw, dh) = if use_dyn_res {
                 let dr = slot.dyn_res.as_ref().unwrap();
@@ -374,6 +375,7 @@ impl ViewportRenderer {
             };
             slot.cull.store_hiz_prev_depth(
                 device,
+                &hiz,
                 &mut encoder,
                 depth_only_view,
                 dw,

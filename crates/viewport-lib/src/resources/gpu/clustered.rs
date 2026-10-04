@@ -183,6 +183,25 @@ pub struct ClusterCell {
     pub punctual_demand: u32,
 }
 
+/// What the clear and build compute builds read: a label, layout and module
+/// per pipeline.
+pub struct ClusterRecipe {
+    device: crate::gpu::Device,
+    stages: [(
+        &'static str,
+        crate::gpu::PipelineLayout,
+        crate::resources::pipeline_slot::LazyModule,
+    ); 2],
+}
+
+const CLUSTER_CLEAR: usize = 0;
+const CLUSTER_BUILD: usize = 1;
+
+fn build_cluster(r: &ClusterRecipe, i: usize) -> crate::gpu::ComputePipeline {
+    let (label, layout, shader) = &r.stages[i];
+    crate::resources::builders::compute_pipeline(&r.device, label, layout, shader.get(), "main")
+}
+
 /// All clustered-shading state owned by `DeviceResources`.
 pub struct ClusteredResources {
     /// `ClusterGridUniform` uniform buffer (group 0 binding 14).
@@ -205,16 +224,16 @@ pub struct ClusteredResources {
     clear_bind_group: crate::gpu::BindGroup,
     /// Layout the clear pipeline is built against.
     clear_bgl: crate::gpu::BindGroupLayout,
-    /// Compute pipeline that zeroes both storage buffers. `None` until a frame
-    /// actually needs a dispatch; see `ensure_pipelines`.
-    clear_pipeline: Option<crate::gpu::ComputePipeline>,
+    /// The clear pipeline (zeroes both storage buffers) and the build
+    /// pipeline (intersects each cluster with the active lights). `None`
+    /// until a frame needs a dispatch; see `ensure_pipelines`.
+    pipelines: Option<
+        crate::resources::pipeline_slot::LazyFamily<ClusterRecipe, 2, crate::gpu::ComputePipeline>,
+    >,
     /// Bind group for the cluster-build compute pass.
     build_bind_group: crate::gpu::BindGroup,
     /// Layout the build pipeline is built against.
     build_bgl: crate::gpu::BindGroupLayout,
-    /// Compute pipeline that intersects each cluster with the active lights.
-    /// `None` until a frame has enough lights to cluster.
-    build_pipeline: Option<crate::gpu::ComputePipeline>,
     /// Whether the cluster grid and index list are known to hold zero. wgpu
     /// zero-initialises both buffers, so this starts true and only a build
     /// dispatch makes it false: a viewport whose lights never reach the cluster
@@ -388,56 +407,86 @@ impl ClusteredResources {
             stats_staging_buf,
             clear_bind_group,
             clear_bgl,
-            clear_pipeline: None,
+            pipelines: None,
             build_bind_group,
             build_bgl,
-            build_pipeline: None,
             grid_zeroed: true,
             clear_params_buf,
         }
     }
 
-    /// Build the clear and build compute pipelines and their modules. Called by
-    /// the lighting prepare on the first frame that has a dispatch to encode. A
-    /// no-op after that.
-    pub fn ensure_pipelines(&mut self, device: &crate::gpu::Device) {
-        if self.clear_pipeline.is_some() {
+    /// Compose the clear and build compute pipelines: their layouts and
+    /// modules, with each pipeline built under the compilation policy the
+    /// first time [`pipelines_ready`](Self::pipelines_ready) asks for it.
+    /// Called by the lighting prepare on the first frame that has a dispatch
+    /// to encode. A no-op after that.
+    pub fn ensure_pipelines(
+        &mut self,
+        device: &crate::gpu::Device,
+        compiler: &std::sync::Arc<crate::resources::pipeline_slot::PipelineCompiler>,
+    ) {
+        if self.pipelines.is_some() {
             return;
         }
-        let clear_shader = crate::resources::builders::wgsl_module(
-            device,
-            "cluster_clear_shader",
-            crate::resources::builders::wgsl_source!("cluster_clear"),
-        );
-        let clear_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "cluster_clear_pipeline_layout",
-            &[&self.clear_bgl],
-        );
-        self.clear_pipeline = Some(crate::resources::builders::compute_pipeline(
-            device,
-            "cluster_clear_pipeline",
-            &clear_layout,
-            &clear_shader,
-            "main",
+        let module = |label: &str, source: &str| {
+            crate::resources::pipeline_slot::LazyModule::new(
+                device,
+                label,
+                source,
+                Default::default(),
+            )
+        };
+        let recipe = ClusterRecipe {
+            device: device.clone(),
+            stages: [
+                (
+                    "cluster_clear_pipeline",
+                    crate::resources::builders::pipeline_layout(
+                        device,
+                        "cluster_clear_pipeline_layout",
+                        &[&self.clear_bgl],
+                    ),
+                    module(
+                        "cluster_clear_shader",
+                        crate::resources::builders::wgsl_source!("cluster_clear"),
+                    ),
+                ),
+                (
+                    "cluster_build_pipeline",
+                    crate::resources::builders::pipeline_layout(
+                        device,
+                        "cluster_build_pipeline_layout",
+                        &[&self.build_bgl],
+                    ),
+                    module(
+                        "cluster_build_shader",
+                        crate::resources::builders::wgsl_source!("cluster_build"),
+                    ),
+                ),
+            ],
+        };
+        self.pipelines = Some(crate::resources::pipeline_slot::LazyFamily::new(
+            recipe,
+            std::sync::Arc::clone(compiler),
+            build_cluster,
         ));
-        let build_shader = crate::resources::builders::wgsl_module(
-            device,
-            "cluster_build_shader",
-            crate::resources::builders::wgsl_source!("cluster_build"),
-        );
-        let build_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "cluster_build_pipeline_layout",
-            &[&self.build_bgl],
-        );
-        self.build_pipeline = Some(crate::resources::builders::compute_pipeline(
-            device,
-            "cluster_build_pipeline",
-            &build_layout,
-            &build_shader,
-            "main",
-        ));
+    }
+
+    /// Ask for both compute pipelines, for a warm-up. Needs `ensure_pipelines`
+    /// first.
+    pub fn request_all(&self) {
+        if let Some(p) = &self.pipelines {
+            p.request_all();
+        }
+    }
+
+    /// Whether both compute pipelines are built, asking for any that is not.
+    /// While this is false the lighting prepare takes the per-light fallback,
+    /// which shades the same without the grid.
+    pub fn pipelines_ready(&self) -> bool {
+        self.pipelines
+            .as_ref()
+            .is_some_and(|p| p.get(CLUSTER_CLEAR).is_some() & p.get(CLUSTER_BUILD).is_some())
     }
 
     /// Whether a clear dispatch is owed: something has written the cluster grid
@@ -510,7 +559,8 @@ impl ClusteredResources {
         active_light_count: u32,
         ts_query_set: Option<&crate::gpu::QuerySet>,
     ) {
-        if let (false, Some(clear_pipeline)) = (self.grid_zeroed, self.clear_pipeline.as_ref()) {
+        let built = |i| self.pipelines.as_ref().and_then(|p| p.get(i));
+        if let (false, Some(clear_pipeline)) = (self.grid_zeroed, built(CLUSTER_CLEAR)) {
             let clear_workgroups = MAX_LIGHT_INDICES.max(CLUSTER_COUNT).div_ceil(64);
             let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some("cluster_clear_pass"),
@@ -524,7 +574,7 @@ impl ClusteredResources {
         if active_light_count == 0 {
             return;
         }
-        let Some(build_pipeline) = self.build_pipeline.as_ref() else {
+        let Some(build_pipeline) = built(CLUSTER_BUILD) else {
             return;
         };
         {

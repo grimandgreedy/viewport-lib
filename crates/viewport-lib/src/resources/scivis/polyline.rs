@@ -1,4 +1,5 @@
 use super::*;
+use crate::resources::pipeline_slot::LazyFamily;
 
 /// Polyline pipeline variant axes: clip-exemption and thin-wireframe vs
 /// thick-billboard geometry. The two axes select genuinely different shader
@@ -15,8 +16,8 @@ pub(crate) struct PolylineKey {
 }
 
 impl PolylineKey {
-    /// Every axis combination, for eager cross-product construction
-    /// (`PolylineVariantSet::build`).
+    /// Every axis combination.
+    #[cfg(test)]
     pub fn all() -> impl Iterator<Item = PolylineKey> {
         (0u8..4).map(|bits| PolylineKey {
             skip_clip: bits & 1 != 0,
@@ -29,28 +30,188 @@ impl PolylineKey {
     }
 }
 
-/// A `DualPipeline` built for every reachable [`PolylineKey`], indexed for a
-/// hash-free draw-time lookup (`get`).
-#[derive(Clone)]
-pub(crate) struct PolylineVariantSet {
-    variants: [DualPipeline; 4],
+/// What a polyline pipeline build reads. `wireframe` picks the shader,
+/// layout, vertex buffer and topology; `skip_clip` the fragment entry point
+/// within either shader (both export `fs_main` and `fs_main_no_clip`).
+pub(crate) struct PolylineRecipe {
+    device: crate::gpu::Device,
+    layout: crate::gpu::PipelineLayout,
+    shader: crate::resources::pipeline_slot::LazyModule,
+    wf_layout: crate::gpu::PipelineLayout,
+    wf_shader: crate::resources::pipeline_slot::LazyModule,
+    sample_count: u32,
+    ldr_format: crate::gpu::TextureFormat,
 }
 
+// Instance buffer layout (112 bytes per segment):
+//   offset   0: pos_a             vec3  : segment start (world space)
+//   offset  12: pos_b             vec3  : segment end   (world space)
+//   offset  24: prev_pos          vec3  : point before pos_a (for miter at A); equals pos_a if strip start
+//   offset  36: next_pos          vec3  : point after  pos_b (for miter at B); equals pos_b if strip end
+//   offset  48: scalar_a          f32
+//   offset  52: scalar_b          f32
+//   offset  56: has_prev          u32   : 1 = prev_pos is valid (interior join at A), 0 = square cap
+//   offset  60: has_next          u32   : 1 = next_pos is valid (interior join at B), 0 = square cap
+//   offset  64: colour_a           vec4  : direct RGBA at segment start
+//   offset  80: colour_b           vec4  : direct RGBA at segment end
+//   offset  96: radius_a          f32   : line width in px at A (= line_width when node_radii is empty)
+//   offset 100: radius_b          f32   : line width in px at B
+//   offset 104: use_direct_colour  u32   : 1 = use colour_a/b, 0 = use scalar LUT / default
+//   offset 108: dist_a            f32   : cumulative arc length at segment start (for dashing)
+/// The 112-byte per-segment instance layout of the thick-line pipelines.
+fn pl_instance_layout() -> crate::gpu::VertexBufferLayout<'static> {
+    crate::gpu::VertexBufferLayout {
+        array_stride: 112,
+        step_mode: crate::gpu::VertexStepMode::Instance,
+        attributes: &[
+            crate::gpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: crate::gpu::VertexFormat::Float32x3,
+            }, // pos_a
+            crate::gpu::VertexAttribute {
+                offset: 12,
+                shader_location: 1,
+                format: crate::gpu::VertexFormat::Float32x3,
+            }, // pos_b
+            crate::gpu::VertexAttribute {
+                offset: 24,
+                shader_location: 2,
+                format: crate::gpu::VertexFormat::Float32x3,
+            }, // prev_pos
+            crate::gpu::VertexAttribute {
+                offset: 36,
+                shader_location: 3,
+                format: crate::gpu::VertexFormat::Float32x3,
+            }, // next_pos
+            crate::gpu::VertexAttribute {
+                offset: 48,
+                shader_location: 4,
+                format: crate::gpu::VertexFormat::Float32,
+            }, // scalar_a
+            crate::gpu::VertexAttribute {
+                offset: 52,
+                shader_location: 5,
+                format: crate::gpu::VertexFormat::Float32,
+            }, // scalar_b
+            crate::gpu::VertexAttribute {
+                offset: 56,
+                shader_location: 6,
+                format: crate::gpu::VertexFormat::Uint32,
+            }, // has_prev
+            crate::gpu::VertexAttribute {
+                offset: 60,
+                shader_location: 7,
+                format: crate::gpu::VertexFormat::Uint32,
+            }, // has_next
+            crate::gpu::VertexAttribute {
+                offset: 64,
+                shader_location: 8,
+                format: crate::gpu::VertexFormat::Float32x4,
+            }, // colour_a
+            crate::gpu::VertexAttribute {
+                offset: 80,
+                shader_location: 9,
+                format: crate::gpu::VertexFormat::Float32x4,
+            }, // colour_b
+            crate::gpu::VertexAttribute {
+                offset: 96,
+                shader_location: 10,
+                format: crate::gpu::VertexFormat::Float32,
+            }, // radius_a
+            crate::gpu::VertexAttribute {
+                offset: 100,
+                shader_location: 11,
+                format: crate::gpu::VertexFormat::Float32,
+            }, // radius_b
+            crate::gpu::VertexAttribute {
+                offset: 104,
+                shader_location: 12,
+                format: crate::gpu::VertexFormat::Uint32,
+            }, // use_direct_colour
+            crate::gpu::VertexAttribute {
+                offset: 108,
+                shader_location: 13,
+                format: crate::gpu::VertexFormat::Float32,
+            }, // dist_a
+        ],
+    }
+}
+
+/// Member index for `key` in one format: the key's slot, then LDR or HDR.
+fn polyline_index(key: PolylineKey, hdr: bool) -> usize {
+    key.slot() * 2 + hdr as usize
+}
+
+fn build_polyline(r: &PolylineRecipe, i: usize) -> crate::gpu::RenderPipeline {
+    let slot = i / 2;
+    let skip_clip = slot & 1 != 0;
+    let wireframe = slot & 2 != 0;
+    let fragment_entry = if skip_clip {
+        "fs_main_no_clip"
+    } else {
+        "fs_main"
+    };
+    let instance_layout = [pl_instance_layout()];
+    let desc = if wireframe {
+        crate::resources::builders::DualPipelineDesc {
+            label: "polyline_wireframe_pipeline_variant",
+            layout: &r.wf_layout,
+            shader: r.wf_shader.get(),
+            vertex_entry: "vs_main",
+            fragment_entry,
+            vertex_buffers: &[],
+            blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+            topology: crate::gpu::PrimitiveTopology::LineList,
+            cull_mode: None,
+            depth_write: true,
+            depth_compare: crate::gpu::CompareFunction::LessEqual,
+            sample_count: r.sample_count,
+            ldr_format: r.ldr_format,
+        }
+    } else {
+        crate::resources::builders::DualPipelineDesc {
+            label: "polyline_pipeline_variant",
+            layout: &r.layout,
+            shader: r.shader.get(),
+            vertex_entry: "vs_main",
+            fragment_entry,
+            vertex_buffers: &instance_layout,
+            blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+            topology: crate::gpu::PrimitiveTopology::TriangleList,
+            cull_mode: None,
+            depth_write: true,
+            depth_compare: crate::gpu::CompareFunction::LessEqual,
+            sample_count: r.sample_count,
+            ldr_format: r.ldr_format,
+        }
+    };
+    crate::resources::builders::build_dual_pipeline_variant(&r.device, &desc, i & 1 != 0)
+}
+
+/// The polyline pipelines for every [`PolylineKey`] in both formats, each
+/// built the first time a draw reads it. Cheap to clone: the set is shared.
+#[derive(Clone)]
+pub(crate) struct PolylineVariantSet(std::sync::Arc<LazyFamily<PolylineRecipe, 8>>);
+
 impl PolylineVariantSet {
-    pub fn build(mut build: impl FnMut(PolylineKey) -> DualPipeline) -> Self {
-        let mut variants: Vec<DualPipeline> = Vec::with_capacity(4);
-        for key in PolylineKey::all() {
-            variants.push(build(key));
-        }
-        Self {
-            variants: variants
-                .try_into()
-                .unwrap_or_else(|_| unreachable!("PolylineKey::all() yields exactly 4 keys")),
-        }
+    /// The pipeline for `key` in the HDR or LDR format, or `None` while it
+    /// compiles on a worker.
+    pub fn get(&self, key: PolylineKey, hdr: bool) -> Option<&crate::gpu::RenderPipeline> {
+        self.0.get(polyline_index(key, hdr))
     }
 
-    pub fn get(&self, key: PolylineKey) -> &DualPipeline {
-        &self.variants[key.slot()]
+    /// Ask for every pipeline, for a warm-up.
+    pub fn request_all(&self) {
+        self.0.request_all();
+    }
+
+    /// Whether `key` can draw this frame in either format without waiting:
+    /// built, or the policy is `Blocking`. Starts nothing. The pick and
+    /// outline passes wait on it, so a line is not picked or outlined before
+    /// it is drawn.
+    pub fn drawable(&self, key: PolylineKey) -> bool {
+        self.0.available(polyline_index(key, false)) || self.0.available(polyline_index(key, true))
     }
 }
 
@@ -90,7 +251,7 @@ mod polyline_key_tests {
 /// type's plugin can reach them from `prepare`, which holds
 /// `&DeviceResources`.
 pub(crate) struct PolylineResources {
-    /// Polyline render pipelines, keyed by `PolylineKey`.
+    /// Polyline render pipelines, keyed by `PolylineKey` and format.
     pub(crate) pipelines: std::sync::OnceLock<PolylineVariantSet>,
     /// Bind group layout for polyline uniforms (group 1).
     pub(crate) bgl: crate::gpu::BindGroupLayout,
@@ -129,7 +290,9 @@ impl PolylineResources {
 }
 
 impl DeviceResources {
-    /// Build (on first call) and return the polyline render pipelines.
+    /// Compose (on first call) and return the polyline render pipelines: the
+    /// modules and layouts, with each of the eight pipelines (four variants,
+    /// two formats) built the first time a draw reads it.
     ///
     /// Takes a shared reference so the polyline item type's plugin can reach
     /// them from `prepare`, alongside the core producers that render through
@@ -142,184 +305,40 @@ impl DeviceResources {
             return set;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
-
-        let pl_bgl = &self.polyline.bgl;
-
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "polyline_shader",
-            crate::resources::builders::wgsl_source!("polyline"),
-        );
-
-        let layout = crate::resources::builders::standard_scene_layout(
-            device,
-            "polyline_pipeline_layout",
-            &self.binds.camera_bgl,
-            pl_bgl,
-        );
-
-        // Instance buffer layout (112 bytes per segment):
-        //   offset   0: pos_a             vec3  : segment start (world space)
-        //   offset  12: pos_b             vec3  : segment end   (world space)
-        //   offset  24: prev_pos          vec3  : point before pos_a (for miter at A); equals pos_a if strip start
-        //   offset  36: next_pos          vec3  : point after  pos_b (for miter at B); equals pos_b if strip end
-        //   offset  48: scalar_a          f32
-        //   offset  52: scalar_b          f32
-        //   offset  56: has_prev          u32   : 1 = prev_pos is valid (interior join at A), 0 = square cap
-        //   offset  60: has_next          u32   : 1 = next_pos is valid (interior join at B), 0 = square cap
-        //   offset  64: colour_a           vec4  : direct RGBA at segment start
-        //   offset  80: colour_b           vec4  : direct RGBA at segment end
-        //   offset  96: radius_a          f32   : line width in px at A (= line_width when node_radii is empty)
-        //   offset 100: radius_b          f32   : line width in px at B
-        //   offset 104: use_direct_colour  u32   : 1 = use colour_a/b, 0 = use scalar LUT / default
-        //   offset 108: dist_a            f32   : cumulative arc length at segment start (for dashing)
-        let pl_instance_layout = crate::gpu::VertexBufferLayout {
-            array_stride: 112,
-            step_mode: crate::gpu::VertexStepMode::Instance,
-            attributes: &[
-                crate::gpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: crate::gpu::VertexFormat::Float32x3,
-                }, // pos_a
-                crate::gpu::VertexAttribute {
-                    offset: 12,
-                    shader_location: 1,
-                    format: crate::gpu::VertexFormat::Float32x3,
-                }, // pos_b
-                crate::gpu::VertexAttribute {
-                    offset: 24,
-                    shader_location: 2,
-                    format: crate::gpu::VertexFormat::Float32x3,
-                }, // prev_pos
-                crate::gpu::VertexAttribute {
-                    offset: 36,
-                    shader_location: 3,
-                    format: crate::gpu::VertexFormat::Float32x3,
-                }, // next_pos
-                crate::gpu::VertexAttribute {
-                    offset: 48,
-                    shader_location: 4,
-                    format: crate::gpu::VertexFormat::Float32,
-                }, // scalar_a
-                crate::gpu::VertexAttribute {
-                    offset: 52,
-                    shader_location: 5,
-                    format: crate::gpu::VertexFormat::Float32,
-                }, // scalar_b
-                crate::gpu::VertexAttribute {
-                    offset: 56,
-                    shader_location: 6,
-                    format: crate::gpu::VertexFormat::Uint32,
-                }, // has_prev
-                crate::gpu::VertexAttribute {
-                    offset: 60,
-                    shader_location: 7,
-                    format: crate::gpu::VertexFormat::Uint32,
-                }, // has_next
-                crate::gpu::VertexAttribute {
-                    offset: 64,
-                    shader_location: 8,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                }, // colour_a
-                crate::gpu::VertexAttribute {
-                    offset: 80,
-                    shader_location: 9,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                }, // colour_b
-                crate::gpu::VertexAttribute {
-                    offset: 96,
-                    shader_location: 10,
-                    format: crate::gpu::VertexFormat::Float32,
-                }, // radius_a
-                crate::gpu::VertexAttribute {
-                    offset: 100,
-                    shader_location: 11,
-                    format: crate::gpu::VertexFormat::Float32,
-                }, // radius_b
-                crate::gpu::VertexAttribute {
-                    offset: 104,
-                    shader_location: 12,
-                    format: crate::gpu::VertexFormat::Uint32,
-                }, // use_direct_colour
-                crate::gpu::VertexAttribute {
-                    offset: 108,
-                    shader_location: 13,
-                    format: crate::gpu::VertexFormat::Float32,
-                }, // dist_a
-            ],
+        let recipe = PolylineRecipe {
+            device: device.clone(),
+            layout: crate::resources::builders::standard_scene_layout(
+                device,
+                "polyline_pipeline_layout",
+                &self.binds.camera_bgl,
+                &self.polyline.bgl,
+            ),
+            shader: self.shared_module(
+                device,
+                "polyline_shader",
+                crate::resources::builders::wgsl_source!("polyline"),
+            ),
+            wf_layout: crate::resources::builders::standard_scene_layout(
+                device,
+                "polyline_wireframe_pipeline_layout",
+                &self.binds.camera_bgl,
+                &self.polyline.wireframe_bgl,
+            ),
+            wf_shader: self.shared_module(
+                device,
+                "polyline_wireframe_shader",
+                crate::resources::builders::wgsl_source!("polyline_wireframe"),
+            ),
+            sample_count: self.sample_count,
+            ldr_format: self.target_format,
         };
-
-        let wf_bgl = &self.polyline.wireframe_bgl;
-
-        let wf_shader = crate::resources::builders::wgsl_module(
-            device,
-            "polyline_wireframe_shader",
-            crate::resources::builders::wgsl_source!("polyline_wireframe"),
-        );
-
-        let wf_layout = crate::resources::builders::standard_scene_layout(
-            device,
-            "polyline_wireframe_pipeline_layout",
-            &self.binds.camera_bgl,
-            wf_bgl,
-        );
-
-        let sample_count = self.sample_count;
-        let ldr_format = self.target_format;
-
-        // One `PolylineVariantSet::build` covers all 4 (skip_clip x wireframe)
-        // combinations: `wireframe` picks the shader/layout/vertex-buffer/
-        // topology triple, `skip_clip` picks the fragment entry point within
-        // whichever shader that is (both `polyline.wgsl` and
-        // `polyline_wireframe.wgsl` export `fs_main` / `fs_main_no_clip`).
-        let built = crate::resources::scivis::polyline::PolylineVariantSet::build(|key| {
-            let fragment_entry = if key.skip_clip {
-                "fs_main_no_clip"
-            } else {
-                "fs_main"
-            };
-            if key.wireframe {
-                crate::resources::builders::build_dual_pipeline(
-                    device,
-                    &crate::resources::builders::DualPipelineDesc {
-                        label: "polyline_wireframe_pipeline_variant",
-                        layout: &wf_layout,
-                        shader: &wf_shader,
-                        vertex_entry: "vs_main",
-                        fragment_entry,
-                        vertex_buffers: &[],
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        topology: crate::gpu::PrimitiveTopology::LineList,
-                        cull_mode: None,
-                        depth_write: true,
-                        depth_compare: crate::gpu::CompareFunction::LessEqual,
-                        sample_count,
-                        ldr_format,
-                    },
-                )
-            } else {
-                crate::resources::builders::build_dual_pipeline(
-                    device,
-                    &crate::resources::builders::DualPipelineDesc {
-                        label: "polyline_pipeline_variant",
-                        layout: &layout,
-                        shader: &shader,
-                        vertex_entry: "vs_main",
-                        fragment_entry,
-                        vertex_buffers: &[pl_instance_layout.clone()],
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        topology: crate::gpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
-                        depth_write: true,
-                        depth_compare: crate::gpu::CompareFunction::LessEqual,
-                        sample_count,
-                        ldr_format,
-                    },
-                )
-            }
-        });
-        self.polyline.pipelines.get_or_init(|| built)
+        self.polyline.pipelines.get_or_init(|| {
+            PolylineVariantSet(std::sync::Arc::new(LazyFamily::new(
+                recipe,
+                std::sync::Arc::clone(&self.pipeline_compiler),
+                build_polyline,
+            )))
+        })
     }
 
     /// Upload one [`PolylineItem`] to the GPU and return draw data.
@@ -665,9 +684,14 @@ mod tests {
             return;
         };
         let resources = DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        resources
+            .pipeline_compiler
+            .set_policy(crate::resources::PipelineCompilation::Blocking);
         let pipelines = resources.ensure_polyline_pipeline(&device);
         for key in PolylineKey::all() {
-            let _ = pipelines.get(key);
+            for hdr in [false, true] {
+                assert!(pipelines.get(key, hdr).is_some());
+            }
         }
     }
 

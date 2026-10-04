@@ -654,6 +654,11 @@ pub struct DeviceResources {
     /// compiles in flight on the workers. Shared with each pipeline set so a
     /// build can run off this thread.
     pub(crate) pipeline_compiler: std::sync::Arc<crate::resources::pipeline_slot::PipelineCompiler>,
+    /// The HiZ occlusion pyramid's layouts and pipelines, shared by every
+    /// viewport and pyramid size. Composed by the first viewport that stores a
+    /// depth for occlusion culling.
+    pub(crate) hiz_pipelines:
+        std::sync::OnceLock<std::sync::Arc<crate::resources::gpu::hiz::HizPipelines>>,
     /// Cancels and waits for this renderer's compiles when it is dropped.
     pub(crate) pipeline_compiler_shutdown: crate::resources::pipeline_slot::CompilerShutdown,
     /// Bumped by `free_texture` and `free_mesh`. The per-object draw cache

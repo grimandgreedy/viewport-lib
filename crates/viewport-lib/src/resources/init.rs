@@ -2179,6 +2179,7 @@ impl DeviceResources {
             frame_upload_bytes: 0,
             frame_pipelines_built: std::sync::atomic::AtomicU32::new(0),
             pipeline_compiler: std::sync::Arc::clone(&pipeline_compiler),
+            hiz_pipelines: std::sync::OnceLock::new(),
             pipeline_compiler_shutdown: crate::resources::pipeline_slot::CompilerShutdown(
                 pipeline_compiler,
             ),

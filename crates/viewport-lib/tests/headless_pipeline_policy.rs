@@ -300,12 +300,14 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
     ] {
         let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
         renderer.set_pipeline_compilation(policy);
+        renderer.set_occlusion_culling(true);
         renderer.warm_pipelines(&device, &queue, &viewport_lib::PipelineSet::all());
         renderer.wait_for_pipelines(&device);
 
         // Every feature the set names, in both display modes: the box is
-        // selected and so outlined, the sphere is transparent, and a third
-        // item of the box mesh makes an instanced batch of two.
+        // selected and so outlined, the sphere is transparent, a third item
+        // of the box mesh makes an instanced batch of two, a polyline draws,
+        // enough point lights to cluster, and occlusion culling is on.
         let mut frames = Vec::new();
         for hdr in [true, false] {
             let mut frame = scene(&mut renderer, &device, hdr);
@@ -314,7 +316,24 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
             sun.kind = viewport_lib::LightKind::Directional {
                 direction: [0.3, 0.2, 1.0],
             };
-            frame.effects.lighting.lights = vec![sun];
+            let points = (0..24).map(|i| {
+                let mut light = viewport_lib::LightSource::default();
+                light.kind = viewport_lib::LightKind::Point {
+                    position: [(i % 6) as f32 - 2.5, (i / 6) as f32 - 1.5, 1.0],
+                    range: 3.0,
+                    radius: 0.05,
+                };
+                light
+            });
+            frame.effects.lighting.lights = std::iter::once(sun).chain(points).collect();
+            let mut polyline = viewport_lib::PolylineItem::default();
+            polyline.positions = vec![[-1.5, -1.0, 0.0], [1.5, -1.0, 0.0]];
+            polyline.strip_lengths = vec![2];
+            polyline.line_width = 4.0;
+            frame
+                .scene
+                .items_mut::<viewport_lib::PolylineItem>()
+                .push(polyline);
             frame.effects.lighting.shadows.enabled = true;
             frame.effects.ground_plane.mode = viewport_lib::GroundPlaneMode::Tile;
             frame.effects.post_process.bloom.enabled = true;

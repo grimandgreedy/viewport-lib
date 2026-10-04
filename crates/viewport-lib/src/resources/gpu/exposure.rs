@@ -87,15 +87,34 @@ pub struct ExposureState {
 
 const _: () = assert!(std::mem::size_of::<ExposureState>() == 16);
 
+/// What the three exposure compute builds read: one layout and one module.
+pub struct ExposureRecipe {
+    device: crate::gpu::Device,
+    layout: crate::gpu::PipelineLayout,
+    shader: crate::resources::pipeline_slot::LazyModule,
+}
+
+fn build_exposure(r: &ExposureRecipe, i: usize) -> crate::gpu::ComputePipeline {
+    let (label, entry) = match i {
+        0 => ("exposure_clear_pipeline", "clear_main"),
+        1 => ("exposure_build_pipeline", "build_main"),
+        _ => ("exposure_resolve_pipeline", "resolve_main"),
+    };
+    crate::resources::builders::compute_pipeline(&r.device, label, &r.layout, r.shader.get(), entry)
+}
+
 /// Shared auto-exposure pipelines and bind group layout owned by
 /// `DeviceResources`.
 pub struct ExposureResources {
     /// Bind group layout for all three compute passes (hdr texture, params
     /// uniform, histogram storage, exposure-state storage).
     pub bgl: crate::gpu::BindGroupLayout,
-    /// The three compute pipelines, `None` until `ensure_pipelines` runs. Only
-    /// the HDR post chain dispatches them, so they are built with the rest of it.
-    pipelines: Option<[crate::gpu::ComputePipeline; 3]>,
+    /// The clear, build and resolve pipelines, `None` until `ensure_pipelines`
+    /// composes them. A frame whose dispatch finds one still compiling skips
+    /// the pass and keeps the exposure it had.
+    pipelines: Option<
+        crate::resources::pipeline_slot::LazyFamily<ExposureRecipe, 3, crate::gpu::ComputePipeline>,
+    >,
 }
 
 impl ExposureResources {
@@ -166,30 +185,44 @@ impl ExposureResources {
         }
     }
 
-    /// Build the clear, build and resolve compute pipelines and the module they
-    /// share. A no-op after the first call.
-    pub fn ensure_pipelines(&mut self, device: &crate::gpu::Device) {
+    /// Compose the clear, build and resolve compute pipelines: the layout and
+    /// the module they share, with each pipeline built under the compilation
+    /// policy the first time a dispatch asks for it. A no-op after the first
+    /// call.
+    pub fn ensure_pipelines(
+        &mut self,
+        device: &crate::gpu::Device,
+        compiler: &std::sync::Arc<crate::resources::pipeline_slot::PipelineCompiler>,
+    ) {
         if self.pipelines.is_some() {
             return;
         }
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "exposure_shader",
-            crate::resources::builders::wgsl_source!("exposure"),
-        );
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            "exposure_pipeline_layout",
-            &[&self.bgl],
-        );
-        let make = |label: &str, entry: &str| {
-            crate::resources::builders::compute_pipeline(device, label, &layout, &shader, entry)
+        let recipe = ExposureRecipe {
+            device: device.clone(),
+            layout: crate::resources::builders::pipeline_layout(
+                device,
+                "exposure_pipeline_layout",
+                &[&self.bgl],
+            ),
+            shader: crate::resources::pipeline_slot::LazyModule::new(
+                device,
+                "exposure_shader",
+                crate::resources::builders::wgsl_source!("exposure"),
+                Default::default(),
+            ),
         };
-        self.pipelines = Some([
-            make("exposure_clear_pipeline", "clear_main"),
-            make("exposure_build_pipeline", "build_main"),
-            make("exposure_resolve_pipeline", "resolve_main"),
-        ]);
+        self.pipelines = Some(crate::resources::pipeline_slot::LazyFamily::new(
+            recipe,
+            std::sync::Arc::clone(compiler),
+            build_exposure,
+        ));
+    }
+
+    /// Ask for all three pipelines, for a warm-up.
+    pub fn request_all(&self) {
+        if let Some(p) = &self.pipelines {
+            p.request_all();
+        }
     }
 
     /// Allocate the per-viewport histogram, exposure-state, and params buffers.
@@ -286,7 +319,11 @@ impl ExposureResources {
         width: u32,
         height: u32,
     ) {
-        let Some([clear_pipeline, build_pipeline, resolve_pipeline]) = self.pipelines.as_ref()
+        let Some(p) = self.pipelines.as_ref() else {
+            return;
+        };
+        let (Some(clear_pipeline), Some(build_pipeline), Some(resolve_pipeline)) =
+            (p.get(0), p.get(1), p.get(2))
         else {
             return;
         };

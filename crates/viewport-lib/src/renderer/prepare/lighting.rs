@@ -772,8 +772,18 @@ impl ViewportRenderer {
             // lookup-table indirection at that scale. A consumer-set debug
             // override also forces the fallback path so the two can be A/B'd
             // for correctness checks.
-            let use_clusters = !frame.effects.debug.force_cluster_fallback
+            let want_clusters = !frame.effects.debug.force_cluster_fallback
                 && active_count > crate::resources::gpu::clustered::SMALL_N_THRESHOLD;
+            // The clear is owed only once a build has written the grid, so a
+            // viewport whose light count never reaches the cluster threshold
+            // composes neither compute pipeline. While they compile on a
+            // worker the frame takes the per-light fallback.
+            if want_clusters || resources.clustered.grid_dirty() {
+                resources
+                    .clustered
+                    .ensure_pipelines(device, &resources.pipeline_compiler);
+            }
+            let use_clusters = want_clusters && resources.clustered.pipelines_ready();
             let fallback_flag = if use_clusters { 0.0 } else { 1.0 };
             let grid_uniform = ClusterGridUniform {
                 dimensions: [
@@ -862,12 +872,6 @@ impl ViewportRenderer {
             } else {
                 None
             };
-            // The clear is owed only once a build has written the grid, so a
-            // viewport whose light count never reaches the cluster threshold
-            // compiles neither compute pipeline.
-            if build_count > 0 || resources.clustered.grid_dirty() {
-                resources.clustered.ensure_pipelines(device);
-            }
             resources
                 .clustered
                 .dispatch_frame(&mut encoder, build_count, cluster_ts);

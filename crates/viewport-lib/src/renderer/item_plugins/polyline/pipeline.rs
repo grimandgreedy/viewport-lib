@@ -12,14 +12,73 @@
 
 use crate::resources::{DeviceResources, PolylineGpuData, PolylineVariantSet};
 
-/// Pipelines owned by the item type, built on the first prepare with items.
+/// What the pick and outline mask builds read.
+pub(super) struct PolylinePassRecipe {
+    device: crate::gpu::Device,
+    builder: crate::resources::PipelineBuilder,
+    polyline_bgl: crate::gpu::BindGroupLayout,
+    pick_id_bgl: crate::gpu::BindGroupLayout,
+    pick_shader: crate::plugin_api::LazyModule,
+    mask_layout: crate::gpu::PipelineLayout,
+    mask_shader: crate::plugin_api::LazyModule,
+}
+
+pub(super) const PICK: usize = 0;
+pub(super) const MASK: usize = 1;
+
+fn build_pass(r: &PolylinePassRecipe, i: usize) -> crate::gpu::RenderPipeline {
+    let attrs = instance_attributes(false);
+    let instance = [crate::gpu::VertexBufferLayout {
+        array_stride: 112,
+        step_mode: crate::gpu::VertexStepMode::Instance,
+        attributes: &attrs,
+    }];
+    match i {
+        // The same screen-space quad expansion, writing the item's object id
+        // from group 2 and the segment index into the primitive channel.
+        PICK => r.builder.build_pick_pipeline(
+            &r.device,
+            &crate::resources::PluginPipelineOpts {
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                extra_bind_group_layouts: &[&r.polyline_bgl, &r.pick_id_bgl],
+                ..crate::resources::PluginPipelineOpts::new(
+                    Some("polyline_pick_pipeline"),
+                    r.pick_shader.get(),
+                    "vs_main",
+                    "fs_main",
+                    &instance,
+                )
+            },
+        ),
+        // The same segment quads, writing white and skipping the clip-plane
+        // and colour logic.
+        _ => crate::resources::builders::build_outline_mask_pipeline(
+            &r.device,
+            "polyline_outline_mask_pipeline",
+            &r.mask_layout,
+            r.mask_shader.get(),
+            crate::gpu::TextureFormat::R8Unorm,
+            &instance,
+            None,
+            true,
+            crate::gpu::CompareFunction::LessEqual,
+        ),
+    }
+}
+
+/// Pipelines owned by the item type, composed on the first prepare with items
+/// and each built the first time a draw needs it.
 pub(super) struct PolylineGpu {
-    /// A clone of the shared substrate pipelines, taken once so the draw hooks
-    /// can reach them without a borrow of the resources.
+    /// A handle to the shared substrate pipelines, taken once so the draw
+    /// hooks can reach them without a borrow of the resources.
     pub(super) pipelines: PolylineVariantSet,
-    pub(super) pick_pipeline: crate::gpu::RenderPipeline,
+    /// The pick and outline mask pipelines.
+    pub(super) passes: crate::plugin_api::LazyPipelines<PolylinePassRecipe, 2>,
     pub(super) pick_id_bgl: crate::gpu::BindGroupLayout,
-    pub(super) mask_pipeline: crate::gpu::RenderPipeline,
 }
 
 /// One item's draw state for this frame.
@@ -67,9 +126,6 @@ fn instance_attributes(with_dist: bool) -> Vec<crate::gpu::VertexAttribute> {
 impl PolylineGpu {
     pub(super) fn new(device: &crate::gpu::Device, resources: &DeviceResources) -> Self {
         let pipelines = resources.ensure_polyline_pipeline(device).clone();
-
-        // Pick: the same screen-space quad expansion, writing the item's object
-        // id from group 2 and the segment index into the primitive channel.
         let pick_id_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("polyline_pick_id_bgl"),
             entries: &[crate::gpu::BindGroupLayoutEntry {
@@ -83,71 +139,51 @@ impl PolylineGpu {
                 count: None,
             }],
         });
-        let pick_shader = crate::resources::builders::wgsl_module(
-            device,
-            "polyline_pick_shader",
-            crate::resources::builders::wgsl_source!("polyline_pick"),
-        );
-        let pick_attrs = instance_attributes(false);
-        let pick_pipeline = resources.build_pick_pipeline(
-            device,
-            &crate::resources::PluginPipelineOpts {
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                extra_bind_group_layouts: &[&resources.polyline.bgl, &pick_id_bgl],
-                ..crate::resources::PluginPipelineOpts::new(
-                    Some("polyline_pick_pipeline"),
-                    &pick_shader,
-                    "vs_main",
-                    "fs_main",
-                    &[crate::gpu::VertexBufferLayout {
-                        array_stride: 112,
-                        step_mode: crate::gpu::VertexStepMode::Instance,
-                        attributes: &pick_attrs,
-                    }],
-                )
+        let passes = resources.lazy_pipelines(
+            PolylinePassRecipe {
+                device: device.clone(),
+                builder: resources.pipeline_builder(),
+                polyline_bgl: resources.polyline.bgl.clone(),
+                pick_id_bgl: pick_id_bgl.clone(),
+                pick_shader: resources.lazy_module(
+                    device,
+                    "polyline_pick_shader",
+                    crate::resources::builders::wgsl_source!("polyline_pick"),
+                ),
+                mask_layout: crate::resources::builders::standard_scene_layout(
+                    device,
+                    "polyline_outline_mask_pipeline_layout",
+                    resources.shared_bindings().group0_layout,
+                    &resources.polyline.bgl,
+                ),
+                mask_shader: resources.lazy_module(
+                    device,
+                    "polyline_outline_mask_shader",
+                    crate::resources::builders::wgsl_source!("polyline_outline_mask"),
+                ),
             },
+            build_pass,
         );
-
-        // Outline mask: the same segment quads, writing white and skipping the
-        // clip-plane and colour logic.
-        let mask_shader = crate::resources::builders::wgsl_module(
-            device,
-            "polyline_outline_mask_shader",
-            crate::resources::builders::wgsl_source!("polyline_outline_mask"),
-        );
-        let mask_layout = crate::resources::builders::standard_scene_layout(
-            device,
-            "polyline_outline_mask_pipeline_layout",
-            resources.shared_bindings().group0_layout,
-            &resources.polyline.bgl,
-        );
-        let mask_attrs = instance_attributes(false);
-        let mask_pipeline = crate::resources::builders::build_outline_mask_pipeline(
-            device,
-            "polyline_outline_mask_pipeline",
-            &mask_layout,
-            &mask_shader,
-            crate::gpu::TextureFormat::R8Unorm,
-            &[crate::gpu::VertexBufferLayout {
-                array_stride: 112,
-                step_mode: crate::gpu::VertexStepMode::Instance,
-                attributes: &mask_attrs,
-            }],
-            None,
-            true,
-            crate::gpu::CompareFunction::LessEqual,
-        );
-
         Self {
             pipelines,
-            pick_pipeline,
+            passes,
             pick_id_bgl,
-            mask_pipeline,
         }
+    }
+
+    /// Whether `entry`'s line pipeline can draw this frame, without starting
+    /// it.
+    pub(super) fn drawable(&self, entry: &PolylineFrame) -> bool {
+        self.pipelines.drawable(crate::resources::PolylineKey {
+            skip_clip: entry.gpu.skip_clip,
+            wireframe: entry.gpu.wireframe,
+        })
+    }
+
+    /// Ask for everything the type can draw with, for a warm-up.
+    pub(super) fn request_all(&self) {
+        self.pipelines.request_all();
+        self.passes.request_all();
     }
 
     /// Build the group-2 object-id bind group for one pickable item.

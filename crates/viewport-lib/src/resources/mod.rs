@@ -108,7 +108,7 @@ pub(crate) use self::postprocess::producer::{
 };
 pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
-    ContactShadowUniform, DofUniform, DualPipeline, FrustumPlane, FrustumUniform,
+    ContactShadowUniform, DofUniform, FrustumPlane, FrustumUniform,
     GpuProjectedTetMesh, GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData,
     MeshInstanceGpuData, ObjectUniform, OutlineObjectBuffers, OutlineUniform,
     OverlayShadowLayerGpu, OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex,

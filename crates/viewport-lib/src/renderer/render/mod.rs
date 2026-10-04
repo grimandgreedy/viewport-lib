@@ -1461,7 +1461,7 @@ impl crate::renderer::ViewportRenderer {
                 };
                 if pl.wireframe {
                     if let (Some(wf_pipeline), Some(wf_bg)) = (
-                        polyline_pipelines.map(|ps| ps.get(key).for_format(is_hdr)),
+                        polyline_pipelines.and_then(|ps| ps.get(key, is_hdr)),
                         pl.wireframe_bind_group.as_ref(),
                     ) {
                         render_pass.set_pipeline(wf_pipeline);
@@ -1471,7 +1471,7 @@ impl crate::renderer::ViewportRenderer {
                     }
                     continue;
                 }
-                if let Some(pipeline) = polyline_pipelines.map(|ps| ps.get(key).for_format(is_hdr))
+                if let Some(pipeline) = polyline_pipelines.and_then(|ps| ps.get(key, is_hdr))
                 {
                     render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(0, camera_bg, &[]);
