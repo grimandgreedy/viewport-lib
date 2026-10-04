@@ -14,13 +14,13 @@
 //!
 //! Navigation: left/middle drag orbit, right drag pan, scroll zoom.
 
-pub use viewport_lib_examples_eframe::eframe;
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::from_egui;
 use vpl::{
-    Material, Modifiers, NodeId, OffscreenViewportTarget, OrbitCameraController, ViewportContext,
-    ViewportEvent, ViewportInstance, primitives,
+    Material, Modifiers, NodeId, OffscreenViewportTarget, OrbitCameraController, RendererConfig,
+    ViewportContext, ViewportEvent, ViewportInstance, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -40,10 +40,10 @@ fn main() -> eframe::Result {
             // compilation is not paid again. The data is only used on a device
             // with a pipeline cache, and anything stale is discarded.
             let cache = std::fs::read(pipeline_cache_path()).ok();
-            let mut session = ViewportInstance::new_with_pipeline_cache(
+            let mut session = ViewportInstance::with_config(
                 &rs.device,
-                OffscreenViewportTarget::render_format(rs.target_format),
-                cache.as_deref(),
+                &RendererConfig::new(OffscreenViewportTarget::render_format(rs.target_format))
+                    .with_pipeline_cache_data(cache),
             );
 
             let sphere = session
@@ -150,7 +150,11 @@ impl App {
                 // viewport size changes. `OffscreenViewportTarget` owns the sRGB
                 // dual-view so the tonemap encode survives egui's sample; we render
                 // into its sRGB view and register its non-sRGB view with egui.
-                if self.target.as_ref().map_or(true, |t| t.inner.size() != size) {
+                if self
+                    .target
+                    .as_ref()
+                    .map_or(true, |t| t.inner.size() != size)
+                {
                     let inner = OffscreenViewportTarget::new(&rs.device, rs.target_format, size);
                     let id = rs.renderer.write().register_native_texture(
                         &rs.device,

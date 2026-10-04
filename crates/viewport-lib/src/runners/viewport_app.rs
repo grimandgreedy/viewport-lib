@@ -75,6 +75,11 @@ pub struct AppConfig {
     /// File the runner keeps the GPU pipeline cache in. Default: `None`, no
     /// cache. See [`with_pipeline_cache`](Self::with_pipeline_cache).
     pub pipeline_cache_path: Option<std::path::PathBuf>,
+    /// Renderer settings. The runner replaces `target_format` with the
+    /// surface format and draws without MSAA, so `sample_count` is ignored;
+    /// a pipeline cache loaded from `pipeline_cache_path` replaces
+    /// `pipeline_cache_data`. See [`with_renderer_config`](Self::with_renderer_config).
+    pub renderer: crate::RendererConfig,
 }
 
 impl Default for AppConfig {
@@ -86,6 +91,7 @@ impl Default for AppConfig {
             present_mode: crate::gpu::PresentMode::AutoVsync,
             redraw_mode: RedrawMode::Continuous,
             pipeline_cache_path: None,
+            renderer: crate::RendererConfig::new(crate::gpu::TextureFormat::Bgra8UnormSrgb),
         }
     }
 }
@@ -115,6 +121,12 @@ impl AppConfig {
     /// for it.
     pub fn with_pipeline_cache(mut self, path: impl Into<std::path::PathBuf>) -> Self {
         self.pipeline_cache_path = Some(path.into());
+        self
+    }
+
+    /// Set the renderer settings, for example the pipeline compilation policy.
+    pub fn with_renderer_config(mut self, config: crate::RendererConfig) -> Self {
+        self.renderer = config;
         self
     }
 
@@ -587,8 +599,10 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
         marks.mark("surface_configure");
 
         let cache_data = super::load_pipeline_cache(self.config.pipeline_cache_path.as_deref());
-        let mut session =
-            ViewportInstance::new_with_pipeline_cache(&device, format, cache_data.as_deref());
+        let mut session = ViewportInstance::with_config(
+            &device,
+            &super::runner_renderer_config(&self.config.renderer, format, cache_data),
+        );
         marks.mark("renderer");
         if let Some(setup) = self.setup.take() {
             setup(&mut session, &device);

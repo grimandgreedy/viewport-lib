@@ -19,6 +19,7 @@ use shadow_state::ShadowState;
 mod blit;
 mod colour_ready;
 mod warm;
+pub use config::RendererConfig;
 pub use warm::PipelineSet;
 mod paths;
 pub use blit::BlitTexture;
@@ -35,6 +36,7 @@ pub use picking::{
     SubSelectionRef, VolumeSelectionInfo,
 };
 mod capture;
+mod config;
 mod overlay_buffers;
 mod overlay_draw_order;
 mod readback;
@@ -665,7 +667,7 @@ impl ViewportRenderer {
     ///   `0.0` and the rest of the breakdown is unaffected.
     /// - `PIPELINE_CACHE` enables
     ///   [`pipeline_cache_data`](Self::pipeline_cache_data) /
-    ///   [`new_with_pipeline_cache`](Self::new_with_pipeline_cache), so
+    ///   [`RendererConfig::with_pipeline_cache_data`], so
     ///   pipeline compilation from a previous run can be reused instead of
     ///   redone (startup and first-use hitches).
     /// - `SHADER_PRIMITIVE_INDEX` lets the GPU pick pass read the rasterizer's
@@ -809,54 +811,72 @@ impl ViewportRenderer {
     }
 
     /// Create a new renderer with default settings (no MSAA).
-    /// Call once at application startup.
+    /// Call once at application startup. For anything else, see
+    /// [`with_config`](Self::with_config).
     pub fn new(device: &crate::gpu::Device, target_format: crate::gpu::TextureFormat) -> Self {
-        Self::with_sample_count(device, target_format, 1)
+        Self::with_config(device, &RendererConfig::new(target_format))
     }
 
     /// Create a new renderer with the specified MSAA sample count (1, 2, or 4).
-    ///
-    /// When using MSAA (sample_count > 1), the caller must create multisampled
-    /// colour and depth textures and use them as render pass attachments with the
-    /// final surface texture as the resolve target.
+    #[deprecated(note = "use `with_config` and `RendererConfig::with_sample_count`")]
     pub fn with_sample_count(
         device: &crate::gpu::Device,
         target_format: crate::gpu::TextureFormat,
         sample_count: u32,
     ) -> Self {
-        Self::with_sample_count_and_cache(device, target_format, sample_count, None)
+        Self::with_config(
+            device,
+            &RendererConfig::new(target_format).with_sample_count(sample_count),
+        )
     }
 
     /// Create a renderer, seeding the GPU pipeline cache from previously saved
-    /// data so shader compilation can be skipped on later launches.
-    ///
-    /// Pass the bytes returned by an earlier [`pipeline_cache_data`](Self::pipeline_cache_data)
-    /// call, or `None` on first run. The cache only takes effect when the device
-    /// was created with `Features::PIPELINE_CACHE`; otherwise the data is ignored
-    /// and this matches [`new`](Self::new).
+    /// data.
+    #[deprecated(note = "use `with_config` and `RendererConfig::with_pipeline_cache_data`")]
     pub fn new_with_pipeline_cache(
         device: &crate::gpu::Device,
         target_format: crate::gpu::TextureFormat,
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
-        Self::with_sample_count_and_cache(device, target_format, 1, pipeline_cache_data)
+        Self::with_config(
+            device,
+            &RendererConfig::new(target_format)
+                .with_pipeline_cache_data(pipeline_cache_data.map(<[u8]>::to_vec)),
+        )
     }
 
     /// Returns the current contents of the GPU pipeline cache, suitable for
-    /// persisting and feeding back into [`new_with_pipeline_cache`](Self::new_with_pipeline_cache)
-    /// on the next launch. `None` when the device lacks `Features::PIPELINE_CACHE`.
+    /// persisting and passing to
+    /// [`RendererConfig::with_pipeline_cache_data`] on the next launch. `None`
+    /// when the device lacks `Features::PIPELINE_CACHE`.
     pub fn pipeline_cache_data(&self) -> Option<Vec<u8>> {
         self.resources.pipeline_cache.as_ref()?.get_data()
     }
 
     /// Like [`with_sample_count`](Self::with_sample_count) with an MSAA count and
     /// an optional saved pipeline cache.
+    #[deprecated(
+        note = "use `with_config` with `RendererConfig::with_sample_count` and `with_pipeline_cache_data`"
+    )]
     pub fn with_sample_count_and_cache(
         device: &crate::gpu::Device,
         target_format: crate::gpu::TextureFormat,
         sample_count: u32,
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
+        Self::with_config(
+            device,
+            &RendererConfig::new(target_format)
+                .with_sample_count(sample_count)
+                .with_pipeline_cache_data(pipeline_cache_data.map(<[u8]>::to_vec)),
+        )
+    }
+
+    /// Create a renderer from a [`RendererConfig`]. Call once at application
+    /// startup.
+    pub fn with_config(device: &crate::gpu::Device, config: &RendererConfig) -> Self {
+        let target_format = config.target_format;
+        let sample_count = config.sample_count;
         // Fail early with an actionable message rather than a cryptic wgpu
         // validation panic deep in mesh-pipeline-layout creation. This is the
         // base lit mesh path's floor; optional features that need more storage
@@ -897,12 +917,16 @@ impl ViewportRenderer {
         } else {
             MaterialTextureBinding::PerBatch
         };
-        let mut resources = DeviceResources::new_with_cache(
+        let mut resources = DeviceResources::new_configured(
             device,
             target_format,
             sample_count,
-            pipeline_cache_data,
+            config.pipeline_cache_data.as_deref(),
+            config.geometry_chunk_bytes,
         );
+        if let Some(policy) = config.pipeline_compilation {
+            resources.pipeline_compiler.set_policy(policy);
+        }
         resources.instancing.material_texture_binding = material_texture_binding;
         resources
             .material_gpu_builder
@@ -3522,8 +3546,11 @@ impl ViewportRenderer {
         // content, mirroring the HDR scene-pass position.
         self.dispatch_plugin_paint(render_pass, frame, false);
         // Shadow atlas viewer overlay.
-        if frame.effects.debug.show_shadow_atlas {
-            render_pass.set_pipeline(&self.resources.shadow.atlas_viewer_pipeline);
+        if let (true, Some(pipeline)) = (
+            frame.effects.debug.show_shadow_atlas,
+            &self.resources.shadow.atlas_viewer_pipeline,
+        ) {
+            render_pass.set_pipeline(pipeline);
             render_pass.set_bind_group(0, &self.resources.shadow.atlas_viewer_bg, &[]);
             render_pass.draw(0..6, 0..1);
         }

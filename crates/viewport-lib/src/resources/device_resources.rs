@@ -629,6 +629,8 @@ pub struct DeviceResources {
     /// ([`MATERIAL_GPU_CAPACITY`](crate::resources::material_gpu::MATERIAL_GPU_CAPACITY)),
     /// so its handle is stable and the camera bind group never rebuilds for it.
     pub(crate) material_gpu_buf: crate::gpu::Buffer,
+    /// Blocks `material_gpu_buf` holds.
+    pub(crate) material_gpu_capacity: usize,
     /// Per-frame interner that deduplicates transform blocks and hands out
     /// `material_id` indices into `material_gpu_buf`. Reset at each `prepare()`.
     pub(crate) material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder,
@@ -1048,11 +1050,30 @@ impl DeviceResources {
     /// per-viewport foreground objects intern). Overwriting a superset each time
     /// is safe: index 0 is always identity and ids only grow within a frame, so
     /// earlier material_ids stay valid.
-    pub(crate) fn upload_material_gpu(&mut self, queue: &crate::gpu::Queue) {
+    ///
+    /// A frame that interns more blocks than the buffer holds replaces it with
+    /// a larger one and sets `camera_bind_groups_dirty`, like
+    /// `upload_custom_data`.
+    pub(crate) fn upload_material_gpu(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) {
         let entries = self.material_gpu_builder.entries();
         let n = entries
             .len()
             .min(crate::resources::material_gpu::MATERIAL_GPU_CAPACITY);
+        if n > self.material_gpu_capacity {
+            let capacity = n
+                .next_power_of_two()
+                .max(self.material_gpu_capacity * 2)
+                .min(crate::resources::material_gpu::MATERIAL_GPU_CAPACITY);
+            self.material_gpu_buf = Self::create_material_gpu_buffer(device, capacity);
+            self.material_gpu_capacity = capacity;
+            self.camera_bind_groups_dirty = true;
+            self.material_gpu_written.clear();
+        }
+        let entries = self.material_gpu_builder.entries();
         // Prepare runs this once for the scene and again per viewport, and a
         // static scene's table does not change between frames: write only
         // what differs from the last upload.
@@ -1074,6 +1095,20 @@ impl DeviceResources {
     }
 
     /// A custom-data buffer holding `capacity` blocks.
+    pub(crate) fn create_material_gpu_buffer(
+        device: &crate::gpu::Device,
+        capacity: usize,
+    ) -> crate::gpu::Buffer {
+        use crate::resources::builders::LoggedAlloc;
+        device.logged_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("material_gpu_buf"),
+            size: (std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>() * capacity)
+                as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
     pub(crate) fn create_custom_data_buffer(
         device: &crate::gpu::Device,
         capacity: usize,

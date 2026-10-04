@@ -2099,6 +2099,19 @@ impl DeviceResources {
         rgba_data: &[u8],
         blendable: bool,
     ) -> crate::error::ViewportResult<crate::resources::MatcapId> {
+        // The built-ins hold the first eight indices, so `builtin_matcap_id`
+        // can name them before they are uploaded.
+        self.ensure_matcaps_initialized(device, queue);
+        self.upload_matcap_texture(device, queue, rgba_data, blendable)
+    }
+
+    fn upload_matcap_texture(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        rgba_data: &[u8],
+        blendable: bool,
+    ) -> crate::error::ViewportResult<crate::resources::MatcapId> {
         let (width, height) = (256u32, 256u32);
         let expected = (width * height * 4) as usize;
         if rgba_data.len() != expected {
@@ -2177,21 +2190,22 @@ impl DeviceResources {
 
     /// Return the `MatcapId` for a built-in preset.
     ///
-    /// Panics if called before the renderer has run at least one prepare pass
-    /// (which calls [`Self::ensure_matcaps_initialized`] automatically).
+    /// Valid from construction. The built-in textures are uploaded by the
+    /// first prepare whose scene uses a matcap, or by the first
+    /// [`upload_matcap`](Self::upload_matcap), whichever comes first.
     pub fn builtin_matcap_id(
         &self,
         preset: crate::resources::BuiltinMatcap,
     ) -> crate::resources::MatcapId {
-        self.content.builtin_matcap_ids
-            .expect("call ensure_matcaps_initialized (or run one prepare frame) before using built-in matcaps")
-            [preset as usize]
+        let index = preset as usize;
+        crate::resources::MatcapId::from_parts(index, BUILTIN_MATCAPS[index].1)
     }
 
     /// Upload the eight built-in matcaps to the GPU if not already done.
     ///
-    /// Called automatically by `ViewportRenderer::prepare()`. Safe to call
-    /// multiple times : no-op after first invocation.
+    /// Called by `ViewportRenderer::prepare()` on the first frame whose scene
+    /// uses a matcap. Safe to call multiple times : no-op after first
+    /// invocation.
     pub fn ensure_matcaps_initialized(
         &mut self,
         device: &crate::gpu::Device,
@@ -2200,36 +2214,29 @@ impl DeviceResources {
         if self.content.matcaps_initialized {
             return;
         }
-        use crate::resources::material::matcap_data;
-        let clay = self
-            .upload_matcap(device, queue, &matcap_data::clay(), true)
-            .unwrap();
-        let wax = self
-            .upload_matcap(device, queue, &matcap_data::wax(), true)
-            .unwrap();
-        let candy = self
-            .upload_matcap(device, queue, &matcap_data::candy(), true)
-            .unwrap();
-        let flat = self
-            .upload_matcap(device, queue, &matcap_data::flat(), true)
-            .unwrap();
-        let ceramic = self
-            .upload_matcap(device, queue, &matcap_data::ceramic(), false)
-            .unwrap();
-        let jade = self
-            .upload_matcap(device, queue, &matcap_data::jade(), false)
-            .unwrap();
-        let mud = self
-            .upload_matcap(device, queue, &matcap_data::mud(), false)
-            .unwrap();
-        let normal = self
-            .upload_matcap(device, queue, &matcap_data::normal(), false)
-            .unwrap();
-        self.content.builtin_matcap_ids =
-            Some([clay, wax, candy, flat, ceramic, jade, mud, normal]);
         self.content.matcaps_initialized = true;
+        let ids = BUILTIN_MATCAPS.map(|(data, blendable)| {
+            self.upload_matcap_texture(device, queue, &data(), blendable)
+                .unwrap()
+        });
+        self.content.builtin_matcap_ids = Some(ids);
     }
 }
+
+/// The built-in matcaps in `BuiltinMatcap` order, with each one's blend flag.
+const BUILTIN_MATCAPS: [(fn() -> Vec<u8>, bool); 8] = {
+    use crate::resources::material::matcap_data as m;
+    [
+        (m::clay, true),
+        (m::wax, true),
+        (m::candy, true),
+        (m::flat, true),
+        (m::ceramic, false),
+        (m::jade, false),
+        (m::mud, false),
+        (m::normal, false),
+    ]
+};
 
 #[cfg(test)]
 mod async_texture_tests {

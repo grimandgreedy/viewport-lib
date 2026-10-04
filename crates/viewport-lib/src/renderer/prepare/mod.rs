@@ -195,9 +195,12 @@ impl ViewportRenderer {
         // here instead of one per call.
         self.resources.flush_mesh_pipeline_rebuild(device);
 
-        // Ensure built-in colourmaps and matcaps are uploaded on first frame.
+        // Write the built-in colourmap texels on the first frame, and upload
+        // the built-in matcaps on the first frame whose scene uses a matcap.
         self.resources.ensure_colourmaps_initialized(device, queue);
-        self.resources.ensure_matcaps_initialized(device, queue);
+        if !self.resources.content.matcaps_initialized && Self::uses_matcap(frame) {
+            self.resources.ensure_matcaps_initialized(device, queue);
+        }
 
         let plugin_frame_index = self.plugin_frame_index;
 
@@ -749,7 +752,7 @@ impl ViewportRenderer {
         // All scene items have interned their material transforms; upload the
         // block buffer so the scene pass can index it. Foreground objects
         // re-upload after they intern in `prepare_viewport_internal`.
-        self.resources.upload_material_gpu(queue);
+        self.resources.upload_material_gpu(device, queue);
         self.resources.upload_custom_data(device, queue);
 
         // Item-type wireframes fill the shared line substrate, cleared above.
@@ -787,6 +790,16 @@ impl ViewportRenderer {
     /// Whether `frame` is drawn through the HDR path. A frame that asks for
     /// HDR is still drawn with the LDR pipelines when the caller paints it
     /// straight into its own render pass.
+    /// Whether any surface item in `frame` draws with a matcap. Matcaps are
+    /// read only by the per-object surface path.
+    fn uses_matcap(frame: &FrameData) -> bool {
+        match &frame.scene.surfaces {
+            SurfaceSubmission::Flat(items) => {
+                items.iter().any(|i| i.material.matcap_id().is_some())
+            }
+        }
+    }
+
     pub(crate) fn draws_hdr(&self, frame: &FrameData) -> bool {
         frame.effects.display.is_hdr() && !self.direct_paint
     }
@@ -815,6 +828,12 @@ impl ViewportRenderer {
             crate::renderer::types::GroundPlaneMode::None
         ) {
             self.resources.ensure_ground_plane_pipeline(device);
+        }
+        if frame.viewport.show_grid {
+            self.resources.ensure_grid_pipeline(device);
+        }
+        if frame.effects.debug.show_shadow_atlas {
+            self.resources.ensure_shadow_atlas_viewer_pipeline(device);
         }
         if frame
             .effects
@@ -870,7 +889,7 @@ impl ViewportRenderer {
         );
         // Foreground objects just interned their materials; re-upload the block
         // buffer so any new entries past the scene set are resident.
-        self.resources.upload_material_gpu(queue);
+        self.resources.upload_material_gpu(device, queue);
         self.resources.upload_custom_data(device, queue);
         // That upload can have grown the custom-data buffer.
         self.flush_camera_bind_group_rebuild(device);

@@ -27,7 +27,8 @@ fn lazy_pipelines_reach_the_cache_and_two_devices_do_not_share_one() {
 
     // The pipelines a frame builds lazily name no cache at their call sites,
     // and have to land in the renderer's cache all the same.
-    let mut renderer = ViewportRenderer::new_with_pipeline_cache(&device, FORMAT, None);
+    let mut renderer =
+        ViewportRenderer::with_config(&device, &viewport_lib::RendererConfig::new(FORMAT));
     let before = renderer.pipeline_cache_data();
     let _ = renderer.render_offscreen(&device, &queue, &frame(), 64, 64);
     let saved = renderer.pipeline_cache_data();
@@ -47,7 +48,10 @@ fn lazy_pipelines_reach_the_cache_and_two_devices_do_not_share_one() {
     drop(renderer);
 
     // A renderer seeded with that data draws the same frame.
-    let mut seeded = ViewportRenderer::new_with_pipeline_cache(&device, FORMAT, saved.as_deref());
+    let mut seeded = ViewportRenderer::with_config(
+        &device,
+        &viewport_lib::RendererConfig::new(FORMAT).with_pipeline_cache_data(saved),
+    );
     let _ = seeded.render_offscreen(&device, &queue, &frame(), 64, 64);
 
     // A second device from a second wgpu instance, alive at the same time.
@@ -56,11 +60,13 @@ fn lazy_pipelines_reach_the_cache_and_two_devices_do_not_share_one() {
     let Some((other_device, other_queue)) = headless_device_recommended_limits() else {
         return;
     };
-    let mut other = ViewportRenderer::new_with_pipeline_cache(&other_device, FORMAT, None);
+    let mut other =
+        ViewportRenderer::with_config(&other_device, &viewport_lib::RendererConfig::new(FORMAT));
     let _ = other.render_offscreen(&other_device, &other_queue, &frame(), 64, 64);
     let _ = seeded.render_offscreen(&device, &queue, &frame(), 64, 64);
 
     // Two renderers on one device.
-    let mut sibling = ViewportRenderer::new_with_pipeline_cache(&device, FORMAT, None);
+    let mut sibling =
+        ViewportRenderer::with_config(&device, &viewport_lib::RendererConfig::new(FORMAT));
     let _ = sibling.render_offscreen(&device, &queue, &frame(), 64, 64);
 }

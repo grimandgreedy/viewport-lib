@@ -547,6 +547,9 @@ impl ViewportRenderer {
             if !xray_object_buffers.is_empty() {
                 self.resources.ensure_xray_pipeline(device);
             }
+            if !constraint_line_buffers.is_empty() || !cap_buffers.is_empty() {
+                self.resources.ensure_guide_overlay_pipelines(device);
+            }
             let slot = &mut self.viewport_slots[vp_idx];
             slot.selection_outlines.outline_object_buffers = outline_object_buffers;
             slot.xray_object_buffers = xray_object_buffers;

@@ -7,7 +7,8 @@ use crate::renderer::types::{EffectsFrame, GroundPlaneMode};
 ///
 /// Start from [`for_effects`](Self::for_effects) with the effect settings the
 /// application renders with, add what a frame's settings cannot say
-/// (transparency, outlines, shadows, the `Direct` path, item types), or take
+/// (transparency, outlines, shadows, the grid, guides, the `Direct` path, item
+/// types), or take
 /// [`all`](Self::all). An empty set builds nothing.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PipelineSet {
@@ -25,6 +26,9 @@ pub struct PipelineSet {
     auto_exposure: bool,
     ground_plane: bool,
     skybox: bool,
+    grid: bool,
+    guides: bool,
+    shadow_atlas_viewer: bool,
     material_plugins: bool,
     clustered_lighting: bool,
     occlusion_culling: bool,
@@ -73,6 +77,9 @@ impl PipelineSet {
             auto_exposure: true,
             ground_plane: true,
             skybox: true,
+            grid: true,
+            guides: true,
+            shadow_atlas_viewer: true,
             material_plugins: true,
             clustered_lighting: true,
             occlusion_culling: true,
@@ -109,6 +116,18 @@ impl PipelineSet {
     /// The HDR families, effects infrastructure and tone map.
     pub fn with_hdr(mut self) -> Self {
         self.hdr = true;
+        self
+    }
+
+    /// The floor grid, which `ViewportFrame::show_grid` turns on.
+    pub fn with_grid(mut self) -> Self {
+        self.grid = true;
+        self
+    }
+
+    /// The constraint guide lines and section cap fill.
+    pub fn with_guides(mut self) -> Self {
+        self.guides = true;
         self
     }
 
@@ -306,8 +325,19 @@ impl ViewportRenderer {
         if set.skybox {
             r.ensure_skybox_pipeline(device);
         }
+        if set.grid {
+            r.ensure_grid_pipeline(device);
+        }
+        if set.guides {
+            r.ensure_guide_overlay_pipelines(device);
+        }
+        if set.shadow_atlas_viewer {
+            r.ensure_shadow_atlas_viewer_pipeline(device);
+        }
         if set.clustered_lighting {
-            r.clustered.ensure_pipelines(device, &r.pipeline_compiler);
+            if r.clustered.ensure_pipelines(device, &r.pipeline_compiler) {
+                r.camera_bind_groups_dirty = true;
+            }
             r.clustered.request_all();
         }
         if set.occlusion_culling {

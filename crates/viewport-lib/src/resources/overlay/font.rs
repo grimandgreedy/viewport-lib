@@ -153,7 +153,8 @@ struct ShapedGlyph {
 pub(crate) struct GlyphAtlas {
     /// Raw font bytes, parallel to `fonts`, kept so a swash `FontRef` can be
     /// rebuilt on demand: it borrows the bytes rather than owning them.
-    font_bytes: Vec<Vec<u8>>,
+    /// The built-in font is borrowed from the binary rather than copied.
+    font_bytes: Vec<std::borrow::Cow<'static, [u8]>>,
 
     /// Table-directory offset and cache key per font, parallel to `fonts`. The key
     /// is minted once at upload and reused, because `ScaleContext` caches per font
@@ -177,7 +178,9 @@ pub(crate) struct GlyphAtlas {
     /// Stored as RGBA for direct GPU upload: R=G=B=255, A=coverage.
     pixels: Vec<[u8; 4]>,
 
-    /// Current atlas dimensions (always square, power of two).
+    /// Current atlas dimensions (always square, power of two). Zero until the
+    /// first glyph is packed: an application that draws no text never pays
+    /// for the pixel buffer or the texture.
     size: u32,
 
     /// Simple row-based packer state.
@@ -207,18 +210,18 @@ impl GlyphAtlas {
     /// Initial atlas size in pixels (width = height).
     const INITIAL_SIZE: u32 = 512;
 
-    /// Create a new atlas with the built-in default font pre-loaded.
+    /// Create a new atlas with the built-in default font pre-loaded. The
+    /// texture is a 1x1 placeholder until the first glyph is packed.
     pub fn new(device: &crate::gpu::Device) -> Self {
-        let size = Self::INITIAL_SIZE;
-        let pixel_count = (size * size) as usize;
-        let pixels = vec![[255, 255, 255, 0]; pixel_count];
+        let size = 0;
+        let pixels = Vec::new();
 
-        let (texture, view) = Self::create_texture(device, size);
+        let (texture, view) = Self::create_texture(device, 1);
 
         let default_key = swash_key(DEFAULT_FONT_BYTES).expect("built-in default font must parse");
 
         Self {
-            font_bytes: vec![DEFAULT_FONT_BYTES.to_vec()],
+            font_bytes: vec![std::borrow::Cow::Borrowed(DEFAULT_FONT_BYTES)],
             font_keys: vec![default_key],
             scale: ScaleContext::new(),
             shape: std::sync::Mutex::new(ShapeContext::new()),
@@ -248,14 +251,15 @@ impl GlyphAtlas {
             .ok_or_else(|| FontError::ParseFailed("not a readable font".into()))?;
         let index = self.font_bytes.len();
         self.font_keys.push(key);
-        self.font_bytes.push(ttf_bytes.to_vec());
+        self.font_bytes
+            .push(std::borrow::Cow::Owned(ttf_bytes.to_vec()));
         Ok(FontHandle(index))
     }
 
     /// The raw bytes of the font at `index` (a [`FontHandle`]'s value), if it has
     /// been uploaded. Index 0 is the built-in default font.
     pub(crate) fn font_bytes(&self, index: usize) -> Option<&[u8]> {
-        self.font_bytes.get(index).map(Vec::as_slice)
+        self.font_bytes.get(index).map(|b| &**b)
     }
 
     /// A swash font handle for `font_index`. Cheap: it borrows the stored bytes
@@ -826,6 +830,9 @@ impl GlyphAtlas {
         offset_y: f32,
         color: bool,
     ) -> GlyphEntry {
+        if self.size == 0 {
+            self.grow(device);
+        }
         // Simple row packer with 1px padding.
         let pad = 1;
         if self.cursor_x + w + pad > self.size {
@@ -865,18 +872,24 @@ impl GlyphAtlas {
         entry
     }
 
-    /// Double the atlas size, copying existing pixel data into the new buffer
-    /// and recreating the GPU texture.
+    /// Double the atlas size (or allocate it at its initial size), copying
+    /// existing pixel data into the new buffer and recreating the GPU texture.
     fn grow(&mut self, device: &crate::gpu::Device) {
         let old_size = self.size;
-        let new_size = old_size * 2;
-        tracing::info!(
-            "Growing glyph atlas from {}x{} to {}x{}",
-            old_size,
-            old_size,
-            new_size,
-            new_size
-        );
+        let new_size = if old_size == 0 {
+            Self::INITIAL_SIZE
+        } else {
+            old_size * 2
+        };
+        if old_size > 0 {
+            tracing::info!(
+                "Growing glyph atlas from {}x{} to {}x{}",
+                old_size,
+                old_size,
+                new_size,
+                new_size
+            );
+        }
 
         let mut new_pixels = vec![[255, 255, 255, 0u8]; (new_size * new_size) as usize];
         for row in 0..old_size {

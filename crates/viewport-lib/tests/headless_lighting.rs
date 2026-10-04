@@ -1337,3 +1337,64 @@ fn light_channel_mask_excludes_object() {
          {ambient_only_max} should be well under half the lit max {lit_max})"
     );
 }
+
+/// Enough point lights to take the clustered path shade the same as the
+/// per-light fallback. The full cluster grid is allocated by the first frame
+/// that clusters, so after a frame with one light this also checks that the
+/// existing camera bind groups were rebuilt to name the new grid.
+#[test]
+fn clustered_lighting_matches_the_per_light_fallback() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let render = |fallback: bool| {
+        let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+        renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+        let mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &box_mesh())
+            .unwrap();
+        let mut frame = FrameData::default();
+        frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
+        frame.camera.viewport_size = [64.0, 64.0];
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame.effects.lighting.shadows.enabled = false;
+        frame.effects.debug.force_cluster_fallback = fallback;
+        frame.effects.lighting.lights = (0..24)
+            .map(|i| {
+                let mut light = LightSource::default();
+                light.kind = LightKind::Point {
+                    position: [(i % 6) as f32 - 2.5, (i / 6) as f32 - 1.5, 1.5],
+                    range: 3.0,
+                    radius: 0.05,
+                };
+                light
+            })
+            .collect();
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        let lights = std::mem::take(&mut frame.effects.lighting.lights);
+        frame.effects.lighting.lights = vec![lights[0].clone()];
+        let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        frame.effects.lighting.lights = lights;
+        renderer.render_offscreen(&device, &queue, &frame, 64, 64)
+    };
+    let clustered = render(false);
+    let fallback = render(true);
+    let max_diff = clustered
+        .iter()
+        .zip(&fallback)
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap();
+    assert!(
+        max_diff <= 2,
+        "clustered and per-light shading differ by up to {max_diff} levels"
+    );
+    let lit = clustered.chunks(4).filter(|p| p[0] > 40).count();
+    assert!(lit > 100, "the lights lit only {lit} pixels");
+}

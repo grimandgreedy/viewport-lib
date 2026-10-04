@@ -787,9 +787,12 @@ impl ViewportRenderer {
             // composes neither compute pipeline. While they compile on a
             // worker the frame takes the per-light fallback.
             if want_clusters || resources.clustered.grid_dirty() {
-                resources
+                if resources
                     .clustered
-                    .ensure_pipelines(device, &resources.pipeline_compiler);
+                    .ensure_pipelines(device, &resources.pipeline_compiler)
+                {
+                    resources.camera_bind_groups_dirty = true;
+                }
             }
             let use_clusters = want_clusters && resources.clustered.pipelines_ready();
             let fallback_flag = if use_clusters { 0.0 } else { 1.0 };

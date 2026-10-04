@@ -22,6 +22,10 @@ use crate::scene::material::Material;
 /// caller can log it.
 pub(crate) const MATERIAL_GPU_CAPACITY: usize = 4096;
 
+/// Blocks the material buffer holds before its first growth. A scene with more
+/// distinct transforms grows it, up to [`MATERIAL_GPU_CAPACITY`].
+pub(crate) const MATERIAL_GPU_INITIAL_CAPACITY: usize = 64;
+
 /// Number of texture slots carrying an independent transform, in this order:
 /// 0 albedo, 1 normal, 2 ambient-occlusion, 3 metallic-roughness, 4 emissive.
 pub(crate) const MATERIAL_TEX_SLOTS: usize = 5;

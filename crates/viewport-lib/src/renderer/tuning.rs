@@ -20,8 +20,7 @@ use crate::renderer::stats::{PerformancePolicy, RuntimeMode};
 ///   (`LightingSettings` shadows, `PostProcessSettings`, `ScatterSettings`); they
 ///   can differ per frame/viewport.
 /// - MSAA sample count and the GPU pipeline cache: construction-time, see
-///   [`crate::ViewportRenderer::with_sample_count`] /
-///   [`crate::ViewportRenderer::new_with_pipeline_cache`].
+///   [`crate::RendererConfig`].
 /// - LOD groups: a registration API keyed by mesh, see
 ///   [`crate::ViewportRenderer::register_lod_group`].
 #[derive(Debug, Clone, PartialEq)]
