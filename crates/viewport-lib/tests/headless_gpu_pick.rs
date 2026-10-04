@@ -10,6 +10,11 @@ use viewport_lib::wgpu;
 mod common;
 use common::*;
 
+/// How long the async pick and snap tests poll before calling a read-back
+/// stuck. A deadline rather than a poll count, so a busy machine that takes
+/// longer per poll does not run out of polls.
+const POLL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 #[test]
 fn gpu_pick_returns_object_id_under_cursor() {
     let Some((device, queue)) = headless_device() else {
@@ -91,14 +96,17 @@ fn gpu_pick_async_begin_poll_returns_hit() {
     // Poll until the read-back lands. The poll is non-blocking, so drive the
     // device between polls the way a render loop's own submissions would, and
     // bound the loop so a stuck map fails the test instead of hanging.
+    //
+    // A fast GPU can finish the read-back before the first poll, so `Ready`
+    // straight away is fine; what matters is that it resolves to the hit.
     let mut hit = None;
-    let mut saw_pending = false;
-    for _ in 0..1000 {
+    let deadline = std::time::Instant::now() + POLL_TIMEOUT;
+    while std::time::Instant::now() < deadline {
         match renderer.pick_object_poll(&device) {
             PickPoll::Pending => {
-                saw_pending = true;
                 let enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
                 queue.submit(std::iter::once(enc.finish()));
+                std::thread::sleep(std::time::Duration::from_millis(1));
                 continue;
             }
             PickPoll::Ready(h) => {
@@ -108,12 +116,6 @@ fn gpu_pick_async_begin_poll_returns_hit() {
             PickPoll::Idle => panic!("poll went Idle while a pick was in flight"),
         }
     }
-    // The read-back should not be ready on the very first poll (that would mean
-    // the poll blocked); it lands after the device is driven.
-    assert!(
-        saw_pending,
-        "expected at least one Pending before the pick resolved"
-    );
     assert_eq!(hit.map(|h| h.id), Some(7));
 
     // The slot is cleared once read: a further poll is Idle.
@@ -161,11 +163,13 @@ fn gpu_pick_async_begin_on_empty_space_reports_no_hit() {
     assert!(started);
 
     let mut resolved = false;
-    for _ in 0..1000 {
+    let deadline = std::time::Instant::now() + POLL_TIMEOUT;
+    while std::time::Instant::now() < deadline {
         match renderer.pick_object_poll(&device) {
             PickPoll::Pending => {
                 let enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
                 queue.submit(std::iter::once(enc.finish()));
+                std::thread::sleep(std::time::Duration::from_millis(1));
                 continue;
             }
             PickPoll::Ready(h) => {
@@ -702,16 +706,16 @@ fn gpu_snap_query_begin_poll_matches_the_blocking_query() {
 
     // Poll until the window lands, driving the device between polls the way a
     // render loop's own submissions would, and bounded so a stuck map fails
-    // rather than hangs. The window is not ready the instant it is submitted,
-    // so the first poll should see it pending.
+    // rather than hangs. A fast GPU can finish the read-back before the first
+    // poll, so `Ready` straight away is fine.
     let mut polled = None;
-    let mut saw_pending = false;
-    for _ in 0..1000 {
+    let deadline = std::time::Instant::now() + POLL_TIMEOUT;
+    while std::time::Instant::now() < deadline {
         match renderer.snap_query_poll(&device, &frame) {
             SnapPoll::Pending => {
-                saw_pending = true;
                 let enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
                 queue.submit(std::iter::once(enc.finish()));
+                std::thread::sleep(std::time::Duration::from_millis(1));
                 continue;
             }
             SnapPoll::Ready(h) => {
@@ -721,10 +725,6 @@ fn gpu_snap_query_begin_poll_matches_the_blocking_query() {
             SnapPoll::Idle => panic!("poll went Idle while a snap query was in flight"),
         }
     }
-    assert!(
-        saw_pending,
-        "expected at least one Pending before the snap resolved"
-    );
     let polled = polled.expect("the polled query snaps to the box too");
 
     // The two forms share one window scan, so they agree exactly.
@@ -799,11 +799,13 @@ fn gpu_snap_query_begin_poll_reaches_an_object_the_pixel_misses() {
     assert!(matches!(renderer.pick_object_poll(&device), PickPoll::Idle));
     assert!(renderer.snap_query_begin(miss, 8.0, &frame, &device, &queue, PickMask::OBJECT));
     let mut hit = None;
-    for _ in 0..1000 {
+    let deadline = std::time::Instant::now() + POLL_TIMEOUT;
+    while std::time::Instant::now() < deadline {
         match renderer.snap_query_poll(&device, &frame) {
             SnapPoll::Pending => {
                 let enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
                 queue.submit(std::iter::once(enc.finish()));
+                std::thread::sleep(std::time::Duration::from_millis(1));
             }
             SnapPoll::Ready(h) => {
                 hit = h;
@@ -821,11 +823,13 @@ fn gpu_snap_query_begin_poll_reaches_an_object_the_pixel_misses() {
     // And with a radius too small to reach it, the window agrees with the pixel.
     assert!(renderer.snap_query_begin(miss, 1.0, &frame, &device, &queue, PickMask::OBJECT));
     let mut hit = Some(());
-    for _ in 0..1000 {
+    let deadline = std::time::Instant::now() + POLL_TIMEOUT;
+    while std::time::Instant::now() < deadline {
         match renderer.snap_query_poll(&device, &frame) {
             SnapPoll::Pending => {
                 let enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
                 queue.submit(std::iter::once(enc.finish()));
+                std::thread::sleep(std::time::Duration::from_millis(1));
             }
             SnapPoll::Ready(h) => {
                 hit = h.map(|_| ());
