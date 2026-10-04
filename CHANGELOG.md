@@ -93,6 +93,8 @@
 
 ### Fixed
 
+- **A material plugin with more than one texture no longer fails to build its pipelines** - `recommended_device_limits` now requests the adapter's sampled-texture limit. The scene and per-object bind groups use 15 of the default 16 fragment-stage textures, so a plugin binding two textures exceeded it on a device made with the recommended limits.
+
 - **Opaque and translucent copies of a mesh no longer share an instanced batch** - a batch was drawn opaque or through OIT according to its first item, so mixing opacities on one mesh drew either the opaque copies blended or the translucent ones solid, depending on sort order. Opacity below 1 now splits the batch.
 - **The hardware ray-query tracer compiles on wgpu 29 and 30** - the kernel lacked the `enable wgpu_ray_query;` directive naga 29 and 30 require, so `Tracer` failed to create its shader on those legs on every device with ray queries. wgpu 27 is unchanged.
 - **A GPU pick hits a deformed mesh where it is drawn** - the object pick pass did not run the registered deformers, so a skinned or displaced mesh was picked in its rest shape: a click on the drawn limb missed, and a click where the rest pose sat hit. The pick shader now composes the deformers like the other mesh passes. The per-pixel vertex and edge refinement still reads the undeformed corners.

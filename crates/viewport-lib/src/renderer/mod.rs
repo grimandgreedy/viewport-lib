@@ -795,6 +795,12 @@ impl ViewportRenderer {
         // the deform bind group invalid; the base draw path stays under both.
         limits.max_storage_buffer_binding_size = adapter_limits.max_storage_buffer_binding_size;
         limits.max_buffer_size = adapter_limits.max_buffer_size;
+        // The scene and per-object groups already take 15 of the default 16
+        // sampled textures in the fragment stage, so a material plugin with a
+        // second texture of its own would not fit. Take the adapter's own limit
+        // (Metal, Vulkan and DX12 all report far more than 16).
+        limits.max_sampled_textures_per_shader_stage =
+            adapter_limits.max_sampled_textures_per_shader_stage;
         // The bindless material path binds one texture array; its element count
         // (a binding-array limit that defaults to 0) must be requested alongside
         // the feature or the layout is invalid. Only ask for it when the adapter
