@@ -1111,8 +1111,8 @@ mod tests {
     }
 
     // The reflection-probe bake uploads an environment per probe, which blocks
-    // on a runner drain. That drain must not clear the promotion window and
-    // strand a streaming consumer's in-flight mesh upload.
+    // on a runner drain. That drain must not age the retention window and reap
+    // a streaming consumer's completed mesh upload before they poll it.
     #[test]
     fn reflection_bake_does_not_strand_a_pending_upload() {
         let Some((device, queue)) = headless_device() else {
@@ -1126,28 +1126,47 @@ mod tests {
             .resources_mut()
             .begin_upload_mesh_data(&device, crate::primitives::cube(1.0))
             .unwrap();
-        assert!(matches!(
-            renderer.upload_status(job),
-            UploadStatus::Pending { .. }
-        ));
+
+        // Bring the mesh to `Ready` with the same retaining pump the bake
+        // uses, so the case does not depend on whether the mesh worker
+        // finishes before the bake's environment worker. Waiting on the bake
+        // to promote it raced the two workers and failed on a busy machine.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !matches!(renderer.upload_status(job), UploadStatus::Ready) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the mesh upload did not finish"
+            );
+            renderer
+                .resources_mut()
+                .process_uploads_retaining(&device, &queue);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
 
         let mut fd = empty_frame();
         let bounds = crate::scene::aabb::Aabb {
             min: glam::Vec3::splat(-1.0),
             max: glam::Vec3::splat(1.0),
         };
+        let cycle = |r: &ViewportRenderer| r.resources.jobs.lock().unwrap().retain_cycle();
+        let before = cycle(&renderer);
         let _zone = renderer
             .capture_reflection_probe(&device, &queue, &mut fd, bounds, 1.0, 8, 8)
             .unwrap();
 
-        // The bake's environment upload drained the runner, promoting the mesh,
-        // but retained the promotion window, so the consumer's next poll still
-        // observes `Ready` rather than a reaped `Unknown`. (Do not pump again
-        // here: an ordinary clearing `process_uploads` is exactly what the
-        // consumer's next presented prepare does, after they have observed it.)
+        // A bake pumps far fewer times than the window is long, so the status
+        // test alone would pass with a clearing drain. The clock is the
+        // direct check: the bake must not advance it at all.
+        assert_eq!(
+            cycle(&renderer),
+            before,
+            "the reflection bake aged the upload retention window"
+        );
+        // So the consumer's next poll still observes `Ready` rather than a
+        // reaped `Unknown`.
         assert!(
             matches!(renderer.upload_status(job), UploadStatus::Ready),
-            "reflection bake must promote and retain the pending upload, not strand it"
+            "the reflection bake reaped a completed upload the consumer had not polled"
         );
     }
 

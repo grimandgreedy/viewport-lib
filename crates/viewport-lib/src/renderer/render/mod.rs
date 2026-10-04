@@ -567,7 +567,8 @@ impl ViewportRenderer {
         // Shadow atlas viewer overlay.
         if let (true, Some(pipeline)) = (
             frame.effects.debug.show_shadow_atlas,
-            &self.resources.shadow.atlas_viewer_pipeline,
+            self.resources
+                .guide_pipeline(crate::resources::overlay::guides::GUIDE_ATLAS_VIEWER),
         ) {
             render_pass.set_pipeline(pipeline);
             render_pass.set_bind_group(0, &self.resources.shadow.atlas_viewer_bg, &[]);

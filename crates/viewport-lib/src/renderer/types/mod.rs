@@ -273,7 +273,10 @@ macro_rules! emit_draw_calls {
         // Grid pass : full-screen analytical shader drawn first so scene geometry
         // occludes it. No vertex buffer; depth is written via @builtin(frag_depth).
         // Camera bind group is restored immediately after for subsequent passes.
-        if let (true, Some(pipeline)) = (frame.viewport.show_grid, &resources.guides.grid_pipeline)
+        if let (true, Some(pipeline)) = (
+            frame.viewport.show_grid,
+            resources.guide_pipeline(crate::resources::overlay::guides::GUIDE_GRID),
+        )
         {
             render_pass.set_pipeline(pipeline);
             render_pass.set_bind_group(0, grid_bg, &[]);
@@ -974,7 +977,7 @@ macro_rules! emit_draw_calls {
         if let Some(slot) = _vp_slot {
             if let (false, Some(pipeline)) = (
                 slot.constraint_line_buffers.is_empty(),
-                &resources.guides.overlay_line_pipeline,
+                resources.guide_pipeline(crate::resources::overlay::guides::GUIDE_LINES),
             ) {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
@@ -990,7 +993,10 @@ macro_rules! emit_draw_calls {
         // Cap fill pass (section view cross-section fill).
         if let Some(slot) = _vp_slot {
             if let (false, Some(pipeline)) =
-                (slot.cap_buffers.is_empty(), &resources.guides.overlay_pipeline)
+                (
+                slot.cap_buffers.is_empty(),
+                resources.guide_pipeline(crate::resources::overlay::guides::GUIDE_TRIANGLES),
+            )
             {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);

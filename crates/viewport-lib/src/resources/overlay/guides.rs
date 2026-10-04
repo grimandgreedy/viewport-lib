@@ -7,16 +7,15 @@
 
 /// Grid, base overlay, and constraint-line GPU resources.
 pub(crate) struct OverlayGuideResources {
-    /// Overlay render pipeline (TriangleList with alpha blending : for semi-transparent BC quads).
-    /// Built on first use by `ensure_guide_overlay_pipelines`.
-    pub(crate) overlay_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Overlay wireframe pipeline (LineList, no alpha blending needed).
-    pub(crate) overlay_line_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// The guide triangle and line pipelines, the grid and the shadow atlas
+    /// viewer, composed by the first `ensure_*` that needs one and each
+    /// compiled under the compilation policy. Index with the `GUIDE_*`
+    /// constants through [`DeviceResources::guide_pipeline`].
+    ///
+    /// [`DeviceResources::guide_pipeline`]: crate::resources::DeviceResources::guide_pipeline
+    pub(crate) pipelines: Option<GuidePipelines>,
     /// Bind group layout for overlay uniforms (group 1: model + colour uniform).
     pub(crate) overlay_bgl: crate::gpu::BindGroupLayout,
-    /// Full-screen analytical grid pipeline (no vertex buffer : positions hardcoded in shader).
-    /// Built on first use by `ensure_grid_pipeline`.
-    pub(crate) grid_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Uniform buffer for the grid shader (GridUniform : written every frame in prepare()).
     pub(crate) grid_uniform_buf: crate::gpu::Buffer,
     /// Bind group for the grid uniform (group 0, single binding).
@@ -52,53 +51,44 @@ mod tests {
     }
 }
 
-impl crate::resources::DeviceResources {
-    /// Build the triangle and line pipelines the constraint guides and section
-    /// caps draw with. Called by the interaction prepare on the first frame
-    /// that has either. A no-op after that.
-    pub(crate) fn ensure_guide_overlay_pipelines(&mut self, device: &crate::gpu::Device) {
-        if self.guides.overlay_pipeline.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        // ------------------------------------------------------------------
-        // Overlay shader module
-        // ------------------------------------------------------------------
-        let overlay_shader = crate::resources::builders::wgsl_module(
-            device,
-            "overlay_shader",
-            crate::resources::builders::wgsl_source!("overlay"),
-        );
+/// Member indices of [`GuidePipelines`].
+pub(crate) const GUIDE_TRIANGLES: usize = 0;
+pub(crate) const GUIDE_LINES: usize = 1;
+pub(crate) const GUIDE_GRID: usize = 2;
+pub(crate) const GUIDE_ATLAS_VIEWER: usize = 3;
 
-        // ------------------------------------------------------------------
-        // Overlay pipeline layout (group 0: camera, group 1: overlay uniform)
-        // ------------------------------------------------------------------
-        let overlay_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "overlay_pipeline_layout",
-            &[&self.binds.camera_bgl, &self.guides.overlay_bgl],
-        );
+pub(crate) type GuidePipelines = crate::resources::pipeline_slot::LazyFamily<GuideRecipe, 4>;
 
-        // ------------------------------------------------------------------
-        // Overlay render pipeline
-        // TriangleList topology with alpha blending for semi-transparent quads.
-        // depth_write_enabled: false : do not corrupt depth buffer with overlays.
-        // depth_compare: Less : overlays respect depth (hidden by geometry in front).
-        // cull_mode: None : quads viewed from both sides.
-        // ------------------------------------------------------------------
-        let overlay_pipeline = crate::resources::builders::render_pipeline(
-            device,
+/// What the guide, grid and atlas-viewer builds read.
+pub(crate) struct GuideRecipe {
+    device: crate::gpu::Device,
+    target_format: crate::gpu::TextureFormat,
+    sample_count: u32,
+    overlay_layout: crate::gpu::PipelineLayout,
+    grid_layout: crate::gpu::PipelineLayout,
+    atlas_layout: crate::gpu::PipelineLayout,
+    overlay_shader: crate::resources::pipeline_slot::LazyModule,
+    grid_shader: crate::resources::pipeline_slot::LazyModule,
+    atlas_shader: crate::resources::pipeline_slot::LazyModule,
+}
+
+fn build_guide(r: &GuideRecipe, i: usize) -> crate::gpu::RenderPipeline {
+    match i {
+        // Triangles with alpha blending, no depth write, depth-tested, both
+        // faces: semi-transparent quads such as the section cap fill.
+        GUIDE_TRIANGLES => crate::resources::builders::render_pipeline(
+            &r.device,
             crate::resources::builders::RenderPipelineDesc {
                 label: "overlay_pipeline",
-                layout: &overlay_pipeline_layout,
-                vertex_module: &overlay_shader,
+                layout: &r.overlay_layout,
+                vertex_module: r.overlay_shader.get(),
                 vertex_entry: "vs_main",
                 vertex_buffers: &[crate::resources::OverlayVertex::buffer_layout()],
                 fragment: Some(crate::gpu::FragmentState {
-                    module: &overlay_shader,
+                    module: r.overlay_shader.get(),
                     entry_point: Some("fs_main"),
                     targets: &[Some(crate::gpu::ColorTargetState {
-                        format: self.target_format,
+                        format: r.target_format,
                         blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
                         write_mask: crate::gpu::ColorWrites::ALL,
                     })],
@@ -118,33 +108,27 @@ impl crate::resources::DeviceResources {
                     crate::gpu::CompareFunction::Less,
                 )),
                 multisample: crate::gpu::MultisampleState {
-                    count: self.sample_count,
+                    count: r.sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
                 },
-                cache: self.pipeline_cache.as_ref(),
+                cache: None,
             },
-        );
-
-        // ------------------------------------------------------------------
-        // Overlay line pipeline (LineList)
-        // Uses the same overlay shader + bind group layout as the triangle overlay.
-        // No alpha blending needed for line overlays.
-        // depth_write_enabled: false : overlay lines don't corrupt depth buffer.
-        // ------------------------------------------------------------------
-        let overlay_line_pipeline = crate::resources::builders::render_pipeline(
-            device,
+        ),
+        // The same shader as lines, unblended: the constraint guides.
+        GUIDE_LINES => crate::resources::builders::render_pipeline(
+            &r.device,
             crate::resources::builders::RenderPipelineDesc {
                 label: "overlay_line_pipeline",
-                layout: &overlay_pipeline_layout,
-                vertex_module: &overlay_shader,
+                layout: &r.overlay_layout,
+                vertex_module: r.overlay_shader.get(),
                 vertex_entry: "vs_main",
                 vertex_buffers: &[crate::resources::OverlayVertex::buffer_layout()],
                 fragment: Some(crate::gpu::FragmentState {
-                    module: &overlay_shader,
+                    module: r.overlay_shader.get(),
                     entry_point: Some("fs_main"),
                     targets: &[Some(crate::gpu::ColorTargetState {
-                        format: self.target_format,
+                        format: r.target_format,
                         blend: None,
                         write_mask: crate::gpu::ColorWrites::ALL,
                     })],
@@ -164,48 +148,28 @@ impl crate::resources::DeviceResources {
                     crate::gpu::CompareFunction::Less,
                 )),
                 multisample: crate::gpu::MultisampleState {
-                    count: self.sample_count,
+                    count: r.sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
                 },
-                cache: self.pipeline_cache.as_ref(),
+                cache: None,
             },
-        );
-
-        self.guides.overlay_pipeline = Some(overlay_pipeline);
-        self.guides.overlay_line_pipeline = Some(overlay_line_pipeline);
-    }
-
-    /// Build the floor grid pipeline. Called by the prepare of the first frame
-    /// that shows the grid. A no-op after that.
-    pub(crate) fn ensure_grid_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.guides.grid_pipeline.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let grid_shader = crate::resources::builders::wgsl_module(
-            device,
-            "grid_shader",
-            crate::resources::builders::wgsl_source!("grid"),
-        );
-        let grid_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "grid_pipeline_layout",
-            &[&self.guides.grid_bgl],
-        );
-        let grid_pipeline = crate::resources::builders::render_pipeline(
-            device,
+        ),
+        // Full-screen analytical grid; no vertex buffer, positions are in the
+        // shader.
+        GUIDE_GRID => crate::resources::builders::render_pipeline(
+            &r.device,
             crate::resources::builders::RenderPipelineDesc {
                 label: "grid_pipeline",
-                layout: &grid_pipeline_layout,
-                vertex_module: &grid_shader,
+                layout: &r.grid_layout,
+                vertex_module: r.grid_shader.get(),
                 vertex_entry: "vs_main",
                 vertex_buffers: &[], // no vertex buffer : positions hardcoded in shader,
                 fragment: Some(crate::gpu::FragmentState {
-                    module: &grid_shader,
+                    module: r.grid_shader.get(),
                     entry_point: Some("fs_main"),
                     targets: &[Some(crate::gpu::ColorTargetState {
-                        format: self.target_format,
+                        format: r.target_format,
                         blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
                         write_mask: crate::gpu::ColorWrites::ALL,
                     })],
@@ -233,46 +197,26 @@ impl crate::resources::DeviceResources {
                     },
                 }),
                 multisample: crate::gpu::MultisampleState {
-                    count: self.sample_count,
+                    count: r.sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
                 },
-                cache: self.pipeline_cache.as_ref(),
+                cache: None,
             },
-        );
-        self.guides.grid_pipeline = Some(grid_pipeline);
-    }
-
-    /// Build the shadow atlas debug viewer pipeline. Called by the prepare of
-    /// the first frame with `show_shadow_atlas` set. A no-op after that.
-    pub(crate) fn ensure_shadow_atlas_viewer_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.shadow.atlas_viewer_pipeline.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let atlas_blit_shader = crate::resources::builders::wgsl_module(
-            device,
-            "shadow_atlas_blit",
-            crate::resources::builders::wgsl_source!("shadow_atlas_blit"),
-        );
-        let atlas_blit_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "atlas_blit_layout",
-            &[&self.shadow.atlas_viewer_bgl],
-        );
-        let shadow_atlas_viewer_pipeline = crate::resources::builders::render_pipeline(
-            device,
+        ),
+        _ => crate::resources::builders::render_pipeline(
+            &r.device,
             crate::resources::builders::RenderPipelineDesc {
                 label: "shadow_atlas_viewer_pipeline",
-                layout: &atlas_blit_layout,
-                vertex_module: &atlas_blit_shader,
+                layout: &r.atlas_layout,
+                vertex_module: r.atlas_shader.get(),
                 vertex_entry: "vs_main",
                 vertex_buffers: &[],
                 fragment: Some(crate::gpu::FragmentState {
-                    module: &atlas_blit_shader,
+                    module: r.atlas_shader.get(),
                     entry_point: Some("fs_main"),
                     targets: &[Some(crate::gpu::ColorTargetState {
-                        format: self.target_format,
+                        format: r.target_format,
                         blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
                         write_mask: crate::gpu::ColorWrites::ALL,
                     })],
@@ -288,14 +232,88 @@ impl crate::resources::DeviceResources {
                     crate::gpu::CompareFunction::Always,
                 )),
                 multisample: crate::gpu::MultisampleState {
-                    count: self.sample_count,
+                    count: r.sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
                 },
-                cache: self.pipeline_cache.as_ref(),
+                cache: None,
             },
-        );
+        ),
+    }
+}
 
-        self.shadow.atlas_viewer_pipeline = Some(shadow_atlas_viewer_pipeline);
+impl crate::resources::DeviceResources {
+    /// Compose the guide family: layouts and lazy modules, nothing compiled.
+    fn ensure_guide_family(&mut self, device: &crate::gpu::Device) -> &GuidePipelines {
+        if self.guides.pipelines.is_none() {
+            let recipe = GuideRecipe {
+                device: device.clone(),
+                target_format: self.target_format,
+                sample_count: self.sample_count,
+                overlay_layout: crate::resources::builders::pipeline_layout(
+                    device,
+                    "overlay_pipeline_layout",
+                    &[&self.binds.camera_bgl, &self.guides.overlay_bgl],
+                ),
+                grid_layout: crate::resources::builders::pipeline_layout(
+                    device,
+                    "grid_pipeline_layout",
+                    &[&self.guides.grid_bgl],
+                ),
+                atlas_layout: crate::resources::builders::pipeline_layout(
+                    device,
+                    "atlas_blit_layout",
+                    &[&self.shadow.atlas_viewer_bgl],
+                ),
+                overlay_shader: self.shared_module(
+                    device,
+                    "overlay_shader",
+                    crate::resources::builders::wgsl_source!("overlay"),
+                ),
+                grid_shader: self.shared_module(
+                    device,
+                    "grid_shader",
+                    crate::resources::builders::wgsl_source!("grid"),
+                ),
+                atlas_shader: self.shared_module(
+                    device,
+                    "shadow_atlas_blit",
+                    crate::resources::builders::wgsl_source!("shadow_atlas_blit"),
+                ),
+            };
+            self.guides.pipelines = Some(crate::resources::pipeline_slot::LazyFamily::new(
+                recipe,
+                std::sync::Arc::clone(&self.pipeline_compiler),
+                build_guide,
+            ));
+        }
+        self.guides.pipelines.as_ref().unwrap()
+    }
+
+    /// Ask for the triangle and line pipelines the constraint guides and
+    /// section caps draw with. Called by the interaction prepare on a frame
+    /// that has either.
+    pub(crate) fn ensure_guide_overlay_pipelines(&mut self, device: &crate::gpu::Device) {
+        let family = self.ensure_guide_family(device);
+        family.get(GUIDE_TRIANGLES);
+        family.get(GUIDE_LINES);
+    }
+
+    /// Ask for the floor grid pipeline. Called by the prepare of a frame that
+    /// shows the grid.
+    pub(crate) fn ensure_grid_pipeline(&mut self, device: &crate::gpu::Device) {
+        self.ensure_guide_family(device).get(GUIDE_GRID);
+    }
+
+    /// Ask for the shadow atlas debug viewer pipeline. Called by the prepare of
+    /// a frame with `show_shadow_atlas` set.
+    pub(crate) fn ensure_shadow_atlas_viewer_pipeline(&mut self, device: &crate::gpu::Device) {
+        self.ensure_guide_family(device).get(GUIDE_ATLAS_VIEWER);
+    }
+
+    /// Guide family member `i` (a `GUIDE_*` constant), or `None` until it is
+    /// composed and built. A draw that gets `None` is skipped.
+    pub(crate) fn guide_pipeline(&self, i: usize) -> Option<&crate::gpu::RenderPipeline> {
+        self.guides.pipelines.as_ref()?.get(i)
     }
 }

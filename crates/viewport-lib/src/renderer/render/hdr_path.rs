@@ -3267,7 +3267,8 @@ impl ViewportRenderer {
         // scene geometry still occludes the grid exactly as in the LDR path.
         if let (true, Some(grid_pipeline)) = (
             frame.viewport.show_grid,
-            &self.resources.guides.grid_pipeline,
+            self.resources
+                .guide_pipeline(crate::resources::overlay::guides::GUIDE_GRID),
         ) {
             let slot = &self.viewport_slots[vp_idx];
             let slot_hdr = slot.hdr.as_ref().unwrap();
@@ -3378,7 +3379,8 @@ impl ViewportRenderer {
 
                 if let (false, Some(pipeline)) = (
                     slot.constraint_line_buffers.is_empty(),
-                    &self.resources.guides.overlay_line_pipeline,
+                    self.resources
+                        .guide_pipeline(crate::resources::overlay::guides::GUIDE_LINES),
                 ) {
                     overlay_pass.set_pipeline(pipeline);
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
