@@ -128,6 +128,7 @@ struct ClearParams {
 /// `ViewportRenderer::cluster_stats`; the readback is skipped when no
 /// consumer asks for it.
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ClusterStats {
     /// Total cluster cells in the grid (constant per build).
     pub total_cells: u32,

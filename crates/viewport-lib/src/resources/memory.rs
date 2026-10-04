@@ -6,6 +6,7 @@
 /// Internal resources (shadow maps, colourmaps, post-process targets) are
 /// not included.
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TextureMemoryStats {
     /// Bytes currently allocated on the GPU for user-uploaded textures.
     pub used_bytes: u64,
@@ -34,6 +35,7 @@ pub struct TextureMemoryStats {
 /// discrete GPU the two come from different pools. On unified memory they come
 /// from the same one, so budget against [`combined`](Self::combined) there.
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ResidentBytes {
     /// GPU buffer bytes across every resident mesh (geometry, attributes,
     /// overrides, per-object uniforms).
