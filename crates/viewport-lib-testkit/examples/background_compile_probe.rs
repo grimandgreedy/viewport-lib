@@ -23,6 +23,43 @@ mod surface_detail_plugin;
 #[allow(dead_code)]
 mod toon_plugin;
 
+/// Draw `frame` the way a presented frame is drawn, so the compilation policy
+/// applies (`render_offscreen` compiles blocking whatever the policy), and wait
+/// for the GPU so the time covers the frame.
+fn draw(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    view: &wgpu::TextureView,
+    frame: &FrameData,
+) {
+    renderer.render_to_texture(device, queue, view, frame);
+    let _ = device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: None,
+    });
+}
+
+/// A render target the size of the frame, in the renderer's format.
+fn target(device: &wgpu::Device, format: wgpu::TextureFormat, size: u32) -> wgpu::TextureView {
+    device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("live_target"),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+        .create_view(&wgpu::TextureViewDescriptor::default())
+}
+
 fn main() {
     let profile =
         DeviceProfile::high_performance("background-compile-probe").with_recommended_features();
@@ -66,8 +103,9 @@ fn main() {
         })
         .collect();
     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+    let view = target(&device, fmt, 512);
     for _ in 0..5 {
-        let _ = renderer.render_offscreen(&device, &queue, &frame, 512, 512);
+        draw(&mut renderer, &device, &queue, &view, &frame);
     }
 
     let summary = |mut t: Vec<f32>| {
@@ -77,7 +115,7 @@ fn main() {
     let idle: Vec<f32> = (0..200)
         .map(|_| {
             let s = Instant::now();
-            let _ = renderer.render_offscreen(&device, &queue, &frame, 512, 512);
+            draw(&mut renderer, &device, &queue, &view, &frame);
             s.elapsed().as_secs_f32() * 1000.0
         })
         .collect();
@@ -94,7 +132,7 @@ fn main() {
     let mut during: Vec<f32> = Vec::new();
     while renderer.pipelines_pending() > 0 {
         let s = Instant::now();
-        let _ = renderer.render_offscreen(&device, &queue, &frame, 512, 512);
+        draw(&mut renderer, &device, &queue, &view, &frame);
         during.push(s.elapsed().as_secs_f32() * 1000.0);
     }
     let workers_ms = started.elapsed().as_secs_f32() * 1000.0;

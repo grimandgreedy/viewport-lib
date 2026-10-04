@@ -77,6 +77,43 @@ fn report(what: &str, took: f32) {
     }
 }
 
+/// Draw `frame` the way a presented frame is drawn, so the compilation policy
+/// applies (`render_offscreen` compiles blocking whatever the policy), and wait
+/// for the GPU so the time covers the frame.
+fn draw(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    view: &wgpu::TextureView,
+    frame: &FrameData,
+) {
+    renderer.render_to_texture(device, queue, view, frame);
+    let _ = device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: None,
+    });
+}
+
+/// A render target the size of the frame, in the renderer's format.
+fn target(device: &wgpu::Device, format: wgpu::TextureFormat, size: u32) -> wgpu::TextureView {
+    device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("live_target"),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+        .create_view(&wgpu::TextureViewDescriptor::default())
+}
+
 fn main() {
     build_log::enable();
     let profile =
@@ -150,11 +187,12 @@ fn main() {
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
     frame.effects.lighting.lights = vec![sun];
+    let view = target(&device, wgpu::TextureFormat::Bgra8UnormSrgb, SIZE);
     let _ = build_log::drain();
 
     for i in 0..4 {
         let t = Instant::now();
-        let _ = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+        draw(&mut renderer, &device, &queue, &view, &frame);
         report(
             &format!("frame {i} ({} pending)", renderer.pipelines_pending()),
             ms(t),
@@ -167,7 +205,7 @@ fn main() {
         renderer.wait_for_pipelines(&device);
         report("wait for the workers", ms(t));
         let t = Instant::now();
-        let _ = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+        draw(&mut renderer, &device, &queue, &view, &frame);
         report("frame after the wait", ms(t));
     }
 }
