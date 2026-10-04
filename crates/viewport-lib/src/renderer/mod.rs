@@ -65,6 +65,8 @@ mod deform_stats_tests;
 #[cfg(test)]
 mod frame_reuse_tests;
 #[cfg(test)]
+mod prepare_timing_tests;
+#[cfg(test)]
 mod hidden_tests;
 #[cfg(test)]
 mod lazy_pipeline_tests;

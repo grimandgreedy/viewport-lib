@@ -11,8 +11,6 @@
 //! shader and draw variant reaches it without touching the per-object / instanced
 //! group-1 layouts.
 
-use std::collections::HashMap;
-
 use crate::scene::material::Material;
 
 /// Maximum distinct material transform blocks per frame. Distinct blocks are rare
@@ -316,7 +314,10 @@ impl MaterialGpu {
 /// the identity block, so any material with no authored transform maps to 0.
 pub(crate) struct MaterialGpuBuilder {
     entries: Vec<MaterialGpu>,
-    lookup: HashMap<[u8; 304], u32>,
+    lookup: crate::resources::fast_hash::FastMap<[u8; 304], u32>,
+    /// The last block interned and its id: consecutive items usually share a
+    /// material, and a byte compare is far cheaper than a hash.
+    last: Option<([u8; 304], u32)>,
     /// Set when the capacity was hit and some materials were forced to entry 0.
     pub(crate) overflowed: bool,
     /// When true, `from_material` fills the bindless texture array indices; when
@@ -330,7 +331,8 @@ impl Default for MaterialGpuBuilder {
     fn default() -> Self {
         let mut b = MaterialGpuBuilder {
             entries: Vec::new(),
-            lookup: HashMap::new(),
+            lookup: Default::default(),
+            last: None,
             overflowed: false,
             bindless: false,
         };
@@ -347,6 +349,7 @@ impl MaterialGpuBuilder {
     pub(crate) fn reset(&mut self) {
         self.entries.clear();
         self.lookup.clear();
+        self.last = None;
         self.overflowed = false;
         // The default material names no textures, so nothing to resolve.
         let default_block = MaterialGpu::from_material(
@@ -376,16 +379,23 @@ impl MaterialGpuBuilder {
     pub(crate) fn intern(&mut self, m: &Material, resolved: MaterialSlots) -> u32 {
         let block = MaterialGpu::from_material(m, self.bindless, resolved);
         let key: [u8; 304] = bytemuck::cast(block);
-        if let Some(&id) = self.lookup.get(&key) {
-            return id;
+        if let Some((last, id)) = &self.last
+            && *last == key
+        {
+            return *id;
         }
-        if self.entries.len() >= MATERIAL_GPU_CAPACITY {
+        let id = if let Some(&id) = self.lookup.get(&key) {
+            id
+        } else if self.entries.len() >= MATERIAL_GPU_CAPACITY {
             self.overflowed = true;
             return 0;
-        }
-        let id = self.entries.len() as u32;
-        self.entries.push(block);
-        self.lookup.insert(key, id);
+        } else {
+            let id = self.entries.len() as u32;
+            self.entries.push(block);
+            self.lookup.insert(key, id);
+            id
+        };
+        self.last = Some((key, id));
         id
     }
 

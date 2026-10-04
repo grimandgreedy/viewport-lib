@@ -36,6 +36,8 @@ impl ViewportRenderer {
         plugin_frame_index: u64,
         lighting: &crate::renderer::types::LightingSettings,
         scene_items: &[SceneRenderItem],
+        // `is_instanceable` per scene item, computed once by the caller.
+        instanceable: &[bool],
         light: &LightingFrame,
         shadows_skipped: bool,
         last_stats: &mut crate::renderer::stats::FrameStats,
@@ -927,8 +929,9 @@ impl ViewportRenderer {
                         let cascade_frustum = crate::camera::frustum::Frustum::from_view_proj(
                             &light.cascade_view_projs[cascade],
                         );
+                        let mut bound = BoundCaster::default();
 
-                        for item in scene_items.iter() {
+                        for (item_idx, item) in scene_items.iter().enumerate() {
                             if item.settings.hidden
                                 || !item.settings.cast_shadows
                                 || item.settings.opacity < 1.0
@@ -947,7 +950,7 @@ impl ViewportRenderer {
                             // policies and param-vis now instance, so they are not
                             // excluded; matcap, emissive texture, submesh, plugin,
                             // warp, deform, and overrides still fall here.
-                            let in_instanced_batch = is_instanceable(item, resources);
+                            let in_instanced_batch = instanceable[item_idx];
                             if in_instanced_batch {
                                 continue;
                             }
@@ -986,25 +989,42 @@ impl ViewportRenderer {
                             let Some(pl) = resources.shadow.cascade(key) else {
                                 continue;
                             };
-                            shadow_pass.set_pipeline(pl);
-                            shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                            bind_deform_group!(
-                                shadow_pass,
-                                resources,
-                                resources
-                                    .deform
-                                    .instance_bind_group_for(item.mesh_id, item.deform_instance,)
+                            if bound.pipeline != Some(key) {
+                                shadow_pass.set_pipeline(pl);
+                                bound.pipeline = Some(key);
+                            }
+                            let group1 = &mesh.object_bind_group;
+                            if bound.group1 != Some(group1 as *const _) {
+                                shadow_pass.set_bind_group(1, group1, &[]);
+                                bound.group1 = Some(group1 as *const _);
+                            }
+                            let group2 = resources
+                                .deform
+                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
+                            if bound.group2 != Some(group2 as *const _) {
+                                bind_deform_group!(shadow_pass, resources, group2);
+                                bound.group2 = Some(group2 as *const _);
+                            }
+                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                            if bound.chunks != Some(chunks) {
+                                shadow_pass.set_vertex_buffer(
+                                    0,
+                                    resources.geometry.vertex_chunk_slice(chunks.0),
+                                );
+                                shadow_pass.set_index_buffer(
+                                    resources.geometry.index_chunk_slice(chunks.1),
+                                    crate::gpu::IndexFormat::Uint32,
+                                );
+                                shadow_binds += 2;
+                                bound.chunks = Some(chunks);
+                            }
+                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                            let first_index = resources.geometry.first_index(mesh.index_span);
+                            shadow_pass.draw_indexed(
+                                first_index..first_index + mesh.index_count,
+                                base_vertex,
+                                0..1,
                             );
-                            shadow_pass.set_vertex_buffer(
-                                0,
-                                resources.geometry.vertex_slice(mesh.vertex_span),
-                            );
-                            shadow_pass.set_index_buffer(
-                                resources.geometry.index_slice(mesh.index_span),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
-                            shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                            shadow_binds += 2;
                             shadow_draws += 1;
                             shadow_draw_cmds += 1;
                         }
@@ -1037,6 +1057,7 @@ impl ViewportRenderer {
                         let cascade_frustum = crate::camera::frustum::Frustum::from_view_proj(
                             &light.cascade_view_projs[cascade],
                         );
+                        let mut bound = BoundCaster::default();
 
                         for item in scene_items.iter() {
                             if item.settings.hidden {
@@ -1079,25 +1100,42 @@ impl ViewportRenderer {
                             let Some(pl) = resources.shadow.cascade(key) else {
                                 continue;
                             };
-                            shadow_pass.set_pipeline(pl);
-                            shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                            bind_deform_group!(
-                                shadow_pass,
-                                resources,
-                                resources
-                                    .deform
-                                    .instance_bind_group_for(item.mesh_id, item.deform_instance,)
+                            if bound.pipeline != Some(key) {
+                                shadow_pass.set_pipeline(pl);
+                                bound.pipeline = Some(key);
+                            }
+                            let group1 = &mesh.object_bind_group;
+                            if bound.group1 != Some(group1 as *const _) {
+                                shadow_pass.set_bind_group(1, group1, &[]);
+                                bound.group1 = Some(group1 as *const _);
+                            }
+                            let group2 = resources
+                                .deform
+                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
+                            if bound.group2 != Some(group2 as *const _) {
+                                bind_deform_group!(shadow_pass, resources, group2);
+                                bound.group2 = Some(group2 as *const _);
+                            }
+                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                            if bound.chunks != Some(chunks) {
+                                shadow_pass.set_vertex_buffer(
+                                    0,
+                                    resources.geometry.vertex_chunk_slice(chunks.0),
+                                );
+                                shadow_pass.set_index_buffer(
+                                    resources.geometry.index_chunk_slice(chunks.1),
+                                    crate::gpu::IndexFormat::Uint32,
+                                );
+                                shadow_binds += 2;
+                                bound.chunks = Some(chunks);
+                            }
+                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                            let first_index = resources.geometry.first_index(mesh.index_span);
+                            shadow_pass.draw_indexed(
+                                first_index..first_index + mesh.index_count,
+                                base_vertex,
+                                0..1,
                             );
-                            shadow_pass.set_vertex_buffer(
-                                0,
-                                resources.geometry.vertex_slice(mesh.vertex_span),
-                            );
-                            shadow_pass.set_index_buffer(
-                                resources.geometry.index_slice(mesh.index_span),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
-                            shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                            shadow_binds += 2;
                             shadow_draws += 1;
                             shadow_draw_cmds += 1;
                         }
@@ -1597,6 +1635,18 @@ fn draw_shadow_cascades_multi_draw(
         binds,
         draw_commands: draw_cmds,
     }
+}
+
+/// What a per-item caster loop last bound, so a run of casters that share a
+/// pipeline, object bind group, deform group and slab chunk binds them once
+/// and draws each from the bound chunk with its own base vertex and first
+/// index.
+#[derive(Default)]
+struct BoundCaster {
+    pipeline: Option<PipelineKey>,
+    group1: Option<*const crate::gpu::BindGroup>,
+    group2: Option<*const crate::gpu::BindGroup>,
+    chunks: Option<(u32, u32)>,
 }
 
 /// Shadow instanced-draw tallies for one pass: `batch_draws` is the pre-collapse

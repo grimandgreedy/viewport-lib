@@ -1672,15 +1672,17 @@ impl DeviceResources {
         sampler: Option<crate::scene::material::SamplerKey>,
     ) -> Option<u64> {
         use std::hash::{Hash, Hasher};
+        // A fast hash, not SipHash: this runs for every per-object draw every
+        // frame, and the inputs are the renderer's own ids.
         let hash_str = |name: &str| -> u64 {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
+            let mut h = crate::resources::fast_hash::FastHasher::default();
             name.hash(&mut h);
             h.finish()
         };
         let attr_hash = active_attr.map(hash_str).unwrap_or(u64::MAX);
         let warp_hash = warp_attr.map(hash_str).unwrap_or(u64::MAX);
         let mesh = self.mesh_store.get(mesh_id)?;
-        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let mut h = crate::resources::fast_hash::FastHasher::default();
         // Index and generation both: cached entries can outlive a mesh slot's
         // occupant, so a freed-and-reused slot must not alias the old bind group.
         mesh_id.index().hash(&mut h);

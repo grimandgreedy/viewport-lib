@@ -714,6 +714,7 @@ impl ViewportRenderer {
             plugin_frame_index,
             lighting,
             scene_items,
+            &instanceable,
             &lighting_frame,
             self.degradation_shadows_skipped,
             &mut self.last_stats,

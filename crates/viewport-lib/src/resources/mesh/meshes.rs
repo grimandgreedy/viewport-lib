@@ -3671,8 +3671,11 @@ pub(crate) fn mesh_is_closed(positions: impl Iterator<Item = [f32; 3]>, indices:
     let cell = eps * 16.0;
     let cell_of = |v: f32, k: usize| ((v - lo[k]) / cell).floor() as i64 + 1;
     let key = |c: [i64; 3]| (c[0] as u64) | ((c[1] as u64) << 21) | ((c[2] as u64) << 42);
-    let mut heads: FastMap<u64, u32> =
-        FastMap::with_capacity_and_hasher(pos.len(), Default::default());
+    let mut heads: crate::resources::fast_hash::FastMap<u64, u32> =
+        crate::resources::fast_hash::FastMap::with_capacity_and_hasher(
+            pos.len(),
+            Default::default(),
+        );
     let mut rep_pos: Vec<[f32; 3]> = Vec::with_capacity(pos.len());
     let mut next_rep: Vec<u32> = Vec::with_capacity(pos.len());
     let mut remap = Vec::with_capacity(pos.len());
@@ -3742,30 +3745,6 @@ pub(crate) fn mesh_is_closed(positions: impl Iterator<Item = [f32; 3]>, indices:
             fwd == back
         })
     })
-}
-
-/// A `HashMap` over integer keys with a cheap multiply hash, for the weld
-/// above, where SipHash would dominate the cost.
-type FastMap<K, V> = std::collections::HashMap<K, V, std::hash::BuildHasherDefault<IntHasher>>;
-
-#[derive(Default)]
-struct IntHasher(u64);
-
-impl std::hash::Hasher for IntHasher {
-    fn finish(&self) -> u64 {
-        // The multiply only carries low bits upward; fold the high bits back
-        // down so keys that differ only in their upper fields still spread.
-        let h = self.0;
-        (h ^ (h >> 29)).wrapping_mul(0xbf58_476d_1ce4_e5b9) ^ (h >> 32)
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.write_u64(b as u64);
-        }
-    }
-    fn write_u64(&mut self, n: u64) {
-        self.0 = (self.0.rotate_left(5) ^ n).wrapping_mul(0x517c_c1b7_2722_0a95);
-    }
 }
 
 #[cfg(test)]

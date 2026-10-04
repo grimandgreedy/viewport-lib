@@ -49,6 +49,7 @@
 
 ### Changed
 
+- **Per-object draws cost about half as much to prepare** - the per-frame maps behind material interning and the per-item bind group cache use a cheap hash instead of SipHash, a run of items sharing a material skips the lookup, and per-object shadow casters bind their pipeline, bind groups and geometry once per run instead of per draw. 10,000 per-object items with a shadow-casting sun go from 10.8 to 5.7 ms of prepare on an M4 Pro; instanced scenes save a little in the shadow stage, which no longer re-tests each item for instancing per cascade.
 - **Rendering into a target of the wrong format panics at the call** - `render`, `render_to_texture` and the other calls that draw into a caller's view now check the view's texture against the format the renderer was created for, and panic naming both. Before, the frame failed wgpu validation inside whichever pass bound a pipeline first (usually the tone map). A linear texture viewed as the renderer's sRGB format is still accepted.
 
 - **`RendererConfig` and `ViewportRenderer::with_config`** - one constructor for the construction-time settings: target format, MSAA sample count, saved pipeline cache, the compilation policy the renderer starts with, and the geometry store's first chunk size. `with_sample_count`, `new_with_pipeline_cache` and `with_sample_count_and_cache` are deprecated, as is `ViewportInstance::new_with_pipeline_cache` in favour of `ViewportInstance::with_config`. `AppConfig` and `AppConfigV2` take one through `with_renderer_config`.

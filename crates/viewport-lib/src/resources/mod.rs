@@ -10,6 +10,8 @@ pub mod content_buffer;
 pub(crate) mod custom_data;
 /// `DeviceResources` and its content, scope, and feature-resource structs.
 pub(crate) mod device_resources;
+/// A cheap hasher for the maps rebuilt or probed every frame.
+pub(crate) mod fast_hash;
 /// GPU compute resources: clustered shading, hierarchical-Z, and dynamic resolution.
 pub mod gpu;
 /// Ground-plane pipeline, uniform, and bind group.
