@@ -183,6 +183,11 @@ pub struct AppConfigV2 {
     /// File the runner keeps the GPU pipeline cache in. Default: `None`, no
     /// cache. See [`with_pipeline_cache`](Self::with_pipeline_cache).
     pub pipeline_cache_path: Option<std::path::PathBuf>,
+    /// Renderer settings for every window. The runner replaces
+    /// `target_format` with each surface's format and draws without MSAA, so
+    /// `sample_count` is ignored; a pipeline cache loaded from
+    /// `pipeline_cache_path` replaces `pipeline_cache_data`.
+    pub renderer: crate::RendererConfig,
 }
 
 impl Default for AppConfigV2 {
@@ -191,11 +196,19 @@ impl Default for AppConfigV2 {
             exit_on_last_window_close: true,
             intercept_close: false,
             pipeline_cache_path: None,
+            renderer: crate::RendererConfig::new(crate::gpu::TextureFormat::Bgra8UnormSrgb),
         }
     }
 }
 
 impl AppConfigV2 {
+    /// Set the renderer settings every window's renderer is built with, for
+    /// example the pipeline compilation policy.
+    pub fn with_renderer_config(mut self, config: crate::RendererConfig) -> Self {
+        self.renderer = config;
+        self
+    }
+
     /// Set whether the loop ends when the last window closes.
     pub fn with_exit_on_last_window_close(mut self, exit: bool) -> Self {
         self.exit_on_last_window_close = exit;
@@ -870,8 +883,10 @@ impl AppHandlerV2 {
         // Every window's renderer joins the device's one cache, so the saved
         // data only seeds the first of them.
         let cache_data = super::load_pipeline_cache(self.config.pipeline_cache_path.as_deref());
-        let mut session =
-            ViewportInstance::new_with_pipeline_cache(&gpu.device, format, cache_data.as_deref());
+        let mut session = ViewportInstance::with_config(
+            &gpu.device,
+            &super::runner_renderer_config(&self.config.renderer, format, cache_data),
+        );
         marks.mark("renderer");
         factory(&mut session, &gpu.device);
         marks.mark("setup");

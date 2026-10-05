@@ -100,6 +100,21 @@ pub struct ViewportInstance {
     next_extra_id: u64,
 }
 
+/// The config a runner builds a window's renderer with: the app's settings
+/// on the surface format, without MSAA, with any loaded pipeline cache.
+#[cfg(feature = "app")]
+pub(crate) fn runner_renderer_config(
+    base: &crate::RendererConfig,
+    format: crate::gpu::TextureFormat,
+    cache_data: Option<Vec<u8>>,
+) -> crate::RendererConfig {
+    let mut config = base.clone().with_target_format(format).with_sample_count(1);
+    if cache_data.is_some() {
+        config.pipeline_cache_data = cache_data;
+    }
+    config
+}
+
 impl ViewportInstance {
     /// Create an instance for a renderer targeting `target_format`.
     ///
@@ -107,22 +122,34 @@ impl ViewportInstance {
     /// not keep it. CPU picking is enabled so [`pick`](Self::pick) works after
     /// the first frame.
     pub fn new(device: &crate::gpu::Device, target_format: crate::gpu::TextureFormat) -> Self {
-        Self::new_with_pipeline_cache(device, target_format, None)
+        Self::with_config(device, &crate::RendererConfig::new(target_format))
     }
 
     /// As [`new`](Self::new), seeding the renderer's pipeline cache from data a
     /// previous run saved with [`pipeline_cache_data`](Self::pipeline_cache_data).
+    #[deprecated(note = "use `with_config` and `RendererConfig::with_pipeline_cache_data`")]
+    pub fn new_with_pipeline_cache(
+        device: &crate::gpu::Device,
+        target_format: crate::gpu::TextureFormat,
+        pipeline_cache_data: Option<&[u8]>,
+    ) -> Self {
+        Self::with_config(
+            device,
+            &crate::RendererConfig::new(target_format)
+                .with_pipeline_cache_data(pipeline_cache_data.map(<[u8]>::to_vec)),
+        )
+    }
+
+    /// As [`new`](Self::new), building the renderer from a
+    /// [`RendererConfig`](crate::RendererConfig): MSAA, a saved pipeline cache,
+    /// the compilation policy.
     ///
     /// A pipeline cache lets the driver skip shader compilation on a later
     /// launch. It needs a device created with `Features::PIPELINE_CACHE`, which
     /// `ViewportRenderer::recommended_device_features` requests where the
     /// adapter has it; on any other device the data is ignored. Stale or
     /// foreign data is discarded, so passing whatever was last saved is safe.
-    pub fn new_with_pipeline_cache(
-        device: &crate::gpu::Device,
-        target_format: crate::gpu::TextureFormat,
-        pipeline_cache_data: Option<&[u8]>,
-    ) -> Self {
+    pub fn with_config(device: &crate::gpu::Device, config: &crate::RendererConfig) -> Self {
         // Your application creates the device before the instance, so a missing
         // feature otherwise degrades silently (e.g. mesh sub-object picking).
         // Warn about the ones the caller could still enable at device creation.
@@ -189,8 +216,7 @@ impl ViewportInstance {
         }
         warn_missing_device_capabilities(device);
 
-        let mut renderer =
-            ViewportRenderer::new_with_pipeline_cache(device, target_format, pipeline_cache_data);
+        let mut renderer = ViewportRenderer::with_config(device, config);
         renderer.set_cpu_pick_cache(true);
         let defaults = InteractionFrame::default();
         Self {
@@ -448,7 +474,7 @@ impl ViewportInstance {
     }
 
     /// The renderer's pipeline cache contents, to save and pass to
-    /// [`new_with_pipeline_cache`](Self::new_with_pipeline_cache) on the next
+    /// [`RendererConfig::with_pipeline_cache_data`](crate::RendererConfig::with_pipeline_cache_data) on the next
     /// launch. `None` on a device without `Features::PIPELINE_CACHE`.
     pub fn pipeline_cache_data(&self) -> Option<Vec<u8>> {
         self.renderer.pipeline_cache_data()

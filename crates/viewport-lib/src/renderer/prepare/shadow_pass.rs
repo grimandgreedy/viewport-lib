@@ -32,11 +32,12 @@ impl ViewportRenderer {
         resources: &mut DeviceResources,
         instancing: &mut InstancingState,
         shadow: &mut crate::renderer::shadow_state::ShadowState,
-        compute_filter_results: &[crate::resources::ComputeFilterResult],
         plugins: &crate::renderer::item_plugins::registry::ItemPluginRegistry,
         plugin_frame_index: u64,
         lighting: &crate::renderer::types::LightingSettings,
         scene_items: &[SceneRenderItem],
+        // `is_instanceable` per scene item, computed once by the caller.
+        instanceable: &[bool],
         light: &LightingFrame,
         shadows_skipped: bool,
         last_stats: &mut crate::renderer::stats::FrameStats,
@@ -64,14 +65,10 @@ impl ViewportRenderer {
             }
             h.finish()
         };
-        // Shadow-pass instrumentation. The stall reported on some mobile backends
-        // shows up at `present` because the shadow depth work is GPU-bound and only
-        // forced to completion later. When the `viewport_lib::shadow` target is
-        // enabled at debug level, bracket the pass and poll the device to completion
-        // so the shadow GPU cost is attributed here instead of hiding inside present.
-        // The poll is skipped entirely (zero overhead) when the target is off.
-        // Enable with `RUST_LOG=viewport_lib::shadow=debug`. For non-perturbing
-        // timing in shipping builds, use GPU timestamp queries instead.
+        // Shadow-pass instrumentation: with the `viewport_lib::shadow` target
+        // at debug level, log the pass's CPU encode time and counts
+        // (`RUST_LOG=viewport_lib::shadow=debug`). Its GPU time is in the GPU
+        // timestamps.
         let shadow_instrument =
             tracing::enabled!(target: "viewport_lib::shadow", tracing::Level::DEBUG);
         let shadow_start = web_time::Instant::now();
@@ -80,8 +77,17 @@ impl ViewportRenderer {
         // Skip the pass entirely when over budget and shadow reduction is allowed.
         // ------------------------------------------------------------------
         let skip_shadows = shadows_skipped;
+        // Item-type plugins cast into the cascades too, so a scene of plugin
+        // items alone still has casters.
+        let has_casters = !scene_items.is_empty()
+            || plugins.iter().any(|(name, _)| {
+                !crate::plugin_api::ItemCollections::new(
+                    crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+                )
+                .is_empty()
+            });
 
-        // When skipping the shadow pass (budget pressure or empty scene), clear the
+        // When skipping the shadow pass (budget pressure or no casters), clear the
         // atlas to max depth so that stale values from a previous frame or a previous
         // showcase don't produce phantom shadows.
         //
@@ -89,10 +95,7 @@ impl ViewportRenderer {
         // every frame is pure cost. An app that draws no casters at all (an
         // overlay-only consumer, or one whose scene is empty this frame) pays
         // for a 4096-square depth clear it never reads otherwise.
-        if lighting.shadows.enabled
-            && (skip_shadows || scene_items.is_empty())
-            && !shadow.atlas_cleared
-        {
+        if lighting.shadows.enabled && (skip_shadows || !has_casters) && !shadow.atlas_cleared {
             shadow.atlas_cleared = true;
             let mut enc = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                 label: Some("shadow_clear_encoder"),
@@ -121,7 +124,7 @@ impl ViewportRenderer {
         // carries cascade_count 0), so the atlas needs neither rendering nor a
         // clear.
         if lighting.shadows.enabled
-            && !scene_items.is_empty()
+            && has_casters
             && !skip_shadows
             && light.effective_cascade_count > 0
         {
@@ -155,10 +158,6 @@ impl ViewportRenderer {
                 && instancing.cached_instance_count > 0
             {
                 // Mutable operations first.
-                if instancing.cull_resources.is_none() {
-                    instancing.cull_resources =
-                        Some(crate::renderer::indirect::CullResources::new(device));
-                }
                 resources.ensure_cull_instance_pipelines(device);
 
                 let instance_count = instancing.cached_instance_count as u32;
@@ -195,12 +194,13 @@ impl ViewportRenderer {
                     );
                 }
 
-                if let (Some(aabb_buf), Some(meta_buf), Some(counter_buf)) = (
+                // `gpu_culling_enabled` is only set once the compute is built.
+                if let (Some(aabb_buf), Some(meta_buf), Some(counter_buf), Some(cull)) = (
                     resources.cull.aabb_buf.as_ref(),
                     resources.cull.batch_meta_buf.as_ref(),
                     instancing.shadow_cull.batch_counter_buf.as_ref(),
+                    instancing.cull_resources.ready(),
                 ) {
-                    let cull = instancing.cull_resources.as_ref().unwrap();
                     let mut shadow_cull_encoder =
                         device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                             label: Some("shadow_cull_encoder"),
@@ -903,7 +903,6 @@ impl ViewportRenderer {
                     // (group 0 = `shadow_bind_group` with cascade dynamic
                     // offset, group 1 = mesh.object_bind_group, group 2 =
                     // per-mesh deform sidecar).
-                    let filter_results = compute_filter_results;
                     for cascade in 0..light.effective_cascade_count {
                         let tile_col = (cascade % 2) as f32;
                         let tile_row = (cascade / 2) as f32;
@@ -930,8 +929,9 @@ impl ViewportRenderer {
                         let cascade_frustum = crate::camera::frustum::Frustum::from_view_proj(
                             &light.cascade_view_projs[cascade],
                         );
+                        let mut bound = BoundCaster::default();
 
-                        for item in scene_items.iter() {
+                        for (item_idx, item) in scene_items.iter().enumerate() {
                             if item.settings.hidden
                                 || !item.settings.cast_shadows
                                 || item.settings.opacity < 1.0
@@ -950,8 +950,7 @@ impl ViewportRenderer {
                             // policies and param-vis now instance, so they are not
                             // excluded; matcap, emissive texture, submesh, plugin,
                             // warp, deform, and overrides still fall here.
-                            let in_instanced_batch =
-                                is_instanceable(item, resources, filter_results);
+                            let in_instanced_batch = instanceable[item_idx];
                             if in_instanced_batch {
                                 continue;
                             }
@@ -976,35 +975,56 @@ impl ViewportRenderer {
                             // silhouette.
                             let key = PipelineKey {
                                 two_sided: item.material.is_two_sided() && !mesh.closed,
+                                // A caster a deformer can cut needs the
+                                // cutout pipeline's fragment stage to discard in.
                                 cutout: matches!(
                                     item.material.alpha_mode,
                                     crate::scene::material::AlphaMode::Mask(_)
-                                ),
+                                ) || resources
+                                    .deform
+                                    .may_discard(item.mesh_id, item.deform_instance),
                                 ..PipelineKey::default()
                             };
                             // Still compiling: the caster waits a frame.
                             let Some(pl) = resources.shadow.cascade(key) else {
                                 continue;
                             };
-                            shadow_pass.set_pipeline(pl);
-                            shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                            bind_deform_group!(
-                                shadow_pass,
-                                resources,
-                                resources
-                                    .deform
-                                    .instance_bind_group_for(item.mesh_id, item.deform_instance,)
+                            if bound.pipeline != Some(key) {
+                                shadow_pass.set_pipeline(pl);
+                                bound.pipeline = Some(key);
+                            }
+                            let group1 = &mesh.object_bind_group;
+                            if bound.group1 != Some(group1 as *const _) {
+                                shadow_pass.set_bind_group(1, group1, &[]);
+                                bound.group1 = Some(group1 as *const _);
+                            }
+                            let group2 = resources
+                                .deform
+                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
+                            if bound.group2 != Some(group2 as *const _) {
+                                bind_deform_group!(shadow_pass, resources, group2);
+                                bound.group2 = Some(group2 as *const _);
+                            }
+                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                            if bound.chunks != Some(chunks) {
+                                shadow_pass.set_vertex_buffer(
+                                    0,
+                                    resources.geometry.vertex_chunk_slice(chunks.0),
+                                );
+                                shadow_pass.set_index_buffer(
+                                    resources.geometry.index_chunk_slice(chunks.1),
+                                    crate::gpu::IndexFormat::Uint32,
+                                );
+                                shadow_binds += 2;
+                                bound.chunks = Some(chunks);
+                            }
+                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                            let first_index = resources.geometry.first_index(mesh.index_span);
+                            shadow_pass.draw_indexed(
+                                first_index..first_index + mesh.index_count,
+                                base_vertex,
+                                0..1,
                             );
-                            shadow_pass.set_vertex_buffer(
-                                0,
-                                resources.geometry.vertex_slice(mesh.vertex_span),
-                            );
-                            shadow_pass.set_index_buffer(
-                                resources.geometry.index_slice(mesh.index_span),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
-                            shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                            shadow_binds += 2;
                             shadow_draws += 1;
                             shadow_draw_cmds += 1;
                         }
@@ -1037,6 +1057,7 @@ impl ViewportRenderer {
                         let cascade_frustum = crate::camera::frustum::Frustum::from_view_proj(
                             &light.cascade_view_projs[cascade],
                         );
+                        let mut bound = BoundCaster::default();
 
                         for item in scene_items.iter() {
                             if item.settings.hidden {
@@ -1065,35 +1086,56 @@ impl ViewportRenderer {
                             // path above.
                             let key = PipelineKey {
                                 two_sided: item.material.is_two_sided() && !mesh.closed,
+                                // A caster a deformer can cut needs the
+                                // cutout pipeline's fragment stage to discard in.
                                 cutout: matches!(
                                     item.material.alpha_mode,
                                     crate::scene::material::AlphaMode::Mask(_)
-                                ),
+                                ) || resources
+                                    .deform
+                                    .may_discard(item.mesh_id, item.deform_instance),
                                 ..PipelineKey::default()
                             };
                             // Still compiling: the caster waits a frame.
                             let Some(pl) = resources.shadow.cascade(key) else {
                                 continue;
                             };
-                            shadow_pass.set_pipeline(pl);
-                            shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                            bind_deform_group!(
-                                shadow_pass,
-                                resources,
-                                resources
-                                    .deform
-                                    .instance_bind_group_for(item.mesh_id, item.deform_instance,)
+                            if bound.pipeline != Some(key) {
+                                shadow_pass.set_pipeline(pl);
+                                bound.pipeline = Some(key);
+                            }
+                            let group1 = &mesh.object_bind_group;
+                            if bound.group1 != Some(group1 as *const _) {
+                                shadow_pass.set_bind_group(1, group1, &[]);
+                                bound.group1 = Some(group1 as *const _);
+                            }
+                            let group2 = resources
+                                .deform
+                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
+                            if bound.group2 != Some(group2 as *const _) {
+                                bind_deform_group!(shadow_pass, resources, group2);
+                                bound.group2 = Some(group2 as *const _);
+                            }
+                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                            if bound.chunks != Some(chunks) {
+                                shadow_pass.set_vertex_buffer(
+                                    0,
+                                    resources.geometry.vertex_chunk_slice(chunks.0),
+                                );
+                                shadow_pass.set_index_buffer(
+                                    resources.geometry.index_chunk_slice(chunks.1),
+                                    crate::gpu::IndexFormat::Uint32,
+                                );
+                                shadow_binds += 2;
+                                bound.chunks = Some(chunks);
+                            }
+                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                            let first_index = resources.geometry.first_index(mesh.index_span);
+                            shadow_pass.draw_indexed(
+                                first_index..first_index + mesh.index_count,
+                                base_vertex,
+                                0..1,
                             );
-                            shadow_pass.set_vertex_buffer(
-                                0,
-                                resources.geometry.vertex_slice(mesh.vertex_span),
-                            );
-                            shadow_pass.set_index_buffer(
-                                resources.geometry.index_slice(mesh.index_span),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
-                            shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                            shadow_binds += 2;
                             shadow_draws += 1;
                             shadow_draw_cmds += 1;
                         }
@@ -1287,6 +1329,9 @@ impl ViewportRenderer {
                         0,
                         bytemuck::cast_slice(&c.item.model),
                     );
+                    // The per-object prepare's record of this buffer no
+                    // longer holds.
+                    *c.mesh.last_object_uniform.lock().unwrap() = None;
                 }
             }
 
@@ -1375,16 +1420,9 @@ impl ViewportRenderer {
         }
 
         if shadow_instrument && lighting.shadows.enabled {
-            // Force the just-submitted shadow work to finish so the measured time
-            // reflects shadow GPU execution rather than landing later at present.
-            // Other work submitted before this point in prepare is minor, so this
-            // is a good attribution of the shadow cost.
-            device
-                .poll(crate::gpu::PollType::Wait {
-                    submission_index: None,
-                    timeout: Some(std::time::Duration::from_millis(2000)),
-                })
-                .ok();
+            // CPU encode time only. The pass's GPU time is in the frame's GPU
+            // timestamps; waiting on the device here to measure it would stall
+            // every frame for anyone with a permissive subscriber.
             tracing::debug!(
                 target: "viewport_lib::shadow",
                 ms = shadow_start.elapsed().as_secs_f32() * 1000.0,
@@ -1392,7 +1430,7 @@ impl ViewportRenderer {
                 atlas = resources.shadow.atlas_size,
                 draws = last_stats.shadow_draw_calls,
                 point_faces = light.point_shadow_faces.len(),
-                "shadow pass + gpu completion"
+                "shadow pass encoded"
             );
         }
     }
@@ -1597,6 +1635,18 @@ fn draw_shadow_cascades_multi_draw(
         binds,
         draw_commands: draw_cmds,
     }
+}
+
+/// What a per-item caster loop last bound, so a run of casters that share a
+/// pipeline, object bind group, deform group and slab chunk binds them once
+/// and draws each from the bound chunk with its own base vertex and first
+/// index.
+#[derive(Default)]
+struct BoundCaster {
+    pipeline: Option<PipelineKey>,
+    group1: Option<*const crate::gpu::BindGroup>,
+    group2: Option<*const crate::gpu::BindGroup>,
+    chunks: Option<(u32, u32)>,
 }
 
 /// Shadow instanced-draw tallies for one pass: `batch_draws` is the pre-collapse

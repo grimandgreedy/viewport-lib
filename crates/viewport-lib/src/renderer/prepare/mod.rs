@@ -130,12 +130,12 @@ impl ViewportRenderer {
         (resolved, switches, culled, reduced)
     }
 
-    /// Scene-global prepare stage: compute filters, lighting, shadow pass, batching, scivis.
+    /// Scene-global prepare stage: lighting, shadow pass, batching, scivis.
     ///
     /// Call once per frame before any `prepare_viewport_internal` calls.
     ///
-    /// Reads `scene_fx` for lighting and IBL, `frame.scene` for compute filter
-    /// items, and `frame.camera` for shadow cascade computation.
+    /// Reads `scene_fx` for lighting and IBL, `frame.scene` for the items, and
+    /// `frame.camera` for shadow cascade computation.
     pub(super) fn prepare_scene_internal(
         &mut self,
         device: &crate::gpu::Device,
@@ -189,27 +189,18 @@ impl ViewportRenderer {
             }
         }
 
-        // GPU compute filtering.
-        // Dispatch before the render pass. Completely skipped when list is empty (zero overhead).
-        if !frame.scene.compute_filter_items.is_empty() {
-            self.compute_filter_results = self.resources.run_compute_filters(
-                device,
-                queue,
-                &frame.scene.compute_filter_items,
-            );
-        } else {
-            self.compute_filter_results.clear();
-        }
-
         // Run the mesh-family pipeline rebuild that deformer registration
         // deferred, before anything draws or builds against those pipelines.
         // A burst of registrations since the last frame costs one rebuild
         // here instead of one per call.
         self.resources.flush_mesh_pipeline_rebuild(device);
 
-        // Ensure built-in colourmaps and matcaps are uploaded on first frame.
+        // Write the built-in colourmap texels on the first frame, and upload
+        // the built-in matcaps on the first frame whose scene uses a matcap.
         self.resources.ensure_colourmaps_initialized(device, queue);
-        self.resources.ensure_matcaps_initialized(device, queue);
+        if !self.resources.content.matcaps_initialized && Self::uses_matcap(frame) {
+            self.resources.ensure_matcaps_initialized(device, queue);
+        }
 
         let plugin_frame_index = self.plugin_frame_index;
 
@@ -333,16 +324,15 @@ impl ViewportRenderer {
             }
         }
         // Evaluate instanceability once per frame and share the result. Each
-        // `is_instanceable` call does several mesh-store and deform lookups plus
-        // a linear scan over the compute-filter results, so computing it once
-        // here instead of separately in the per-object skip test and the
-        // instanced batch filter keeps this O(items) rather than running the
+        // `is_instanceable` call does several mesh-store and deform lookups, so
+        // computing it once here instead of separately in the per-object skip
+        // test and the instanced batch filter keeps this O(items) rather than running the
         // same per-item work three times over. At city scale (tens of thousands
         // of resident meshes) that is the difference between a few milliseconds
         // and a few hundred.
         let instanceable: Vec<bool> = scene_items
             .iter()
-            .map(|item| is_instanceable(item, resources, &self.compute_filter_results))
+            .map(|item| is_instanceable(item, resources))
             .collect();
         // Blend each light-probe-lit item's SH into the shared buffer once, so
         // the per-object and instanced paths that draw those items index the
@@ -378,6 +368,7 @@ impl ViewportRenderer {
         } else {
             (0, 0)
         };
+        settle_gpu_culling(&mut self.instancing, &resources.pipeline_compiler, device);
         let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0;
 
         let geometry_start = web_time::Instant::now();
@@ -719,11 +710,11 @@ impl ViewportRenderer {
             resources,
             &mut self.instancing,
             &mut self.shadow,
-            &self.compute_filter_results,
             &self.item_type_plugins,
             plugin_frame_index,
             lighting,
             scene_items,
+            &instanceable,
             &lighting_frame,
             self.degradation_shadows_skipped,
             &mut self.last_stats,
@@ -762,7 +753,7 @@ impl ViewportRenderer {
         // All scene items have interned their material transforms; upload the
         // block buffer so the scene pass can index it. Foreground objects
         // re-upload after they intern in `prepare_viewport_internal`.
-        self.resources.upload_material_gpu(queue);
+        self.resources.upload_material_gpu(device, queue);
         self.resources.upload_custom_data(device, queue);
 
         // Item-type wireframes fill the shared line substrate, cleared above.
@@ -800,6 +791,16 @@ impl ViewportRenderer {
     /// Whether `frame` is drawn through the HDR path. A frame that asks for
     /// HDR is still drawn with the LDR pipelines when the caller paints it
     /// straight into its own render pass.
+    /// Whether any surface item in `frame` draws with a matcap. Matcaps are
+    /// read only by the per-object surface path.
+    fn uses_matcap(frame: &FrameData) -> bool {
+        match &frame.scene.surfaces {
+            SurfaceSubmission::Flat(items) => {
+                items.iter().any(|i| i.material.matcap_id().is_some())
+            }
+        }
+    }
+
     pub(crate) fn draws_hdr(&self, frame: &FrameData) -> bool {
         frame.effects.display.is_hdr() && !self.direct_paint
     }
@@ -828,6 +829,12 @@ impl ViewportRenderer {
             crate::renderer::types::GroundPlaneMode::None
         ) {
             self.resources.ensure_ground_plane_pipeline(device);
+        }
+        if frame.viewport.show_grid {
+            self.resources.ensure_grid_pipeline(device);
+        }
+        if frame.effects.debug.show_shadow_atlas {
+            self.resources.ensure_shadow_atlas_viewer_pipeline(device);
         }
         if frame
             .effects
@@ -883,7 +890,7 @@ impl ViewportRenderer {
         );
         // Foreground objects just interned their materials; re-upload the block
         // buffer so any new entries past the scene set are resident.
-        self.resources.upload_material_gpu(queue);
+        self.resources.upload_material_gpu(device, queue);
         self.resources.upload_custom_data(device, queue);
         // That upload can have grown the custom-data buffer.
         self.flush_camera_bind_group_rebuild(device);
@@ -1354,6 +1361,29 @@ impl ViewportRenderer {
         self.last_stats = stats;
         stats
     }
+}
+
+/// Decide whether this frame runs the GPU cull. It needs the cull compute
+/// pipelines; the first frame that wants them with instances to cull asks
+/// for them under the compilation policy, and under `Background` the
+/// frames until they are built take the CPU path, which draws the same
+/// image.
+fn settle_gpu_culling(
+    inst: &mut InstancingState,
+    compiler: &crate::resources::pipeline_slot::PipelineCompiler,
+    device: &crate::gpu::Device,
+) {
+    let has_work =
+        inst.use_instancing && !inst.batches.is_empty() && inst.cached_instance_count > 0;
+    inst.gpu_culling_enabled = inst.gpu_culling_wanted
+        && (!has_work || {
+            let dev = device.clone();
+            inst.cull_resources
+                .get(compiler, move || {
+                    crate::renderer::indirect::CullResources::new(&dev)
+                })
+                .is_some()
+        });
 }
 
 #[cfg(test)]

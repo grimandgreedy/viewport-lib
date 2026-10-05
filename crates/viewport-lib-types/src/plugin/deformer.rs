@@ -28,6 +28,29 @@ pub enum DeformStage {
 /// `deform_read_*` helpers in `deform.wgsl`, and read its slot's parameter
 /// region via `deform_header.slot_params[ctx.slot * 4 + k]`.
 ///
+/// # Removing surface
+///
+/// The body may also define
+///
+/// ```text
+/// fn keep(v: DeformVertex, ctx: DeformContext) -> f32 { ... }
+/// ```
+///
+/// Where it returns a negative value the surface is removed, consistently: it
+/// is not drawn, casts no shadow, gets no selection outline and is not hit by
+/// a GPU object pick, which passes through to what is behind. CPU picking reads
+/// the mesh's own geometry and does not see it, and nor does the per-pixel
+/// vertex and edge refinement of a GPU pick. It is called once per vertex with
+/// the final world-space vertex, after every deformer in both stages has run,
+/// so a cut sees the vertex wherever the other deformers moved it, whatever
+/// this deformer's own stage and priority. The value is interpolated across
+/// the triangle, so the edge of the removed region follows its zero line
+/// rather than whole triangles. When several deformers define `keep`, the
+/// lowest value wins. Like `deform`, it runs only for draws whose mesh or
+/// instance carries this slot's data, so a body that reads per-instance data
+/// should return a positive value when `deform_instance_slot_stride(ctx.slot)`
+/// is zero. Renderers with no registered `keep` compile no discard for it.
+///
 /// # Hook contract
 ///
 /// The shipped `deform.wgsl` declares:
@@ -74,14 +97,16 @@ pub enum DeformStage {
 ///
 /// Every registered deformer runs in every mesh-family pass: the main solid
 /// and transparent passes, the OIT accumulate pass, the instanced and
-/// instanced-OIT pipelines, the shadow pass, and the outline-mask pass. A
-/// deformer cannot opt out of a single pass; the composed pipeline is
-/// shared across them.
+/// instanced-OIT pipelines, the shadow passes, the outline-mask pass and the
+/// GPU object-pick pass. A deformer cannot opt out of a single pass; the
+/// composed pipeline is shared across them.
 ///
 /// In particular: shadows always deform. A skinned or wind-swept mesh
 /// casts a shadow that matches its deformed silhouette. The outline mask
-/// follows the deformed silhouette for the same reason. GPU picking, which
-/// uses the same mesh family, picks the deformed mesh.
+/// follows the deformed silhouette for the same reason, and a GPU object pick
+/// hits the deformed mesh. The per-pixel vertex and edge refinement of a GPU
+/// pick still reads the undeformed corners, so on a moving deformer it can name
+/// a vertex or edge near, rather than at, the deformed position.
 ///
 /// Bodies that have nothing to do for a draw (no slot data attached,
 /// flag bit clear) are gated off by the per-slot flag branch the composer

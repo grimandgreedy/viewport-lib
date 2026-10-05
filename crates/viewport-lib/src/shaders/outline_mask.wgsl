@@ -35,11 +35,17 @@ struct OutlineUniform {
 // Per-vertex deformation hook contract.
 // #include "helpers/deform.wgsl"
 
+struct OutlineVsOut {
+    @builtin(position) clip_pos: vec4<f32>,
+    // Kept-surface value from deformers that define `keep`; see deform.wgsl.
+    // <viewport-deform-keep> @location(0) deform_keep: f32,
+};
+
 @vertex
 fn vs_main(
     @location(0) position: vec3<f32>,
     @builtin(vertex_index) vertex_index: u32,
-) -> @builtin(position) vec4<f32> {
+) -> OutlineVsOut {
     // Override replaces the vertex-buffer position outright, matching
     // mesh.wgsl; deformers layer on top.
     var local_pos = position;
@@ -60,10 +66,15 @@ fn vs_main(
     let world_pos4 = outline.model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;
     dv = viewport_deform_world_space(dv, dctx);
-    return camera.view_proj * vec4<f32>(dv.position, 1.0);
+    var out: OutlineVsOut;
+    // <viewport-deform-keep> out.deform_keep = viewport_deform_keep(dv, dctx);
+    out.clip_pos = camera.view_proj * vec4<f32>(dv.position, 1.0);
+    return out;
 }
 
 @fragment
-fn fs_main() -> @location(0) vec4<f32> {
+fn fs_main(in: OutlineVsOut) -> @location(0) vec4<f32> {
+    // A cut-away part is not selected surface, so it gets no outline.
+    // <viewport-deform-keep> if in.deform_keep < 0.0 { discard; }
     return vec4<f32>(1.0, 0.0, 0.0, 1.0);
 }

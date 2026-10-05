@@ -7,7 +7,7 @@ use crate::resources::pipeline_slot::LazyFamily;
 pub(crate) struct OitContext {
     pub(crate) device: crate::gpu::Device,
     pub(crate) layout: crate::gpu::PipelineLayout,
-    pub(crate) shader: crate::gpu::ShaderModule,
+    pub(crate) shader: crate::resources::pipeline_slot::LazyModule,
 }
 
 /// Weighted-blended OIT pipelines and composite layout.
@@ -38,7 +38,7 @@ pub(crate) fn build_per_object(ctx: &OitContext, i: usize) -> crate::gpu::Render
     crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
         &ctx.device,
         &ctx.layout,
-        &ctx.shader,
+        ctx.shader.get(),
         i & 1 != 0,
     )
 }
@@ -48,7 +48,7 @@ pub(crate) fn build_instanced(ctx: &OitContext, i: usize) -> crate::gpu::RenderP
     crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
         &ctx.device,
         &ctx.layout,
-        &ctx.shader,
+        ctx.shader.get(),
         if two_sided {
             "oit_instanced_pipeline_two_sided"
         } else {

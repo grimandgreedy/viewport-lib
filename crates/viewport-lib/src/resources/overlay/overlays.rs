@@ -15,45 +15,7 @@ impl DeviceResources {
     ) {
         use bytemuck::cast_slice;
 
-        let (vertices, colour): (Vec<OverlayVertex>, [f32; 4]) = match overlay {
-            crate::interaction::query::snap::ConstraintOverlay::AxisLine {
-                origin,
-                direction,
-                colour,
-            } => (
-                vec![
-                    OverlayVertex {
-                        position: (*origin - *direction).to_array(),
-                    },
-                    OverlayVertex {
-                        position: (*origin + *direction).to_array(),
-                    },
-                ],
-                colour.to_linear_rgba(),
-            ),
-            crate::interaction::query::snap::ConstraintOverlay::Plane {
-                origin,
-                axis_a,
-                axis_b,
-                colour,
-            } => (
-                vec![
-                    OverlayVertex {
-                        position: (*origin - *axis_a).to_array(),
-                    },
-                    OverlayVertex {
-                        position: (*origin + *axis_a).to_array(),
-                    },
-                    OverlayVertex {
-                        position: (*origin - *axis_b).to_array(),
-                    },
-                    OverlayVertex {
-                        position: (*origin + *axis_b).to_array(),
-                    },
-                ],
-                colour.to_linear_rgba(),
-            ),
-        };
+        let (vertices, colour) = constraint_overlay_geometry(overlay);
         let indices: Vec<u32> = (0..vertices.len() as u32).collect();
 
         let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -107,81 +69,50 @@ impl DeviceResources {
             bind_group,
         )
     }
+}
 
-    /// Upload cap geometry (cross-section fill) as transient overlay buffers.
-    ///
-    /// Uses the overlay pipeline (position-only vertices + flat colour uniform).
-    pub(crate) fn upload_cap_geometry(
-        &self,
-        device: &crate::gpu::Device,
-        cap: &crate::geometry::cap_geometry::CapMesh,
-        colour: [f32; 4],
-    ) -> (
-        crate::gpu::Buffer,
-        crate::gpu::Buffer,
-        u32,
-        crate::gpu::Buffer,
-        crate::gpu::BindGroup,
-    ) {
-        use bytemuck::cast_slice;
-
-        let vertices: Vec<OverlayVertex> = cap
-            .positions
-            .iter()
-            .map(|p| OverlayVertex { position: *p })
-            .collect();
-
-        let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("cap_vbuf"),
-            size: (std::mem::size_of::<OverlayVertex>() * vertices.len()) as u64,
-            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(vertex_buffer.slice(..), cast_slice(&vertices));
-        vertex_buffer.unmap();
-
-        let index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("cap_ibuf"),
-            size: (std::mem::size_of::<u32>() * cap.indices.len()) as u64,
-            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(index_buffer.slice(..), cast_slice(&cap.indices));
-        index_buffer.unmap();
-
-        let uniform_data = OverlayUniform {
-            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+/// The line-list vertices and linear colour for a constraint overlay.
+pub(crate) fn constraint_overlay_geometry(
+    overlay: &crate::interaction::query::snap::ConstraintOverlay,
+) -> (Vec<OverlayVertex>, [f32; 4]) {
+    match overlay {
+        crate::interaction::query::snap::ConstraintOverlay::AxisLine {
+            origin,
+            direction,
             colour,
-        };
-        let uniform_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("cap_ubuf"),
-            size: std::mem::size_of::<OverlayUniform>() as u64,
-            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(
-            uniform_buffer.slice(..),
-            cast_slice(&[uniform_data]),
-        );
-        uniform_buffer.unmap();
-
-        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("cap_bg"),
-            layout: &self.guides.overlay_bgl,
-            entries: &[crate::gpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
-        });
-
-        let idx_count = cap.indices.len() as u32;
-        (
-            vertex_buffer,
-            index_buffer,
-            idx_count,
-            uniform_buffer,
-            bind_group,
-        )
+        } => (
+            vec![
+                OverlayVertex {
+                    position: (*origin - *direction).to_array(),
+                },
+                OverlayVertex {
+                    position: (*origin + *direction).to_array(),
+                },
+            ],
+            colour.to_linear_rgba(),
+        ),
+        crate::interaction::query::snap::ConstraintOverlay::Plane {
+            origin,
+            axis_a,
+            axis_b,
+            colour,
+        } => (
+            vec![
+                OverlayVertex {
+                    position: (*origin - *axis_a).to_array(),
+                },
+                OverlayVertex {
+                    position: (*origin + *axis_a).to_array(),
+                },
+                OverlayVertex {
+                    position: (*origin - *axis_b).to_array(),
+                },
+                OverlayVertex {
+                    position: (*origin + *axis_b).to_array(),
+                },
+            ],
+            colour.to_linear_rgba(),
+        ),
     }
 }
 
@@ -243,6 +174,30 @@ pub(crate) struct BackdropBlurState {
     pub size: [u32; 2],
     /// Format the textures were created with.
     pub format: crate::gpu::TextureFormat,
+    /// Bind groups and uniforms over the textures above, built on the first
+    /// blur and reused until the textures are recreated.
+    pub binds: std::sync::Mutex<BackdropBlurBinds>,
+}
+
+/// The backdrop blur's per-texture-set bind groups. The downsample source can
+/// change between frames (the dynamic-resolution target or the intermediate),
+/// so that one is keyed on the source view.
+#[derive(Default)]
+pub(crate) struct BackdropBlurBinds {
+    pub downsample: Option<(crate::gpu::TextureView, crate::gpu::BindGroup)>,
+    pub fixed: Option<BackdropBlurFixed>,
+    /// The LDR path's blit of the intermediate to the output.
+    pub blit: Option<crate::gpu::BindGroup>,
+}
+
+pub(crate) struct BackdropBlurFixed {
+    pub h_uniform: crate::gpu::Buffer,
+    pub v_uniform: crate::gpu::Buffer,
+    pub h_bg: crate::gpu::BindGroup,
+    pub v_bg: crate::gpu::BindGroup,
+    pub overlay_bg: crate::gpu::BindGroup,
+    /// The spread the uniforms hold.
+    pub spread: f32,
 }
 
 /// Uniform buffer layout for the full-screen ground plane shader.

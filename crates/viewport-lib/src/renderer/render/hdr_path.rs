@@ -68,7 +68,6 @@ fn post_effect_ctx<'a>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn draw_mesh_item(
     resources: &DeviceResources,
-    compute_filter_results: &[crate::resources::ComputeFilterResult],
     render_pass: &mut crate::gpu::RenderPass<'_>,
     item: &SceneRenderItem,
     obj_bg_override: Option<&crate::gpu::BindGroup>,
@@ -148,17 +147,8 @@ pub(super) fn draw_mesh_item(
             render_pass.draw(0..mesh.index_count, obj_index..obj_index + 1);
         }
     } else {
-        let filter = compute_filter_results
-            .iter()
-            .find(|r| r.mesh_id == item.mesh_id);
-        let ranges = if filter.is_none() {
-            // A compute-filtered index buffer is compacted, so the mesh's
-            // ranges no longer address it; the filter branch below draws the
-            // whole filtered mesh with the item material instead.
-            crate::renderer::prepare::active_submesh_materials(item, mesh).zip(submesh_bgs)
-        } else {
-            None
-        };
+        let ranges =
+            crate::renderer::prepare::active_submesh_materials(item, mesh).zip(submesh_bgs);
         if let Some((mats, bgs)) = ranges {
             bind_deform_group!(render_pass, resources, deform_bg);
             render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
@@ -243,17 +233,11 @@ pub(super) fn draw_mesh_item(
             render_pass.set_pipeline(pl);
             bind_deform_group!(render_pass, resources, deform_bg);
             render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-            if let Some(fr) = filter {
-                render_pass
-                    .set_index_buffer(fr.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..fr.index_count, 0, obj_index..obj_index + 1);
-            } else {
-                render_pass.set_index_buffer(
-                    resources.geometry.index_slice(mesh.index_span),
-                    crate::gpu::IndexFormat::Uint32,
-                );
-                render_pass.draw_indexed(0..mesh.index_count, 0, obj_index..obj_index + 1);
-            }
+            render_pass.set_index_buffer(
+                resources.geometry.index_slice(mesh.index_span),
+                crate::gpu::IndexFormat::Uint32,
+            );
+            render_pass.draw_indexed(0..mesh.index_count, 0, obj_index..obj_index + 1);
         }
     }
     if item.show_normals {
@@ -384,7 +368,8 @@ impl ViewportRenderer {
             // Manual and physical-camera exposure write the state buffer
             // directly; only automatic exposure dispatches the metering passes.
             if frame.effects.display.exposure.manual_multiplier().is_none() {
-                res.exposure.ensure_pipelines(device);
+                res.exposure
+                    .ensure_pipelines(device, &res.pipeline_compiler);
             }
             let slot = &self.viewport_slots[vp_idx];
             if slot
@@ -787,7 +772,6 @@ impl ViewportRenderer {
 
             let use_instancing = self.instancing.use_instancing;
             let batches = &self.instancing.batches;
-            let compute_filter_results = &self.compute_filter_results;
 
             if !scene_items.is_empty() {
                 if use_instancing && !batches.is_empty() {
@@ -799,15 +783,11 @@ impl ViewportRenderer {
                             // not admitted to an instanced batch. Reuse `is_instanceable`
                             // (the single source of truth used in prepare) instead of
                             // re-listing its conditions, so this filter cannot drift from
-                            // it -- a past drift dropped position-override and
-                            // compute-filter items from the scene pass entirely.
+                            // it -- a past drift dropped position-override items
+                            // from the scene pass entirely.
                             !item.settings.hidden
                                 && resources.mesh_store.get(item.mesh_id).is_some()
-                                && !crate::renderer::prepare::is_instanceable(
-                                    item,
-                                    resources,
-                                    compute_filter_results,
-                                )
+                                && !crate::renderer::prepare::is_instanceable(item, resources)
                         })
                         .collect();
 
@@ -1314,7 +1294,10 @@ impl ViewportRenderer {
                                         crate::scene::material::AlphaMode::Opaque
                                     )
                                     && item.active_attribute.is_none()
-                                    && item.submesh_materials.is_none(),
+                                    && item.submesh_materials.is_none()
+                                    && !resources
+                                        .deform
+                                        .may_discard(item.mesh_id, item.deform_instance),
                                 ..PipelineKey::default()
                             };
                             let pipeline = if let Some((pp, _)) = plug {
@@ -1353,26 +1336,10 @@ impl ViewportRenderer {
                                 0,
                                 resources.geometry.vertex_slice(mesh.vertex_span),
                             );
-                            let filter = compute_filter_results
-                                .iter()
-                                .find(|r| r.mesh_id == item.mesh_id);
-                            let ranges = if filter.is_none() {
+                            let ranges =
                                 crate::renderer::prepare::active_submesh_materials(item, mesh)
-                                    .zip(self.mesh_uniforms.submesh_bind_groups.get(&item_idx))
-                            } else {
-                                None
-                            };
-                            if let Some(fr) = filter {
-                                render_pass.set_index_buffer(
-                                    fr.index_buffer.slice(..),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                render_pass.draw_indexed(
-                                    0..fr.index_count,
-                                    0,
-                                    obj_inst..obj_inst + 1,
-                                );
-                            } else if let Some((mats, bgs)) = ranges {
+                                    .zip(self.mesh_uniforms.submesh_bind_groups.get(&item_idx));
+                            if let Some((mats, bgs)) = ranges {
                                 // One draw per opaque-material range; blend
                                 // ranges go to the OIT pass with the other
                                 // transparent excluded items.
@@ -1533,7 +1500,6 @@ impl ViewportRenderer {
                             let obj_bg = per_item_bgs.get(*item_idx).and_then(|opt| opt.as_ref());
                             draw_mesh_item(
                                 resources,
-                                compute_filter_results,
                                 &mut render_pass,
                                 item,
                                 obj_bg,
@@ -1652,6 +1618,7 @@ impl ViewportRenderer {
             .render_camera
             .view_proj()
             .to_cols_array_2d();
+        let hiz = self.resources.hiz_pipelines(ctx.device);
         // Borrow the slot mutably and split its fields: the depth view is read
         // from `hdr` while the pyramid is written into `cull`.
         let slot = &mut self.viewport_slots[ctx.vp_idx];
@@ -1672,7 +1639,7 @@ impl ViewportRenderer {
         let w = depth_tex.width();
         let h = depth_tex.height();
         slot.cull
-            .store_hiz_prev_depth(ctx.device, encoder, depth_view, w, h, view_proj);
+            .store_hiz_prev_depth(ctx.device, &hiz, encoder, depth_view, w, h, view_proj);
     }
 
     fn hdr_ssaa_refraction(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
@@ -1840,7 +1807,33 @@ impl ViewportRenderer {
         if !self.any_plugin_draws_depth_read(frame) {
             return;
         }
-        let device = ctx.device;
+        // Prebuilt group handed to plugins that have a spare bind group. Plugins
+        // at the four-group limit ignore it and bake the same depth-only view +
+        // sampler into a group of their own.
+        let depth_bg = {
+            let resources = &self.resources;
+            let hdr = self.viewport_slots[ctx.vp_idx].hdr.as_mut().unwrap();
+            let view = hdr.hdr_depth_only_view.clone();
+            hdr.depth_read_bg.get(view.clone(), || {
+                ctx.device
+                    .create_bind_group(&crate::gpu::BindGroupDescriptor {
+                        label: Some("plugin_depth_read_bg"),
+                        layout: &resources.material.depth_read_bgl,
+                        entries: &[
+                            crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: crate::gpu::BindingResource::TextureView(&view),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 1,
+                                resource: crate::gpu::BindingResource::Sampler(
+                                    &resources.material.depth_read_sampler,
+                                ),
+                            },
+                        ],
+                    })
+            })
+        };
         let vp_idx = ctx.vp_idx;
         let resources = &self.resources;
         let slot = &self.viewport_slots[vp_idx];
@@ -1856,26 +1849,6 @@ impl ViewportRenderer {
         let colour_view = &slot_hdr.hdr_view;
         let depth_view = &slot_hdr.hdr_depth_view;
         let depth_only_view = &slot_hdr.hdr_depth_only_view;
-
-        // Prebuilt group handed to plugins that have a spare bind group. Plugins
-        // at the four-group limit ignore it and bake the same depth-only view +
-        // sampler into a group of their own.
-        let depth_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("plugin_depth_read_bg"),
-            layout: &resources.material.depth_read_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(depth_only_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(
-                        &resources.material.depth_read_sampler,
-                    ),
-                },
-            ],
-        });
 
         // Depth attachment read-only (`depth_ops: None`) so `depth_only_view`,
         // a depth-aspect view of the same buffer, can be sampled in the pass.
@@ -1938,8 +1911,7 @@ impl ViewportRenderer {
                             && crate::renderer::prepare::has_transparent_draws(i, &self.resources)
                             && !crate::renderer::prepare::is_instanceable(
                                 i,
-                                &self.resources,
-                                &self.compute_filter_results,
+                                &self.resources
                             )
                     })
             } else {
@@ -2417,11 +2389,7 @@ impl ViewportRenderer {
                             }
                             // Instanceable transparent items go through the instanced OIT
                             // path; only the per-object (non-instanceable) ones draw here.
-                            if crate::renderer::prepare::is_instanceable(
-                                item,
-                                &self.resources,
-                                &self.compute_filter_results,
-                            ) {
+                            if crate::renderer::prepare::is_instanceable(item, &self.resources) {
                                 continue;
                             }
                             let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
@@ -2925,7 +2893,6 @@ impl ViewportRenderer {
                 .and_then(|e| e.bind_group.as_ref());
             draw_mesh_item(
                 resources,
-                &self.compute_filter_results,
                 &mut render_pass,
                 item,
                 obj_bg,
@@ -3249,22 +3216,24 @@ impl ViewportRenderer {
         // (at scale 1.0 output_depth_view aliases the scene depth, which the
         // tone map pass has already consumed).
         if self.foreground_active(ctx.frame) {
-            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
             if let (Some(fg_view), Some(pipeline), Some(bgl)) = (
-                slot_hdr.foreground_depth_only_view.as_ref(),
+                hdr.foreground_depth_only_view.clone(),
                 self.resources.post.foreground_stamp_pipeline.as_ref(),
                 self.resources.post.foreground_stamp_bgl.as_ref(),
             ) {
-                let stamp_bg = ctx
-                    .device
-                    .create_bind_group(&crate::gpu::BindGroupDescriptor {
-                        label: Some("foreground_stamp_bg"),
-                        layout: bgl,
-                        entries: &[crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: crate::gpu::BindingResource::TextureView(fg_view),
-                        }],
-                    });
+                let stamp_bg = hdr.foreground_stamp_bg.get(fg_view.clone(), || {
+                    ctx.device
+                        .create_bind_group(&crate::gpu::BindGroupDescriptor {
+                            label: Some("foreground_stamp_bg"),
+                            layout: bgl,
+                            entries: &[crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: crate::gpu::BindingResource::TextureView(&fg_view),
+                            }],
+                        })
+                });
+                let slot_hdr = &*hdr;
                 let mut stamp_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                     #[cfg(any(wgpu29, wgpu30))]
                     multiview_mask: None,
@@ -3296,7 +3265,11 @@ impl ViewportRenderer {
         // Grid pass (HDR path): draw the existing analytical grid on the final
         // output after tone mapping / FXAA, reusing the scene depth buffer so
         // scene geometry still occludes the grid exactly as in the LDR path.
-        if frame.viewport.show_grid {
+        if let (true, Some(grid_pipeline)) = (
+            frame.viewport.show_grid,
+            self.resources
+                .guide_pipeline(crate::resources::overlay::guides::GUIDE_GRID),
+        ) {
             let slot = &self.viewport_slots[vp_idx];
             let slot_hdr = slot.hdr.as_ref().unwrap();
             let grid_bg = &slot.grid_bind_group;
@@ -3324,7 +3297,7 @@ impl ViewportRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            grid_pass.set_pipeline(&self.resources.guides.grid_pipeline);
+            grid_pass.set_pipeline(grid_pipeline);
             grid_pass.set_bind_group(0, grid_bg, &[]);
             grid_pass.draw(0..3, 0..1);
         }
@@ -3404,8 +3377,12 @@ impl ViewportRenderer {
                         occlusion_query_set: None,
                     });
 
-                if !slot.constraint_line_buffers.is_empty() {
-                    overlay_pass.set_pipeline(&self.resources.guides.overlay_line_pipeline);
+                if let (false, Some(pipeline)) = (
+                    slot.constraint_line_buffers.is_empty(),
+                    self.resources
+                        .guide_pipeline(crate::resources::overlay::guides::GUIDE_LINES),
+                ) {
+                    overlay_pass.set_pipeline(pipeline);
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
                     for (vbuf, ibuf, index_count, _ubuf, bg) in &slot.constraint_line_buffers {
                         overlay_pass.set_bind_group(1, bg, &[]);
@@ -3427,11 +3404,11 @@ impl ViewportRenderer {
                         self.resources,
                         &self.resources.deform.dummy_bind_group
                     );
-                    for (mesh_id, _buf, bg) in &slot.xray_object_buffers {
+                    for (mesh_id, xray) in &slot.xray_object_buffers {
                         let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
                             continue;
                         };
-                        overlay_pass.set_bind_group(1, bg, &[]);
+                        overlay_pass.set_bind_group(1, &xray.bind_group, &[]);
                         overlay_pass.set_vertex_buffer(
                             0,
                             resources.geometry.vertex_slice(mesh.vertex_span),

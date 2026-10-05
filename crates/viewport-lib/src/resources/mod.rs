@@ -1,6 +1,7 @@
 /// Shared constructors for common wgpu bind-group-layout, sampler, and
 /// pipeline-layout descriptors, used by the per-feature `ensure_*` methods.
 pub(crate) mod builders;
+pub(crate) mod cached_bind_group;
 /// Opt-in record of what each pipeline and shader module cost to create, for
 /// attributing startup time. See [`builders::build_log`].
 pub use builders::build_log;
@@ -9,6 +10,8 @@ pub mod content_buffer;
 pub(crate) mod custom_data;
 /// `DeviceResources` and its content, scope, and feature-resource structs.
 pub(crate) mod device_resources;
+/// A cheap hasher for the maps rebuilt or probed every frame.
+pub(crate) mod fast_hash;
 /// GPU compute resources: clustered shading, hierarchical-Z, and dynamic resolution.
 pub mod gpu;
 /// Ground-plane pipeline, uniform, and bind group.
@@ -38,6 +41,9 @@ pub use pipeline_slot::PipelineCompilation;
 mod plugin_builders;
 mod postprocess;
 pub(crate) use postprocess::TargetGroups;
+/// A GPU readback that can be polled instead of waited on.
+#[cfg(any(feature = "raytrace", feature = "bake"))]
+pub(crate) mod readback;
 pub(crate) mod resource_deps;
 /// Group-0/1 camera, per-object, and clip bind plumbing.
 pub(crate) mod scene_bindings;
@@ -55,7 +61,6 @@ pub mod upload_jobs;
 pub mod volume;
 
 pub use self::content_buffer::ContentBuffer;
-pub use self::gpu::compute_filter::ComputeFilterResult;
 pub use self::handle::ContentHandle;
 pub use self::light_probes::{
     LightProbe, LightProbeSet, LightProbeVolume, SHCoefficients, evaluate_sh,
@@ -85,7 +90,8 @@ pub use self::overlay::font::{FontError, FontHandle, TextMetrics};
 pub(crate) use self::overlay::geometry::{CompiledOverlay, CompiledSource, OverlayInstance};
 pub use self::plugin_builders::{
     HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry, PICK_COLOR_FORMAT,
-    PICK_DEPTH_CHANNEL_FORMAT, PluginPipelineOpts, SCENE_DEPTH_FORMAT, SHADOW_DEPTH_FORMAT,
+    PICK_DEPTH_CHANNEL_FORMAT, PipelineBuilder, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
+    SHADOW_DEPTH_FORMAT,
 };
 pub use self::resource_deps::{ResourceGate, Revalidate};
 pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
@@ -105,7 +111,7 @@ pub(crate) use self::postprocess::producer::{
 };
 pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
-    ContactShadowUniform, DofUniform, DualPipeline, FrustumPlane, FrustumUniform,
+    ContactShadowUniform, DofUniform, FrustumPlane, FrustumUniform,
     GpuProjectedTetMesh, GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData,
     MeshInstanceGpuData, ObjectUniform, OutlineObjectBuffers, OutlineUniform,
     OverlayShadowLayerGpu, OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex,

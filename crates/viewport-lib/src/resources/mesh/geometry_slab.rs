@@ -10,7 +10,7 @@
 //! Storage is split into a vertex slab and an index slab, each a growable list
 //! of chunk buffers with a first-fit free list. Spans are aligned to the storage
 //! offset alignment so a sub-range can also be bound as a STORAGE buffer (the
-//! compute-filter and GPU-picking paths read geometry that way).
+//! GPU-picking paths read geometry that way).
 
 use crate::gpu;
 use crate::resources::builders::LoggedAlloc;
@@ -293,15 +293,20 @@ pub(crate) struct GeometrySlab {
 }
 
 impl GeometrySlab {
-    pub(crate) fn new(device: &gpu::Device) -> Self {
+    /// `base_chunk` sizes the first chunk; `None` takes
+    /// `VIEWPORT_SLAB_CHUNK_BYTES` from the environment, else the default.
+    pub(crate) fn new(device: &gpu::Device, base_chunk: Option<u64>) -> Self {
         let limits = device.limits();
         let align = (limits.min_storage_buffer_offset_alignment as u64).max(DEFAULT_ALIGN);
         let max_buffer = limits.max_buffer_size;
-        // Diagnostic seam: shrink the first-chunk size so a test can force
-        // multi-chunk allocation with small meshes. Off in normal use.
-        let base_chunk = std::env::var("VIEWPORT_SLAB_CHUNK_BYTES")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
+        // The environment variable lets a test force multi-chunk allocation
+        // with small meshes without each test configuring the renderer.
+        let base_chunk = base_chunk
+            .or_else(|| {
+                std::env::var("VIEWPORT_SLAB_CHUNK_BYTES")
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+            })
             .map(|b| align_up(b.max(align), align))
             .unwrap_or(INITIAL_CHUNK_BYTES)
             .min(max_buffer);

@@ -246,12 +246,6 @@ pub struct SceneFrame {
     pub generation: u64,
     /// Surface geometry submission (opaque and transparent meshes).
     pub surfaces: SurfaceSubmission,
-    /// GPU compute filter items dispatched before the render pass.
-    ///
-    /// Each item references a pre-uploaded mesh and a compute kernel that
-    /// rewrites its index buffer (culling, LOD selection). Empty by default;
-    /// an empty list adds no dispatch and no allocations.
-    pub compute_filter_items: Vec<ComputeFilterItem>,
     /// Unstructured volume meshes submitted this frame.
     ///
     /// Each [`VolumeMeshItem`] renders either as a boundary surface (default,
@@ -299,7 +293,6 @@ impl Default for SceneFrame {
         Self {
             generation: 0,
             surfaces: SurfaceSubmission::default(),
-            compute_filter_items: Vec::new(),
             volume_meshes: Vec::new(),
             mesh_instances: Vec::new(),
             lights: Vec::new(),
@@ -784,8 +777,7 @@ pub use viewport_lib_types::effects::debug::EffectsDebug;
 ///
 /// Groups the lighting, environment, and scatter configuration that applies
 /// to the whole scene (not per-viewport). Construct directly or obtain via
-/// [`EffectsFrame::split`]. Compute filter items travel with the scene content
-/// on [`SceneFrame::compute_filter_items`].
+/// [`EffectsFrame::split`].
 ///
 /// # Multi-viewport usage
 /// Call [`ViewportRenderer::prepare_scene`] once per frame with this struct.

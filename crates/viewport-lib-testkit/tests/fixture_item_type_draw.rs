@@ -131,54 +131,56 @@ fn triangle_fixture_agrees_with_the_renderer_sample_count() {
 /// with what the pass binds: the fixture draws, so a layout or format
 /// regression surfaces as a wgpu validation failure here.
 ///
-/// The scene carries a mesh as well as the plugin's items: the renderer skips
-/// the whole shadow pass when there are no mesh surfaces, so a plugin-only
-/// scene never reaches `cast_shadow_pass` at all.
+/// Run with a mesh in the scene and with the plugin's items alone: plugin
+/// items are casters in their own right, so the pass must run without a mesh.
 #[test]
 fn triangle_fixture_is_dispatched_by_the_shadow_pass() {
-    let Some(mut harness) = harness() else {
-        eprintln!("skipping: no GPU adapter with recommended limits available");
-        return;
-    };
-    let log = CallLog::new();
-    let plugin = TriangleItemTypePlugin::new(
-        harness.renderer.resources(),
-        &harness.device,
-        log.clone(),
-        TYPE_NAME,
-        glam::Vec3::ZERO,
-        [0.9, 0.9, 0.9],
-    );
-    harness
-        .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+    for with_mesh in [true, false] {
+        let Some(mut harness) = harness() else {
+            eprintln!("skipping: no GPU adapter with recommended limits available");
+            return;
+        };
+        let log = CallLog::new();
+        let plugin = TriangleItemTypePlugin::new(
+            harness.renderer.resources(),
+            &harness.device,
+            log.clone(),
+            TYPE_NAME,
+            glam::Vec3::ZERO,
+            [0.9, 0.9, 0.9],
+        );
+        harness
+            .renderer
+            .with_item_type_plugin(&harness.device, Box::new(plugin));
 
-    let mesh_id = harness
-        .renderer
-        .resources_mut()
-        .upload_mesh_data(&harness.device, &probe_quad())
-        .expect("upload probe quad");
+        let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
+        frame.scene.lights = vec![LightSource::directional_lux(
+            glam::Vec3::new(0.3, 0.3, -1.0).normalize().to_array(),
+            Lux(10_000.0),
+        )];
+        frame.effects.lighting.shadows.enabled = true;
+        if with_mesh {
+            let mesh_id = harness
+                .renderer
+                .resources_mut()
+                .upload_mesh_data(&harness.device, &probe_quad())
+                .expect("upload probe quad");
+            let mut floor = SceneRenderItem::default();
+            floor.mesh_id = mesh_id;
+            floor.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).to_cols_array_2d();
+            frame.scene.surfaces = SurfaceSubmission::Flat(vec![floor].into());
+        }
+        frame
+            .scene
+            .submit_plugin_items(TYPE_NAME, CountedItemCollection::new(1));
 
-    let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
-    frame.scene.lights = vec![LightSource::directional_lux(
-        glam::Vec3::new(0.3, 0.3, -1.0).normalize().to_array(),
-        Lux(10_000.0),
-    )];
-    frame.effects.lighting.shadows.enabled = true;
-    let mut floor = SceneRenderItem::default();
-    floor.mesh_id = mesh_id;
-    floor.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).to_cols_array_2d();
-    frame.scene.surfaces = SurfaceSubmission::Flat(vec![floor].into());
-    frame
-        .scene
-        .submit_plugin_items(TYPE_NAME, CountedItemCollection::new(1));
-
-    harness.render(&frame, SIZE, SIZE);
-    assert!(
-        log.count("cast_shadow_pass") > 0,
-        "the shadow pass must dispatch to the plugin; log holds {:?}",
-        log.entries()
-    );
+        harness.render(&frame, SIZE, SIZE);
+        assert!(
+            log.count("cast_shadow_pass") > 0,
+            "the shadow pass must dispatch to the plugin (with_mesh: {with_mesh}); log holds {:?}",
+            log.entries()
+        );
+    }
 }
 
 /// The pick pipeline, built from `PickTargetDesc` with the plugin's own

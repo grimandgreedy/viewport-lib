@@ -53,7 +53,7 @@ impl Default for OvlState {
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
-use viewport_lib_item_types::PointCloudItem;
+use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
 use vpl::{
     BuiltinColourmap, Colour, FontHandle, GlyphRunItem, LabelAnchor, LabelItem, LineCap,
     OutlineMode, OverlayFill, OverlayShape, OverlayShapeItem, PositionedGlyph, TriangleDirection,

@@ -16,7 +16,9 @@
 use crate::eframe::egui;
 use crate::{App, MeshId};
 use viewport_lib as vpl;
-use viewport_lib_item_types::{PointCloudItem, VectorFieldItem};
+use viewport_lib_plugins::item_types::{
+    point_cloud::PointCloudItem, vector_field::VectorFieldItem,
+};
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, ColourSource, ColourmapId,
     FrameData, LightingSettings, SceneRenderItem, SizeSource, ViewportRenderer, VolumeMeshData,

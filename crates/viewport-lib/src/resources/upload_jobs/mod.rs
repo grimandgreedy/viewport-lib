@@ -856,6 +856,12 @@ impl JobRunner {
         }
     }
 
+    /// How many clearing pumps the retention clock has counted.
+    #[cfg(test)]
+    pub(crate) fn retain_cycle(&self) -> u64 {
+        self.retain_cycle
+    }
+
     /// Count of jobs sitting on the apply queue. Exposed for tests and
     /// metrics; `pending` already aggregates it into the in-flight total.
     pub fn pending_apply_len(&self) -> usize {

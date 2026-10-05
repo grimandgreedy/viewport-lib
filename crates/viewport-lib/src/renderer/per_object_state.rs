@@ -115,11 +115,14 @@ pub(crate) struct PerObjectState {
     /// selects its element with an object-data index, so items sharing a material
     /// share one bind group. Persists across frames; pruned by capacity and on a
     /// resource-free epoch bump.
-    pub(crate) material_bind_groups: HashMap<u64, MaterialBindGroup>,
+    pub(crate) material_bind_groups: crate::resources::fast_hash::FastMap<u64, MaterialBindGroup>,
     /// Shared storage buffer holding this frame's `array<ObjectUniform>`. Binding
     /// 0 of every per-object group-1 bind group. Grown (reallocated) when the
     /// per-frame object count exceeds its capacity.
     pub(crate) object_data_buf: Option<crate::gpu::Buffer>,
+    /// `object_data_buf`'s contents as last written; cleared when the buffer
+    /// is replaced. A static scene's array is not written again.
+    pub(crate) object_data_written: Vec<u8>,
     /// Capacity of `object_data_buf` in `ObjectUniform` elements.
     pub(crate) object_data_capacity: usize,
     /// Bumped whenever `object_data_buf` is reallocated. A change clears
@@ -166,8 +169,9 @@ pub(crate) struct PerObjectState {
 impl PerObjectState {
     pub(crate) fn new() -> Self {
         Self {
-            material_bind_groups: HashMap::new(),
+            material_bind_groups: Default::default(),
             object_data_buf: None,
+            object_data_written: Vec::new(),
             object_data_capacity: 0,
             object_data_gen: 0,
             object_indices: Vec::new(),

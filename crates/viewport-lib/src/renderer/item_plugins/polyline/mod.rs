@@ -70,6 +70,14 @@ impl ItemTypePlugin for PolylinePlugin {
         self.frame.clear();
     }
 
+    /// Asks for the four line pipelines in both formats, the pick and the
+    /// outline mask.
+    fn warm(&mut self, device: &crate::gpu::Device, resources: &crate::DeviceResources) {
+        self.gpu
+            .get_or_insert_with(|| pipeline::PolylineGpu::new(device, resources))
+            .request_all();
+    }
+
     fn prepare(
         &mut self,
         device: &crate::gpu::Device,
@@ -160,7 +168,10 @@ impl ItemTypePlugin for PolylinePlugin {
                 skip_clip: gd.skip_clip,
                 wireframe: gd.wireframe,
             };
-            let pipeline = gpu.pipelines.get(key).for_format(is_hdr);
+            // Still compiling: this line draws next frame.
+            let Some(pipeline) = gpu.pipelines.get(key, is_hdr) else {
+                continue;
+            };
             pass.set_pipeline(pipeline);
             if gd.wireframe {
                 let Some(wf_bg) = gd.wireframe_bind_group.as_ref() else {
@@ -189,11 +200,14 @@ impl ItemTypePlugin for PolylinePlugin {
         let Some(gpu) = &self.gpu else { return };
         let mut bound = false;
         for entry in &self.frame {
-            if !entry.outlined || entry.gpu.segment_count == 0 {
+            if !entry.outlined || entry.gpu.segment_count == 0 || !gpu.drawable(entry) {
                 continue;
             }
             if !bound {
-                pass.set_pipeline(&gpu.mask_pipeline);
+                let Some(mask) = gpu.passes.get(pipeline::MASK) else {
+                    return;
+                };
+                pass.set_pipeline(mask);
                 bound = true;
             }
             pass.set_bind_group(1, &entry.gpu.bind_group, &[]);
@@ -428,11 +442,14 @@ impl ItemTypePlugin for PolylinePlugin {
             let Some(pick_bg) = &entry.pick_bind_group else {
                 continue;
             };
-            if entry.gpu.segment_count == 0 {
+            if entry.gpu.segment_count == 0 || !gpu.drawable(entry) {
                 continue;
             }
             if !bound {
-                pass.set_pipeline(&gpu.pick_pipeline);
+                let Some(pick) = gpu.passes.get(pipeline::PICK) else {
+                    return;
+                };
+                pass.set_pipeline(pick);
                 bound = true;
             }
             pass.set_bind_group(1, &entry.gpu.bind_group, &[]);

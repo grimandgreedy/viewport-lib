@@ -138,8 +138,13 @@ fn main() {
         .map(|dir| std::path::PathBuf::from(dir).join("overlay_only.bin"));
     let cache_in = cache_path.as_ref().and_then(|p| std::fs::read(p).ok());
     let t_new = Instant::now();
-    let mut renderer =
-        ViewportRenderer::new_with_pipeline_cache(&device, FORMAT, cache_in.as_deref());
+    // Build on this thread so each build lands in the frame that asked for it.
+    let mut renderer = ViewportRenderer::with_config(
+        &device,
+        &vpl::RendererConfig::new(FORMAT)
+            .with_pipeline_cache_data(cache_in.clone())
+            .with_pipeline_compilation(vpl::PipelineCompilation::Blocking),
+    );
     let new_ms = t_new.elapsed().as_secs_f32() * 1000.0;
     let sections = collected.lock().unwrap().clone();
 
@@ -155,7 +160,7 @@ fn main() {
     let mut install_total = 0.0;
     if install_all {
         let t = Instant::now();
-        viewport_lib_item_types::install(&mut renderer, &device);
+        viewport_lib_plugins::item_types::install(&mut renderer, &device);
         install_total = t.elapsed().as_secs_f32() * 1000.0;
     }
     // Drained here so a type that builds at registration is not counted

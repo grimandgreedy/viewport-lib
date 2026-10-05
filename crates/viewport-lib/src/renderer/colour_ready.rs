@@ -50,7 +50,8 @@ impl DeviceResources {
                 crate::scene::material::AlphaMode::Opaque
             )
             && item.active_attribute.is_none()
-            && item.submesh_materials.is_none();
+            && item.submesh_materials.is_none()
+            && !self.deform.may_discard(item.mesh_id, item.deform_instance);
         let keys = [
             PipelineKey::two_sided(two_sided),
             PipelineKey {

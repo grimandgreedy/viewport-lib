@@ -88,6 +88,7 @@ fn main() {
         "mesh_instanced_oit.wgsl",
         "mesh_oit.wgsl",
         "outline_mask.wgsl",
+        "pick_id.wgsl",
         "shadow.wgsl",
         "shadow_point.wgsl",
     ];

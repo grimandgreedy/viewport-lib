@@ -19,7 +19,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
-use viewport_lib_item_types::{ContourLevels, SurfaceContourItem};
+use viewport_lib_plugins::item_types::surface_contour::{ContourLevels, SurfaceContourItem};
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, ColourmapId,
     FrameData, LightingSettings, Material, MeshData, MeshId, PolylineItem, SceneRenderItem,

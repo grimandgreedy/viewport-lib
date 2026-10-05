@@ -31,15 +31,15 @@ pub enum PipelineCompilation {
 }
 
 impl PipelineCompilation {
-    /// The default for this platform: `Blocking` on macOS, iOS and the web,
-    /// `Background` everywhere else. A worker thread compiling under Metal
-    /// stalls the thread that renders, and the web has no threads.
+    /// The default for this platform: `Background`, except `Blocking` on the
+    /// web, which has no threads, and on macOS and iOS when built against
+    /// wgpu 27. wgpu 27's Metal backend holds one device-wide lock for the
+    /// whole of a pipeline compile, and every buffer and texture allocation
+    /// takes it too, so a worker compile stalls the thread that renders for
+    /// as long as the compile lasts. wgpu 29 and 30 dropped that lock.
     pub fn platform_default() -> Self {
-        if cfg!(any(
-            target_os = "macos",
-            target_os = "ios",
-            target_family = "wasm"
-        )) {
+        let apple = cfg!(any(target_os = "macos", target_os = "ios"));
+        if cfg!(target_family = "wasm") || (apple && cfg!(feature = "wgpu27")) {
             Self::Blocking
         } else {
             Self::Background
@@ -80,6 +80,9 @@ struct Pending {
     count: AtomicUsize,
     lock: Mutex<()>,
     finished: Condvar,
+    /// Set when the renderer goes away. A job a worker has not started yet
+    /// is then dropped instead of compiled.
+    cancelled: AtomicBool,
 }
 
 impl Pending {
@@ -108,6 +111,9 @@ pub struct PipelineCompiler {
     /// Set while the renderer captures: every read blocks whatever the
     /// policy, so a captured frame has nothing missing.
     capturing: AtomicBool,
+    /// How many read-back calls are running: each needs a complete frame, so
+    /// reads block while it is non-zero. See [`Self::blocking_scope`].
+    blocking_scopes: AtomicUsize,
     pending: Arc<Pending>,
 }
 
@@ -116,6 +122,7 @@ impl PipelineCompiler {
         Self {
             policy: AtomicU8::new(policy as u8),
             capturing: AtomicBool::new(false),
+            blocking_scopes: AtomicUsize::new(0),
             pending: Arc::new(Pending::default()),
         }
     }
@@ -123,7 +130,10 @@ impl PipelineCompiler {
     /// The policy slots follow right now: the one set, or `Blocking` while
     /// capturing or where there are no threads.
     pub(crate) fn policy(&self) -> PipelineCompilation {
-        if cfg!(target_family = "wasm") || self.capturing.load(Ordering::Relaxed) {
+        if cfg!(target_family = "wasm")
+            || self.capturing.load(Ordering::Relaxed)
+            || self.blocking_scopes.load(Ordering::Relaxed) > 0
+        {
             return PipelineCompilation::Blocking;
         }
         self.configured_policy()
@@ -142,6 +152,14 @@ impl PipelineCompiler {
         self.capturing.store(capturing, Ordering::Relaxed);
     }
 
+    /// Make every read block until the returned guard is dropped. A call that
+    /// hands pixels back (`render_offscreen`, the captures and probe bakes)
+    /// has no later frame to catch up on, so it must not skip a draw.
+    pub(crate) fn blocking_scope(self: &Arc<Self>) -> BlockingScope {
+        self.blocking_scopes.fetch_add(1, Ordering::Relaxed);
+        BlockingScope(Arc::clone(self))
+    }
+
     /// Compiles handed to the workers that have not finished.
     pub(crate) fn pending(&self) -> usize {
         self.pending.count.load(Ordering::SeqCst)
@@ -152,13 +170,46 @@ impl PipelineCompiler {
         self.pending.wait();
     }
 
+    /// Drop the compiles no worker has started and wait for the ones that
+    /// have. A process that exits while a worker is inside the driver's
+    /// pipeline compile can abort in the driver's own teardown (seen on
+    /// NVIDIA under Vulkan), so a renderer does this when it is dropped.
+    pub(crate) fn shut_down(&self) {
+        self.pending.cancelled.store(true, Ordering::SeqCst);
+        self.pending.wait();
+    }
+
     fn spawn(&self, job: impl FnOnce() + Send + 'static) {
         let pending = Arc::clone(&self.pending);
         pending.add();
         pool().submit(Box::new(move || {
-            job();
+            if !pending.cancelled.load(Ordering::SeqCst) {
+                job();
+            }
             pending.finish();
         }));
+    }
+}
+
+/// Ends a [`PipelineCompiler::blocking_scope`] when dropped.
+pub(crate) struct BlockingScope(Arc<PipelineCompiler>);
+
+impl Drop for BlockingScope {
+    fn drop(&mut self) {
+        self.0.blocking_scopes.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Shuts the renderer's compiler down when dropped: see
+/// [`PipelineCompiler::shut_down`]. Held by `DeviceResources`, so dropping the
+/// renderer returns only once no worker is compiling for it. The compiler
+/// itself can outlive the renderer inside a build context a worker holds, so
+/// the shutdown cannot live in its own `Drop`.
+pub(crate) struct CompilerShutdown(pub(crate) Arc<PipelineCompiler>);
+
+impl Drop for CompilerShutdown {
+    fn drop(&mut self) {
+        self.0.shut_down();
     }
 }
 
@@ -188,6 +239,11 @@ impl<P> PipelineSlot<P> {
     /// Whether the pipeline has been built, without starting anything.
     pub(crate) fn is_ready(&self) -> bool {
         self.ready.get().is_some()
+    }
+
+    /// The pipeline if it has been built, without starting anything.
+    pub(crate) fn ready(&self) -> Option<&P> {
+        self.ready.get()
     }
 }
 
@@ -248,6 +304,27 @@ impl<P: Send + 'static> PipelineSlot<P> {
     }
 }
 
+impl<P: Send + 'static> PipelineSlot<P> {
+    /// The pipeline, built on the calling thread or taken from a worker that
+    /// already has it, whatever the policy. For a caller with no way to skip
+    /// its work this frame.
+    pub(crate) fn get_blocking(&self, build: impl FnOnce() -> P) -> &P {
+        if let Some(p) = self.ready.get() {
+            return p;
+        }
+        let mut inflight = self.inflight.lock().unwrap();
+        if let Some(rx) = inflight.take()
+            && let Ok(p) = rx.recv()
+        {
+            let _ = self.ready.set(p);
+        }
+        if self.ready.get().is_none() {
+            let _ = self.ready.set(build());
+        }
+        self.ready.get().unwrap()
+    }
+}
+
 /// `N` pipelines built from one shared context, each the first time something
 /// reads it.
 ///
@@ -258,20 +335,21 @@ impl<P: Send + 'static> PipelineSlot<P> {
 /// `None` while a worker has it; the draw that wanted it skips that frame.
 /// Compiles in flight count towards `ViewportRenderer::pipelines_pending`.
 ///
-/// Make one with [`DeviceResources::lazy_pipelines`](crate::resources::DeviceResources::lazy_pipelines).
-pub struct LazyFamily<C, const N: usize> {
+/// `P` is a render pipeline unless named: a set of compute pipelines is
+/// `LazyFamily<C, N, ComputePipeline>`, and a dispatch whose pipeline is not
+/// ready is skipped the same way a draw is.
+///
+/// Make one with [`DeviceResources::lazy_pipelines`](crate::resources::DeviceResources::lazy_pipelines)
+/// or [`DeviceResources::lazy_compute_pipelines`](crate::resources::DeviceResources::lazy_compute_pipelines).
+pub struct LazyFamily<C, const N: usize, P = crate::gpu::RenderPipeline> {
     ctx: Arc<C>,
     compiler: Arc<PipelineCompiler>,
-    slots: [PipelineSlot; N],
-    build: fn(&C, usize) -> crate::gpu::RenderPipeline,
+    slots: [PipelineSlot<P>; N],
+    build: fn(&C, usize) -> P,
 }
 
-impl<C: Send + Sync + 'static, const N: usize> LazyFamily<C, N> {
-    pub(crate) fn new(
-        ctx: C,
-        compiler: Arc<PipelineCompiler>,
-        build: fn(&C, usize) -> crate::gpu::RenderPipeline,
-    ) -> Self {
+impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, N, P> {
+    pub(crate) fn new(ctx: C, compiler: Arc<PipelineCompiler>, build: fn(&C, usize) -> P) -> Self {
         Self {
             ctx: Arc::new(ctx),
             compiler,
@@ -286,7 +364,7 @@ impl<C: Send + Sync + 'static, const N: usize> LazyFamily<C, N> {
     }
 
     /// Member `i`, or `None` while a worker has it.
-    pub fn get(&self, i: usize) -> Option<&crate::gpu::RenderPipeline> {
+    pub fn get(&self, i: usize) -> Option<&P> {
         let ctx = Arc::clone(&self.ctx);
         let build = self.build;
         self.slots[i].get(&self.compiler, move || build(&ctx, i))
@@ -295,6 +373,14 @@ impl<C: Send + Sync + 'static, const N: usize> LazyFamily<C, N> {
     /// Whether member `i` is built, without starting anything.
     pub fn is_ready(&self, i: usize) -> bool {
         self.slots[i].is_ready()
+    }
+
+    /// Whether [`get`](Self::get) would return member `i` this frame: it is
+    /// built, or the policy is `Blocking` and `get` would build it. Starts
+    /// nothing. A pass that should wait for another member (an outline or a
+    /// pick waiting for the colour pipeline) checks the other one with this.
+    pub fn available(&self, i: usize) -> bool {
+        self.slots[i].is_ready() || self.compiler.policy() == PipelineCompilation::Blocking
     }
 
     /// Ask for members `0..end`: built now under `Blocking`, handed to the
@@ -313,6 +399,50 @@ impl<C: Send + Sync + 'static, const N: usize> LazyFamily<C, N> {
     /// How many members are built.
     pub fn ready_count(&self) -> usize {
         self.slots.iter().filter(|s| s.is_ready()).count()
+    }
+}
+
+/// The compiled module for one shader source, shared by every
+/// [`LazyModule`] made from that source.
+pub(crate) type ModuleCell = Arc<OnceLock<crate::gpu::ShaderModule>>;
+
+/// A shader module that compiles the first time a pipeline build asks for it.
+/// Make one with [`DeviceResources::lazy_module`](crate::resources::DeviceResources::lazy_module).
+///
+/// A family's context holds these instead of compiled modules, so the module
+/// compile (milliseconds for the mesh shaders) runs inside the first member's
+/// build, on a worker under `Background`, and not in the `ensure_*` that
+/// composed the family. Handles made from the same source share one compile.
+#[derive(Clone)]
+pub struct LazyModule(Arc<LazyModuleInner>);
+
+struct LazyModuleInner {
+    device: crate::gpu::Device,
+    label: String,
+    source: String,
+    cell: ModuleCell,
+}
+
+impl LazyModule {
+    pub(crate) fn new(
+        device: &crate::gpu::Device,
+        label: &str,
+        source: &str,
+        cell: ModuleCell,
+    ) -> Self {
+        Self(Arc::new(LazyModuleInner {
+            device: device.clone(),
+            label: label.to_owned(),
+            source: source.to_owned(),
+            cell,
+        }))
+    }
+
+    /// The module, compiled on the calling thread if nothing has compiled it.
+    pub fn get(&self) -> &crate::gpu::ShaderModule {
+        let m = &self.0;
+        m.cell
+            .get_or_init(|| crate::resources::builders::wgsl_module(&m.device, &m.label, &m.source))
     }
 }
 
@@ -509,6 +639,57 @@ mod tests {
     }
 
     #[test]
+    fn shutting_down_drops_queued_compiles_and_waits_for_running_ones() {
+        let compiler = background();
+        let (started_tx, started_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let built = Arc::new(AtomicU32::new(0));
+        // More slots than the pool has workers, so some are still queued.
+        let slots: Vec<PipelineSlot<u32>> = (0..32).map(|_| PipelineSlot::new()).collect();
+        let release_rx = Arc::new(Mutex::new(release_rx));
+        for slot in &slots {
+            let (started_tx, release_rx, built) = (
+                started_tx.clone(),
+                Arc::clone(&release_rx),
+                Arc::clone(&built),
+            );
+            slot.get(&compiler, move || {
+                let _ = started_tx.send(());
+                let _ = release_rx.lock().unwrap().recv();
+                built.fetch_add(1, Ordering::SeqCst);
+                0
+            });
+        }
+        // One job is inside its build; let it finish once shutdown is waiting.
+        started_rx.recv().unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            for _ in 0..32 {
+                let _ = release_tx.send(());
+            }
+        });
+        compiler.shut_down();
+        releaser.join().unwrap();
+        assert_eq!(pending(&compiler), 0);
+        assert!(
+            built.load(Ordering::SeqCst) < 32,
+            "queued compiles still ran"
+        );
+    }
+
+    #[test]
+    fn a_blocking_scope_makes_reads_block_until_it_ends() {
+        let compiler = Arc::new(background());
+        {
+            let _outer = compiler.blocking_scope();
+            let _inner = compiler.blocking_scope();
+            let slot = PipelineSlot::<u32>::new();
+            assert_eq!(slot.get(&compiler, || 4), Some(&4));
+        }
+        assert_eq!(compiler.policy(), PipelineCompilation::Background);
+    }
+
+    #[test]
     fn capturing_makes_every_read_block() {
         let compiler = background();
         compiler.set_capturing(true);
@@ -524,12 +705,9 @@ mod tests {
     }
 
     #[test]
-    fn the_platform_default_is_blocking_only_on_apple_and_the_web() {
-        let expected = if cfg!(any(
-            target_os = "macos",
-            target_os = "ios",
-            target_family = "wasm"
-        )) {
+    fn the_platform_default_is_blocking_only_on_the_web_and_apple_on_wgpu27() {
+        let apple = cfg!(any(target_os = "macos", target_os = "ios"));
+        let expected = if cfg!(target_family = "wasm") || (apple && cfg!(feature = "wgpu27")) {
             PipelineCompilation::Blocking
         } else {
             PipelineCompilation::Background

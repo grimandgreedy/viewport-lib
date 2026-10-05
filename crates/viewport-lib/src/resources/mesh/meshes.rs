@@ -67,6 +67,9 @@ pub(crate) struct MeshPrep {
     pub cpu_positions: Option<Vec<[f32; 3]>>,
     pub cpu_normals: Option<Vec<[f32; 3]>>,
     pub cpu_indices: Option<Vec<u32>>,
+    /// `mesh_is_closed` on the source geometry, computed here so the async
+    /// path pays for it on the worker thread.
+    pub closed: bool,
 }
 
 impl DeviceResources {
@@ -250,6 +253,7 @@ impl DeviceResources {
             cpu_positions: retain_cpu.then(|| data.positions.clone()),
             cpu_normals: retain_cpu.then(|| data.normals.clone()),
             cpu_indices: retain_cpu.then(|| data.indices.clone()),
+            closed: mesh_is_closed(data.positions.iter().copied(), &data.indices),
         }
     }
 
@@ -269,6 +273,7 @@ impl DeviceResources {
             cpu_positions,
             cpu_normals,
             cpu_indices,
+            closed,
         } = prep;
         let tangent_slice = data.tangents.as_deref().or(computed_tangents.as_deref());
 
@@ -298,6 +303,7 @@ impl DeviceResources {
             uv1_bytes,
             None,
         );
+        mesh.closed = closed;
         mesh.cpu_positions = cpu_positions;
         mesh.cpu_normals = cpu_normals;
         mesh.cpu_indices = cpu_indices;
@@ -412,6 +418,7 @@ impl DeviceResources {
                     cpu_positions,
                     cpu_normals,
                     cpu_indices,
+                    closed,
                 } = prep;
                 let mut voff: usize = 0;
                 let mut ioff: usize = 0;
@@ -516,8 +523,7 @@ impl DeviceResources {
                                 aabb,
                                 data.uvs1.is_some(),
                             );
-                            mesh.closed =
-                                mesh_is_closed(data.positions.iter().copied(), &data.indices);
+                            mesh.closed = closed;
                             mesh.cpu_positions = cpu_positions;
                             mesh.cpu_normals = cpu_normals;
                             mesh.cpu_indices = cpu_indices;
@@ -1492,6 +1498,7 @@ impl DeviceResources {
             new_mesh.cpu_normals = Some(data.normals.clone());
             new_mesh.cpu_indices = Some(data.indices.clone());
         }
+        new_mesh.closed = mesh_is_closed(data.positions.iter().copied(), &data.indices);
         new_mesh.submeshes = data.submeshes.clone();
         let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_colour_bufs, vector_attr_bufs) =
             Self::upload_attributes(
@@ -2221,9 +2228,12 @@ impl DeviceResources {
         let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some(label),
             size: (std::mem::size_of::<f32>() * data.len()) as u64,
+            // COPY_SRC so a deformer slot can take the attribute as its per-mesh
+            // source (`set_deform_slot_source_attribute`).
             usage: crate::gpu::BufferUsages::STORAGE
                 | crate::gpu::BufferUsages::VERTEX
-                | crate::gpu::BufferUsages::COPY_DST,
+                | crate::gpu::BufferUsages::COPY_DST
+                | crate::gpu::BufferUsages::COPY_SRC,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(buf.slice(..), bytemuck::cast_slice(data));
@@ -2437,7 +2447,7 @@ impl DeviceResources {
         vertices: &[Vertex],
         indices: &[u32],
     ) -> GpuMesh {
-        Self::create_mesh_with_normals(
+        let mut mesh = Self::create_mesh_with_normals(
             device,
             geometry,
             object_bgl,
@@ -2462,7 +2472,9 @@ impl DeviceResources {
             indices,
             None,
             None,
-        )
+        );
+        mesh.closed = mesh_is_closed(vertices.iter().map(|v| v.position), indices);
+        mesh
     }
 
     pub(crate) fn create_mesh_with_normals(
@@ -2554,7 +2566,6 @@ impl DeviceResources {
             mesh.normal_line_buffer = Some(buf);
         }
         mesh.cpu_indices = Some(indices.to_vec());
-        mesh.closed = mesh_is_closed(vertices.iter().map(|v| v.position), indices);
         mesh
     }
 
@@ -2946,6 +2957,7 @@ impl DeviceResources {
             normal_line_buffer: None,
             normal_line_count: 0,
             object_uniform_buf,
+            last_object_uniform: std::sync::Mutex::new(None),
             object_bind_group,
             last_tex_key: (
                 u64::MAX,
@@ -3634,7 +3646,6 @@ impl DeviceResources {
 /// (a repeated position) open the surface, as do inconsistent windings,
 /// which is the conservative answer.
 pub(crate) fn mesh_is_closed(positions: impl Iterator<Item = [f32; 3]>, indices: &[u32]) -> bool {
-    use std::collections::HashMap;
     if indices.len() < 12 || indices.len() % 3 != 0 {
         return false;
     }
@@ -3652,52 +3663,88 @@ pub(crate) fn mesh_is_closed(positions: impl Iterator<Item = [f32; 3]>, indices:
     }
     let extent = (0..3).map(|k| hi[k] - lo[k]).fold(0.0f32, f32::max);
     let eps = (extent * 1e-5).max(1e-7);
-    // Weld: sort by x, then merge every vertex with the unwelded ones within
-    // eps along x that are also within eps on y and z.
-    let mut order: Vec<u32> = (0..pos.len() as u32).collect();
-    order.sort_by(|&a, &b| pos[a as usize][0].total_cmp(&pos[b as usize][0]));
-    let mut remap = vec![u32::MAX; pos.len()];
-    let mut next = 0u32;
-    for (oi, &i) in order.iter().enumerate() {
-        if remap[i as usize] != u32::MAX {
-            continue;
-        }
-        remap[i as usize] = next;
-        let pi = pos[i as usize];
-        for &j in &order[oi + 1..] {
-            let pj = pos[j as usize];
-            if pj[0] - pi[0] > eps {
-                break;
+    // Weld on a grid of cells 16 eps wide: a vertex merges with the first
+    // representative within eps on every axis, found in the one to eight
+    // cells its eps box touches. At most 6250 cells per axis, so a cell
+    // packs into 21 bits per axis. Each cell holds the head of a list of its
+    // representatives, linked through `next_rep`.
+    let cell = eps * 16.0;
+    let cell_of = |v: f32, k: usize| ((v - lo[k]) / cell).floor() as i64 + 1;
+    let key = |c: [i64; 3]| (c[0] as u64) | ((c[1] as u64) << 21) | ((c[2] as u64) << 42);
+    let mut heads: crate::resources::fast_hash::FastMap<u64, u32> =
+        crate::resources::fast_hash::FastMap::with_capacity_and_hasher(
+            pos.len(),
+            Default::default(),
+        );
+    let mut rep_pos: Vec<[f32; 3]> = Vec::with_capacity(pos.len());
+    let mut next_rep: Vec<u32> = Vec::with_capacity(pos.len());
+    let mut remap = Vec::with_capacity(pos.len());
+    for p in &pos {
+        let lo_c = [0, 1, 2].map(|k| cell_of(p[k] - eps, k));
+        let hi_c = [0, 1, 2].map(|k| cell_of(p[k] + eps, k));
+        let mut found = None;
+        'search: for cx in lo_c[0]..=hi_c[0] {
+            for cy in lo_c[1]..=hi_c[1] {
+                for cz in lo_c[2]..=hi_c[2] {
+                    let mut r = heads.get(&key([cx, cy, cz])).copied().unwrap_or(u32::MAX);
+                    while r != u32::MAX {
+                        let q = rep_pos[r as usize];
+                        if (0..3).all(|k| (q[k] - p[k]).abs() <= eps) {
+                            found = Some(r);
+                            break 'search;
+                        }
+                        r = next_rep[r as usize];
+                    }
+                }
             }
-            if remap[j as usize] == u32::MAX
-                && (pj[1] - pi[1]).abs() <= eps
-                && (pj[2] - pi[2]).abs() <= eps
-            {
-                remap[j as usize] = next;
-            }
         }
-        next += 1;
+        let id = found.unwrap_or_else(|| {
+            let id = rep_pos.len() as u32;
+            rep_pos.push(*p);
+            let home = key([0, 1, 2].map(|k| cell_of(p[k], k)));
+            next_rep.push(heads.insert(home, id).unwrap_or(u32::MAX));
+            id
+        });
+        remap.push(id);
     }
-    let mut edges: HashMap<(u32, u32), i32> = HashMap::with_capacity(indices.len());
-    for tri in indices.chunks_exact(3) {
-        let Some(a) = remap.get(tri[0] as usize) else {
+    // Directed edges in a compressed adjacency list: closed and consistently
+    // wound means every u -> v occurs as often as v -> u.
+    let mut welded = Vec::with_capacity(indices.len());
+    for &i in indices {
+        let Some(&r) = remap.get(i as usize) else {
             return false;
         };
-        let Some(b) = remap.get(tri[1] as usize) else {
-            return false;
-        };
-        let Some(c) = remap.get(tri[2] as usize) else {
-            return false;
-        };
+        welded.push(r);
+    }
+    let mut start = vec![0u32; rep_pos.len() + 1];
+    for tri in welded.chunks_exact(3) {
+        let (a, b, c) = (tri[0], tri[1], tri[2]);
         if a == b || b == c || a == c {
             return false;
         }
-        for (u, v) in [(*a, *b), (*b, *c), (*c, *a)] {
-            let (key, sign) = if u < v { ((u, v), 1) } else { ((v, u), -1) };
-            *edges.entry(key).or_insert(0) += sign;
+        for u in [a, b, c] {
+            start[u as usize + 1] += 1;
         }
     }
-    edges.values().all(|&n| n == 0)
+    for i in 1..start.len() {
+        start[i] += start[i - 1];
+    }
+    let mut fill = start.clone();
+    let mut adj = vec![0u32; welded.len()];
+    for tri in welded.chunks_exact(3) {
+        for (u, v) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
+            adj[fill[u as usize] as usize] = v;
+            fill[u as usize] += 1;
+        }
+    }
+    let out = |u: u32| &adj[start[u as usize] as usize..start[u as usize + 1] as usize];
+    (0..rep_pos.len() as u32).all(|u| {
+        out(u).iter().all(|&v| {
+            let fwd = out(u).iter().filter(|&&w| w == v).count();
+            let back = out(v).iter().filter(|&&w| w == u).count();
+            fwd == back
+        })
+    })
 }
 
 #[cfg(test)]
@@ -3731,6 +3778,72 @@ mod closed_mesh_tests {
             [0.0, 1.0, 0.0],
         ];
         assert!(!mesh_is_closed(sheet.iter().copied(), &[0, 1, 2, 0, 2, 3]));
+    }
+
+    /// A box with `n` x `n` quads per face and each face's vertices
+    /// duplicated, as a hex-grid boundary is, every copy nudged by up to
+    /// `jitter` on each axis.
+    fn grid_box(n: usize, jitter: f32) -> (Vec<[f32; 3]>, Vec<u32>) {
+        let mut pos = Vec::new();
+        let mut idx = Vec::new();
+        let mut seed = 1u32;
+        let mut nudge = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0
+        };
+        for axis in 0..3 {
+            for side in [0.0f32, 1.0] {
+                let base = pos.len() as u32;
+                for i in 0..=n {
+                    for j in 0..=n {
+                        let mut p = [0.0; 3];
+                        p[axis] = side;
+                        p[(axis + 1) % 3] = i as f32 / n as f32;
+                        p[(axis + 2) % 3] = j as f32 / n as f32;
+                        pos.push(p.map(|v| v + nudge() * jitter));
+                    }
+                }
+                let at = |i: usize, j: usize| base + (i * (n + 1) + j) as u32;
+                for i in 0..n {
+                    for j in 0..n {
+                        let (a, b, c, d) = (at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1));
+                        if side > 0.5 {
+                            idx.extend_from_slice(&[a, b, c, a, c, d]);
+                        } else {
+                            idx.extend_from_slice(&[a, c, b, a, d, c]);
+                        }
+                    }
+                }
+            }
+        }
+        (pos, idx)
+    }
+
+    #[test]
+    fn axis_aligned_grid_box_is_closed() {
+        let (pos, idx) = grid_box(40, 0.0);
+        assert!(mesh_is_closed(pos.iter().copied(), &idx));
+        let (pos, mut idx) = grid_box(40, 0.0);
+        idx.truncate(idx.len() - 3);
+        assert!(!mesh_is_closed(pos.iter().copied(), &idx));
+    }
+
+    #[test]
+    fn welds_copies_that_straddle_a_cell_boundary() {
+        // eps is 1e-5 of the extent; copies jittered by up to 0.4 eps sit
+        // within eps of each other and many land in different weld cells.
+        let (pos, idx) = grid_box(60, 0.4e-5);
+        assert!(mesh_is_closed(pos.iter().copied(), &idx));
+    }
+
+    /// `cargo test --release mesh_is_closed_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn mesh_is_closed_timing() {
+        let (pos, idx) = grid_box(330, 0.0);
+        let t = std::time::Instant::now();
+        assert!(mesh_is_closed(pos.iter().copied(), &idx));
+        println!("{} tris: {:?}", idx.len() / 3, t.elapsed());
     }
 
     #[test]

@@ -23,7 +23,7 @@ exclude = ["tests/snapshots/*.png"]
 # wgpu through `viewport_lib::wgpu`, so it always matches the library's leg.
 [dependencies]
 viewport-lib = { path = "../viewport-lib", version = "0.22", default-features = false }
-viewport-lib-item-types = { path = "../viewport-lib-item-types", version = "0.1", default-features = false }
+viewport-lib-plugins = { path = "../viewport-lib-plugins", version = "0.1", default-features = false, features = ["item-types"] }
 glam = { version = "=0.30.10", features = ["bytemuck"] }
 pollster = "0.4"
 viewport-lib-io = { version = "0.8", optional = true }
@@ -64,9 +64,9 @@ counters = []
 # wgpu leg selection, forwarded to viewport-lib. Used when the testkit is built
 # standalone; as viewport-lib's dev-dependency the leg comes from the library
 # via Cargo feature unification.
-wgpu27 = ["viewport-lib/wgpu27", "viewport-lib-item-types/wgpu27"]
-wgpu29 = ["viewport-lib/wgpu29", "viewport-lib-item-types/wgpu29"]
-wgpu30 = ["viewport-lib/wgpu30", "viewport-lib-item-types/wgpu30"]
+wgpu27 = ["viewport-lib/wgpu27", "viewport-lib-plugins/wgpu27"]
+wgpu29 = ["viewport-lib/wgpu29", "viewport-lib-plugins/wgpu29"]
+wgpu30 = ["viewport-lib/wgpu30", "viewport-lib-plugins/wgpu30"]
 # Load real models (Suzanne, Stanford bunny, CAD parts) through viewport-lib-io.
 # Off by default so the base build needs no external model files. Implies
 # `scenes` because the loaders build catalogue scenes.

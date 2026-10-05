@@ -148,7 +148,7 @@ pub(crate) const SHOWCASES: [Entry; 58] = [
     ),
     entry(
         18,
-        "Clip Volumes",
+        "Clips and Cuts",
         M::ClipVolumes,
         &crate::showcase_18_clip_volumes::SHOWCASE,
     ),

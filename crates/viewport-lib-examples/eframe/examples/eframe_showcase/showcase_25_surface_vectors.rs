@@ -15,7 +15,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
-use viewport_lib_item_types::VectorFieldItem;
+use viewport_lib_plugins::item_types::vector_field::VectorFieldItem;
 use vpl::{
     BackfacePolicy, BuiltinColourmap, ColourSource, ColourmapId, FrameData, LightingSettings,
     MeshData, MeshId, SceneRenderItem, edge_one_form_vectors, face_intrinsic_vectors,

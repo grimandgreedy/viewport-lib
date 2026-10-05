@@ -11,7 +11,7 @@
 //!
 //! ```ignore
 //! use viewport_lib::plugin_api::Writes;
-//! use viewport_lib_item_types::channels::point_cloud as pc;
+//! use viewport_lib_plugins::item_types::point_cloud::channels as pc;
 //!
 //! renderer.reserve(pc::Positions, &device, &queue, id, 1_000_000)?;
 //! renderer.write_range(pc::Positions, &queue, id, 250_000, &sector)?;

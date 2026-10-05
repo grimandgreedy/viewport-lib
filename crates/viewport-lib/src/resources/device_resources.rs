@@ -93,6 +93,18 @@ pub(crate) struct ViewportHdrState {
 
     // --- Bind groups (rebuilt when viewport dimensions change) ---
     pub tone_map_bind_group: crate::gpu::BindGroup,
+    /// The views `tone_map_bind_group` was last built over (HDR input, bloom,
+    /// AO, contact shadow, scene depth, foreground depth, grade LUT), so a
+    /// frame that binds the same ones reuses it. `None` until the first rebuild.
+    pub tone_map_bg_views: Option<[crate::gpu::TextureView; 7]>,
+    /// The foreground view the DOF bind group was last built with.
+    pub dof_bg_foreground: Option<crate::gpu::TextureView>,
+    /// Scene depth + sampler, handed to plugins that draw in the depth-read pass.
+    pub depth_read_bg:
+        crate::resources::cached_bind_group::CachedBindGroup<crate::gpu::TextureView>,
+    /// Foreground depth, read by the foreground depth stamp.
+    pub foreground_stamp_bg:
+        crate::resources::cached_bind_group::CachedBindGroup<crate::gpu::TextureView>,
 
     // --- Per-viewport uniform buffers ---
     pub tone_map_uniform_buf: crate::gpu::Buffer,
@@ -457,8 +469,9 @@ pub struct DeviceResources {
     /// compile one `mesh.wgsl`, and the LDR, HDR and culled instanced families
     /// one `mesh_instanced.wgsl`; a module this size takes milliseconds to
     /// parse, so each is built once. See [`shared_module`](Self::shared_module).
-    pub(crate) shader_modules:
-        std::sync::Mutex<std::collections::HashMap<(usize, u64), crate::gpu::ShaderModule>>,
+    pub(crate) shader_modules: std::sync::Mutex<
+        std::collections::HashMap<(usize, u64), crate::resources::pipeline_slot::ModuleCell>,
+    >,
     /// Core scene mesh pipelines: base LDR set (solid, two-sided, transparent,
     /// wireframe) and their lazily-built HDR variants. See
     /// `resources::scene_pipelines::SceneCorePipelines`.
@@ -566,10 +579,6 @@ pub struct DeviceResources {
     // --- volume rendering (lazily created) ---
     /// Volume render/surface-slice/outline pipelines, layouts, cube geometry, and default LUT.
 
-    // --- GPU compute filtering (lazily created) ---
-    /// Compute-filter pipeline and bind group layout (lazy).
-    pub(crate) compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources,
-
     // --- Order-independent transparency (OIT) : lazily created ---
     // The viewport-sized accum/reveal textures, composite bind group, and target
     // size live on ViewportHdrState; only the shared pipelines and layout sit here.
@@ -620,6 +629,8 @@ pub struct DeviceResources {
     /// ([`MATERIAL_GPU_CAPACITY`](crate::resources::material_gpu::MATERIAL_GPU_CAPACITY)),
     /// so its handle is stable and the camera bind group never rebuilds for it.
     pub(crate) material_gpu_buf: crate::gpu::Buffer,
+    /// Blocks `material_gpu_buf` holds.
+    pub(crate) material_gpu_capacity: usize,
     /// Per-frame interner that deduplicates transform blocks and hands out
     /// `material_id` indices into `material_gpu_buf`. Reset at each `prepare()`.
     pub(crate) material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder,
@@ -657,6 +668,17 @@ pub struct DeviceResources {
     /// compiles in flight on the workers. Shared with each pipeline set so a
     /// build can run off this thread.
     pub(crate) pipeline_compiler: std::sync::Arc<crate::resources::pipeline_slot::PipelineCompiler>,
+    /// The HiZ occlusion pyramid's layouts and pipelines, shared by every
+    /// viewport and pyramid size. Composed by the first viewport that stores a
+    /// depth for occlusion culling.
+    pub(crate) hiz_pipelines:
+        std::sync::OnceLock<std::sync::Arc<crate::resources::gpu::hiz::HizPipelines>>,
+    /// The material table and instance custom data as last uploaded, so an
+    /// unchanged table is not written again.
+    pub(crate) material_gpu_written: Vec<u8>,
+    pub(crate) custom_data_written: Vec<u8>,
+    /// Cancels and waits for this renderer's compiles when it is dropped.
+    pub(crate) pipeline_compiler_shutdown: crate::resources::pipeline_slot::CompilerShutdown,
     /// Bumped by `free_texture` and `free_mesh`. The per-object draw cache
     /// holds bind groups that keep their referenced GPU resources alive; when
     /// this changes, the cache purges its stale entries so a freed resource's
@@ -1028,17 +1050,41 @@ impl DeviceResources {
     /// per-viewport foreground objects intern). Overwriting a superset each time
     /// is safe: index 0 is always identity and ids only grow within a frame, so
     /// earlier material_ids stay valid.
-    pub(crate) fn upload_material_gpu(&mut self, queue: &crate::gpu::Queue) {
+    ///
+    /// A frame that interns more blocks than the buffer holds replaces it with
+    /// a larger one and sets `camera_bind_groups_dirty`, like
+    /// `upload_custom_data`.
+    pub(crate) fn upload_material_gpu(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) {
         let entries = self.material_gpu_builder.entries();
         let n = entries
             .len()
             .min(crate::resources::material_gpu::MATERIAL_GPU_CAPACITY);
-        queue.write_buffer(
-            &self.material_gpu_buf,
-            0,
-            bytemuck::cast_slice(&entries[..n]),
-        );
-        let bytes = (n * std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>()) as u64;
+        if n > self.material_gpu_capacity {
+            let capacity = n
+                .next_power_of_two()
+                .max(self.material_gpu_capacity * 2)
+                .min(crate::resources::material_gpu::MATERIAL_GPU_CAPACITY);
+            self.material_gpu_buf = Self::create_material_gpu_buffer(device, capacity);
+            self.material_gpu_capacity = capacity;
+            self.camera_bind_groups_dirty = true;
+            self.material_gpu_written.clear();
+        }
+        let entries = self.material_gpu_builder.entries();
+        // Prepare runs this once for the scene and again per viewport, and a
+        // static scene's table does not change between frames: write only
+        // what differs from the last upload.
+        let data: &[u8] = bytemuck::cast_slice(&entries[..n]);
+        if self.material_gpu_written.as_slice() == data {
+            return;
+        }
+        queue.write_buffer(&self.material_gpu_buf, 0, data);
+        self.material_gpu_written.clear();
+        self.material_gpu_written.extend_from_slice(data);
+        let bytes = data.len() as u64;
         if self.material_gpu_builder.overflowed {
             tracing::warn!(
                 capacity = crate::resources::material_gpu::MATERIAL_GPU_CAPACITY,
@@ -1049,6 +1095,20 @@ impl DeviceResources {
     }
 
     /// A custom-data buffer holding `capacity` blocks.
+    pub(crate) fn create_material_gpu_buffer(
+        device: &crate::gpu::Device,
+        capacity: usize,
+    ) -> crate::gpu::Buffer {
+        use crate::resources::builders::LoggedAlloc;
+        device.logged_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("material_gpu_buf"),
+            size: (std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>() * capacity)
+                as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
     pub(crate) fn create_custom_data_buffer(
         device: &crate::gpu::Device,
         capacity: usize,
@@ -1090,15 +1150,19 @@ impl DeviceResources {
             self.instance_custom_data_buf = Self::create_custom_data_buffer(device, capacity);
             self.instance_custom_data_capacity = capacity;
             self.camera_bind_groups_dirty = true;
+            self.custom_data_written.clear();
         }
         let entries = self.custom_data_builder.entries();
-        queue.write_buffer(
-            &self.instance_custom_data_buf,
-            0,
-            bytemuck::cast_slice(&entries[..n]),
-        );
-        let bytes =
-            (n * std::mem::size_of::<crate::resources::custom_data::InstanceCustomData>()) as u64;
+        // Unchanged since the last upload: nothing to write (see
+        // `upload_material_gpu`).
+        let data: &[u8] = bytemuck::cast_slice(&entries[..n]);
+        if self.custom_data_written.as_slice() == data {
+            return;
+        }
+        queue.write_buffer(&self.instance_custom_data_buf, 0, data);
+        self.custom_data_written.clear();
+        self.custom_data_written.extend_from_slice(data);
+        let bytes = data.len() as u64;
         if self.custom_data_builder.overflowed {
             tracing::warn!(
                 capacity = crate::resources::custom_data::CUSTOM_DATA_CAPACITY,
@@ -1698,31 +1762,30 @@ impl DeviceResources {
 }
 
 impl DeviceResources {
-    /// Record a lazy pipeline build for `FrameStats::pipelines_built_this_frame`.
-    ///
-    /// `site` is the `file!()`/`line!()` of the builder, emitted at debug level
-    /// under the `viewport_lib::pipelines` target so a hitch traced to a lazy
-    /// compile can be attributed to the exact builder.
-    /// The shader module for `source`, created on first request and shared by
-    /// every later request for the same text. `label` names the module when it
-    /// is created; a later caller with a different label gets the same module.
+    /// The shader module for `source`, compiled the first time a build asks
+    /// for it and shared by every handle made from the same text. `label`
+    /// names the module when it is compiled; a handle with a different label
+    /// gets the same module. Nothing is compiled here.
     pub(crate) fn shared_module(
         &self,
         device: &crate::gpu::Device,
         label: &str,
         source: &str,
-    ) -> crate::gpu::ShaderModule {
+    ) -> crate::resources::pipeline_slot::LazyModule {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         source.hash(&mut hasher);
         let key = (source.len(), hasher.finish());
-        let mut modules = self.shader_modules.lock().unwrap();
-        modules
-            .entry(key)
-            .or_insert_with(|| crate::resources::builders::wgsl_module(device, label, source))
-            .clone()
+        let cell =
+            std::sync::Arc::clone(self.shader_modules.lock().unwrap().entry(key).or_default());
+        crate::resources::pipeline_slot::LazyModule::new(device, label, source, cell)
     }
 
+    /// Record a lazy pipeline build for `FrameStats::pipelines_built_this_frame`.
+    ///
+    /// `site` is the `file!()`/`line!()` of the builder, emitted at debug level
+    /// under the `viewport_lib::pipelines` target so a hitch traced to a lazy
+    /// compile can be attributed to the exact builder.
     pub(crate) fn note_pipeline_built(&self, site: &'static str) {
         self.frame_pipelines_built
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

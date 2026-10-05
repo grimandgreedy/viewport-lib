@@ -10,7 +10,7 @@ use viewport_lib::{
     CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
     SceneRenderItem,
 };
-use viewport_lib_item_types::RibbonItem;
+use viewport_lib_plugins::item_types::curves::RibbonItem;
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
 /// A ground plane with a wide ribbon floating above it, lit from overhead
@@ -43,7 +43,7 @@ fn frame(ground: &SceneRenderItem, ribbon: RibbonItem) -> FrameData {
         SceneFrame::from_surface_items(vec![ground.clone()]),
     );
     fd.scene
-        .items_mut::<viewport_lib_item_types::RibbonItem>()
+        .items_mut::<viewport_lib_plugins::item_types::curves::RibbonItem>()
         .push(ribbon);
     let mut light = LightSource::default();
     light.kind = LightKind::Directional {

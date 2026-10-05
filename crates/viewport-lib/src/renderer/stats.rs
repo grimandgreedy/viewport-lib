@@ -148,6 +148,7 @@ impl Default for PerformancePolicy {
 /// The other two are self-reported, so a plugin that has not implemented them
 /// reads zero whatever it does.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PluginFrameCounters {
     /// CPU time in this plugin's `prepare`, in milliseconds. Zero on a frame
     /// where the plugin had no items and was not dispatched.
@@ -170,6 +171,7 @@ pub struct PluginFrameCounters {
 /// with `Instant`. They measure how long it takes to record and submit the work,
 /// not how long the GPU spends running it; use `gpu_frame_ms` for GPU cost.
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PrepareBreakdown {
     /// Item-type plugin prepare, summed across every registered plugin.
     /// Skinning and other vertex deformers run here, so a heavy skinned crowd
@@ -250,6 +252,7 @@ pub struct PrepareBreakdown {
 /// the fields do not sum to the full frame GPU time; treat the remainder as
 /// those un-instrumented passes plus present.
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct GpuBreakdown {
     /// Main opaque HDR scene pass.
     pub scene_ms: f32,
@@ -308,6 +311,7 @@ pub struct GpuBreakdown {
 
 /// Per-frame rendering statistics returned by [`crate::ViewportRenderer::prepare`].
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FrameStats {
     /// Total mesh-family objects considered for rendering.
     ///
@@ -347,8 +351,8 @@ pub struct FrameStats {
     /// (different-colour/tint/pattern) or is two-sided and transparent, uses a
     /// matcap, has a scalar attribute or parameter visualization, carries a
     /// position/normal override, carries deform slot data (per-mesh or
-    /// per-instance, so skinning and displacement both land here), or is
-    /// hit by a compute filter. Each such item costs a uniform write and a bind-group
+    /// per-instance, so skinning and displacement both land here). Each such
+    /// item costs a uniform write and a bind-group
     /// build in `prepare`, so a large count here means `prepare` is paying
     /// per-object cost across much of the scene rather than batching it.
     pub per_object_items: u32,

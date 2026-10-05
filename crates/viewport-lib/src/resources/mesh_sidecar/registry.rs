@@ -107,6 +107,38 @@ fn build_stage_calls(stored: &[StoredDeformer], stage: DeformStage) -> String {
     out
 }
 
+/// Whether a registered body defines the optional `keep` hook. Checked on the
+/// prefixed body, the same way the shading composer detects its hooks, so a
+/// local or a field that happens to be called `keep` does not count.
+pub(crate) fn defines_keep(d: &StoredDeformer) -> bool {
+    identifier_prefix(d.desc.name, &d.desc.wgsl_body)
+        .contains(&format!("fn {name}__keep(", name = d.desc.name))
+}
+
+/// The keep call sequence: every body that defines `keep`, each under its
+/// own slot flag, combined by `min`.
+fn build_keep_calls(stored: &[StoredDeformer]) -> String {
+    let mut out = String::new();
+    for d in stored.iter().filter(|d| defines_keep(d)) {
+        out.push_str(&format!(
+            "    if ((ctx.flags & (1u << {slot}u)) != 0u) {{\n        var ctx_{name} = ctx;\n        ctx_{name}.slot = {slot}u;\n        keep = min(keep, {name}__keep(v, ctx_{name}));\n    }}\n",
+            slot = d.slot,
+            name = d.desc.name,
+        ));
+    }
+    out
+}
+
+/// The tag a mesh-family shader puts in front of each line that only exists
+/// when some registered deformer defines `keep`: the varying, its write and
+/// the fragment test. Left as a comment otherwise, so a renderer with no
+/// cutting deformer compiles the same shaders as before.
+const KEEP_LINE_TAG: &str = "// <viewport-deform-keep> ";
+
+fn enable_keep_lines(source: &str) -> String {
+    source.replace(KEEP_LINE_TAG, "")
+}
+
 /// Rewrite the slot marker region for one stage with the provided call block.
 fn rewrite_marker(source: &str, marker: &str, body: &str) -> Option<String> {
     let open = format!("// <viewport-deform-slots:{marker}>");
@@ -231,7 +263,13 @@ pub(crate) fn compose_shader(base: &str, stored: &[StoredDeformer]) -> String {
     let world_calls = build_stage_calls(stored, DeformStage::WorldSpace);
 
     let after_obj = rewrite_marker(&with_bodies, "object", &object_calls).unwrap_or(with_bodies);
-    rewrite_marker(&after_obj, "world", &world_calls).unwrap_or(after_obj)
+    let after_world = rewrite_marker(&after_obj, "world", &world_calls).unwrap_or(after_obj);
+    if !stored.iter().any(defines_keep) {
+        return after_world;
+    }
+    let keep_calls = build_keep_calls(stored);
+    let after_keep = rewrite_marker(&after_world, "keep", &keep_calls).unwrap_or(after_world);
+    enable_keep_lines(&after_keep)
 }
 
 /// Assign a slot in the host range `[0, DEFORM_SLOT_COUNT_PUB)` to a new
@@ -519,5 +557,65 @@ mod tests {
         assert!(composed.contains("ctx_wind.slot = 2u;"));
         // Identifier of helper struct DeformVertex stays unprefixed.
         assert!(composed.contains("DeformVertex"));
+    }
+
+    const KEEP_BODY: &str = "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    return v;\n}\nfn keep(v: DeformVertex, ctx: DeformContext) -> f32 {\n    return v.position.x;\n}\n";
+
+    #[test]
+    fn a_body_without_keep_leaves_the_keep_lines_commented() {
+        let Some(src) = lookup_source("mesh.wgsl") else {
+            return;
+        };
+        let d = desc(
+            "wind",
+            DeformStage::WorldSpace,
+            0,
+            // A local and a field called `keep` are not the hook.
+            "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var keep = v;\n    return keep;\n}\n",
+        );
+        assert!(!defines_keep(&d));
+        let composed = compose_shader(src, &std::slice::from_ref(&d));
+        assert!(composed.contains(KEEP_LINE_TAG));
+        assert!(composed.contains("// <viewport-deform-keep> @location(13) deform_keep: f32,"));
+        assert!(composed.contains("// </viewport-deform-slots:keep>"));
+    }
+
+    #[test]
+    fn a_keep_hook_enables_the_keep_lines_and_is_called_under_its_slot() {
+        let Some(src) = lookup_source("mesh.wgsl") else {
+            return;
+        };
+        let mut d = desc("cut", DeformStage::WorldSpace, 0, KEEP_BODY);
+        d.slot = 1;
+        assert!(defines_keep(&d));
+        let composed = compose_shader(src, &std::slice::from_ref(&d));
+        assert!(!composed.contains(KEEP_LINE_TAG));
+        assert!(composed.contains("@location(13) deform_keep: f32,"));
+        assert!(composed.contains("out.deform_keep = viewport_deform_keep(dv, dctx);"));
+        assert!(composed.contains("if in.deform_keep < 0.0 { discard; }"));
+        assert!(composed.contains("keep = min(keep, cut__keep(v, ctx_cut));"));
+        assert!(composed.contains("ctx.flags & (1u << 1u)"));
+    }
+
+    /// Every composed shader that writes the varying also declares it, and the
+    /// other way round, so enabling the lines cannot leave a half-plumbed module.
+    #[test]
+    fn keep_lines_come_in_matching_sets() {
+        for name in MESH_FAMILY_SHADERS {
+            let Some(src) = lookup_source(name) else {
+                return;
+            };
+            let declares = src.contains("// <viewport-deform-keep> @location(");
+            let writes = src.contains("// <viewport-deform-keep> out.deform_keep");
+            let tests = src.contains("// <viewport-deform-keep> if in.deform_keep");
+            assert_eq!(
+                declares, writes,
+                "'{name}' declares the keep varying without writing it, or the reverse"
+            );
+            assert!(
+                !tests || declares,
+                "'{name}' tests keep without declaring it"
+            );
+        }
     }
 }

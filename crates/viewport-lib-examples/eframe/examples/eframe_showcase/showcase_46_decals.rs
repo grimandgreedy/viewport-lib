@@ -9,7 +9,7 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
-use viewport_lib_item_types::{
+use viewport_lib_plugins::item_types::decal::{
     CylindricalFacing, DecalAnimation, DecalBlendMode, DecalHandle, DecalItem, DecalProjection,
     LiveDecals,
 };

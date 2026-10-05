@@ -22,7 +22,7 @@ use crate::App;
 use crate::eframe::egui;
 use std::collections::HashMap;
 use viewport_lib as vpl;
-use viewport_lib_item_types::{TensorFieldItem, TensorSource};
+use viewport_lib_plugins::item_types::tensor_field::{TensorFieldItem, TensorSource};
 
 use vpl::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, CellSelectionInfo, ColourSource,
@@ -349,7 +349,7 @@ pub(crate) fn submit_tensor_fields(app: &App, fd: &mut FrameData) {
         };
         item.settings.pick_id = PickId(PICK_TENSOR_FIELD);
         fd.scene
-            .items_mut::<viewport_lib_item_types::TensorFieldItem>()
+            .items_mut::<viewport_lib_plugins::item_types::tensor_field::TensorFieldItem>()
             .push(item);
     }
 }

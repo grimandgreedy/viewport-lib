@@ -69,7 +69,7 @@ fn a_mesh_frame_builds_only_the_pipelines_it_binds() {
         renderer.set_pipeline_compilation(PipelineCompilation::Blocking);
         let frame = scene(&mut renderer, &device, hdr);
         let _ = pipelines_built();
-        let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        let _ = render_presented(&mut renderer, &device, &queue, &frame, 64, 64);
         let built = pipelines_built();
         let mesh: Vec<&String> = built
             .iter()
@@ -90,7 +90,7 @@ fn a_mesh_frame_builds_only_the_pipelines_it_binds() {
             !mesh.iter().any(|l| l.contains("wireframe")),
             "hdr {hdr}: built the wireframe pipeline for a frame that draws no wireframe"
         );
-        let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        let _ = render_presented(&mut renderer, &device, &queue, &frame, 64, 64);
         let second = pipelines_built();
         assert!(
             second.is_empty(),
@@ -112,12 +112,12 @@ fn a_mesh_frame_under_background_catches_up() {
         let mut blocking = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
         blocking.set_pipeline_compilation(PipelineCompilation::Blocking);
         let frame = scene(&mut blocking, &device, hdr);
-        let expected = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
+        let expected = render_presented(&mut blocking, &device, &queue, &frame, 64, 64);
 
         let mut background = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
         background.set_pipeline_compilation(PipelineCompilation::Background);
         let frame = scene(&mut background, &device, hdr);
-        let first = background.render_offscreen(&device, &queue, &frame, 64, 64);
+        let first = render_presented(&mut background, &device, &queue, &frame, 64, 64);
         let stats = background.last_frame_stats();
         // Something was handed to the workers, or the pool was quick enough
         // that the frame already matches; either way nothing may have been
@@ -129,7 +129,7 @@ fn a_mesh_frame_under_background_catches_up() {
         background.wait_for_pipelines(&device);
         let start = std::time::Instant::now();
         loop {
-            let out = background.render_offscreen(&device, &queue, &frame, 64, 64);
+            let out = render_presented(&mut background, &device, &queue, &frame, 64, 64);
             if out == expected {
                 break;
             }
@@ -168,18 +168,47 @@ fn a_compiling_item_casts_no_shadow() {
     empty.set_pipeline_compilation(PipelineCompilation::Blocking);
     let mut empty_frame = lit(&mut empty);
     empty_frame.scene.surfaces = SurfaceSubmission::Flat(Vec::new().into());
-    let nothing = empty.render_offscreen(&device, &queue, &empty_frame, 64, 64);
+    let nothing = render_presented(&mut empty, &device, &queue, &empty_frame, 64, 64);
 
     let mut background = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     background.set_pipeline_compilation(PipelineCompilation::Background);
     let frame = lit(&mut background);
-    let first = background.render_offscreen(&device, &queue, &frame, 64, 64);
+    let first = render_presented(&mut background, &device, &queue, &frame, 64, 64);
     if background.last_frame_stats().pipelines_pending > 0 {
         // The boxes were skipped; so were their shadows, so the image is the
         // lit ground alone.
         assert!(
             first == nothing,
             "a shadow was drawn for a box that was not"
+        );
+    }
+}
+
+/// A read-back has no later frame to catch up on, so `render_offscreen` under
+/// `Background` compiles what the frame needs and returns the complete image
+/// on the first call.
+#[test]
+fn a_read_back_under_background_is_complete() {
+    let _guard = LOG_LOCK.lock().unwrap();
+    let Some((device, queue)) = headless_device_recommended_limits() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    for hdr in [true, false] {
+        let mut blocking = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+        blocking.set_pipeline_compilation(PipelineCompilation::Blocking);
+        let frame = scene(&mut blocking, &device, hdr);
+        let expected = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
+
+        let mut background = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+        background.set_pipeline_compilation(PipelineCompilation::Background);
+        let frame = scene(&mut background, &device, hdr);
+        let first = background.render_offscreen(&device, &queue, &frame, 64, 64);
+        assert!(first == expected, "hdr {hdr}: the read-back skipped a draw");
+        assert_eq!(
+            background.pipeline_compilation(),
+            PipelineCompilation::Background,
+            "the read-back changed the configured policy"
         );
     }
 }
@@ -205,11 +234,11 @@ fn an_effect_switched_on_under_background_catches_up() {
     let mut blocking = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     blocking.set_pipeline_compilation(PipelineCompilation::Blocking);
     let mut frame = scene(&mut blocking, &device, true);
-    let _ = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
-    let plain = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
+    let _ = render_presented(&mut blocking, &device, &queue, &frame, 64, 64);
+    let plain = render_presented(&mut blocking, &device, &queue, &frame, 64, 64);
     with_effects(&mut frame);
-    let _ = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
-    let expected = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
+    let _ = render_presented(&mut blocking, &device, &queue, &frame, 64, 64);
+    let expected = render_presented(&mut blocking, &device, &queue, &frame, 64, 64);
     assert!(
         plain != expected,
         "the effects have to be visible to be told apart"
@@ -218,11 +247,11 @@ fn an_effect_switched_on_under_background_catches_up() {
     let mut background = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     background.set_pipeline_compilation(PipelineCompilation::Background);
     let mut frame = scene(&mut background, &device, true);
-    let _ = background.render_offscreen(&device, &queue, &frame, 64, 64);
+    let _ = render_presented(&mut background, &device, &queue, &frame, 64, 64);
     background.wait_for_pipelines(&device);
     let start = std::time::Instant::now();
     loop {
-        if background.render_offscreen(&device, &queue, &frame, 64, 64) == plain {
+        if render_presented(&mut background, &device, &queue, &frame, 64, 64) == plain {
             break;
         }
         assert!(
@@ -234,7 +263,7 @@ fn an_effect_switched_on_under_background_catches_up() {
     // The frame that switches the effects on hands their pipelines to the
     // workers and draws without them, however quickly the workers finish.
     with_effects(&mut frame);
-    let first = background.render_offscreen(&device, &queue, &frame, 64, 64);
+    let first = render_presented(&mut background, &device, &queue, &frame, 64, 64);
     assert!(
         first == plain,
         "the frame that switched the effects on drew them, so it compiled them itself"
@@ -243,7 +272,7 @@ fn an_effect_switched_on_under_background_catches_up() {
     background.wait_for_pipelines(&device);
     let start = std::time::Instant::now();
     loop {
-        let out = background.render_offscreen(&device, &queue, &frame, 64, 64);
+        let out = render_presented(&mut background, &device, &queue, &frame, 64, 64);
         if out == expected {
             break;
         }
@@ -271,12 +300,14 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
     ] {
         let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
         renderer.set_pipeline_compilation(policy);
+        renderer.set_occlusion_culling(true);
         renderer.warm_pipelines(&device, &queue, &viewport_lib::PipelineSet::all());
         renderer.wait_for_pipelines(&device);
 
         // Every feature the set names, in both display modes: the box is
-        // selected and so outlined, the sphere is transparent, and a third
-        // item of the box mesh makes an instanced batch of two.
+        // selected and so outlined, the sphere is transparent, a third item
+        // of the box mesh makes an instanced batch of two, a polyline draws,
+        // enough point lights to cluster, and occlusion culling is on.
         let mut frames = Vec::new();
         for hdr in [true, false] {
             let mut frame = scene(&mut renderer, &device, hdr);
@@ -285,7 +316,24 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
             sun.kind = viewport_lib::LightKind::Directional {
                 direction: [0.3, 0.2, 1.0],
             };
-            frame.effects.lighting.lights = vec![sun];
+            let points = (0..24).map(|i| {
+                let mut light = viewport_lib::LightSource::default();
+                light.kind = viewport_lib::LightKind::Point {
+                    position: [(i % 6) as f32 - 2.5, (i / 6) as f32 - 1.5, 1.0],
+                    range: 3.0,
+                    radius: 0.05,
+                };
+                light
+            });
+            frame.effects.lighting.lights = std::iter::once(sun).chain(points).collect();
+            let mut polyline = viewport_lib::PolylineItem::default();
+            polyline.positions = vec![[-1.5, -1.0, 0.0], [1.5, -1.0, 0.0]];
+            polyline.strip_lengths = vec![2];
+            polyline.line_width = 4.0;
+            frame
+                .scene
+                .items_mut::<viewport_lib::PolylineItem>()
+                .push(polyline);
             frame.effects.lighting.shadows.enabled = true;
             frame.effects.ground_plane.mode = viewport_lib::GroundPlaneMode::Tile;
             frame.effects.post_process.bloom.enabled = true;
@@ -310,7 +358,7 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
         let _ = viewport_lib::resources::build_log::drain();
         for frame in &frames {
             for _ in 0..3 {
-                let _ = renderer.render_offscreen(&device, &queue, frame, 64, 64);
+                let _ = render_presented(&mut renderer, &device, &queue, frame, 64, 64);
             }
         }
         let built = viewport_lib::resources::build_log::drain();
@@ -319,5 +367,80 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
             "{policy:?}: the frames built after the warm-up: {built:?}"
         );
         assert_eq!(renderer.pipelines_pending(), 0);
+    }
+}
+
+/// While the GPU cull's compute pipelines compile on a worker, the frame takes
+/// the CPU cull path and draws the same image; once they are built the GPU
+/// cull takes over.
+#[test]
+fn instanced_frames_cull_on_the_cpu_until_the_gpu_cull_is_built() {
+    let _guard = LOG_LOCK.lock().unwrap();
+    let Some((device, queue)) = headless_device_recommended_limits() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let rows = |renderer: &mut ViewportRenderer| {
+        let mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &box_mesh())
+            .unwrap();
+        let mut frame = FrameData::default();
+        frame.camera.render_camera = RenderCamera::from_camera(&Camera {
+            distance: 14.0,
+            ..Camera::default()
+        });
+        frame.camera.viewport_size = [64.0, 64.0];
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        // Eight copies of one mesh: enough to batch, so the cull runs.
+        let items: Vec<SceneRenderItem> = (0..8)
+            .map(|i| {
+                let mut item = SceneRenderItem::default();
+                item.mesh_id = mesh;
+                item.model =
+                    glam::Mat4::from_translation(glam::Vec3::new((i as f32 - 3.5) * 1.2, 0.0, 0.0))
+                        .to_cols_array_2d();
+                item
+            })
+            .collect();
+        frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+        frame
+    };
+
+    let mut blocking = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    if !blocking.is_gpu_culling_supported() {
+        eprintln!("skipping: no GPU-driven cull on this device");
+        return;
+    }
+    blocking.set_pipeline_compilation(PipelineCompilation::Blocking);
+    let frame = rows(&mut blocking);
+    let expected = blocking.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert!(
+        blocking.last_frame_stats().gpu_culling_active,
+        "the scene has to reach the GPU cull"
+    );
+
+    let mut background = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    background.set_pipeline_compilation(PipelineCompilation::Background);
+    let frame = rows(&mut background);
+    let _ = render_presented(&mut background, &device, &queue, &frame, 64, 64);
+    assert!(
+        !background.last_frame_stats().gpu_culling_active,
+        "the first frame ran the GPU cull before its compute was built"
+    );
+
+    background.wait_for_pipelines(&device);
+    let start = std::time::Instant::now();
+    loop {
+        let out = render_presented(&mut background, &device, &queue, &frame, 64, 64);
+        if out == expected && background.last_frame_stats().gpu_culling_active {
+            break;
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(30),
+            "the background renderer never reached the GPU cull with the blocking image"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }

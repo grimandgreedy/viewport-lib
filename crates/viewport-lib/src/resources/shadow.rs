@@ -93,8 +93,6 @@ pub(crate) struct ShadowResources {
     /// Non-comparison sampler for reading depth values as float (atlas viewer).
     #[allow(dead_code)]
     pub(crate) atlas_depth_sampler: crate::gpu::Sampler,
-    /// Pipeline for the shadow atlas corner overlay.
-    pub(crate) atlas_viewer_pipeline: crate::gpu::RenderPipeline,
     /// Bind group for the atlas viewer (uniform + depth texture + sampler).
     pub(crate) atlas_viewer_bg: crate::gpu::BindGroup,
     /// Layout of `atlas_viewer_bg`, kept so the group can be rebuilt when the

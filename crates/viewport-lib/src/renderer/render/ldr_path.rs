@@ -155,7 +155,6 @@ impl ViewportRenderer {
                 &self.instancing.batches,
                 camera_bg,
                 grid_bg,
-                &self.compute_filter_results,
                 Some(slot),
                 &self.mesh_uniforms.wireframe_bind_groups,
                 &self.mesh_uniforms.bind_groups,
@@ -168,7 +167,7 @@ impl ViewportRenderer {
                 // truncated off). When those boundaries are appended to
                 // `scene_items` the bundle no longer covers the full list, so
                 // fall back to the per-item draw path that walks every item.
-                if scene_items.len() == self.prepared_surfaces.len() {
+                if scene_items.len() == self.prepared_surface_count {
                     self.per_object_bundle.as_ref()
                 } else {
                     None
@@ -336,7 +335,6 @@ impl ViewportRenderer {
                         .and_then(|e| e.bind_group.as_ref());
                     super::hdr_path::draw_mesh_item(
                         resources,
-                        &self.compute_filter_results,
                         &mut render_pass,
                         item,
                         obj_bg,
@@ -365,6 +363,7 @@ impl ViewportRenderer {
         // the slot.
         if store_scene_depth {
             let view_proj = frame.camera.render_camera.view_proj().to_cols_array_2d();
+            let hiz = self.resources.hiz_pipelines(device);
             let slot = &mut self.viewport_slots[vp_idx];
             let (depth_only_view, dw, dh) = if use_dyn_res {
                 let dr = slot.dyn_res.as_ref().unwrap();
@@ -376,6 +375,7 @@ impl ViewportRenderer {
             };
             slot.cull.store_hiz_prev_depth(
                 device,
+                &hiz,
                 &mut encoder,
                 depth_only_view,
                 dw,
@@ -533,20 +533,30 @@ impl ViewportRenderer {
             let bs = self.backdrop_blur_state.as_ref().unwrap();
             let blit_bgl = self.resources.post.dyn_res_upscale_bgl.as_ref().unwrap();
             let blit_sampler = self.resources.post.dyn_res_linear_sampler.as_ref().unwrap();
-            let blit_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some("backdrop_blit_bg"),
-                layout: blit_bgl,
-                entries: &[
-                    crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: crate::gpu::BindingResource::TextureView(&bs.intermediate_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 1,
-                        resource: crate::gpu::BindingResource::Sampler(blit_sampler),
-                    },
-                ],
-            });
+            let blit_bg = bs
+                .binds
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .blit
+                .get_or_insert_with(|| {
+                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                        label: Some("backdrop_blit_bg"),
+                        layout: blit_bgl,
+                        entries: &[
+                            crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: crate::gpu::BindingResource::TextureView(
+                                    &bs.intermediate_view,
+                                ),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 1,
+                                resource: crate::gpu::BindingResource::Sampler(blit_sampler),
+                            },
+                        ],
+                    })
+                })
+                .clone();
             let mut blit_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,

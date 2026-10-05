@@ -22,7 +22,9 @@ use crate::eframe::egui;
 use std::f32::consts::PI;
 use viewport_lib as vpl;
 use viewport_lib::plugin_api::Uploads;
-use viewport_lib_item_types::{GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree};
+use viewport_lib_plugins::item_types::gaussian_splat::{
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree,
+};
 use vpl::{FrameData, LightingSettings, SceneRenderItem, ViewportRenderer};
 
 // ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@ use viewport_lib::{
     AttributeData, CameraFrame, FrameData, Material, PolylineItem, SceneFrame, SceneRenderItem,
     extract_isolines, isoline_strips, primitives,
 };
-use viewport_lib_item_types::{ContourLevels, SurfaceContourItem};
+use viewport_lib_plugins::item_types::surface_contour::{ContourLevels, SurfaceContourItem};
 use viewport_lib_testkit::{Harness, orbit_camera};
 
 const W: u32 = 240;

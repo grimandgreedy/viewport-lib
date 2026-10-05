@@ -95,15 +95,18 @@ impl Harness {
         target_format: wgpu::TextureFormat,
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
-        let mut renderer =
-            ViewportRenderer::new_with_pipeline_cache(&device, target_format, pipeline_cache_data);
         // A test reads its frame back at once, so every pipeline has to be
         // there when the frame draws, whatever the platform's default.
-        renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+        let mut renderer = ViewportRenderer::with_config(
+            &device,
+            &viewport_lib::RendererConfig::new(target_format)
+                .with_pipeline_cache_data(pipeline_cache_data.map(<[u8]>::to_vec))
+                .with_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking),
+        );
         // The item types viewport-lib ships with live in their own crate and
         // register like any other plugin, so a harness that renders them has
         // to install them the way a consumer does.
-        viewport_lib_item_types::install(&mut renderer, &device);
+        viewport_lib_plugins::item_types::install(&mut renderer, &device);
         Self {
             device,
             queue,

@@ -37,7 +37,6 @@ impl ViewportRenderer {
             &self.instancing.batches,
             camera_bg,
             grid_bg,
-            &self.compute_filter_results,
             vp_slot,
             &self.mesh_uniforms.wireframe_bind_groups,
             &self.mesh_uniforms.bind_groups,
@@ -121,8 +120,12 @@ impl ViewportRenderer {
         }
         emit_overlay_2d!(self, render_pass);
         // Shadow atlas viewer overlay.
-        if frame.effects.debug.show_shadow_atlas {
-            render_pass.set_pipeline(&self.resources.shadow.atlas_viewer_pipeline);
+        if let (true, Some(pipeline)) = (
+            frame.effects.debug.show_shadow_atlas,
+            self.resources
+                .guide_pipeline(crate::resources::overlay::guides::GUIDE_ATLAS_VIEWER),
+        ) {
+            render_pass.set_pipeline(pipeline);
             render_pass.set_bind_group(0, &self.resources.shadow.atlas_viewer_bg, &[]);
             render_pass.draw(0..6, 0..1);
         }

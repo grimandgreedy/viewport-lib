@@ -770,6 +770,7 @@ impl MaterialPluginPipelines {
 /// Pipeline and resource counts for one registered material plugin, from
 /// [`DeviceResources::material_plugin_stats`](crate::resources::DeviceResources::material_plugin_stats).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MaterialPluginStats {
     /// The plugin's default-variant id, as returned by
     /// `register_material_plugin`. Lets a consumer correlate a stats row

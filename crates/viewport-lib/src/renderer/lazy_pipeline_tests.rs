@@ -66,6 +66,9 @@ fn build_everything(
     res.ensure_skybox_pipeline(device);
     res.ensure_cascade_shadow_pipelines(device);
     res.ensure_point_shadow_pipeline(device);
+    res.ensure_grid_pipeline(device);
+    res.ensure_guide_overlay_pipelines(device);
+    res.ensure_shadow_atlas_viewer_pipeline(device);
 }
 
 struct Meshes {
@@ -213,6 +216,22 @@ fn hdr_mesh() {
 #[test]
 fn hdr_instanced_mesh() {
     check("hdr instanced mesh", plain_instanced, empty);
+}
+
+#[test]
+fn grid() {
+    fn setup(meshes: &Meshes, _: &mut ViewportRenderer) -> FrameData {
+        let mut frame = base_frame(meshes);
+        frame.viewport.show_grid = true;
+        frame
+    }
+    fn direct(meshes: &Meshes, r: &mut ViewportRenderer) -> FrameData {
+        let mut frame = setup(meshes, r);
+        frame.effects.display.mode = crate::PipelineMode::Direct;
+        frame
+    }
+    check("grid", setup, plain);
+    check("direct grid", direct, plain);
 }
 
 #[test]
@@ -458,4 +477,134 @@ fn custom_data_past_the_initial_capacity_draws_on_the_frame_that_grows_it() {
             "the custom data changed nothing, so the case cannot tell which buffer was read"
         );
     }
+}
+
+/// The built-in matcaps are uploaded by the first frame that draws with one,
+/// and that frame draws it: a frame without a matcap uploads none, and the id
+/// is valid before any upload.
+#[test]
+fn builtin_matcap_uploads_on_first_use() {
+    let Some((device, queue)) = device(false) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, FORMAT);
+    let meshes = upload(&mut renderer, &device);
+    let normal = renderer
+        .resources()
+        .builtin_matcap_id(crate::resources::BuiltinMatcap::Normal);
+    let plain_frame = base_frame(&meshes);
+    let plain = renderer.render_offscreen(&device, &queue, &plain_frame, SIZE, SIZE);
+    assert!(!renderer.resources.content.matcaps_initialized);
+
+    let mut frame = base_frame(&meshes);
+    let SurfaceSubmission::Flat(items) = &frame.scene.surfaces;
+    let mut items: Vec<SceneRenderItem> = items.iter().cloned().collect();
+    items[0].material.shading_model = crate::ShadingModel::Matcap(normal);
+    frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+    let first = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+    assert!(renderer.resources.content.matcaps_initialized);
+    assert!(
+        first != plain,
+        "the matcap frame drew the same as the plain one"
+    );
+    let second = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+    assert!(
+        first == second,
+        "the first matcap frame differs from the next"
+    );
+}
+
+/// More distinct material UV transforms than the material buffer starts with
+/// draw correctly on the frame that grows it, as the custom-data case above.
+#[test]
+fn material_transforms_past_the_initial_capacity_draw_on_the_frame_that_grows_it() {
+    const COUNT: usize = 200;
+    fn grid(meshes: &Meshes, texture: crate::TextureId, offsets: bool) -> FrameData {
+        let mut frame = base_frame(meshes);
+        frame.scene.surfaces = SurfaceSubmission::Flat(
+            (0..COUNT)
+                .map(|i| {
+                    let (x, y) = ((i % 20) as f32, (i / 20) as f32);
+                    let mut item = cube_item(meshes, 0.0, [1.0, 1.0, 1.0]);
+                    item.model = (glam::Mat4::from_translation(glam::Vec3::new(
+                        x * 0.2 - 2.0,
+                        y * 0.2 - 1.0,
+                        0.0,
+                    )) * glam::Mat4::from_scale(glam::Vec3::splat(0.18)))
+                    .to_cols_array_2d();
+                    item.material.texture_id = Some(texture);
+                    // Scale zero samples one texel, picked by the offset: the
+                    // left (black) or right (white) half, distinct per item.
+                    item.material.uv_scale = [0.0, 0.0];
+                    if offsets {
+                        let half = if (i / 3) % 2 == 0 { 0.25 } else { 0.75 };
+                        item.material.uv_offset = [half + i as f32 * 0.0005, 0.5];
+                    } else {
+                        item.material.uv_offset = [0.25, 0.5];
+                    }
+                    item
+                })
+                .collect::<Vec<_>>()
+                .into(),
+        );
+        frame
+    }
+    fn halves(
+        renderer: &mut ViewportRenderer,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) -> crate::TextureId {
+        let rgba = vec![0, 0, 0, 255, 255, 255, 255, 255];
+        renderer
+            .resources_mut()
+            .upload_texture(device, queue, crate::TextureData::srgb(2, 1, rgba))
+            .unwrap()
+    }
+
+    let Some((device, queue)) = device(false) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, FORMAT);
+    let meshes = upload(&mut renderer, &device);
+    let texture = halves(&mut renderer, &device, &queue);
+    let initial = renderer.resources.material_gpu_capacity;
+    assert!(
+        initial < COUNT,
+        "the case needs more blocks than the buffer starts with"
+    );
+
+    let mut warm = grid(&meshes, texture, false);
+    warm.scene.generation = 1;
+    let without = renderer.render_offscreen(&device, &queue, &warm, SIZE, SIZE);
+    assert_eq!(renderer.resources.material_gpu_capacity, initial);
+
+    let mut frame = grid(&meshes, texture, true);
+    frame.scene.generation = 2;
+    let growing = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+    assert!(
+        renderer.resources.material_gpu_capacity >= COUNT,
+        "the buffer did not grow to hold the frame's blocks"
+    );
+    // A fresh renderer draws the same frame with its viewport created after
+    // the growth, so its bind groups name the large buffer from the start.
+    let mut fresh = ViewportRenderer::new(&device, FORMAT);
+    let fresh_meshes = upload(&mut fresh, &device);
+    let fresh_texture = halves(&mut fresh, &device, &queue);
+    let expected = fresh.render_offscreen(
+        &device,
+        &queue,
+        &grid(&fresh_meshes, fresh_texture, true),
+        SIZE,
+        SIZE,
+    );
+    assert!(
+        growing == expected,
+        "the frame that grew the buffer drew differently from a renderer that never had the small one"
+    );
+    assert!(
+        expected != without,
+        "the transforms changed nothing, so the case cannot tell which buffer was read"
+    );
 }

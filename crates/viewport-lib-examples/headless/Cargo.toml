@@ -30,6 +30,8 @@ wgpu27 = ["viewport-lib/wgpu27"]
 wgpu29 = ["viewport-lib/wgpu29"]
 wgpu30 = ["viewport-lib/wgpu30"]
 raytrace = ["viewport-lib/raytrace"]
+# Hardware ray-query traversal where the device offers it (Vulkan and DX12).
+raytrace-hardware = ["raytrace", "viewport-lib/raytrace-hardware"]
 
 [[example]]
 name = "headless-shadow-debug"
@@ -52,4 +54,9 @@ path = "examples/wgpu_leg_agnostic/main.rs"
 [[example]]
 name = "raytrace-reference"
 path = "examples/raytrace_reference/main.rs"
+required-features = ["raytrace"]
+
+[[example]]
+name = "bake-backends"
+path = "examples/bake_backends.rs"
 required-features = ["raytrace"]

@@ -51,6 +51,24 @@ impl DeviceResources {
         sample_count: u32,
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
+        Self::new_configured(
+            device,
+            target_format,
+            sample_count,
+            pipeline_cache_data,
+            None,
+        )
+    }
+
+    /// The constructor behind the public ones, with the geometry store's
+    /// first chunk size (`None` for the default).
+    pub(crate) fn new_configured(
+        device: &crate::gpu::Device,
+        target_format: crate::gpu::TextureFormat,
+        sample_count: u32,
+        pipeline_cache_data: Option<&[u8]>,
+        geometry_chunk_bytes: Option<u64>,
+    ) -> Self {
         // A pipeline cache records compiled pipelines so a later run (seeded with
         // saved data) skips recompilation. Only available when the device enables
         // `Features::PIPELINE_CACHE`; `fallback: true` discards stale/invalid data
@@ -768,16 +786,13 @@ impl DeviceResources {
             mapped_at_creation: false,
         });
 
-        // Per-material UV transform buffer (group 0, binding 13). Fixed capacity
-        // so the handle is stable across frames; the camera bind group binds it
-        // once and never rebuilds for material churn.
-        let material_gpu_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("material_gpu_buf"),
-            size: (std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>()
-                * crate::resources::material_gpu::MATERIAL_GPU_CAPACITY) as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // Per-material UV transform buffer (group 0, binding 21). Starts small
+        // and grows when a frame interns more blocks than it holds; see
+        // `upload_material_gpu`.
+        let material_gpu_buf = Self::create_material_gpu_buffer(
+            device,
+            crate::resources::material_gpu::MATERIAL_GPU_INITIAL_CAPACITY,
+        );
 
         // Per-instance custom-data buffer (group 0, binding 22). Starts small
         // and grows when a frame interns more blocks than it holds; see
@@ -1158,123 +1173,12 @@ impl DeviceResources {
         // draws through the 2D overlay system (see `gizmo_overlay`).
 
         // ------------------------------------------------------------------
-        // Overlay shader module
-        // ------------------------------------------------------------------
-        let overlay_shader = crate::resources::builders::wgsl_module(
-            device,
-            "overlay_shader",
-            crate::resources::builders::wgsl_source!("overlay"),
-        );
-
-        // ------------------------------------------------------------------
         // Overlay bind group layout (group 1: model + colour uniform)
         // ------------------------------------------------------------------
         let overlay_bgl = crate::resources::builders::uniform_bgl(
             device,
             "overlay_bgl",
             crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
-        );
-
-        // ------------------------------------------------------------------
-        // Overlay pipeline layout (group 0: camera, group 1: overlay uniform)
-        // ------------------------------------------------------------------
-        let overlay_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "overlay_pipeline_layout",
-            &[&camera_bgl, &overlay_bgl],
-        );
-
-        // ------------------------------------------------------------------
-        // Overlay render pipeline
-        // TriangleList topology with alpha blending for semi-transparent quads.
-        // depth_write_enabled: false : do not corrupt depth buffer with overlays.
-        // depth_compare: Less : overlays respect depth (hidden by geometry in front).
-        // cull_mode: None : quads viewed from both sides.
-        // ------------------------------------------------------------------
-        let overlay_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "overlay_pipeline",
-                layout: &overlay_pipeline_layout,
-                vertex_module: &overlay_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[OverlayVertex::buffer_layout()],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &overlay_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: crate::gpu::FrontFace::Ccw,
-                    cull_mode: None, // BC quads are visible from both sides.
-                    unclipped_depth: false,
-                    polygon_mode: crate::gpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false, // Do not write to depth buffer.
-                    crate::gpu::CompareFunction::Less,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
-        );
-
-        // ------------------------------------------------------------------
-        // Overlay line pipeline (LineList)
-        // Uses the same overlay shader + bind group layout as the triangle overlay.
-        // No alpha blending needed for line overlays.
-        // depth_write_enabled: false : overlay lines don't corrupt depth buffer.
-        // ------------------------------------------------------------------
-        let overlay_line_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "overlay_line_pipeline",
-                layout: &overlay_pipeline_layout,
-                vertex_module: &overlay_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[OverlayVertex::buffer_layout()],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &overlay_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: None,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::LineList,
-                    strip_index_format: None,
-                    front_face: crate::gpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: crate::gpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false,
-                    crate::gpu::CompareFunction::Less,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
         );
 
         // ------------------------------------------------------------------
@@ -1286,67 +1190,10 @@ impl DeviceResources {
         // clip-space depth via @builtin(frag_depth) for correct occlusion.
         // Horizon fade eliminates clipping artefacts at shallow viewing angles.
         // ------------------------------------------------------------------
-        let grid_shader = crate::resources::builders::wgsl_module(
-            device,
-            "grid_shader",
-            crate::resources::builders::wgsl_source!("grid"),
-        );
         let grid_bgl = crate::resources::builders::uniform_bgl(
             device,
             "grid_bgl",
             crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
-        );
-        let grid_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "grid_pipeline_layout",
-            &[&grid_bgl],
-        );
-        let grid_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "grid_pipeline",
-                layout: &grid_pipeline_layout,
-                vertex_module: &grid_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[], // no vertex buffer : positions hardcoded in shader,
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &grid_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::gpu::DepthStencilState {
-                    format: crate::gpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: crate::resources::builders::dwrite(true),
-                    depth_compare: crate::resources::builders::dcompare(
-                        crate::gpu::CompareFunction::LessEqual,
-                    ),
-                    stencil: crate::gpu::StencilState::default(),
-                    bias: crate::gpu::DepthBiasState {
-                        // Push grid depth slightly behind coplanar geometry to prevent
-                        // z-fighting when object faces coincide with the grid plane.
-                        // 4 x the minimum representable Depth24 unit ~ 2.4e-7 : invisible
-                        // at any distance but reliably loses the depth test to geometry.
-                        constant: 4,
-                        slope_scale: 0.0,
-                        clamp: 0.0,
-                    },
-                }),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
         );
         // Default-zero uniform : overwritten every frame in prepare().
         let grid_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
@@ -1455,11 +1302,6 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Shadow atlas viewer pipeline (corner overlay, no vertex buffers)
         // ------------------------------------------------------------------
-        let atlas_blit_shader = crate::resources::builders::wgsl_module(
-            device,
-            "shadow_atlas_blit",
-            crate::resources::builders::wgsl_source!("shadow_atlas_blit"),
-        );
         let atlas_blit_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("atlas_blit_bgl"),
@@ -1495,11 +1337,6 @@ impl DeviceResources {
                     },
                 ],
             });
-        let atlas_blit_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "atlas_blit_layout",
-            &[&atlas_blit_bgl],
-        );
         let shadow_atlas_viewer_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("shadow_atlas_viewer_buf"),
             size: std::mem::size_of::<AtlasBlitUniform>() as u64,
@@ -1524,42 +1361,6 @@ impl DeviceResources {
                 },
             ],
         });
-        let shadow_atlas_viewer_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "shadow_atlas_viewer_pipeline",
-                layout: &atlas_blit_layout,
-                vertex_module: &atlas_blit_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &atlas_blit_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false,
-                    crate::gpu::CompareFunction::Always,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
-        );
-
         // The axes orientation indicator draws through the shared 2D overlay
         // shape pass, so it needs no dedicated pipeline or vertex buffer.
 
@@ -1876,7 +1677,8 @@ impl DeviceResources {
         // application mesh. Its write is recorded now and flushed at the first
         // `process_uploads`.
         mark("buffers_and_bind_groups");
-        let mut geometry = crate::resources::mesh::geometry_slab::GeometrySlab::new(device);
+        let mut geometry =
+            crate::resources::mesh::geometry_slab::GeometrySlab::new(device, geometry_chunk_bytes);
         geometry.dedicate_next_allocation();
         let cube_mesh = Self::create_mesh(
             device,
@@ -1990,6 +1792,10 @@ impl DeviceResources {
         let polyline = crate::resources::scivis::polyline::PolylineResources::new(device);
         mark("polyline_resources");
 
+        let pipeline_compiler =
+            std::sync::Arc::new(crate::resources::pipeline_slot::PipelineCompiler::new(
+                crate::resources::pipeline_slot::initial_policy(),
+            ));
         let resources = Self {
             target_format,
             sample_count,
@@ -2048,16 +1854,13 @@ impl DeviceResources {
                 info_buf: shadow_info_buf,
                 atlas_size: SHADOW_ATLAS_SIZE,
                 atlas_depth_sampler: shadow_atlas_depth_sampler,
-                atlas_viewer_pipeline: shadow_atlas_viewer_pipeline,
                 atlas_viewer_bg: shadow_atlas_viewer_bg,
                 atlas_viewer_bgl: atlas_blit_bgl,
                 atlas_viewer_buf: shadow_atlas_viewer_buf,
             },
             guides: crate::resources::overlay::guides::OverlayGuideResources {
-                overlay_pipeline,
-                overlay_line_pipeline,
                 overlay_bgl,
-                grid_pipeline,
+                pipelines: None,
                 grid_uniform_buf,
                 grid_bind_group,
                 grid_bgl,
@@ -2135,10 +1938,6 @@ impl DeviceResources {
             instancing: crate::resources::mesh::instancing::InstancingResources::default(),
             cull: crate::resources::mesh::instancing::CullResources::default(),
             polyline,
-            compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources {
-                pipeline: None,
-                bgl: None,
-            },
             oit: crate::resources::postprocess::OitResources::default(),
             pt: crate::resources::types::ProjectedTetResources::default(),
             // IBL / environment map resources.
@@ -2171,6 +1970,7 @@ impl DeviceResources {
             backdrop_blur: crate::resources::overlay::overlay_shape::BackdropBlurResources::default(
             ),
             material_gpu_buf,
+            material_gpu_capacity: crate::resources::material_gpu::MATERIAL_GPU_INITIAL_CAPACITY,
             material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder::default(),
             instance_custom_data_buf,
             instance_custom_data_capacity:
@@ -2178,10 +1978,12 @@ impl DeviceResources {
             custom_data_builder: crate::resources::custom_data::CustomDataBuilder::default(),
             frame_upload_bytes: 0,
             frame_pipelines_built: std::sync::atomic::AtomicU32::new(0),
-            pipeline_compiler: std::sync::Arc::new(
-                crate::resources::pipeline_slot::PipelineCompiler::new(
-                    crate::resources::pipeline_slot::initial_policy(),
-                ),
+            pipeline_compiler: std::sync::Arc::clone(&pipeline_compiler),
+            hiz_pipelines: std::sync::OnceLock::new(),
+            material_gpu_written: Vec::new(),
+            custom_data_written: Vec::new(),
+            pipeline_compiler_shutdown: crate::resources::pipeline_slot::CompilerShutdown(
+                pipeline_compiler,
             ),
             resource_free_epoch: 0,
             resource_view_epoch: 0,

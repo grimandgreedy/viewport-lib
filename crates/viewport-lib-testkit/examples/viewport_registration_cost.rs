@@ -108,6 +108,8 @@ fn main() {
     .expect("no wgpu device");
 
     let mut renderer = ViewportRenderer::new(&device, FORMAT);
+    // Build on this thread so each build lands in the frame that asked for it.
+    renderer.set_pipeline_compilation(vpl::PipelineCompilation::Blocking);
     // Viewport 0 exists implicitly: the single-viewport path uses slot 0, so
     // only the extra ones are registered here.
     let _ = vpl::resources::build_log::drain();

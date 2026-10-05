@@ -32,6 +32,7 @@ mod showcase_15_point_clouds;
 mod showcase_16_streamlines;
 mod showcase_17_volume;
 mod showcase_18_clip_volumes;
+mod showcase_18_cuts;
 mod showcase_19_matcap;
 mod showcase_20_face_attributes;
 mod showcase_21_textures;
@@ -132,12 +133,12 @@ fn main() -> eframe::Result {
             let start = std::time::Instant::now();
             let mut renderer =
                 ViewportRenderer::new(&device, OffscreenViewportTarget::render_format(format));
-            viewport_lib_item_types::install(&mut renderer, &device);
+            viewport_lib_plugins::item_types::install(&mut renderer, &device);
             report_builds("renderer and item types", start);
             // Where pipelines compile on workers, ask for everything the
             // showcases can draw with now, so switching pages never compiles
             // on the frame. The top bar shows the count while it runs. Where
-            // compiles block (macOS, the web) this would freeze the launch,
+            // compiles block (the web, or Apple on wgpu 27) this would freeze the launch,
             // so there each page builds what it draws.
             if renderer.pipeline_compilation() == vpl::PipelineCompilation::Background {
                 renderer.warm_pipelines(&device, &queue, &vpl::PipelineSet::all());
@@ -252,6 +253,7 @@ fn main() -> eframe::Result {
                 surfaces_state:
                     showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState::default(),
                 va_state: showcase_59_vector_art::VectorArtState::default(),
+                cut_state: showcase_18_cuts::CutViewsState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -542,6 +544,7 @@ pub(crate) struct App {
     // --- Showcase 58: Physically-Based Surfaces (shading parity + emissive/IBL) ---
     pub(crate) surfaces_state: showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState,
     pub(crate) va_state: showcase_59_vector_art::VectorArtState,
+    pub(crate) cut_state: showcase_18_cuts::CutViewsState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.

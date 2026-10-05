@@ -451,30 +451,20 @@ fn build_clip_shapes(
     (out, index_of, bboxes)
 }
 
-/// Create the clip-shape storage buffer for a frame, always non-empty (a single
-/// zero entry when there are no masks) so the pipeline layout is always satisfied.
-fn upload_clip_buffer(
-    device: &crate::gpu::Device,
-    queue: &crate::gpu::Queue,
-    clips: &[crate::resources::ClipShapeGpu],
-) -> crate::gpu::Buffer {
-    let dummy = [crate::resources::ClipShapeGpu {
-        center: [0.0, 0.0],
-        half_size: [0.0, 0.0],
-        radii: [0.0; 4],
-        params: [0.0, 0.0, -1.0, 0.0],
-        pivot: [0.0, 0.0],
-        _pad: [0.0, 0.0],
-    }];
-    let data: &[crate::resources::ClipShapeGpu] = if clips.is_empty() { &dummy } else { clips };
-    let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-        label: Some("overlay_clip_buf"),
-        size: std::mem::size_of_val(data) as u64,
-        usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&buf, 0, bytemuck::cast_slice(data));
-    buf
+/// Written in place of an empty clip list, so the clip binding always has an
+/// element to point at.
+static NO_CLIP: [crate::resources::ClipShapeGpu; 1] = [crate::resources::ClipShapeGpu {
+    center: [0.0, 0.0],
+    half_size: [0.0, 0.0],
+    radii: [0.0; 4],
+    params: [0.0, 0.0, -1.0, 0.0],
+    pivot: [0.0, 0.0],
+    _pad: [0.0, 0.0],
+}];
+
+/// The clip-shape data to upload for a frame: never empty.
+fn clip_data(clips: &[crate::resources::ClipShapeGpu]) -> &[crate::resources::ClipShapeGpu] {
+    if clips.is_empty() { &NO_CLIP } else { clips }
 }
 
 impl ViewportRenderer {
@@ -574,14 +564,9 @@ impl ViewportRenderer {
             return;
         }
         let data = [crate::resources::OverlayInstance::IDENTITY];
-        let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("overlay_instances_buf"),
-            size: std::mem::size_of_val(&data) as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&buf, 0, bytemuck::cast_slice(&data));
-        self.overlay_instances_buf = Some(buf);
+        self.overlay_bindings
+            .instances
+            .write_changed(device, queue, &data);
         self.overlay_instances_ready = true;
     }
 
@@ -1438,32 +1423,39 @@ impl ViewportRenderer {
                 {
                     let vertex_buf = self.overlay_text_vbuf.write(device, queue, &verts);
                     self.ensure_overlay_viewport_buf(device, queue, vp_w, vp_h);
-                    let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
-                    let instances_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                        label: Some("overlay_instances_buf"),
-                        size: std::mem::size_of_val(&instances[..]) as u64,
-                        usage: crate::gpu::BufferUsages::STORAGE
-                            | crate::gpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
-                    queue.write_buffer(&instances_buf, 0, bytemuck::cast_slice(&instances));
-                    // Share the instance buffer with the shape pass (immediate shapes
-                    // read the identity at slot 0; retained shape draws use their slot).
-                    self.overlay_instances_buf = Some(instances_buf.clone());
+                    let clip_buf = self.overlay_bindings.clip.write_changed(
+                        device,
+                        queue,
+                        clip_data(&clip_shapes),
+                    );
+                    // Shared with the shape pass (immediate shapes read the
+                    // identity at slot 0; retained shape draws use their slot).
+                    let instances_buf = self
+                        .overlay_bindings
+                        .instances
+                        .write_changed(device, queue, &instances);
                     self.overlay_instances_ready = true;
 
                     // Finish retained shape-stream draws now that the instance
                     // buffer exists: build each group's shape bind group (its shadow
                     // buffer plus the shared clip / viewport / instances) and record
                     // its draw + segment.
-                    if !pending_shapes.is_empty() {
+                    if pending_shapes.is_empty() {
+                        self.overlay_bindings.retained_shape_bgs.clear();
+                    } else {
                         self.resources.ensure_overlay_shape_pipeline(device);
                         let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
                         if let Some(sh_bgl) = self.resources.overlay_shape.shadow_bgl.as_ref() {
+                            let mut previous =
+                                std::mem::take(&mut self.overlay_bindings.retained_shape_bgs);
                             for (svbuf, svcount, shbuf, instance_index, z) in
                                 pending_shapes.drain(..)
                             {
-                                let bind_group =
+                                let mut cached = previous.remove(&shbuf).unwrap_or_else(
+                                    crate::resources::cached_bind_group::CachedBindGroup::new,
+                                );
+                                let key = [clip_buf.clone(), vp_buf.clone(), instances_buf.clone()];
+                                let bind_group = cached.get(key, || {
                                     device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                                         label: Some("overlay_retained_shape_bg"),
                                         layout: sh_bgl,
@@ -1485,7 +1477,11 @@ impl ViewportRenderer {
                                                 resource: instances_buf.as_entire_binding(),
                                             },
                                         ],
-                                    });
+                                    })
+                                });
+                                self.overlay_bindings
+                                    .retained_shape_bgs
+                                    .insert(shbuf, cached);
                                 let draw_index = self.overlay_retained_shape_draws.len() as u32;
                                 self.overlay_retained_shape_draws.push(
                                     crate::renderer::overlay_buffers::RetainedShapeDraw {
@@ -1506,33 +1502,40 @@ impl ViewportRenderer {
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
                     let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
-                    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                        label: Some("overlay_label_bg"),
-                        layout: bgl,
-                        entries: &[
-                            crate::gpu::BindGroupEntry {
-                                binding: 0,
-                                resource: crate::gpu::BindingResource::TextureView(
-                                    &self.resources.content.glyph_atlas.view,
-                                ),
-                            },
-                            crate::gpu::BindGroupEntry {
-                                binding: 1,
-                                resource: crate::gpu::BindingResource::Sampler(sampler),
-                            },
-                            crate::gpu::BindGroupEntry {
-                                binding: 2,
-                                resource: clip_buf.as_entire_binding(),
-                            },
-                            crate::gpu::BindGroupEntry {
-                                binding: 3,
-                                resource: vp_buf.as_entire_binding(),
-                            },
-                            crate::gpu::BindGroupEntry {
-                                binding: 4,
-                                resource: instances_buf.as_entire_binding(),
-                            },
-                        ],
+                    let atlas_view = &self.resources.content.glyph_atlas.view;
+                    let key = (
+                        atlas_view.clone(),
+                        clip_buf.clone(),
+                        vp_buf.clone(),
+                        instances_buf.clone(),
+                    );
+                    let bind_group = self.overlay_bindings.label_bg.get(key, || {
+                        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                            label: Some("overlay_label_bg"),
+                            layout: bgl,
+                            entries: &[
+                                crate::gpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: crate::gpu::BindingResource::TextureView(atlas_view),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: crate::gpu::BindingResource::Sampler(sampler),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: clip_buf.as_entire_binding(),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 3,
+                                    resource: vp_buf.as_entire_binding(),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 4,
+                                    resource: instances_buf.as_entire_binding(),
+                                },
+                            ],
+                        })
                     });
                     self.label_gpu_data = Some(crate::resources::LabelGpuData {
                         vertex_buf,
@@ -2321,46 +2324,55 @@ impl ViewportRenderer {
                             params2: [0.0, 1.0, 0.0, 0.0],
                         });
                     }
-                    let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                        label: Some("overlay_shape_shadow_buf"),
-                        size: std::mem::size_of_val(&shadow_layers[..]) as u64,
-                        usage: crate::gpu::BufferUsages::STORAGE
-                            | crate::gpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
-                    queue.write_buffer(&buf, 0, bytemuck::cast_slice(&shadow_layers));
-                    Some(buf)
+                    Some(self.overlay_bindings.shape_shadow.write_changed(
+                        device,
+                        queue,
+                        &shadow_layers,
+                    ))
                 } else {
                     None
                 };
 
                 let (shadow_bind_group, shape_clip_buf) =
                     if let (true, Some(buf)) = (solid_vbuf.is_some(), shadow_buf.as_ref()) {
-                        let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
+                        let clip_buf = self.overlay_bindings.clip.write_changed(
+                            device,
+                            queue,
+                            clip_data(&clip_shapes),
+                        );
                         let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
-                        let inst_buf = self.overlay_instances_buf.as_ref().unwrap();
+                        let inst_buf = self.overlay_bindings.instances.buffer().unwrap().clone();
+                        let key = [
+                            buf.clone(),
+                            clip_buf.clone(),
+                            vp_buf.clone(),
+                            inst_buf.clone(),
+                        ];
+                        let cache = &mut self.overlay_bindings.shape_shadow_bg;
                         let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
-                            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                                label: Some("overlay_shape_shadow_bg"),
-                                layout: bgl,
-                                entries: &[
-                                    crate::gpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: buf.as_entire_binding(),
-                                    },
-                                    crate::gpu::BindGroupEntry {
-                                        binding: 1,
-                                        resource: clip_buf.as_entire_binding(),
-                                    },
-                                    crate::gpu::BindGroupEntry {
-                                        binding: 2,
-                                        resource: vp_buf.as_entire_binding(),
-                                    },
-                                    crate::gpu::BindGroupEntry {
-                                        binding: 3,
-                                        resource: inst_buf.as_entire_binding(),
-                                    },
-                                ],
+                            cache.get(key, || {
+                                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                                    label: Some("overlay_shape_shadow_bg"),
+                                    layout: bgl,
+                                    entries: &[
+                                        crate::gpu::BindGroupEntry {
+                                            binding: 0,
+                                            resource: buf.as_entire_binding(),
+                                        },
+                                        crate::gpu::BindGroupEntry {
+                                            binding: 1,
+                                            resource: clip_buf.as_entire_binding(),
+                                        },
+                                        crate::gpu::BindGroupEntry {
+                                            binding: 2,
+                                            resource: vp_buf.as_entire_binding(),
+                                        },
+                                        crate::gpu::BindGroupEntry {
+                                            binding: 3,
+                                            resource: inst_buf.as_entire_binding(),
+                                        },
+                                    ],
+                                })
                             })
                         });
                         (bg, Some(clip_buf))
@@ -2378,6 +2390,7 @@ impl ViewportRenderer {
                         self.resources.overlay_shape.tex_bgl.as_ref(),
                         self.resources.overlay_shape.tex_sampler.as_ref(),
                     ) {
+                        let mut previous = std::mem::take(&mut self.overlay_bindings.tex_bgs);
                         for (group_idx, (tex_id, verts)) in tex_groups.iter().enumerate() {
                             if verts.is_empty() {
                                 continue;
@@ -2387,23 +2400,35 @@ impl ViewportRenderer {
                                 continue;
                             };
                             let view = &entry.view;
-                            let bind_group =
-                                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                                    label: Some("overlay_shape_tex_bg"),
-                                    layout: bgl,
-                                    entries: &[
-                                        crate::gpu::BindGroupEntry {
-                                            binding: 0,
-                                            resource: crate::gpu::BindingResource::TextureView(
-                                                view,
-                                            ),
-                                        },
-                                        crate::gpu::BindGroupEntry {
-                                            binding: 1,
-                                            resource: crate::gpu::BindingResource::Sampler(sampler),
-                                        },
-                                    ],
-                                });
+                            let bind_group = match previous
+                                .remove(view)
+                                .or_else(|| self.overlay_bindings.tex_bgs.get(view).cloned())
+                            {
+                                Some(bg) => bg,
+                                None => {
+                                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                                        label: Some("overlay_shape_tex_bg"),
+                                        layout: bgl,
+                                        entries: &[
+                                            crate::gpu::BindGroupEntry {
+                                                binding: 0,
+                                                resource: crate::gpu::BindingResource::TextureView(
+                                                    view,
+                                                ),
+                                            },
+                                            crate::gpu::BindGroupEntry {
+                                                binding: 1,
+                                                resource: crate::gpu::BindingResource::Sampler(
+                                                    sampler,
+                                                ),
+                                            },
+                                        ],
+                                    })
+                                }
+                            };
+                            self.overlay_bindings
+                                .tex_bgs
+                                .insert(view.clone(), bind_group.clone());
                             let batch_index = tex_batches.len();
                             if batch_index >= self.overlay_shape_tex_vbufs.len() {
                                 self.overlay_shape_tex_vbufs.push(
@@ -2451,25 +2476,33 @@ impl ViewportRenderer {
                 // textured shape the same way it is on a solid one.
                 let (tex_clip_bind_group, tex_clip_buf) = if has_tex || has_blur {
                     if let Some(bgl) = self.resources.overlay_shape.tex_clip_bgl.as_ref() {
-                        let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
+                        let clip_buf = self.overlay_bindings.clip.write_changed(
+                            device,
+                            queue,
+                            clip_data(&clip_shapes),
+                        );
                         let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
-                        let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                            label: Some("overlay_shape_tex_clip_bg"),
-                            layout: bgl,
-                            entries: &[
-                                crate::gpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: clip_buf.as_entire_binding(),
-                                },
-                                crate::gpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: vp_buf.as_entire_binding(),
-                                },
-                                crate::gpu::BindGroupEntry {
-                                    binding: 2,
-                                    resource: shadow_buf.as_ref().unwrap().as_entire_binding(),
-                                },
-                            ],
+                        let shadow = shadow_buf.as_ref().unwrap();
+                        let key = [clip_buf.clone(), vp_buf.clone(), shadow.clone()];
+                        let bg = self.overlay_bindings.tex_clip_bg.get(key, || {
+                            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                                label: Some("overlay_shape_tex_clip_bg"),
+                                layout: bgl,
+                                entries: &[
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: clip_buf.as_entire_binding(),
+                                    },
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: vp_buf.as_entire_binding(),
+                                    },
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 2,
+                                        resource: shadow.as_entire_binding(),
+                                    },
+                                ],
+                            })
                         });
                         (Some(bg), Some(clip_buf))
                     } else {

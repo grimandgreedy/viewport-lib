@@ -19,6 +19,7 @@ use shadow_state::ShadowState;
 mod blit;
 mod colour_ready;
 mod warm;
+pub use config::RendererConfig;
 pub use warm::PipelineSet;
 mod paths;
 pub use blit::BlitTexture;
@@ -35,6 +36,7 @@ pub use picking::{
     SubSelectionRef, VolumeSelectionInfo,
 };
 mod capture;
+mod config;
 mod overlay_buffers;
 mod overlay_draw_order;
 mod readback;
@@ -61,6 +63,10 @@ mod deform_shadow_tests;
 #[cfg(test)]
 mod deform_stats_tests;
 #[cfg(test)]
+mod frame_reuse_tests;
+#[cfg(test)]
+mod prepare_timing_tests;
+#[cfg(test)]
 mod hidden_tests;
 #[cfg(test)]
 mod lazy_pipeline_tests;
@@ -80,25 +86,24 @@ pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 #[allow(deprecated)]
 pub use self::types::{
     Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
-    BloomSettings, CameraFrame, Candela, ClipObject, ClipShape, ComputeFilterItem,
-    ComputeFilterKind, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis,
-    DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentSettings, ExposureMode,
-    ExposureSettings, FillRule, FilterMode, ForegroundPass, ForegroundProjection, FrameData,
-    GlyphRunItem, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
-    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
-    LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS,
-    MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS,
-    OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill,
-    OverlayFrame, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape,
-    OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId,
-    OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment, PathTrack, PipelineMode,
-    PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph,
-    PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality,
-    ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer,
-    ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission, TextureTransform,
-    TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, VignetteSettings,
-    VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline,
-    sphere_wireframe_polyline,
+    BloomSettings, CameraFrame, Candela, ClipObject, ClipShape, ContactShadowSettings,
+    DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings, DofSettings, EdlSettings,
+    EffectsFrame, EnvironmentSettings, ExposureMode, ExposureSettings, FillRule, ForegroundPass,
+    ForegroundProjection, FrameData, GlyphRunItem, GradientStop, GroundPlane, GroundPlaneMode,
+    IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
+    LightKind, LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux,
+    MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
+    OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
+    OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
+    OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment,
+    PathTrack, PipelineMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem,
+    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
+    ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
+    ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission,
+    TextureTransform, TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame,
+    VignetteSettings, VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline,
+    obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -203,25 +208,16 @@ pub(crate) struct ViewportSlot {
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(
         crate::resources::mesh::mesh_store::MeshId,
-        crate::gpu::Buffer,
-        crate::gpu::BindGroup,
+        crate::resources::overlay::highlight::OutlineBinding,
     )>,
-    /// Per-frame constraint guide line buffers, rebuilt in prepare().
-    pub constraint_line_buffers: Vec<(
-        crate::gpu::Buffer,
-        crate::gpu::Buffer,
-        u32,
-        crate::gpu::Buffer,
-        crate::gpu::BindGroup,
-    )>,
-    /// Per-frame cap geometry buffers (section view cross-section fill), rebuilt in prepare().
-    pub cap_buffers: Vec<(
-        crate::gpu::Buffer,
-        crate::gpu::Buffer,
-        u32,
-        crate::gpu::Buffer,
-        crate::gpu::BindGroup,
-    )>,
+    /// Per-frame constraint guide line draws, rebuilt in prepare().
+    pub constraint_line_buffers: Vec<overlay_buffers::OverlayGeometryDraw>,
+    /// Per-frame cap geometry draws (section view cross-section fill), rebuilt in prepare().
+    pub cap_buffers: Vec<overlay_buffers::OverlayGeometryDraw>,
+    /// The buffers behind `constraint_line_buffers` and `cap_buffers`, kept
+    /// across frames.
+    pub constraint_line_pool: Vec<overlay_buffers::OverlayGeometrySlot>,
+    pub cap_pool: Vec<overlay_buffers::OverlayGeometrySlot>,
     // --- Sub-object highlight (per-viewport, generation-cached) ---
     /// Per-viewport dynamic resolution intermediate render target.
     /// `None` when render_scale == 1.0 or not yet initialised.
@@ -427,11 +423,10 @@ pub struct ViewportRenderer {
     /// Per-frame retained overlay shape-stream draws (SDF shapes), referenced by
     /// `OverlayDrawSource::RetainedShape { draw_index }`.
     overlay_retained_shape_draws: Vec<overlay_buffers::RetainedShapeDraw>,
-    /// Shared per-draw instance buffer for the overlay pass: slot 0 identity plus
-    /// one per retained group. Bound by both the text pipeline (label bind group)
-    /// and the shape pipeline (shadow bind group). Rebuilt each frame.
-    overlay_instances_buf: Option<crate::gpu::Buffer>,
-    /// Set once the label prepare has written `overlay_instances_buf` this frame,
+    /// The overlay pass's clip, instance and shadow-layer storage buffers and
+    /// the bind groups over them, reused across frames.
+    overlay_bindings: overlay_buffers::OverlayBindings,
+    /// Set once the label prepare has written the overlay instances this frame,
     /// so the shape prepare reuses it instead of building an identity-only fallback.
     overlay_instances_ready: bool,
     /// Retained-overlay counters for the frame being prepared. Reset at the start
@@ -447,12 +442,6 @@ pub struct ViewportRenderer {
     /// shadow info, and grid. Slots are grown lazily in `prepare` via
     /// `ensure_viewport_slot`. There are at most 4 in the current UI.
     viewport_slots: Vec<ViewportSlot>,
-    /// GPU compute filter results from the last `prepare()` call.
-    ///
-    /// Each entry contains a compacted index buffer + count for one filtered mesh.
-    /// Consumed during `paint()` to override the mesh's default index buffer.
-    /// Cleared and rebuilt each frame.
-    compute_filter_results: Vec<crate::resources::ComputeFilterResult>,
     /// State for the non-instanced (per-object) mesh draw path.
     mesh_uniforms: PerObjectState,
     /// Cached render bundle for the opaque per-object draws, rebuilt by
@@ -469,6 +458,10 @@ pub struct ViewportRenderer {
     /// this the draw path re-read the raw `frame.scene.surfaces`, discarding
     /// the LOD level swap and cull for every non-instanced item.
     prepared_surfaces: Vec<SceneRenderItem>,
+    /// How many of the items a frame renders came from `prepared_surfaces`:
+    /// the render moves that list out while it draws, so the count is kept
+    /// here for the code that compares against it.
+    prepared_surface_count: usize,
     /// Cached shadow state carried across frames.
     shadow: ShadowState,
     /// Current runtime mode controlling internal default behaviour.
@@ -676,7 +669,7 @@ impl ViewportRenderer {
     ///   `0.0` and the rest of the breakdown is unaffected.
     /// - `PIPELINE_CACHE` enables
     ///   [`pipeline_cache_data`](Self::pipeline_cache_data) /
-    ///   [`new_with_pipeline_cache`](Self::new_with_pipeline_cache), so
+    ///   [`RendererConfig::with_pipeline_cache_data`], so
     ///   pipeline compilation from a previous run can be reused instead of
     ///   redone (startup and first-use hitches).
     /// - `SHADER_PRIMITIVE_INDEX` lets the GPU pick pass read the rasterizer's
@@ -804,6 +797,12 @@ impl ViewportRenderer {
         // the deform bind group invalid; the base draw path stays under both.
         limits.max_storage_buffer_binding_size = adapter_limits.max_storage_buffer_binding_size;
         limits.max_buffer_size = adapter_limits.max_buffer_size;
+        // The scene and per-object groups already take 15 of the default 16
+        // sampled textures in the fragment stage, so a material plugin with a
+        // second texture of its own would not fit. Take the adapter's own limit
+        // (Metal, Vulkan and DX12 all report far more than 16).
+        limits.max_sampled_textures_per_shader_stage =
+            adapter_limits.max_sampled_textures_per_shader_stage;
         // The bindless material path binds one texture array; its element count
         // (a binding-array limit that defaults to 0) must be requested alongside
         // the feature or the layout is invalid. Only ask for it when the adapter
@@ -820,54 +819,72 @@ impl ViewportRenderer {
     }
 
     /// Create a new renderer with default settings (no MSAA).
-    /// Call once at application startup.
+    /// Call once at application startup. For anything else, see
+    /// [`with_config`](Self::with_config).
     pub fn new(device: &crate::gpu::Device, target_format: crate::gpu::TextureFormat) -> Self {
-        Self::with_sample_count(device, target_format, 1)
+        Self::with_config(device, &RendererConfig::new(target_format))
     }
 
     /// Create a new renderer with the specified MSAA sample count (1, 2, or 4).
-    ///
-    /// When using MSAA (sample_count > 1), the caller must create multisampled
-    /// colour and depth textures and use them as render pass attachments with the
-    /// final surface texture as the resolve target.
+    #[deprecated(note = "use `with_config` and `RendererConfig::with_sample_count`")]
     pub fn with_sample_count(
         device: &crate::gpu::Device,
         target_format: crate::gpu::TextureFormat,
         sample_count: u32,
     ) -> Self {
-        Self::with_sample_count_and_cache(device, target_format, sample_count, None)
+        Self::with_config(
+            device,
+            &RendererConfig::new(target_format).with_sample_count(sample_count),
+        )
     }
 
     /// Create a renderer, seeding the GPU pipeline cache from previously saved
-    /// data so shader compilation can be skipped on later launches.
-    ///
-    /// Pass the bytes returned by an earlier [`pipeline_cache_data`](Self::pipeline_cache_data)
-    /// call, or `None` on first run. The cache only takes effect when the device
-    /// was created with `Features::PIPELINE_CACHE`; otherwise the data is ignored
-    /// and this matches [`new`](Self::new).
+    /// data.
+    #[deprecated(note = "use `with_config` and `RendererConfig::with_pipeline_cache_data`")]
     pub fn new_with_pipeline_cache(
         device: &crate::gpu::Device,
         target_format: crate::gpu::TextureFormat,
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
-        Self::with_sample_count_and_cache(device, target_format, 1, pipeline_cache_data)
+        Self::with_config(
+            device,
+            &RendererConfig::new(target_format)
+                .with_pipeline_cache_data(pipeline_cache_data.map(<[u8]>::to_vec)),
+        )
     }
 
     /// Returns the current contents of the GPU pipeline cache, suitable for
-    /// persisting and feeding back into [`new_with_pipeline_cache`](Self::new_with_pipeline_cache)
-    /// on the next launch. `None` when the device lacks `Features::PIPELINE_CACHE`.
+    /// persisting and passing to
+    /// [`RendererConfig::with_pipeline_cache_data`] on the next launch. `None`
+    /// when the device lacks `Features::PIPELINE_CACHE`.
     pub fn pipeline_cache_data(&self) -> Option<Vec<u8>> {
         self.resources.pipeline_cache.as_ref()?.get_data()
     }
 
     /// Like [`with_sample_count`](Self::with_sample_count) with an MSAA count and
     /// an optional saved pipeline cache.
+    #[deprecated(
+        note = "use `with_config` with `RendererConfig::with_sample_count` and `with_pipeline_cache_data`"
+    )]
     pub fn with_sample_count_and_cache(
         device: &crate::gpu::Device,
         target_format: crate::gpu::TextureFormat,
         sample_count: u32,
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
+        Self::with_config(
+            device,
+            &RendererConfig::new(target_format)
+                .with_sample_count(sample_count)
+                .with_pipeline_cache_data(pipeline_cache_data.map(<[u8]>::to_vec)),
+        )
+    }
+
+    /// Create a renderer from a [`RendererConfig`]. Call once at application
+    /// startup.
+    pub fn with_config(device: &crate::gpu::Device, config: &RendererConfig) -> Self {
+        let target_format = config.target_format;
+        let sample_count = config.sample_count;
         // Fail early with an actionable message rather than a cryptic wgpu
         // validation panic deep in mesh-pipeline-layout creation. This is the
         // base lit mesh path's floor; optional features that need more storage
@@ -908,12 +925,16 @@ impl ViewportRenderer {
         } else {
             MaterialTextureBinding::PerBatch
         };
-        let mut resources = DeviceResources::new_with_cache(
+        let mut resources = DeviceResources::new_configured(
             device,
             target_format,
             sample_count,
-            pipeline_cache_data,
+            config.pipeline_cache_data.as_deref(),
+            config.geometry_chunk_bytes,
         );
+        if let Some(policy) = config.pipeline_compilation {
+            resources.pipeline_compiler.set_policy(policy);
+        }
         resources.instancing.material_texture_binding = material_texture_binding;
         resources
             .material_gpu_builder
@@ -947,17 +968,17 @@ impl ViewportRenderer {
             overlay_retained_counters: OverlayRetainedCounters::default(),
             overlay_retained_draws: Vec::new(),
             overlay_retained_shape_draws: Vec::new(),
-            overlay_instances_buf: None,
+            overlay_bindings: overlay_buffers::OverlayBindings::new(),
             overlay_instances_ready: false,
             overlay_draw_segments: Vec::new(),
             overlay_uses_zorder: false,
             backdrop_blur_state: None,
             viewport_slots: Vec::new(),
-            compute_filter_results: Vec::new(),
             mesh_uniforms: PerObjectState::new(),
             per_object_bundle: None,
             per_object_bundle_gate: Default::default(),
             prepared_surfaces: Vec::new(),
+            prepared_surface_count: 0,
             shadow: ShadowState::new(),
             runtime_mode: crate::renderer::stats::RuntimeMode::Interactive,
             render_mode: RenderMode::Presented,
@@ -1188,6 +1209,7 @@ impl ViewportRenderer {
     /// Has no effect when the device does not support `INDIRECT_FIRST_INSTANCE`
     /// (culling is already disabled on those devices).
     pub fn disable_gpu_driven_culling(&mut self) {
+        self.instancing.gpu_culling_wanted = false;
         self.instancing.gpu_culling_enabled = false;
     }
 
@@ -1212,7 +1234,8 @@ impl ViewportRenderer {
     /// Has no effect when the device does not support `INDIRECT_FIRST_INSTANCE`.
     pub fn enable_gpu_driven_culling(&mut self) {
         if self.instancing.gpu_culling_supported {
-            self.instancing.gpu_culling_enabled = true;
+            // Active from the next prepare, once its compute is built.
+            self.instancing.gpu_culling_wanted = true;
         }
     }
 
@@ -1337,8 +1360,8 @@ impl ViewportRenderer {
     /// Set how a pipeline is compiled the first time a frame needs it.
     ///
     /// The default is [`PipelineCompilation::platform_default`]: on a
-    /// worker, with the draw skipped until it is ready, everywhere but
-    /// macOS, iOS and the web. Set [`PipelineCompilation::Blocking`] to
+    /// worker, with the draw skipped until it is ready, everywhere but the
+    /// web and, on wgpu 27, macOS and iOS. Set [`PipelineCompilation::Blocking`] to
     /// compile on the calling thread and never skip a draw, which is what a
     /// frame that is read back right away needs. Takes effect for the next
     /// compile; one already running on a worker finishes there.
@@ -1453,7 +1476,7 @@ impl ViewportRenderer {
     /// [`is_gpu_culling_supported`](Self::is_gpu_culling_supported) is true.
     pub fn tuning(&self) -> crate::renderer::tuning::RenderTuning {
         crate::renderer::tuning::RenderTuning {
-            gpu_driven_culling: self.instancing.gpu_culling_enabled,
+            gpu_driven_culling: self.instancing.gpu_culling_wanted,
             occlusion_culling: self.occlusion_culling_enabled(),
             performance: self.performance_policy(),
             render_scale: self.current_render_scale,
@@ -1585,11 +1608,12 @@ impl ViewportRenderer {
         if !self.instancing.gpu_culling_supported {
             return;
         }
-        if self.instancing.cull_resources.is_none() {
-            self.instancing.cull_resources =
-                Some(crate::renderer::indirect::CullResources::new(device));
-        }
-        let cull = self.instancing.cull_resources.as_ref().unwrap();
+        // A plugin's indirect draw reads what this dispatch writes, so it
+        // cannot be skipped while the compute compiles.
+        let cull = self
+            .instancing
+            .cull_resources
+            .get_blocking(|| crate::renderer::indirect::CullResources::new(device));
         cull.dispatch(encoder, device, queue, frustum, None, sub, None, None);
     }
 
@@ -1616,11 +1640,12 @@ impl ViewportRenderer {
         }
         debug_assert!(cascade_idx < 4, "cascade_idx must be in 0..4");
         let cascade_idx = cascade_idx.min(3);
-        if self.instancing.cull_resources.is_none() {
-            self.instancing.cull_resources =
-                Some(crate::renderer::indirect::CullResources::new(device));
-        }
-        let cull = self.instancing.cull_resources.as_ref().unwrap();
+        // A plugin's indirect draw reads what this dispatch writes, so it
+        // cannot be skipped while the compute compiles.
+        let cull = self
+            .instancing
+            .cull_resources
+            .get_blocking(|| crate::renderer::indirect::CullResources::new(device));
         cull.dispatch(
             encoder,
             device,
@@ -1720,11 +1745,12 @@ impl ViewportRenderer {
         if !self.instancing.gpu_culling_supported {
             return;
         }
-        if self.instancing.cull_resources.is_none() {
-            self.instancing.cull_resources =
-                Some(crate::renderer::indirect::CullResources::new(device));
-        }
-        let cull = self.instancing.cull_resources.as_ref().unwrap();
+        // A plugin's indirect draw reads what this dispatch writes, so it
+        // cannot be skipped while the compute compiles.
+        let cull = self
+            .instancing
+            .cull_resources
+            .get_blocking(|| crate::renderer::indirect::CullResources::new(device));
         let (meta_buf, counter_buf) = cull.scratch_single_mesh_buffers();
         let meta = crate::plugin_api::BatchMeta {
             index_count: draw.index_count,
@@ -2028,6 +2054,8 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
     ) {
+        // Whatever the lighting uniforms held is gone with the old device.
+        self.shadow.written = Default::default();
         let shared = self.resources.shared_bindings();
         for plugin in self.item_type_plugins.values_mut() {
             plugin.on_device_recreated(device, queue);
@@ -3322,6 +3350,8 @@ impl ViewportRenderer {
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),
+                constraint_line_pool: Vec::new(),
+                cap_pool: Vec::new(),
                 sub_highlight: None,
                 sub_highlight_generation: u64::MAX,
                 dyn_res: None,
@@ -3404,8 +3434,7 @@ impl ViewportRenderer {
     ///
     /// `scene_effects` carries the scene-global effects: lighting, environment
     /// map, and scatter settings.  Obtain it by constructing [`SceneEffects`]
-    /// directly or via [`EffectsFrame::split`]. Compute filter items are read
-    /// from `frame.scene.compute_filter_items`.
+    /// directly or via [`EffectsFrame::split`].
     pub(crate) fn prepare_scene(
         &mut self,
         device: &crate::gpu::Device,
@@ -3479,7 +3508,6 @@ impl ViewportRenderer {
             &self.instancing.batches,
             camera_bg,
             grid_bg,
-            &self.compute_filter_results,
             vp_slot,
             &self.mesh_uniforms.wireframe_bind_groups,
             &self.mesh_uniforms.bind_groups,
@@ -3526,8 +3554,12 @@ impl ViewportRenderer {
         // content, mirroring the HDR scene-pass position.
         self.dispatch_plugin_paint(render_pass, frame, false);
         // Shadow atlas viewer overlay.
-        if frame.effects.debug.show_shadow_atlas {
-            render_pass.set_pipeline(&self.resources.shadow.atlas_viewer_pipeline);
+        if let (true, Some(pipeline)) = (
+            frame.effects.debug.show_shadow_atlas,
+            self.resources
+                .guide_pipeline(crate::resources::overlay::guides::GUIDE_ATLAS_VIEWER),
+        ) {
+            render_pass.set_pipeline(pipeline);
             render_pass.set_bind_group(0, &self.resources.shadow.atlas_viewer_bg, &[]);
             render_pass.draw(0..6, 0..1);
         }

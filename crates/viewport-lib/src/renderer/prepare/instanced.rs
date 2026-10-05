@@ -33,6 +33,7 @@ type BatchGroupKey = (
     Option<TextureId>,
     Option<TextureId>,
     bool,
+    bool,
     Option<(u32, u32)>,
 );
 
@@ -258,6 +259,9 @@ fn batch_group_key(item: &SceneRenderItem, binding: MaterialTextureBinding) -> B
         keep(m.metallic_roughness_texture_id),
         keep(m.emissive_texture_id),
         m.is_two_sided(),
+        // The batch draws opaque or through OIT as a whole, so opaque and
+        // translucent copies of a mesh must not share one.
+        item.settings.opacity < 1.0,
         m.shading_plugin
             .map(|p| (p.plugin_index(), p.variant_index())),
     )
@@ -327,9 +331,7 @@ impl ViewportRenderer {
         //
         // Items with active_attribute, matcap, warp, deform slot data (per-mesh
         // or per-instance), submesh materials, or overrides are excluded from
-        // the instanced batch filter (see `is_instanceable`). Items whose mesh has an active compute filter result
-        // are also excluded so the per-object path can apply the filtered index
-        // buffer (instanced draws always use the full index buffer).
+        // the instanced batch filter (see `is_instanceable`).
         // These flags are set on render items AFTER collect_render_items() (per-frame
         // mutations), so they do NOT bump the scene generation. Use last_instancable_count
         // as a cache key instead of a blanket has_per_frame_mutations flag; this allows
@@ -782,9 +784,6 @@ impl ViewportRenderer {
         let batch_count = instancing.batches.len() as u32;
 
         // Do all mutable borrows before taking immutable borrows from resources.
-        if instancing.cull_resources.is_none() {
-            instancing.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
-        }
         resources.ensure_cull_instance_pipelines(device);
         if hdr_family {
             resources.ensure_hdr_cull_pipelines(device);
@@ -857,7 +856,10 @@ impl ViewportRenderer {
             let vp_mat = frame.camera.render_camera.view_proj();
             let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(&vp_mat);
 
-            let cull = instancing.cull_resources.as_ref().unwrap();
+            // `gpu_culling_enabled` is only set once the compute is built.
+            let Some(cull) = instancing.cull_resources.ready() else {
+                return;
+            };
             let mut encoder =
                 device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                     label: Some("cull_encoder"),
@@ -1041,6 +1043,32 @@ mod batch_key_tests {
             batch_group_key(&one_sided, MaterialTextureBinding::Bindless),
             batch_group_key(&two_sided, MaterialTextureBinding::Bindless),
         );
+    }
+
+    #[test]
+    fn opaque_and_translucent_copies_split() {
+        // A batch is drawn opaque or through OIT as a whole, so an opaque and
+        // a translucent copy of one mesh must land in separate batches. Two
+        // translucent copies at different opacities still share one: opacity
+        // itself travels per instance.
+        for binding in [
+            MaterialTextureBinding::PerBatch,
+            MaterialTextureBinding::Bindless,
+        ] {
+            let opaque = item_with(0, None, false);
+            let mut half = item_with(0, None, false);
+            half.settings.opacity = 0.5;
+            let mut quarter = item_with(0, None, false);
+            quarter.settings.opacity = 0.25;
+            assert_ne!(
+                batch_group_key(&opaque, binding),
+                batch_group_key(&half, binding)
+            );
+            assert_eq!(
+                batch_group_key(&half, binding),
+                batch_group_key(&quarter, binding)
+            );
+        }
     }
 
     #[test]

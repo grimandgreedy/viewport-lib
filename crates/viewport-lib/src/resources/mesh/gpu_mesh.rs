@@ -44,6 +44,9 @@ pub struct GpuMesh {
     pub normal_line_count: u32,
     /// Per-object uniform buffer (model matrix, material, selection state).
     pub object_uniform_buf: crate::gpu::Buffer,
+    /// What the per-object prepare last wrote to `object_uniform_buf`, so an
+    /// unchanged mesh is not written again each frame. `None` when unknown.
+    pub(crate) last_object_uniform: std::sync::Mutex<Option<crate::resources::ObjectUniform>>,
     /// Bind group (group 1) combining `object_uniform_buf` with texture views.
     /// Texture views are the fallback 1x1 textures by default; rebuilt when material
     /// texture assignment changes (tracked via `last_tex_key`).

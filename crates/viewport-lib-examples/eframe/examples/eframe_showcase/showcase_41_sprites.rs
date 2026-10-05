@@ -20,11 +20,14 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
-use viewport_lib_item_types::GpuParticleSystems;
-use viewport_lib_item_types::{
-    ForceField, GpuParticleSystemConfig, GpuParticleSystemId, GpuParticleSystemItem,
-    ParticleMeshAlign, ParticleRender, RibbonItem, SpawnShape, SpriteItem, SpriteLitParams,
-    SpriteNormalMode, SpriteOrientation, SpriteSizeMode, VelocityDist,
+use viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystems;
+use viewport_lib_plugins::item_types::{
+    curves::RibbonItem,
+    gpu_particles::{
+        ForceField, GpuParticleSystemConfig, GpuParticleSystemId, GpuParticleSystemItem,
+        ParticleMeshAlign, ParticleRender, SpawnShape, VelocityDist,
+    },
+    sprite::{SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation, SpriteSizeMode},
 };
 use vpl::Selection;
 #[allow(unused_imports)]
@@ -1745,23 +1748,23 @@ pub(crate) fn submit_sprite_items(app: &mut App, fd: &mut FrameData, dt: f32) {
         return;
     }
     fd.scene
-        .items_mut::<viewport_lib_item_types::SpriteItem>()
+        .items_mut::<viewport_lib_plugins::item_types::sprite::SpriteItem>()
         .extend(sprite_items(app));
     fd.scene
         .items_mut::<viewport_lib::PolylineItem>()
         .extend(ring_polylines(app));
     fd.scene.mesh_instances.extend(mesh_instance_items(app));
     fd.scene
-        .items_mut::<viewport_lib_item_types::RibbonItem>()
+        .items_mut::<viewport_lib_plugins::item_types::curves::RibbonItem>()
         .extend(trail_ribbon_items(app));
     if let Some(item) = gpu_particle_item(app, dt) {
         fd.scene
-            .items_mut::<viewport_lib_item_types::GpuParticleSystemItem>()
+            .items_mut::<viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystemItem>()
             .push(item);
     }
     if let Some(item) = gpu_mesh_particle_item(app, dt) {
         fd.scene
-            .items_mut::<viewport_lib_item_types::GpuParticleSystemItem>()
+            .items_mut::<viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystemItem>()
             .push(item);
     }
 

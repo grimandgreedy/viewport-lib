@@ -26,7 +26,7 @@ use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
 use viewport_lib::wgpu;
-use viewport_lib_item_types::{
+use viewport_lib_plugins::item_types::external_instances::{
     ExternalInstanceSetConfig, ExternalInstanceSetId, ExternalInstanceUploads,
     ExternalInstancesItem,
 };

@@ -12,8 +12,8 @@
 
 use glam::Vec3;
 use viewport_lib::raytrace::{
-    RtImage, RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, bake_lightmap,
-    bake_lightmap_directional, bake_shadowmask,
+    DirectionalBake, RtImage, RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, Tracer,
+    bake_lightmap, bake_lightmap_directional, bake_shadowmask,
 };
 
 mod common;
@@ -572,4 +572,153 @@ fn different_seeds_vary_the_noise_but_not_the_signal() {
             "seeds should converge to the same mean, got {ma:?} vs {mb:?}"
         );
     }
+}
+
+/// A lit floor under a small occluder, so samples both hit and miss.
+fn occluded_floor() -> RtScene {
+    let mut scene = RtScene::new();
+    scene.set_sky([0.1, 0.12, 0.16], [0.2, 0.24, 0.32]);
+    add_floor(&mut scene, 5.0, RtMaterial::default());
+    scene.add_light(RtLight::Directional {
+        direction: [0.3, 0.2, 0.9],
+        colour: [2.0, 1.9, 1.7].into(),
+    });
+    let occ = [
+        Vec3::new(-1.0, -1.0, 1.5),
+        Vec3::new(1.0, -1.0, 1.5),
+        Vec3::new(1.0, 1.0, 1.5),
+        Vec3::new(-1.0, 1.0, 1.5),
+    ];
+    scene.add_mesh(
+        &occ,
+        &[0u32, 1, 2, 0, 2, 3],
+        Some(&[Vec3::Z; 4]),
+        RtMaterial::default(),
+    );
+    scene
+}
+
+/// Step a job `dispatches` at a time until it hands its result over.
+fn drive(
+    device: &viewport_lib::wgpu::Device,
+    queue: &viewport_lib::wgpu::Queue,
+    mut job: viewport_lib::raytrace::DirectionalBakeJob,
+    dispatches: u32,
+) -> DirectionalBake {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        job.step(device, queue, dispatches);
+        if let Some(bake) = job.poll(device) {
+            assert!(
+                job.poll(device).is_none(),
+                "a job hands its result over once"
+            );
+            return bake;
+        }
+    }
+    panic!("the bake never finished");
+}
+
+/// A bake stepped a dispatch at a time gives exactly what the blocking call
+/// gives, however the dispatches are spread over the steps.
+#[test]
+fn a_stepped_bake_matches_the_blocking_one() {
+    let Some((device, queue)) = device_queue() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let scene = occluded_floor();
+    let (pos, nrm) = uniform_surfaces(48, 48, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+    let surf = TexelSurfaces {
+        width: 48,
+        height: 48,
+        world_pos: &pos,
+        world_normal: &nrm,
+    };
+    let blocking = bake_lightmap_directional(&device, &queue, &scene, &surf, &settings(64));
+    let tracer = Tracer::new(&device, &queue, &scene);
+    for dispatches in [1, 3] {
+        let job = tracer.begin_directional(&device, &surf, &settings(64));
+        assert_eq!(job.samples(), 64);
+        let stepped = drive(&device, &queue, job, dispatches);
+        assert_eq!(
+            stepped.irradiance, blocking.irradiance,
+            "irradiance stepped {dispatches} at a time"
+        );
+        assert_eq!(
+            stepped.direction, blocking.direction,
+            "direction stepped {dispatches} at a time"
+        );
+    }
+}
+
+/// Fewer samples per dispatch draws a different sample stream, so the noise
+/// changes, but the solve converges to the same irradiance.
+#[test]
+fn smaller_dispatches_change_the_noise_not_the_signal() {
+    let Some((device, queue)) = device_queue() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let scene = occluded_floor();
+    let (pos, nrm) = uniform_surfaces(48, 48, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+    let surf = TexelSurfaces {
+        width: 48,
+        height: 48,
+        world_pos: &pos,
+        world_normal: &nrm,
+    };
+    let tracer = Tracer::new(&device, &queue, &scene);
+    let full = tracer
+        .begin_directional(&device, &surf, &settings(64))
+        .wait(&device, &queue);
+    let small = drive(
+        &device,
+        &queue,
+        tracer
+            .begin_directional(&device, &surf, &settings(64))
+            .samples_per_dispatch(2),
+        4,
+    );
+    assert_ne!(full.irradiance, small.irradiance);
+    let mean = |b: &DirectionalBake| {
+        b.irradiance
+            .chunks_exact(4)
+            .map(|p| f64::from(p[0]))
+            .sum::<f64>()
+            / (b.irradiance.len() / 4) as f64
+    };
+    let (a, b) = (mean(&full), mean(&small));
+    assert!(
+        (a - b).abs() < 0.03 * a,
+        "mean irradiance {a} with 16 per dispatch, {b} with 2"
+    );
+}
+
+/// Dropping a bake part way leaves the device and the tracer usable.
+#[test]
+fn a_dropped_bake_leaves_the_tracer_usable() {
+    let Some((device, queue)) = device_queue() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let scene = occluded_floor();
+    let (pos, nrm) = uniform_surfaces(32, 32, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+    let surf = TexelSurfaces {
+        width: 32,
+        height: 32,
+        world_pos: &pos,
+        world_normal: &nrm,
+    };
+    let mut tracer = Tracer::new(&device, &queue, &scene);
+    let expected = tracer.bake_directional(&device, &queue, &surf, &settings(32));
+    let mut job = tracer.begin_directional(&device, &surf, &settings(32));
+    job.step(&device, &queue, 1);
+    assert!(
+        job.poll(&device).is_none(),
+        "one dispatch of two is not done"
+    );
+    drop(job);
+    let again = tracer.bake_directional(&device, &queue, &surf, &settings(32));
+    assert_eq!(again.irradiance, expected.irradiance);
 }

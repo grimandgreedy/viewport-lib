@@ -58,6 +58,36 @@ fn overlay_load(frame: &mut FrameData, count: usize) {
         .collect();
 }
 
+/// The tests here read wall-clock phase timings, so they take turns: another
+/// test compiling or rendering on a parallel thread would land in the phase
+/// being measured.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The median of one breakdown field over `frames` renders of `frame`, after
+/// one warm-up render (glyph rasterisation, buffer growth).
+fn median_phase(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame: &FrameData,
+    frames: usize,
+    field: fn(&viewport_lib::PrepareBreakdown) -> f32,
+) -> f32 {
+    let size = frame.camera.viewport_size[0] as u32;
+    let _ = renderer.render_offscreen(device, queue, frame, size, size);
+    let mut samples: Vec<f32> = (0..frames)
+        .map(|_| {
+            let _ = renderer.render_offscreen(device, queue, frame, size, size);
+            field(&renderer.last_frame_stats().prepare_breakdown)
+        })
+        .collect();
+    samples.sort_by(f32::total_cmp);
+    samples[frames / 2]
+}
+
 /// The sum of every `PrepareBreakdown` phase, which should account for
 /// `cpu_prepare_ms`.
 fn phase_sum(b: &viewport_lib::PrepareBreakdown) -> f32 {
@@ -78,6 +108,7 @@ fn phase_sum(b: &viewport_lib::PrepareBreakdown) -> f32 {
 /// invisible inside `viewport_ms`.
 #[test]
 fn overlay_prepare_cost_is_reported_separately() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -109,32 +140,41 @@ fn overlay_prepare_cost_is_reported_separately() {
 
 /// Overlay time is taken out of `viewport_ms`, not counted in both places. The
 /// overlay load must not show up as a matching rise in `viewport_ms`, or a
-/// consumer reading both fields double-counts it.
+/// consumer reading both fields double-counts it. Medians over several frames,
+/// so one slow frame on a busy machine does not decide it.
 #[test]
 fn overlay_time_is_not_also_inside_viewport_time() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let size = 64u32;
+    const FRAMES: usize = 9;
 
+    let empty = overlay_frame(size);
     let mut loaded = overlay_frame(size);
     overlay_load(&mut loaded, 512);
-    // Two frames: the first warms caches (glyph rasterisation, buffer growth) so
-    // the measured one is steady-state.
-    let _ = renderer.render_offscreen(&device, &queue, &loaded, size, size);
-    let _ = renderer.render_offscreen(&device, &queue, &loaded, size, size);
-    let b = renderer.last_frame_stats().prepare_breakdown;
+
+    let viewport = |b: &viewport_lib::PrepareBreakdown| b.viewport_ms;
+    let overlay = |b: &viewport_lib::PrepareBreakdown| b.overlay_ms;
+    let empty_viewport = median_phase(&mut renderer, &device, &queue, &empty, FRAMES, viewport);
+    let loaded_viewport = median_phase(&mut renderer, &device, &queue, &loaded, FRAMES, viewport);
+    let loaded_overlay = median_phase(&mut renderer, &device, &queue, &loaded, FRAMES, overlay);
 
     assert!(
-        b.overlay_ms > b.viewport_ms,
-        "with 1024 overlay items the overlay phase should dominate the rest of \
-         the viewport phase, but overlay_ms {} <= viewport_ms {} - which is what \
-         it looks like when overlay time is still being counted inside \
-         viewport_ms",
-        b.overlay_ms,
-        b.viewport_ms
+        loaded_overlay > 0.0,
+        "1024 overlay items reported no overlay time"
+    );
+    // Counted in both places, the load would raise `viewport_ms` by about
+    // `overlay_ms`. Half of it leaves room for noise either way.
+    let rise = loaded_viewport - empty_viewport;
+    assert!(
+        rise < 0.5 * loaded_overlay,
+        "viewport_ms rose by {rise} ms ({empty_viewport} -> {loaded_viewport}) under an overlay \
+         load that took {loaded_overlay} ms - which is what it looks like when overlay time is \
+         still being counted inside viewport_ms"
     );
 }
 
@@ -143,6 +183,7 @@ fn overlay_time_is_not_also_inside_viewport_time() {
 /// `other_ms` breaks this silently.
 #[test]
 fn breakdown_phases_still_account_for_cpu_prepare() {
+    let _serial = serial();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;

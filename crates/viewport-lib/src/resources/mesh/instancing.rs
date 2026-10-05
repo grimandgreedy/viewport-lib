@@ -109,8 +109,8 @@ pub(crate) struct CullResources {
 pub(crate) struct InstancedLdrContext {
     device: crate::gpu::Device,
     layout: crate::gpu::PipelineLayout,
-    shader: crate::gpu::ShaderModule,
-    shader_nodiscard: crate::gpu::ShaderModule,
+    shader: crate::resources::pipeline_slot::LazyModule,
+    shader_nodiscard: crate::resources::pipeline_slot::LazyModule,
     target_format: crate::gpu::TextureFormat,
     sample_count: u32,
 }
@@ -122,10 +122,10 @@ pub(crate) struct InstancedLdrContext {
 pub(crate) struct InstancedHdrContext {
     device: crate::gpu::Device,
     solid_layout: crate::gpu::PipelineLayout,
-    solid_shader: crate::gpu::ShaderModule,
-    solid_shader_nodiscard: crate::gpu::ShaderModule,
+    solid_shader: crate::resources::pipeline_slot::LazyModule,
+    solid_shader_nodiscard: crate::resources::pipeline_slot::LazyModule,
     blend_layout: crate::gpu::PipelineLayout,
-    blend_shader: crate::gpu::ShaderModule,
+    blend_shader: crate::resources::pipeline_slot::LazyModule,
 }
 
 /// What an instanced shadow pipeline build reads: the depth-only layout, the
@@ -135,7 +135,7 @@ pub(crate) struct InstancedShadowRecipe {
     device: crate::gpu::Device,
     layout: crate::gpu::PipelineLayout,
     cutout_layout: crate::gpu::PipelineLayout,
-    shader: crate::gpu::ShaderModule,
+    shader: crate::resources::pipeline_slot::LazyModule,
     label: &'static str,
     vs_main: &'static str,
     vs_cutout: &'static str,
@@ -174,11 +174,11 @@ fn build_instanced_shadow(r: &InstancedShadowRecipe, i: usize) -> crate::gpu::Re
         crate::resources::builders::RenderPipelineDesc {
             label: &label,
             layout: if cutout { &r.cutout_layout } else { &r.layout },
-            vertex_module: &r.shader,
+            vertex_module: r.shader.get(),
             vertex_entry: if cutout { r.vs_cutout } else { r.vs_main },
             vertex_buffers: &[Vertex::buffer_layout()],
             fragment: cutout.then(|| crate::gpu::FragmentState {
-                module: &r.shader,
+                module: r.shader.get(),
                 entry_point: Some("fs_cutout"),
                 targets: &[],
                 compilation_options: crate::gpu::PipelineCompilationOptions::default(),
@@ -207,8 +207,8 @@ fn build_instanced_shadow(r: &InstancedShadowRecipe, i: usize) -> crate::gpu::Re
 pub(crate) struct CullHdrContext {
     device: crate::gpu::Device,
     layout: crate::gpu::PipelineLayout,
-    shader: crate::gpu::ShaderModule,
-    shader_nodiscard: crate::gpu::ShaderModule,
+    shader: crate::resources::pipeline_slot::LazyModule,
+    shader_nodiscard: crate::resources::pipeline_slot::LazyModule,
 }
 
 /// Solid slot index for `key`: bit 0 two-sided, bit 1 discard-free.
@@ -234,7 +234,7 @@ fn build_instanced_ldr(ctx: &InstancedLdrContext, i: usize) -> crate::gpu::Rende
         return instanced_mesh_pipeline(
             &ctx.device,
             &ctx.layout,
-            &ctx.shader,
+            ctx.shader.get(),
             ctx.target_format,
             ctx.sample_count,
             "transparent_instanced_pipeline",
@@ -244,9 +244,9 @@ fn build_instanced_ldr(ctx: &InstancedLdrContext, i: usize) -> crate::gpu::Rende
         );
     }
     let shader = if i & 2 != 0 {
-        &ctx.shader_nodiscard
+        ctx.shader_nodiscard.get()
     } else {
-        &ctx.shader
+        ctx.shader.get()
     };
     instanced_mesh_pipeline(
         &ctx.device,
@@ -269,29 +269,29 @@ fn build_instanced_hdr(ctx: &InstancedHdrContext, i: usize) -> crate::gpu::Rende
         INSTANCED_TRANSPARENT => hdr_instanced_blend_pipeline(
             &ctx.device,
             &ctx.blend_layout,
-            &ctx.blend_shader,
+            ctx.blend_shader.get(),
             "hdr_transparent_instanced_pipeline",
             crate::gpu::BlendState::ALPHA_BLENDING,
         ),
         INSTANCED_ADDITIVE => hdr_instanced_blend_pipeline(
             &ctx.device,
             &ctx.blend_layout,
-            &ctx.blend_shader,
+            ctx.blend_shader.get(),
             "hdr_instanced_additive_pipeline",
             crate::resources::mesh::mesh_pipelines::ADDITIVE_BLEND,
         ),
         INSTANCED_PREMULTIPLIED => hdr_instanced_blend_pipeline(
             &ctx.device,
             &ctx.blend_layout,
-            &ctx.blend_shader,
+            ctx.blend_shader.get(),
             "hdr_instanced_premultiplied_pipeline",
             crate::resources::mesh::mesh_pipelines::PREMULTIPLIED_BLEND,
         ),
         _ => {
             let shader = if i & 2 != 0 {
-                &ctx.solid_shader_nodiscard
+                ctx.solid_shader_nodiscard.get()
             } else {
-                &ctx.solid_shader
+                ctx.solid_shader.get()
             };
             instanced_mesh_pipeline(
                 &ctx.device,
@@ -310,9 +310,9 @@ fn build_instanced_hdr(ctx: &InstancedHdrContext, i: usize) -> crate::gpu::Rende
 
 fn build_cull_hdr(ctx: &CullHdrContext, i: usize) -> crate::gpu::RenderPipeline {
     let shader = if i & 2 != 0 {
-        &ctx.shader_nodiscard
+        ctx.shader_nodiscard.get()
     } else {
-        &ctx.shader
+        ctx.shader.get()
     };
     crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline_with(
         &ctx.device,
@@ -331,7 +331,7 @@ fn build_cull_oit(
     crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
         &ctx.device,
         &ctx.layout,
-        &ctx.shader,
+        ctx.shader.get(),
         if two_sided {
             "oit_instanced_cull_pipeline_two_sided"
         } else {
@@ -476,7 +476,7 @@ impl DeviceResources {
         &self,
         device: &crate::gpu::Device,
         label: &str,
-    ) -> crate::gpu::ShaderModule {
+    ) -> crate::resources::pipeline_slot::LazyModule {
         self.shared_module(device, label, &self.instanced_shader_source(false))
     }
 
@@ -486,7 +486,10 @@ impl DeviceResources {
         &self,
         device: &crate::gpu::Device,
         label: &str,
-    ) -> (crate::gpu::ShaderModule, crate::gpu::ShaderModule) {
+    ) -> (
+        crate::resources::pipeline_slot::LazyModule,
+        crate::resources::pipeline_slot::LazyModule,
+    ) {
         self.instanced_module_pair(device, label, false)
     }
 
@@ -496,7 +499,10 @@ impl DeviceResources {
         &self,
         device: &crate::gpu::Device,
         label: &str,
-    ) -> (crate::gpu::ShaderModule, crate::gpu::ShaderModule) {
+    ) -> (
+        crate::resources::pipeline_slot::LazyModule,
+        crate::resources::pipeline_slot::LazyModule,
+    ) {
         self.instanced_module_pair(device, label, true)
     }
 
@@ -505,7 +511,10 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         label: &str,
         bindless: bool,
-    ) -> (crate::gpu::ShaderModule, crate::gpu::ShaderModule) {
+    ) -> (
+        crate::resources::pipeline_slot::LazyModule,
+        crate::resources::pipeline_slot::LazyModule,
+    ) {
         // The LDR, HDR and culled families all compile this source, so the two
         // modules are shared between them.
         let source = self.instanced_shader_source(bindless);
@@ -646,7 +655,7 @@ impl DeviceResources {
             .then(|| crate::resources::mesh::instanced_bindless::bindless_instance_bgl(device));
 
         // Shadow instanced pipeline.
-        let shadow_instanced_shader = crate::resources::builders::wgsl_module(
+        let shadow_instanced_shader = self.shared_module(
             device,
             "shadow_instanced_shader",
             crate::resources::builders::wgsl_source!("shadow_instanced"),
@@ -1280,7 +1289,7 @@ impl DeviceResources {
             "shadow_instanced_cull_pipeline_layout",
             &[&shadow_bgl_for_cull, &shadow_cull_bgl],
         );
-        let shadow_cull_shader = crate::resources::builders::wgsl_module(
+        let shadow_cull_shader = self.shared_module(
             device,
             "shadow_instanced_cull_shader",
             crate::resources::builders::wgsl_source!("shadow_instanced"),
