@@ -37,7 +37,7 @@ fn main() {
         }
     }
 
-    let minify = std::env::var_os("CARGO_FEATURE_MINIFY_SHADERS").is_some();
+    let minify = minify_wgsl::enabled();
     for (name, path) in &shaders {
         println!("cargo:rerun-if-changed={}", path.display());
         let source = fs::read_to_string(path)

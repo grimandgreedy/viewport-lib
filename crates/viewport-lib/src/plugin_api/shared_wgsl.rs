@@ -22,8 +22,8 @@
 //! );
 //! ```
 //!
-//! With the `minify-shaders` feature, the helpers are embedded with their
-//! comments and indentation removed, so match on statements rather than on
+//! On wasm32, or with the `minify-shaders` feature, the helpers are embedded
+//! with their comments and indentation removed, so match on statements rather than on
 //! comments or leading whitespace if you rewrite one.
 
 /// Catalog version. Bumped on any breaking change to a helper signature,
