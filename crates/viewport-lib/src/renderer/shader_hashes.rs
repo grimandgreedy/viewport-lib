@@ -307,6 +307,19 @@ return a;
             ("SHARED_CLIP_VOLUME_WGSL", s::SHARED_CLIP_VOLUME_WGSL),
             ("SHARED_BRDF_WGSL", s::SHARED_BRDF_WGSL),
             ("SHARED_OUTLINE_EDGE_WGSL", s::SHARED_OUTLINE_EDGE_WGSL),
+            ("SHARED_BINDINGS_WGSL", s::SHARED_BINDINGS_WGSL),
+            ("SHARED_PBR_WGSL", s::SHARED_PBR_WGSL),
+            ("SHARED_OIT_WGSL", s::SHARED_OIT_WGSL),
+            ("SHARED_DEPTH_READ_WGSL", s::SHARED_DEPTH_READ_WGSL),
+            ("SHARED_MASK_WGSL", s::SHARED_MASK_WGSL),
+            (
+                "SHARED_SHADOW_BINDINGS_WGSL",
+                s::SHARED_SHADOW_BINDINGS_WGSL,
+            ),
+            ("SHARED_PICK_WGSL", s::SHARED_PICK_WGSL),
+            ("SHARED_PICK_INSTANCE_WGSL", s::SHARED_PICK_INSTANCE_WGSL),
+            ("POST_EFFECT_VS_WGSL", s::POST_EFFECT_VS_WGSL),
+            ("SHARED_PICK_PRIM_WGSL", s::SHARED_PICK_PRIM_WGSL),
         ]);
         for (name, src) in sources {
             assert_eq!(minify_wgsl(src), src, "{name} was embedded unminified");
