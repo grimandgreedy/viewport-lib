@@ -154,7 +154,7 @@ impl PostEffectProducer for ContactShadowEffect {
         let shader = wgsl_module(
             device,
             "external_cs_shader",
-            include_str!("shaders/contact_shadow.wgsl"),
+            include_str!(concat!(env!("OUT_DIR"), "/contact_shadow.wgsl")),
         );
         self.pipeline = Some(build_post_effect_pipeline(
             device,

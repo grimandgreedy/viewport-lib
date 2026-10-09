@@ -146,9 +146,9 @@ enum Pass {
 impl Pass {
     fn shader(self) -> &'static str {
         match self {
-            Pass::ColourGrade => include_str!("shaders/colour_grade.wgsl"),
-            Pass::DepthFog => include_str!("shaders/depth_fog.wgsl"),
-            Pass::EdgeDetect => include_str!("shaders/edge_detect.wgsl"),
+            Pass::ColourGrade => include_str!(concat!(env!("OUT_DIR"), "/colour_grade.wgsl")),
+            Pass::DepthFog => include_str!(concat!(env!("OUT_DIR"), "/depth_fog.wgsl")),
+            Pass::EdgeDetect => include_str!(concat!(env!("OUT_DIR"), "/edge_detect.wgsl")),
         }
     }
 

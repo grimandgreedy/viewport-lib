@@ -10,6 +10,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "build/minify_wgsl.rs"]
+mod minify_wgsl;
+
 fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let out_dir = std::env::var("OUT_DIR").unwrap();
@@ -17,6 +20,7 @@ fn main() {
 
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=build/minify_wgsl.rs");
 
     let mut shaders: Vec<(String, PathBuf)> = Vec::new();
     collect_wgsl(&src_dir, &mut shaders);
@@ -33,10 +37,16 @@ fn main() {
         }
     }
 
+    let minify = std::env::var_os("CARGO_FEATURE_MINIFY_SHADERS").is_some();
     for (name, path) in &shaders {
         println!("cargo:rerun-if-changed={}", path.display());
         let source = fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("build.rs: failed to read {}: {}", path.display(), e));
+        let source = if minify {
+            minify_wgsl::minify_wgsl(&source)
+        } else {
+            source
+        };
         let out_path = PathBuf::from(&out_dir).join(name);
         fs::write(&out_path, source)
             .unwrap_or_else(|e| panic!("build.rs: failed to write {}: {}", out_path.display(), e));
