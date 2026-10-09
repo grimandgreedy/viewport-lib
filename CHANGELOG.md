@@ -50,6 +50,7 @@
 
 ### Changed
 
+- **Built-in overlay font is now Roboto, 99 KB instead of 402 KB** - Roboto Regular replaces Inter Regular, cut to Latin through Extended-B, Greek, Cyrillic, punctuation, super/subscripts, currency, letterlike symbols, arrows and maths operators. Text outside that set (Vietnamese, for example) needs a font passed to `upload_font`. Overlay text renders with Roboto's shapes and spacing, and glyph ids in a `GlyphRunItem` that used the built-in font now name different glyphs.
 - **Per-object draws cost about half as much to prepare** - the per-frame maps behind material interning and the per-item bind group cache use a cheap hash instead of SipHash, a run of items sharing a material skips the lookup, and per-object shadow casters bind their pipeline, bind groups and geometry once per run instead of per draw. 10,000 per-object items with a shadow-casting sun go from 10.8 to 5.7 ms of prepare on an M4 Pro; instanced scenes save a little in the shadow stage, which no longer re-tests each item for instancing per cascade.
 - **Rendering into a target of the wrong format panics at the call** - `render`, `render_to_texture` and the other calls that draw into a caller's view now check the view's texture against the format the renderer was created for, and panic naming both. Before, the frame failed wgpu validation inside whichever pass bound a pipeline first (usually the tone map). A linear texture viewed as the renderer's sRGB format is still accepted.
 

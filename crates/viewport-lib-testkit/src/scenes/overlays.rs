@@ -226,8 +226,10 @@ fn backdrop(ctx: &mut BuildCtx<'_>, overlays: OverlayFrame) -> BuiltScene {
 /// Glyph ids into the built-in font's glyph table, not codepoints. Fixed
 /// literals rather than a lookup: the run path takes ids as given and never
 /// sees text, so what matters for the reference image is that the same ids
-/// rasterise to the same bitmaps every run.
-const RUN_IDS: [u16; 7] = [55, 82, 89, 87, 80, 74, 81];
+/// rasterise to the same bitmaps every run. They name letters with marks above,
+/// below and stacked, so a misplaced glyph box shows up as a clipped accent:
+/// Ǻ Ɔ Ș Ď Ç Ƈ Ȼ. Changing the built-in font changes what these ids name.
+const RUN_IDS: [u16; 7] = [744, 153, 877, 807, 745, 154, 236];
 
 fn run_glyphs(advance: f32) -> Vec<PositionedGlyph> {
     RUN_IDS
