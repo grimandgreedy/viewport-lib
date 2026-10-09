@@ -221,7 +221,7 @@ impl CutDeformer {
                 // `deform` moves nothing and `keep` runs after every stage, so
                 // the cut sees the final position whatever its place here.
                 priority: 0,
-                wgsl_body: include_str!("cut.wgsl").to_string(),
+                wgsl_body: include_str!(concat!(env!("OUT_DIR"), "/cut.wgsl")).to_string(),
                 per_vertex_stride: 4,
             },
         )?;

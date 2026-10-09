@@ -21,6 +21,11 @@
 //!     this_pipeline_specific_wgsl = include_str!("my_shader.wgsl"),
 //! );
 //! ```
+//!
+//! With the `minify-shaders` feature, the helpers that live in `.wgsl` files
+//! are embedded with their comments and indentation removed, so match on
+//! statements rather than on comments or leading whitespace if you rewrite
+//! one.
 
 /// Catalog version. Bumped on any breaking change to a helper signature,
 /// struct field, or binding number. Plugins should assert against this at
@@ -233,7 +238,8 @@ fn viewport_clip_test(world_pos: vec3<f32>) -> bool {
 /// It applies no shadow term. Multiply by
 /// [`viewport_sample_csm`](SHARED_PBR_WGSL) yourself if the item casts into
 /// the cascade atlas.
-pub const SHARED_SCENE_LIGHTING_WGSL: &str = include_str!("../shaders/helpers/scene_lighting.wgsl");
+pub const SHARED_SCENE_LIGHTING_WGSL: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/helpers/scene_lighting.wgsl"));
 
 /// The cascaded shadow-map sampler the renderer's own lit shaders use.
 ///
@@ -252,7 +258,7 @@ pub const SHARED_SCENE_LIGHTING_WGSL: &str = include_str!("../shaders/helpers/sc
 /// for a body composing [`SHARED_BINDINGS_WGSL`] instead, and returns only the
 /// factor. Take this one when the item needs the full sample, or when it is
 /// already composing the clustered lighting path.
-pub const SHARED_CSM_WGSL: &str = include_str!("../shaders/helpers/csm.wgsl");
+pub const SHARED_CSM_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/helpers/csm.wgsl"));
 
 /// The section-view clip-volume test, for a body that declares its own group-0
 /// bindings.
@@ -267,7 +273,8 @@ pub const SHARED_CSM_WGSL: &str = include_str!("../shaders/helpers/csm.wgsl");
 /// `viewport_pass_clip_volumes`, so compose this only when the body cannot
 /// take the shared bindings: it reads the `clip_volume: ClipVolumeUB` uniform
 /// the body declares at binding 6, and declares nothing itself.
-pub const SHARED_CLIP_VOLUME_WGSL: &str = include_str!("../shaders/helpers/clip_volume_test.wgsl");
+pub const SHARED_CLIP_VOLUME_WGSL: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/helpers/clip_volume_test.wgsl"));
 
 /// The direct Cook-Torrance BRDF the renderer's lit mesh shaders evaluate.
 ///
@@ -275,7 +282,7 @@ pub const SHARED_CLIP_VOLUME_WGSL: &str = include_str!("../shaders/helpers/clip_
 /// that shades with the scene's lights itself and wants its highlights to
 /// match the surface it sits on. It declares no bindings and reads none, so
 /// it composes after either set of group-0 declarations.
-pub const SHARED_BRDF_WGSL: &str = include_str!("../shaders/helpers/brdf.wgsl");
+pub const SHARED_BRDF_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/helpers/brdf.wgsl"));
 
 /// The fullscreen edge trace the selection outline uses: a complete shader,
 /// vertex and fragment stage, that reads a single-channel coverage mask and
@@ -286,7 +293,8 @@ pub const SHARED_BRDF_WGSL: &str = include_str!("../shaders/helpers/brdf.wgsl");
 /// is the mask texture at binding 0, a filtering sampler at binding 1 and an
 /// [`OutlineEdgeUniform`](crate::resources::OutlineEdgeUniform) at binding 2;
 /// the entry points are `vs_main` and `fs_main`.
-pub const SHARED_OUTLINE_EDGE_WGSL: &str = include_str!("../shaders/outline_edge.wgsl");
+pub const SHARED_OUTLINE_EDGE_WGSL: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/outline_edge.wgsl"));
 
 /// Shared PBR shading helper.
 ///

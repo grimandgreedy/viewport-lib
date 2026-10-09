@@ -2,6 +2,9 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "build/minify_wgsl.rs"]
+mod minify_wgsl;
+
 fn main() {
     // Exclusive selectors for the wgpu version legs, so the seam modules read
     // `#[cfg(wgpu27)]` ("27 and only 27") instead of the verbose
@@ -25,6 +28,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/shaders");
     println!("cargo:rerun-if-changed=src/renderer/item_plugins");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=build/minify_wgsl.rs");
 
     // (bare file name, full source path). Names must stay globally unique:
     // OUT_DIR output is flat and every include_str! site keys on the name.
@@ -60,6 +64,16 @@ fn main() {
     let is_ios = std::env::var("CARGO_CFG_TARGET_OS")
         .map(|v| v == "ios")
         .unwrap_or(false);
+    // Stripping runs last, after include resolution and the iOS patch, both of
+    // which match on comments or indentation.
+    let minify = std::env::var_os("CARGO_FEATURE_MINIFY_SHADERS").is_some();
+    let finish = |source: String| {
+        if minify {
+            minify_wgsl::minify_wgsl(&source)
+        } else {
+            source
+        }
+    };
 
     for (name, src_path) in &shaders {
         let raw = fs::read_to_string(src_path)
@@ -74,7 +88,7 @@ fn main() {
             preprocessed
         };
         let out_path = PathBuf::from(&out_dir).join(name);
-        fs::write(&out_path, preprocessed)
+        fs::write(&out_path, finish(preprocessed))
             .unwrap_or_else(|e| panic!("build.rs: failed to write {}: {}", out_path.display(), e));
     }
 
@@ -123,7 +137,33 @@ fn main() {
         };
         let noop_name = name.replace(".wgsl", "_noop.wgsl");
         let out_path = PathBuf::from(&out_dir).join(&noop_name);
-        fs::write(&out_path, preprocessed)
+        fs::write(&out_path, finish(preprocessed))
+            .unwrap_or_else(|e| panic!("build.rs: failed to write {}: {}", out_path.display(), e));
+    }
+
+    // The helpers `plugin_api::shared_wgsl` publishes as string constants go
+    // through OUT_DIR too, so they get the same treatment as the shaders.
+    let helpers_dir = shaders_dir.join("helpers");
+    let helpers_out = PathBuf::from(&out_dir).join("helpers");
+    fs::create_dir_all(&helpers_out).unwrap_or_else(|e| {
+        panic!(
+            "build.rs: failed to create {}: {}",
+            helpers_out.display(),
+            e
+        )
+    });
+    for entry in fs::read_dir(&helpers_dir)
+        .unwrap_or_else(|e| panic!("build.rs: failed to read {}: {}", helpers_dir.display(), e))
+        .flatten()
+    {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("wgsl") {
+            continue;
+        }
+        let raw = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("build.rs: failed to read {}: {}", path.display(), e));
+        let out_path = helpers_out.join(path.file_name().unwrap());
+        fs::write(&out_path, finish(raw))
             .unwrap_or_else(|e| panic!("build.rs: failed to write {}: {}", out_path.display(), e));
     }
 

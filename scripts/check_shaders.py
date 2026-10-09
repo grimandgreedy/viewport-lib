@@ -21,7 +21,9 @@ family. Those produce sources this never sees.
 
 Usage:
 
-    scripts/check_shaders.py [--no-build] [--chrome PATH]
+    scripts/check_shaders.py [--no-build] [--minify] [--chrome PATH]
+
+`--minify` checks the shaders as the `minify-shaders` feature embeds them.
 
 Chrome is found at the usual macOS and Linux locations, or set VPL_CHROME.
 """
@@ -101,14 +103,14 @@ main()
 """
 
 
-def out_dir_from_cargo(repo_root, build):
+def out_dir_from_cargo(repo_root, build, features):
     """Ask cargo where build.rs wrote the composed shaders.
 
     The path has a hash in it and several stale ones usually sit alongside it,
     so read it from cargo rather than guessing at the newest directory.
     """
     verb = "build" if build else "check"
-    cmd = ["cargo", verb, "-p", "viewport-lib", "--message-format", "json"]
+    cmd = ["cargo", verb, "-p", "viewport-lib", "--message-format", "json"] + features
     result = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True)
     if result.returncode != 0:
         sys.stderr.write(result.stderr)
@@ -134,7 +136,7 @@ def out_dir_from_cargo(repo_root, build):
     return out
 
 
-def item_type_shaders(repo_root, build):
+def item_type_shaders(repo_root, build, features):
     """The plugins crate composes its shaders in Rust, so ask them.
 
     A body under `src/` is a fragment: it declares no group-0 bindings and
@@ -142,6 +144,7 @@ def item_type_shaders(repo_root, build):
     actually compiles, so it prints the composed set.
     """
     cmd = ["cargo", "run", "-q", "-p", "viewport-lib-plugins", "--example", "dump_shaders"]
+    cmd += features
     if not build:
         cmd.append("--offline")
     result = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True)
@@ -176,12 +179,18 @@ def main():
         action="store_true",
         help="use the shaders from the last build instead of building first",
     )
+    parser.add_argument(
+        "--minify",
+        action="store_true",
+        help="build with the minify-shaders feature and check the stripped shaders",
+    )
     parser.add_argument("--chrome", help="path to a Chrome or Chromium binary")
     args = parser.parse_args()
+    features = ["--features", "minify-shaders"] if args.minify else []
 
     repo_root = pathlib.Path(__file__).resolve().parent.parent
     chrome = find_chrome(args.chrome)
-    out_dir = out_dir_from_cargo(repo_root, build=not args.no_build)
+    out_dir = out_dir_from_cargo(repo_root, build=not args.no_build, features=features)
 
     shaders = {p.name: p.read_text() for p in sorted(out_dir.glob("*.wgsl"))}
     if not shaders:
@@ -196,7 +205,7 @@ def main():
             shaders[f"{name}+keep"] = source.replace(keep_tag, "")
     # Namespaced, because a name can legitimately appear in both sets while a
     # type is mid-migration and the two copies are different sources.
-    for name, source in item_type_shaders(repo_root, build=not args.no_build).items():
+    for name, source in item_type_shaders(repo_root, build=not args.no_build, features=features).items():
         shaders[f"plugins/{name}"] = source
     print(f"checking {len(shaders)} shaders from {out_dir}")
 
