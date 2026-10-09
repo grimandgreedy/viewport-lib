@@ -66,7 +66,7 @@ fn main() {
         .unwrap_or(false);
     // Stripping runs last, after include resolution and the iOS patch, both of
     // which match on comments or indentation.
-    let minify = std::env::var_os("CARGO_FEATURE_MINIFY_SHADERS").is_some();
+    let minify = minify_wgsl::enabled();
     let finish = |source: String| {
         if minify {
             minify_wgsl::minify_wgsl(&source)

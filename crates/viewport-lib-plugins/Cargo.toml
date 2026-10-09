@@ -39,6 +39,6 @@ wgpu27 = ["viewport-lib/wgpu27"]
 wgpu29 = ["viewport-lib/wgpu29"]
 wgpu30 = ["viewport-lib/wgpu30"]
 serde = ["viewport-lib/serde"]
-# Embed this crate's WGSL with comments and indentation removed, and turn on the
-# same feature in viewport-lib.
+# Embed this crate's WGSL with comments and indentation removed (the default on
+# wasm32), and turn on the same feature in viewport-lib.
 minify-shaders = ["viewport-lib/minify-shaders"]

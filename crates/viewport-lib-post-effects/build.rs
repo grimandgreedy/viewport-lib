@@ -1,5 +1,5 @@
 //! Copy `src/shaders/*.wgsl` into `OUT_DIR`, stripped of comments and
-//! indentation when the `minify-shaders` feature is on.
+//! indentation with the `minify-shaders` feature or on wasm32.
 
 use std::fs;
 use std::path::PathBuf;
@@ -16,7 +16,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=build/minify_wgsl.rs");
 
-    let minify = std::env::var_os("CARGO_FEATURE_MINIFY_SHADERS").is_some();
+    let minify = minify_wgsl::enabled();
     for entry in fs::read_dir(&shaders_dir)
         .unwrap_or_else(|e| panic!("build.rs: failed to read {}: {}", shaders_dir.display(), e))
         .flatten()

@@ -210,6 +210,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 #[path = "../../build/minify_wgsl.rs"]
 mod minify_wgsl;
 

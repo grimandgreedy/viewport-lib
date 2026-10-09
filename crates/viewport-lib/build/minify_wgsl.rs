@@ -1,9 +1,22 @@
-// WGSL comment and indentation stripping for the `minify-shaders` feature.
+// WGSL comment and indentation stripping: on with the `minify-shaders`
+// feature, and on by default for wasm32 unless `VPL_READABLE_SHADERS` is set.
 //
 // This file is shared by the build scripts of viewport-lib,
 // viewport-lib-plugins and viewport-lib-post-effects. Each crate keeps an
 // identical copy under `build/` (a published crate cannot reach a sibling's
 // files), and a viewport-lib test checks the copies have not drifted.
+
+/// Whether this build should strip its WGSL. Call from a build script.
+///
+/// The `minify-shaders` feature always strips. A wasm32 build strips by
+/// default, since its shaders are downloaded on every page load; set
+/// `VPL_READABLE_SHADERS` in the environment to keep them readable there.
+pub fn enabled() -> bool {
+    println!("cargo:rerun-if-env-changed=VPL_READABLE_SHADERS");
+    let feature = std::env::var_os("CARGO_FEATURE_MINIFY_SHADERS").is_some();
+    let wasm = std::env::var("CARGO_CFG_TARGET_ARCH").is_ok_and(|a| a == "wasm32");
+    feature || (wasm && std::env::var_os("VPL_READABLE_SHADERS").is_none())
+}
 
 /// Strip line comments, blank lines and leading and trailing whitespace from
 /// WGSL source.
