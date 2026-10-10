@@ -130,7 +130,9 @@ fn combine_clip(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
     if (!b_valid) { return a; }
     let r = vec4<f32>(max(a.x, b.x), max(a.y, b.y), min(a.z, b.z), min(a.w, b.w));
     if (r.z <= r.x || r.w <= r.y) {
-        return vec4<f32>(1.0e9, 1.0e9, 1.0e9 + 1.0, 1.0e9 + 1.0);
+        // Off the top-left, where no fragment falls. Not far off to the
+        // right: 1e9 + 1 rounds to 1e9 in f32 and the box would lose its area.
+        return vec4<f32>(-2.0, -2.0, -1.0, -1.0);
     }
     return r;
 }

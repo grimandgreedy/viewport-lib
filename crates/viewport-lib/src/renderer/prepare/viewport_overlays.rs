@@ -187,11 +187,33 @@ pub(super) fn emit_vector_shape(
     }
 }
 
-/// Intersect two clip boxes in framebuffer pixels. An all-zero box means "no
-/// clip", so the other wins; two real boxes intersect, and a non-overlapping
-/// pair returns an off-screen box so nothing survives. This mirrors
-/// `combine_clip` in the overlay shaders, which does the same for the instance
-/// half of the clip.
+/// A clip box that lies wholly off screen, so every fragment tested against it
+/// is discarded. It sits above and left of the framebuffer, where no fragment
+/// position falls, and keeps a real area: a box far off to the right would need
+/// large coordinates, where `x + 1.0` rounds back to `x` in f32 and the box
+/// collapses into the "no clip" sentinel.
+const OFFSCREEN_CLIP_RECT: [f32; 4] = [-2.0, -2.0, -1.0, -1.0];
+
+/// Scale a public `OverlayClip::rect` from logical to framebuffer pixels.
+///
+/// The shaders and `combine_clip_rects` read any box without area as "no
+/// clip", which is the internal sentinel. A public box without area is an
+/// empty intersection and must clip everything, so it becomes the off-screen
+/// box instead.
+pub(super) fn clip_rect_to_framebuffer(r: [f32; 4], ppp: f32) -> [f32; 4] {
+    if r[2] > r[0] && r[3] > r[1] {
+        [r[0] * ppp, r[1] * ppp, r[2] * ppp, r[3] * ppp]
+    } else {
+        OFFSCREEN_CLIP_RECT
+    }
+}
+
+/// Intersect two clip boxes in framebuffer pixels. A box without area means
+/// "no clip", so the other wins; two real boxes intersect, and a
+/// non-overlapping pair returns an off-screen box so nothing survives. This
+/// mirrors `combine_clip` in the overlay shaders, which does the same for the
+/// instance half of the clip. Public boxes reach here through
+/// `clip_rect_to_framebuffer`, so an empty one is never read as no clip.
 fn combine_clip_rects(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     let a_valid = a[2] > a[0] && a[3] > a[1];
     let b_valid = b[2] > b[0] && b[3] > b[1];
@@ -208,7 +230,7 @@ fn combine_clip_rects(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
         a[3].min(b[3]),
     ];
     if r[2] <= r[0] || r[3] <= r[1] {
-        return [1.0e9, 1.0e9, 1.0e9 + 1.0, 1.0e9 + 1.0];
+        return OFFSCREEN_CLIP_RECT;
     }
     r
 }
@@ -634,7 +656,7 @@ impl ViewportRenderer {
                                   clip_id: Option<u32>,
                                   clip_rect: Option<[f32; 4]>| {
                     let mask = clip_id.and_then(|id| clip_index_of.get(&id).copied());
-                    let rect = clip_rect.map(|r| [r[0] * ppp, r[1] * ppp, r[2] * ppp, r[3] * ppp]);
+                    let rect = clip_rect.map(|r| clip_rect_to_framebuffer(r, ppp));
                     if mask.is_none() && rect.is_none() {
                         return;
                     }
@@ -1377,7 +1399,7 @@ impl ViewportRenderer {
                     // `clip_rect` if set, else the mask's own bbox (a cheap reject
                     // matching the shaped mask), else none.
                     let clip_rect = if let Some(rect) = r.clip.rect {
-                        [rect[0] * ppp, rect[1] * ppp, rect[2] * ppp, rect[3] * ppp]
+                        clip_rect_to_framebuffer(rect, ppp)
                     } else if let Some(bb) = mask_bbox {
                         bb
                     } else {
@@ -2010,10 +2032,7 @@ impl ViewportRenderer {
                         [0.0, 0.0, 0.0, 0.0]
                     };
                     let clip_rect = match shape.clip.rect {
-                        Some(r) => combine_clip_rects(
-                            mask_rect,
-                            [r[0] * ppp, r[1] * ppp, r[2] * ppp, r[3] * ppp],
-                        ),
+                        Some(r) => combine_clip_rects(mask_rect, clip_rect_to_framebuffer(r, ppp)),
                         None => mask_rect,
                     };
                     let clip_index = clip_index_i as f32;
