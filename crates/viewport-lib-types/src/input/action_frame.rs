@@ -22,7 +22,9 @@ pub enum ResolvedActionState {
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct NavigationActions {
-    /// Orbit delta in radians (x = yaw, y = pitch). Zero if no orbit input.
+    /// Orbit drag delta in viewport pixels (x = yaw, y = pitch). Zero if no
+    /// orbit input. A camera controller turns it into an angle with its own
+    /// sensitivity.
     pub orbit: glam::Vec2,
     /// Pan delta in viewport-local pixels (x = right, y = down). Zero if no pan input.
     pub pan: glam::Vec2,
