@@ -692,6 +692,55 @@ impl OverlayShapeItem {
         )
     }
 
+    /// Build a filled polygon from points in screen space (logical pixels).
+    ///
+    /// The points' bounding box becomes the item's position and size, and the
+    /// path is shifted into the item's local space, so the polygon draws where
+    /// the points are. Uses [`FillRule::NonZero`]. Fewer than three points
+    /// gives an empty, zero-size item.
+    pub fn polygon(points: &[[f32; 2]]) -> Self {
+        if points.len() < 3 {
+            return Self::vector(Vec::new(), FillRule::NonZero, [0.0, 0.0], [0.0, 0.0]);
+        }
+        let (lo, hi) = points
+            .iter()
+            .skip(1)
+            .fold((points[0], points[0]), |(lo, hi), p| {
+                (
+                    [lo[0].min(p[0]), lo[1].min(p[1])],
+                    [hi[0].max(p[0]), hi[1].max(p[1])],
+                )
+            });
+        let path = SubPath::polygon(points).map_points(|p| [p[0] - lo[0], p[1] - lo[1]]);
+        Self::vector(
+            vec![path],
+            FillRule::NonZero,
+            lo,
+            [hi[0] - lo[0], hi[1] - lo[1]],
+        )
+    }
+
+    /// Set `size`, and for an [`OverlayShape::Vector`] scale the path with it.
+    ///
+    /// An analytic shape always fills its box, but a vector path keeps the
+    /// coordinates it was drawn with, so changing `size` alone leaves the path
+    /// where it was. This scales the path by `size / self.size` on each axis,
+    /// so it keeps its place within its box, padding included. An axis whose
+    /// current size is zero is left unscaled. For an analytic shape this is
+    /// the same as setting `size`.
+    pub fn with_size_fitted(mut self, size: [f32; 2]) -> Self {
+        if let OverlayShape::Vector { subpaths, .. } = &mut self.shape {
+            let factor = |new: f32, old: f32| if old > 0.0 { new / old } else { 1.0 };
+            let fx = factor(size[0], self.size[0]);
+            let fy = factor(size[1], self.size[1]);
+            for sp in subpaths.iter_mut() {
+                *sp = std::mem::take(sp).map_points(|p| [p[0] * fx, p[1] * fy]);
+            }
+        }
+        self.size = size;
+        self
+    }
+
     /// Set the whole baked appearance at once.
     pub fn with_style(mut self, style: OverlayStyle) -> Self {
         self.style = style;
@@ -1323,6 +1372,47 @@ mod tests {
             assert!(s.contains(to_screen(inside)), "inside {corner:?}");
             assert!(!s.contains(to_screen(outside)), "outside {corner:?}");
         }
+    }
+
+    #[test]
+    fn polygon_draws_where_its_points_are() {
+        let pts = [[100.0, 50.0], [160.0, 70.0], [120.0, 130.0]];
+        let s = OverlayShapeItem::polygon(&pts);
+        assert_eq!(s.transform.translate, [100.0, 50.0]);
+        assert_eq!(s.size, [60.0, 80.0]);
+        let centroid = [
+            (pts[0][0] + pts[1][0] + pts[2][0]) / 3.0,
+            (pts[0][1] + pts[1][1] + pts[2][1]) / 3.0,
+        ];
+        assert!(s.contains(centroid));
+        assert!(
+            !s.contains([101.0, 129.0]),
+            "inside the box, outside the triangle"
+        );
+
+        let empty = OverlayShapeItem::polygon(&pts[..2]);
+        assert_eq!(empty.size, [0.0, 0.0]);
+        assert!(!empty.contains([100.0, 50.0]));
+    }
+
+    #[test]
+    fn size_fitted_scales_a_vector_path_with_its_box() {
+        // A 10x10 square drawn in a 20x20 box with 5 px of padding all round.
+        let square = SubPath::polygon(&[[5.0, 5.0], [15.0, 5.0], [15.0, 15.0], [5.0, 15.0]]);
+        let s = OverlayShapeItem::vector(vec![square], FillRule::NonZero, [0.0, 0.0], [20.0, 20.0])
+            .with_size_fitted([40.0, 80.0]);
+        assert_eq!(s.size, [40.0, 80.0]);
+        let OverlayShape::Vector { subpaths, .. } = &s.shape else {
+            unreachable!()
+        };
+        assert_eq!(path_bounds(subpaths), Some(([10.0, 20.0], [30.0, 60.0])));
+        assert!(s.contains([20.0, 40.0]));
+        assert!(!s.contains([5.0, 10.0]), "the padding scaled too");
+
+        // An analytic shape just takes the size.
+        let c = OverlayShapeItem::new(OverlayShape::Circle, [0.0, 0.0], [10.0, 10.0])
+            .with_size_fitted([30.0, 30.0]);
+        assert_eq!(c.size, [30.0, 30.0]);
     }
 
     #[test]
