@@ -813,6 +813,9 @@ pub enum LightingPosture {
     /// Physically-scaled daylight: real photometric magnitudes
     /// ([`LightingSettings::daylight`]) mapped down by an adaptive camera
     /// ([`ExposureSettings::automatic`]) so the sun does not clip to white.
+    /// The environment intensity is a lux target matched to the daylight fill,
+    /// so an HDRI sky lights the scene beside the sun whatever its stored
+    /// brightness.
     PhysicalDaylight,
 }
 
@@ -831,8 +834,11 @@ impl EffectsFrame {
     /// let effects = EffectsFrame::default().with_posture(LightingPosture::PhysicalDaylight);
     /// ```
     ///
-    /// Leaves other display fields (pipeline mode, tone-map operator) and the
-    /// per-material [`ShadingModel`](crate::ShadingModel) untouched.
+    /// The environment intensity is part of [`LightingSettings`], so it follows
+    /// the posture too: a multiplier of 1.0 for `Faithful`, a lux target for
+    /// `PhysicalDaylight`. Set the environment itself afterwards; it is not
+    /// touched. Leaves other display fields (pipeline mode, tone-map operator)
+    /// and the per-material [`ShadingModel`](crate::ShadingModel) untouched.
     pub fn with_posture(mut self, posture: LightingPosture) -> Self {
         match posture {
             LightingPosture::Faithful => {

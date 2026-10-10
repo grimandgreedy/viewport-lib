@@ -200,3 +200,143 @@ fn diffuse_and_specular_scales_apply_separately() {
         "and has no diffuse to lose: {metal_no_diffuse} vs {metal_full}"
     );
 }
+
+/// An equirect sky of radiance `sky` above the horizon and `ground` below.
+fn sky_and_ground(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    sky: f32,
+    ground: f32,
+) -> EnvironmentMapId {
+    let (w, h) = (64u32, 32u32);
+    let px: Vec<f32> = (0..h)
+        .flat_map(|y| {
+            let v = if y < h / 2 { sky } else { ground };
+            [v, v, v, 1.0].repeat(w as usize)
+        })
+        .collect();
+    renderer
+        .upload_environment(
+            device,
+            queue,
+            TextureData::hdr(w, h, px),
+            EnvironmentOptions::default(),
+        )
+        .unwrap()
+}
+
+/// An environment set to N lux lights an upward-facing white Lambert surface
+/// like a directional light of N lux straight overhead.
+#[test]
+fn lux_environment_matches_a_directional_light_of_the_same_lux() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // The stored brightness is arbitrary: the lux target sets it.
+    let env = sky_and_ground(&mut renderer, &device, &queue, 0.3, 0.0);
+    let measured = renderer.environment_upper_hemisphere_lux(env).unwrap();
+    assert!(
+        (measured - 0.3 * std::f32::consts::PI).abs() < 0.01,
+        "measured {measured}"
+    );
+
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &viewport_lib::primitives::plane(40.0, 40.0))
+        .unwrap();
+    let lux = 1.5;
+    let render = |renderer: &mut ViewportRenderer, from_environment: bool| {
+        let mut frame = FrameData::default();
+        let camera = Camera {
+            orientation: glam::Quat::from_rotation_x(0.2),
+            ..Camera::default()
+        };
+        frame.camera.render_camera = {
+            let mut rc = RenderCamera::from_camera(&camera);
+            rc.aspect = 1.0;
+            rc
+        };
+        frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame.viewport.environment_background = EnvironmentBackground::colour();
+        frame.effects.lighting.hemisphere_intensity = 0.0;
+        frame.effects.lighting.shadows.enabled = false;
+        if from_environment {
+            frame.effects.lighting.lights = vec![];
+            frame.effects.environment = Some(EnvironmentLighting::new(env));
+            frame.effects.lighting.environment_intensity =
+                viewport_lib::EnvironmentIntensity::Lux(lux);
+        } else {
+            let mut sun = viewport_lib::LightSource::default();
+            sun.kind = viewport_lib::LightKind::Directional {
+                direction: [0.0, 0.0, 1.0],
+            };
+            sun.intensity = lux;
+            frame.effects.lighting.lights = vec![sun];
+        }
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.material = matte();
+        item.material.ambient = 0.0;
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        centre(&renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE))[0]
+    };
+    let from_environment = render(&mut renderer, true);
+    let from_light = render(&mut renderer, false);
+    assert!(from_light > 60, "the plane is lit: {from_light}");
+    assert!(
+        (from_environment as f32 - from_light as f32).abs() <= 0.08 * from_light as f32,
+        "{lux} lux of environment gives {from_environment}, of light {from_light}"
+    );
+}
+
+/// Under the daylight posture an HDRI sky reads beside the 100,000 lux sun.
+/// At the multiplier of 1.0 it used to get, it added next to nothing.
+#[test]
+fn daylight_posture_lights_with_the_environment() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let env = sky_and_ground(&mut renderer, &device, &queue, 1.0, 0.2);
+    let mut frame = sphere_frame(
+        &mut renderer,
+        &device,
+        EnvironmentLighting::new(env),
+        matte(),
+    );
+    frame.effects = std::mem::take(&mut frame.effects)
+        .with_posture(viewport_lib::LightingPosture::PhysicalDaylight);
+    frame.effects.environment = Some(EnvironmentLighting::new(env));
+    // A fixed daylight exposure, so the two renders compare directly.
+    frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(15.0);
+    assert!(matches!(
+        frame.effects.lighting.environment_intensity,
+        viewport_lib::EnvironmentIntensity::Lux(_)
+    ));
+    let posture = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+    frame.effects.lighting.environment_intensity =
+        viewport_lib::EnvironmentIntensity::Multiplier(1.0);
+    let old = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+    // The side away from the sun: sphere pixels the old render left dark. The
+    // background is black in both, so it adds nothing to either sum.
+    let (mut posture_shade, mut old_shade, mut count) = (0u64, 0u64, 0u32);
+    for (p, o) in posture.chunks_exact(4).zip(old.chunks_exact(4)) {
+        if o[1] < 40 && p[1] > 0 {
+            posture_shade += p[1] as u64;
+            old_shade += o[1] as u64;
+            count += 1;
+        }
+    }
+    assert!(count > 50, "the sphere has a shadow side: {count} pixels");
+    assert!(
+        posture_shade > old_shade * 2 + count as u64 * 10,
+        "the environment lights the shadow side: {posture_shade} vs {old_shade} over {count} pixels"
+    );
+}

@@ -2818,6 +2818,20 @@ impl ViewportRenderer {
         )
     }
 
+    /// The illuminance `id`'s upper hemisphere (+Z) gives an upward-facing
+    /// surface at a multiplier of 1.0, in lux, or `None` if `id` is freed or
+    /// still baking. [`EnvironmentIntensity::Lux`] scales the environment by its
+    /// target over this.
+    pub fn environment_upper_hemisphere_lux(
+        &self,
+        id: crate::resources::EnvironmentMapId,
+    ) -> Option<f32> {
+        crate::resources::material::environment::environment_upper_hemisphere_lux(
+            &self.resources,
+            id,
+        )
+    }
+
     /// Release an environment's slot and its source. Returns `false` when `id`
     /// was already freed. A handle kept past this resolves to nothing.
     pub fn free_environment(&mut self, id: crate::resources::EnvironmentMapId) -> bool {

@@ -107,6 +107,9 @@ pub(crate) struct EnvSlot {
     /// The full-resolution source, kept for drawing as the skybox. Set when the
     /// bake lands; a live slot without one is still baking.
     pub(crate) source: Option<(crate::gpu::Texture, crate::gpu::TextureView)>,
+    /// Illuminance the upper hemisphere (+Z) gives an upward-facing surface at
+    /// a multiplier of 1.0, measured from the source when the bake lands.
+    pub(crate) lux: f32,
 }
 
 impl EnvSlot {
@@ -114,6 +117,7 @@ impl EnvSlot {
     fn release(&mut self) {
         self.live = false;
         self.source = None;
+        self.lux = 0.0;
         self.generation = (self.generation + 1) & 0x00FF_FFFF;
     }
 }
@@ -172,14 +176,56 @@ pub(crate) struct SkyboxBinding {
 
 /// The factor `intensity` scales `env`'s stored radiance by.
 pub(crate) fn environment_multiplier(
-    _ibl: &IblResources,
-    _env: EnvironmentMapId,
+    ibl: &IblResources,
+    env: EnvironmentMapId,
     intensity: EnvironmentIntensity,
 ) -> f32 {
-    match intensity {
-        EnvironmentIntensity::Multiplier(m) => m,
-        _ => 1.0,
-    }
+    let lux = ibl
+        .env_slots
+        .get(env.index() as usize)
+        .map_or(0.0, |s| s.lux);
+    intensity.multiplier(lux)
+}
+
+/// The illuminance `id`'s upper hemisphere (+Z) gives an upward-facing surface
+/// at a multiplier of 1.0, in lux, or `None` if `id` is freed or still baking.
+///
+/// This is what `EnvironmentIntensity::Lux` divides its target by.
+pub fn environment_upper_hemisphere_lux(
+    resources: &crate::resources::DeviceResources,
+    id: EnvironmentMapId,
+) -> Option<f32> {
+    resources
+        .ibl
+        .is_baked(id)
+        .then(|| resources.ibl.env_slots[id.index() as usize].lux)
+}
+
+/// Integrate the luminance of an equirect panorama over the upper hemisphere,
+/// weighted by the cosine to +Z: the illuminance an upward-facing surface gets.
+fn upper_hemisphere_lux(pixels: &[f32], width: u32, height: u32) -> f32 {
+    let (w, h) = (width as usize, height as usize);
+    let d_phi = 2.0 * PI / width as f32;
+    let d_theta = PI / height as f32;
+    // Rows from the top: latitude runs from +90 degrees down to -90.
+    let total: f64 = (0..h / 2 + 1)
+        .into_par_iter()
+        .map(|y| {
+            let lat = (0.5 - (y as f32 + 0.5) / height as f32) * PI;
+            if lat <= 0.0 {
+                return 0.0;
+            }
+            // cos to +Z (sin of latitude) times the texel's solid angle.
+            let weight = (lat.sin() * lat.cos() * d_phi * d_theta) as f64;
+            let row = &pixels[y * w * 4..(y + 1) * w * 4];
+            let luminance: f64 = row
+                .chunks_exact(4)
+                .map(|t| (0.2126 * t[0] + 0.7152 * t[1] + 0.0722 * t[2]) as f64)
+                .sum();
+            luminance * weight
+        })
+        .sum();
+    total as f32
 }
 
 /// The environment a viewport draws behind the scene and how, or `None` for
@@ -681,6 +727,7 @@ fn submit_bake(
     if compute_supported {
         runner.submit_with_gpu(device, queue, move |dev, q, progress| {
             progress.set(0.1);
+            let lux = upper_hemisphere_lux(&pixels, width, height);
             let result = super::ibl_compute::bake_environment_layer(
                 dev,
                 q,
@@ -697,7 +744,7 @@ fn submit_bake(
             let brdf = result.brdf_texture.zip(result.brdf_view);
             Ok(JobProduct::with_gpu_and_apply(
                 result.submission,
-                install_bake(env, source, brdf),
+                install_bake(env, lux, source, brdf),
             ))
         })
     } else {
@@ -755,6 +802,7 @@ fn alloc_env_layer(resources: &mut crate::resources::DeviceResources) -> Option<
 /// if it was baked, and creates the array sampling views on the first bake.
 fn install_bake(
     env: EnvironmentMapId,
+    lux: f32,
     source: (crate::gpu::Texture, crate::gpu::TextureView),
     brdf: Option<(crate::gpu::Texture, crate::gpu::TextureView)>,
 ) -> ApplyFn {
@@ -780,6 +828,7 @@ fn install_bake(
         let slot = &mut ibl.env_slots[env.index() as usize];
         if slot.live && slot.generation == env.generation() {
             slot.source = Some(source);
+            slot.lux = lux;
             ibl.zones_dirty = true;
         }
         if rebind {
@@ -872,7 +921,12 @@ fn run_cpu_path(
 
     Ok(JobProduct::with_gpu_and_apply(
         submission,
-        install_bake(env, (skybox, skybox_view), brdf),
+        install_bake(
+            env,
+            upper_hemisphere_lux(pixels, width, height),
+            (skybox, skybox_view),
+            brdf,
+        ),
     ))
 }
 
@@ -1525,6 +1579,27 @@ mod tests {
 
     /// A texel past the half-float range (a sun disc) is clamped rather than
     /// turning infinite, and a NaN becomes black, so the bake stays finite.
+    /// A uniform sky of radiance 1 gives pi lux on an upward-facing surface,
+    /// whatever lies below the horizon.
+    #[test]
+    fn upper_hemisphere_lux_integrates_the_sky_only() {
+        let (w, h) = (64u32, 32u32);
+        let uniform = make_solid_env(w, h, [1.0, 1.0, 1.0]);
+        let mut sky_only = uniform.clone();
+        let half = (w * h / 2 * 4) as usize;
+        sky_only[half..].fill(0.0);
+        let mut ground_only = uniform.clone();
+        ground_only[..half].fill(0.0);
+        for (label, px, expected) in [
+            ("uniform", &uniform, PI),
+            ("sky only", &sky_only, PI),
+            ("ground only", &ground_only, 0.0),
+        ] {
+            let lux = upper_hemisphere_lux(px, w, h);
+            assert!((lux - expected).abs() < 0.01, "{label}: {lux} vs {expected}");
+        }
+    }
+
     #[test]
     fn hot_texels_bake_finite() {
         let mut px = make_solid_env(8, 4, [1.0, 1.0, 1.0]);

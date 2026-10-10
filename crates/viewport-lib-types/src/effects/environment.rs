@@ -56,6 +56,34 @@ pub enum EnvironmentIntensity {
     /// Multiply the stored radiance by this factor, so a stored `1.0` reads as
     /// that many nits.
     Multiplier(f32),
+    /// Multiply the stored radiance by `2^EV`. Each step doubles or halves the
+    /// brightness, matching how exposure is set.
+    Ev100(f32),
+    /// Scale the environment so its upper hemisphere (+Z) gives this
+    /// illuminance in lux on an upward-facing surface, like a directional
+    /// light of the same lux overhead. The renderer measures each environment's
+    /// own illuminance when it is uploaded, so differently exposed HDRIs come
+    /// out equally bright. A clear daytime sky is roughly 10,000 to 30,000 lux.
+    Lux(f32),
+}
+
+impl EnvironmentIntensity {
+    /// The factor on the stored radiance, given the environment's measured
+    /// upper-hemisphere illuminance at a multiplier of 1.0. A `Lux` target on
+    /// an environment that measures black gives 0.
+    pub fn multiplier(self, measured_lux: f32) -> f32 {
+        match self {
+            Self::Multiplier(m) => m,
+            Self::Ev100(ev) => ev.exp2(),
+            Self::Lux(target) => {
+                if measured_lux > 1e-6 {
+                    target / measured_lux
+                } else {
+                    0.0
+                }
+            }
+        }
+    }
 }
 
 impl Default for EnvironmentIntensity {
@@ -129,4 +157,17 @@ pub enum BackgroundSource {
     Colour,
     /// A specific environment. A freed handle draws the flat colour.
     Environment(EnvironmentMapId),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intensity_modes_give_their_multiplier() {
+        assert_eq!(EnvironmentIntensity::Multiplier(3.0).multiplier(10.0), 3.0);
+        assert_eq!(EnvironmentIntensity::Ev100(3.0).multiplier(10.0), 8.0);
+        assert_eq!(EnvironmentIntensity::Lux(1000.0).multiplier(4.0), 250.0);
+        assert_eq!(EnvironmentIntensity::Lux(1000.0).multiplier(0.0), 0.0);
+    }
 }
