@@ -1,6 +1,7 @@
-//! CPU-side IBL precomputation and environment map upload.
+//! Environment uploads, the slot table that hands out `EnvironmentMapId`s,
+//! the lighting selection and per-viewport backgrounds, and the CPU IBL bake.
 //!
-//! Produces:
+//! Each environment bakes:
 //! - **Irradiance map** (64x32 equirect) : diffuse hemisphere integral.
 //! - **Prefiltered specular map** (256x128 equirect, 5 mip levels) : split-sum approximation.
 //! - **BRDF integration LUT** (128x128) : Schlick-GGX split-sum second integral.
@@ -1274,7 +1275,7 @@ fn sample_equirect(pixels: &[f32], width: u32, height: u32, dir: [f32; 3]) -> [f
 // -------------------------------------------------------------------------
 
 fn convolve_irradiance(src: &[f32], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<f32> {
-    let sample_delta = 0.05f32; // ~40 phi steps x ~20 theta steps = 800 samples
+    let sample_delta = 0.05f32; // ~126 phi steps x ~31 theta steps, about 4,000 samples
     let mut out = vec![0.0f32; (dst_w * dst_h * 4) as usize];
 
     // Per-row parallelism. Each row writes a disjoint slice of `out`, so

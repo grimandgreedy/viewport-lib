@@ -270,9 +270,11 @@ pub struct SingleLightUniform {
 /// - ibl_enabled:          u32            =  4 bytes
 /// - ibl_intensity:        f32            =  4 bytes
 /// - ibl_rotation:         f32            =  4 bytes
-/// - show_skybox:          u32            =  4 bytes
+/// - ibl_diffuse_scale:    f32            =  4 bytes
 /// - debug_vis_split_x:    f32            =  4 bytes
-/// - _pad_dbg:             [u32; 3]       = 12 bytes
+/// - env_zone_count:       u32            =  4 bytes
+/// - ibl_specular_scale:   f32            =  4 bytes
+/// - _pad_dbg:             u32            =  4 bytes
 /// Total: 16 + 16 + 16 + 16 + 16 = 80 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
