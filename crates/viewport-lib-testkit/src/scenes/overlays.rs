@@ -128,13 +128,15 @@ fn build_shadow_parity(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
     // A flat image, so what the cell pins is the shadow rather than the texel
     // filtering: this path reads the shadow layers through its own binding.
-    let texture = ctx.renderer.resources_mut().upload_overlay_texture(
-        ctx.device,
-        ctx.queue,
-        2,
-        2,
-        &[200u8, 205, 240, 153].repeat(4),
-    );
+    let texture = ctx
+        .renderer
+        .resources_mut()
+        .upload_overlay_texture(
+            ctx.device,
+            ctx.queue,
+            viewport_lib::TextureData::srgb(2, 2, [200u8, 205, 240, 153].repeat(4)),
+        )
+        .expect("a well-formed sRGB image");
     let mut textured = OverlayShapeItem::new(
         OverlayShape::Rect { corner_radius: 8.0 },
         [256.0, 24.0],

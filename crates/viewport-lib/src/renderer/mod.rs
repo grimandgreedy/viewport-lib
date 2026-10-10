@@ -3023,12 +3023,10 @@ impl ViewportRenderer {
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba_data: Vec<u8>,
+        data: crate::TextureData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
         self.resources
-            .begin_upload_overlay_texture(device, queue, width, height, rgba_data)
+            .begin_upload_overlay_texture(device, queue, data)
     }
 
     /// Take the [`OverlayTextureId`](crate::renderer::OverlayTextureId) produced by a

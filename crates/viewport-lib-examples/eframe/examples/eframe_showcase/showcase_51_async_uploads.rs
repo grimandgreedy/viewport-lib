@@ -1830,19 +1830,26 @@ impl App {
         let (data, w, h) = demo_overlay_texture();
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            let id = renderer.resources_mut().upload_overlay_texture(
-                &self.device,
-                &self.queue,
-                w,
-                h,
-                &data,
-            );
-            self.async_uploads_state.loaded_overlay_texture_id = Some(id);
-            self.async_uploads_state.overlay_texture_state = AssetState::Loaded {
-                duration_ms: started.elapsed().as_millis() as u64,
+            let data = vpl::TextureData::srgb(w, h, data);
+            let duration_ms = |started: Instant| started.elapsed().as_millis() as u64;
+            self.async_uploads_state.overlay_texture_state = match renderer
+                .resources_mut()
+                .upload_overlay_texture(&self.device, &self.queue, data)
+            {
+                Ok(id) => {
+                    self.async_uploads_state.loaded_overlay_texture_id = Some(id);
+                    AssetState::Loaded {
+                        duration_ms: duration_ms(started),
+                    }
+                }
+                Err(e) => AssetState::Failed {
+                    reason: format!("{e}"),
+                    duration_ms: duration_ms(started),
+                },
             };
         } else {
-            match renderer.begin_upload_overlay_texture(&self.device, &self.queue, w, h, data) {
+            let data = vpl::TextureData::srgb(w, h, data);
+            match renderer.begin_upload_overlay_texture(&self.device, &self.queue, data) {
                 Ok(job) => {
                     self.async_uploads_state.overlay_texture_state = AssetState::InFlight {
                         job,

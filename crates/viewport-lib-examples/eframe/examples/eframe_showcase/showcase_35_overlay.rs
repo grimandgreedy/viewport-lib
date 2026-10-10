@@ -1785,28 +1785,20 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.ovl_state.cloud_scalars = scalars;
     app.ovl_state.cloud_built = true;
     let (tw, th, tdata) = build_demo_texture();
-    app.ovl_state.tex_id = Some(renderer.resources_mut().upload_overlay_texture(
-        &app.device,
-        &app.queue,
-        tw,
-        th,
-        &tdata,
-    ));
-    app.ovl_state.carlgauss_tex_id = Some(renderer.resources_mut().upload_overlay_texture(
-        &app.device,
-        &app.queue,
+    let mut upload = |data: vpl::TextureData| {
+        renderer
+            .resources_mut()
+            .upload_overlay_texture(&app.device, &app.queue, data)
+            .expect("the demo textures are well-formed sRGB images")
+    };
+    app.ovl_state.tex_id = Some(upload(vpl::TextureData::srgb(tw, th, tdata)));
+    app.ovl_state.carlgauss_tex_id = Some(upload(vpl::TextureData::srgb(
         CARLGAUSS_WIDTH,
         CARLGAUSS_HEIGHT,
-        CARLGAUSS_RGBA,
-    ));
+        CARLGAUSS_RGBA.to_vec(),
+    )));
     let (nw, nh, ndata) = build_nine_slice_texture();
-    app.ovl_state.nine_slice_tex_id = Some(renderer.resources_mut().upload_overlay_texture(
-        &app.device,
-        &app.queue,
-        nw,
-        nh,
-        &ndata,
-    ));
+    app.ovl_state.nine_slice_tex_id = Some(upload(vpl::TextureData::srgb(nw, nh, ndata)));
     // Optional color-emoji font for the glyph-run row.
     if let Some(bytes) = EMOJI_FONT_PATHS.iter().find_map(|p| std::fs::read(p).ok()) {
         if let Ok(handle) = renderer.resources_mut().upload_font(&bytes) {

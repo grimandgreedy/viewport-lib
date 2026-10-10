@@ -102,10 +102,14 @@ fn reported_support_matches_what_the_renderer_draws() {
 
     // A flat two-by-two image, enough to make the textured shape pipeline the
     // one that draws: it reads the shadow layers through its own binding.
-    let texture =
-        renderer
-            .resources_mut()
-            .upload_overlay_texture(&device, &queue, 2, 2, &[255u8; 16]);
+    let texture = renderer
+        .resources_mut()
+        .upload_overlay_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::srgb(2, 2, vec![255u8; 16]),
+        )
+        .unwrap();
 
     let analytic = OverlayShape::Circle;
     let vector = OverlayShape::Vector {
@@ -285,7 +289,12 @@ fn an_open_polyline_reports_a_texture_fill_as_inert() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let tex = renderer
         .resources_mut()
-        .upload_overlay_texture(&device, &queue, 1, 1, &[255u8; 4]);
+        .upload_overlay_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::srgb(1, 1, vec![255u8; 4]),
+        )
+        .unwrap();
     let style = OverlayStyle::default().with_fill(OverlayFill::texture(tex));
 
     assert_eq!(

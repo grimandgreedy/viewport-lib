@@ -106,25 +106,21 @@ impl Showcase for OverlaysShowcase {
         ctx.session.camera_mut().distance = 14.0;
 
         // Overlay textures for the texture-masked and 9-slice shapes.
+        let mut upload = |data: vpl::TextureData| {
+            ctx.session
+                .resources_mut()
+                .upload_overlay_texture(ctx.device, ctx.queue, data)
+                .expect("the demo textures are well-formed sRGB images")
+        };
         let (w, h, rgba) = build_demo_texture();
-        self.demo_tex = Some(
-            ctx.session
-                .resources_mut()
-                .upload_overlay_texture(ctx.device, ctx.queue, w, h, &rgba),
-        );
+        self.demo_tex = Some(upload(vpl::TextureData::srgb(w, h, rgba)));
         let (w, h, rgba) = build_nine_slice_texture();
-        self.nine_slice_tex = Some(
-            ctx.session
-                .resources_mut()
-                .upload_overlay_texture(ctx.device, ctx.queue, w, h, &rgba),
-        );
-        self.carlgauss_tex = Some(ctx.session.resources_mut().upload_overlay_texture(
-            ctx.device,
-            ctx.queue,
+        self.nine_slice_tex = Some(upload(vpl::TextureData::srgb(w, h, rgba)));
+        self.carlgauss_tex = Some(upload(vpl::TextureData::srgb(
             CARLGAUSS_W,
             CARLGAUSS_H,
-            CARLGAUSS_RGBA,
-        ));
+            CARLGAUSS_RGBA.to_vec(),
+        )));
 
         self.load_emoji_font(ctx);
     }
