@@ -12,7 +12,7 @@ use viewport_lib::wgpu;
 mod common;
 use common::*;
 
-use viewport_lib::{AutoExposure, ExposureMode, ExposureSettings};
+use viewport_lib::{AutoExposure, EnvironmentSettings, ExposureMode, ExposureSettings};
 
 /// A camera-facing quad (normal +Z) scaled to fill the frame, so metering sees
 /// the lit surface rather than the background.
@@ -201,5 +201,68 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
         auto_gap > 20.0,
         "partial adaptation over-equalised: gap {auto_gap} (expected the brighter \
          scene to stay brighter at adaptation 0.5)"
+    );
+}
+
+/// A frame with nothing in view but a uniform skybox drawn at `nits`, auto
+/// exposure at full adaptation.
+fn sky_frame(size: u32, nits: f32) -> FrameData {
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [size as f32, size as f32];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+    let mut env = EnvironmentSettings::default();
+    env.intensity = nits;
+    frame.effects.environment = Some(env);
+    let a = AutoExposure {
+        adaptation: 1.0,
+        ..AutoExposure::default()
+    };
+    frame.effects.display.exposure = ExposureSettings::from_mode(ExposureMode::Automatic(a));
+    frame
+}
+
+/// The skybox is scene content to the meter. Looking only at the sky, a dim and
+/// a bright sky both expose to a mid level. When the meter skipped every
+/// far-plane texel it saw nothing here and held one exposure for both, so the
+/// bright sky clipped and the dim one went black.
+#[test]
+fn auto_exposure_meters_the_skybox() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let (w, h) = (16u32, 8u32);
+    let pixels: Vec<f32> = (0..w * h).flat_map(|_| [1.0, 1.0, 1.0, 1.0]).collect();
+    renderer
+        .upload_environment_map(&device, &queue, &pixels, w, h)
+        .unwrap();
+
+    let size = 64u32;
+    let dim = centre_luma(
+        &renderer.render_offscreen(&device, &queue, &sky_frame(size, 5.0), size, size),
+        size,
+    );
+    let bright = centre_luma(
+        &renderer.render_offscreen(&device, &queue, &sky_frame(size, 5000.0), size, size),
+        size,
+    );
+    for (label, l) in [("dim", dim), ("bright", bright)] {
+        assert!(
+            l > 40.0 && l < 240.0,
+            "{label} sky luma {l} out of the expected mid range"
+        );
+    }
+    assert!(
+        (bright - dim).abs() < 45.0,
+        "auto exposure did not adapt to the sky: dim {dim} vs bright {bright}"
     );
 }
