@@ -36,6 +36,9 @@ if [ -z "$chrome" ]; then
     exit 1
 fi
 
+# Compile-check everything else for wasm first: the smoke example does not
+# reach the plugins or post-effects crates, or features it leaves off.
+"$repo_root/scripts/build_web.sh" --check
 "$repo_root/scripts/build_web.sh" --release "$example"
 
 exec python3 "$repo_root/scripts/check_web.py" "$example_dir" "$chrome"
