@@ -118,16 +118,11 @@ macro_rules! point_cloud_writes {
     };
 }
 
-/// Colours are supplied as [`Colour`](viewport_lib::Colour) and stored as linear
-/// RGBA, so this channel is the one that has to build a buffer.
-fn encode_colours(data: &[viewport_lib::Colour]) -> std::borrow::Cow<'_, [u8]> {
-    let linear: Vec<[f32; 4]> = data.iter().map(|c| c.to_linear_rgba()).collect();
-    std::borrow::Cow::Owned(bytemuck::cast_slice(&linear).to_vec())
-}
-
 point_cloud_writes!(channels::Positions, Positions, encode = cast_bytes);
 point_cloud_writes!(channels::Scalars, Scalars, encode = cast_bytes);
-point_cloud_writes!(channels::Colours, Colours, encode = encode_colours);
+// `Colour` is `Pod` and stores linear RGBA, the buffer's layout, so colours go
+// across untouched like the other channels.
+point_cloud_writes!(channels::Colours, Colours, encode = cast_bytes);
 point_cloud_writes!(channels::Sizes, Sizes, encode = cast_bytes);
 point_cloud_writes!(
     channels::Transparencies,

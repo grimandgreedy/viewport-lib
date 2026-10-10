@@ -223,9 +223,9 @@ const SPRITE_STRIDE: u32 = std::mem::size_of::<GpuSpriteInstance>() as u32;
 
 /// Encode a run of caller-supplied sprites into the bytes a ranged write sends.
 pub(crate) fn encode_sprites(sprites: &[super::channels::Sprite]) -> Vec<u8> {
-    let records: Vec<GpuSpriteInstance> = sprites
-        .iter()
-        .map(|s| GpuSpriteInstance {
+    let mut bytes = Vec::with_capacity(sprites.len() * SPRITE_STRIDE as usize);
+    for s in sprites {
+        let record = GpuSpriteInstance {
             colour: s.colour.to_linear_rgba(),
             size: s.size,
             rotation: s.rotation,
@@ -234,9 +234,10 @@ pub(crate) fn encode_sprites(sprites: &[super::channels::Sprite]) -> Vec<u8> {
             uv_rect: s.uv_rect,
             velocity: s.velocity,
             _pad2: 0.0,
-        })
-        .collect();
-    bytemuck::cast_slice(&records).to_vec()
+        };
+        bytes.extend_from_slice(bytemuck::bytes_of(&record));
+    }
+    bytes
 }
 
 /// Build the GPU data for one sprite batch: its buffers and its bind groups.

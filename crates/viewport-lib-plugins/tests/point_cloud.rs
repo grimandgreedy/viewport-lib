@@ -769,3 +769,54 @@ fn a_warmed_point_cloud_type_builds_nothing_on_its_first_frame() {
         "the first point cloud frames built pipelines after the warm-up: {builds:?}"
     );
 }
+
+/// A ranged colour write reaches the GPU in the layout the shader reads.
+/// Colours go across as the caller's own bytes, with no repacking, so a
+/// mismatch between `Colour` and the buffer would show here as the wrong
+/// colour or nothing.
+#[test]
+fn a_ranged_colour_write_recolours_the_cloud() {
+    let _serial = serial();
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+
+    let mut cloud = PointCloudItem::default();
+    cloud.positions = (0..9)
+        .map(|i| [(i % 3) as f32 * 0.3 - 0.3, (i / 3) as f32 * 0.3 - 0.3, 0.0])
+        .collect();
+    cloud.colour =
+        ColourSource::PerSample(vec![viewport_lib::Colour::linear_rgb(0.0, 1.0, 0.0); 9]);
+    cloud.size = SizeSource::Uniform(12.0);
+    let id = renderer.upload(&device, &queue, &cloud).expect("upload");
+
+    let mut frame = sub_object_pick_frame();
+    frame
+        .scene
+        .items_mut::<PointCloudRefItem>()
+        .push(PointCloudRefItem::new(id));
+    let reddish = |px: &[u8]| {
+        px.chunks_exact(4)
+            .filter(|p| p[0] > 120 && p[1] < 60)
+            .count()
+    };
+    let greenish = |px: &[u8]| {
+        px.chunks_exact(4)
+            .filter(|p| p[1] > 120 && p[0] < 60)
+            .count()
+    };
+
+    let before = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert!(greenish(&before) > 0, "the uploaded colours should draw");
+    assert_eq!(reddish(&before), 0);
+
+    let red = vec![viewport_lib::Colour::linear_rgb(1.0, 0.0, 0.0); 9];
+    renderer
+        .write_range(pc::Colours, &queue, id, 0, &red)
+        .expect("the colour channel was uploaded populated");
+    let after = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert!(reddish(&after) > 0, "the written colours should draw");
+    assert_eq!(greenish(&after), 0, "every point was recoloured");
+}
