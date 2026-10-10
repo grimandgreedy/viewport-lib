@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 
-use viewport_lib_types::par::*;
+use crate::util::par::*;
 
 use viewport_lib_types::data::{attribute::AttributeData, mesh::MeshData};
 

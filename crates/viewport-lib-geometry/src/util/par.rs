@@ -4,7 +4,7 @@
 //! rayon cannot build its pool there: the first parallel operation panics while
 //! trying to spawn, which is a crash rather than a slowdown. This module is the
 //! one place that difference is decided, so call sites read the same on both
-//! targets and nothing else in the workspace has to know.
+//! targets and nothing else in the crate has to know.
 //!
 //! On wasm every operation here runs serially on the calling thread. The work
 //! still completes and the results are identical; it just takes as long as it
@@ -14,7 +14,7 @@
 //! Use it in place of rayon's prelude:
 //!
 //! ```ignore
-//! use viewport_lib_types::par::*;
+//! use crate::util::par::*;
 //!
 //! let out: Vec<u16> = input.par_iter().map(|&f| convert(f)).collect();
 //! ```
@@ -23,6 +23,8 @@
 //! would replace the serial half of this module. They also need
 //! cross-origin-isolation headers on the page, which a library cannot impose on
 //! whoever embeds it, so the serial path stays the default either way.
+
+#![allow(dead_code, unused_imports)]
 
 #[cfg(not(target_arch = "wasm32"))]
 mod imp {
