@@ -7,7 +7,7 @@
 //! `Identical` (two-sided) must render it, and at opacity 0.75 that has to hold
 //! through the OIT pass, not just when opaque.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -69,11 +69,11 @@ fn two_sided_transparent_draws_back_faces_on_hdr_oit() {
         frame.camera.viewport_size = [size as f32, size as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
-        frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+        frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
         frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
-        item.material.base_colour = [1.0, 0.0, 0.0].into();
+        item.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
         item.settings.unlit = true;
         item.settings.opacity = opacity;
         if two_sided {
@@ -162,12 +162,12 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
     frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material.base_colour = [1.0, 0.0, 0.0].into();
+    item.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
     item.material.shading_plugin = Some(plugin_id);
     item.material.backface_policy = BackfacePolicy::Identical;
     item.settings.opacity = 0.75;

@@ -3,7 +3,7 @@
 //! Part of the headless integration suite (split from the former single
 //! headless.rs). Shared device and mesh helpers live in tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -31,7 +31,11 @@ fn lightmap_replace_mode_recolors_object() {
     let red = vec![[255u8, 0, 0, 255]; 16].concat();
     let radiance = renderer
         .resources_mut()
-        .upload_texture(&device, &queue, 4, 4, &red)
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::linear(4, 4, red.to_vec()),
+        )
         .expect("upload lightmap texture");
     renderer
         .resources_mut()
@@ -61,7 +65,7 @@ fn lightmap_replace_mode_recolors_object() {
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
     item.material.shading_model = ShadingModel::Pbr;
-    item.material.base_colour = [1.0, 1.0, 1.0].into();
+    item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let (w, h) = (64u32, 64u32);
@@ -116,7 +120,7 @@ fn lightmap_ao_mode_darkens_object() {
         item.mesh_id = mesh_id;
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
         item.material.shading_model = ShadingModel::Pbr;
-        item.material.base_colour = [1.0, 1.0, 1.0].into();
+        item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         frame
     };
@@ -142,7 +146,11 @@ fn lightmap_ao_mode_darkens_object() {
     let dark = vec![[26u8, 26, 26, 255]; 16].concat();
     let occlusion = renderer
         .resources_mut()
-        .upload_texture(&device, &queue, 4, 4, &dark)
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::linear(4, 4, dark.to_vec()),
+        )
         .expect("upload occlusion texture");
     renderer
         .resources_mut()
@@ -180,7 +188,11 @@ fn lightmap_set_clear_lifecycle() {
     let white = vec![[255u8, 255, 255, 255]; 16].concat();
     let radiance = renderer
         .resources_mut()
-        .upload_texture(&device, &queue, 4, 4, &white)
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::linear(4, 4, white.to_vec()),
+        )
         .expect("upload texture");
     let data = viewport_lib::resources::LightmapData::NonDirectional { radiance };
 

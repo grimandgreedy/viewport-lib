@@ -10,10 +10,10 @@ use web_time::Instant;
 use ::winit::application::ApplicationHandler;
 use ::winit::event::WindowEvent;
 use ::winit::event_loop::{ActiveEventLoop, EventLoop};
-use ::winit::window::{Window, WindowAttributes, WindowId};
+use ::winit::window::{CursorIcon, Window, WindowAttributes, WindowId};
 
 use crate::interaction::input::adapters::{from_winit, from_winit_device};
-use crate::interaction::input::{ViewportContext, ViewportEvent};
+use crate::interaction::input::{CursorShape, ViewportContext, ViewportEvent};
 use crate::runners::ViewportInstance;
 use crate::{ExposureMode, FrameData, OrbitCameraController, OverlayFrame};
 
@@ -42,6 +42,16 @@ pub enum RedrawMode {
     OnDemand,
 }
 
+/// Whether to ask for another frame once this one is done.
+///
+/// A frame whose surface had to be reconfigured was never shown, so it is
+/// retried whatever the mode: under [`RedrawMode::OnDemand`] nothing else would
+/// ask for it. A frame skipped for a transient reason (a timeout, an occluded
+/// window) follows the mode, so an occluded on-demand window does not spin.
+pub(crate) fn wants_redraw(mode: RedrawMode, requested: bool, reconfigured: bool) -> bool {
+    mode == RedrawMode::Continuous || requested || reconfigured
+}
+
 /// Window configuration for a [`ViewportApp`].
 ///
 /// Non-exhaustive: build with [`AppConfig::default`] and the `with_*` methods so
@@ -62,16 +72,26 @@ pub struct AppConfig {
     /// When the runner schedules the next frame. Default:
     /// [`RedrawMode::Continuous`].
     pub redraw_mode: RedrawMode,
+    /// File the runner keeps the GPU pipeline cache in. Default: `None`, no
+    /// cache. See [`with_pipeline_cache`](Self::with_pipeline_cache).
+    pub pipeline_cache_path: Option<std::path::PathBuf>,
+    /// Renderer settings. The runner replaces `target_format` with the
+    /// surface format and draws without MSAA, so `sample_count` is ignored;
+    /// a pipeline cache loaded from `pipeline_cache_path` replaces
+    /// `pipeline_cache_data`. See [`with_renderer_config`](Self::with_renderer_config).
+    pub renderer: crate::RendererConfig,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            title: "viewport-lib".to_string(),
+            title: "Viewport".to_string(),
             width: 1280,
             height: 720,
             present_mode: crate::gpu::PresentMode::AutoVsync,
             redraw_mode: RedrawMode::Continuous,
+            pipeline_cache_path: None,
+            renderer: crate::RendererConfig::new(crate::gpu::TextureFormat::Bgra8UnormSrgb),
         }
     }
 }
@@ -87,6 +107,26 @@ impl AppConfig {
     pub fn with_window_size(mut self, width: u32, height: u32) -> Self {
         self.width = width;
         self.height = height;
+        self
+    }
+
+    /// Keep the GPU pipeline cache in `path` between runs.
+    ///
+    /// The runner loads the file before it builds the renderer and writes it
+    /// back after the first frame and again on exit, so a later launch skips
+    /// the shader compilation the first one paid for. It only has an effect on
+    /// a backend with a pipeline cache (Vulkan); elsewhere nothing is read or
+    /// written. The file is specific to the GPU and driver, and data that no
+    /// longer matches is discarded, so a per-user cache directory is the place
+    /// for it.
+    pub fn with_pipeline_cache(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.pipeline_cache_path = Some(path.into());
+        self
+    }
+
+    /// Set the renderer settings, for example the pipeline compilation policy.
+    pub fn with_renderer_config(mut self, config: crate::RendererConfig) -> Self {
+        self.renderer = config;
         self
     }
 
@@ -130,6 +170,7 @@ impl AppConfig {
 /// runs.
 pub struct FrameCtx<'a> {
     session: &'a mut ViewportInstance,
+    window: &'a Window,
     /// Seconds since the previous frame.
     pub dt: f32,
     /// Seconds since the app started.
@@ -190,6 +231,18 @@ impl FrameCtx<'_> {
     /// The wgpu queue the runner created. See [`device`](Self::device).
     pub fn queue(&self) -> &crate::gpu::Queue {
         self.queue
+    }
+
+    /// Show or hide the cursor over the window.
+    pub fn set_cursor_visible(&self, visible: bool) {
+        self.window.set_cursor_visible(visible);
+    }
+
+    /// Set the shape the pointer takes over the window: a grab hand over a handle a tool
+    /// can pick up, a crosshair over a picker, a resize arrow over an edge. Set it each
+    /// frame from whatever the pointer is over; the shape persists until changed.
+    pub fn set_cursor(&self, shape: CursorShape) {
+        self.window.set_cursor(cursor_icon(shape));
     }
 
     /// Ask the runner to close the window and end the event loop after this
@@ -372,7 +425,8 @@ impl ViewportApp {
     /// the runner still owning the window, the wgpu bring-up, and the render loop.
     ///
     /// ```rust,ignore
-    /// let mut orbit = OrbitCameraController::viewport_all();
+    /// let orbit = OrbitCameraController::new_stateless();
+    /// let mut input = ViewportInput::from_preset(BindingPreset::Default);
     /// ViewportApp::new(config)
     ///     .with_input(move |ictx| {
     ///         for ev in ictx.events() {
@@ -380,10 +434,11 @@ impl ViewportApp {
     ///                 menu.borrow_mut().handle(ev); // consume: do not forward
     ///                 continue;
     ///             }
-    ///             orbit.push_event(ev.clone());     // navigation
+    ///             input.push_event(ev.clone());     // navigation
     ///             ictx.forward(ev.clone());         // viewport picking/selection
     ///         }
-    ///         orbit.apply_to_camera(ictx.camera_mut());
+    ///         let frame = input.resolve();
+    ///         orbit.apply(ictx.camera_mut(), &frame);
     ///     })
     ///     .run(move |ctx| { /* overlays */ });
     /// ```
@@ -413,12 +468,36 @@ impl ViewportApp {
             callback,
             input: self.input,
             state: None,
-            orbit: OrbitCameraController::viewport_all(),
+            orbit: OrbitCameraController::new_stateless(),
             events: Vec::new(),
             last_frame: Instant::now(),
             start: Instant::now(),
         };
         event_loop.run_app(&mut handler).expect("run app");
+    }
+}
+
+/// The winit cursor for a [`CursorShape`]. Shared by both runners, so a host names the
+/// shape once and gets the same pointer whichever one it is on.
+pub(crate) fn cursor_icon(shape: CursorShape) -> CursorIcon {
+    match shape {
+        CursorShape::Default => CursorIcon::Default,
+        CursorShape::Pointer => CursorIcon::Pointer,
+        CursorShape::Text => CursorIcon::Text,
+        CursorShape::Crosshair => CursorIcon::Crosshair,
+        CursorShape::Move => CursorIcon::Move,
+        CursorShape::NotAllowed => CursorIcon::NotAllowed,
+        CursorShape::Grab => CursorIcon::Grab,
+        CursorShape::Grabbing => CursorIcon::Grabbing,
+        CursorShape::ResizeHorizontal => CursorIcon::EwResize,
+        CursorShape::ResizeVertical => CursorIcon::NsResize,
+        CursorShape::ResizeNeSw => CursorIcon::NeswResize,
+        CursorShape::ResizeNwSe => CursorIcon::NwseResize,
+        CursorShape::ResizeColumn => CursorIcon::ColResize,
+        CursorShape::ResizeRow => CursorIcon::RowResize,
+        // A shape this winit version does not name falls back to the arrow rather than
+        // leaving whatever was set before.
+        _ => CursorIcon::Default,
     }
 }
 
@@ -434,6 +513,8 @@ struct RunState {
     /// Cursor is over the window. Tracked from `CursorEntered`/`CursorLeft`; the
     /// input resolver gates hover-based gestures on this.
     hovered: bool,
+    /// Startup timing, held until the first frame is presented.
+    startup_marks: Option<super::InitMarks>,
 }
 
 struct AppHandler<F> {
@@ -457,6 +538,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
         if self.state.is_some() {
             return;
         }
+        let mut marks = super::InitMarks::new();
 
         let window = Arc::new(
             event_loop
@@ -470,9 +552,11 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                 )
                 .expect("window"),
         );
+        marks.mark("window");
 
         let instance = crate::gpu::default_instance();
         let surface = instance.create_surface(window.clone()).expect("surface");
+        marks.mark("instance_and_surface");
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::HighPerformance,
@@ -481,6 +565,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
             },
         ))
         .expect("adapter");
+        marks.mark("request_adapter");
         let required_features = crate::ViewportRenderer::recommended_device_features(&adapter);
         let (device, queue) =
             pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
@@ -489,6 +574,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                 ..Default::default()
             }))
             .expect("device");
+        marks.mark("request_device");
 
         let size = window.inner_size();
         let caps = surface.get_capabilities(&adapter);
@@ -497,19 +583,30 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
             .iter()
             .find(|f| f.is_srgb())
             .copied()
-            .unwrap_or(caps.formats[0]);
+            .or_else(|| caps.formats.first().copied())
+            .expect("the adapter cannot present to this surface");
         let surface_config = crate::gpu::runner_surface_config(
             format,
             size.width.max(1),
             size.height.max(1),
             self.config.present_mode,
-            caps.alpha_modes[0],
+            caps.alpha_modes
+                .first()
+                .copied()
+                .unwrap_or(crate::gpu::CompositeAlphaMode::Auto),
         );
         surface.configure(&device, &surface_config);
+        marks.mark("surface_configure");
 
-        let mut session = ViewportInstance::new(&device, format);
+        let cache_data = super::load_pipeline_cache(self.config.pipeline_cache_path.as_deref());
+        let mut session = ViewportInstance::with_config(
+            &device,
+            &super::runner_renderer_config(&self.config.renderer, format, cache_data),
+        );
+        marks.mark("renderer");
         if let Some(setup) = self.setup.take() {
             setup(&mut session, &device);
+            marks.mark("setup");
         }
         // Focus/hover start conservative: the window is focused on creation, but
         // the cursor is only "over" it once a CursorEntered arrives.
@@ -540,7 +637,17 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
             session,
             focused,
             hovered,
+            startup_marks: Some(marks),
         });
+    }
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let (Some(path), Some(state)) = (
+            self.config.pipeline_cache_path.as_deref(),
+            self.state.as_ref(),
+        ) {
+            super::save_pipeline_cache(path, &state.session);
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -629,6 +736,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
 
                 let mut ctx = FrameCtx {
                     session: &mut state.session,
+                    window: &state.window,
                     dt,
                     time,
                     device: &state.device,
@@ -679,37 +787,57 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                         });
                 }
 
-                let frame = match crate::gpu::acquire_surface(&state.surface) {
-                    crate::gpu::SurfaceFrame::Acquired(f) => f,
+                // A frame that cannot be acquired is not drawn, but the rest of
+                // the turn still runs: the callback's exit request, the next
+                // frame's input window, and the redraw request all depend on it.
+                let mut reconfigured = false;
+                match crate::gpu::acquire_surface(&state.surface) {
+                    crate::gpu::SurfaceFrame::Acquired(frame) => {
+                        let view = frame
+                            .texture
+                            .create_view(&crate::gpu::TextureViewDescriptor::default());
+                        let cmd = state.session.render(&state.device, &state.queue, &view);
+                        state.queue.submit(std::iter::once(cmd));
+                        crate::gpu::present(&state.queue, frame);
+                        if let Some(marks) = state.startup_marks.take() {
+                            marks.finish("first_frame");
+                            // The first frame has compiled most of what the
+                            // session will use, so save now as well as on
+                            // exit: a process that is killed still leaves a
+                            // cache behind.
+                            if let Some(path) = self.config.pipeline_cache_path.as_deref() {
+                                super::save_pipeline_cache(path, &state.session);
+                            }
+                        }
+                    }
                     crate::gpu::SurfaceFrame::Recreate => {
                         state
                             .surface
                             .configure(&state.device, &state.surface_config);
-                        return;
+                        reconfigured = true;
                     }
-                    crate::gpu::SurfaceFrame::Skip => return,
-                };
-                let view = frame
-                    .texture
-                    .create_view(&crate::gpu::TextureViewDescriptor::default());
-                let cmd = state.session.render(&state.device, &state.queue, &view);
-                state.queue.submit(std::iter::once(cmd));
-                crate::gpu::present(&state.queue, frame);
+                    crate::gpu::SurfaceFrame::Skip => {}
+                }
 
                 if request_exit {
                     event_loop.exit();
                     return;
                 }
 
-                state.session.begin_frame(ViewportContext {
-                    hovered: state.hovered,
-                    focused: state.focused,
-                    viewport_size: [w, h],
-                });
+                // begin_frame_at rather than begin_frame: the runner already owns a
+                // clock, and double tap and long press need one.
+                state.session.begin_frame_at(
+                    ViewportContext {
+                        hovered: state.hovered,
+                        focused: state.focused,
+                        viewport_size: [w, h],
+                    },
+                    self.start.elapsed().as_secs_f32(),
+                );
                 // Continuous keeps the loop spinning; OnDemand only redraws when
                 // the callback asked to (an animating callback calls
                 // request_redraw each frame).
-                if self.config.redraw_mode == RedrawMode::Continuous || request_redraw {
+                if wants_redraw(self.config.redraw_mode, request_redraw, reconfigured) {
                     state.window.request_redraw();
                 }
             }
@@ -730,6 +858,15 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
             }
 
             other => {
+                // A touch device never sends CursorEntered, so the contact itself is
+                // what makes the viewport hovered: without this the resolver gates
+                // every touch-driven gesture out.
+                if let WindowEvent::Touch(touch) = &other {
+                    state.hovered = !matches!(
+                        touch.phase,
+                        ::winit::event::TouchPhase::Ended | ::winit::event::TouchPhase::Cancelled
+                    );
+                }
                 let scale = state.window.scale_factor() as f32;
                 if let Some(ev) = from_winit(&other, scale) {
                     // Without an input handler, feed the resolver directly (orbit /
@@ -894,5 +1031,15 @@ mod tests {
         let action = session.resolve();
         assert!(!action.pointer.clicked, "no forwarded click");
         assert_eq!(action.navigation.zoom, 0.0, "no forwarded scroll");
+    }
+
+    /// A frame lost to a surface reconfigure is asked for again in every mode;
+    /// a transient skip follows the mode.
+    #[test]
+    fn a_reconfigured_frame_is_retried_on_demand() {
+        assert!(wants_redraw(RedrawMode::OnDemand, false, true));
+        assert!(!wants_redraw(RedrawMode::OnDemand, false, false));
+        assert!(wants_redraw(RedrawMode::OnDemand, true, false));
+        assert!(wants_redraw(RedrawMode::Continuous, false, false));
     }
 }

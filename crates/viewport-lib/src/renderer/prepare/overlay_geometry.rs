@@ -1,6 +1,7 @@
 //! CPU tessellation and fill helpers for overlay rects, shapes, and polylines.
 
 use super::*;
+use crate::Colour;
 
 pub(super) fn gradient_lerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     let t = t.clamp(0.0, 1.0);
@@ -200,6 +201,7 @@ pub(super) fn emit_filled_polyline(
                 use_texture: 0.0,
                 clip_index: -1.0,
                 clip_rect: [0.0; 4],
+                group_tint: 0.0,
             });
         }
     }
@@ -234,6 +236,7 @@ pub(super) fn emit_vector_fill(
             use_texture: 0.0,
             clip_index: -1.0,
             clip_rect: [0.0; 4],
+            group_tint: 0.0,
         });
     }
 }
@@ -260,11 +263,61 @@ pub(super) fn tessellate_polyline(
     vp_w: f32,
     vp_h: f32,
 ) -> Vec<crate::resources::OverlayTextVertex> {
+    let half_t = thickness * 0.5;
+    tessellate_ribbon(
+        points,
+        -half_t,
+        half_t,
+        [0.0, 0.0],
+        closed,
+        join,
+        mitre_limit,
+        cap,
+        colour,
+        vp_w,
+        vp_h,
+    )
+}
+
+/// Tessellate a band running alongside a path, between two signed offsets from
+/// its centreline. `d_lo` and `d_hi` are distances along the left-hand normal,
+/// with `d_lo <= d_hi`; a centred stroke of thickness `t` is `(-t/2, t/2)`.
+///
+/// A band that sits wholly on one side of the path is how a shadow layer is
+/// clipped to one side of a silhouette: an outer layer runs from the contour
+/// outward, an inner layer from the contour inward, and neither crosses into
+/// the other's territory the way a centred stroke does.
+///
+/// `shift` moves a one-sided band's far edge by the component of `shift` along
+/// the band, leaving the near edge on the path. That is what a shadow layer's
+/// offset becomes once the layer is clipped to one side of the contour: moving
+/// the whole band would push it across the contour, while moving only the far
+/// edge widens the band where the offset points and narrows it where it points
+/// away, which is the same region. A straddling band ignores `shift`.
+///
+/// Caps are a half-disc about the centreline, which only reads correctly for a
+/// band that straddles it. A one-sided band is meant for closed paths, where
+/// there are no ends to cap.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn tessellate_ribbon(
+    points: &[[f32; 2]],
+    d_lo: f32,
+    d_hi: f32,
+    shift: [f32; 2],
+    closed: bool,
+    join: crate::renderer::types::LineJoin,
+    mitre_limit: f32,
+    cap: crate::renderer::types::PolylineCap,
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) -> Vec<crate::resources::OverlayTextVertex> {
     let n = points.len();
-    if n < 2 {
+    if n < 2 || d_hi <= d_lo {
         return Vec::new();
     }
-    let half_t = thickness * 0.5;
+    // Reach of the band from the centreline, used to place caps.
+    let half_t = d_lo.abs().max(d_hi.abs());
 
     let get = |i: i32| -> Option<[f32; 2]> {
         if closed {
@@ -290,6 +343,22 @@ pub(super) fn tessellate_polyline(
     let scale = |a: [f32; 2], k: f32| -> [f32; 2] { [a[0] * k, a[1] * k] };
     let perp_left = |t: [f32; 2]| -> [f32; 2] { [-t[1], t[0]] };
     let dot = |a: [f32; 2], b: [f32; 2]| -> f32 { a[0] * b[0] + a[1] * b[1] };
+
+    // The band's two edges at a rib whose outward direction is `nrm`. A
+    // one-sided band keeps its near edge on the path and moves the far one by
+    // the shift's component along `nrm`; a straddling band is a plain stroke.
+    let one_sided = d_lo >= 0.0 || d_hi <= 0.0;
+    let edges = |nrm: [f32; 2]| -> (f32, f32) {
+        if !one_sided || shift == [0.0, 0.0] {
+            return (d_hi, d_lo);
+        }
+        let m = dot(shift, nrm);
+        if d_lo >= 0.0 {
+            ((d_hi + m).max(d_lo), d_lo)
+        } else {
+            (d_hi, (d_lo + m).min(d_hi))
+        }
+    };
 
     // Build "ribs": for each logical join, one or two (left, right) pairs.
     let mut ribs: Vec<([f32; 2], [f32; 2])> = Vec::with_capacity(n + 4);
@@ -322,25 +391,29 @@ pub(super) fn tessellate_polyline(
                     crate::renderer::types::LineJoin::Bevel => false,
                 };
                 if use_mitre {
-                    let off = scale(bisect, half_t * mitre_scale);
-                    ribs.push((add(cur, off), sub(cur, off)));
+                    let k = mitre_scale;
+                    let (hi, lo) = edges(bisect);
+                    ribs.push((
+                        add(cur, scale(bisect, hi * k)),
+                        add(cur, scale(bisect, lo * k)),
+                    ));
                 } else {
                     // Bevel: two ribs at this point, one per adjacent segment.
-                    let off1 = scale(n1, half_t);
-                    let off2 = scale(n2, half_t);
-                    ribs.push((add(cur, off1), sub(cur, off1)));
-                    ribs.push((add(cur, off2), sub(cur, off2)));
+                    let (h1, l1) = edges(n1);
+                    let (h2, l2) = edges(n2);
+                    ribs.push((add(cur, scale(n1, h1)), add(cur, scale(n1, l1))));
+                    ribs.push((add(cur, scale(n2, h2)), add(cur, scale(n2, l2))));
                 }
             }
             (Some(t1), None) => {
                 let n1 = perp_left(t1);
-                let off = scale(n1, half_t);
-                ribs.push((add(cur, off), sub(cur, off)));
+                let (hi, lo) = edges(n1);
+                ribs.push((add(cur, scale(n1, hi)), add(cur, scale(n1, lo))));
             }
             (None, Some(t2)) => {
                 let n2 = perp_left(t2);
-                let off = scale(n2, half_t);
-                ribs.push((add(cur, off), sub(cur, off)));
+                let (hi, lo) = edges(n2);
+                ribs.push((add(cur, scale(n2, hi)), add(cur, scale(n2, lo))));
             }
             (None, None) => {}
         }
@@ -379,6 +452,7 @@ pub(super) fn tessellate_polyline(
             use_texture: 0.0,
             clip_index: -1.0,
             clip_rect: [0.0; 4],
+            group_tint: 0.0,
         });
     };
     for w in ribs.windows(2) {
@@ -531,6 +605,7 @@ pub(super) fn emit_disc(
         use_texture: 0.0,
         clip_index: -1.0,
         clip_rect: [0.0; 4],
+        group_tint: 0.0,
     };
     for i in 0..segs {
         let a0 = std::f32::consts::TAU * i as f32 / segs as f32;
@@ -547,25 +622,38 @@ pub(super) fn emit_disc(
     }
 }
 
+/// The stroke a polyline draws with, standing an absent one in as a stroke of
+/// no width. The bands a shadow layer puts around a path are measured from the
+/// stroke edges, so a path with no line keeps the geometry it has for a line of
+/// zero width rather than losing its shadow.
+pub(super) fn resolved_stroke(
+    poly: &crate::renderer::types::OverlayPolylineItem,
+) -> crate::renderer::types::OverlayStroke {
+    poly.stroke.clone().unwrap_or_else(|| {
+        crate::renderer::types::OverlayStroke::new(0.0, Colour::linear(1.0, 1.0, 1.0, 1.0))
+    })
+}
+
 /// Emit the stroke geometry for a polyline item, honouring its cap style and
 /// stroke pattern. `colour` must already have opacity applied.
 pub(super) fn emit_polyline_stroke(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
     poly: &crate::renderer::types::OverlayPolylineItem,
+    stroke: &crate::renderer::types::OverlayStroke,
     colour: [f32; 4],
     vp_w: f32,
     vp_h: f32,
 ) {
     use crate::renderer::types::StrokePattern;
-    match poly.stroke_pattern {
+    match stroke.pattern {
         StrokePattern::Solid => {
             verts.extend(tessellate_polyline(
                 &poly.points,
-                poly.thickness,
+                stroke.width,
                 poly.closed,
-                poly.join,
-                poly.mitre_limit,
-                poly.cap,
+                stroke.join,
+                stroke.mitre_limit,
+                stroke.cap,
                 colour,
                 vp_w,
                 vp_h,
@@ -580,9 +668,8 @@ pub(super) fn emit_polyline_stroke(
             // disappearing or looping forever. The 0.25 px floor bounds the
             // sub-path count on long paths.
             if dash_length <= 0.0 || gap_length <= 0.0 {
-                let mut solid = poly.clone();
-                solid.stroke_pattern = StrokePattern::Solid;
-                emit_polyline_stroke(verts, &solid, colour, vp_w, vp_h);
+                let solid = stroke.clone().with_pattern(StrokePattern::Solid);
+                emit_polyline_stroke(verts, poly, &solid, colour, vp_w, vp_h);
                 return;
             }
             let dash = dash_length.max(0.25);
@@ -591,11 +678,11 @@ pub(super) fn emit_polyline_stroke(
             for sub in dash_subpaths(&pts, &cum, dash, gap, offset, poly.closed) {
                 verts.extend(tessellate_polyline(
                     &sub,
-                    poly.thickness,
+                    stroke.width,
                     false,
-                    poly.join,
-                    poly.mitre_limit,
-                    poly.cap,
+                    stroke.join,
+                    stroke.mitre_limit,
+                    stroke.cap,
                     colour,
                     vp_w,
                     vp_h,
@@ -619,7 +706,7 @@ pub(super) fn emit_polyline_stroke(
             };
             while s < limit {
                 let c = point_at_arc(&pts, &cum, s);
-                emit_disc(verts, c, poly.thickness * 0.5, colour, vp_w, vp_h);
+                emit_disc(verts, c, stroke.width * 0.5, colour, vp_w, vp_h);
                 s += spacing;
             }
         }
@@ -653,7 +740,7 @@ pub(super) fn pack_stops(
     });
     if buf.is_empty() {
         // Empty stops list: degrade to transparent black.
-        let s = crate::renderer::types::GradientStop::new(0.0, [0.0; 4]);
+        let s = crate::renderer::types::GradientStop::new(0.0, Colour::TRANSPARENT);
         buf = vec![s, s];
     } else if buf.len() == 1 {
         buf.push(buf[0]);
@@ -670,34 +757,6 @@ pub(super) fn pack_stops(
         positions[i] = positions[n - 1];
     }
     n as f32
-}
-
-/// Emit a solid-colour quad (6 vertices) in screen pixel coordinates.
-pub(super) fn emit_solid_quad(
-    verts: &mut Vec<crate::resources::OverlayTextVertex>,
-    x0: f32,
-    y0: f32,
-    x1: f32,
-    y1: f32,
-    colour: [f32; 4],
-    vp_w: f32,
-    vp_h: f32,
-) {
-    let tl = overlay_local_px(x0, y0, vp_w, vp_h);
-    let tr = overlay_local_px(x1, y0, vp_w, vp_h);
-    let bl = overlay_local_px(x0, y1, vp_w, vp_h);
-    let br = overlay_local_px(x1, y1, vp_w, vp_h);
-    let uv = [0.0, 0.0];
-    let tex = 0.0;
-    let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: pos,
-        uv,
-        colour,
-        use_texture: tex,
-        clip_index: -1.0,
-        clip_rect: [0.0; 4],
-    };
-    verts.extend_from_slice(&[v(tl), v(bl), v(tr), v(tr), v(bl), v(br)]);
 }
 
 /// Emit a textured quad (6 vertices) for a glyph in screen pixel coordinates.
@@ -726,6 +785,7 @@ pub(super) fn emit_textured_quad(
         use_texture: tex,
         clip_index: -1.0,
         clip_rect: [0.0; 4],
+        group_tint: 0.0,
     };
     // UV layout: top-left = uv_min, bottom-right = uv_max.
     verts.extend_from_slice(&[
@@ -808,45 +868,6 @@ pub(super) fn emit_glyph_quads_colored(
     }
 }
 
-/// Emit a thin screen-space line as a quad (6 vertices).
-pub(super) fn emit_line_quad(
-    verts: &mut Vec<crate::resources::OverlayTextVertex>,
-    x0: f32,
-    y0: f32,
-    x1: f32,
-    y1: f32,
-    thickness: f32,
-    colour: [f32; 4],
-    vp_w: f32,
-    vp_h: f32,
-) {
-    let dx = x1 - x0;
-    let dy = y1 - y0;
-    let len = (dx * dx + dy * dy).sqrt();
-    if len < 0.001 {
-        return;
-    }
-    let half = thickness * 0.5;
-    let nx = -dy / len * half;
-    let ny = dx / len * half;
-
-    let p0 = overlay_local_px(x0 + nx, y0 + ny, vp_w, vp_h);
-    let p1 = overlay_local_px(x0 - nx, y0 - ny, vp_w, vp_h);
-    let p2 = overlay_local_px(x1 + nx, y1 + ny, vp_w, vp_h);
-    let p3 = overlay_local_px(x1 - nx, y1 - ny, vp_w, vp_h);
-    let uv = [0.0, 0.0];
-    let tex = 0.0;
-    let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: pos,
-        uv,
-        colour,
-        use_texture: tex,
-        clip_index: -1.0,
-        clip_rect: [0.0; 4],
-    };
-    verts.extend_from_slice(&[v(p0), v(p1), v(p2), v(p2), v(p1), v(p3)]);
-}
-
 /// Apply an opacity multiplier to a colour's alpha channel.
 #[inline]
 pub(super) fn apply_opacity(colour: [f32; 4], opacity: f32) -> [f32; 4] {
@@ -856,16 +877,20 @@ pub(super) fn apply_opacity(colour: [f32; 4], opacity: f32) -> [f32; 4] {
 #[cfg(test)]
 mod stroke_tests {
     use super::*;
-    use crate::renderer::types::{LineJoin, OverlayPolylineItem, PolylineCap, StrokePattern};
+    use crate::renderer::types::{
+        LineJoin, OverlayPolylineItem, OverlayStroke, PolylineCap, StrokePattern,
+    };
 
     const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
     fn line_item(pattern: StrokePattern, cap: PolylineCap) -> OverlayPolylineItem {
         let mut item = OverlayPolylineItem::default();
         item.points = vec![[0.0, 0.0], [100.0, 0.0]];
-        item.thickness = 4.0;
-        item.stroke_pattern = pattern;
-        item.cap = cap;
+        item.stroke = Some(
+            OverlayStroke::new(4.0, Colour::linear(1.0, 1.0, 1.0, 1.0))
+                .with_pattern(pattern)
+                .with_cap(cap),
+        );
         item
     }
 
@@ -943,7 +968,8 @@ mod stroke_tests {
             },
             PolylineCap::Butt,
         );
-        emit_polyline_stroke(&mut verts, &item, WHITE, 100.0, 100.0);
+        let stroke = item.stroke.clone().unwrap();
+        emit_polyline_stroke(&mut verts, &item, &stroke, WHITE, 100.0, 100.0);
         // Dots at 0, 10, .., 100 = 11 discs of 10 fan triangles each.
         assert_eq!(verts.len(), 11 * 10 * 3);
     }
@@ -951,104 +977,583 @@ mod stroke_tests {
     #[test]
     fn degenerate_dash_pattern_falls_back_to_solid() {
         let mut dashed = Vec::new();
+        let dashed_item = line_item(
+            StrokePattern::Dashed {
+                dash_length: 10.0,
+                gap_length: 0.0,
+                offset: 0.0,
+            },
+            PolylineCap::Butt,
+        );
+        let dashed_stroke = dashed_item.stroke.clone().unwrap();
         emit_polyline_stroke(
             &mut dashed,
-            &line_item(
-                StrokePattern::Dashed {
-                    dash_length: 10.0,
-                    gap_length: 0.0,
-                    offset: 0.0,
-                },
-                PolylineCap::Butt,
-            ),
+            &dashed_item,
+            &dashed_stroke,
             WHITE,
             100.0,
             100.0,
         );
         let mut solid = Vec::new();
-        emit_polyline_stroke(
-            &mut solid,
-            &line_item(StrokePattern::Solid, PolylineCap::Butt),
-            WHITE,
-            100.0,
-            100.0,
-        );
+        let solid_item = line_item(StrokePattern::Solid, PolylineCap::Butt);
+        let solid_stroke = solid_item.stroke.clone().unwrap();
+        emit_polyline_stroke(&mut solid, &solid_item, &solid_stroke, WHITE, 100.0, 100.0);
         assert_eq!(dashed.len(), solid.len());
     }
 }
 
-/// Emit a rounded rectangle as solid quads: one center rect + four edge rects +
-/// four corner fans.  This is a CPU tessellation approach that avoids shader
-/// changes.
-pub(super) fn emit_rounded_quad(
+/// Number of concentric bands used to fake a blurred edge on tessellated
+/// geometry (polyline strokes and vector fills). Glyphs do not use this: their
+/// blur is baked exactly into the atlas cell. Five is enough that the banding
+/// is not visible at the blur distances overlays actually use.
+const SHADOW_BANDS: usize = 5;
+
+/// Coverage of a shadow layer at `d` pixels outside its spread edge, matching
+/// `shadow_coverage` in `overlay_shape.wgsl` so the same `ShadowLayer` reads the
+/// same way on an SDF shape and on tessellated geometry.
+fn shadow_coverage(d: f32, blur: f32, falloff: f32) -> f32 {
+    if blur <= 0.0 {
+        return if d <= 0.0 { 1.0 } else { 0.0 };
+    }
+    let t = (d / blur).clamp(0.0, 1.0);
+    let base = 1.0 - (t * t * (3.0 - 2.0 * t));
+    if (falloff - 1.0).abs() <= f32::EPSILON {
+        base
+    } else {
+        base.powf(falloff)
+    }
+}
+
+/// The (offset-from-edge, per-band alpha) pairs to draw a shadow layer as
+/// concentric bands, widest first.
+///
+/// Bands are drawn outside-in and composited src-over, so each band's own alpha
+/// is solved from the coverage the previous bands already laid down. That makes
+/// the accumulated alpha follow the target curve instead of simply summing.
+pub(super) fn shadow_bands(layer: &crate::renderer::types::ShadowLayer) -> Vec<(f32, f32)> {
+    let blur = layer.blur.max(0.0);
+    if blur <= 0.0 {
+        return vec![(0.0, 1.0)];
+    }
+    let mut out = Vec::with_capacity(SHADOW_BANDS);
+    let mut acc = 0.0f32;
+    for i in 0..SHADOW_BANDS {
+        // i = 0 is the outermost band, at the full blur distance.
+        let d = blur * (1.0 - i as f32 / SHADOW_BANDS as f32);
+        let c = shadow_coverage(d, blur, layer.falloff);
+        if c <= 0.0 {
+            continue;
+        }
+        let a = if acc >= 1.0 {
+            0.0
+        } else {
+            ((c - acc) / (1.0 - acc)).clamp(0.0, 1.0)
+        };
+        if a > 0.0 {
+            out.push((d, a));
+            acc = c;
+        }
+    }
+    out
+}
+
+/// Mitre limit used when a shadow band follows a tessellated contour. Flattened
+/// curves have shallow joins, so the limit only ever bites on a genuine spike.
+const CONTOUR_BAND_MITRE_LIMIT: f32 = 4.0;
+
+/// Which side of a contour faces away from the area it encloses, as a sign on
+/// the left-hand normal. A contour wound counter-clockwise encloses what is to
+/// its left, so its outward side is the right one.
+pub(super) fn contour_outward_sign(points: &[[f32; 2]]) -> f32 {
+    if polygon_area(points) > 0.0 {
+        -1.0
+    } else {
+        1.0
+    }
+}
+
+/// Emit one side of a shadow band along a closed contour: from the contour out
+/// to `width` on the side `side` selects (a sign on the left-hand normal), with
+/// `shift` moving the far edge the way a layer offset does.
+///
+/// This is how a shadow layer is clipped to one side of a tessellated
+/// silhouette. An outer layer takes the outward side and so never paints over
+/// the fill it belongs to; an inner layer takes the other and never leaves it.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_contour_band(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
-    x0: f32,
-    y0: f32,
-    x1: f32,
-    y1: f32,
+    points: &[[f32; 2]],
+    side: f32,
+    width: f32,
+    shift: [f32; 2],
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    if width <= 0.0 || points.len() < 3 {
+        return;
+    }
+    let (lo, hi) = if side > 0.0 {
+        (0.0, width)
+    } else {
+        (-width, 0.0)
+    };
+    verts.extend(tessellate_ribbon(
+        points,
+        lo,
+        hi,
+        shift,
+        true,
+        crate::renderer::types::LineJoin::Mitre,
+        CONTOUR_BAND_MITRE_LIMIT,
+        crate::renderer::types::PolylineCap::Butt,
+        colour,
+        vp_w,
+        vp_h,
+    ));
+}
+
+/// Emit one outer shadow layer of a polyline: a band running outward from the
+/// edge of what the item covers, once per blur band.
+///
+/// The band stops at that edge rather than painting the dilated silhouette
+/// behind the item, so a translucent path never tints itself through its own
+/// shadow. What counts as the edge depends on the item: a closed path with a
+/// fill is bounded by its contour, and anything else is bounded by both sides
+/// of its stroke, ends included.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_polyline_shadow(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    poly: &crate::renderer::types::OverlayPolylineItem,
+    layer: &crate::renderer::types::ShadowLayer,
+    opacity: f32,
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let base = layer.colour.to_linear_rgba();
+    let filled = poly.closed && poly.style.fill.is_set();
+    for (d, band_alpha) in shadow_bands(layer) {
+        let colour = apply_opacity(base, opacity * band_alpha);
+        let width = layer.spread + d;
+        if colour[3] <= 0.0 || width <= 0.0 {
+            continue;
+        }
+        if filled {
+            let side = contour_outward_sign(&poly.points);
+            emit_contour_band(
+                verts,
+                &poly.points,
+                side,
+                width,
+                layer.offset,
+                colour,
+                vp_w,
+                vp_h,
+            );
+        } else {
+            emit_stroke_outer_shadow(verts, poly, width, layer.offset, colour, vp_w, vp_h);
+        }
+    }
+}
+
+/// Emit the band outside a stroke: one ribbon alongside each of its two edges,
+/// plus the piece that wraps each open end.
+///
+/// A dash pattern is followed dash by dash, and a dotted pattern becomes a ring
+/// around each dot, so the shadow keeps the shape of the stroke it belongs to.
+#[allow(clippy::too_many_arguments)]
+fn emit_stroke_outer_shadow(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    poly: &crate::renderer::types::OverlayPolylineItem,
+    width: f32,
+    shift: [f32; 2],
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    use crate::renderer::types::StrokePattern;
+    let stroke = resolved_stroke(poly);
+    let half = (stroke.width * 0.5).max(0.0);
+    let mut sides = |points: &[[f32; 2]], closed: bool| {
+        for (lo, hi) in [(half, half + width), (-half - width, -half)] {
+            verts.extend(tessellate_ribbon(
+                points,
+                lo,
+                hi,
+                shift,
+                closed,
+                stroke.join,
+                stroke.mitre_limit,
+                crate::renderer::types::PolylineCap::Butt,
+                colour,
+                vp_w,
+                vp_h,
+            ));
+        }
+        if !closed {
+            emit_stroke_end_shadow(verts, points, half, width, stroke.cap, colour, vp_w, vp_h);
+        }
+    };
+    match stroke.pattern {
+        StrokePattern::Solid => sides(&poly.points, poly.closed),
+        StrokePattern::Dashed {
+            dash_length,
+            gap_length,
+            offset,
+        } => {
+            if dash_length <= 0.0 || gap_length <= 0.0 {
+                sides(&poly.points, poly.closed);
+                return;
+            }
+            let (pts, cum) = polyline_arc_table(&poly.points, poly.closed);
+            for sub in dash_subpaths(
+                &pts,
+                &cum,
+                dash_length.max(0.25),
+                gap_length.max(0.25),
+                offset,
+                poly.closed,
+            ) {
+                sides(&sub, false);
+            }
+        }
+        StrokePattern::Dotted { spacing, offset } => {
+            let (pts, cum) = polyline_arc_table(&poly.points, poly.closed);
+            if pts.len() < 2 {
+                return;
+            }
+            let total = *cum.last().unwrap();
+            let spacing = spacing.max(0.5);
+            let mut s = offset.rem_euclid(spacing);
+            let limit = if poly.closed {
+                total - 1e-3
+            } else {
+                total + 1e-3
+            };
+            while s < limit {
+                let c = point_at_arc(&pts, &cum, s);
+                emit_ring(verts, c, half, half + width, colour, vp_w, vp_h);
+                s += spacing;
+            }
+        }
+    }
+}
+
+/// Emit the shadow that wraps each open end of a stroke: the points outside the
+/// stroke, within `width` of it, past where it stops.
+///
+/// A round cap ends in a half-disc, so its wrap is a half-annulus. A butt or
+/// square cap ends flat, so its wrap is a rectangle across the end with a
+/// quarter-disc at each corner.
+#[allow(clippy::too_many_arguments)]
+fn emit_stroke_end_shadow(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    points: &[[f32; 2]],
+    half: f32,
+    width: f32,
+    cap: crate::renderer::types::PolylineCap,
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    use crate::renderer::types::PolylineCap;
+    let n = points.len();
+    if n < 2 {
+        return;
+    }
+    let unit = |v: [f32; 2]| {
+        let len = (v[0] * v[0] + v[1] * v[1]).sqrt();
+        if len < 1e-6 {
+            [0.0, 0.0]
+        } else {
+            [v[0] / len, v[1] / len]
+        }
+    };
+    let ends = [
+        (
+            points[0],
+            unit([points[0][0] - points[1][0], points[0][1] - points[1][1]]),
+        ),
+        (
+            points[n - 1],
+            unit([
+                points[n - 1][0] - points[n - 2][0],
+                points[n - 1][1] - points[n - 2][1],
+            ]),
+        ),
+    ];
+    for (p, out) in ends {
+        if out == [0.0, 0.0] {
+            continue;
+        }
+        let nrm = [-out[1], out[0]];
+        match cap {
+            PolylineCap::Round => {
+                emit_half_ring(verts, p, out, half, half + width, colour, vp_w, vp_h);
+            }
+            PolylineCap::Butt | PolylineCap::Square => {
+                // A square cap puts the flat end half a thickness further on.
+                let e = if cap == PolylineCap::Square {
+                    [p[0] + out[0] * half, p[1] + out[1] * half]
+                } else {
+                    p
+                };
+                let corner = |s: f32| [e[0] + nrm[0] * half * s, e[1] + nrm[1] * half * s];
+                let (c0, c1) = (corner(1.0), corner(-1.0));
+                let push = |q: [f32; 2]| [q[0] + out[0] * width, q[1] + out[1] * width];
+                emit_quad(verts, c0, c1, push(c1), push(c0), colour, vp_w, vp_h);
+                for (c, from) in [(c0, nrm), (c1, [-nrm[0], -nrm[1]])] {
+                    emit_fan(verts, c, from, out, width, colour, vp_w, vp_h);
+                }
+            }
+        }
+    }
+}
+
+/// Emit a flat quad as two triangles, in screen pixel coordinates.
+#[allow(clippy::too_many_arguments)]
+fn emit_quad(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    a: [f32; 2],
+    b: [f32; 2],
+    c: [f32; 2],
+    d: [f32; 2],
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let v = |p: [f32; 2]| crate::resources::OverlayTextVertex {
+        position: overlay_local_px(p[0], p[1], vp_w, vp_h),
+        uv: [0.0, 0.0],
+        colour,
+        use_texture: 0.0,
+        clip_index: -1.0,
+        clip_rect: [0.0; 4],
+        group_tint: 0.0,
+    };
+    verts.extend_from_slice(&[v(a), v(b), v(c), v(a), v(c), v(d)]);
+}
+
+/// Emit a fan sweeping from direction `from` to direction `to` (the short way),
+/// at `radius` about `centre`.
+#[allow(clippy::too_many_arguments)]
+fn emit_fan(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    centre: [f32; 2],
+    from: [f32; 2],
+    to: [f32; 2],
     radius: f32,
     colour: [f32; 4],
     vp_w: f32,
     vp_h: f32,
 ) {
-    let w = x1 - x0;
-    let h = y1 - y0;
-    let r = radius.min(w * 0.5).min(h * 0.5).max(0.0);
+    let a0 = from[1].atan2(from[0]);
+    let mut sweep = to[1].atan2(to[0]) - a0;
+    while sweep > std::f32::consts::PI {
+        sweep -= std::f32::consts::TAU;
+    }
+    while sweep < -std::f32::consts::PI {
+        sweep += std::f32::consts::TAU;
+    }
+    let segs = 4;
+    let at = |a: f32| [centre[0] + a.cos() * radius, centre[1] + a.sin() * radius];
+    for i in 0..segs {
+        let t0 = a0 + sweep * i as f32 / segs as f32;
+        let t1 = a0 + sweep * (i + 1) as f32 / segs as f32;
+        emit_quad(verts, centre, at(t0), at(t1), centre, colour, vp_w, vp_h);
+    }
+}
 
-    if r < 0.5 {
-        emit_solid_quad(verts, x0, y0, x1, y1, colour, vp_w, vp_h);
-        return;
+/// Emit an annulus between two radii about `centre`.
+#[allow(clippy::too_many_arguments)]
+fn emit_ring(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    centre: [f32; 2],
+    r_inner: f32,
+    r_outer: f32,
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let segs = 16;
+    let at = |a: f32, r: f32| [centre[0] + a.cos() * r, centre[1] + a.sin() * r];
+    for i in 0..segs {
+        let a0 = std::f32::consts::TAU * i as f32 / segs as f32;
+        let a1 = std::f32::consts::TAU * (i + 1) as f32 / segs as f32;
+        emit_quad(
+            verts,
+            at(a0, r_inner),
+            at(a0, r_outer),
+            at(a1, r_outer),
+            at(a1, r_inner),
+            colour,
+            vp_w,
+            vp_h,
+        );
+    }
+}
+
+/// Emit half an annulus about `centre`, on the side `outward` points to.
+#[allow(clippy::too_many_arguments)]
+fn emit_half_ring(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    centre: [f32; 2],
+    outward: [f32; 2],
+    r_inner: f32,
+    r_outer: f32,
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let segs = 8;
+    let base = outward[1].atan2(outward[0]) - std::f32::consts::FRAC_PI_2;
+    let at = |a: f32, r: f32| [centre[0] + a.cos() * r, centre[1] + a.sin() * r];
+    for i in 0..segs {
+        let a0 = base + std::f32::consts::PI * i as f32 / segs as f32;
+        let a1 = base + std::f32::consts::PI * (i + 1) as f32 / segs as f32;
+        emit_quad(
+            verts,
+            at(a0, r_inner),
+            at(a0, r_outer),
+            at(a1, r_outer),
+            at(a1, r_inner),
+            colour,
+            vp_w,
+            vp_h,
+        );
+    }
+}
+
+/// Emit one inner shadow layer of a polyline: a band running inward from the
+/// edge of what the item covers, once per blur band.
+///
+/// A closed path with a fill covers an area, so the band runs inward from the
+/// contour, as it does on any other filled silhouette. Anything else covers
+/// only its stroke, so the band eats into the stroke from both of its edges,
+/// which is what an inset layer means for a line. In that case the layer offset
+/// is left out: a stroke has no interior for the band to slide within.
+pub(super) fn emit_polyline_inner_shadow(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    poly: &crate::renderer::types::OverlayPolylineItem,
+    layer: &crate::renderer::types::ShadowLayer,
+    opacity: f32,
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let base = layer.colour.to_linear_rgba();
+    let area = poly.closed && poly.style.fill.is_set();
+    let stroke_width = resolved_stroke(poly).width;
+    for (d, band_alpha) in shadow_bands(layer) {
+        let colour = apply_opacity(base, opacity * band_alpha);
+        let width = layer.spread + d;
+        if colour[3] <= 0.0 || width <= 0.0 {
+            continue;
+        }
+        if area {
+            let side = -contour_outward_sign(&poly.points);
+            emit_contour_band(
+                verts,
+                &poly.points,
+                side,
+                width,
+                layer.offset,
+                colour,
+                vp_w,
+                vp_h,
+            );
+        } else if stroke_width > 0.0 {
+            let half = stroke_width * 0.5;
+            let w = width.min(half);
+            for (lo, hi) in [(half - w, half), (-half, w - half)] {
+                verts.extend(tessellate_ribbon(
+                    &poly.points,
+                    lo,
+                    hi,
+                    [0.0, 0.0],
+                    poly.closed,
+                    crate::renderer::types::LineJoin::Mitre,
+                    CONTOUR_BAND_MITRE_LIMIT,
+                    crate::renderer::types::PolylineCap::Butt,
+                    colour,
+                    vp_w,
+                    vp_h,
+                ));
+            }
+        }
+    }
+}
+
+/// A screen-space rotation applied to already-emitted overlay vertices.
+///
+/// Text has no signed distance field to turn in a shader the way an analytic
+/// shape does, so a rotated run is rotated here. Vertex positions are logical
+/// screen pixels at this point, so rotating them in place is the whole job, and
+/// it turns a label's background plate and its shadows along with the glyphs
+/// rather than only the letterforms.
+///
+/// The glyph cells stay axis-aligned in the atlas and are sampled through the
+/// clamp/linear sampler, so a rotated run is very slightly softer than an
+/// upright one.
+#[derive(Clone, Copy)]
+pub(super) struct OverlayRotation {
+    sin: f32,
+    cos: f32,
+    scale: f32,
+    /// Absolute screen-pixel point the vertices turn and scale about.
+    centre: [f32; 2],
+}
+
+impl OverlayRotation {
+    /// An item transform baked into vertex positions: scale about `centre`,
+    /// then rotate about it. `None` when neither would move anything, so
+    /// callers can pass one through unconditionally.
+    ///
+    /// This is the inner half of the composition contract. The outer half (the
+    /// group transform) rides the GPU instance; an immediate item has no
+    /// instance slot of its own, so its half is folded in here.
+    pub(super) fn new(radians: f32, scale: f32, centre: [f32; 2]) -> Option<Self> {
+        if radians == 0.0 && scale == 1.0 {
+            return None;
+        }
+        Some(Self {
+            sin: radians.sin(),
+            cos: radians.cos(),
+            scale,
+            centre,
+        })
     }
 
-    // Center cross (two rects that cover everything except the corners).
-    // Horizontal bar (full width, inset top/bottom by r).
-    emit_solid_quad(verts, x0, y0 + r, x1, y1 - r, colour, vp_w, vp_h);
-    // Top bar (inset left/right by r, top edge).
-    emit_solid_quad(verts, x0 + r, y0, x1 - r, y0 + r, colour, vp_w, vp_h);
-    // Bottom bar.
-    emit_solid_quad(verts, x0 + r, y1 - r, x1 - r, y1, colour, vp_w, vp_h);
+    /// The centre of a box, offset by a pivot measured from that centre. This is
+    /// the `OverlayShapeItem::rotation_pivot` contract: `[0, 0]` is the centre.
+    pub(super) fn pivot_point(box_min: [f32; 2], box_size: [f32; 2], pivot: [f32; 2]) -> [f32; 2] {
+        [
+            box_min[0] + box_size[0] * 0.5 + pivot[0],
+            box_min[1] + box_size[1] * 0.5 + pivot[1],
+        ]
+    }
 
-    // Four corner fans.
-    let corners = [
-        (
-            x0 + r,
-            y0 + r,
-            std::f32::consts::PI,
-            std::f32::consts::FRAC_PI_2 * 3.0,
-        ), // top-left
-        (
-            x1 - r,
-            y0 + r,
-            std::f32::consts::FRAC_PI_2 * 3.0,
-            std::f32::consts::TAU,
-        ), // top-right
-        (x1 - r, y1 - r, 0.0, std::f32::consts::FRAC_PI_2), // bottom-right
-        (
-            x0 + r,
-            y1 - r,
-            std::f32::consts::FRAC_PI_2,
-            std::f32::consts::PI,
-        ), // bottom-left
-    ];
-    let segments = 6;
-    let uv = [0.0, 0.0];
-    let tex = 0.0;
-    let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: pos,
-        uv,
-        colour,
-        use_texture: tex,
-        clip_index: -1.0,
-        clip_rect: [0.0; 4],
+    fn apply(&self, p: [f32; 2]) -> [f32; 2] {
+        let dx = (p[0] - self.centre[0]) * self.scale;
+        let dy = (p[1] - self.centre[1]) * self.scale;
+        [
+            self.centre[0] + self.cos * dx - self.sin * dy,
+            self.centre[1] + self.sin * dx + self.cos * dy,
+        ]
+    }
+}
+
+/// Apply an item transform to the positions of `verts[from..]` in place. A
+/// `None` transform is a no-op, so callers can pass one through
+/// unconditionally.
+pub(super) fn rotate_vertices_from(
+    verts: &mut [crate::resources::OverlayTextVertex],
+    from: usize,
+    rot: Option<OverlayRotation>,
+) {
+    let Some(r) = rot else {
+        return;
     };
-    for (cx, cy, start, end) in corners {
-        let center = overlay_local_px(cx, cy, vp_w, vp_h);
-        for i in 0..segments {
-            let a0 = start + (end - start) * i as f32 / segments as f32;
-            let a1 = start + (end - start) * (i + 1) as f32 / segments as f32;
-            let p0 = overlay_local_px(cx + a0.cos() * r, cy + a0.sin() * r, vp_w, vp_h);
-            let p1 = overlay_local_px(cx + a1.cos() * r, cy + a1.sin() * r, vp_w, vp_h);
-            verts.extend_from_slice(&[v(center), v(p0), v(p1)]);
-        }
+    for v in &mut verts[from..] {
+        v.position = r.apply(v.position);
     }
 }

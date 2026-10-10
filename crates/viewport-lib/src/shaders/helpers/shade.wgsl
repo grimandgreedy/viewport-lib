@@ -1,8 +1,7 @@
 // Frozen fragment-shading hook contract for material/shading plugins.
 //
-// These structs are the plugin-facing surface of the fragment-shading seam
-// (see docs/issues/lighting-shader-injection-seam.md). Hook bodies registered
-// against the lit mesh family receive them:
+// These structs are the plugin-facing surface of the fragment-shading seam.
+// Hook bodies registered against the lit mesh family receive them:
 //
 //   fn <name>__shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32>
 //   fn <name>__shade_ambient(surf: ShadingSurface) -> vec3<f32>

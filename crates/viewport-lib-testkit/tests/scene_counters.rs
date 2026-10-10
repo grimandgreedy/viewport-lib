@@ -46,6 +46,10 @@ fn expected(name: &str) -> Option<Expected> {
         "textured_checker" => e(1, 1, 1, 0, 0, 2208),
         "textured_normalmap" => e(1, 1, 1, 0, 0, 3968),
         "transparent" => e(3, 3, 1, 1, 0, 2880),
+        // One opaque instanced batch and one OIT instanced batch, which is why
+        // this is the only scene whose `main_buffer_binds` reaches four: both
+        // instanced loops run, and each binds the slab's two chunks.
+        "transparent_background" => e(2, 2, 2, 2, 0, 972),
         "materials_pbr" => e(25, 25, 1, 1, 0, 55200),
         "many_objects" => e(144, 144, 2, 2, 0, 16992),
         "lights_eight" => e(4, 4, 2, 2, 0, 2892),
@@ -56,7 +60,107 @@ fn expected(name: &str) -> Option<Expected> {
         // path; visual correctness is covered by the snapshot test.
         "point_cloud" => e(0, 0, 0, 0, 0, 0),
         "polyline" => e(0, 0, 0, 0, 0, 0),
-        "glyphs" => e(0, 0, 0, 0, 0, 0),
+        "vector_fields" => e(0, 0, 0, 0, 0, 0),
+        "tensor_fields" => e(0, 0, 0, 0, 0, 0),
+        "tubes" => e(0, 0, 0, 0, 0, 0),
+        "streamtubes" => e(0, 0, 0, 0, 0, 0),
+        "ribbons" => e(0, 0, 0, 0, 0, 0),
+        "sprites" => e(0, 0, 0, 0, 0, 0),
+        // The extra sprite scenes carry mesh geometry for the sprites to draw
+        // against: a ground slab and a cube for the soft fade, a cube for the
+        // OIT overlaps, and a textured ground for the refraction to distort.
+        "sprites_soft" => e(2, 2, 2, 2, 0, 24),
+        "sprites_oit" => e(1, 1, 1, 0, 0, 12),
+        "sprites_refraction" => e(1, 1, 1, 0, 0, 12),
+        // Same content as `sprites_soft`, supersampled: the counters are
+        // resolution-independent, so they match it exactly.
+        "supersampled_sprites" => e(2, 2, 2, 2, 0, 24),
+        "supersampled_sprite_refraction" => e(1, 1, 1, 0, 0, 12),
+        // No mesh geometry: the particles are the whole scene.
+        "gpu_particles" => e(0, 0, 0, 0, 0, 0),
+        "volume" => e(0, 0, 0, 0, 0, 0),
+        "gaussian_splats" => e(0, 0, 0, 0, 0, 0),
+        "image_slice" => e(0, 0, 0, 0, 0, 0),
+        "volume_surface_slice" => e(0, 0, 0, 0, 0, 0),
+        "gpu_implicit" => e(0, 0, 0, 0, 0, 0),
+        "gpu_marching_cubes" => e(0, 0, 0, 0, 0, 0),
+        "mesh_instances" => e(0, 0, 0, 0, 0, 0),
+        // These item-type scenes include mesh geometry (ground and receivers
+        // for scatter and decals), so the mesh counters are live for them.
+        "scatter_volume" => e(2, 2, 2, 2, 0, 972),
+        // A fog box containing a dense sphere, downsampled: two volumes over a
+        // slab and a pillar, so the back-to-front order has something to get
+        // wrong.
+        "scatter_layered" => e(2, 2, 2, 2, 0, 24),
+        // A texture-driven volume beside a noise-driven one, against a single
+        // backdrop slab.
+        "scatter_textured" => e(1, 1, 1, 0, 0, 12),
+        // Scrolling noise and heat-haze refraction at a pinned clock, over a
+        // wall and four struts for the shimmer to bend.
+        "scatter_animated" => e(5, 5, 2, 2, 0, 60),
+        // Wireframe-only scene: a volume box, splat rings and sprite quads,
+        // all drawn as lines through the shared substrate. No mesh geometry.
+        "item_wireframes" => e(0, 0, 0, 0, 0, 0),
+        "decals" => e(2, 2, 2, 2, 0, 24),
+        // The decal scene again with supersampling on: same content and same
+        // draw structure, only the resolution differs.
+        "supersampled_decals" => e(2, 2, 2, 2, 0, 24),
+        // One slab receiving a decal, with soft-particle sprites over it: the
+        // scene that pins decal ordering against the depth-read pass.
+        "decal_under_soft_sprite" => e(1, 1, 1, 0, 0, 12),
+        // One slab with soft-particle sprites and refractive sprites over it:
+        // the scene that pins what the refraction samples.
+        "refraction_over_soft_sprite" => e(1, 1, 1, 0, 0, 12),
+        // A mesh that opted out of decals beside a GPU implicit surface that
+        // did not: pins that decals land on any depth writer, not just meshes.
+        "decal_on_non_mesh" => e(1, 1, 1, 0, 0, 960),
+        // Three spheres on different layers under two decals that each target
+        // one. The spheres share a mesh and a material, so they batch.
+        "decal_layers" => e(3, 3, 1, 1, 0, 2880),
+        // One flow sphere.
+        "surface_lic" => e(1, 1, 1, 0, 0, 2208),
+        // A flow sphere, a flow torus and a plain box.
+        "surface_lic_occluded" => e(3, 3, 3, 3, 0, 4524),
+        // Two hex blocks drawn through their boundary meshes.
+        "volume_mesh_node_scalars" => e(2, 2, 2, 0, 2, 216),
+        // One clipped block drawn as a surface; the transparent one is not a
+        // mesh draw.
+        "volume_mesh_node_scalars_cut" => e(1, 1, 1, 0, 1, 127),
+        // A wave grid and a sphere, both coloured; the contour items redraw
+        // their meshes in their own pass, which the counters do not see.
+        "surface_contours" => e(2, 2, 2, 0, 2, 20640),
+        // A contoured plane and a plain box, and a clipped block drawn as a
+        // surface.
+        "surface_contours_occluded" => e(3, 3, 3, 2, 1, 8331),
+        // Tube, streamtube and ribbon under one decal. No mesh geometry: the
+        // curve types are the whole scene.
+        "decal_on_curves" => e(0, 0, 0, 0, 0, 0),
+        // The same scene from below the projection plane, where the shader's
+        // view-direction check currently removes the decal outright.
+        "decal_from_below" => e(1, 1, 1, 0, 0, 960),
+        // The overlay scenes: one sphere backdrop each, so the scene-side
+        "room_point_light" => e(13, 13, 13, 13, 0, 1104),
+        "room_point_light_two_sided" => e(13, 13, 13, 13, 0, 1104),
+        "room_doorway_sun" => e(14, 14, 14, 14, 0, 1116),
+        "room_cut_solids" => e(11, 11, 10, 10, 0, 3040),
+        "slab_stack_sun" => e(10, 10, 10, 10, 0, 120),
+        "slab_stack_point" => e(10, 10, 10, 10, 0, 120),
+        "long_hall" => e(26, 26, 5, 5, 0, 312),
+        // counters are identical across all of them. They exist to gate overlay
+        // pixels, not scene structure; a change here means the backdrop moved.
+        "overlay_shapes" => e(1, 1, 1, 0, 0, 960),
+        "overlay_vector" => e(1, 1, 1, 0, 0, 960),
+        "overlay_polylines" => e(1, 1, 1, 0, 0, 960),
+        "overlay_labels" => e(1, 1, 1, 0, 0, 960),
+        "overlay_glyph_runs" => e(1, 1, 1, 0, 0, 960),
+        "overlay_shadows" => e(1, 1, 1, 0, 0, 960),
+        "overlay_rotation" => e(1, 1, 1, 0, 0, 960),
+        "overlay_clipping" => e(1, 1, 1, 0, 0, 960),
+        "overlay_retained" => e(1, 1, 1, 0, 0, 960),
+        "overlay_composition" => e(1, 1, 1, 0, 0, 960),
+        "overlay_text_fill" => e(1, 1, 1, 0, 0, 960),
+        "overlay_shadow_parity" => e(1, 1, 1, 0, 0, 960),
+        "overlay_group_anchor" => e(1, 1, 1, 0, 0, 960),
         _ => return None,
     })
 }

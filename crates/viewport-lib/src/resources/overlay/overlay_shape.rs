@@ -182,7 +182,8 @@ impl crate::resources::DeviceResources {
             crate::resources::builders::clamp_linear_sampler(device, "overlay_shape_tex_sampler");
 
         // Group 1: the clip-mask storage buffer, so a textured shape honours
-        // `with_clip` the same way a solid shape does.
+        // `with_clip` the same way a solid shape does, plus the shared
+        // shadow-layer buffer.
         let clip_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("overlay_shape_tex_clip_bgl"),
             entries: &[
@@ -208,6 +209,23 @@ impl crate::resources::DeviceResources {
                         ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 2: the stacked shadow layers, the same buffer the
+                // solid pass reads, so a textured shape takes the same layers.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(
+                            std::num::NonZeroU64::new(
+                                std::mem::size_of::<OverlayShadowLayerGpu>() as u64
+                            )
+                            .unwrap(),
+                        ),
                     },
                     count: None,
                 },
@@ -274,7 +292,7 @@ impl crate::resources::DeviceResources {
         self.overlay_shape.tex_pipeline = Some(pipeline);
     }
 
-    /// Upload RGBA8 pixel data as a texture for overlay shape fills.
+    /// Upload an image as a texture for overlay shape fills.
     ///
     /// Returns an `OverlayTextureId` that can be stored in
     /// `OverlayShapeItem::texture`. The texture stays resident until you release
@@ -284,28 +302,29 @@ impl crate::resources::DeviceResources {
     /// plus [`update_overlay_texture`](Self::update_overlay_texture), which reuse
     /// one GPU texture instead of allocating a new one per frame.
     ///
-    /// `rgba_data` must contain exactly `width * height * 4` bytes in
-    /// row-major, top-to-bottom order. The data is treated as sRGB-encoded
-    /// (standard 8-bit image data).
+    /// The format follows `data`: an sRGB image is sampled with the hardware
+    /// decode, a linear one (a lookup table, a data image) as stored, and float
+    /// pixels at half-float precision, so values above 1 survive.
+    ///
+    /// # Errors
+    ///
+    /// The errors [`TextureData::validate`](crate::TextureData::validate)
+    /// returns, and
+    /// [`ViewportError::UnsupportedTextureData`](crate::error::ViewportError::UnsupportedTextureData)
+    /// for a normal map or a compressed payload, which an overlay cannot use.
     pub fn upload_overlay_texture(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba_data: &[u8],
-    ) -> OverlayTextureId {
-        assert_eq!(
-            rgba_data.len(),
-            (width * height * 4) as usize,
-            "upload_overlay_texture: rgba_data length does not match width * height * 4"
-        );
-
+        data: crate::TextureData,
+    ) -> crate::error::ViewportResult<OverlayTextureId> {
+        let (width, height, format, pixels) = overlay_texture_pixels(data)?;
         let entry =
-            build_overlay_texture_entry(device, Some(queue), width, height, Some(rgba_data));
-        self.content
+            build_overlay_texture_entry(device, Some(queue), width, height, format, Some(&pixels));
+        Ok(self
+            .content
             .overlay_textures
-            .insert(entry, overlay_texture_bytes(width, height))
+            .insert(entry, overlay_texture_bytes(width, height, format)))
     }
 
     /// Allocate a reusable overlay texture and return a stable
@@ -318,17 +337,27 @@ impl crate::resources::DeviceResources {
     /// Unlike [`upload_overlay_texture`](Self::upload_overlay_texture), updating
     /// this handle reuses the same GPU texture rather than stranding one per
     /// frame, so it is the right choice for a live source (decoded video, a
-    /// capture feed, a per-frame heatmap). The format is `Rgba8UnormSrgb`.
+    /// capture feed, a per-frame heatmap).
+    ///
+    /// `colour_space` is the space of the RGBA8 bytes it will be fed: `Srgb`
+    /// for video and captured or authored colour, `Linear` for data such as a
+    /// heatmap's values. It is fixed for the texture's life, so each update
+    /// stays a plain byte copy.
     pub fn create_streaming_overlay_texture(
         &mut self,
         device: &crate::gpu::Device,
         width: u32,
         height: u32,
+        colour_space: crate::ColourSpace,
     ) -> OverlayTextureId {
-        let entry = build_overlay_texture_entry(device, None, width, height, None);
+        let format = match colour_space {
+            crate::ColourSpace::Srgb => crate::gpu::TextureFormat::Rgba8UnormSrgb,
+            crate::ColourSpace::Linear => crate::gpu::TextureFormat::Rgba8Unorm,
+        };
+        let entry = build_overlay_texture_entry(device, None, width, height, format, None);
         self.content
             .overlay_textures
-            .insert(entry, overlay_texture_bytes(width, height))
+            .insert(entry, overlay_texture_bytes(width, height, format))
     }
 
     /// Replace the contents of an overlay texture in place.
@@ -341,7 +370,9 @@ impl crate::resources::DeviceResources {
     /// or [`upload_overlay_texture`](Self::upload_overlay_texture).
     ///
     /// Returns `false` (and does nothing) if `id` does not resolve to a live
-    /// texture, for example because it was already freed.
+    /// texture, for example because it was already freed, or if the texture holds
+    /// float pixels, which RGBA8 bytes cannot fill. The texture keeps the colour
+    /// space it was created with, including across a resize.
     ///
     /// # Panics
     ///
@@ -371,13 +402,26 @@ impl crate::resources::DeviceResources {
             return false;
         };
 
+        let format = texture.format();
+        if !matches!(
+            format,
+            crate::gpu::TextureFormat::Rgba8UnormSrgb | crate::gpu::TextureFormat::Rgba8Unorm
+        ) {
+            return false;
+        }
         let size = texture.size();
         if size.width != width || size.height != height {
-            *entry =
-                build_overlay_texture_entry(device, Some(queue), width, height, Some(rgba_data));
+            *entry = build_overlay_texture_entry(
+                device,
+                Some(queue),
+                width,
+                height,
+                format,
+                Some(rgba_data),
+            );
             self.content
                 .overlay_textures
-                .set_bytes(id, overlay_texture_bytes(width, height));
+                .set_bytes(id, overlay_texture_bytes(width, height, format));
             return true;
         }
 
@@ -406,8 +450,9 @@ impl crate::resources::DeviceResources {
     /// The intended source is an
     /// [`OffscreenViewportTarget`](crate::OffscreenViewportTarget) that a viewport
     /// rendered into: pass its `render_view()` (the sRGB view), not `sample_view()`.
-    /// The overlay path samples with an sRGB decode, so the sRGB view round-trips
-    /// the colour faithfully; the non-sRGB view would read too dark.
+    /// A sample is decoded according to the view's format, so the sRGB view
+    /// turns the stored colour back into linear values; the non-sRGB view would
+    /// hand the shader the encoded values and the image would draw wrong.
     ///
     /// The registry does not own the texture: it never writes to or resizes it, and
     /// [`update_overlay_texture`](Self::update_overlay_texture) rejects the returned
@@ -473,33 +518,25 @@ impl crate::resources::DeviceResources {
     /// [`OverlayTextureId`] via
     /// [`upload_result_overlay_texture`](Self::upload_result_overlay_texture).
     ///
-    /// Ownership of `rgba_data` transfers into the worker.
+    /// The format follows `data` exactly as for
+    /// [`upload_overlay_texture`](Self::upload_overlay_texture), and `data`
+    /// transfers into the worker.
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
-    /// before submission when `rgba_data.len() != width * height * 4`.
+    /// The same as [`upload_overlay_texture`](Self::upload_overlay_texture),
+    /// reported before any job is submitted.
     pub fn begin_upload_overlay_texture(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba_data: Vec<u8>,
+        data: crate::TextureData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        let expected = (width * height * 4) as usize;
-        if rgba_data.len() != expected {
-            return Err(crate::error::ViewportError::InvalidTextureData {
-                expected,
-                actual: rgba_data.len(),
-            });
-        }
-
+        let (width, height, format, pixels) = overlay_texture_pixels(data)?;
         let slot = crate::resources::ResultSlot::<OverlayTextureId>::new();
         let slot_for_apply = slot.clone();
         let device_for_worker = device.clone();
         let queue_for_worker = queue.clone();
-
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
@@ -509,7 +546,8 @@ impl crate::resources::DeviceResources {
                     Some(&queue_for_worker),
                     width,
                     height,
-                    Some(&rgba_data),
+                    format,
+                    Some(&pixels),
                 );
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
@@ -517,13 +555,12 @@ impl crate::resources::DeviceResources {
                         let id = resources
                             .content
                             .overlay_textures
-                            .insert(entry, overlay_texture_bytes(width, height));
+                            .insert(entry, overlay_texture_bytes(width, height, format));
                         slot_for_apply.set(id);
                     }),
                 ))
             })
         };
-
         self.job_results
             .overlay_texture
             .lock()
@@ -641,9 +678,12 @@ impl crate::resources::DeviceResources {
 pub(crate) struct OverlayShadowLayerGpu {
     /// RGBA shadow colour (pre-multiplied opacity).
     pub colour: [f32; 4],
-    /// `[radius_px, offset_x, offset_y, is_inner]`. `is_inner` is 0 for an
+    /// `[blur_px, offset_x, offset_y, is_inner]`. `is_inner` is 0 for an
     /// outer drop shadow, 1 for an inner (inset) shadow.
     pub params: [f32; 4],
+    /// `[spread_px, falloff, 0, 0]`. `spread` grows the silhouette before the
+    /// blur is applied; `falloff` is the exponent shaping the blur curve.
+    pub params2: [f32; 4],
 }
 
 /// One clip-mask shape as uploaded to the clip storage buffer, shared by the shape
@@ -683,16 +723,12 @@ pub(crate) struct OverlayShapeVertex {
     pub local_pos: [f32; 2],
     /// RGBA fill colour (pre-multiplied opacity).
     pub fill_colour: [f32; 4],
-    /// RGBA border colour (pre-multiplied opacity).
-    pub border_colour: [f32; 4],
     /// Half-extents of the shape bounding box in logical pixels.
     pub half_size: [f32; 2],
     /// Shape-specific radii. For RoundedRect: [top-left, top-right,
     /// bottom-right, bottom-left]. For Rect: uniform radius in [0].
     /// Unused components are zero.
     pub radii: [f32; 4],
-    /// Border thickness in logical pixels.
-    pub border_width: f32,
     /// Encoded shape type: 0 = Rect/RoundedRect, 1 = Circle, 2 = Ellipse, 3 = Capsule.
     pub shape_type: f32,
     /// RGBA end colour for linear gradient (equals fill_colour for solid fill).
@@ -702,10 +738,9 @@ pub(crate) struct OverlayShapeVertex {
     /// number of active gradient stops (0 for solid, 2..4 otherwise).
     pub gradient_params: [f32; 4],
     /// Shadow-layer index and counts: `[base_index, outer_count,
-    /// inner_count, border_mode]`. The counts index into the shared shadow
-    /// storage buffer starting at `base_index` (outer layers first, then
-    /// inner). `border_mode` is 0=inset, 1=outer, 2=center.
-    pub shadow_index: [f32; 4],
+    /// inner_count]`. The counts index into the shared shadow storage buffer
+    /// starting at `base_index`, outer layers first, then inner.
+    pub shadow_index: [f32; 3],
     /// Rotation and pivot: `[rotation_radians, pivot_x, pivot_y, _pad]`.
     /// `local_pos` is rotated by `-rotation` around `pivot` (pixels from the
     /// shape centre) before SDF evaluation, so the shape rotates inside its
@@ -733,101 +768,97 @@ impl OverlayShapeVertex {
         crate::gpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<OverlayShapeVertex>() as crate::gpu::BufferAddress,
             step_mode: crate::gpu::VertexStepMode::Vertex,
+            // Offsets come from `offset_of!` so reordering fields cannot desync
+            // them from the struct.
             attributes: &[
                 // location 0: position vec2f
                 crate::gpu::VertexAttribute {
-                    offset: 0,
+                    offset: std::mem::offset_of!(OverlayShapeVertex, position) as u64,
                     shader_location: 0,
                     format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 1: local_pos vec2f
                 crate::gpu::VertexAttribute {
-                    offset: 8,
+                    offset: std::mem::offset_of!(OverlayShapeVertex, local_pos) as u64,
                     shader_location: 1,
                     format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 2: fill_colour vec4f
                 crate::gpu::VertexAttribute {
-                    offset: 16,
+                    offset: std::mem::offset_of!(OverlayShapeVertex, fill_colour) as u64,
                     shader_location: 2,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 3: border_colour vec4f
+                // location 3: half_size vec2f
                 crate::gpu::VertexAttribute {
-                    offset: 32,
+                    offset: std::mem::offset_of!(OverlayShapeVertex, half_size) as u64,
                     shader_location: 3,
-                    format: crate::gpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x2,
                 },
-                // location 4: half_size vec2f
+                // location 4: radii vec4f
                 crate::gpu::VertexAttribute {
-                    offset: 48,
+                    offset: std::mem::offset_of!(OverlayShapeVertex, radii) as u64,
                     shader_location: 4,
-                    format: crate::gpu::VertexFormat::Float32x2,
-                },
-                // location 5: radii vec4f
-                crate::gpu::VertexAttribute {
-                    offset: 56,
-                    shader_location: 5,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 6: shape_meta vec2f (border_width, shape_type) -- combined
+                // location 5: shape_type f32
                 crate::gpu::VertexAttribute {
-                    offset: 72,
-                    shader_location: 6,
-                    format: crate::gpu::VertexFormat::Float32x2,
+                    offset: std::mem::offset_of!(OverlayShapeVertex, shape_type) as u64,
+                    shader_location: 5,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
-                // location 7: stop_positions vec4f (gradient stop positions)
+                // location 6: fill_colour2 vec4f (end colour for gradient)
                 crate::gpu::VertexAttribute {
-                    offset: 196,
+                    offset: std::mem::offset_of!(OverlayShapeVertex, fill_colour2) as u64,
+                    shader_location: 6,
+                    format: crate::gpu::VertexFormat::Float32x4,
+                },
+                // location 7: gradient_params vec4f (type, angle, stop_count, pad)
+                crate::gpu::VertexAttribute {
+                    offset: std::mem::offset_of!(OverlayShapeVertex, gradient_params) as u64,
                     shader_location: 7,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 8: fill_colour2 vec4f (end colour for gradient)
+                // location 8: shadow_index vec3f (base_index, outer_ct, inner_ct)
                 crate::gpu::VertexAttribute {
-                    offset: 80,
+                    offset: std::mem::offset_of!(OverlayShapeVertex, shadow_index) as u64,
                     shader_location: 8,
-                    format: crate::gpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 },
-                // location 9: gradient_params vec4f (type, angle, stop_count, pad)
+                // location 9: rotation_pivot vec4f (rotation, pivot_x, pivot_y, pad)
                 crate::gpu::VertexAttribute {
-                    offset: 96,
+                    offset: std::mem::offset_of!(OverlayShapeVertex, rotation_pivot) as u64,
                     shader_location: 9,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 10: shadow_index vec4f (base_index, outer_ct, inner_ct, border_mode)
+                // location 10: clip_rect vec4f (x0, y0, x1, y1 in framebuffer pixels)
                 crate::gpu::VertexAttribute {
-                    offset: 112,
+                    offset: std::mem::offset_of!(OverlayShapeVertex, clip_rect) as u64,
                     shader_location: 10,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 11: rotation_pivot vec4f (rotation, pivot_x, pivot_y, pad)
+                // location 11: clip_index f32
                 crate::gpu::VertexAttribute {
-                    offset: 128,
+                    offset: std::mem::offset_of!(OverlayShapeVertex, clip_index) as u64,
                     shader_location: 11,
-                    format: crate::gpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
-                // location 12: clip_rect vec4f (x0, y0, x1, y1 in framebuffer pixels)
+                // location 12: stop_colour_c vec4f
                 crate::gpu::VertexAttribute {
-                    offset: 144,
+                    offset: std::mem::offset_of!(OverlayShapeVertex, stop_colour_c) as u64,
                     shader_location: 12,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 13: clip_index f32
+                // location 13: stop_colour_d vec4f
                 crate::gpu::VertexAttribute {
-                    offset: 160,
+                    offset: std::mem::offset_of!(OverlayShapeVertex, stop_colour_d) as u64,
                     shader_location: 13,
-                    format: crate::gpu::VertexFormat::Float32,
-                },
-                // location 14: stop_colour_c vec4f
-                crate::gpu::VertexAttribute {
-                    offset: 164,
-                    shader_location: 14,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 15: stop_colour_d vec4f
+                // location 14: stop_positions vec4f (gradient stop positions)
                 crate::gpu::VertexAttribute {
-                    offset: 180,
-                    shader_location: 15,
+                    offset: std::mem::offset_of!(OverlayShapeVertex, stop_positions) as u64,
+                    shader_location: 14,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
             ],
@@ -849,28 +880,23 @@ pub(crate) struct OverlayShapeTexVertex {
     pub local_pos: [f32; 2],
     /// RGBA tint colour (pre-multiplied opacity). Multiplied with texture sample.
     pub fill_colour: [f32; 4],
-    /// RGBA border colour (pre-multiplied opacity).
-    pub border_colour: [f32; 4],
     /// Half-extents of the shape bounding box in logical pixels.
     pub half_size: [f32; 2],
     /// Shape-specific radii (same encoding as `OverlayShapeVertex`).
     pub radii: [f32; 4],
-    /// Border thickness in logical pixels.
-    pub border_width: f32,
     /// Encoded shape type (same values as `OverlayShapeVertex`).
     pub shape_type: f32,
     /// Clip-mask shape index, or `-1.0` for none. Same encoding as
-    /// `OverlayShapeVertex::clip_index`. Kept adjacent to `border_width` and
-    /// `shape_type` so the three pack into one `Float32x3` vertex attribute,
-    /// keeping the textured vertex within the 16-attribute limit.
+    /// `OverlayShapeVertex::clip_index`. Kept adjacent to `shape_type` so the
+    /// two pack into one `Float32x2` vertex attribute.
     pub clip_index: f32,
     /// Texture UV coordinates. (0,0) = top-left of image, (1,1) = bottom-right.
     /// Slightly outside [0,1] in the border/AA padding region.
     pub uv: [f32; 2],
-    /// RGBA shadow colour (pre-multiplied opacity).
-    pub shadow_colour: [f32; 4],
-    /// Shadow parameters: x = radius (pixels), y = offset_x, z = offset_y, w = border_mode.
-    pub shadow_params: [f32; 4],
+    /// `[base_index, outer_count, inner_count]`: where this shape's run of
+    /// stacked shadow layers starts in the shared buffer and how many of each
+    /// kind it has. Same encoding as `OverlayShapeVertex::shadow_index`.
+    pub shadow_index: [f32; 3],
     /// Per-shape flags.
     /// - `x` = is_backdrop_blur (0.0 = regular tinted sample; 1.0 = the bound
     ///   texture is the scene-blur output composited under the tint).
@@ -902,10 +928,7 @@ impl OverlayShapeTexVertex {
             array_stride: std::mem::size_of::<OverlayShapeTexVertex>() as crate::gpu::BufferAddress,
             step_mode: crate::gpu::VertexStepMode::Vertex,
             // Offsets come from `offset_of!` so reordering fields can't desync
-            // them. Locations 0-15 fill the 16-attribute limit exactly; location
-            // 6 packs the three adjacent f32 fields (border_width, shape_type,
-            // clip_index) into one Float32x3 so clip data fits without a 17th
-            // attribute.
+            // them.
             attributes: &[
                 // location 0: position vec2f
                 crate::gpu::VertexAttribute {
@@ -925,84 +948,71 @@ impl OverlayShapeTexVertex {
                     shader_location: 2,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 3: border_colour vec4f
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, border_colour) as u64,
-                    shader_location: 3,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 4: half_size vec2f
+                // location 3: half_size vec2f
                 crate::gpu::VertexAttribute {
                     offset: std::mem::offset_of!(OverlayShapeTexVertex, half_size) as u64,
-                    shader_location: 4,
+                    shader_location: 3,
                     format: crate::gpu::VertexFormat::Float32x2,
                 },
-                // location 5: radii vec4f
+                // location 4: radii vec4f
                 crate::gpu::VertexAttribute {
                     offset: std::mem::offset_of!(OverlayShapeTexVertex, radii) as u64,
+                    shader_location: 4,
+                    format: crate::gpu::VertexFormat::Float32x4,
+                },
+                // location 5: shape_meta vec2f (shape_type, clip_index). The two
+                // f32 fields are contiguous, so one Float32x2 reads both.
+                crate::gpu::VertexAttribute {
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, shape_type) as u64,
                     shader_location: 5,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 6: shape_meta vec3f (border_width, shape_type, clip_index).
-                // The three f32 fields are contiguous, so one Float32x3 reads all
-                // three and keeps the vertex within the 16-attribute limit.
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, border_width) as u64,
-                    shader_location: 6,
-                    format: crate::gpu::VertexFormat::Float32x3,
-                },
-                // location 7: clip_rect vec4f (framebuffer-pixel clip bbox)
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, clip_rect) as u64,
-                    shader_location: 7,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 8: uv vec2f
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, uv) as u64,
-                    shader_location: 8,
                     format: crate::gpu::VertexFormat::Float32x2,
                 },
-                // location 9: shadow_colour vec4f
+                // location 6: clip_rect vec4f (framebuffer-pixel clip bbox)
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, shadow_colour) as u64,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, clip_rect) as u64,
+                    shader_location: 6,
+                    format: crate::gpu::VertexFormat::Float32x4,
+                },
+                // location 7: uv vec2f
+                crate::gpu::VertexAttribute {
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, uv) as u64,
+                    shader_location: 7,
+                    format: crate::gpu::VertexFormat::Float32x2,
+                },
+                // location 8: shadow_index vec3f (base, outer_ct, inner_ct)
+                crate::gpu::VertexAttribute {
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, shadow_index) as u64,
+                    shader_location: 8,
+                    format: crate::gpu::VertexFormat::Float32x3,
+                },
+                // location 9: extras vec4f (blur, centre_mode, edge_mode, nine_slice_enabled)
+                crate::gpu::VertexAttribute {
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, extras) as u64,
                     shader_location: 9,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 10: shadow_params vec4f (radius, offset_x, offset_y, border_mode)
+                // location 10: nine_slice_uv vec4f
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, shadow_params) as u64,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, nine_slice_uv) as u64,
                     shader_location: 10,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 11: extras vec4f (blur, centre_mode, edge_mode, nine_slice_enabled)
+                // location 11: nine_slice_frac vec4f
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, extras) as u64,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, nine_slice_frac) as u64,
                     shader_location: 11,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 12: nine_slice_uv vec4f
+                // location 12: texture_transform_a vec4f (offset.xy, scale.xy)
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, nine_slice_uv) as u64,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, texture_transform_a) as u64,
                     shader_location: 12,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 13: nine_slice_frac vec4f
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, nine_slice_frac) as u64,
-                    shader_location: 13,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 14: texture_transform_a vec4f (offset.xy, scale.xy)
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, texture_transform_a) as u64,
-                    shader_location: 14,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 15: texture_transform_b vec4f (rotation, tile_mode, flip_x, flip_y)
+                // location 13: texture_transform_b vec4f (rotation, tile_mode, flip_x, flip_y)
                 crate::gpu::VertexAttribute {
                     offset: std::mem::offset_of!(OverlayShapeTexVertex, texture_transform_b) as u64,
-                    shader_location: 15,
+                    shader_location: 13,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
             ],
@@ -1034,13 +1044,46 @@ pub(crate) struct OverlayShapeTextureEntry {
     pub size: [u32; 2],
 }
 
-/// Resident-byte charge for an `RGBA8` overlay texture of the given size.
-fn overlay_texture_bytes(width: u32, height: u32) -> u64 {
-    (width as u64) * (height as u64) * 4
+/// Bytes per texel of an overlay texture format: 4 for the 8-bit formats, 8
+/// for half float.
+fn overlay_texel_bytes(format: crate::gpu::TextureFormat) -> u32 {
+    format.block_copy_size(None).unwrap_or(4)
 }
 
-/// Write `rgba_data` (row-major, top-to-bottom, `width * height * 4` bytes) into
-/// the whole of `texture`.
+/// Resident-byte charge for an overlay texture of the given size and format.
+fn overlay_texture_bytes(width: u32, height: u32, format: crate::gpu::TextureFormat) -> u64 {
+    (width as u64) * (height as u64) * overlay_texel_bytes(format) as u64
+}
+
+/// Check that an overlay can take `data` and turn it into a format and the
+/// bytes to write. An overlay has no normal slot and samples no compressed
+/// format, so both are rejected rather than drawn wrongly.
+fn overlay_texture_pixels(
+    data: crate::TextureData,
+) -> crate::error::ViewportResult<(u32, u32, crate::gpu::TextureFormat, Vec<u8>)> {
+    use crate::{TexturePayload, TextureRejection, TextureRole, UploadSlot};
+    data.validate()?;
+    let reject = |reason| {
+        Err(crate::error::ViewportError::UnsupportedTextureData {
+            slot: UploadSlot::Overlay,
+            reason,
+        })
+    };
+    if data.role() == TextureRole::NormalMap {
+        return reject(TextureRejection::NormalMap);
+    }
+    if matches!(data.payload(), TexturePayload::Compressed { .. }) {
+        return reject(TextureRejection::UnsupportedPayload);
+    }
+    let (width, height) = (data.width(), data.height());
+    let (format, mut levels) =
+        crate::resources::material::textures::texture_format_and_levels(data);
+    let pixels = levels.pop().expect("an uncompressed payload is one level");
+    Ok((width, height, format, pixels))
+}
+
+/// Write `bytes` (row-major, top-to-bottom, one full image in `texture`'s
+/// format) into the whole of `texture`.
 fn write_overlay_texture(
     queue: &crate::gpu::Queue,
     texture: &crate::gpu::Texture,
@@ -1058,7 +1101,7 @@ fn write_overlay_texture(
         rgba_data,
         crate::gpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(width * 4),
+            bytes_per_row: Some(width * overlay_texel_bytes(texture.format())),
             rows_per_image: Some(height),
         },
         crate::gpu::Extent3d {
@@ -1069,8 +1112,8 @@ fn write_overlay_texture(
     );
 }
 
-/// Create an `Rgba8UnormSrgb` overlay texture and its default view, optionally
-/// writing initial pixels. Pass `queue` and `rgba_data` together to upload
+/// Create an overlay texture in `format` and its default view, optionally
+/// writing initial pixels. Pass `queue` and `pixels` together to upload
 /// contents; pass both `None` to leave the texture undefined (a streaming
 /// texture filled later by `update_overlay_texture`).
 fn build_overlay_texture_entry(
@@ -1078,7 +1121,8 @@ fn build_overlay_texture_entry(
     queue: Option<&crate::gpu::Queue>,
     width: u32,
     height: u32,
-    rgba_data: Option<&[u8]>,
+    format: crate::gpu::TextureFormat,
+    pixels: Option<&[u8]>,
 ) -> OverlayShapeTextureEntry {
     let texture = device.create_texture(&crate::gpu::TextureDescriptor {
         label: Some("overlay_shape_tex"),
@@ -1090,13 +1134,13 @@ fn build_overlay_texture_entry(
         mip_level_count: 1,
         sample_count: 1,
         dimension: crate::gpu::TextureDimension::D2,
-        format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
+        format,
         usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
 
-    if let (Some(queue), Some(rgba_data)) = (queue, rgba_data) {
-        write_overlay_texture(queue, &texture, width, height, rgba_data);
+    if let (Some(queue), Some(pixels)) = (queue, pixels) {
+        write_overlay_texture(queue, &texture, width, height, pixels);
     }
 
     let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());

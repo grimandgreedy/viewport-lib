@@ -62,7 +62,42 @@ impl ViewportRenderer {
         // the linear sampler; the ds variant needs the non-ds one built first.
         self.resources.ensure_dyn_res_pipeline(device);
         self.resources.ensure_dyn_res_ds_pipeline(device);
+        self.blit_bind_group(device, source)
+    }
 
+    /// Prepare `source` for compositing with
+    /// [`blit_composite`](Self::blit_composite), rather than for replacing a
+    /// destination with [`blit`](Self::blit).
+    ///
+    /// The returned handle is the same kind of thing as [`create_blit`]'s and
+    /// works with either draw; the difference is which pipelines get built.
+    /// Compositing needs a blend state, and this is where that pipeline pair is
+    /// compiled, so a consumer that only ever blits never pays for it.
+    ///
+    /// `source` must be premultiplied, which is what this renderer produces. For
+    /// an [`OffscreenViewportTarget`](crate::OffscreenViewportTarget) pass its
+    /// `render_view()`, as with [`create_blit`](Self::create_blit).
+    ///
+    /// [`create_blit`]: Self::create_blit
+    pub fn create_blit_composite(
+        &mut self,
+        device: &crate::gpu::Device,
+        source: &crate::gpu::TextureView,
+    ) -> BlitTexture {
+        // The composite pipelines reuse the plain blit's bind-group layout,
+        // sampler and shader, so that one has to exist first.
+        self.resources.ensure_dyn_res_pipeline(device);
+        self.resources.ensure_blit_composite_pipelines(device);
+        self.blit_bind_group(device, source)
+    }
+
+    /// The texture + sampler bind group both blit kinds use. Identical either
+    /// way: only the pipeline's blend state differs.
+    fn blit_bind_group(
+        &self,
+        device: &crate::gpu::Device,
+        source: &crate::gpu::TextureView,
+    ) -> BlitTexture {
         let bgl = self
             .resources
             .post
@@ -114,6 +149,46 @@ impl ViewportRenderer {
     /// the render pass.
     pub fn blit_with_depth<'rp>(&self, rp: &mut crate::gpu::RenderPass<'rp>, blit: &BlitTexture) {
         if let Some(pipeline) = &self.resources.post.dyn_res_upscale_ds_pipeline {
+            rp.set_pipeline(pipeline);
+            rp.set_bind_group(0, &blit.bind_group, &[]);
+            rp.draw(0..3, 0..1);
+        }
+    }
+
+    /// Composite `blit` over what is already in the render pass, rather than
+    /// replacing it. Set the viewport and scissor rect before calling.
+    ///
+    /// For drawing one viewport inside another: render the inner one with
+    /// [`ViewportFrame::background_colour`](crate::renderer::ViewportFrame::background_colour)
+    /// set to `Colour::TRANSPARENT` and composite it here, and the outer
+    /// viewport's own content shows through wherever the inner one drew nothing.
+    /// [`blit`](Self::blit) cannot do this: it has no blend state and replaces
+    /// its destination, which is what upscaling a frame into a surface wants.
+    ///
+    /// The source must be premultiplied, which is what this renderer produces.
+    /// The blend is `src + dst * (1 - src.a)`.
+    ///
+    /// Prepare the source with
+    /// [`create_blit_composite`](Self::create_blit_composite), which is where
+    /// the blend pipelines are built, so a consumer that only ever blits pays
+    /// nothing for this.
+    pub fn blit_composite<'rp>(&self, rp: &mut crate::gpu::RenderPass<'rp>, blit: &BlitTexture) {
+        if let Some(pipeline) = &self.resources.post.blit_composite_pipeline {
+            rp.set_pipeline(pipeline);
+            rp.set_bind_group(0, &blit.bind_group, &[]);
+            rp.draw(0..3, 0..1);
+        }
+    }
+
+    /// Like [`blit_composite`](Self::blit_composite) but for a render pass that
+    /// carries a `Depth24PlusStencil8` depth-stencil attachment (e.g. an eframe
+    /// paint pass). Only the pipeline variant differs.
+    pub fn blit_composite_with_depth<'rp>(
+        &self,
+        rp: &mut crate::gpu::RenderPass<'rp>,
+        blit: &BlitTexture,
+    ) {
+        if let Some(pipeline) = &self.resources.post.blit_composite_ds_pipeline {
             rp.set_pipeline(pipeline);
             rp.set_bind_group(0, &blit.bind_group, &[]);
             rp.draw(0..3, 0..1);

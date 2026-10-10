@@ -17,6 +17,15 @@ pub struct GpuMesh {
     pub(crate) index_span: SlabSpan,
     /// Number of indices in the triangle index buffer.
     pub index_count: u32,
+    /// Whether the triangle mesh is a closed, consistently wound surface:
+    /// every edge is shared by exactly two triangles that traverse it in
+    /// opposite directions, with vertices welded by position so a UV or
+    /// normal seam does not split an edge. Computed at upload. A closed mesh
+    /// casts shadows through the cull-front pipeline whatever its
+    /// `BackfacePolicy`, and its back faces (the inside, seen through a clip
+    /// plane) shade as inside the solid's own shadow. The cull-none caster
+    /// path is for surfaces that are genuinely open.
+    pub closed: bool,
     /// Material ranges partitioning the index buffer, from
     /// `MeshData::submeshes`. Empty for single-material meshes, which draw
     /// the full `0..index_count` range.
@@ -35,6 +44,9 @@ pub struct GpuMesh {
     pub normal_line_count: u32,
     /// Per-object uniform buffer (model matrix, material, selection state).
     pub object_uniform_buf: crate::gpu::Buffer,
+    /// What the per-object prepare last wrote to `object_uniform_buf`, so an
+    /// unchanged mesh is not written again each frame. `None` when unknown.
+    pub(crate) last_object_uniform: std::sync::Mutex<Option<crate::resources::ObjectUniform>>,
     /// Bind group (group 1) combining `object_uniform_buf` with texture views.
     /// Texture views are the fallback 1x1 textures by default; rebuilt when material
     /// texture assignment changes (tracked via `last_tex_key`).
@@ -63,7 +75,8 @@ pub struct GpuMesh {
     /// Named face colour buffers: 3N `[f32; 4]` entries (colour replicated for all 3 vertices of each tri).
     pub face_colour_buffers: std::collections::HashMap<String, crate::gpu::Buffer>,
     /// Per-vertex vector attribute buffers: flat `array<f32>` with 3 values per vertex.
-    /// Uploaded from `AttributeData::VertexVector`; used by the Surface LIC surface pass.
+    /// Uploaded from `AttributeData::VertexVector`. Read by the material warp, and bound as a
+    /// vertex buffer through `MeshDraw::bind_vector_attribute`.
     pub vector_attribute_buffers: std::collections::HashMap<String, crate::gpu::Buffer>,
     /// Optional per-vertex position override buffer.
     ///
@@ -95,6 +108,11 @@ pub struct GpuMesh {
     /// via `DeviceResources::set_lightmap`; `None` for meshes without one, which
     /// bind the shared fallbacks and skip the shader branch.
     pub(crate) lightmap: Option<crate::resources::lightmap::MeshLightmap>,
+    /// Whether this mesh carries a second UV set (`MeshData::uvs1`). When true its
+    /// object bind group binds the parallel uv1 chunk buffer at binding 19 and the
+    /// per-object uniform carries the mesh `base_vertex`; when false it binds the
+    /// zero fallback and any `uv_set = 1` texture sample reads `vec2(0.0)`.
+    pub(crate) has_uv1: bool,
     /// Monotonic counter bumped by `set_lightmap` / `clear_lightmap`. Folded
     /// into `last_tex_key` so the object bind group rebuilds and rebinds the
     /// real UV1 buffer and lightmap texture (or the fallbacks) on the next
@@ -225,5 +243,45 @@ impl GpuMesh {
             bytes += map.values().map(|b| b.size()).sum::<u64>();
         }
         bytes
+    }
+
+    /// Host memory bytes held by the retained CPU geometry copies
+    /// (`cpu_positions`, `cpu_normals`, `cpu_indices`).
+    ///
+    /// These are host allocations, not GPU buffers, so they are not part of
+    /// [`gpu_byte_size`](Self::gpu_byte_size). On a discrete GPU they draw from
+    /// a different pool; on unified memory they draw from the same one, which is
+    /// why they are reported separately rather than ignored.
+    ///
+    /// The `parry3d` triangle mesh cached by
+    /// [`cached_pick_trimesh`](Self::cached_pick_trimesh) is built lazily on the
+    /// first CPU pick and is not counted here. It is released alongside these
+    /// copies by [`release_cpu_geometry`](Self::release_cpu_geometry).
+    pub(crate) fn cpu_byte_size(&self) -> u64 {
+        let positions = self.cpu_positions.as_ref().map_or(0, |v| v.len() * 12);
+        let normals = self.cpu_normals.as_ref().map_or(0, |v| v.len() * 12);
+        let indices = self.cpu_indices.as_ref().map_or(0, |v| v.len() * 4);
+        (positions + normals + indices) as u64
+    }
+
+    /// Drop the retained CPU geometry copies and the cached pick triangle mesh,
+    /// returning the host bytes released as counted by
+    /// [`cpu_byte_size`](Self::cpu_byte_size).
+    ///
+    /// The mesh keeps rendering unchanged. What stops working is every feature
+    /// that reads back the geometry on the CPU: CPU picking
+    /// (`ViewportRenderer::pick`) resolves no hit against this mesh, clip-plane
+    /// cap geometry has nothing to build a cross-section fill from, and the
+    /// normal-line visualisation cannot build its buffer if it has not already.
+    /// GPU picking is unaffected.
+    pub(crate) fn release_cpu_geometry(&mut self) -> u64 {
+        let released = self.cpu_byte_size();
+        self.cpu_positions = None;
+        self.cpu_normals = None;
+        self.cpu_indices = None;
+        if let Ok(mut cache) = self.pick_trimesh_cache.lock() {
+            *cache = None;
+        }
+        released
     }
 }

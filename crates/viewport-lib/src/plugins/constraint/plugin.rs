@@ -139,7 +139,7 @@ impl RuntimePlugin for ConstraintPlugin {
     }
 }
 
-impl crate::plugin_api::ViewportPlugin for ConstraintPlugin {
+impl crate::plugin_api::PluginInstaller for ConstraintPlugin {
     type Handle = ();
 
     /// Register the configured plugin on the runtime. Add constraints first,

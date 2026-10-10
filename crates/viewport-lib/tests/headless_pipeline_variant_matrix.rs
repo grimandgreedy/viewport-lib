@@ -1,27 +1,25 @@
-//! Phase 0 completeness matrix for the pipeline-variant-specialization plan
-//! (`docs/adrs/0002-pipeline-variant-management.md`).
-//!
 //! Every reachable (pass, variant-key) combination must resolve to a pipeline
-//! that renders the right thing. This file exercises the axes that matter per
-//! pass -- facedness (one-sided vs two-sided), alpha-cutout, and LDR vs HDR --
-//! across the opaque, OIT, and shadow passes, for both the per-object and the
-//! instanced draw routes.
+//! that renders the right thing.
 //!
-//! Every cell here passes; this is a regression backstop for the pipeline-key
-//! refactor. `shadow_alpha_mask_matrix` covers both draw routes for a masked
-//! caster (a material that discards to nothing in the colour pass must not
-//! still cast a full opaque shadow), including the per-object route, whose
-//! alpha-cutout pipeline was the first of two filed gaps this plan closes.
+//! This file exercises the axes that matter per pass -- facedness (one-sided vs
+//! two-sided), alpha-cutout, and LDR vs HDR -- across the opaque, OIT, and
+//! shadow passes, for both the per-object and the instanced draw routes. A
+//! keyed pipeline set can be incomplete (a key with no pipeline built for it)
+//! or miscorresponded (a key resolving to another key's pipeline), and neither
+//! is visible from the types; rendering every cell is what catches both.
 //!
-//! The other filed gap (`material-plugin-opaque-pipelines-no-early-z-nodiscard-variant`)
-//! is closed too but is not covered here: it was a missing fast-path pipeline
-//! twin, not a rendering difference, so a plugin material draws the same
-//! pixels whether or not the discard-free twin exists. There is no pixel-level
-//! signal that distinguishes the two paths; see
+//! `shadow_alpha_mask_matrix` covers both draw routes for a masked caster: a
+//! material that discards to nothing in the colour pass must not still cast a
+//! full opaque shadow.
+//!
+//! One gap in the same family is deliberately not covered here. A material
+//! plugin's opaque pipelines need a discard-free twin for the early-Z fast
+//! path, and a missing twin is not a rendering difference: the plugin draws the
+//! same pixels either way, so no pixel-level assertion can tell the two apart.
 //! `mesh_sidecar::shade::tests::material_plugin_pipelines_resolve_every_key_once_built`
-//! for the completeness check that covers it instead.
+//! is the completeness check that covers it instead.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -79,7 +77,7 @@ fn base_frame(target: PipelineMode, size: u32, generation: u64) -> FrameData {
     frame.scene.generation = generation;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
     frame.effects.display.mode = target;
     frame.camera.render_camera = {
         let mut rc = RenderCamera::from_camera(&top_down_camera(6.0));
@@ -98,7 +96,7 @@ fn route_filler(mesh_id: MeshId) -> SceneRenderItem {
     item.mesh_id = mesh_id;
     item.model =
         glam::Mat4::from_translation(glam::Vec3::new(-500.0, -500.0, -500.0)).to_cols_array_2d();
-    item.material = Material::from_colour([0.1, 0.9, 0.1]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.1, 0.9, 0.1));
     item
 }
 
@@ -128,7 +126,7 @@ fn opaque_two_sided_matrix() {
                 let mut frame = base_frame(target, 128, gen_ctr.get());
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = mesh_id;
-                item.material.base_colour = [1.0, 0.0, 0.0].into();
+                item.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
                 item.settings.unlit = true;
                 if two_sided {
                     item.material.backface_policy = BackfacePolicy::Identical;
@@ -181,11 +179,19 @@ fn opaque_alpha_mask_matrix() {
                 // colour or opacity, so a real (1x1) texture is required.
                 let tex_below = renderer
                     .resources_mut()
-                    .upload_texture(&device, &queue, 1, 1, &[255, 255, 255, 20])
+                    .upload_texture(
+                        &device,
+                        &queue,
+                        viewport_lib::TextureData::srgb(1, 1, [255, 255, 255, 20].to_vec()),
+                    )
                     .unwrap();
                 let tex_above = renderer
                     .resources_mut()
-                    .upload_texture(&device, &queue, 1, 1, &[255, 255, 255, 220])
+                    .upload_texture(
+                        &device,
+                        &queue,
+                        viewport_lib::TextureData::srgb(1, 1, [255, 255, 255, 220].to_vec()),
+                    )
                     .unwrap();
 
                 let gen_ctr = std::cell::Cell::new(0u64);
@@ -194,7 +200,7 @@ fn opaque_alpha_mask_matrix() {
                     let mut frame = base_frame(target, 128, gen_ctr.get());
                     let mut item = SceneRenderItem::default();
                     item.mesh_id = mesh_id;
-                    item.material.base_colour = [1.0, 0.0, 0.0].into();
+                    item.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
                     item.material.texture_id = Some(tex);
                     item.material.alpha_mode = AlphaMode::Mask(0.5);
                     item.settings.unlit = true;
@@ -249,7 +255,7 @@ fn oit_two_sided_matrix() {
             let mut frame = base_frame(PipelineMode::Hdr, 128, gen_ctr.get());
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.material.base_colour = [1.0, 0.0, 0.0].into();
+            item.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
             item.settings.unlit = true;
             item.settings.opacity = 0.75;
             if two_sided {
@@ -312,7 +318,11 @@ fn oit_premultiplied_blend_matrix() {
     // A premultiplied grey: RGB already scaled by the 0.5 alpha it carries.
     let tex = renderer
         .resources_mut()
-        .upload_texture(&device, &queue, 1, 1, &[128, 128, 128, 128])
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::srgb(1, 1, [128, 128, 128, 128].to_vec()),
+        )
         .unwrap();
 
     let gen_ctr = std::cell::Cell::new(0u64);
@@ -321,7 +331,7 @@ fn oit_premultiplied_blend_matrix() {
         let mut frame = base_frame(PipelineMode::Hdr, 128, gen_ctr.get());
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
-        item.material.base_colour = [1.0, 1.0, 1.0].into();
+        item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material.texture_id = Some(tex);
         item.material.alpha_mode = mode;
         item.settings.unlit = true;
@@ -393,7 +403,7 @@ fn shadow_two_sided_matrix() {
             frame.effects.lighting.shadows.extent_override = Some(3.0);
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.material.base_colour = [0.7, 0.7, 0.7].into();
+            item.material.base_colour = Colour::linear_rgb(0.7, 0.7, 0.7);
             if two_sided {
                 item.material.backface_policy = BackfacePolicy::Identical;
             }
@@ -472,11 +482,19 @@ fn shadow_alpha_mask_matrix() {
         // Mask discard reads texture alpha, not base colour or opacity.
         let tex_below = renderer
             .resources_mut()
-            .upload_texture(&device, &queue, 1, 1, &[255, 255, 255, 20])
+            .upload_texture(
+                &device,
+                &queue,
+                viewport_lib::TextureData::srgb(1, 1, [255, 255, 255, 20].to_vec()),
+            )
             .unwrap();
         let tex_above = renderer
             .resources_mut()
-            .upload_texture(&device, &queue, 1, 1, &[255, 255, 255, 220])
+            .upload_texture(
+                &device,
+                &queue,
+                viewport_lib::TextureData::srgb(1, 1, [255, 255, 255, 220].to_vec()),
+            )
             .unwrap();
 
         let gen_ctr = std::cell::Cell::new(0u64);
@@ -488,14 +506,14 @@ fn shadow_alpha_mask_matrix() {
             frame.effects.lighting.shadows.extent_override = Some(3.0);
             let mut floor = SceneRenderItem::default();
             floor.mesh_id = floor_id;
-            floor.material.base_colour = [0.7, 0.7, 0.7].into();
+            floor.material.base_colour = Colour::linear_rgb(0.7, 0.7, 0.7);
             let mut items = vec![floor];
             if let Some(tex) = caster_tex {
                 let mut caster = SceneRenderItem::default();
                 caster.mesh_id = caster_id;
                 caster.model =
                     glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.6)).to_cols_array_2d();
-                caster.material.base_colour = [1.0, 0.0, 0.0].into();
+                caster.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
                 caster.material.texture_id = Some(tex);
                 caster.material.alpha_mode = AlphaMode::Mask(0.5);
                 if !route_instanced {

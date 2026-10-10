@@ -1,40 +1,25 @@
-mod common;
-mod compute_filter;
-mod decal;
-mod external_instances;
-mod gaussian_splat;
-mod gpu_implicit;
-mod gpu_marching_cubes;
-mod lines;
+//! Item structs: the per-frame submission types a consumer fills in.
+//!
+//! Each item type implemented as an [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin)
+//! keeps its own struct in its plugin directory, beside the code that draws it,
+//! and this module re-exports them so the crate-root paths and every internal
+//! `items::` path resolve unchanged. What is declared here rather than
+//! re-exported belongs to the geometry substrate (surface mesh, mesh-instance
+//! batch, volume mesh), which is not an item type, plus the identity transform
+//! the item structs default to.
+
+mod blend;
 mod mesh;
 mod mesh_instance;
-mod point_cloud;
-mod refs;
-mod scatter_volume;
-mod screen_image;
-mod slice;
-mod sprite;
-mod volume;
 mod volume_mesh;
 
-pub use self::common::*;
-pub use self::compute_filter::*;
-pub use self::decal::*;
-pub use self::external_instances::*;
-pub use self::gaussian_splat::*;
-// Glyph render items live in `viewport-lib-types` (wgpu-free, no store id);
-// re-exported here so `crate::...::items::` paths keep resolving.
-pub use self::gpu_implicit::*;
-pub use self::gpu_marching_cubes::*;
-pub use self::lines::*;
+/// 4x4 identity matrix, the default `model` for an item that carries a
+/// per-frame transform. Taken from glam rather than restated so it cannot drift
+/// from the column-major convention the rest of the renderer uses.
+pub(crate) const IDENTITY_MAT4: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
+
+pub use self::blend::SpriteBlend;
 pub use self::mesh::*;
 pub use self::mesh_instance::*;
-pub use self::point_cloud::*;
-pub use self::refs::*;
-pub use self::scatter_volume::*;
-pub use self::screen_image::*;
-pub use self::slice::*;
-pub use self::sprite::*;
-pub use self::volume::*;
 pub use self::volume_mesh::*;
-pub use viewport_lib_types::render_item::glyph::{GlyphItem, GlyphType, TensorGlyphItem};
+pub use crate::renderer::item_plugins::polyline::types::*;

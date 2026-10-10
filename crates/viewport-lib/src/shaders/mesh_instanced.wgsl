@@ -47,36 +47,107 @@ struct ShadowAtlas {
     atlas_rects: array<vec4<f32>, 8>,
 };
 
+// Per-instance data (128 bytes). Shading scalars (PBR terms, ranges, emissive,
+// alpha, use_pbr/use_flat, normal_strength) live in material_gpu_buf, read via
+// material_id; only per-instance fields ride here. The has_* texture flags stay
+// per-instance (the explicit MeshInstanceItem path sets them at upload time).
 struct InstanceData {
-    model: mat4x4<f32>,
-    colour: vec4<f32>,
-    selected: u32,
-    wireframe: u32,
-    ambient: f32,
-    diffuse: f32,
-    specular: f32,
-    shininess: f32,
-    has_texture: u32,
-    use_pbr: u32,
-    metallic: f32,
-    roughness: f32,
-    has_normal_map: u32,
-    has_ao_map: u32,
-    unlit: u32,
-    receive_shadows: u32,
-    use_flat: u32,
-    normal_strength: f32,
-    uv_transform: vec4<f32>,
-    ao_range: vec2<f32>,                  // (min, max) remap of AO map R sample
-    alpha_cutoff: f32,                    // Mask cutoff (albedo alpha threshold)
-    alpha_flag: u32,                      // 1 = alpha-test enabled, 0 = off
-    emissive: vec3<f32>,                  // self-illumination added after lighting
-    _pad_emissive: f32,
-    has_light_probe: u32,                 // 1 = sample light_probe_sh for indirect diffuse
-    light_probe_index: u32,               // base block index into light_probe_sh
-    ignore_clip: u32,                     // 1 = exempt from clip planes/volumes
-    _pad_lp: u32,
+    model: mat4x4<f32>,                   // offset 0
+    colour: vec4<f32>,                    // offset 64
+    selected: u32,                        // offset 80
+    wireframe: u32,                       // offset 84
+    has_texture: u32,                     // offset 88
+    has_normal_map: u32,                  // offset 92
+    has_ao_map: u32,                      // offset 96
+    unlit: u32,                           // offset 100
+    receive_shadows: u32,                 // offset 104 : bit 0 receive, bit 1 closed surface, bit 2 two-sided receiver
+    material_id: u32,                     // offset 108
+    alpha_cutoff: f32,                    // offset 112
+    alpha_flag: u32,                      // offset 116
+    has_light_probe: u32,                 // offset 120
+    light_probe_index: u32,               // offset 124
+    ignore_clip: u32,                     // offset 128
+    custom_data_id: u32,                  // offset 132
+    backface_pattern_scale: f32,          // offset 136
+    object_mask: u32,                     // offset 140 : layer mask, AND-tested per light
 };
+
+// Per-material UV transform block (group 0, binding 21). Slot order: 0 albedo,
+// 1 normal, 2 AO, 3 metallic-roughness, 4 emissive. material_id 0 is identity.
+struct TexTransform {
+    offset_scale: vec4<f32>,   // (offset.x, offset.y, scale.x, scale.y)
+    rot_tc: vec4<f32>,         // (rotation_radians, f32(uv_set), 0, 0)
+}
+// scalars0 = (ambient, diffuse, specular, shininess)
+// scalars1 = (metallic, roughness, normal_strength, _)
+// scalars2 = (emissive.rgb, ao_min)
+// scalars1 = (metallic, roughness, normal_strength, has_mr_tex)
+// scalars3 = (ao_max, param_vis_scale, backface_policy, has_emissive_tex)
+// flags    = (use_pbr, use_flat, alpha_mode, param_vis_mode)
+// backface_colour = styled back-face colour (DiffColour rgb / Tint factor in .r /
+//                   Pattern rgb); Pattern world scale is per-instance
+// mr_range = (metallic_min, metallic_max, roughness_min, roughness_max)
+struct MaterialGpu {
+    xf: array<TexTransform, 5>,
+    scalars0: vec4<f32>,
+    scalars1: vec4<f32>,
+    scalars2: vec4<f32>,
+    scalars3: vec4<f32>,
+    flags: vec4<u32>,
+    backface_colour: vec4<f32>,
+    mr_range: vec4<f32>,
+    tex_index0: vec4<u32>,   // bindless array indices: albedo, normal, ao, metallic-roughness
+    tex_index1: vec4<u32>,   // bindless array indices: emissive, unused, unused, unused
+}
+@group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
+
+// Per-instance custom-data payload (group 0, binding 22). Raw [f32; 8] per
+// instance, indexed by custom_data_id. Slots 0..3 add to emissive (nits), slot 3
+// is pad, and slots 4..8 (`data1`) are the raw material-plugin channel, surfaced
+// to a plugin hook as `surf.attr`. custom_data_id 0 is the zero block.
+struct CustomData {
+    data0: vec4<f32>,   // slots 0..4
+    data1: vec4<f32>,   // slots 4..8
+}
+@group(0) @binding(22) var<storage, read> instance_custom_data_buf: array<CustomData>;
+
+struct SlotUv {
+    uv: vec2<f32>,
+    ddx: vec2<f32>,
+    ddy: vec2<f32>,
+}
+
+// See mesh.wgsl:material_slot_uv. uv' = rotate((uv*scale+offset)-0.5, rot)+0.5,
+// derivatives rotated by the same angle. rot_tc.y picks uv0 (0) or uv1 (1).
+fn material_slot_uv(
+    mid: u32,
+    slot: u32,
+    uv0: vec2<f32>,
+    uv1: vec2<f32>,
+    ddx0: vec2<f32>,
+    ddy0: vec2<f32>,
+    ddx1: vec2<f32>,
+    ddy1: vec2<f32>,
+) -> SlotUv {
+    let xf = material_gpu_buf[mid].xf[slot];
+    let use1 = xf.rot_tc.y > 0.5;
+    let uv = select(uv0, uv1, use1);
+    let duvdx = select(ddx0, ddx1, use1);
+    let duvdy = select(ddy0, ddy1, use1);
+    let s = xf.offset_scale.zw;
+    let o = xf.offset_scale.xy;
+    let rot = xf.rot_tc.x;
+    let c = cos(rot);
+    let sn = sin(rot);
+    let base = uv * s + o - vec2<f32>(0.5, 0.5);
+    let dx = duvdx * s;
+    let dy = duvdy * s;
+    var r: SlotUv;
+    r.uv = vec2<f32>(c * base.x - sn * base.y, sn * base.x + c * base.y) + vec2<f32>(0.5, 0.5);
+    r.ddx = vec2<f32>(c * dx.x - sn * dx.y, sn * dx.x + c * dx.y);
+    r.ddy = vec2<f32>(c * dy.x - sn * dy.y, sn * dy.x + c * dy.y);
+    return r;
+}
 
 struct ClipVolumeEntry {
     volume_type: u32,
@@ -115,7 +186,6 @@ struct ClipVolumeUB {
 @group(0) @binding(9) var ibl_brdf_lut: texture_2d<f32>;
 @group(0) @binding(10) var ibl_sampler: sampler;
 @group(0) @binding(11) var ibl_skybox: texture_2d<f32>;
-@group(0) @binding(12) var<storage, read_write> debug_frag_buf: array<vec4<f32>>;
 
 // #include "helpers/clip_volume_test.wgsl"
 @group(1) @binding(0) var<storage, read> instances:          array<InstanceData>;
@@ -124,6 +194,13 @@ struct ClipVolumeUB {
 @group(1) @binding(3) var                normal_map:         texture_2d<f32>;
 @group(1) @binding(4) var                ao_map:             texture_2d<f32>;
 @group(1) @binding(5) var<storage, read> visibility_indices: array<u32>;
+@group(1) @binding(6) var                metallic_roughness_tex: texture_2d<f32>;
+@group(1) @binding(7) var                emissive_tex:           texture_2d<f32>;
+// Second UV set (glTF TEXCOORD_1) for this batch's vertex-slab chunk. The
+// instanced draw binds the whole chunk vertex buffer with a per-mesh base_vertex,
+// so `@builtin(vertex_index)` is chunk-global and indexes this directly. The zero
+// fallback is bound for chunks with no second UV set.
+@group(1) @binding(8) var<storage, read> uv1_buf: array<vec2<f32>>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -142,7 +219,18 @@ struct VertexOut {
     @location(3) uv:             vec2<f32>,
     @location(4) world_tangent:  vec4<f32>,
     @location(5) @interpolate(flat) instance_idx: u32,
+    // Second UV set (glTF TEXCOORD_1); vec2(0.0) for meshes without one.
+    @location(6) uv1: vec2<f32>,
 };
+
+// Second UV set for the current vertex. The instanced draw binds the whole chunk
+// vertex buffer with a per-mesh base_vertex, so `vertex_index` is already the
+// chunk-global index into the whole-chunk uv1 buffer; the index is clamped so the
+// one-entry zero fallback (meshes without a second set) stays in range.
+fn load_uv1(vertex_index: u32) -> vec2<f32> {
+    let n = arrayLength(&uv1_buf);
+    return uv1_buf[min(vertex_index, max(n, 1u) - 1u)];
+}
 
 @vertex
 fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
@@ -167,6 +255,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
+    out.uv1 = load_uv1(in.vertex_index);
     out.instance_idx = idx;
     return out;
 }
@@ -198,6 +287,7 @@ fn vs_main_cull(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
+    out.uv1 = load_uv1(in.vertex_index);
     out.instance_idx = actual_idx;
     return out;
 }
@@ -207,21 +297,50 @@ fn vs_main_cull(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
 // ---------------------------------------------------------------------------
 
 
-fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>) -> f32 {
+fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec3<f32>) -> f32 {
     if light.point_shadow_slot < 0 {
         return 1.0;
     }
-    let to_frag = world_pos - light.pos_or_dir;
-    let dist = length(to_frag);
-    let dir = to_frag / max(dist, 1e-5);
-    let normalised = clamp(dist / max(light.range, 1e-5), 0.0, 1.0);
-    let bias = 0.0015;
+    // The cube stores linear distance-to-light over range, one value per
+    // texel, so across one texel a receiver's own distance changes by
+    // texel_world * tan(theta) (theta between the normal and the light ray).
+    // A flat receiver near the light and nearly parallel to it (a ceiling
+    // slab over a room light) sees that exceed any fixed constant and reads
+    // its own recorded distance as an occluder, in bands aligned with the
+    // cube-face texel rows. Two receiver-side terms clear it:
+    //   - normal offset: the sample point is lifted off the surface along the
+    //     normal by a couple of texels, scaled by sin(theta) so perpendicular
+    //     receivers stay put. Lifting by e buys a distance margin of e /
+    //     cos(theta), the same growth as a slope-scaled bias, but the world
+    //     displacement stays bounded at grazing angles;
+    //   - a constant distance bias of one texel, plus the consumer knob.
+    // Both scale with the cube-face texel footprint at the receiver, so the
+    // bias is a fixed number of texels at any distance and face resolution.
+    let to_light = light.pos_or_dir - world_pos;
+    let dist = length(to_light);
+    let l = to_light / max(dist, 1e-5);
+    // A cube face spans two units at unit distance over face_size texels.
+    let face_size = f32(textureDimensions(point_shadow_cube_tex).x);
+    let texel_world = dist * 2.0 / max(face_size, 1.0);
+    // Whichever side of the surface faces the light: two-sided receivers are
+    // shaded from either side and the offset must always lift toward the
+    // light.
+    let n = geo_normal * select(-1.0, 1.0, dot(geo_normal, l) >= 0.0);
+    let n_dot_l = clamp(dot(n, l), 0.0, 1.0);
+    let sin_t = sqrt(max(1.0 - n_dot_l * n_dot_l, 0.0));
+    let offset_pos = world_pos + n * (texel_world * 2.0 * sin_t);
+    let to_frag = offset_pos - light.pos_or_dir;
+    let offset_dist = length(to_frag);
+    let dir = to_frag / max(offset_dist, 1e-5);
+    let range = max(light.range, 1e-5);
+    let normalised = clamp((offset_dist - texel_world) / range, 0.0, 1.0)
+        - lights_uniform.shadow_bias;
     return textureSampleCompareLevel(
         point_shadow_cube_tex,
         shadow_sampler,
         dir,
         light.point_shadow_slot,
-        normalised - bias,
+        normalised,
     );
 }
 
@@ -294,9 +413,12 @@ fn build_shading_surface(
     surf.uv_ddx = dpdx(surface.mat_uv);
     surf.uv_ddy = dpdy(surface.mat_uv);
     surf.front_facing = surface.front_facing;
-    // Filled from the injected varying in modules whose hook reads the
-    // per-vertex extension attribute; zero everywhere else.
-    surf.attr = vec4<f32>(0.0);
+    // On the instanced path `attr` carries the per-instance raw material
+    // channel: custom_data slots 4..8 (`data1`), the block reserved for material
+    // plugins (slots 0..3 add to emissive, slot 3 is pad). A plugin hook that
+    // instances reads its per-instance inputs here; `custom_data_id` 0 is the
+    // shared all-zero block, so instances that set no custom data read zero.
+    surf.attr = instance_custom_data_buf[instances[in.instance_idx].custom_data_id].data1;
     return surf;
 }
 
@@ -311,21 +433,51 @@ struct LitResult {
     last_shadow_sample: ShadowSample,
 };
 
+// Procedural UV parameterisation pattern (mirrors mesh.wgsl:param_vis_colour).
+// Replaces the lit colour entirely; driven by the per-material mode/scale.
+fn param_vis_colour(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
+    let col_a      = vec3<f32>(1.0,  1.0,  1.0);
+    let col_b      = vec3<f32>(0.0,  0.0,  0.0);
+    let line_col   = vec3<f32>(0.0,  0.0,  0.0);
+    let bg_col     = vec3<f32>(1.0,  1.0,  1.0);
+    let line_width = 0.05f;
+    let su = uv.x * scale;
+    let sv = uv.y * scale;
+    if mode == 1u {
+        let p = (i32(floor(su)) + i32(floor(sv))) & 1;
+        return select(col_a, col_b, p != 0);
+    } else if mode == 2u {
+        let on_line = fract(su) < line_width || fract(sv) < line_width;
+        return select(bg_col, line_col, on_line);
+    } else if mode == 3u {
+        let d      = uv - vec2<f32>(0.5);
+        let r      = length(d) * scale * 2.0;
+        let theta  = atan2(d.y, d.x);
+        let ring   = i32(floor(r)) & 1;
+        let sector = i32(floor(theta * 4.0 / 3.14159265 + 8.0)) & 1;
+        return select(col_a, col_b, (ring ^ sector) != 0);
+    } else {
+        let r = length(uv - vec2<f32>(0.5)) * scale * 2.0;
+        return select(col_a, col_b, (i32(floor(r)) & 1) != 0);
+    }
+}
+
 // Material prep for the instanced opaque path. Wireframe and unlit fully
 // determine the colour and set `resolved`; otherwise the surface fields feed
 // compute_lit.
-fn compute_surface(in: VertexOut) -> Surface {
+fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     let inst = instances[in.instance_idx];
+    let mat = material_gpu_buf[inst.material_id];
 
     var out: Surface;
     out.resolved = false;
     out.out_colour = vec4<f32>(0.0);
     out.base_colour = vec3<f32>(0.0);
     out.normal = vec3<f32>(0.0, 0.0, 1.0);
+    out.front_facing = select(0u, 1u, is_front);
     out.ao_factor = 1.0;
     out.mat_uv = in.uv;
     out.alpha = 1.0;
-    out.front_facing = 1u;
 
     // Screen-space derivatives of the interpolated inputs, taken here where
     // control flow is still uniform. The shading branches below key off
@@ -333,6 +485,8 @@ fn compute_surface(in: VertexOut) -> Surface {
     // rejected by strict WGSL validators; these feed explicit-gradient sampling.
     let d_uv_dx = dpdx(in.uv);
     let d_uv_dy = dpdy(in.uv);
+    let d_uv1_dx = dpdx(in.uv1);
+    let d_uv1_dy = dpdy(in.uv1);
     let d_wp_dx = dpdx(in.world_pos);
     let d_wp_dy = dpdy(in.world_pos);
 
@@ -350,10 +504,20 @@ fn compute_surface(in: VertexOut) -> Surface {
         return out;
     }
 
-    let mat_uv = in.uv * inst.uv_transform.zw + inst.uv_transform.xy;
+    // Per-material UV transform (slot 0 = albedo; also feeds the plugin surf.uv).
+    let s0 = material_slot_uv(
+        inst.material_id, 0u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
+    let mat_uv = s0.uv;
     out.mat_uv = mat_uv;
-    let muv_ddx = d_uv_dx * inst.uv_transform.zw;
-    let muv_ddy = d_uv_dy * inst.uv_transform.zw;
+    let muv_ddx = s0.ddx;
+    let muv_ddy = s0.ddy;
+    let s_normal = material_slot_uv(
+        inst.material_id, 1u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
+    let s_ao = material_slot_uv(
+        inst.material_id, 2u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
 
     var tex_colour = vec4<f32>(1.0);
     if inst.has_texture == 1u { tex_colour = textureSampleGrad(obj_texture, obj_sampler, mat_uv, muv_ddx, muv_ddy); }
@@ -366,7 +530,7 @@ fn compute_surface(in: VertexOut) -> Surface {
         discard;
     }
 
-    let base_colour = obj_colour.rgb;
+    var base_colour = obj_colour.rgb;
 
     // Unlit: skip all lighting, return raw colour directly.
     if inst.unlit != 0u {
@@ -375,18 +539,28 @@ fn compute_surface(in: VertexOut) -> Surface {
         return out;
     }
 
+    // UV parameterisation visualisation: procedural pattern replaces all lighting.
+    // Mode in flags.w, tile scale in scalars3.y (per-material). Uses the raw mesh
+    // UV, matching the per-object path.
+    if mat.flags.w != 0u {
+        let vis = param_vis_colour(in.uv, mat.flags.w, mat.scalars3.y);
+        out.resolved = true;
+        out.out_colour = vec4<f32>(vis, obj_colour.a);
+        return out;
+    }
+
     var N: vec3<f32>;
-    if inst.use_flat != 0u {
+    if mat.flags.y != 0u {
         let dpx = d_wp_dx;
         let dpy = d_wp_dy;
         var Nf = normalize(cross(dpx, dpy));
         if dot(Nf, in.world_normal) < 0.0 { Nf = -Nf; }
         N = Nf;
     } else if inst.has_normal_map != 0u {
-        let nm_sample = textureSampleGrad(normal_map, obj_sampler, mat_uv, muv_ddx, muv_ddy).rgb;
+        let nm_sample = textureSampleGrad(normal_map, obj_sampler, s_normal.uv, s_normal.ddx, s_normal.ddy).rgb;
         var ts_unpacked = nm_sample * 2.0 - vec3<f32>(1.0);
-        ts_unpacked.x = ts_unpacked.x * inst.normal_strength;
-        ts_unpacked.y = ts_unpacked.y * inst.normal_strength;
+        ts_unpacked.x = ts_unpacked.x * mat.scalars1.z;
+        ts_unpacked.y = ts_unpacked.y * mat.scalars1.z;
         let ts_normal = normalize(ts_unpacked);
         let T = normalize(in.world_tangent.xyz);
         let Ng = normalize(in.world_normal);
@@ -398,10 +572,40 @@ fn compute_surface(in: VertexOut) -> Surface {
         N = normalize(in.world_normal);
     }
 
+    // Styled back-face policy: flip the normal and override the colour on back
+    // faces. Mirrors mesh.wgsl. Policy in scalars3.z: 2 DifferentColour,
+    // 3 Tint, 4..7 Pattern. Cull (0) and Identical (1) do not enter here. The
+    // Pattern world scale is per-instance (`inst.backface_pattern_scale`).
+    let backface_policy = u32(mat.scalars3.z);
+    if !is_front && backface_policy >= 2u {
+        N = -N;
+        if backface_policy == 2u {
+            base_colour = mat.backface_colour.rgb;
+        } else if backface_policy == 3u {
+            base_colour = base_colour * (1.0 - mat.backface_colour.r);
+        } else {
+            let pattern_colour = mat.backface_colour.rgb;
+            let pattern_type = backface_policy - 4u;
+            let wp = in.world_pos * inst.backface_pattern_scale;
+            var use_pattern = false;
+            if pattern_type == 0u {
+                let p = (i32(floor(wp.x)) + i32(floor(wp.z))) & 1;
+                use_pattern = p != 0;
+            } else if pattern_type == 1u {
+                use_pattern = fract((wp.x + wp.z) * 0.5) < 0.4;
+            } else if pattern_type == 2u {
+                use_pattern = fract((wp.x + wp.z) * 0.5) < 0.3 || fract((wp.x - wp.z) * 0.5) < 0.3;
+            } else {
+                use_pattern = fract(wp.z * 0.5) < 0.4;
+            }
+            base_colour = select(base_colour, pattern_colour, use_pattern);
+        }
+    }
+
     var ao_factor = 1.0;
     if inst.has_ao_map != 0u {
-        let raw_ao = textureSampleGrad(ao_map, obj_sampler, mat_uv, muv_ddx, muv_ddy).r;
-        ao_factor = mix(inst.ao_range.x, inst.ao_range.y, raw_ao);
+        let raw_ao = textureSampleGrad(ao_map, obj_sampler, s_ao.uv, s_ao.ddx, s_ao.ddy).r;
+        ao_factor = mix(vec2<f32>(mat.scalars2.w, mat.scalars3.x).x, vec2<f32>(mat.scalars2.w, mat.scalars3.x).y, raw_ao);
     }
 
     out.base_colour = base_colour;
@@ -411,14 +615,31 @@ fn compute_surface(in: VertexOut) -> Surface {
 }
 
 // Lighting for the instanced opaque path. Samples shadows like the per-object path.
-fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -> LitResult {
+fn compute_lit(
+    surface: Surface,
+    in: VertexOut,
+    saa_kernel: f32,
+    refl_dr: f32,
+    d_uv_dx: vec2<f32>,
+    d_uv_dy: vec2<f32>,
+    d_uv1_dx: vec2<f32>,
+    d_uv1_dy: vec2<f32>,
+) -> LitResult {
     let inst = instances[in.instance_idx];
+    let mat = material_gpu_buf[inst.material_id];
     var base_colour = surface.base_colour;
     let ao_factor = surface.ao_factor;
     var N = surface.normal;
 
     // Use the smooth vertex normal for shadow bias (see mesh.wgsl for rationale).
     let shadow_normal = N;
+    // Interpolated vertex normal, unflipped and without normal mapping: the
+    // point-shadow receiver bias reasons about the surface as the shadow
+    // pass rasterised it.
+    let geo_normal = normalize(in.world_normal);
+    // Bit 2 of receive_shadows: a styled policy on an open mesh, the cull-none
+    // caster path, which takes the two-sided receiver bias.
+    let receiver_two_sided = select(0u, 1u, (inst.receive_shadows & 4u) != 0u);
 
     let V = normalize(camera.eye_pos - in.world_pos);
 
@@ -426,6 +647,18 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
     // footprint) are supplied by the caller, computed in uniform control flow.
     // The PBR block below is gated on per-instance data, so evaluating the
     // underlying derivatives here would violate WGSL uniformity.
+
+    // Metallic-roughness texture (slot 3), sampled unconditionally: the PBR
+    // branch below is gated on per-instance data. The fallback view is a 1x1
+    // texture, so this is cheap; the result is only used when `has_mr_tex` is
+    // set. The UV derivatives arrive as parameters because they cannot be taken
+    // here: this function is called past the per-instance early return in the
+    // entry point, so its whole body is non-uniform control flow, and `dpdx`
+    // and `dpdy` are not legal there.
+    let s_mr = material_slot_uv(
+        inst.material_id, 3u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
+    let mr_sample = textureSampleGrad(metallic_roughness_tex, obj_sampler, s_mr.uv, s_mr.ddx, s_mr.ddy);
 
     let tint = vec4<f32>(1.0, 1.0, 1.0, 1.0);
     var last_shadow_sample = ShadowSample(1.0, 0u, vec2<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0, 0.0);
@@ -439,9 +672,18 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
     var dbg_metallic     = 0.0;
     let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
 
-    if inst.use_pbr != 0u {
-        var metallic  = clamp(inst.metallic,  0.0, 1.0);
-        var roughness = specular_aa_roughness_kernel(max(inst.roughness, 0.04), saa_kernel);
+    if mat.flags.x != 0u {
+        var metallic  = clamp(mat.scalars1.x,  0.0, 1.0);
+        var roughness = max(mat.scalars1.y, 0.04);
+        // glTF ORM texture: G=roughness, B=metallic. `mr_range` remaps the raw
+        // sample before the scalar factor, then specular-AA, matching mesh.wgsl.
+        if mat.scalars1.w != 0.0 {
+            let m_remapped = mix(mat.mr_range.x, mat.mr_range.y, mr_sample.b);
+            let r_remapped = mix(mat.mr_range.z, mat.mr_range.w, mr_sample.g);
+            metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
+            roughness = max(r_remapped * roughness, 0.04);
+        }
+        roughness = specular_aa_roughness_kernel(roughness, saa_kernel);
         var F0 = mix(vec3<f32>(0.04), base_colour, metallic);
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.
@@ -454,6 +696,7 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
         for (var j = 0u; j < pbr_range.count; j++) {
             let i = cluster_light_global(pbr_range, j);
             let l = lights_storage[i];
+            if !light_in_channel(l, inst.object_mask) { continue; }
             let ev = eval_light(l, in.world_pos);
             if !ev.in_range { continue; }
             let L = ev.l;
@@ -466,12 +709,16 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
             // </viewport-shade-slot:backface-cull>
             // <viewport-shade-slot:shadow>
             var shadow_factor = 1.0;
-            if lights_uniform.shadows_enabled != 0u && inst.receive_shadows != 0u {
-                if i == 0u && lights_storage[0].light_type != 1u {
-                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L, 0u);
+            if lights_uniform.shadows_enabled != 0u && (inst.receive_shadows & 1u) != 0u {
+                if (inst.receive_shadows & 2u) != 0u && surface.front_facing == 0u {
+                    // The inside of a closed solid, seen through a clip
+                    // plane: in the solid's own shadow. See mesh.wgsl.
+                    shadow_factor = 0.0;
+                } else if i == 0u && lights_storage[0].light_type != 1u {
+                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L, receiver_two_sided);
                     shadow_factor = last_shadow_sample.factor;
                 } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
-                    shadow_factor = sample_point_shadow(l, in.world_pos);
+                    shadow_factor = sample_point_shadow(l, in.world_pos, geo_normal);
                 }
             }
             // </viewport-shade-slot:shadow>
@@ -485,6 +732,12 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
         dbg_metallic   = metallic;
         // <viewport-shade-slot:ambient>
         var ambient: vec3<f32>;
+        // The environment's specular, kept apart so a light probe or lightmap
+        // that replaces the baked diffuse below leaves the reflection in place,
+        // and the weight the environment's own diffuse gets.
+        var ibl_specular = vec3<f32>(0.0);
+        let ambient_kd = (vec3<f32>(1.0) - F_Schlick_roughness(max(dot(N, V), 0.001), F0, roughness))
+            * (1.0 - metallic);
         if lights_uniform.ibl_enabled != 0u {
             var ibl: IblContrib;
             if lights_uniform.env_zone_count != 0u {
@@ -497,6 +750,9 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
                                        ao_factor, lights_uniform.ibl_intensity,
                                        lights_uniform.ibl_rotation, refl_dr);
             }
+            ibl.diffuse *= lights_uniform.ibl_diffuse_scale;
+            ibl.specular *= lights_uniform.ibl_specular_scale;
+            ibl_specular = ibl.specular;
             ambient = ibl.diffuse + ibl.specular;
             dbg_ibl_diff_lum = dot(ibl.diffuse, lum_weights);
             dbg_ibl_spec_lum = dot(ibl.specular, lum_weights);
@@ -504,16 +760,21 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
         } else {
             let hemi_t = clamp(in.world_normal.z * 0.5 + 0.5, 0.0, 1.0);
             let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
-            let ambient_scale = vec3<f32>(inst.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
+            let ambient_scale = vec3<f32>(mat.scalars0.x) + hemi_colour * lights_uniform.hemisphere_intensity;
             ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * ao_factor;
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
         // Light-probe instances take their indirect diffuse from the SH field
         // sampled at the object position, replacing the global-IBL / hemisphere
-        // diffuse above. SH probes carry diffuse only, so IBL specular is not
-        // added here.
+        // diffuse above. SH probes carry diffuse only: with an environment, the
+        // probe takes the diffuse weight and the environment's reflection stays.
         if inst.has_light_probe != 0u {
-            ambient = evaluate_object_indirect(inst.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
+            let probe = evaluate_object_indirect(inst.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
+            if lights_uniform.ibl_enabled != 0u {
+                ambient = probe * ambient_kd + ibl_specular;
+            } else {
+                ambient = probe;
+            }
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
         // </viewport-shade-slot:ambient>
@@ -527,16 +788,20 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
         for (var j = 0u; j < bp_range.count; j++) {
             let i = cluster_light_global(bp_range, j);
             let l = lights_storage[i];
+            if !light_in_channel(l, inst.object_mask) { continue; }
             let ev = eval_light(l, in.world_pos);
             if !ev.in_range { continue; }
             let light_dir = ev.l;
             var shadow = 1.0;
-            if lights_uniform.shadows_enabled != 0u && inst.receive_shadows != 0u {
-                if i == 0u && lights_storage[0].light_type != 1u {
-                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir, 0u);
+            if lights_uniform.shadows_enabled != 0u && (inst.receive_shadows & 1u) != 0u {
+                if (inst.receive_shadows & 2u) != 0u && surface.front_facing == 0u {
+                    // Inside a closed solid: see the loop above.
+                    shadow = 0.0;
+                } else if i == 0u && lights_storage[0].light_type != 1u {
+                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir, receiver_two_sided);
                     shadow = last_shadow_sample.factor;
                 } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
-                    shadow = sample_point_shadow(l, in.world_pos);
+                    shadow = sample_point_shadow(l, in.world_pos, geo_normal);
                 }
             }
             let H = normalize(light_dir + V);
@@ -544,12 +809,12 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
             let n_dot_h = max(dot(N, H), 0.0);
             // Energy-normalised Blinn-Phong (matches the PBR path): 1/pi on the
             // diffuse lobe, (shininess + 8) / (8 pi) on the specular lobe.
-            let diffuse_contrib  = inst.diffuse  * n_dot_l * shadow * INV_PI;
-            let specular_contrib = inst.specular * pow(n_dot_h, inst.shininess)
-                                 * (inst.shininess + 8.0) * INV_PI * 0.125 * shadow;
+            let diffuse_contrib  = mat.scalars0.y  * n_dot_l * shadow * INV_PI;
+            let specular_contrib = mat.scalars0.z * pow(n_dot_h, mat.scalars0.w)
+                                 * (mat.scalars0.w + 8.0) * INV_PI * 0.125 * shadow;
             total_colour_contrib += (diffuse_contrib + specular_contrib) * ev.radiance;
         }
-        let ambient_contrib = inst.ambient;
+        let ambient_contrib = mat.scalars0.x;
         let hemi_t = clamp(in.world_normal.z * 0.5 + 0.5, 0.0, 1.0);
         let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
         let hemi_ambient = hemi_colour * lights_uniform.hemisphere_intensity;
@@ -578,8 +843,8 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
 }
 
 @fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    let surface = compute_surface(in);
+fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    let surface = compute_surface(in, is_front);
 
     // Derivative terms for the lighting stage, taken here while control flow is
     // still uniform (before the resolved early return and compute_lit's
@@ -591,11 +856,23 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let R_dr = reflect(-V_dr, surface.normal);
     let refl_dr = max(length(dpdx(R_dr)), length(dpdy(R_dr)));
 
+    // The emissive slot's derivatives, taken here for the same reason: the
+    // early return below is per-instance, so everything after it is in
+    // non-uniform control flow and `dpdx`/`dpdy` are not legal there. Tint
+    // rejects the module over it, so no instanced mesh draws at all in Chrome;
+    // naga does not enforce the rule and lets the same source through.
+    let d_uv_dx = dpdx(in.uv);
+    let d_uv_dy = dpdy(in.uv);
+    let d_uv1_dx = dpdx(in.uv1);
+    let d_uv1_dy = dpdy(in.uv1);
+
     if surface.resolved {
         return surface.out_colour;
     }
 
-    let lit = compute_lit(surface, in, saa_kernel, refl_dr);
+    let lit = compute_lit(
+        surface, in, saa_kernel, refl_dr, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
 
     // Re-bind the locals the debug-vis overlay reads before the include.
     let N = surface.normal;
@@ -610,8 +887,20 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var final_rgb = lit.rgb;
 
     // Emissive term: added after lighting so it can push HDR values above 1.0.
-    // The instanced path has no emissive texture, so the factor is applied flat.
-    let emissive = instances[in.instance_idx].emissive;
+    // The emissive factor is modulated by the emissive texture (slot 4) when set,
+    // matching mesh.wgsl. Per-instance custom data slots 0..3 then add to emissive
+    // (nits); zero is a no-op.
+    let e_inst = instances[in.instance_idx];
+    let e_mat = material_gpu_buf[e_inst.material_id];
+    var emissive = e_mat.scalars2.xyz;
+    if e_mat.scalars3.w != 0.0 {
+        let s_em = material_slot_uv(
+            e_inst.material_id, 4u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+        );
+        emissive = emissive * textureSampleGrad(emissive_tex, obj_sampler, s_em.uv, s_em.ddx, s_em.ddy).rgb;
+    }
+    let inst_emissive = instance_custom_data_buf[e_inst.custom_data_id].data0.xyz;
+    emissive = emissive + inst_emissive;
     final_rgb += emissive;
     let dbg_emissive_lum = dot(emissive, vec3<f32>(0.2126, 0.7152, 0.0722));
 

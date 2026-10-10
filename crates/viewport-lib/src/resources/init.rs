@@ -1,6 +1,28 @@
 use super::*;
-use crate::gpu::util::DeviceExt;
-use crate::resources::VertexBufferLayoutExt;
+use crate::resources::builders::LoggedAlloc;
+
+/// Count the storage buffers a set of bind group layout entries costs in one
+/// shader stage. Used to check the layouts built here against the constants
+/// that describe them.
+#[cfg(debug_assertions)]
+fn stage_storage_buffers(
+    entries: &[crate::gpu::BindGroupLayoutEntry],
+    stage: crate::gpu::ShaderStages,
+) -> u32 {
+    entries
+        .iter()
+        .filter(|e| {
+            e.visibility.contains(stage)
+                && matches!(
+                    e.ty,
+                    crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { .. },
+                        ..
+                    }
+                )
+        })
+        .count() as u32
+}
 
 impl DeviceResources {
     /// Create all GPU resources for the viewport.
@@ -29,6 +51,24 @@ impl DeviceResources {
         sample_count: u32,
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
+        Self::new_configured(
+            device,
+            target_format,
+            sample_count,
+            pipeline_cache_data,
+            None,
+        )
+    }
+
+    /// The constructor behind the public ones, with the geometry store's
+    /// first chunk size (`None` for the default).
+    pub(crate) fn new_configured(
+        device: &crate::gpu::Device,
+        target_format: crate::gpu::TextureFormat,
+        sample_count: u32,
+        pipeline_cache_data: Option<&[u8]>,
+        geometry_chunk_bytes: Option<u64>,
+    ) -> Self {
         // A pipeline cache records compiled pipelines so a later run (seeded with
         // saved data) skips recompilation. Only available when the device enables
         // `Features::PIPELINE_CACHE`; `fallback: true` discards stale/invalid data
@@ -48,6 +88,12 @@ impl DeviceResources {
         } else {
             None
         };
+        // Registered with or without a cache: the lookup has to know about
+        // every renderer to tell when it cannot answer.
+        let pipeline_cache_lease = crate::resources::builders::device_pipeline_cache::register(
+            device,
+            pipeline_cache.as_ref(),
+        );
 
         // Cold-start instrumentation. Pipeline compilation and large depth-texture
         // allocation can dominate construction on some backends (notably Adreno
@@ -85,271 +131,266 @@ impl DeviceResources {
             && device_limits.max_storage_buffers_per_shader_stage
                 >= crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE;
 
-        let mesh_src = if deform_enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))
-        };
-        // Lit modules compile without the pixel-inspector debug block
-        // (debug_vis_shaders starts false); DebugVis rebuilds them with it.
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "mesh_shader",
-            crate::resources::builders::builtin_hook_env(
-                crate::resources::builders::strip_mesh_non_pbr(
-                    crate::resources::builders::strip_mesh_discards(
-                        crate::resources::builders::strip_debug_vis(mesh_src, false),
-                    ),
-                ),
-            ),
-        );
-
         // ------------------------------------------------------------------
         // Bind group layouts
         // ------------------------------------------------------------------
+        let camera_bgl_entries = [
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Depth,
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Comparison),
+                count: None,
+            },
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 3,
+                // Lights are read only in the fragment stage. Kept FRAGMENT-only
+                // so it does not consume one of Metal's per-stage vertex buffer
+                // slots (the per-object mesh pipeline binds many vertex-stage
+                // storage buffers and is slot-sensitive).
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 4: clip planes uniform (section view clipping).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 5: shadow atlas uniform (CSM matrices, splits, PCSS params).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 6: clip volume uniform (box/sphere/plane extended clip region).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 6,
+                // Clip-volume tests run only in the fragment stage (discard), so
+                // keep this FRAGMENT-only to free a Metal vertex buffer slot.
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 7: IBL irradiance equirect array (one layer per environment).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 7,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Binding 8: IBL prefiltered specular equirect array (one layer per environment).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 8,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Binding 9: BRDF integration LUT texture.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 9,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Binding 10: IBL sampler (linear, clamp-to-edge).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 10,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            // Binding 11: Skybox/environment equirect texture (full-res for skybox).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 11,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Binding 13: read-only storage buffer of `SingleLightUniform`
+            // entries. Indexed against the `count` field of the lights
+            // header uniform (binding 3). Capacity = `MAX_SCENE_LIGHTS`.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 13,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 14: clustered-shading grid uniform (dimensions,
+            // near/far, screen size, fallback flag). FRAGMENT only: the
+            // cluster helpers are fragment-stage, and the vertex-stage
+            // Metal buffer table is at capacity (the object group's
+            // binding 15 took the last slot).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 14,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 15: cluster cell storage (offset + count per cell),
+            // read-only in the fragment stage.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 15,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 16: global cluster light index list, read-only in
+            // the fragment stage.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 16,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 17: point-light shadow depth array.
+            // iOS Metal does not support cube array textures, so on that
+            // target the shader uses texture_depth_2d_array and we bind a
+            // D2Array view instead.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 17,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Depth,
+                    view_dimension: if cfg!(target_os = "ios") {
+                        crate::gpu::TextureViewDimension::D2Array
+                    } else {
+                        crate::gpu::TextureViewDimension::CubeArray
+                    },
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 18: indirect-lighting storage buffer (FRAGMENT,
+            // read-only). Holds per-object light-probe SH blocks then the
+            // environment-selection zones in a second region (see
+            // indirect_light_data / load_env_zone in scene_lighting.wgsl).
+            // Binding 19 is intentionally free: env zones used to live there
+            // before they were folded into this buffer.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 18,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 20: adaptive probe volume (FRAGMENT, read-only). A
+            // 3-vec4 header (grid box + dims) then 9 vec4 of SH per grid
+            // cell, trilinearly sampled per fragment when the object's
+            // light_probe_index is the volume sentinel.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 20,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 21: per-material UV transform buffer (FRAGMENT,
+            // read-only). Array of `MaterialGpu` transform blocks, indexed by
+            // the per-draw `material_id`. Scene-global, so it lives in group 0.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 21,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 22: per-instance custom-data buffer (FRAGMENT,
+            // read-only). Array of `InstanceCustomData` payloads, indexed by
+            // the per-instance `custom_data_id`. Scene-global, group 0.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 22,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ];
         let camera_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("camera_bgl"),
-            entries: &[
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(
-                        crate::gpu::SamplerBindingType::Comparison,
-                    ),
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 4: clip planes uniform (section view clipping).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 5: shadow atlas uniform (CSM matrices, splits, PCSS params).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 6: clip volume uniform (box/sphere/plane extended clip region).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 7: IBL irradiance equirect array (one layer per environment).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // Binding 8: IBL prefiltered specular equirect array (one layer per environment).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // Binding 9: BRDF integration LUT texture.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // Binding 10: IBL sampler (linear, clamp-to-edge).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 10,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // Binding 11: Skybox/environment equirect texture (full-res for skybox).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 11,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // Binding 12: per-fragment debug storage buffer (written in debug_vis.wgsl).
-                // Sized to viewport_width * viewport_height * 16 bytes when debug is active;
-                // a 16-byte sentinel buffer is used otherwise.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 12,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 13: read-only storage buffer of `SingleLightUniform`
-                // entries. Indexed against the `count` field of the lights
-                // header uniform (binding 3). Capacity = `MAX_SCENE_LIGHTS`.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 13,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 14: clustered-shading grid uniform (dimensions,
-                // near/far, screen size, fallback flag). FRAGMENT only: the
-                // cluster helpers are fragment-stage, and the vertex-stage
-                // Metal buffer table is at capacity (the object group's
-                // binding 15 took the last slot).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 14,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 15: cluster cell storage (offset + count per cell),
-                // read-only in the fragment stage.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 15,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 16: global cluster light index list, read-only in
-                // the fragment stage.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 16,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 17: point-light shadow depth array.
-                // iOS Metal does not support cube array textures, so on that
-                // target the shader uses texture_depth_2d_array and we bind a
-                // D2Array view instead.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 17,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
-                        view_dimension: if cfg!(target_os = "ios") {
-                            crate::gpu::TextureViewDimension::D2Array
-                        } else {
-                            crate::gpu::TextureViewDimension::CubeArray
-                        },
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 18: indirect-lighting storage buffer (FRAGMENT,
-                // read-only). Holds per-object light-probe SH blocks then the
-                // environment-selection zones in a second region (see
-                // indirect_light_data / load_env_zone in scene_lighting.wgsl).
-                // Binding 19 is intentionally free: env zones used to live there
-                // before they were folded into this buffer.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 18,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 20: adaptive probe volume (FRAGMENT, read-only). A
-                // 3-vec4 header (grid box + dims) then 9 vec4 of SH per grid
-                // cell, trilinearly sampled per fragment when the object's
-                // light_probe_index is the volume sentinel.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 20,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &camera_bgl_entries,
         });
 
         // Object bind group layout (group 1 for non-instanced pipelines).
@@ -362,226 +403,241 @@ impl DeviceResources {
         // Textures are co-located in group 1 (rather than a separate group 2) so that
         // the total bind group count stays at 2, compatible with iced's wgpu device
         // which hardcodes max_bind_groups = 2 in its DeviceDescriptor.
+        let object_bgl_entries = [
+            // binding 0: per-object data as a read-only storage array.
+            // Every per-object mesh draw binds the same buffer here and
+            // selects its element with @builtin(instance_index), so group 1
+            // stops changing per draw. Single-item paths (shadow casters,
+            // normal lines) bind a one-element buffer and draw at
+            // instance 0.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 1: albedo texture (filterable)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 2: shared filtering sampler
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            // binding 3: normal map texture (filterable)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 4: AO map texture (filterable)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 5: LUT (colourmap) texture (256x1 Rgba8UnormSrgb, FRAGMENT, filterable)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 6: scalar attribute storage buffer (VERTEX, read-only).
+            // Read only in vs_main; the fragment stage receives the value as
+            // the interpolated `scalar_val` varying, so it does not need the
+            // buffer visible. Keeping it vertex-only also keeps this buffer off
+            // the fragment stage's storage-buffer count.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 6,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 7: matcap texture (FRAGMENT, filterable 2D)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 7,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 8: per-face colour storage buffer (VERTEX, read-only).
+            // Like binding 6, read only in vs_main; the fragment stage gets it
+            // as the interpolated `face_colour` varying, so it stays vertex-only
+            // and off the fragment stage's storage-buffer count.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 8,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 9: warp vector storage buffer (VERTEX, read-only)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 9,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 10: LUT clamp sampler (FRAGMENT, filtering)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 10,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            // binding 11: metallic-roughness ORM texture (FRAGMENT, filterable)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 11,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 12: emissive texture (FRAGMENT, filterable)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 12,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 13: position override storage buffer (VERTEX, read-only).
+            // Fallback sentinel (1x vec3<f32>) is bound when no override is set.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 13,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 14: normal override storage buffer (VERTEX, read-only).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 14,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 15: per-vertex extension attribute storage buffer
+            // (VERTEX, read-only). One vec4<f32> per vertex; declared and
+            // read only by material-plugin modules whose hook sets
+            // reads_vertex_attribute. Fallback sentinel (one zero vec4)
+            // is bound for meshes without the channel.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 15,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 17: baked lightmap texture array (FRAGMENT, filterable).
+            // Sampled with the binding-2 material sampler. A lightmap can
+            // spill across several atlas pages, so this is a texture_2d_array
+            // and the shader selects a layer per vertex from UV1.z. Single-page
+            // lightmaps (and the 1x1 fallback for meshes without one) bind a
+            // one-layer array.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 17,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 18: dominant-direction atlas array for directional
+            // lightmaps (FRAGMENT, filterable). Same page layout as binding 17.
+            // The 1x1 fallback is bound and ignored unless
+            // object.lightmap_directional is set.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 18,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 19: second UV set (uv1) storage stream (VERTEX). The
+            // per-chunk parallel buffer for meshes with `MeshData::uvs1`, or
+            // the one-entry zero fallback otherwise. A material texture slot
+            // samples it instead of the interleaved uv0 when its
+            // `UvTransform::uv_set` is 1.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 19,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ];
         let object_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("object_bgl"),
-            entries: &[
-                // binding 0: per-object data as a read-only storage array.
-                // Every per-object mesh draw binds the same buffer here and
-                // selects its element with @builtin(instance_index), so group 1
-                // stops changing per draw. Single-item paths (shadow casters,
-                // normal lines, LIC) bind a one-element buffer and draw at
-                // instance 0.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 1: albedo texture (filterable)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 2: shared filtering sampler
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // binding 3: normal map texture (filterable)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 4: AO map texture (filterable)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 5: LUT (colourmap) texture (256x1 Rgba8UnormSrgb, FRAGMENT, filterable)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 6: scalar attribute storage buffer (VERTEX, read-only).
-                // Read only in vs_main; the fragment stage receives the value as
-                // the interpolated `scalar_val` varying, so it does not need the
-                // buffer visible. Keeping it vertex-only also keeps this buffer off
-                // the fragment stage's storage-buffer count.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 7: matcap texture (FRAGMENT, filterable 2D)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 8: per-face colour storage buffer (VERTEX, read-only).
-                // Like binding 6, read only in vs_main; the fragment stage gets it
-                // as the interpolated `face_colour` varying, so it stays vertex-only
-                // and off the fragment stage's storage-buffer count.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 9: warp vector storage buffer (VERTEX, read-only)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 10: LUT clamp sampler (FRAGMENT, filtering)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 10,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // binding 11: metallic-roughness ORM texture (FRAGMENT, filterable)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 11,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 12: emissive texture (FRAGMENT, filterable)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 12,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 13: position override storage buffer (VERTEX, read-only).
-                // Fallback sentinel (1x vec3<f32>) is bound when no override is set.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 13,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 14: normal override storage buffer (VERTEX, read-only).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 14,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 15: per-vertex extension attribute storage buffer
-                // (VERTEX, read-only). One vec4<f32> per vertex; declared and
-                // read only by material-plugin modules whose hook sets
-                // reads_vertex_attribute. Fallback sentinel (one zero vec4)
-                // is bound for meshes without the channel.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 15,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 17: baked lightmap texture array (FRAGMENT, filterable).
-                // Sampled with the binding-2 material sampler. A lightmap can
-                // spill across several atlas pages, so this is a texture_2d_array
-                // and the shader selects a layer per vertex from UV1.z. Single-page
-                // lightmaps (and the 1x1 fallback for meshes without one) bind a
-                // one-layer array.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 17,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 18: dominant-direction atlas array for directional
-                // lightmaps (FRAGMENT, filterable). Same page layout as binding 17.
-                // The 1x1 fallback is bound and ignored unless
-                // object.lightmap_directional is set.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 18,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &object_bgl_entries,
         });
 
         // Texture-only bind group layout : kept for the instanced pipeline (group 1 bindings
@@ -645,64 +701,106 @@ impl DeviceResources {
         } else {
             crate::resources::mesh_sidecar::deform::DeformationState::new_disabled(device)
         };
-        let deform_bgl = deform.enabled.then_some(&deform.bind_group_layout);
 
-        // ------------------------------------------------------------------
-        // Pipeline layout (shared between solid and transparent pipelines)
-        // Groups: 0=camera, 1=object+texture, and optionally 2=deform sidecar
-        // ------------------------------------------------------------------
-        let pipeline_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
-            device,
-            "mesh_pipeline_layout",
-            &camera_bgl,
-            &object_bgl,
-            deform_bgl,
-        );
+        // wgpu counts max_storage_buffers_per_shader_stage per stage across
+        // every group in a pipeline layout, so the mesh pipelines pay the sum of
+        // the groups they bind. The constants describing that sum live in
+        // ViewportRenderer and drift silently when a vertex-stage binding is
+        // added here: a deform gate one short of what the layout binds turns
+        // deformers on and then fails every pipeline layout that includes the
+        // deform group, which renders nothing at all. Derive the counts from the
+        // entries just used rather than trusting the constants.
+        #[cfg(debug_assertions)]
+        {
+            let base = stage_storage_buffers(&camera_bgl_entries, crate::gpu::ShaderStages::VERTEX)
+                + stage_storage_buffers(&object_bgl_entries, crate::gpu::ShaderStages::VERTEX);
+            let default_limit = crate::gpu::Limits::default().max_storage_buffers_per_shader_stage;
+            debug_assert!(
+                base <= default_limit,
+                "the base mesh path binds {base} vertex-stage storage buffers, over wgpu's \
+                 default limit of {default_limit}; a consumer creating a device with default \
+                 limits could no longer render at all"
+            );
+            // The same sum in the fragment stage. wgpu totals a stage's
+            // storage buffers across every group a pipeline layout binds, so a
+            // group added on top of these two (the projected-tet volume path
+            // binds a third) only has the difference to spend. The base path
+            // sits on the limit exactly, so a new fragment-visible storage
+            // binding here costs some later pipeline its layout rather than
+            // this one.
+            let base_fragment =
+                stage_storage_buffers(&camera_bgl_entries, crate::gpu::ShaderStages::FRAGMENT)
+                    + stage_storage_buffers(
+                        &object_bgl_entries,
+                        crate::gpu::ShaderStages::FRAGMENT,
+                    );
+            debug_assert!(
+                base_fragment <= default_limit,
+                "the base mesh path binds {base_fragment} fragment-stage storage buffers, over                  wgpu's default limit of {default_limit}; a consumer creating a device with                  default limits could no longer render at all"
+            );
+            let with_deform = base
+                + stage_storage_buffers(
+                    &crate::resources::mesh_sidecar::deform::BGL_ENTRIES,
+                    crate::gpu::ShaderStages::VERTEX,
+                );
+            debug_assert_eq!(
+                with_deform,
+                crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE,
+                "the deform-enabled mesh pipeline layout binds {} vertex-stage storage buffers \
+                 but DEFORM_STORAGE_BUFFERS_PER_STAGE gates deformers at {}; a device granted \
+                 exactly the gate value would enable the deform group and then fail every \
+                 pipeline layout that includes it",
+                with_deform,
+                crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE,
+            );
+        }
 
-        // ------------------------------------------------------------------
-        // LDR mesh.wgsl pipelines: solid + two-sided + transparent + wireframe.
-        // Built through the shared factory so `register_deformer` can rebuild
-        // them with a freshly composed shader module.
-        // ------------------------------------------------------------------
-        let ldr = crate::resources::mesh::mesh_pipelines::build_ldr_mesh_pipelines(
-            device,
-            &pipeline_layout,
-            &shader,
-            target_format,
-            sample_count,
-            pipeline_cache.as_ref(),
-        );
-        let solid_pipeline = ldr.solid;
-        let solid_two_sided_pipeline = ldr.solid_two_sided;
-        let transparent_pipeline = ldr.transparent;
-        let wireframe_pipeline = ldr.wireframe;
-
+        // The LDR mesh.wgsl pipelines (solid, two-sided, transparent, wireframe)
+        // and the module they share are built by `ensure_ldr_mesh_pipelines` on
+        // the first frame that carries mesh-family content, not here: a viewport
+        // that only ever draws overlays never binds one.
         mark("mesh_pipelines");
 
         // ------------------------------------------------------------------
         // Camera uniform buffer and bind group
         // ------------------------------------------------------------------
-        let camera_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let camera_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("camera_uniform_buf"),
             size: std::mem::size_of::<CameraUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let light_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let light_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("light_uniform_buf"),
             size: std::mem::size_of::<LightUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let light_storage_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let light_storage_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("light_storage_buf"),
             size: (std::mem::size_of::<crate::resources::SingleLightUniform>()
                 * crate::resources::MAX_SCENE_LIGHTS) as u64,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+
+        // Per-material UV transform buffer (group 0, binding 21). Starts small
+        // and grows when a frame interns more blocks than it holds; see
+        // `upload_material_gpu`.
+        let material_gpu_buf = Self::create_material_gpu_buffer(
+            device,
+            crate::resources::material_gpu::MATERIAL_GPU_INITIAL_CAPACITY,
+        );
+
+        // Per-instance custom-data buffer (group 0, binding 22). Starts small
+        // and grows when a frame interns more blocks than it holds; see
+        // `upload_custom_data`.
+        let instance_custom_data_buf = Self::create_custom_data_buffer(
+            device,
+            crate::resources::custom_data::CUSTOM_DATA_INITIAL_CAPACITY,
+        );
 
         // Indirect-lighting storage buffer (group 0 binding 18). Holds the
         // per-object light-probe SH blocks in the first region and the
@@ -712,7 +810,7 @@ impl DeviceResources {
         // region starts at MAX_LIGHT_PROBE_OBJECTS * SH_GPU_STRIDE_BYTES; the
         // shader's ENV_ZONE_BASE (in vec4) must match (guarded by a const_assert
         // in resources::material::environment).
-        let indirect_light_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let indirect_light_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("indirect_light_buf"),
             size: (crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS
                 * crate::resources::light_probes::SH_GPU_STRIDE_BYTES
@@ -726,7 +824,7 @@ impl DeviceResources {
         // Disabled probe-volume header (binding 20 fallback): 3 vec4, all zero so
         // the enabled flag (header[0].w) reads 0 and the sampler returns black.
         let light_probe_volume_fallback =
-            device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            device.logged_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                 label: Some("light_probe_volume_fallback"),
                 contents: bytemuck::cast_slice(&[[0.0f32; 4]; 3]),
                 usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -734,7 +832,7 @@ impl DeviceResources {
 
         // Clip planes uniform buffer (binding 4 of camera bind group).
         // Initialized to count=0 (no active clip planes).
-        let clip_planes_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let clip_planes_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("clip_planes_uniform_buf"),
             size: std::mem::size_of::<ClipPlanesUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -743,7 +841,7 @@ impl DeviceResources {
 
         // Clip volume uniform buffer (binding 6 of camera bind group).
         // Holds up to CLIP_VOLUME_MAX box/sphere entries; initialized to count=0 (no volumes).
-        let clip_volume_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let clip_volume_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("clip_volume_uniform_buf"),
             size: std::mem::size_of::<ClipVolumesUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -753,23 +851,13 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Shadow map texture, sampler, and bind group
         // ------------------------------------------------------------------
-        let shadow_map_texture = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("shadow_atlas"),
-            size: crate::gpu::Extent3d {
-                width: SHADOW_ATLAS_SIZE,
-                height: SHADOW_ATLAS_SIZE,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Depth32Float,
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let shadow_map_view =
-            shadow_map_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+        // A 1x1 placeholder, not the real atlas. At SHADOW_ATLAS_SIZE the atlas
+        // is 64 MB, and a viewport whose scene casts no cascade shadow never
+        // samples it, so the bind groups start on a placeholder the same way
+        // the IBL slots below do. `ensure_shadow_atlas` swaps in the full
+        // texture the first time a frame renders cascades.
+        let (shadow_map_texture, shadow_map_view) =
+            crate::resources::shadow::create_atlas_texture(device, 1);
 
         let shadow_sampler = crate::resources::builders::comparison_sampler(
             device,
@@ -785,61 +873,16 @@ impl DeviceResources {
         //  - Per-face 2D-array views (one per face) for shadow render passes.
         //  - A `CubeArray` view bound to the lit pass for sampling.
         // ------------------------------------------------------------------
-        let point_shadow_face_size = crate::renderer::POINT_SHADOW_FACE_SIZE;
-        let point_shadow_max_lights = crate::renderer::MAX_POINT_SHADOW_LIGHTS;
-        let point_shadow_layers = point_shadow_max_lights * 6;
-        let point_shadow_cube_texture = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("point_shadow_cube_array"),
-            size: crate::gpu::Extent3d {
-                width: point_shadow_face_size,
-                height: point_shadow_face_size,
-                depth_or_array_layers: point_shadow_layers,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Depth32Float,
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let point_shadow_cube_view =
-            point_shadow_cube_texture.create_view(&crate::gpu::TextureViewDescriptor {
-                label: Some("point_shadow_cube_view"),
-                // iOS Metal does not support CubeArray views. Use D2Array instead;
-                // the shader is patched at build time to match.
-                dimension: Some(if cfg!(target_os = "ios") {
-                    crate::gpu::TextureViewDimension::D2Array
-                } else {
-                    crate::gpu::TextureViewDimension::CubeArray
-                }),
-                aspect: crate::gpu::TextureAspect::DepthOnly,
-                base_array_layer: 0,
-                array_layer_count: Some(point_shadow_layers),
-                base_mip_level: 0,
-                mip_level_count: Some(1),
-                format: Some(crate::gpu::TextureFormat::Depth32Float),
-                usage: None,
-            });
-        let point_shadow_face_views: Vec<crate::gpu::TextureView> = (0..point_shadow_layers)
-            .map(|layer| {
-                point_shadow_cube_texture.create_view(&crate::gpu::TextureViewDescriptor {
-                    label: Some("point_shadow_face_view"),
-                    dimension: Some(crate::gpu::TextureViewDimension::D2),
-                    aspect: crate::gpu::TextureAspect::DepthOnly,
-                    base_array_layer: layer,
-                    array_layer_count: Some(1),
-                    base_mip_level: 0,
-                    mip_level_count: Some(1),
-                    format: Some(crate::gpu::TextureFormat::Depth32Float),
-                    usage: None,
-                })
-            })
-            .collect();
+        // Also a placeholder: one 1x1 cube rather than the real
+        // MAX_POINT_SHADOW_LIGHTS array, which is 192 MB at
+        // POINT_SHADOW_FACE_SIZE. Most scenes have no shadow-casting point
+        // light at all. `ensure_point_shadow_cubes` swaps in the full array the
+        // first time a frame queues point-shadow faces.
+        let (point_shadow_cube_texture, point_shadow_cube_view, point_shadow_face_views) =
+            crate::resources::shadow::create_point_cube_array(device, 1, 1);
 
-        // Includes the 4096^2 directional atlas and the point-shadow cube array
-        // (POINT_SHADOW_FACE_SIZE^2 * MAX_POINT_SHADOW_LIGHTS * 6 layers), both
-        // allocated unconditionally here. Watch this number on mobile.
+        // The directional atlas and the point-shadow cube array are placeholders
+        // at this point; both are promoted on the first frame that needs them.
         mark("buffers_and_shadow_textures");
 
         // Non-comparison sampler (no compare field) for plain float depth reads.
@@ -847,7 +890,7 @@ impl DeviceResources {
             crate::resources::builders::clamp_nearest_sampler(device, "shadow_atlas_depth_sampler");
 
         // Shadow atlas uniform buffer (binding 5).
-        let shadow_info_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let shadow_info_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("shadow_info_buf"),
             size: std::mem::size_of::<ShadowAtlasUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -859,7 +902,7 @@ impl DeviceResources {
         // and a linear/repeat sampler. Never sampled : the `ibl_enabled` uniform guard
         // prevents IBL calculations when no environment map is uploaded.
         // ------------------------------------------------------------------
-        let ibl_fallback_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+        let ibl_fallback_texture = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("ibl_fallback_black"),
             size: crate::gpu::Extent3d {
                 width: 1,
@@ -879,7 +922,7 @@ impl DeviceResources {
         // 1x1x1 black `2d-array` fallback for the irradiance / prefiltered array
         // slots (bindings 7-8), bound until the default environment is uploaded.
         // Never sampled: the `ibl_enabled` guard is off with no environment.
-        let ibl_fallback_array_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+        let ibl_fallback_array_texture = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("ibl_fallback_array_black"),
             size: crate::gpu::Extent3d {
                 width: 1,
@@ -901,10 +944,10 @@ impl DeviceResources {
             });
 
         // BRDF integration LUT placeholder: a 1x1 black fallback that's swapped for the real
-        // 128x128 LUT on the first call to `upload_environment_map`. The LUT is scene-independent
-        // (function of roughness x N.V only); idempotent caching inside `upload_environment_map`
+        // 128x128 LUT on the first call to `upload_environment`. The LUT is scene-independent
+        // (function of roughness x N.V only); idempotent caching inside `upload_environment`
         // means subsequent uploads skip its ~16.7M Hammersley samples.
-        let ibl_fallback_brdf_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+        let ibl_fallback_brdf_texture = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("ibl_fallback_brdf"),
             size: crate::gpu::Extent3d {
                 width: 1,
@@ -922,14 +965,6 @@ impl DeviceResources {
             ibl_fallback_brdf_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         let ibl_sampler = crate::resources::builders::env_sampler(device, "ibl_sampler");
-
-        // 16-byte sentinel bound at group 0 binding 12 when the debug fragment buffer is inactive.
-        let debug_frag_sentinel_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("debug_frag_sentinel_buf"),
-            size: 16,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
 
         let clustered = crate::resources::gpu::clustered::ClusteredResources::new(device);
 
@@ -993,10 +1028,6 @@ impl DeviceResources {
                     resource: crate::gpu::BindingResource::TextureView(&ibl_fallback_view),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 12,
-                    resource: debug_frag_sentinel_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
                     binding: 13,
                     resource: light_storage_buf.as_entire_binding(),
                 },
@@ -1024,19 +1055,16 @@ impl DeviceResources {
                     binding: 20,
                     resource: light_probe_volume_fallback.as_entire_binding(),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 21,
+                    resource: material_gpu_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 22,
+                    resource: instance_custom_data_buf.as_entire_binding(),
+                },
             ],
         });
-
-        // ------------------------------------------------------------------
-        // Shadow pass pipeline (depth-only, renders from light's POV)
-        // ------------------------------------------------------------------
-        let shadow_src = if deform_enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow_noop.wgsl"))
-        };
-        let shadow_shader =
-            crate::resources::builders::wgsl_module(device, "shadow_shader", shadow_src);
 
         // Shadow pass uses a simple bind group layout: just the light uniform.
         let shadow_camera_bgl =
@@ -1057,44 +1085,14 @@ impl DeviceResources {
                 }],
             });
 
-        let shadow_pl_bgls: Vec<&crate::gpu::BindGroupLayout> = if let Some(d) = deform_bgl {
-            vec![&shadow_camera_bgl, &object_bgl, d]
-        } else {
-            vec![&shadow_camera_bgl, &object_bgl]
-        };
-        let shadow_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "shadow_pipeline_layout",
-            &shadow_pl_bgls,
-        );
-
-        // Depth-only pass through the shared factory so register_deformer
-        // can rebuild it from composed source. Keyed by facedness (cull-front
-        // for closed solids so a solid's own front face is never compared
-        // against itself in the shadow map; cull-none for two-sided
-        // materials, `BackfacePolicy::Identical`, with a larger caster-side
-        // bias) and cutout (a fragment stage that discards below the
-        // caster's albedo alpha cutoff, for `AlphaMode::Mask` materials).
-        let shadow_pipeline = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-            let cull_mode = if key.two_sided {
-                None
-            } else {
-                Some(crate::gpu::Face::Front)
-            };
-            crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
-                device,
-                &shadow_pipeline_layout,
-                &shadow_shader,
-                cull_mode,
-                key.cutout,
-                pipeline_cache.as_ref(),
-            )
-        });
+        // The depth-only cascade pipelines are built by
+        // `ensure_cascade_shadow_pipelines` on the first frame that rasterises
+        // into the atlas, which is where the atlas itself is allocated.
 
         // Shadow pass uniform buffer : 4 cascade slots x 256 bytes (wgpu dynamic-offset alignment).
         // Each slot holds one 4x4 matrix (64 bytes); the remaining 192 bytes per slot are padding.
         const SHADOW_SLOT_STRIDE: u64 = 256;
-        let shadow_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let shadow_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("shadow_uniform_buf"),
             size: 4 * SHADOW_SLOT_STRIDE,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -1126,16 +1124,8 @@ impl DeviceResources {
         // mirrors the cascade pipeline (same object + deform bind groups)
         // and carries a per-face uniform with view_proj + light_pos + range.
         // ------------------------------------------------------------------
-        let shadow_point_src = if deform_enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow_point.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow_point_noop.wgsl"))
-        };
-        let shadow_point_shader = crate::resources::builders::wgsl_module(
-            device,
-            "shadow_point_shader",
-            shadow_point_src,
-        );
+        // The pipeline itself is built by `ensure_point_shadow_pipeline` on the
+        // first frame with point-shadow faces to draw.
         let shadow_point_face_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("shadow_point_face_bgl"),
@@ -1151,29 +1141,11 @@ impl DeviceResources {
                     count: None,
                 }],
             });
-        let shadow_point_pl_bgls: Vec<&crate::gpu::BindGroupLayout> = if let Some(d) = deform_bgl {
-            vec![&shadow_point_face_bgl, &object_bgl, d]
-        } else {
-            vec![&shadow_point_face_bgl, &object_bgl]
-        };
-        let shadow_point_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "shadow_point_pipeline_layout",
-            &shadow_point_pl_bgls,
-        );
-        let shadow_point_pipeline =
-            crate::resources::mesh::mesh_pipelines::build_shadow_point_pipeline(
-                device,
-                &shadow_point_pipeline_layout,
-                &shadow_point_shader,
-                pipeline_cache.as_ref(),
-            );
-
         // Per-face uniform buffer. Stride 256 satisfies wgpu's dynamic-offset
         // alignment requirement. Total slots = MAX_POINT_SHADOW_LIGHTS * 6.
         const SHADOW_POINT_FACE_STRIDE: u64 = 256;
-        let shadow_point_face_count = (point_shadow_max_lights * 6) as u64;
-        let shadow_point_face_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let shadow_point_face_count = (crate::renderer::MAX_POINT_SHADOW_LIGHTS * 6) as u64;
+        let shadow_point_face_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("shadow_point_face_buf"),
             size: shadow_point_face_count * SHADOW_POINT_FACE_STRIDE,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -1201,123 +1173,12 @@ impl DeviceResources {
         // draws through the 2D overlay system (see `gizmo_overlay`).
 
         // ------------------------------------------------------------------
-        // Overlay shader module
-        // ------------------------------------------------------------------
-        let overlay_shader = crate::resources::builders::wgsl_module(
-            device,
-            "overlay_shader",
-            crate::resources::builders::wgsl_source!("overlay"),
-        );
-
-        // ------------------------------------------------------------------
         // Overlay bind group layout (group 1: model + colour uniform)
         // ------------------------------------------------------------------
         let overlay_bgl = crate::resources::builders::uniform_bgl(
             device,
             "overlay_bgl",
             crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
-        );
-
-        // ------------------------------------------------------------------
-        // Overlay pipeline layout (group 0: camera, group 1: overlay uniform)
-        // ------------------------------------------------------------------
-        let overlay_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "overlay_pipeline_layout",
-            &[&camera_bgl, &overlay_bgl],
-        );
-
-        // ------------------------------------------------------------------
-        // Overlay render pipeline
-        // TriangleList topology with alpha blending for semi-transparent quads.
-        // depth_write_enabled: false : do not corrupt depth buffer with overlays.
-        // depth_compare: Less : overlays respect depth (hidden by geometry in front).
-        // cull_mode: None : quads viewed from both sides.
-        // ------------------------------------------------------------------
-        let overlay_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "overlay_pipeline",
-                layout: &overlay_pipeline_layout,
-                vertex_module: &overlay_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[OverlayVertex::buffer_layout()],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &overlay_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: crate::gpu::FrontFace::Ccw,
-                    cull_mode: None, // BC quads are visible from both sides.
-                    unclipped_depth: false,
-                    polygon_mode: crate::gpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false, // Do not write to depth buffer.
-                    crate::gpu::CompareFunction::Less,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
-        );
-
-        // ------------------------------------------------------------------
-        // Overlay line pipeline (LineList)
-        // Uses the same overlay shader + bind group layout as the triangle overlay.
-        // No alpha blending needed for line overlays.
-        // depth_write_enabled: false : overlay lines don't corrupt depth buffer.
-        // ------------------------------------------------------------------
-        let overlay_line_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "overlay_line_pipeline",
-                layout: &overlay_pipeline_layout,
-                vertex_module: &overlay_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[OverlayVertex::buffer_layout()],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &overlay_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: None,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::LineList,
-                    strip_index_format: None,
-                    front_face: crate::gpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: crate::gpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false,
-                    crate::gpu::CompareFunction::Less,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
         );
 
         // ------------------------------------------------------------------
@@ -1329,70 +1190,13 @@ impl DeviceResources {
         // clip-space depth via @builtin(frag_depth) for correct occlusion.
         // Horizon fade eliminates clipping artefacts at shallow viewing angles.
         // ------------------------------------------------------------------
-        let grid_shader = crate::resources::builders::wgsl_module(
-            device,
-            "grid_shader",
-            crate::resources::builders::wgsl_source!("grid"),
-        );
         let grid_bgl = crate::resources::builders::uniform_bgl(
             device,
             "grid_bgl",
             crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
         );
-        let grid_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "grid_pipeline_layout",
-            &[&grid_bgl],
-        );
-        let grid_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "grid_pipeline",
-                layout: &grid_pipeline_layout,
-                vertex_module: &grid_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[], // no vertex buffer : positions hardcoded in shader,
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &grid_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::gpu::DepthStencilState {
-                    format: crate::gpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: crate::resources::builders::dwrite(true),
-                    depth_compare: crate::resources::builders::dcompare(
-                        crate::gpu::CompareFunction::LessEqual,
-                    ),
-                    stencil: crate::gpu::StencilState::default(),
-                    bias: crate::gpu::DepthBiasState {
-                        // Push grid depth slightly behind coplanar geometry to prevent
-                        // z-fighting when object faces coincide with the grid plane.
-                        // 4 x the minimum representable Depth24 unit ~ 2.4e-7 : invisible
-                        // at any distance but reliably loses the depth test to geometry.
-                        constant: 4,
-                        slope_scale: 0.0,
-                        clamp: 0.0,
-                    },
-                }),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
-        );
         // Default-zero uniform : overwritten every frame in prepare().
-        let grid_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let grid_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("grid_uniform_buf"),
             size: std::mem::size_of::<GridUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -1415,11 +1219,6 @@ impl DeviceResources {
         // Z height, then renders one of four modes: None (skipped), ShadowOnly,
         // Tile, SolidColour.  Uses @builtin(frag_depth) for depth occlusion.
         // ------------------------------------------------------------------
-        let ground_plane_shader = crate::resources::builders::wgsl_module(
-            device,
-            "ground_plane_shader",
-            crate::resources::builders::wgsl_source!("ground_plane"),
-        );
         let ground_plane_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("ground_plane_bgl"),
@@ -1469,47 +1268,9 @@ impl DeviceResources {
                     },
                 ],
             });
-        let ground_plane_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "ground_plane_pipeline_layout",
-            &[&ground_plane_bgl],
-        );
-        let ground_plane_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "ground_plane_pipeline",
-                layout: &ground_plane_pipeline_layout,
-                vertex_module: &ground_plane_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &ground_plane_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    true,
-                    crate::gpu::CompareFunction::LessEqual,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
-        );
-        let ground_plane_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        // The ground-plane pipeline is built by `ensure_ground_plane_pipeline` on
+        // the first frame that asks for a ground plane.
+        let ground_plane_uniform_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("ground_plane_uniform_buf"),
             size: std::mem::size_of::<GroundPlaneUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -1541,11 +1302,6 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Shadow atlas viewer pipeline (corner overlay, no vertex buffers)
         // ------------------------------------------------------------------
-        let atlas_blit_shader = crate::resources::builders::wgsl_module(
-            device,
-            "shadow_atlas_blit",
-            crate::resources::builders::wgsl_source!("shadow_atlas_blit"),
-        );
         let atlas_blit_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("atlas_blit_bgl"),
@@ -1581,12 +1337,7 @@ impl DeviceResources {
                     },
                 ],
             });
-        let atlas_blit_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "atlas_blit_layout",
-            &[&atlas_blit_bgl],
-        );
-        let shadow_atlas_viewer_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let shadow_atlas_viewer_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("shadow_atlas_viewer_buf"),
             size: std::mem::size_of::<AtlasBlitUniform>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -1610,42 +1361,6 @@ impl DeviceResources {
                 },
             ],
         });
-        let shadow_atlas_viewer_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "shadow_atlas_viewer_pipeline",
-                layout: &atlas_blit_layout,
-                vertex_module: &atlas_blit_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &atlas_blit_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false,
-                    crate::gpu::CompareFunction::Always,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
-        );
-
         // The axes orientation indicator draws through the shared 2D overlay
         // shape pass, so it needs no dedicated pipeline or vertex buffer.
 
@@ -1696,7 +1411,7 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Fallback normal map: 1x1 [128, 128, 255, 255] : flat tangent-space normal
         // ------------------------------------------------------------------
-        let fallback_normal_map = device.create_texture(&crate::gpu::TextureDescriptor {
+        let fallback_normal_map = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("fallback_normal_map"),
             size: crate::gpu::Extent3d {
                 width: 1,
@@ -1716,7 +1431,7 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Fallback AO map: 1x1 [255, 255, 255, 255] : no occlusion
         // ------------------------------------------------------------------
-        let fallback_ao_map = device.create_texture(&crate::gpu::TextureDescriptor {
+        let fallback_ao_map = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("fallback_ao_map"),
             size: crate::gpu::Extent3d {
                 width: 1,
@@ -1738,7 +1453,7 @@ impl DeviceResources {
         // Content is uninitialized: shader only samples when has_metallic_roughness_tex != 0.
         // ------------------------------------------------------------------
         let fallback_metallic_roughness_texture =
-            device.create_texture(&crate::gpu::TextureDescriptor {
+            device.logged_texture(&crate::gpu::TextureDescriptor {
                 label: Some("fallback_metallic_roughness_texture"),
                 size: crate::gpu::Extent3d {
                     width: 1,
@@ -1760,7 +1475,7 @@ impl DeviceResources {
         // Fallback emissive texture: 1x1 Rgba8Unorm.
         // Content is uninitialized: shader only samples when has_emissive_tex != 0.
         // ------------------------------------------------------------------
-        let fallback_emissive_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+        let fallback_emissive_texture = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("fallback_emissive_texture"),
             size: crate::gpu::Extent3d {
                 width: 1,
@@ -1781,7 +1496,7 @@ impl DeviceResources {
         // Fallback texture: 1x1 white RGBA (used when no albedo texture is assigned)
         // ------------------------------------------------------------------
         let fallback_texture = {
-            let tex = device.create_texture(&crate::gpu::TextureDescriptor {
+            let tex = device.logged_texture(&crate::gpu::TextureDescriptor {
                 label: Some("fallback_texture"),
                 size: crate::gpu::Extent3d {
                     width: 1,
@@ -1829,6 +1544,7 @@ impl DeviceResources {
                 view,
                 sampler,
                 bind_group,
+                colour_space: Some(crate::ColourSpace::Srgb),
             }
         };
 
@@ -1848,7 +1564,7 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Colourmap / LUT fallback resources
         // ------------------------------------------------------------------
-        let fallback_lut_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+        let fallback_lut_texture = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("fallback_lut_texture"),
             size: crate::gpu::Extent3d {
                 width: 1,
@@ -1868,7 +1584,16 @@ impl DeviceResources {
         let fallback_lut_view =
             fallback_lut_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
-        let fallback_scalar_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        mark("material_fallback_textures");
+
+        // The built-in LUTs are resident from here: textures, views, CPU copies
+        // and ids. Only their texels wait for a queue, which construction has
+        // not got.
+        let (colourmap_textures, colourmap_views, colourmaps_cpu, builtin_colourmap_ids) =
+            crate::resources::material::textures::create_builtin_colourmaps(device);
+        mark("builtin_colourmaps");
+
+        let fallback_scalar_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_scalar_buf"),
             size: 4,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -1877,7 +1602,7 @@ impl DeviceResources {
         crate::resources::builders::write_mapped(fallback_scalar_buf.slice(..), &[0u8; 4]);
         fallback_scalar_buf.unmap();
 
-        let fallback_face_colour_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let fallback_face_colour_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_face_colour_buf"),
             size: 16, // one vec4<f32>
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -1886,7 +1611,7 @@ impl DeviceResources {
         crate::resources::builders::write_mapped(fallback_face_colour_buf.slice(..), &[0u8; 16]);
         fallback_face_colour_buf.unmap();
 
-        let fallback_warp_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let fallback_warp_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_warp_buf"),
             size: 12, // one vec3<f32>
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -1895,7 +1620,7 @@ impl DeviceResources {
         crate::resources::builders::write_mapped(fallback_warp_buf.slice(..), &[0u8; 12]);
         fallback_warp_buf.unmap();
 
-        let fallback_position_override_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let fallback_position_override_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_position_override_buf"),
             size: 12, // one vec3<f32>
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -1907,7 +1632,7 @@ impl DeviceResources {
         );
         fallback_position_override_buf.unmap();
 
-        let fallback_normal_override_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let fallback_normal_override_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_normal_override_buf"),
             size: 12,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -1919,7 +1644,7 @@ impl DeviceResources {
         );
         fallback_normal_override_buf.unmap();
 
-        let fallback_extension_attr_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let fallback_extension_attr_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_extension_attr_buf"),
             size: 16, // one vec4<f32>
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -1928,15 +1653,33 @@ impl DeviceResources {
         crate::resources::builders::write_mapped(fallback_extension_attr_buf.slice(..), &[0u8; 16]);
         fallback_extension_attr_buf.unmap();
 
+        // Zero uv1 stream bound at the mesh bind group's second-UV-set slot for
+        // meshes without a second UV set (`MeshData::uvs1 == None`). A one-entry
+        // `vec2<f32>`; the shader clamps any index to 0, so the sample reads
+        // `vec2(0.0)`.
+        let fallback_uv1_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("fallback_uv1_buf"),
+            size: 8, // one vec2<f32>
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        crate::resources::builders::write_mapped(fallback_uv1_buf.slice(..), &[0u8; 8]);
+        fallback_uv1_buf.unmap();
+
         // ------------------------------------------------------------------
         // Hardcoded unit cube mesh (test scene object)
         // Created here : after fallback textures : so the combined bind group
         // can reference the fallback texture views at creation time.
         // ------------------------------------------------------------------
         let (cube_verts, cube_indices) = build_unit_cube();
-        // Shared geometry slab; the fallback cube is its first allocation. Its
-        // write is recorded now and flushed at the first `process_uploads`.
-        let mut geometry = crate::resources::mesh::geometry_slab::GeometrySlab::new(device);
+        // Shared geometry slab; the fallback cube is its first allocation, in
+        // a small chunk of its own so the slab's first full chunk waits for an
+        // application mesh. Its write is recorded now and flushed at the first
+        // `process_uploads`.
+        mark("buffers_and_bind_groups");
+        let mut geometry =
+            crate::resources::mesh::geometry_slab::GeometrySlab::new(device, geometry_chunk_bytes);
+        geometry.dedicate_next_allocation();
         let cube_mesh = Self::create_mesh(
             device,
             &mut geometry,
@@ -1957,9 +1700,11 @@ impl DeviceResources {
             &fallback_extension_attr_buf,
             &fallback_metallic_roughness_texture_view,
             &fallback_emissive_texture_view,
+            &fallback_uv1_buf,
             &cube_verts,
             &cube_indices,
         );
+        mark("geometry_slab_and_builtin_cube");
 
         // ------------------------------------------------------------------
         // Outline & x-ray pipelines
@@ -1992,116 +1737,10 @@ impl DeviceResources {
             ],
         });
 
-        let xray_shader = crate::resources::builders::wgsl_module(
-            device,
-            "xray_shader",
-            crate::resources::builders::wgsl_source!("xray"),
-        );
-
-        let outline_pl_bgls: Vec<&crate::gpu::BindGroupLayout> = if let Some(d) = deform_bgl {
-            vec![&camera_bgl, &outline_bgl, d]
-        } else {
-            vec![&camera_bgl, &outline_bgl]
-        };
-        let outline_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "outline_pipeline_layout",
-            &outline_pl_bgls,
-        );
-
-        // Mask-write pipeline: renders selected objects as r=1.0 to an R8 mask
-        // texture with depth testing, replacing the old stencil-based approach.
-        let outline_mask_src = if deform_enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/outline_mask.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/outline_mask_noop.wgsl"))
-        };
-        let outline_mask_shader = crate::resources::builders::wgsl_module(
-            device,
-            "outline_mask_shader",
-            outline_mask_src,
-        );
-        let outline_masks = crate::resources::mesh::mesh_pipelines::build_outline_mask_pipelines(
-            device,
-            &outline_pipeline_layout,
-            &outline_mask_shader,
-            crate::gpu::TextureFormat::R8Unorm,
-            pipeline_cache.as_ref(),
-        );
-        let outline_mask_pipeline = outline_masks.mask;
-        let outline_mask_two_sided_pipeline = outline_masks.mask_two_sided;
-
-        // Billboard disc pipeline for the Gaussian splat outline mask pass.
-        // Reuses the same pipeline layout as the mesh mask pipelines (camera_bgl + outline_bgl).
-        // Positions are instance-stepped vec3; each instance expands to a 6-vertex quad.
-        let splat_outline_mask_shader = crate::resources::builders::wgsl_module(
-            device,
-            "splat_outline_mask_shader",
-            crate::resources::builders::wgsl_source!("splat_outline_mask"),
-        );
-        let splat_outline_pos_attrs = [crate::gpu::VertexAttribute {
-            offset: 0,
-            shader_location: 0,
-            format: crate::gpu::VertexFormat::Float32x3,
-        }];
-        let splat_outline_pos_layout = crate::gpu::VertexBufferLayout {
-            array_stride: 12, // vec3<f32>
-            step_mode: crate::gpu::VertexStepMode::Instance,
-            attributes: &splat_outline_pos_attrs,
-        };
-        let splat_outline_size_attrs = [crate::gpu::VertexAttribute {
-            offset: 0,
-            shader_location: 1,
-            format: crate::gpu::VertexFormat::Float32,
-        }];
-        let splat_outline_size_layout = crate::gpu::VertexBufferLayout {
-            array_stride: 4, // f32
-            step_mode: crate::gpu::VertexStepMode::Instance,
-            attributes: &splat_outline_size_attrs,
-        };
-        let splat_outline_mask_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "splat_outline_mask_pipeline",
-                layout: &outline_pipeline_layout,
-                vertex_module: &splat_outline_mask_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[splat_outline_pos_layout, splat_outline_size_layout],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &splat_outline_mask_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::R8Unorm,
-                        blend: None,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false,
-                    crate::gpu::CompareFunction::Less,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
-        );
-
-        // Edge-detection pipeline: fullscreen pass that reads the R8 mask and
-        // outputs an anti-aliased outline ring to the outline colour texture.
-        let outline_edge_shader = crate::resources::builders::wgsl_module(
-            device,
-            "outline_edge_shader",
-            crate::resources::builders::wgsl_source!("outline_edge"),
-        );
+        // The mask-write and edge-detection pipelines are built by
+        // `ensure_outline_pipelines` on the first frame with a selection to
+        // outline. Their layouts are built here because the edge pass's bind
+        // group is too.
         let outline_edge_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("outline_edge_bgl"),
@@ -2136,141 +1775,37 @@ impl DeviceResources {
                     },
                 ],
             });
-        let outline_edge_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "outline_edge_layout",
-            &[&outline_edge_bgl],
-        );
-        let outline_edge_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "outline_edge_pipeline",
-                layout: &outline_edge_layout,
-                vertex_module: &outline_edge_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &outline_edge_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: crate::gpu::MultisampleState::default(),
-                cache: pipeline_cache.as_ref(),
-            },
-        );
-
-        // X-ray pipeline: render selected objects through all geometry as a semi-transparent tint.
-        let xray_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "xray_pipeline",
-                layout: &outline_pipeline_layout,
-                vertex_module: &xray_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[Vertex::buffer_layout()],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &xray_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false,
-                    crate::gpu::CompareFunction::Always,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
-        );
-
-        // Skybox pipeline: fullscreen triangle that samples the equirect environment map.
-        let skybox_shader = crate::resources::builders::wgsl_module(
-            device,
-            "skybox_shader",
-            crate::resources::builders::wgsl_source!("skybox"),
-        );
-        let skybox_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "skybox_pipeline_layout",
-            &[&camera_bgl],
-        );
-        let skybox_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "skybox_pipeline",
-                layout: &skybox_pipeline_layout,
-                vertex_module: &skybox_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &skybox_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::Rgba16Float,
-                        blend: None,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                // Drawn after opaques: only sky pixels (depth == 1.0) pass.
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false,
-                    crate::gpu::CompareFunction::Equal,
-                )),
-                multisample: crate::gpu::MultisampleState::default(),
-                cache: pipeline_cache.as_ref(),
-            },
-        );
+        // `outline_edge_layout`, the edge pipeline, the x-ray pipeline and the
+        // skybox pipeline are all built on first use; see
+        // `ensure_outline_pipelines`, `ensure_xray_pipeline` and
+        // `ensure_skybox_pipeline`.
 
         mark("misc_pipelines");
 
         // `deform` is constructed earlier (before the mesh pipeline layout).
 
-        let mut resources = Self {
+        // Hoisted out of the struct literal below so each one is timed: both
+        // allocate GPU resources, and inside the literal they were invisible to
+        // the phase marks.
+        let glyph_atlas = crate::resources::overlay::font::GlyphAtlas::new(device);
+        mark("glyph_atlas");
+        let polyline = crate::resources::scivis::polyline::PolylineResources::new(device);
+        mark("polyline_resources");
+
+        let pipeline_compiler =
+            std::sync::Arc::new(crate::resources::pipeline_slot::PipelineCompiler::new(
+                crate::resources::pipeline_slot::initial_policy(),
+            ));
+        let resources = Self {
             target_format,
             sample_count,
             debug_vis_shaders: false,
+            force_debug_vis_shaders: false,
             mesh_pipelines_dirty: false,
             pipeline_cache,
-            scene: crate::resources::scene_pipelines::SceneCorePipelines {
-                solid: solid_pipeline,
-                solid_two_sided: solid_two_sided_pipeline,
-                transparent: transparent_pipeline,
-                wireframe: wireframe_pipeline,
-                hdr_opaque: None,
-                hdr_transparent: None,
-                hdr_wireframe: None,
-                hdr_overlay: None,
-            },
+            pipeline_cache_lease,
+            shader_modules: Default::default(),
+            scene: crate::resources::scene_pipelines::SceneCorePipelines::default(),
             deform,
             shade_hooks: Vec::new(),
             material_plugins: std::collections::HashMap::new(),
@@ -2281,7 +1816,6 @@ impl DeviceResources {
                 object_bgl,
                 clip_planes_buf: clip_planes_uniform_buf,
                 clip_volume_buf: clip_volume_uniform_buf,
-                debug_frag_sentinel_buf,
             },
             lighting: crate::resources::lighting::LightingResources {
                 uniform_buf: light_uniform_buf,
@@ -2303,37 +1837,37 @@ impl DeviceResources {
             shadow: crate::resources::shadow::ShadowResources {
                 map_texture: shadow_map_texture,
                 map_view: shadow_map_view,
+                atlas_allocated: false,
                 sampler: shadow_sampler,
                 point_cube_texture: point_shadow_cube_texture,
                 point_cube_view: point_shadow_cube_view,
+                point_cubes_allocated: false,
                 point_face_views: point_shadow_face_views,
-                point_pipeline: shadow_point_pipeline,
+                point_pipeline: None,
                 point_face_bgl: shadow_point_face_bgl,
                 point_face_buf: shadow_point_face_buf,
                 point_face_bind_group: shadow_point_face_bind_group,
-                pipeline: shadow_pipeline,
+                pipeline: None,
                 camera_bgl: shadow_camera_bgl,
                 uniform_buf: shadow_uniform_buf,
                 bind_group: shadow_bind_group,
                 info_buf: shadow_info_buf,
                 atlas_size: SHADOW_ATLAS_SIZE,
                 atlas_depth_sampler: shadow_atlas_depth_sampler,
-                atlas_viewer_pipeline: shadow_atlas_viewer_pipeline,
                 atlas_viewer_bg: shadow_atlas_viewer_bg,
+                atlas_viewer_bgl: atlas_blit_bgl,
                 atlas_viewer_buf: shadow_atlas_viewer_buf,
             },
             guides: crate::resources::overlay::guides::OverlayGuideResources {
-                overlay_pipeline,
-                overlay_line_pipeline,
                 overlay_bgl,
-                grid_pipeline,
+                pipelines: None,
                 grid_uniform_buf,
                 grid_bind_group,
                 grid_bgl,
                 constraint_lines: Vec::new(),
             },
             ground: crate::resources::ground_plane::GroundPlaneResources {
-                pipeline: ground_plane_pipeline,
+                pipeline: None,
                 bgl: ground_plane_bgl,
                 uniform_buf: ground_plane_uniform_buf,
                 bind_group: ground_plane_bind_group,
@@ -2351,6 +1885,7 @@ impl DeviceResources {
                 emissive: fallback_emissive_texture,
                 emissive_view: fallback_emissive_texture_view,
                 sampler: material_sampler,
+                sampler_palette: std::sync::Mutex::new(std::collections::HashMap::new()),
                 lut_sampler,
                 depth_read_sampler,
                 depth_read_bgl,
@@ -2358,20 +1893,11 @@ impl DeviceResources {
             },
             content: crate::resources::types::ContentResources {
                 material_bind_groups: std::collections::HashMap::new(),
+                texture_slot_mismatches: std::sync::Mutex::new(Vec::new()),
                 textures: crate::resources::material::texture_store::TextureStore::new(),
-                polyline_store: crate::resources::PolylineStore::new(),
-                streamtube_store: crate::resources::StreamtubeStore::new(),
-                tube_store: crate::resources::TubeStore::new(),
-                ribbon_store: crate::resources::RibbonStore::new(),
-                point_cloud_store: crate::resources::PointCloudStore::new(),
-                glyph_set_store: crate::resources::GlyphSetStore::new(),
-                tensor_glyph_set_store: crate::resources::TensorGlyphSetStore::new(),
-                sprite_set_store: crate::resources::SpriteSetStore::new(),
-                sprite_instance_set_store: crate::resources::SpriteInstanceSetStore::new(),
-                gaussian_splat_store: crate::resources::types::GaussianSplatStore::new(),
                 volume_textures: crate::resources::handle::SlotStore::default(),
                 projected_tet_store: crate::resources::handle::SlotStore::default(),
-                glyph_atlas: crate::resources::overlay::font::GlyphAtlas::new(device),
+                glyph_atlas,
                 overlay_textures: crate::resources::handle::SlotStore::default(),
                 overlay_geometry: crate::resources::handle::SlotStore::default(),
                 matcap_textures: Vec::new(),
@@ -2380,9 +1906,9 @@ impl DeviceResources {
                 fallback_matcap_view: None,
                 matcaps_initialized: false,
                 builtin_matcap_ids: None,
-                colourmap_textures: Vec::new(),
-                colourmap_views: Vec::new(),
-                colourmaps_cpu: Vec::new(),
+                colourmap_textures,
+                colourmap_views,
+                colourmaps_cpu,
                 fallback_lut_texture,
                 fallback_lut_view,
                 fallback_scalar_buf,
@@ -2391,7 +1917,8 @@ impl DeviceResources {
                 fallback_position_override_buf,
                 fallback_normal_override_buf,
                 fallback_extension_attr_buf,
-                builtin_colourmap_ids: None,
+                fallback_uv1_buf,
+                builtin_colourmap_ids,
                 colourmaps_initialized: false,
             },
             jobs: std::sync::Mutex::new(crate::resources::upload_jobs::JobRunner::new()),
@@ -2399,49 +1926,20 @@ impl DeviceResources {
             post: crate::resources::postprocess::PostProcessResources::default(),
             outline: crate::resources::types::OutlineResources {
                 bind_group_layout: outline_bgl,
-                mask_pipeline: outline_mask_pipeline,
-                mask_two_sided_pipeline: outline_mask_two_sided_pipeline,
-                edge_pipeline: outline_edge_pipeline,
+                mask_pipeline: None,
+                mask_two_sided_pipeline: None,
+                edge_pipeline: None,
                 edge_bgl: outline_edge_bgl,
-                xray_pipeline,
-                splat_mask_pipeline: splat_outline_mask_pipeline,
-                colour_texture: None,
-                colour_view: None,
-                depth_texture: None,
-                depth_view: None,
-                target_size: [0, 0],
-                composite_pipeline_single: None,
-                composite_pipeline_msaa: None,
-                composite_pipeline_hdr: None,
+                xray_pipeline: None,
+                composite: None,
                 composite_bgl: None,
-                composite_bind_group: None,
                 composite_sampler: None,
             },
             instancing: crate::resources::mesh::instancing::InstancingResources::default(),
             cull: crate::resources::mesh::instancing::CullResources::default(),
-            lic: crate::resources::postprocess::LicResources::default(),
-            gaussian_splat:
-                crate::resources::scivis::gaussian_splat::GaussianSplatResources::default(),
-            sprite: crate::resources::scivis::sprite::SpriteResources::default(),
-            point_cloud: crate::resources::scivis::point_cloud::PointCloudResources {
-                pipeline: None,
-                bgl: None,
-            },
-            glyph: crate::resources::scivis::glyph::GlyphResources::default(),
-            tensor_glyph: crate::resources::scivis::glyph::TensorGlyphResources::default(),
-            volume: crate::resources::volume::volumes::VolumeResources::default(),
-            polyline: crate::resources::scivis::polyline::PolylineResources::default(),
-            streamtube: crate::resources::scivis::tube::StreamtubeResources::default(),
-            ribbon: crate::resources::scivis::tube::RibbonResources::default(),
-            image_slice: crate::resources::types::ImageSliceResources::default(),
-            compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources {
-                pipeline: None,
-                bgl: None,
-            },
+            polyline,
             oit: crate::resources::postprocess::OitResources::default(),
             pt: crate::resources::types::ProjectedTetResources::default(),
-            // Scatter-volume (participating media) pipeline (lazily created).
-            scatter: crate::resources::volume::scatter_volume::ScatterResources::default(),
             // IBL / environment map resources.
             ibl: crate::resources::material::environment::IblResources {
                 irradiance_view: None,
@@ -2457,43 +1955,52 @@ impl DeviceResources {
                 fallback_brdf_view: ibl_fallback_brdf_view,
                 irradiance_texture: None,
                 prefiltered_texture: None,
-                env_next_layer: 1,
+                env_slots: crate::resources::material::environment::IblResources::empty_env_slots(),
+                lighting: None,
+                env_jobs: std::collections::HashMap::new(),
+                zones: Vec::new(),
+                zones_dirty: false,
                 env_zone_count: 0,
                 brdf_lut_texture: None,
-                skybox_texture: None,
-                skybox_pipeline,
+                skybox_pipeline: None,
+                skybox_bgl: None,
             },
             pick: crate::resources::types::PickResources::default(),
-            implicit: crate::resources::types::ImplicitResources::default(),
-            mc: crate::resources::volume::gpu_marching_cubes::McResources::default(),
 
-            particle: crate::resources::gpu::gpu_particles::ParticleResources::default(),
-            external_instances:
-                crate::resources::gpu::external_instances::ExternalInstancesResources::default(),
-            screen_image: crate::resources::types::ScreenImageResources::default(),
             sub_highlight: crate::resources::types::SubHighlightResources::default(),
             overlay_text: crate::resources::overlay::overlay_text::OverlayTextResources::default(),
             overlay_shape: crate::resources::overlay::overlay_shape::OverlayShapeResources::default(
             ),
             backdrop_blur: crate::resources::overlay::overlay_shape::BackdropBlurResources::default(
             ),
+            material_gpu_buf,
+            material_gpu_capacity: crate::resources::material_gpu::MATERIAL_GPU_INITIAL_CAPACITY,
+            material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder::default(),
+            instance_custom_data_buf,
+            instance_custom_data_capacity:
+                crate::resources::custom_data::CUSTOM_DATA_INITIAL_CAPACITY,
+            custom_data_builder: crate::resources::custom_data::CustomDataBuilder::default(),
             frame_upload_bytes: 0,
-            frame_pipelines_built: 0,
+            frame_pipelines_built: std::sync::atomic::AtomicU32::new(0),
+            pipeline_compiler: std::sync::Arc::clone(&pipeline_compiler),
+            hiz_pipelines: std::sync::OnceLock::new(),
+            material_gpu_written: Vec::new(),
+            custom_data_written: Vec::new(),
+            pipeline_compiler_shutdown: crate::resources::pipeline_slot::CompilerShutdown(
+                pipeline_compiler,
+            ),
             resource_free_epoch: 0,
+            resource_view_epoch: 0,
+            retain_mesh_cpu_geometry: true,
             occlusion_culling_enabled: false,
             force_po_discard: false,
-            decal: crate::resources::decal::DecalResources::default(),
+            camera_bind_groups_dirty: false,
         };
-        // Decal pipelines are built here rather than on the first frame that
-        // submits a decal: decals tend to appear mid-session (impact marks,
-        // scorches), and a lazy build would stall that frame by the compile
-        // cost (~8 ms measured on a desktop GPU).
-        resources.ensure_decal_shared(device);
-        resources.ensure_decal_pipeline(device);
-        mark("decal_pipelines");
         // Pipelines built during construction are load-time cost, not a frame
         // hitch; keep them out of the first frame's stats.
-        resources.frame_pipelines_built = 0;
+        resources
+            .frame_pipelines_built
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         // GPU skinning is opt-in: hosts call
         // `viewport_lib::plugins::skinning::SkinningPlugin::install(&mut resources, &device)`
         // before uploading any skin data. The renderer otherwise carries no

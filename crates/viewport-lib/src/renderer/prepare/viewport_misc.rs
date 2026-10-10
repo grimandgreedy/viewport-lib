@@ -1,203 +1,30 @@
-//! Per-viewport finalization passes: Gaussian splat sort and wireframe,
-//! sprite wireframe, debug fragment buffer, and atlas blit uniform.
+//! Per-viewport finalization passes: the debug fragment buffer and the
+//! atlas blit uniform.
 
 use super::*;
 
 impl ViewportRenderer {
-    pub(super) fn prepare_splat_sort(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        frame: &FrameData,
-    ) {
-        // ------------------------------------------------------------------
-        // Gaussian splat: per-viewport GPU sort.
-        // ------------------------------------------------------------------
-        self.gaussian_splat_draw_data.clear();
-        if !frame.scene.gaussian_splats.is_empty() {
-            self.resources.ensure_gaussian_splat_pipelines(device);
-            let vp_idx = frame.camera.viewport_index;
-            let eye = frame.camera.render_camera.eye_position;
-            let vp_w = frame.camera.viewport_size[0].max(1.0);
-            let vp_h = frame.camera.viewport_size[1].max(1.0);
-            for item in &frame.scene.gaussian_splats {
-                if item.settings.hidden {
-                    continue;
-                }
-                if self
-                    .resources
-                    .content
-                    .gaussian_splat_store
-                    .get(item.source)
-                    .is_none()
-                {
-                    continue;
-                }
-                let store_index = item.source.index();
-                let sh_degree = self
-                    .resources
-                    .content
-                    .gaussian_splat_store
-                    .get(item.source)
-                    .unwrap()
-                    .sh_degree;
-                let count = self
-                    .resources
-                    .content
-                    .gaussian_splat_store
-                    .get(item.source)
-                    .unwrap()
-                    .count;
-                self.resources.run_gaussian_splat_sort(
-                    device,
-                    queue,
-                    store_index,
-                    vp_idx,
-                    eye,
-                    item.model,
-                    vp_w,
-                    vp_h,
-                    sh_degree,
-                );
-                self.gaussian_splat_draw_data
-                    .push(crate::resources::GaussianSplatDrawData {
-                        store_index,
-                        viewport_index: vp_idx,
-                        model: item.model,
-                        count,
-                        wireframe: frame.viewport.wireframe_mode || item.settings.wireframe,
-                        pick_id: item.settings.pick_id,
-                    });
-            }
-        }
-    }
-
-    pub(super) fn prepare_splat_wireframe(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        frame: &FrameData,
-    ) {
-        // Gaussian splat wireframe overlay.
-        let need_splat_wf = frame.viewport.wireframe_mode
-            || frame
-                .scene
-                .gaussian_splats
-                .iter()
-                .any(|g| !g.settings.hidden && g.settings.wireframe);
-        if need_splat_wf {
-            self.resources.ensure_polyline_pipeline(device);
-            let vp_size = frame.camera.viewport_size;
-            for item in &frame.scene.gaussian_splats {
-                if item.settings.hidden {
-                    continue;
-                }
-                if !(frame.viewport.wireframe_mode || item.settings.wireframe) {
-                    continue;
-                }
-                let Some(gpu_set) = self.resources.content.gaussian_splat_store.get(item.source)
-                else {
-                    continue;
-                };
-                let count = gpu_set.count as usize;
-                let positions = gpu_set.cpu_positions.clone();
-                let scales = gpu_set.cpu_scales.clone();
-                let _ = gpu_set;
-                let polyline = splat_wireframe_polyline(&positions, &scales, item.model, count);
-                if !polyline.positions.is_empty() {
-                    let gpu = self
-                        .resources
-                        .upload_polyline_per_frame(device, queue, &polyline, vp_size);
-                    self.polyline_gpu_data.push(gpu);
-                }
-            }
-        }
-    }
-
-    pub(super) fn prepare_sprite_wireframe(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        frame: &FrameData,
-    ) {
-        // Sprite wireframe overlay: quad outline per sprite (<=100) or AABB box (>100).
-        let need_sprite_wf = frame.viewport.wireframe_mode
-            || frame
-                .scene
-                .sprite_items
-                .iter()
-                .any(|s| !s.settings.hidden && s.settings.wireframe);
-        if need_sprite_wf {
-            self.resources.ensure_polyline_pipeline(device);
-            let vp_size = frame.camera.viewport_size;
-            for item in &frame.scene.sprite_items {
-                if item.settings.hidden {
-                    continue;
-                }
-                if !(frame.viewport.wireframe_mode || item.settings.wireframe) {
-                    continue;
-                }
-                if item.positions.is_empty() {
-                    continue;
-                }
-                let polyline = sprite_wireframe_polyline(item, &frame.camera);
-                if !polyline.positions.is_empty() {
-                    let gpu = self
-                        .resources
-                        .upload_polyline_per_frame(device, queue, &polyline, vp_size);
-                    self.polyline_gpu_data.push(gpu);
-                }
-            }
-        }
-    }
-
-    pub(super) fn prepare_debug_buffer(&mut self, device: &crate::gpu::Device, frame: &FrameData) {
-        // Debug fragment buffer: allocate or resize when debug_vis is active.
-        // Must use physical pixels: clip_pos in the shader is in physical pixels,
-        // and viewport_width in ClipPlanesUniform (the buffer stride) is now physical too.
+    pub(super) fn prepare_debug_buffer(&mut self, frame: &FrameData) {
         {
             let vp_idx = frame.camera.viewport_index;
-            let debug_active = frame.effects.debug.debug_vis.active;
+            // Physical pixels: the viewport size the debug readback is bounded
+            // by is the one the HDR target was allocated at.
             let ppp = frame.camera.pixels_per_point;
             let vw = (frame.camera.viewport_size[0] * ppp).max(1.0) as u32;
             let vh = (frame.camera.viewport_size[1] * ppp).max(1.0) as u32;
-            let slot = &self.viewport_slots[vp_idx];
+            let debug_active = frame.effects.debug.debug_vis.active;
 
-            if debug_active && slot.debug_frag_dims != (vw, vh) {
-                let size = (vw as u64) * (vh as u64) * 16;
-                let new_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("debug_frag_buf"),
-                    size: size.max(16),
-                    usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                });
-                let new_bg = self.resources.create_camera_bind_group(
-                    device,
-                    &self.viewport_slots[vp_idx].camera_buf,
-                    &self.viewport_slots[vp_idx].clip_planes_buf,
-                    &self.viewport_slots[vp_idx].shadow_info_buf,
-                    &self.viewport_slots[vp_idx].clip_volume_buf,
-                    &new_buf,
-                    "per_viewport_camera_bg_debug",
-                );
-                self.viewport_slots[vp_idx].debug_frag_buf = Some(new_buf);
-                self.viewport_slots[vp_idx].debug_frag_dims = (vw, vh);
-                self.viewport_slots[vp_idx].camera_bind_group = new_bg;
-            } else if !debug_active && slot.debug_frag_buf.is_some() {
-                let sentinel = &self.resources.binds.debug_frag_sentinel_buf;
-                let new_bg = self.resources.create_camera_bind_group(
-                    device,
-                    &self.viewport_slots[vp_idx].camera_buf,
-                    &self.viewport_slots[vp_idx].clip_planes_buf,
-                    &self.viewport_slots[vp_idx].shadow_info_buf,
-                    &self.viewport_slots[vp_idx].clip_volume_buf,
-                    sentinel,
-                    "per_viewport_camera_bg",
-                );
-                self.viewport_slots[vp_idx].debug_frag_buf = None;
-                self.viewport_slots[vp_idx].debug_frag_dims = (0, 0);
-                self.viewport_slots[vp_idx].camera_bind_group = new_bg;
-            }
+            // Whether this frame will leave the debug quantity in the HDR
+            // texture, where `read_debug_pixel` can read it back after the depth
+            // test has chosen a winner. That needs the HDR path (the LDR path
+            // renders straight into the caller's target, which the renderer does
+            // not own) and `Replace` (the other modes blend the quantity with
+            // the shaded colour, so what lands there is not the quantity).
+            let readable = debug_active
+                && frame.effects.display.mode == crate::renderer::types::PipelineMode::Hdr
+                && frame.effects.debug.debug_vis.mode
+                    == crate::renderer::types::DebugOutputMode::Replace;
+            self.viewport_slots[vp_idx].debug_readback_dims = readable.then_some((vw, vh));
         }
     }
 

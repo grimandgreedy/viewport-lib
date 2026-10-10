@@ -10,38 +10,46 @@ mod device_lost;
 pub use device_lost::{DeviceLostInfo, DeviceLostWatcher};
 mod indirect;
 mod instancing_state;
+mod item_plugin_uploads;
 use instancing_state::InstancingState;
 mod per_object_state;
 use per_object_state::PerObjectState;
 mod shadow_state;
 use shadow_state::ShadowState;
 mod blit;
+mod colour_ready;
+mod warm;
+pub use config::RendererConfig;
+pub use warm::PipelineSet;
 mod paths;
 pub use blit::BlitTexture;
 pub use capture::{CapturedHdr, CapturedHdrGpu};
 pub use paths::{OwnedPath, PassPath, PassView};
 mod gpu_context;
 pub use gpu_context::GpuContext;
-mod picking;
+pub(crate) mod item_plugins;
+pub(crate) mod picking;
 pub use picking::sub_object;
 pub use picking::{
-    CellSelectionInfo, GpuPickHit, PickBackend, PickHit, PickMask, PickPoll, PickRectResult,
-    PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, VolumeSelectionInfo,
+    CellSelectionInfo, GpuPickHit, PickBackend, PickHit, PickId, PickMask, PickPoll,
+    PickRectResult, PolylineSelectionInfo, SnapHit, SnapPoll, SubObjectRef, SubSelection,
+    SubSelectionRef, VolumeSelectionInfo,
 };
 mod capture;
+mod config;
 mod overlay_buffers;
 mod overlay_draw_order;
 mod readback;
 pub use readback::ExposureReadback;
 // Gaussian splat upload vocabulary lives in `resources`; re-exported here so the
 // public `renderer::GaussianSplat*` path and its doc links stay stable.
-pub use crate::resources::{GaussianSplatData, GaussianSplatId, ShDegree};
 pub(crate) mod pipeline_key;
-use pipeline_key::{PipelineKey, select_opaque_solid, select_two_sided};
+use pipeline_key::{PipelineKey, select_two_sided};
 mod point_shadow_pool;
 mod prepare;
 mod render;
 mod submit;
+mod surface_mask;
 pub use submit::SubmitSink;
 pub mod shader_hashes;
 mod shadow_debug_stats;
@@ -51,44 +59,51 @@ pub mod tuning;
 pub use shadow_debug_stats::ShadowDebugStats;
 
 #[cfg(test)]
+mod deform_shadow_tests;
+#[cfg(test)]
+mod deform_stats_tests;
+#[cfg(test)]
+mod frame_reuse_tests;
+#[cfg(test)]
 mod hidden_tests;
 #[cfg(test)]
-mod instanced_texture_tests;
+mod lazy_pipeline_tests;
 #[cfg(test)]
 mod lod_instance_tests;
+#[cfg(test)]
+mod prepare_timing_tests;
+
+/// Item-type names beginning with this prefix belong to the types viewport-lib
+/// ships with.
+///
+/// It is a naming convention, not an allocation: what
+/// [`ViewportRenderer::with_item_type_plugin`] actually refuses is a name a
+/// type the renderer itself installed is already answering to. Pick a prefix of
+/// your own anyway, so a type shipped later cannot collide with yours.
+pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 
 pub use self::types::{
-    AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BloomSettings, BorderMode,
-    CameraFrame, Candela, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
-    ContactShadowSettings, CylindricalFacing, DebugOutputMode, DebugQuantity, DebugVis,
-    DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, DisplaySettings, DofSettings,
-    EdlSettings, EffectsFrame, EmitterConfig, EnvironmentSettings, ExposureMode, ExposureSettings,
-    ExternalInstancesItem, FillRule, FilterMode, ForceField, ForegroundPass, ForegroundProjection,
-    FrameData, GaussianSplatItem, GlyphItem, GlyphRunItem, GlyphSetRefItem, GlyphType,
-    GpuImplicitItem, GpuMarchingCubesItem, GpuParticleSystemItem, GradientStop, GroundPlane,
-    GroundPlaneMode, ImageSliceItem, IndirectLightSource, InteractionFrame, LabelAnchor,
-    LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource, LightingPosture,
-    LightingSettings, LineCap, LineJoin, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem,
-    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OverlayAnchor,
-    OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill, OverlayFrame,
-    OverlayGeometryId, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId,
-    POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathSegment, PathTrack, PickId, PipelineMode,
-    PointCloudItem, PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap, PolylineItem,
-    PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
-    RetainedOverlay, RibbonItem, RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem,
-    SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShadowFilter, ShadowLayer,
-    ShadowSettings, SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem,
-    SpriteLitParams, SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode,
-    StreamtubeItem, StreamtubeRefItem, StrokePattern, SubPath, SurfaceLICConfig, SurfaceSubmission,
-    TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping,
-    TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame,
-    VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
-    aabb_wireframe_polyline, sphere_wireframe_polyline,
+    Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
+    BackgroundSource, BloomSettings, CameraFrame, Candela, ClipObject, ClipShape,
+    ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings, DofSettings,
+    EdlSettings, EffectsFrame, EnvironmentBackground, EnvironmentIntensity, EnvironmentLighting,
+    ExposureMode, ExposureSettings, FillRule, ForegroundPass, ForegroundProjection, FrameData,
+    GlyphRunItem, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
+    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
+    LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS,
+    MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS,
+    OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip, OverlayContentHash,
+    OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
+    OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment,
+    PipelineMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph,
+    PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality,
+    ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer,
+    ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission, TextureTransform,
+    TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, VignetteSettings,
+    VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline,
+    sphere_wireframe_polyline,
 };
-
-// Crate-internal anchor resolution helpers (viewport corner placement), used by
-// the screen-image prepare/upload and picking paths outside `renderer::types`.
-pub(crate) use self::types::viewport_anchored_ndc;
 
 /// An opaque handle to a per-viewport GPU state slot.
 ///
@@ -119,46 +134,21 @@ use crate::resources::{
     BatchMeta, CLIP_VOLUME_MAX, CameraUniform, ClipPlanesUniform, ClipVolumeEntry,
     ClipVolumesUniform, DeviceResources, GridUniform, InstanceAabb, InstanceData, LightsUniform,
     ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, PickInstance,
-    ShadowAtlasUniform, SingleLightUniform, SplatOutlineMaskUniform,
+    PipelineCompilation, ShadowAtlasUniform, SingleLightUniform,
 };
 
-/// Per-frame selection-outline state for one viewport, one entry per scene-item
-/// kind, rebuilt in prepare(). Each kind either owns dedicated outline buffers or
-/// records indices into that kind's `*_gpu_data`; the outline mask/edge passes and
-/// the composite walk these. Grouped so `ViewportSlot` carries one field instead of
-/// a dozen parallel ones.
+/// Per-frame selection-outline state for one viewport, rebuilt in prepare().
+///
+/// Two sources feed the outline mask: the geometry substrate, whose selected
+/// surfaces and volume-mesh boundaries get dedicated mask buffers here, and the
+/// item-type plugins, which draw their own coverage through
+/// [`ItemTypePlugin::outline_mask`](crate::plugin_api::ItemTypePlugin::outline_mask)
+/// and are tracked only by the flag below. The mask, edge and composite passes
+/// gate on both.
 #[derive(Default)]
 pub(crate) struct SelectionOutlines {
     /// Per-frame outline buffers for selected objects.
     pub outline_object_buffers: Vec<OutlineObjectBuffers>,
-    /// Per-frame outline buffers for selected Gaussian splat sets.
-    pub splat_outline_buffers: Vec<crate::resources::SplatOutlineBuffers>,
-    /// Indices into `volume_gpu_data` for selected volumes.
-    pub volume_outline_indices: Vec<usize>,
-    /// Indices into `glyph_gpu_data` for selected glyph sets. Each entry is
-    /// (gpu_data_index, instance_filter): None draws all instances, Some(indices)
-    /// draws only those specific instance indices.
-    pub glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
-    /// Indices into `tensor_glyph_gpu_data` for selected tensor glyph sets.
-    pub tensor_glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
-    /// Indices into `sprite_gpu_data` for selected sprite sets.
-    pub sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
-    /// Per-frame inline quad outline buffers for selected image slices.
-    pub raw_geom_outline_buffers: Vec<crate::resources::RawGeomOutlineBuffers>,
-    /// Per-frame NDC rect outline buffers for selected screen images.
-    pub screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers>,
-    /// Indices into `implicit_gpu_data` for selected GPU implicit items.
-    pub implicit_outline_indices: Vec<usize>,
-    /// Per-frame outline data for selected GPU marching cubes items.
-    pub mc_outline_data: Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem>,
-    /// Outline items for selected streamtubes (index into streamtube_gpu_data + mask bind group).
-    pub streamtube_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
-    /// Outline items for selected tubes.
-    pub tube_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
-    /// Outline items for selected ribbons.
-    pub ribbon_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
-    /// Indices into polyline_gpu_data for selected user polylines.
-    pub polyline_outline_indices: Vec<usize>,
     /// True when an item-type plugin drew selection coverage into the outline
     /// mask this frame. Plugin outline coverage is not tracked in the per-kind
     /// buffers above, so the mask/edge pass and the composite also gate on this.
@@ -206,11 +196,10 @@ pub(crate) struct ViewportSlot {
     /// batch counters, and their bind groups). The cull dispatch for this
     /// viewport's camera writes here; the draw path reads from here.
     pub cull: crate::resources::ViewportCullState,
-    /// Per-fragment debug storage buffer (group 0 binding 12). Allocated at
-    /// `width * height * 16` bytes when debug_vis is active; None otherwise.
-    pub debug_frag_buf: Option<crate::gpu::Buffer>,
-    /// Viewport dimensions for which `debug_frag_buf` was allocated.
-    pub debug_frag_dims: (u32, u32),
+    /// Viewport dimensions when the last prepared frame left a readable debug
+    /// quantity in the HDR texture (debug vis active, HDR path, `Replace`
+    /// mode); `None` when it did not. Read by `read_debug_pixel`.
+    pub debug_readback_dims: Option<(u32, u32)>,
 
     // --- Per-viewport interaction state ---
     /// Per-frame selection-outline state, one entry per scene-item kind, rebuilt in prepare().
@@ -218,25 +207,16 @@ pub(crate) struct ViewportSlot {
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(
         crate::resources::mesh::mesh_store::MeshId,
-        crate::gpu::Buffer,
-        crate::gpu::BindGroup,
+        crate::resources::overlay::highlight::OutlineBinding,
     )>,
-    /// Per-frame constraint guide line buffers, rebuilt in prepare().
-    pub constraint_line_buffers: Vec<(
-        crate::gpu::Buffer,
-        crate::gpu::Buffer,
-        u32,
-        crate::gpu::Buffer,
-        crate::gpu::BindGroup,
-    )>,
-    /// Per-frame cap geometry buffers (section view cross-section fill), rebuilt in prepare().
-    pub cap_buffers: Vec<(
-        crate::gpu::Buffer,
-        crate::gpu::Buffer,
-        u32,
-        crate::gpu::Buffer,
-        crate::gpu::BindGroup,
-    )>,
+    /// Per-frame constraint guide line draws, rebuilt in prepare().
+    pub constraint_line_buffers: Vec<overlay_buffers::OverlayGeometryDraw>,
+    /// Per-frame cap geometry draws (section view cross-section fill), rebuilt in prepare().
+    pub cap_buffers: Vec<overlay_buffers::OverlayGeometryDraw>,
+    /// The buffers behind `constraint_line_buffers` and `cap_buffers`, kept
+    /// across frames.
+    pub constraint_line_pool: Vec<overlay_buffers::OverlayGeometrySlot>,
+    pub cap_pool: Vec<overlay_buffers::OverlayGeometrySlot>,
     // --- Sub-object highlight (per-viewport, generation-cached) ---
     /// Per-viewport dynamic resolution intermediate render target.
     /// `None` when render_scale == 1.0 or not yet initialised.
@@ -250,37 +230,13 @@ pub(crate) struct ViewportSlot {
     /// Version of the last sub-selection snapshot that was uploaded.
     /// `u64::MAX` forces a rebuild on the first frame.
     pub sub_highlight_generation: u64,
-}
-
-/// Retained pick state for one GPU implicit surface, built during `prepare()`.
-struct GpuImplicitPickItem {
-    id: u64,
-    primitives: Vec<crate::resources::ImplicitPrimitive>,
-    blend_mode: crate::resources::ImplicitBlendMode,
-    max_steps: u32,
-    step_scale: f32,
-    hit_threshold: f32,
-    max_distance: f32,
-}
-
-/// Retained pick state for one GPU marching cubes item, built during `prepare()`.
-struct GpuMcPickItem {
-    id: u64,
-    isovalue: f32,
-    volume_data: std::sync::Arc<crate::geometry::marching_cubes::VolumeData>,
+    /// The skybox bind group for this viewport's background environment.
+    pub skybox: Option<crate::resources::material::environment::SkyboxBinding>,
+    /// Whether this viewport draws a skybox this frame.
+    pub draw_skybox: bool,
 }
 
 /// Renderer wrapping all GPU resources and providing `prepare()` and `paint()` methods.
-/// Per-viewport scene-colour resolve sampled by the refractive sprite pass.
-///
-/// Lazily allocated on the first frame containing a refractive sprite; resized
-/// whenever the HDR target dimensions change. The bind group is rebuilt with
-/// the resolve when either changes.
-struct SpriteRefractionResolve {
-    texture: crate::gpu::Texture,
-    view: crate::gpu::TextureView,
-    size: [u32; 2],
-}
 
 /// GPU timestamp slot for the main opaque HDR scene pass.
 pub(crate) const GPU_TS_SCENE: u32 = 0;
@@ -305,9 +261,34 @@ pub(crate) const GPU_TS_SSAO: u32 = 7;
 pub(crate) const GPU_TS_BLOOM: u32 = 8;
 /// FXAA fullscreen pass.
 pub(crate) const GPU_TS_FXAA: u32 = 9;
+/// The dedicated screen-space overlay pass (shapes, labels, glyph runs,
+/// polylines, retained groups). Written only when the overlay runs as its own
+/// pass: the HDR path always does, the LDR path only when a backdrop-blur shape
+/// forces a second pass, otherwise its draws are inline at the end of the scene
+/// pass and counted there.
+pub(crate) const GPU_TS_OVERLAY: u32 = 10;
+/// The compaction's three dispatches inside the main-camera cull, split out so
+/// the cost of packing the visible list in instance order can be attributed to
+/// a specific dispatch rather than inferred. These are timestamps taken inside
+/// a compute pass, so they need `TIMESTAMP_QUERY_INSIDE_PASSES` on top of
+/// `TIMESTAMP_QUERY` and read `0.0` without it. Only the main-camera cull is
+/// split; shadow-cascade culls run the same three dispatches untimed.
+pub(crate) const GPU_TS_CULL_PLAN: u32 = 11;
+pub(crate) const GPU_TS_CULL_COUNT: u32 = 12;
+pub(crate) const GPU_TS_CULL_SCATTER: u32 = 13;
 /// Number of measured GPU passes; the query set holds `2 * GPU_TS_SLOTS` entries
 /// (a begin/end pair per slot).
-pub(crate) const GPU_TS_SLOTS: u32 = 10;
+pub(crate) const GPU_TS_SLOTS: u32 = 14;
+
+/// Retained-overlay counts gathered while the overlay phase runs, before they
+/// reach the matching `FrameStats` fields. Live bytes are read from the compiled
+/// geometry store at publish time and need no accumulation here.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct OverlayRetainedCounters {
+    pub submitted: u32,
+    pub drawn: u32,
+    pub reemitted: u32,
+}
 
 /// Whether a `render()` presents the frame the user sees, or is an auxiliary
 /// read.
@@ -335,6 +316,28 @@ pub(crate) enum RenderMode {
     Derivative,
 }
 
+/// A registered external post-effect producer plus its lifecycle state.
+struct RegisteredPostEffectProducer {
+    id: crate::plugin_api::PostEffectProducerId,
+    /// `init_gpu` has run against the current device. Registration has no
+    /// device parameter, so GPU init is deferred to the next render.
+    gpu_ready: bool,
+    producer: Box<dyn crate::plugin_api::PostEffectProducer>,
+}
+
+/// A registered external post-effect stage plus its chain key and lifecycle
+/// state.
+struct RegisteredPostEffectStage {
+    id: crate::plugin_api::PostEffectStageId,
+    /// Chain position; the built-in FXAA sits at
+    /// `post_effect::stage_order::ANTI_ALIASING`.
+    order: i32,
+    /// `init_gpu` has run against the current device (deferred, as for
+    /// producers).
+    gpu_ready: bool,
+    stage: Box<dyn crate::plugin_api::PostEffectStage>,
+}
+
 /// Owns the GPU pipelines and per-frame state for rendering a scene. Call
 /// `prepare` once per frame to upload data, then `paint_to` (or `render`) to
 /// issue draw calls.
@@ -346,72 +349,48 @@ pub struct ViewportRenderer {
     /// [`ItemTypePlugin::type_name`](crate::plugin_api::ItemTypePlugin::type_name).
     /// `init_gpu` is invoked once on registration; per-frame `prepare` and
     /// `paint` fire when a matching collection is on `SceneFrame`.
-    item_type_plugins:
-        std::collections::HashMap<&'static str, Box<dyn crate::plugin_api::ItemTypePlugin>>,
+    item_type_plugins: crate::renderer::item_plugins::registry::ItemPluginRegistry,
+    /// Per-plugin `prepare` timings for the last frame, in registration order.
+    /// Rebuilt each `dispatch_plugin_prepare`; a plugin with no items that frame
+    /// is present with a zero.
+    plugin_prepare_ms: Vec<(&'static str, f32)>,
+    /// Names of the item types the renderer installed itself, which an
+    /// external plugin may not take over.
+    renderer_owned_type_names: std::collections::HashSet<&'static str>,
+    /// Externally registered post-effect producers, in registration order.
+    /// `init_gpu` is deferred to the first render with the device; per-frame
+    /// `prepare` / `encode` run on the HDR path, per viewport.
+    post_effect_producers: Vec<RegisteredPostEffectProducer>,
+    /// Source for [`PostEffectProducerId`](crate::plugin_api::PostEffectProducerId)s.
+    next_post_effect_producer_id: u64,
+    /// Externally registered post-effect stages, in registration order; the
+    /// chain sorts by each stage's order key at encode time.
+    post_effect_stages: Vec<RegisteredPostEffectStage>,
+    /// Source for [`PostEffectStageId`](crate::plugin_api::PostEffectStageId)s.
+    next_post_effect_stage_id: u64,
+    /// This viewport frame's external composite-slot contributions: the
+    /// views returned by producer `encode` calls. Cleared per render call.
+    frame_external_slot_views: Vec<(crate::plugin_api::PostEffectSlot, crate::gpu::TextureView)>,
+    /// Slots that have logged the external-overrides-built-in conflict (one
+    /// bit per `PostEffectSlot` variant), so the debug log fires once per
+    /// slot per renderer.
+    post_effect_slot_warned: u8,
     /// Monotonic frame counter passed to plugin contexts.
     plugin_frame_index: u64,
     /// Performance counters from the last frame.
     last_stats: crate::renderer::stats::FrameStats,
-    /// Per-frame point cloud GPU data, rebuilt in prepare(), consumed in paint().
-    point_cloud_gpu_data: Vec<crate::resources::PointCloudGpuData>,
-    /// Per-frame glyph GPU data, rebuilt in prepare(), consumed in paint().
-    glyph_gpu_data: Vec<crate::resources::GlyphGpuData>,
-    /// Per-frame tensor glyph GPU data, rebuilt in prepare(), consumed in paint().
-    tensor_glyph_gpu_data: Vec<crate::resources::TensorGlyphGpuData>,
     /// Per-frame polyline GPU data, rebuilt in prepare(), consumed in paint().
     polyline_gpu_data: Vec<crate::resources::PolylineGpuData>,
-    /// Per-frame volume GPU data, rebuilt in prepare(), consumed in paint().
-    volume_gpu_data: Vec<crate::resources::VolumeGpuData>,
-    /// Per-frame streamtube GPU data, rebuilt in prepare(), consumed in paint().
-    streamtube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
-    /// Per-frame general tube GPU data, rebuilt in prepare(), consumed in paint().
-    tube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
-    /// Per-frame ribbon GPU data, rebuilt in prepare(), consumed in paint().
-    ribbon_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
-    /// Indices into streamtube_gpu_data for selected streamtubes (set in prepare_scene, consumed in prepare_viewport).
-    streamtube_selected_gpu_indices: Vec<usize>,
-    /// Indices into tube_gpu_data for selected tubes (set in prepare_scene, consumed in prepare_viewport).
-    tube_selected_gpu_indices: Vec<usize>,
-    /// Indices into ribbon_gpu_data for selected ribbons (set in prepare_scene, consumed in prepare_viewport).
-    ribbon_selected_gpu_indices: Vec<usize>,
-    /// Indices into polyline_gpu_data for selected user polylines (set in prepare_scene, consumed in prepare_viewport).
-    polyline_selected_gpu_indices: Vec<usize>,
-    /// Per-frame image slice GPU data, rebuilt in prepare(), consumed in paint().
-    image_slice_gpu_data: Vec<crate::resources::ImageSliceGpuData>,
-    /// Per-frame volume surface slice GPU data, rebuilt in prepare(), consumed in paint().
-    volume_surface_slice_gpu_data: Vec<crate::resources::VolumeSurfaceSliceGpuData>,
-    /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint().
-    lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
-    /// Per-frame GPU implicit surface data, rebuilt in prepare(), consumed in paint().
-    implicit_gpu_data: Vec<crate::resources::volume::implicit::ImplicitGpuItem>,
-    /// Per-frame decal draw list, rebuilt in prepare(), consumed in paint().
-    /// Entries are cheap clones of cached GPU handles from `decal_cache`.
-    decal_gpu_data: Vec<crate::resources::decal::DecalGpuItem>,
-    /// Decal GPU resources cached across frames, keyed by decal content hash.
-    /// Decals are static per submission, so this skips rebuilding a uniform
-    /// buffer and bind group for each decal every frame. Entries not seen in a
-    /// frame are evicted so removed decals do not leak.
-    decal_cache: std::collections::HashMap<u64, crate::resources::decal::DecalGpuItem>,
-    /// Per-frame decal exclude GPU data, rebuilt in prepare(), consumed in paint().
-    decal_exclude_items: Vec<crate::resources::decal::DecalExcludeGpuItem>,
-    /// Per-frame GPU marching cubes render data, rebuilt in prepare(), consumed in paint().
-    mc_gpu_data: Vec<crate::resources::volume::gpu_marching_cubes::McFrameData>,
-    /// Per-frame sprite GPU data, rebuilt in prepare(), consumed in paint().
-    sprite_gpu_data: Vec<crate::resources::SpriteGpuData>,
+    /// Whether the frame being prepared may be painted straight into the
+    /// caller's render pass, which binds the LDR pipelines whatever display
+    /// mode the frame asks for. Set by each entry point before it prepares;
+    /// starts `true`, the choice that is right for either path.
+    pub(crate) direct_paint: bool,
+    /// Which items need stamping into the surface mask this frame, and the
+    /// mesh family's pipeline and buffer for doing it.
+    surface_mask: surface_mask::SurfaceMaskState,
     /// Per-frame mesh-instance batches, rebuilt in prepare(), consumed in paint().
     mesh_instance_gpu_data: Vec<crate::resources::MeshInstanceGpuData>,
-    /// Per-frame GPU particle systems, dispatched in prepare(), consumed in paint().
-    particle_gpu_data: Vec<crate::resources::gpu::gpu_particles::ParticleFrameData>,
-    external_instances_gpu_data:
-        Vec<crate::resources::gpu::external_instances::ExternalInstancesGpuData>,
-    /// Scene-colour resolve textures for the refractive sprite pass, indexed
-    /// alongside `viewport_slots`. Lazily allocated when the first refractive
-    /// sprite appears for a viewport.
-    sprite_refraction_resolves: Vec<Option<SpriteRefractionResolve>>,
-    /// Per-frame Gaussian splat draw data, rebuilt in prepare_viewport_internal(), consumed in paint().
-    gaussian_splat_draw_data: Vec<crate::resources::GaussianSplatDrawData>,
-    /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint().
-    screen_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
     /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
     label_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame SDF overlay shape GPU data, rebuilt in prepare(), consumed in paint().
@@ -447,13 +426,15 @@ pub struct ViewportRenderer {
     /// Per-frame retained overlay shape-stream draws (SDF shapes), referenced by
     /// `OverlayDrawSource::RetainedShape { draw_index }`.
     overlay_retained_shape_draws: Vec<overlay_buffers::RetainedShapeDraw>,
-    /// Shared per-draw instance buffer for the overlay pass: slot 0 identity plus
-    /// one per retained group. Bound by both the text pipeline (label bind group)
-    /// and the shape pipeline (shadow bind group). Rebuilt each frame.
-    overlay_instances_buf: Option<crate::gpu::Buffer>,
-    /// Set once the label prepare has written `overlay_instances_buf` this frame,
+    /// The overlay pass's clip, instance and shadow-layer storage buffers and
+    /// the bind groups over them, reused across frames.
+    overlay_bindings: overlay_buffers::OverlayBindings,
+    /// Set once the label prepare has written the overlay instances this frame,
     /// so the shape prepare reuses it instead of building an identity-only fallback.
     overlay_instances_ready: bool,
+    /// Retained-overlay counters for the frame being prepared. Reset at the start
+    /// of the overlay phase and published into `FrameStats` at the end of it.
+    overlay_retained_counters: OverlayRetainedCounters,
     /// Cached GPU textures for the backdrop blur effect (frosted glass).
     /// Recreated when the viewport size changes.
     backdrop_blur_state: Option<crate::resources::BackdropBlurState>,
@@ -464,12 +445,6 @@ pub struct ViewportRenderer {
     /// shadow info, and grid. Slots are grown lazily in `prepare` via
     /// `ensure_viewport_slot`. There are at most 4 in the current UI.
     viewport_slots: Vec<ViewportSlot>,
-    /// GPU compute filter results from the last `prepare()` call.
-    ///
-    /// Each entry contains a compacted index buffer + count for one filtered mesh.
-    /// Consumed during `paint()` to override the mesh's default index buffer.
-    /// Cleared and rebuilt each frame.
-    compute_filter_results: Vec<crate::resources::ComputeFilterResult>,
     /// State for the non-instanced (per-object) mesh draw path.
     mesh_uniforms: PerObjectState,
     /// Cached render bundle for the opaque per-object draws, rebuilt by
@@ -486,6 +461,10 @@ pub struct ViewportRenderer {
     /// this the draw path re-read the raw `frame.scene.surfaces`, discarding
     /// the LOD level swap and cull for every non-instanced item.
     prepared_surfaces: Vec<SceneRenderItem>,
+    /// How many of the items a frame renders came from `prepared_surfaces`:
+    /// the render moves that list out while it draws, so the count is kept
+    /// here for the code that compares against it.
+    prepared_surface_count: usize,
     /// Cached shadow state carried across frames.
     shadow: ShadowState,
     /// Current runtime mode controlling internal default behaviour.
@@ -509,9 +488,6 @@ pub struct ViewportRenderer {
     /// Clamped to `[policy.min_render_scale, policy.max_render_scale]`.
     /// Reported in `FrameStats::render_scale` each frame.
     current_render_scale: f32,
-    /// Instant the renderer was constructed. Used as the t=0 reference for
-    /// per-frame animated effects (e.g. `ScatterVolume::noise` time scrolling).
-    start_instant: web_time::Instant,
     /// Instant recorded at the start of the most recent `prepare()` call.
     /// Used to compute `total_frame_ms` on the following frame.
     last_prepare_instant: Option<web_time::Instant>,
@@ -540,55 +516,10 @@ pub struct ViewportRenderer {
     /// identity is stable means objects only moved: refit the pick BVH.
     pick_bvh_transform_rev: u64,
     /// Point cloud items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_point_cloud_items: Vec<PointCloudItem>,
-    /// Gaussian splat items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_splat_items: Vec<GaussianSplatItem>,
-    /// Volume items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_volume_items: Vec<VolumeItem>,
-    /// Scatter volume items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_scatter_volume_items: Vec<crate::renderer::types::ScatterVolumeItem>,
-    /// Volumes packed into the GPU storage buffer this frame
-    /// (volume, density_multiplier, flag bits). Stored so `render_viewport`
-    /// can re-upload as needed without re-walking the scene frame.
-    pub(crate) prepared_scatter_volumes:
-        Vec<(crate::scene::scatter_volume::ScatterVolume, f32, u32)>,
-    /// Subset of the prepared scatter volumes that carry `RefractionParams`.
-    /// Cleared and refilled each frame by `prepare_viewport`. The refraction
-    /// pass walks this list; an empty list skips the pass entirely.
-    pub(crate) prepared_refraction_volumes: Vec<(crate::scene::scatter_volume::ScatterVolume, f32)>,
-    /// Per-viewport scatter intermediates and temporal history. Indexed by
-    /// `vp_idx`. Grown lazily inside the scatter pass; each entry is
-    /// reallocated when the requested scatter target size or downsample mode
-    /// changes.
-    pub(crate) scatter_viewport_states: Vec<Option<crate::resources::ScatterViewportState>>,
     /// Opaque volume mesh items from the last `prepare()` call, retained for cell-level `pick()` dispatch.
     pick_volume_mesh_items: Vec<VolumeMeshItem>,
     /// Polyline items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_polyline_items: Vec<PolylineItem>,
-    /// Glyph items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_glyph_items: Vec<GlyphItem>,
-    /// Tensor glyph items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_tensor_glyph_items: Vec<TensorGlyphItem>,
-    /// Sprite items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_sprite_items: Vec<SpriteItem>,
-    /// Streamtube items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_streamtube_items: Vec<StreamtubeItem>,
-    /// Tube items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_tube_items: Vec<TubeItem>,
-    /// Ribbon items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_ribbon_items: Vec<RibbonItem>,
-    /// Image slice items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_image_slice_items: Vec<ImageSliceItem>,
     /// Volume surface slice items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_volume_surface_slice_items: Vec<VolumeSurfaceSliceItem>,
-    /// Screen image items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_screen_image_items: Vec<ScreenImageItem>,
-    /// Decal items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_decal_items: Vec<DecalItem>,
-    /// GPU implicit surface items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_implicit_items: Vec<GpuImplicitPickItem>,
-    /// GPU marching cubes items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_mc_items: Vec<GpuMcPickItem>,
     /// When `false`, `prepare()` skips populating the CPU pick caches above, so
     /// scenes that never call `pick()`/`pick_rect()` avoid a per-frame deep copy
     /// of all inline geometry. Enable with `set_cpu_pick_cache(true)`.
@@ -598,17 +529,9 @@ pub struct ViewportRenderer {
     /// and parks the staging buffers here; `pick_object_poll` reads them back
     /// without blocking on the GPU queue. `None` when no async pick is pending.
     pending_pick: Option<picking::PendingPick>,
-
-    /// Shared unit-cube mesh (`[-0.5, 0.5]^3`) used as the GPU pick proxy for
-    /// box-shaped items: decals (under each decal's `transform`) and box scatter
-    /// volumes (under a translate+scale to the box). Uploaded lazily on first
-    /// use, then reused. `None` until then.
-    decal_pick_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
-
-    /// Shared unit-radius icosphere used as the GPU pick proxy for sphere scatter
-    /// volumes, scaled to each volume's radius. Uploaded lazily on first use.
-    /// `None` until then.
-    scatter_pick_sphere: Option<crate::resources::mesh::mesh_store::MeshId>,
+    /// In-flight async snap query, the windowed twin of `pending_pick`:
+    /// `snap_query_begin` parks it, `snap_query_poll` reads it back.
+    pending_snap: Option<picking::PendingSnap>,
 
     // --- GPU timestamp queries ---
     /// Timestamp query set with `2 * GPU_TS_SLOTS` entries: a begin/end pair per
@@ -711,6 +634,25 @@ pub struct ViewportRenderer {
     pub(crate) last_cluster_stats: Option<crate::resources::gpu::clustered::ClusterStats>,
 }
 
+/// Warn once when a cull submission needs more compaction scratch than the
+/// device will bind as one storage buffer, so the drop to arrival-order
+/// submission is visible rather than silent.
+///
+/// The scratch sizes to the submission, so this needs a scene far past what any
+/// device can draw: it takes tens of millions of instances to reach the default
+/// 128 MiB binding limit.
+pub(crate) fn warn_once_cull_plan_capacity(batches: u32, instances: u32) {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+        tracing::warn!(
+            batches,
+            instances,
+            "cull submission needs more compaction scratch than max_storage_buffer_binding_size; \
+             draws submit in cull-arrival order, so frames are not bit-reproducible"
+        );
+    });
+}
+
 impl ViewportRenderer {
     /// The optional device features the renderer can take advantage of,
     /// filtered to what `adapter` supports. Pass the result as
@@ -724,22 +666,31 @@ impl ViewportRenderer {
     ///   and geometry chunk into one multi-draw (present on Vulkan/DX12; absent
     ///   on Metal, which keeps the per-batch loop).
     /// - `TIMESTAMP_QUERY` enables `FrameStats::gpu_frame_ms` and the
-    ///   per-pass GPU breakdown.
+    ///   per-pass GPU breakdown. `TIMESTAMP_QUERY_INSIDE_PASSES` additionally
+    ///   splits the cull's compaction into its three dispatches
+    ///   (`GpuBreakdown::cull_plan_ms` and friends); without it those read
+    ///   `0.0` and the rest of the breakdown is unaffected.
     /// - `PIPELINE_CACHE` enables
     ///   [`pipeline_cache_data`](Self::pipeline_cache_data) /
-    ///   [`new_with_pipeline_cache`](Self::new_with_pipeline_cache), so
+    ///   [`RendererConfig::with_pipeline_cache_data`], so
     ///   pipeline compilation from a previous run can be reused instead of
     ///   redone (startup and first-use hitches).
     /// - `SHADER_PRIMITIVE_INDEX` lets the GPU pick pass read the rasterizer's
     ///   triangle index, so a GPU pick can resolve the hit face / cell / segment
     ///   (not just the object). Without it the GPU pick stays object-level for
-    ///   triangle-meshed types; instance- and segment-level picks (glyphs,
+    ///   triangle-meshed types; instance- and segment-level picks (fields,
     ///   sprites, polylines) do not need it.
     /// - `FLOAT32_FILTERABLE` lets direct-volume (`VolumeItem`) rendering keep the
     ///   scalar field in a full-precision `R32Float` 3D texture and still sample
     ///   it with trilinear interpolation. Without it the field falls back to an
     ///   `R16Float` texture (trilinear at reduced precision, half the bandwidth);
     ///   either way the reconstruction is smooth, never blocky nearest-neighbour.
+    /// - The bindless texture-array set (texture `binding_array` + non-uniform
+    ///   indexing + partially bound) lets the instanced mesh path bind material
+    ///   textures once per frame and index them per material, so instances of one
+    ///   mesh with different materials batch together. Present on Vulkan, DX12, and
+    ///   Apple Silicon Metal (argument buffers Tier 2); without it (WebGPU, older
+    ///   hardware) the path binds textures per batch (the portable default).
     ///
     /// Everything works without them; rendering falls back to direct draws
     /// (with CPU-side shadow-cascade culling), GPU timings read as `None`,
@@ -750,6 +701,7 @@ impl ViewportRenderer {
             crate::gpu::Features::INDIRECT_FIRST_INSTANCE,
             crate::gpu::Features::MULTI_DRAW_INDIRECT_COUNT,
             crate::gpu::Features::TIMESTAMP_QUERY,
+            crate::gpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
             crate::gpu::Features::PIPELINE_CACHE,
             crate::gpu::PRIMITIVE_INDEX_FEATURE,
             crate::gpu::Features::FLOAT32_FILTERABLE,
@@ -757,6 +709,15 @@ impl ViewportRenderer {
             if adapter.features().contains(feature) {
                 features |= feature;
             }
+        }
+        // The bindless material-texture path needs the whole texture-array set at
+        // once; request it only when the adapter offers every piece, so a device
+        // that supports part of it is not asked for a feature it lacks.
+        if adapter
+            .features()
+            .contains(crate::gpu::BINDLESS_TEXTURE_FEATURES)
+        {
+            features |= crate::gpu::BINDLESS_TEXTURE_FEATURES;
         }
         features
     }
@@ -791,11 +752,18 @@ impl ViewportRenderer {
     pub const MIN_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
 
     /// The per-stage storage-buffer count per-vertex deformers need: the base
-    /// vertex stage (seven) plus the two the deform sidecar adds. A device below
+    /// vertex stage (eight) plus the two the deform sidecar adds. A device below
     /// this still renders the base mesh path, but the deform group is left out
     /// and `register_deformer` reports that deformers are unavailable, rather
     /// than failing pipeline creation.
-    pub const DEFORM_STORAGE_BUFFERS_PER_STAGE: u32 = 9;
+    ///
+    /// This must equal what the deform-enabled mesh pipeline layout actually
+    /// binds in the vertex stage. A device granted exactly one less passes the
+    /// gate and then fails every pipeline layout that includes the deform
+    /// group, which renders nothing at all. `ViewportGpuResources::new` counts
+    /// the layouts it builds and `debug_assert!`s against this, so adding a
+    /// vertex-stage storage buffer without updating it fails a debug build.
+    pub const DEFORM_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
 
     /// The device limits viewport-lib runs best with, above wgpu's defaults.
     ///
@@ -832,58 +800,94 @@ impl ViewportRenderer {
         // the deform bind group invalid; the base draw path stays under both.
         limits.max_storage_buffer_binding_size = adapter_limits.max_storage_buffer_binding_size;
         limits.max_buffer_size = adapter_limits.max_buffer_size;
+        // The scene and per-object groups already take 15 of the default 16
+        // sampled textures in the fragment stage, so a material plugin with a
+        // second texture of its own would not fit. Take the adapter's own limit
+        // (Metal, Vulkan and DX12 all report far more than 16).
+        limits.max_sampled_textures_per_shader_stage =
+            adapter_limits.max_sampled_textures_per_shader_stage;
+        // The bindless material path binds one texture array; its element count
+        // (a binding-array limit that defaults to 0) must be requested alongside
+        // the feature or the layout is invalid. Only ask for it when the adapter
+        // offers the bindless features, clamped to what it reports.
+        if adapter
+            .features()
+            .contains(crate::gpu::BINDLESS_TEXTURE_FEATURES)
+        {
+            limits.max_binding_array_elements_per_shader_stage =
+                crate::resources::mesh::instanced_bindless::BINDLESS_TEXTURE_CAPACITY
+                    .min(adapter_limits.max_binding_array_elements_per_shader_stage);
+        }
         limits
     }
 
     /// Create a new renderer with default settings (no MSAA).
-    /// Call once at application startup.
+    /// Call once at application startup. For anything else, see
+    /// [`with_config`](Self::with_config).
     pub fn new(device: &crate::gpu::Device, target_format: crate::gpu::TextureFormat) -> Self {
-        Self::with_sample_count(device, target_format, 1)
+        Self::with_config(device, &RendererConfig::new(target_format))
     }
 
     /// Create a new renderer with the specified MSAA sample count (1, 2, or 4).
-    ///
-    /// When using MSAA (sample_count > 1), the caller must create multisampled
-    /// colour and depth textures and use them as render pass attachments with the
-    /// final surface texture as the resolve target.
+    #[deprecated(note = "use `with_config` and `RendererConfig::with_sample_count`")]
     pub fn with_sample_count(
         device: &crate::gpu::Device,
         target_format: crate::gpu::TextureFormat,
         sample_count: u32,
     ) -> Self {
-        Self::with_sample_count_and_cache(device, target_format, sample_count, None)
+        Self::with_config(
+            device,
+            &RendererConfig::new(target_format).with_sample_count(sample_count),
+        )
     }
 
     /// Create a renderer, seeding the GPU pipeline cache from previously saved
-    /// data so shader compilation can be skipped on later launches.
-    ///
-    /// Pass the bytes returned by an earlier [`pipeline_cache_data`](Self::pipeline_cache_data)
-    /// call, or `None` on first run. The cache only takes effect when the device
-    /// was created with `Features::PIPELINE_CACHE`; otherwise the data is ignored
-    /// and this matches [`new`](Self::new).
+    /// data.
+    #[deprecated(note = "use `with_config` and `RendererConfig::with_pipeline_cache_data`")]
     pub fn new_with_pipeline_cache(
         device: &crate::gpu::Device,
         target_format: crate::gpu::TextureFormat,
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
-        Self::with_sample_count_and_cache(device, target_format, 1, pipeline_cache_data)
+        Self::with_config(
+            device,
+            &RendererConfig::new(target_format)
+                .with_pipeline_cache_data(pipeline_cache_data.map(<[u8]>::to_vec)),
+        )
     }
 
     /// Returns the current contents of the GPU pipeline cache, suitable for
-    /// persisting and feeding back into [`new_with_pipeline_cache`](Self::new_with_pipeline_cache)
-    /// on the next launch. `None` when the device lacks `Features::PIPELINE_CACHE`.
+    /// persisting and passing to
+    /// [`RendererConfig::with_pipeline_cache_data`] on the next launch. `None`
+    /// when the device lacks `Features::PIPELINE_CACHE`.
     pub fn pipeline_cache_data(&self) -> Option<Vec<u8>> {
         self.resources.pipeline_cache.as_ref()?.get_data()
     }
 
     /// Like [`with_sample_count`](Self::with_sample_count) with an MSAA count and
     /// an optional saved pipeline cache.
+    #[deprecated(
+        note = "use `with_config` with `RendererConfig::with_sample_count` and `with_pipeline_cache_data`"
+    )]
     pub fn with_sample_count_and_cache(
         device: &crate::gpu::Device,
         target_format: crate::gpu::TextureFormat,
         sample_count: u32,
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
+        Self::with_config(
+            device,
+            &RendererConfig::new(target_format)
+                .with_sample_count(sample_count)
+                .with_pipeline_cache_data(pipeline_cache_data.map(<[u8]>::to_vec)),
+        )
+    }
+
+    /// Create a renderer from a [`RendererConfig`]. Call once at application
+    /// startup.
+    pub fn with_config(device: &crate::gpu::Device, config: &RendererConfig) -> Self {
+        let target_format = config.target_format;
+        let sample_count = config.sample_count;
         // Fail early with an actionable message rather than a cryptic wgpu
         // validation panic deep in mesh-pipeline-layout creation. This is the
         // base lit mesh path's floor; optional features that need more storage
@@ -893,7 +897,7 @@ impl ViewportRenderer {
         let available = device.limits().max_storage_buffers_per_shader_stage;
         assert!(
             available >= Self::MIN_STORAGE_BUFFERS_PER_STAGE,
-            "viewport-lib needs max_storage_buffers_per_shader_stage >= {}, but the device was \
+            "the renderer needs max_storage_buffers_per_shader_stage >= {}, but the device was \
              created with {}. Pass ViewportRenderer::recommended_device_limits(&adapter) as \
              required_limits in the DeviceDescriptor (or request a higher limit).",
             Self::MIN_STORAGE_BUFFERS_PER_STAGE,
@@ -905,45 +909,58 @@ impl ViewportRenderer {
         let multi_draw_supported = device
             .features()
             .contains(crate::gpu::Features::MULTI_DRAW_INDIRECT_COUNT);
-        Self {
-            resources: DeviceResources::new_with_cache(
-                device,
-                target_format,
-                sample_count,
-                pipeline_cache_data,
-            ),
+        // Bindless material textures activate only when the device enabled the
+        // whole texture-array feature set AND granted enough binding-array
+        // elements for the texture array (both are needed to build the layout).
+        // Modern Metal (Apple Silicon, argument buffers Tier 2), Vulkan, and DX12
+        // qualify; a device that enabled the feature but not the element limit,
+        // or WebGPU, stays on the per-batch binding rather than crashing.
+        use crate::resources::mesh::instanced_bindless::{
+            BINDLESS_TEXTURE_CAPACITY, MaterialTextureBinding,
+        };
+        let material_texture_binding = if device
+            .features()
+            .contains(crate::gpu::BINDLESS_TEXTURE_FEATURES)
+            && device.limits().max_binding_array_elements_per_shader_stage
+                >= BINDLESS_TEXTURE_CAPACITY
+        {
+            MaterialTextureBinding::Bindless
+        } else {
+            MaterialTextureBinding::PerBatch
+        };
+        let mut resources = DeviceResources::new_configured(
+            device,
+            target_format,
+            sample_count,
+            config.pipeline_cache_data.as_deref(),
+            config.geometry_chunk_bytes,
+        );
+        if let Some(policy) = config.pipeline_compilation {
+            resources.pipeline_compiler.set_policy(policy);
+        }
+        resources.instancing.material_texture_binding = material_texture_binding;
+        resources
+            .material_gpu_builder
+            .set_bindless(material_texture_binding == MaterialTextureBinding::Bindless);
+        let mut renderer = Self {
+            resources,
             instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
-            item_type_plugins: std::collections::HashMap::new(),
+            item_type_plugins: crate::renderer::item_plugins::registry::ItemPluginRegistry::new(),
+            plugin_prepare_ms: Vec::new(),
+            renderer_owned_type_names: std::collections::HashSet::new(),
+            post_effect_producers: Vec::new(),
+            next_post_effect_producer_id: 0,
+            post_effect_stages: Vec::new(),
+            next_post_effect_stage_id: 0,
+            frame_external_slot_views: Vec::new(),
+            post_effect_slot_warned: 0,
             plugin_frame_index: 0,
             last_stats: crate::renderer::stats::FrameStats::default(),
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
-            point_cloud_gpu_data: Vec::new(),
-            glyph_gpu_data: Vec::new(),
-            tensor_glyph_gpu_data: Vec::new(),
             polyline_gpu_data: Vec::new(),
-            volume_gpu_data: Vec::new(),
-            streamtube_gpu_data: Vec::new(),
-            tube_gpu_data: Vec::new(),
-            ribbon_gpu_data: Vec::new(),
-            streamtube_selected_gpu_indices: Vec::new(),
-            tube_selected_gpu_indices: Vec::new(),
-            ribbon_selected_gpu_indices: Vec::new(),
-            polyline_selected_gpu_indices: Vec::new(),
-            image_slice_gpu_data: Vec::new(),
-            volume_surface_slice_gpu_data: Vec::new(),
-            sprite_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
-            particle_gpu_data: Vec::new(),
-            external_instances_gpu_data: Vec::new(),
-            sprite_refraction_resolves: Vec::new(),
-            gaussian_splat_draw_data: Vec::new(),
-            lic_gpu_data: Vec::new(),
-            implicit_gpu_data: Vec::new(),
-            decal_gpu_data: Vec::new(),
-            decal_cache: std::collections::HashMap::new(),
-            decal_exclude_items: Vec::new(),
-            mc_gpu_data: Vec::new(),
-            screen_image_gpu_data: Vec::new(),
+            direct_paint: true,
+            surface_mask: surface_mask::SurfaceMaskState::new(),
             label_gpu_data: None,
             overlay_shape_gpu_data: None,
             overlay_text_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_label_vbuf"),
@@ -951,26 +968,26 @@ impl ViewportRenderer {
             overlay_shape_blur_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_shape_blur_vbuf"),
             overlay_shape_tex_vbufs: Vec::new(),
             overlay_viewport_buf: None,
+            overlay_retained_counters: OverlayRetainedCounters::default(),
             overlay_retained_draws: Vec::new(),
             overlay_retained_shape_draws: Vec::new(),
-            overlay_instances_buf: None,
+            overlay_bindings: overlay_buffers::OverlayBindings::new(),
             overlay_instances_ready: false,
             overlay_draw_segments: Vec::new(),
             overlay_uses_zorder: false,
             backdrop_blur_state: None,
             viewport_slots: Vec::new(),
-            compute_filter_results: Vec::new(),
             mesh_uniforms: PerObjectState::new(),
             per_object_bundle: None,
             per_object_bundle_gate: Default::default(),
             prepared_surfaces: Vec::new(),
+            prepared_surface_count: 0,
             shadow: ShadowState::new(),
             runtime_mode: crate::renderer::stats::RuntimeMode::Interactive,
             render_mode: RenderMode::Presented,
             performance_policy: crate::renderer::stats::PerformancePolicy::default(),
             upload_budget: None,
             current_render_scale: 1.0,
-            start_instant: web_time::Instant::now(),
             last_prepare_instant: None,
             frame_counter: 0,
             lod_levels: std::collections::HashMap::new(),
@@ -979,31 +996,10 @@ impl ViewportRenderer {
             pick_bvh: std::sync::Mutex::new(None),
             pick_bvh_identity_rev: 0,
             pick_bvh_transform_rev: 0,
-            pick_point_cloud_items: Vec::new(),
-            pick_splat_items: Vec::new(),
-            pick_volume_items: Vec::new(),
-            pick_scatter_volume_items: Vec::new(),
-            prepared_scatter_volumes: Vec::new(),
-            prepared_refraction_volumes: Vec::new(),
-            scatter_viewport_states: Vec::new(),
             pick_volume_mesh_items: Vec::new(),
-            pick_polyline_items: Vec::new(),
-            pick_glyph_items: Vec::new(),
-            pick_tensor_glyph_items: Vec::new(),
-            pick_sprite_items: Vec::new(),
-            pick_streamtube_items: Vec::new(),
-            pick_tube_items: Vec::new(),
-            pick_ribbon_items: Vec::new(),
-            pick_image_slice_items: Vec::new(),
-            pick_volume_surface_slice_items: Vec::new(),
-            pick_screen_image_items: Vec::new(),
-            pick_decal_items: Vec::new(),
-            pick_implicit_items: Vec::new(),
-            pick_mc_items: Vec::new(),
             cpu_pick_cache_enabled: false,
             pending_pick: None,
-            decal_pick_cube: None,
-            scatter_pick_sphere: None,
+            pending_snap: None,
             ts_query_set: None,
             ts_query_set_prev: None,
             ts_prev_mask: 0,
@@ -1026,12 +1022,116 @@ impl ViewportRenderer {
             degradation_effects_throttled: false,
             last_frustum_culled_lights: 0,
             last_cluster_stats: None,
-        }
+        };
+        renderer.register_internal_item_plugins(device);
+        renderer
     }
 
     /// Access the underlying GPU resources (e.g. for mesh uploads).
     pub fn resources(&self) -> &DeviceResources {
         &self.resources
+    }
+
+    /// Device memory held by the two shadow depth textures: the directional
+    /// cascade atlas and the point-light cube array.
+    ///
+    /// Separate from [`resident_bytes`](Self::resident_bytes), which covers the
+    /// content a consumer uploaded. This is fixed renderer overhead, but it is
+    /// not paid until a frame needs it: both textures start as placeholders a
+    /// few bytes wide, so this reads near zero for a viewport that has not cast
+    /// a shadow yet and steps up as each is allocated. At full size the atlas is
+    /// 64 MiB and the cube array 192 MiB, so a consumer budgeting device memory
+    /// wants to know which of the two it has actually taken.
+    ///
+    /// The cascade atlas is allocated by the first frame that rasterises
+    /// cascades (shadows enabled, a casting primary light, and something to
+    /// cast), and the cube array by the first frame that queues point-shadow
+    /// faces. Neither is released afterwards.
+    pub fn shadow_allocation_bytes(&self) -> u64 {
+        let shadow = &self.resources.shadow;
+        let texel = 4; // Depth32Float
+        let atlas = shadow.map_texture.width() as u64 * shadow.map_texture.height() as u64 * texel;
+        let cube = shadow.point_cube_texture.width() as u64
+            * shadow.point_cube_texture.height() as u64
+            * shadow.point_cube_texture.depth_or_array_layers() as u64
+            * texel;
+        atlas + cube
+    }
+
+    /// Resident GPU bytes for the user-uploaded working set, including whatever
+    /// registered item-type plugins report holding in stores of their own.
+    ///
+    /// The same figure as
+    /// [`DeviceResources::resident_bytes`](crate::resources::DeviceResources::resident_bytes)
+    /// with [`ResidentBytes::plugin_bytes`](crate::resources::ResidentBytes::plugin_bytes)
+    /// filled in. Prefer this one: the plugins are registered with the
+    /// renderer, so the resources-level call cannot see them and reports
+    /// `plugin_bytes` as zero.
+    pub fn resident_bytes(&self) -> crate::resources::ResidentBytes {
+        let mut bytes = self.resources.resident_bytes();
+        bytes.plugin_bytes = self
+            .item_type_plugins
+            .values()
+            .map(|p| p.resident_bytes())
+            .sum();
+        bytes
+    }
+
+    /// Resident GPU bytes per registered item type, in registration order.
+    ///
+    /// [`ResidentBytes::plugin_bytes`](crate::resources::ResidentBytes::plugin_bytes)
+    /// is the sum of these, which is the right figure to budget against but
+    /// the wrong one to act on: an eviction policy that is over its ceiling
+    /// needs to know which type to free content from. This is the breakdown.
+    ///
+    /// Every registered type appears, including the ones reporting zero (a
+    /// type whose items carry their own geometry holds nothing between
+    /// frames, and a type that has not implemented
+    /// [`resident_bytes`](crate::plugin_api::ItemTypePlugin::resident_bytes)
+    /// reports zero whatever it holds).
+    pub fn plugin_resident_bytes(&self) -> impl Iterator<Item = (&'static str, u64)> + '_ {
+        self.item_type_plugins
+            .iter()
+            .map(|(name, plugin)| (name, plugin.resident_bytes()))
+    }
+
+    /// Per-item-type contribution to the last prepared frame: CPU prepare time,
+    /// draw calls, and uploaded bytes.
+    ///
+    /// The time half of what
+    /// [`plugin_resident_bytes`](Self::plugin_resident_bytes) does for memory.
+    /// [`PrepareBreakdown::plugin_ms`](crate::renderer::stats::PrepareBreakdown::plugin_ms)
+    /// is the total across every plugin, which is the figure to watch but the
+    /// wrong one to act on: a scene registers many item types (every built-in
+    /// type past mesh geometry is one), and a frame that got slower needs to say
+    /// which. This is the breakdown.
+    ///
+    /// Every registered type appears, in registration order, including the ones
+    /// reading zero. `prepare_ms` is renderer-measured; `draw_calls` and
+    /// `upload_bytes` are self-reported by the plugin and read zero for a plugin
+    /// that has not implemented
+    /// [`ItemTypePlugin::draw_calls`](crate::plugin_api::ItemTypePlugin::draw_calls)
+    /// or [`upload_bytes`](crate::plugin_api::ItemTypePlugin::upload_bytes).
+    pub fn plugin_frame_counters(
+        &self,
+    ) -> impl Iterator<Item = (&'static str, crate::renderer::stats::PluginFrameCounters)> + '_
+    {
+        self.item_type_plugins.iter().map(move |(name, plugin)| {
+            let prepare_ms = self
+                .plugin_prepare_ms
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, ms)| *ms)
+                .unwrap_or(0.0);
+            (
+                name,
+                crate::renderer::stats::PluginFrameCounters {
+                    prepare_ms,
+                    draw_calls: plugin.draw_calls(),
+                    upload_bytes: plugin.upload_bytes(),
+                },
+            )
+        })
     }
 
     /// Performance counters from the last completed frame.
@@ -1112,6 +1212,7 @@ impl ViewportRenderer {
     /// Has no effect when the device does not support `INDIRECT_FIRST_INSTANCE`
     /// (culling is already disabled on those devices).
     pub fn disable_gpu_driven_culling(&mut self) {
+        self.instancing.gpu_culling_wanted = false;
         self.instancing.gpu_culling_enabled = false;
     }
 
@@ -1136,7 +1237,8 @@ impl ViewportRenderer {
     /// Has no effect when the device does not support `INDIRECT_FIRST_INSTANCE`.
     pub fn enable_gpu_driven_culling(&mut self) {
         if self.instancing.gpu_culling_supported {
-            self.instancing.gpu_culling_enabled = true;
+            // Active from the next prepare, once its compute is built.
+            self.instancing.gpu_culling_wanted = true;
         }
     }
 
@@ -1191,6 +1293,23 @@ impl ViewportRenderer {
         self.resources.set_force_po_discard(force);
     }
 
+    /// Keep the debug-visualisation block compiled into the lit pipelines even
+    /// while [`DebugVis`] is off.
+    ///
+    /// The block sits under a uniform branch that only `DebugVis` takes, so
+    /// pixels are identical either way. What changes is what an ordinary draw
+    /// pays to carry it: the block declares a 24-element array, and a lit shader
+    /// holding that allocation spends registers on it on every draw. The lit
+    /// pipelines therefore compile without it by default.
+    ///
+    /// This exists so a benchmark can measure that cost by rendering one scene
+    /// both ways in a single process, which is the only way to compare them
+    /// without run-to-run variance swamping the difference. Off by default; not
+    /// a rendering mode.
+    pub fn set_force_debug_vis_shaders(&mut self, force: bool) {
+        self.resources.force_debug_vis_shaders = force;
+    }
+
     /// Force the indirect draw paths to collapse batch runs into
     /// `multi_draw_indexed_indirect` even where the backend emulates it as a
     /// per-entry loop (Metal). The emulated result is identical, so this exists
@@ -1229,11 +1348,56 @@ impl ViewportRenderer {
     /// - [`RuntimeMode::Capture`]: full quality, intended for screenshot/export workflows.
     pub fn set_runtime_mode(&mut self, mode: crate::renderer::stats::RuntimeMode) {
         self.runtime_mode = mode;
+        // A capture must have every pipeline it binds, so compiles block
+        // for as long as the mode is set, whatever the compilation policy.
+        self.resources
+            .pipeline_compiler
+            .set_capturing(mode == crate::renderer::stats::RuntimeMode::Capture);
     }
 
     /// Return the current runtime mode.
     pub fn runtime_mode(&self) -> crate::renderer::stats::RuntimeMode {
         self.runtime_mode
+    }
+
+    /// Set how a pipeline is compiled the first time a frame needs it.
+    ///
+    /// The default is [`PipelineCompilation::platform_default`]: on a
+    /// worker, with the draw skipped until it is ready, everywhere but the
+    /// web and, on wgpu 27, macOS and iOS. Set [`PipelineCompilation::Blocking`] to
+    /// compile on the calling thread and never skip a draw, which is what a
+    /// frame that is read back right away needs. Takes effect for the next
+    /// compile; one already running on a worker finishes there.
+    /// [`RuntimeMode::Capture`](crate::RuntimeMode::Capture) compiles
+    /// blocking while it is set, whatever this says.
+    pub fn set_pipeline_compilation(&mut self, policy: PipelineCompilation) {
+        self.resources.pipeline_compiler.set_policy(policy);
+    }
+
+    /// The pipeline compilation policy as set. See
+    /// [`set_pipeline_compilation`](Self::set_pipeline_compilation).
+    pub fn pipeline_compilation(&self) -> PipelineCompilation {
+        self.resources.pipeline_compiler.configured_policy()
+    }
+
+    /// Pipelines handed to the workers that are not ready yet. Zero means
+    /// every pipeline a frame or a warm-up has asked for so far is built;
+    /// the next frame that uses one draws it. Always zero under
+    /// [`PipelineCompilation::Blocking`]. Also in
+    /// [`FrameStats::pipelines_pending`](crate::FrameStats::pipelines_pending).
+    pub fn pipelines_pending(&self) -> usize {
+        self.resources.pipeline_compiler.pending()
+    }
+
+    /// Block until [`pipelines_pending`](Self::pipelines_pending) is zero.
+    ///
+    /// A pending rebuild of the mesh pipelines (after a deformer
+    /// registration) is flushed first, so nothing is left for the next
+    /// frame to compile. Returns at once under `Blocking`. This is what a
+    /// loading screen waits on after a warm-up.
+    pub fn wait_for_pipelines(&mut self, device: &crate::gpu::Device) {
+        self.resources.flush_mesh_pipeline_rebuild(device);
+        self.resources.pipeline_compiler.wait();
     }
 
     /// True when the current render presents a frame the user sees, and so
@@ -1248,7 +1412,7 @@ impl ViewportRenderer {
     ///
     /// When enabled, `prepare()` retains a copy of the frame's pickable items so
     /// `pick()` and `pick_rect()` can run later (e.g. on a mouse click) without the
-    /// scene data. This copies all inline point/glyph/curve geometry each frame, so it
+    /// scene data. This copies all inline point/field/curve geometry each frame, so it
     /// is disabled by default: turn it on only when using the CPU `pick()`/`pick_rect()`
     /// path. The GPU path (`pick_scene_gpu`) and the renderer-free
     /// `interaction::picking` functions do not need it.
@@ -1315,7 +1479,7 @@ impl ViewportRenderer {
     /// [`is_gpu_culling_supported`](Self::is_gpu_culling_supported) is true.
     pub fn tuning(&self) -> crate::renderer::tuning::RenderTuning {
         crate::renderer::tuning::RenderTuning {
-            gpu_driven_culling: self.instancing.gpu_culling_enabled,
+            gpu_driven_culling: self.instancing.gpu_culling_wanted,
             occlusion_culling: self.occlusion_culling_enabled(),
             performance: self.performance_policy(),
             render_scale: self.current_render_scale,
@@ -1367,6 +1531,49 @@ impl ViewportRenderer {
         self.instancing.use_instancing
     }
 
+    /// Which material-texture path this renderer took: `"bindless"` or
+    /// `"per-batch"`.
+    ///
+    /// Chosen once at construction from the device's enabled features, and it is
+    /// not inferable from the backend: an Apple silicon device reports the
+    /// bindless feature set through Metal argument buffers and takes that path.
+    /// Requesting [`recommended_device_features`](Self::recommended_device_features)
+    /// is what enables it when the adapter has it.
+    ///
+    /// The two paths bind textures differently, so they do not share a bug
+    /// surface. Worth logging, and worth putting in a bug report.
+    pub fn material_texture_binding(&self) -> &'static str {
+        use crate::resources::mesh::instanced_bindless::MaterialTextureBinding;
+        match self.resources.instancing.material_texture_binding {
+            MaterialTextureBinding::Bindless => "bindless",
+            MaterialTextureBinding::PerBatch => "per-batch",
+        }
+    }
+
+    /// Take the per-batch material-texture binding, whatever the device supports.
+    ///
+    /// The write side of [`material_texture_binding`](Self::material_texture_binding).
+    /// The renderer picks bindless whenever the device offers it, and the two
+    /// paths bind textures differently, so when output differs between machines
+    /// this is how to hold one of them still. Turning bindless off without it
+    /// means building the device with fewer features than the renderer asks for,
+    /// which changes more than this one choice.
+    ///
+    /// Call once, immediately after construction and before the first
+    /// [`prepare`](Self::prepare). There is no way back to bindless on the same
+    /// renderer: build another one.
+    ///
+    /// Expect fewer, larger instanced batches on the bindless path and more,
+    /// smaller ones here, since a per-batch bind group cannot span materials that
+    /// use different textures.
+    pub fn use_per_batch_material_textures(&mut self) {
+        use crate::resources::mesh::instanced_bindless::MaterialTextureBinding;
+        self.resources.instancing.material_texture_binding = MaterialTextureBinding::PerBatch;
+        // The interner keys blocks on their bytes, and the texture indices are
+        // part of those bytes only on the bindless path, so it has to be told.
+        self.resources.material_gpu_builder.set_bindless(false);
+    }
+
     /// Returns the number of instanced batches prepared for the current frame.
     ///
     /// Zero when using the non-instanced path. Each batch corresponds to a distinct
@@ -1404,11 +1611,12 @@ impl ViewportRenderer {
         if !self.instancing.gpu_culling_supported {
             return;
         }
-        if self.instancing.cull_resources.is_none() {
-            self.instancing.cull_resources =
-                Some(crate::renderer::indirect::CullResources::new(device));
-        }
-        let cull = self.instancing.cull_resources.as_ref().unwrap();
+        // A plugin's indirect draw reads what this dispatch writes, so it
+        // cannot be skipped while the compute compiles.
+        let cull = self
+            .instancing
+            .cull_resources
+            .get_blocking(|| crate::renderer::indirect::CullResources::new(device));
         cull.dispatch(encoder, device, queue, frustum, None, sub, None, None);
     }
 
@@ -1435,11 +1643,12 @@ impl ViewportRenderer {
         }
         debug_assert!(cascade_idx < 4, "cascade_idx must be in 0..4");
         let cascade_idx = cascade_idx.min(3);
-        if self.instancing.cull_resources.is_none() {
-            self.instancing.cull_resources =
-                Some(crate::renderer::indirect::CullResources::new(device));
-        }
-        let cull = self.instancing.cull_resources.as_ref().unwrap();
+        // A plugin's indirect draw reads what this dispatch writes, so it
+        // cannot be skipped while the compute compiles.
+        let cull = self
+            .instancing
+            .cull_resources
+            .get_blocking(|| crate::renderer::indirect::CullResources::new(device));
         cull.dispatch(
             encoder,
             device,
@@ -1539,11 +1748,12 @@ impl ViewportRenderer {
         if !self.instancing.gpu_culling_supported {
             return;
         }
-        if self.instancing.cull_resources.is_none() {
-            self.instancing.cull_resources =
-                Some(crate::renderer::indirect::CullResources::new(device));
-        }
-        let cull = self.instancing.cull_resources.as_ref().unwrap();
+        // A plugin's indirect draw reads what this dispatch writes, so it
+        // cannot be skipped while the compute compiles.
+        let cull = self
+            .instancing
+            .cull_resources
+            .get_blocking(|| crate::renderer::indirect::CullResources::new(device));
         let (meta_buf, counter_buf) = cull.scratch_single_mesh_buffers();
         let meta = crate::plugin_api::BatchMeta {
             index_count: draw.index_count,
@@ -1553,7 +1763,7 @@ impl ViewportRenderer {
             vis_offset: 0,
             is_transparent: 0,
             base_vertex: draw.base_vertex,
-            _pad: 0,
+            _reserved_flags: 0,
         };
         queue.write_buffer(meta_buf, 0, bytemuck::bytes_of(&meta));
         queue.write_buffer(counter_buf, 0, &[0u8; 4]);
@@ -1592,7 +1802,50 @@ impl ViewportRenderer {
     /// every frame where
     /// [`SceneFrame::submit_plugin_items`](crate::renderer::SceneFrame::submit_plugin_items)
     /// has populated a collection under the same name.
+    ///
+    /// # Panics
+    ///
+    /// If a type the renderer installed itself already answers to
+    /// `type_name()`. The store-backed calls on this renderer (`Uploads`,
+    /// `create_gpu_particle_system`, and the rest) resolve their plugin by name
+    /// and downcast it, so replacing one would leave those calls looking at a
+    /// type that is not what they expect. The collision is refused where it is
+    /// made rather than surfacing as a failure in an unrelated upload later.
+    /// Pick a prefix of your own: the name is only ever compared, never parsed.
     pub fn with_item_type_plugin(
+        &mut self,
+        device: &crate::gpu::Device,
+        plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
+    ) {
+        let name = plugin.type_name();
+        assert!(
+            !self.renderer_owned_type_names.contains(&name),
+            "item type name {name:?} is taken by a type the renderer installed itself. \
+             Register under a prefix of your own."
+        );
+        self.register_item_type_plugin(device, plugin);
+    }
+
+    /// [`with_item_type_plugin`](Self::with_item_type_plugin) without the
+    /// name check, and recording the name as one the renderer owns.
+    ///
+    /// The check is the only difference. The types the renderer installs
+    /// deliberately enter through the same door an external type does, so that
+    /// door is known to be wide enough for everything an item type needs; what
+    /// they cannot also do is pass a guard that exists to stop anything else
+    /// taking their names.
+    pub(crate) fn install_item_type_plugin(
+        &mut self,
+        device: &crate::gpu::Device,
+        plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
+    ) {
+        self.renderer_owned_type_names.insert(plugin.type_name());
+        self.register_item_type_plugin(device, plugin);
+    }
+
+    /// Run a plugin's `init_gpu` and store it under its type name, replacing
+    /// whatever was there. The shared tail of both registration paths.
+    fn register_item_type_plugin(
         &mut self,
         device: &crate::gpu::Device,
         mut plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
@@ -1607,6 +1860,186 @@ impl ViewportRenderer {
     /// registered.
     pub fn has_item_type_plugin(&self, type_name: &str) -> bool {
         self.item_type_plugins.contains_key(type_name)
+    }
+
+    /// Borrow a registered item-type plugin back as its concrete type.
+    ///
+    /// `with_item_type_plugin` takes the plugin by box and the renderer owns it
+    /// from then on, so this is how a host reaches it again: to upload content
+    /// the plugin stores itself, to change its settings, or to read state it
+    /// accumulated during a frame.
+    ///
+    /// `None` when nothing is registered under `type_name`, or when something
+    /// is but it is not a `T`.
+    pub fn item_type_plugin<T: crate::plugin_api::ItemTypePlugin>(
+        &self,
+        type_name: &str,
+    ) -> Option<&T> {
+        self.item_type_plugins
+            .get(type_name)?
+            .as_any_plugin()
+            .downcast_ref::<T>()
+    }
+
+    /// Mutably borrow a registered item-type plugin back as its concrete type,
+    /// the same lookup as [`item_type_plugin`](Self::item_type_plugin).
+    ///
+    /// This is the upload route for an item type that owns its own content:
+    /// take the plugin and call its own upload method on it, the way content
+    /// held by the renderer is uploaded through
+    /// [`resources_mut`](Self::resources_mut).
+    pub fn item_type_plugin_mut<T: crate::plugin_api::ItemTypePlugin>(
+        &mut self,
+        type_name: &str,
+    ) -> Option<&mut T> {
+        self.item_type_plugins
+            .get_mut(type_name)?
+            .as_any_plugin_mut()
+            .downcast_mut::<T>()
+    }
+
+    /// Borrow a registered item-type plugin together with the renderer-owned
+    /// services an upload into it needs: the job runner and read access to the
+    /// shared content arenas.
+    ///
+    /// Use this rather than [`item_type_plugin_mut`](Self::item_type_plugin_mut)
+    /// whenever the call being made on the plugin needs more than the plugin
+    /// itself. `item_type_plugin_mut` borrows the whole renderer, so
+    /// `renderer.resources()` and the job runner are out of reach for as long
+    /// as the plugin is held; these are separate fields, and only the renderer
+    /// can lend them out at the same time. The built-in types that hold their
+    /// own content upload through this.
+    ///
+    /// `None` when nothing is registered under `type_name`, or when something
+    /// is but it is not a `T`.
+    pub fn item_type_plugin_host<T: crate::plugin_api::ItemTypePlugin>(
+        &mut self,
+        type_name: &str,
+    ) -> Option<crate::plugin_api::ItemTypeHost<'_, T>> {
+        let jobs = crate::resources::Jobs::new(&self.resources);
+        let plugin = self
+            .item_type_plugins
+            .get_mut(type_name)?
+            .as_any_plugin_mut()
+            .downcast_mut::<T>()?;
+        Some(crate::plugin_api::ItemTypeHost {
+            plugin,
+            jobs,
+            resources: &self.resources,
+        })
+    }
+
+    /// Register a [`PostEffectProducer`](crate::plugin_api::PostEffectProducer).
+    ///
+    /// The producer's `init_gpu` runs on the next render (registration takes
+    /// no device), followed by `on_viewport_resized` for every viewport that
+    /// already has render targets. From then on, each HDR frame runs
+    /// `prepare` and `encode` per viewport while `enabled` returns true.
+    /// Producers run after the built-in effects, in registration order.
+    ///
+    /// Returns an id for [`remove_post_effect_producer`](Self::remove_post_effect_producer).
+    pub fn add_post_effect_producer(
+        &mut self,
+        producer: Box<dyn crate::plugin_api::PostEffectProducer>,
+    ) -> crate::plugin_api::PostEffectProducerId {
+        self.next_post_effect_producer_id += 1;
+        let id = crate::plugin_api::PostEffectProducerId(self.next_post_effect_producer_id);
+        self.post_effect_producers
+            .push(RegisteredPostEffectProducer {
+                id,
+                gpu_ready: false,
+                producer,
+            });
+        id
+    }
+
+    /// Unregister a post-effect producer. Unknown ids are ignored.
+    pub fn remove_post_effect_producer(&mut self, id: crate::plugin_api::PostEffectProducerId) {
+        self.post_effect_producers.retain(|p| p.id != id);
+    }
+
+    /// Register a [`PostEffectStage`](crate::plugin_api::PostEffectStage) at
+    /// `order` in the post-composite chain.
+    ///
+    /// The chain runs in ascending order of the key; the built-in FXAA sits
+    /// at [`stage_order::ANTI_ALIASING`](crate::plugin_api::post_effect::stage_order::ANTI_ALIASING)
+    /// (0), and [`stage_order::EXTERNAL_DEFAULT`](crate::plugin_api::post_effect::stage_order::EXTERNAL_DEFAULT)
+    /// (100) is the conventional post-AA band. Negative keys run before AA.
+    /// Stages sharing a key run in registration order, built-ins first. The
+    /// stage's `init_gpu` runs on the next render, followed by
+    /// `on_viewport_resized` for every viewport that already has render
+    /// targets; each HDR frame then runs `prepare` and `encode` per viewport
+    /// while `enabled` returns true.
+    ///
+    /// Returns an id for [`remove_post_effect_stage`](Self::remove_post_effect_stage).
+    pub fn add_post_effect_stage(
+        &mut self,
+        stage: Box<dyn crate::plugin_api::PostEffectStage>,
+        order: i32,
+    ) -> crate::plugin_api::PostEffectStageId {
+        self.next_post_effect_stage_id += 1;
+        let id = crate::plugin_api::PostEffectStageId(self.next_post_effect_stage_id);
+        self.post_effect_stages.push(RegisteredPostEffectStage {
+            id,
+            order,
+            gpu_ready: false,
+            stage,
+        });
+        id
+    }
+
+    /// Unregister a post-effect stage. Unknown ids are ignored.
+    pub fn remove_post_effect_stage(&mut self, id: crate::plugin_api::PostEffectStageId) {
+        self.post_effect_stages.retain(|s| s.id != id);
+    }
+
+    /// Run deferred GPU init for post-effect producers and stages registered
+    /// since the last render: `init_gpu`, then `on_viewport_resized` for
+    /// each viewport that already has render targets.
+    pub(crate) fn init_pending_post_effect_producers(&mut self, device: &crate::gpu::Device) {
+        if self.post_effect_producers.iter().all(|p| p.gpu_ready)
+            && self.post_effect_stages.iter().all(|s| s.gpu_ready)
+        {
+            return;
+        }
+        let target_format = self.resources.target_format;
+        let live: Vec<crate::plugin_api::PostEffectResizeContext<'_>> = self
+            .viewport_slots
+            .iter()
+            .enumerate()
+            .filter_map(|(vp_idx, slot)| {
+                slot.hdr
+                    .as_ref()
+                    .map(|hdr| crate::plugin_api::PostEffectResizeContext {
+                        viewport_index: vp_idx,
+                        scene_size: hdr.scene_size,
+                        output_size: hdr.output_size,
+                        scene_colour: &hdr.hdr_view,
+                        scene_depth: &hdr.hdr_depth_only_view,
+                        target_format,
+                    })
+            })
+            .collect();
+        for entry in &mut self.post_effect_producers {
+            if entry.gpu_ready {
+                continue;
+            }
+            entry.producer.init_gpu(device);
+            for ctx in &live {
+                entry.producer.on_viewport_resized(device, ctx);
+            }
+            entry.gpu_ready = true;
+        }
+        for entry in &mut self.post_effect_stages {
+            if entry.gpu_ready {
+                continue;
+            }
+            entry.stage.init_gpu(device);
+            for ctx in &live {
+                entry.stage.on_viewport_resized(device, ctx);
+            }
+            entry.gpu_ready = true;
+        }
     }
 
     /// Notify every registered item-type plugin that the wgpu device has been
@@ -1624,10 +2057,45 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
     ) {
+        // Whatever the lighting uniforms held is gone with the old device.
+        self.shadow.written = Default::default();
         let shared = self.resources.shared_bindings();
         for plugin in self.item_type_plugins.values_mut() {
             plugin.on_device_recreated(device, queue);
             plugin.init_gpu(device, &shared);
+        }
+        // Post-effect producers and stages follow the same shape, then
+        // re-receive the per-viewport resize signal so their targets are
+        // rebuilt against the new device.
+        for entry in &mut self.post_effect_producers {
+            entry.producer.on_device_recreated(device, queue);
+            entry.producer.init_gpu(device);
+            entry.gpu_ready = true;
+        }
+        for entry in &mut self.post_effect_stages {
+            entry.stage.on_device_recreated(device, queue);
+            entry.stage.init_gpu(device);
+            entry.gpu_ready = true;
+        }
+        let target_format = self.resources.target_format;
+        for (vp_idx, slot) in self.viewport_slots.iter().enumerate() {
+            let Some(hdr) = slot.hdr.as_ref() else {
+                continue;
+            };
+            let ctx = crate::plugin_api::PostEffectResizeContext {
+                viewport_index: vp_idx,
+                scene_size: hdr.scene_size,
+                output_size: hdr.output_size,
+                scene_colour: &hdr.hdr_view,
+                scene_depth: &hdr.hdr_depth_only_view,
+                target_format,
+            };
+            for entry in &mut self.post_effect_producers {
+                entry.producer.on_viewport_resized(device, &ctx);
+            }
+            for entry in &mut self.post_effect_stages {
+                entry.stage.on_viewport_resized(device, &ctx);
+            }
         }
     }
 
@@ -1643,21 +2111,28 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> Vec<crate::gpu::CommandBuffer> {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+        if self.item_type_plugins.is_empty() {
             return Vec::new();
         }
-        // A derivative render (capture / bake) reads resident state: it must not
-        // run a plugin's `&mut self` prepare, which would advance the plugin's
-        // own per-frame state, nor bump the plugin frame index. The draw passes
-        // are skipped in the same way (see `dispatch_plugin_paint`), so plugin
-        // geometry is absent from a bake rather than drawn stale.
-        if !self.render_advances_state() {
-            return Vec::new();
-        }
+        // Derivative renders (captures / bakes) dispatch too: they run their
+        // own prepare and cull against the capture camera, so the matching
+        // paint draws current, right-camera geometry, the same as built-in
+        // item types. The presented frame re-prepares afterwards anyway.
+        //
+        // Plugin prepare runs before the rest of the lib's prepare, so a plugin
+        // that reads LUT texels rather than binding the view has to find them
+        // written; the call is a no-op after the first frame.
+        self.resources.ensure_colourmaps_initialized(device, queue);
         self.plugin_frame_index = self.plugin_frame_index.wrapping_add(1);
+        self.collect_surface_mask(device, queue, frame);
         let mut bufs: Vec<crate::gpu::CommandBuffer> = Vec::new();
+        let mut timings: Vec<(&'static str, f32)> = Vec::new();
         for (name, plugin) in self.item_type_plugins.iter_mut() {
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                let start = web_time::Instant::now();
                 // Constructed per plugin because `Jobs` borrows `&resources`
                 // and the borrow only needs to live for this iteration.
                 let ctx = crate::plugin_api::ItemFrameContext {
@@ -1665,33 +2140,111 @@ impl ViewportRenderer {
                     viewport_size: glam::Vec2::from(frame.camera.viewport_size),
                     viewport_index: frame.camera.viewport_index,
                     frame_index: self.plugin_frame_index,
+                    scene_generation: frame.scene.generation,
                     jobs: crate::resources::Jobs::new(&self.resources),
+                    resources: &self.resources,
+                    wireframe_mode: frame.viewport.wireframe_mode,
+                    outline_selected: frame.interaction.outline_selected,
+                    sub_selection: frame.interaction.sub_selection.as_ref(),
+                    clip_objects: &frame.effects.clip.objects,
+                    quality_reduced: self.degradation_volume_quality_reduced,
+                    collections: crate::renderer::item_plugins::plugin_collections_slice(
+                        frame, name,
+                    ),
                 };
-                bufs.extend(plugin.prepare(device, queue, &ctx, items.as_ref()));
+                bufs.extend(plugin.prepare(device, queue, &ctx, &items));
+                timings.push((name, start.elapsed().as_secs_f32() * 1000.0));
+            } else {
+                // Present with a zero rather than absent, so a consumer reading
+                // the breakdown sees every registered type every frame.
+                timings.push((name, 0.0));
             }
         }
+        self.plugin_prepare_ms = timings;
         bufs
+    }
+
+    /// Collect every plugin's wireframe polylines and upload them into the
+    /// shared line substrate.
+    ///
+    /// Runs in scene prepare, right after the substrate is cleared, so a
+    /// plugin's wireframe draws in the same
+    /// pass and the same order relative to scene geometry as before these
+    /// moved behind the seam. Two phases because the context borrows
+    /// `resources` while the upload needs it mutably.
+    pub(crate) fn dispatch_plugin_wireframes(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &FrameData,
+    ) {
+        if self.item_type_plugins.is_empty() {
+            return;
+        }
+        let mut polylines: Vec<crate::renderer::PolylineItem> = Vec::new();
+        for (name, plugin) in self.item_type_plugins.iter() {
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if items.is_empty() {
+                continue;
+            }
+            if items.is_empty() {
+                continue;
+            }
+            let ctx = crate::plugin_api::ItemFrameContext {
+                camera: &frame.camera.render_camera,
+                viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+                viewport_index: frame.camera.viewport_index,
+                frame_index: self.plugin_frame_index,
+                scene_generation: frame.scene.generation,
+                jobs: crate::resources::Jobs::new(&self.resources),
+                resources: &self.resources,
+                wireframe_mode: frame.viewport.wireframe_mode,
+                outline_selected: frame.interaction.outline_selected,
+                sub_selection: frame.interaction.sub_selection.as_ref(),
+                clip_objects: &frame.effects.clip.objects,
+                quality_reduced: self.degradation_volume_quality_reduced,
+                collections: crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            };
+            polylines.extend(plugin.wireframe_polylines(&items, &ctx));
+        }
+        if polylines.is_empty() {
+            return;
+        }
+        self.resources.ensure_polyline_pipeline(device);
+        let vp_size = frame.camera.viewport_size;
+        for item in &polylines {
+            if item.positions.is_empty() {
+                continue;
+            }
+            let mut gpu = self
+                .resources
+                .upload_polyline_per_frame(device, queue, item, vp_size);
+            // A plugin asks for the thin single-pixel line by setting the flag
+            // on the item it returns; the substrate keys its pipeline on the
+            // uploaded data rather than on the item.
+            gpu.wireframe = item.settings.wireframe;
+            self.polyline_gpu_data.push(gpu);
+        }
     }
 
     /// Walk registered item-type plugins and invoke `paint` for each one
     /// that has a matching collection submitted on `frame.scene`.
     ///
-    /// Called from inside the lib's HDR scene pass between built-in
-    /// opaques and the skybox.
-    pub(crate) fn dispatch_plugin_paint<'rp>(
-        &'rp self,
-        pass: &mut crate::gpu::RenderPass<'rp>,
-        frame: &'rp FrameData,
+    /// Called from inside the lib's HDR scene pass after built-in opaques
+    /// and the skybox (`is_hdr` true), and from the LDR scene positions
+    /// after the built-in scene content (`is_hdr` false). On the LDR path
+    /// only plugins that opt in via `draws_ldr` are invoked: the pass
+    /// targets the renderer's output format, and a plugin without a
+    /// pipeline for it must be skipped, not handed an incompatible pass.
+    pub(crate) fn dispatch_plugin_paint(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
+        is_hdr: bool,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
-            return;
-        }
-        // A derivative render (capture / bake) does not draw plugin items. Their
-        // draw passes read visibility / LOD that `cull` sets against the
-        // presented camera (skipped here), so painting them would render stale,
-        // wrong-camera geometry into the bake. Plugin geometry is absent from
-        // bakes rather than partially present.
-        if !self.render_advances_state() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         let ctx = crate::plugin_api::PaintContext {
@@ -1699,10 +2252,22 @@ impl ViewportRenderer {
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
+            target_format: if is_hdr {
+                crate::resources::HDR_COLOR_FORMAT
+            } else {
+                self.resources.target_format
+            },
+            meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                plugin.paint(pass, &ctx, items.as_ref());
+            if !is_hdr && !plugin.draws_ldr() {
+                continue;
+            }
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.paint(pass, &ctx, &items);
             }
         }
     }
@@ -1716,11 +2281,8 @@ impl ViewportRenderer {
     pub(crate) fn any_plugin_items_submitted(&self, frame: &FrameData) -> bool {
         !self.item_type_plugins.is_empty()
             && self.item_type_plugins.keys().any(|name| {
-                frame
-                    .scene
-                    .plugin_items
-                    .get(*name)
-                    .is_some_and(|items| !items.is_empty())
+                crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                    .any(|items| !items.is_empty())
             })
     }
 
@@ -1731,10 +2293,7 @@ impl ViewportRenderer {
         !frame.scene.foreground_items.is_empty()
             || self.item_type_plugins.iter().any(|(name, plugin)| {
                 plugin.draws_foreground()
-                    && frame
-                        .scene
-                        .plugin_items
-                        .get(*name)
+                    && crate::renderer::item_plugins::plugin_items_for(frame, name)
                         .is_some_and(|items| !items.is_empty())
             })
     }
@@ -1745,17 +2304,13 @@ impl ViewportRenderer {
     /// Called from inside the foreground pass after the built-in item
     /// draws. `camera` carries the foreground projection so plugin-side
     /// math agrees with the bound group-0 camera.
-    pub(crate) fn dispatch_plugin_paint_foreground<'rp>(
-        &'rp self,
-        pass: &mut crate::gpu::RenderPass<'rp>,
-        frame: &'rp FrameData,
-        camera: &'rp RenderCamera,
+    pub(crate) fn dispatch_plugin_paint_foreground(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
+        camera: &RenderCamera,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
-            return;
-        }
-        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
-        if !self.render_advances_state() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         let ctx = crate::plugin_api::PaintContext {
@@ -1763,13 +2318,18 @@ impl ViewportRenderer {
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
+            target_format: crate::resources::HDR_COLOR_FORMAT,
+            meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         for (name, plugin) in self.item_type_plugins.iter() {
             if !plugin.draws_foreground() {
                 continue;
             }
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                plugin.paint_foreground(pass, &ctx, items.as_ref());
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.paint_foreground(pass, &ctx, &items);
             }
         }
     }
@@ -1782,10 +2342,7 @@ impl ViewportRenderer {
         !self.item_type_plugins.is_empty()
             && self.item_type_plugins.iter().any(|(name, plugin)| {
                 plugin.draws_depth_read()
-                    && frame
-                        .scene
-                        .plugin_items
-                        .get(*name)
+                    && crate::renderer::item_plugins::plugin_items_for(frame, name)
                         .is_some_and(|items| !items.is_empty())
             })
     }
@@ -1799,19 +2356,15 @@ impl ViewportRenderer {
     /// instead of writing it. The caller hands over the view + sampler and a
     /// prebuilt bind group so the plugin can either bake the depth into a group
     /// of its own or bind the ready-made group at a spare slot.
-    pub(crate) fn dispatch_plugin_paint_depth_read<'rp>(
-        &'rp self,
-        pass: &mut crate::gpu::RenderPass<'rp>,
-        frame: &'rp FrameData,
-        scene_depth: &'rp crate::gpu::TextureView,
-        scene_depth_sampler: &'rp crate::gpu::Sampler,
-        scene_depth_bind_group: &'rp crate::gpu::BindGroup,
+    pub(crate) fn dispatch_plugin_paint_depth_read(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
+        scene_depth: &crate::gpu::TextureView,
+        scene_depth_sampler: &crate::gpu::Sampler,
+        scene_depth_bind_group: &crate::gpu::BindGroup,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
-            return;
-        }
-        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
-        if !self.render_advances_state() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         let ctx = crate::plugin_api::DepthReadContext {
@@ -1827,8 +2380,81 @@ impl ViewportRenderer {
             if !plugin.draws_depth_read() {
                 continue;
             }
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                plugin.paint_depth_read(pass, &ctx, items.as_ref());
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.paint_depth_read(pass, &ctx, &items);
+            }
+        }
+    }
+
+    /// Walk registered plugins and invoke `encode` for each one that asked for
+    /// `scope`, handing over the frame's command encoder rather than a begun
+    /// render pass.
+    ///
+    /// Called from the HDR path at each [`EncoderScope`] point. A plugin that
+    /// lists no scopes is skipped without building the context.
+    ///
+    /// [`EncoderScope`]: crate::plugin_api::EncoderScope
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn dispatch_plugin_encode(
+        &self,
+        encoder: &mut crate::gpu::CommandEncoder,
+        frame: &FrameData,
+        scope: crate::plugin_api::EncoderScope,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        vp_idx: usize,
+    ) {
+        if self.item_type_plugins.is_empty() {
+            return;
+        }
+        if !self
+            .item_type_plugins
+            .values()
+            .any(|p| p.encoder_scopes().contains(&scope))
+        {
+            return;
+        }
+        let Some(slot) = self.viewport_slots.get(vp_idx) else {
+            return;
+        };
+        let Some(slot_hdr) = slot.hdr.as_ref() else {
+            return;
+        };
+        // The HDR attachments, not the supersampled ones: under SSAA the
+        // resolve has already run by the time either scope fires, so from here
+        // on the frame draws into the HDR target like every other frame.
+        let ctx = crate::plugin_api::EncoderScopeContext {
+            scope,
+            device,
+            queue,
+            camera: &frame.camera.render_camera,
+            viewport_index: vp_idx,
+            frame_index: self.plugin_frame_index,
+            scene_size: slot_hdr.scene_size,
+            camera_bind_group: &slot.camera_bind_group,
+            scene_colour: &slot_hdr.hdr_view,
+            scene_colour_texture: &slot_hdr.hdr_texture,
+            scene_depth: &slot_hdr.hdr_depth_view,
+            scene_depth_only: &slot_hdr.hdr_depth_only_view,
+            scene_stencil_only: &slot_hdr.hdr_stencil_only_view,
+            effects: &frame.effects,
+            outline_colour: frame.interaction.outline_colour,
+            outline_width_px: frame.interaction.outline_width_px,
+            meshes: crate::resources::MeshDraw::new(&self.resources),
+            quality_reduced: self.last_stats.volume_quality_reduced,
+        };
+        for (name, plugin) in self.item_type_plugins.iter() {
+            if !plugin.encoder_scopes().contains(&scope) {
+                continue;
+            }
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.encode(encoder, &ctx, &items);
             }
         }
     }
@@ -1839,13 +2465,13 @@ impl ViewportRenderer {
     /// Called from inside the GPU pick pass after the built-in draws. The
     /// caller has bound the shared group-0 camera bind group; plugins that
     /// rebind group 0 must restore it.
-    pub(crate) fn dispatch_plugin_pick<'rp>(
-        &'rp self,
-        pass: &mut crate::gpu::RenderPass<'rp>,
-        frame: &'rp FrameData,
+    pub(crate) fn dispatch_plugin_pick(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
         mask: crate::renderer::picking::PickMask,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         let ctx = crate::plugin_api::PickPassContext {
@@ -1854,10 +2480,14 @@ impl ViewportRenderer {
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             mask,
+            meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                plugin.render_pick(pass, &ctx, items.as_ref());
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.render_pick(pass, &ctx, &items);
             }
         }
     }
@@ -1867,16 +2497,12 @@ impl ViewportRenderer {
     ///
     /// Called from inside the lib's OIT render pass, after built-in
     /// transparent draws.
-    pub(crate) fn dispatch_plugin_paint_transparent<'rp>(
-        &'rp self,
-        pass: &mut crate::gpu::RenderPass<'rp>,
-        frame: &'rp FrameData,
+    pub(crate) fn dispatch_plugin_paint_transparent(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
-            return;
-        }
-        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
-        if !self.render_advances_state() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         let ctx = crate::plugin_api::PaintContext {
@@ -1884,10 +2510,15 @@ impl ViewportRenderer {
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
+            target_format: crate::resources::HDR_COLOR_FORMAT,
+            meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                plugin.paint_transparent(pass, &ctx, items.as_ref());
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.paint_transparent(pass, &ctx, &items);
             }
         }
     }
@@ -1901,18 +2532,14 @@ impl ViewportRenderer {
     /// alongside the other dispatchers as the natural shape; a future
     /// refactor that splits the resources borrow can switch back.
     #[allow(dead_code)]
-    pub(crate) fn dispatch_plugin_shadow<'rp>(
-        &'rp self,
-        pass: &mut crate::gpu::RenderPass<'rp>,
-        frame: &'rp FrameData,
+    pub(crate) fn dispatch_plugin_shadow(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
         cascade_idx: u32,
         light_view_proj: glam::Mat4,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
-            return;
-        }
-        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
-        if !self.render_advances_state() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         let ctx = crate::plugin_api::ShadowCastContext {
@@ -1923,8 +2550,11 @@ impl ViewportRenderer {
             frame_index: self.plugin_frame_index,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                plugin.cast_shadow_pass(pass, &ctx, items.as_ref());
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.cast_shadow_pass(pass, &ctx, &items);
             }
         }
     }
@@ -1939,25 +2569,32 @@ impl ViewportRenderer {
         frustum: &crate::camera::frustum::Frustum,
         frame: &FrameData,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
-            return;
-        }
-        // Skip during a derivative render: `cull` is `&mut self` and would
-        // advance the plugin's own per-frame visibility state. See
-        // `dispatch_plugin_prepare`.
-        if !self.render_advances_state() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         for (name, plugin) in self.item_type_plugins.iter_mut() {
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
                 let ctx = crate::plugin_api::ItemFrameContext {
                     camera: &frame.camera.render_camera,
                     viewport_size: glam::Vec2::from(frame.camera.viewport_size),
                     viewport_index: frame.camera.viewport_index,
                     frame_index: self.plugin_frame_index,
+                    scene_generation: frame.scene.generation,
                     jobs: crate::resources::Jobs::new(&self.resources),
+                    resources: &self.resources,
+                    wireframe_mode: frame.viewport.wireframe_mode,
+                    outline_selected: frame.interaction.outline_selected,
+                    sub_selection: frame.interaction.sub_selection.as_ref(),
+                    clip_objects: &frame.effects.clip.objects,
+                    quality_reduced: self.degradation_volume_quality_reduced,
+                    collections: crate::renderer::item_plugins::plugin_collections_slice(
+                        frame, name,
+                    ),
                 };
-                plugin.cull(frustum, &ctx, items.as_ref());
+                plugin.cull(frustum, &ctx, &items);
             }
         }
     }
@@ -1975,25 +2612,32 @@ impl ViewportRenderer {
             return false;
         }
         self.item_type_plugins.keys().any(|name| {
-            frame.scene.plugin_items.get(*name).is_some_and(|items| {
+            crate::renderer::item_plugins::plugin_collections_for(frame, name).any(|items| {
                 (0..items.len()).any(|i| {
                     let s = items.item_settings(i);
-                    s.selected && !s.hidden
+                    if s.hidden {
+                        return false;
+                    }
+                    // A sub-object selection on a plugin item drives the
+                    // outline machinery the same way whole-item selection
+                    // does; without this, sub-level outlines would never
+                    // open the mask pass.
+                    s.selected
+                        || (s.pick_id != PickId::NONE
+                            && frame.interaction.sub_selection.as_ref().is_some_and(|sel| {
+                                sel.items.iter().any(|(node_id, _)| *node_id == s.pick_id.0)
+                            }))
                 })
             })
         })
     }
 
-    pub(crate) fn dispatch_plugin_outline_mask<'rp>(
-        &'rp self,
-        pass: &mut crate::gpu::RenderPass<'rp>,
-        frame: &'rp FrameData,
+    pub(crate) fn dispatch_plugin_outline_mask(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
-            return;
-        }
-        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
-        if !self.render_advances_state() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         let ctx = crate::plugin_api::OutlineMaskContext {
@@ -2001,10 +2645,14 @@ impl ViewportRenderer {
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
+            meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                plugin.outline_mask(pass, &ctx, items.as_ref());
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.outline_mask(pass, &ctx, &items);
             }
         }
     }
@@ -2034,11 +2682,30 @@ impl ViewportRenderer {
         }
     }
 
-    /// Read the debug values at a specific pixel from the per-fragment storage buffer.
+    /// Read the debug quantity at a specific pixel, as the visible surface there
+    /// resolved it.
     ///
-    /// Returns `None` when debug_vis is inactive (no buffer allocated) or when `(x, y)`
-    /// is outside the viewport. The four channels correspond to the current R/G/B channel
-    /// selectors plus 1.0 for alpha.
+    /// The value comes out of the HDR target after the depth test, so it belongs
+    /// to the surface you can see rather than to whichever fragment happened to
+    /// shade last. The three colour channels hold the current R/G/B channel
+    /// selectors; alpha comes from the target and carries nothing useful.
+    ///
+    /// Returns `None` unless the last prepared frame could leave the quantity
+    /// there, which needs all of:
+    ///
+    /// - [`DebugVis::active`](crate::DebugVis) set,
+    /// - [`PipelineMode::Hdr`](crate::PipelineMode) : the LDR path renders
+    ///   straight into your target, which the renderer does not own,
+    /// - [`DebugOutputMode::Replace`](crate::DebugOutputMode) : the other modes
+    ///   mix the quantity with the shaded colour, so what lands in the target is
+    ///   not the quantity,
+    ///
+    /// and `(x, y)` inside the viewport. `None` means the configuration cannot
+    /// be answered, never that the pixel had no value.
+    ///
+    /// Values are half-float, so expect about three decimal digits. With
+    /// supersampling on, the texel has been resolved from several samples and is
+    /// a filtered average rather than one surface's value.
     ///
     /// This submits a GPU-to-CPU copy and waits synchronously. Only call from outside
     /// a render pass (e.g., in the next frame's prepare step), not inside paint callbacks.
@@ -2053,22 +2720,46 @@ impl ViewportRenderer {
     ) -> Option<[f32; 4]> {
         // Use the primary viewport slot (index 0).
         let slot = self.viewport_slots.first()?;
-        let buf = slot.debug_frag_buf.as_ref()?;
-        let (vw, vh) = slot.debug_frag_dims;
+        let (vw, vh) = slot.debug_readback_dims?;
         if x >= vw || y >= vh {
             return None;
         }
-        let byte_offset = ((y as u64) * (vw as u64) + (x as u64)) * 16;
+        let texture = &slot.hdr.as_ref()?.hdr_texture;
+
+        // One texel out of the HDR target. A buffer copy needs its rows aligned
+        // even for a single row, so the staging buffer is a whole aligned row
+        // and only its first texel is read.
         let staging = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: None,
-            size: 16,
+            label: Some("debug_pixel_staging"),
+            size: u64::from(crate::gpu::COPY_BYTES_PER_ROW_ALIGNMENT),
             usage: crate::gpu::BufferUsages::MAP_READ | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let mut encoder =
             device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor { label: None });
-        encoder.copy_buffer_to_buffer(buf, byte_offset, &staging, 0, 16);
+        encoder.copy_texture_to_buffer(
+            crate::gpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d { x, y, z: 0 },
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            crate::gpu::TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: crate::gpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(crate::gpu::COPY_BYTES_PER_ROW_ALIGNMENT),
+                    rows_per_image: Some(1),
+                },
+            },
+            crate::gpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
         queue.submit(Some(encoder.finish()));
+
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel::<Result<(), crate::gpu::BufferAsyncError>>();
         slice.map_async(crate::gpu::MapMode::Read, move |r| {
@@ -2080,124 +2771,78 @@ impl ViewportRenderer {
         });
         rx.recv().ok()?.ok()?;
         let data = crate::gpu::mapped_range(slice);
-        Some(bytemuck::pod_read_unaligned::<[f32; 4]>(&data))
+        // Rgba16Float: four halves.
+        Some(std::array::from_fn(|c| {
+            let bits = u16::from_le_bytes([data[c * 2], data[c * 2 + 1]]);
+            half::f16::from_bits(bits).to_f32()
+        }))
     }
 
-    /// Upload a Gaussian splat set to the GPU.
+    /// Upload an equirectangular environment, bake its lighting, and return its
+    /// handle. Blocks until the bake finishes.
     ///
-    /// Call once per splat set at startup or when it changes. The returned
-    /// [`GaussianSplatId`] is valid until [`free_gaussian_splat`](Self::free_gaussian_splat) is called.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ViewportError::InvalidGaussianSplatData`](crate::error::ViewportError::InvalidGaussianSplatData)
-    /// if `data.positions` is empty or if `positions`, `scales`, `rotations`, and `opacities`
-    /// differ in length.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use viewport_lib::error::ViewportError;
-    /// # use viewport_lib::renderer::{GaussianSplatData, ViewportRenderer};
-    /// # fn demo(renderer: &mut ViewportRenderer, device: &viewport_lib::wgpu::Device, queue: &viewport_lib::wgpu::Queue) {
-    /// let result = renderer.upload_gaussian_splat(device, queue, &GaussianSplatData::default());
-    /// assert!(matches!(result, Err(ViewportError::InvalidGaussianSplatData { .. })));
-    /// # }
-    /// ```
-    pub fn upload_gaussian_splat(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        data: &GaussianSplatData,
-    ) -> crate::error::ViewportResult<GaussianSplatId> {
-        self.resources.upload_gaussian_splat(device, queue, data)
-    }
-
-    /// Remove an uploaded Gaussian splat set by handle.
-    ///
-    /// After this call the `id` is invalid and must not be submitted in `SceneFrame`.
-    pub fn free_gaussian_splat(&mut self, id: GaussianSplatId) {
-        self.resources.free_gaussian_splat(id);
-    }
-
-    /// Upload an equirectangular HDR environment map and precompute IBL textures.
-    ///
-    /// `pixels` is row-major RGBA f32 data (4 floats per texel), `width`x`height`.
-    /// This rebuilds camera bind groups so shaders immediately see the new textures.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
-    /// if `pixels.len()` does not equal `width * height * 4`.
+    /// Name the handle in an [`EnvironmentLighting`] to light the scene with it,
+    /// in an [`EnvironmentBackground`] to draw it behind a viewport, or in an
+    /// [`EnvironmentZone`](crate::resources::EnvironmentZone). `data` is a whole
+    /// Z-up panorama; a float image (`TextureData::hdr`) gives realistic light,
+    /// an 8-bit image is decoded by its colour space but lights flat, and a
+    /// BC6H or ASTC HDR image stays compressed on the GPU. See
+    /// [`upload_environment`](crate::resources::material::environment::upload_environment)
+    /// for the details and errors.
     ///
     /// # Examples
     ///
     /// ```no_run
     /// # use viewport_lib::error::ViewportError;
     /// # use viewport_lib::renderer::ViewportRenderer;
+    /// # use viewport_lib::{EnvironmentOptions, TextureData};
     /// # fn demo(renderer: &mut ViewportRenderer, device: &viewport_lib::wgpu::Device, queue: &viewport_lib::wgpu::Queue) {
-    /// // 2x2 RGBA image requires exactly 16 floats.
-    /// let result = renderer.upload_environment_map(device, queue, &[0.0f32; 12], 2, 2);
+    /// // A 2x2 RGBA image needs exactly 16 floats.
+    /// let data = TextureData::hdr(2, 2, vec![0.0f32; 12]);
+    /// let result = renderer.upload_environment(device, queue, data, EnvironmentOptions::default());
     /// assert!(matches!(result, Err(ViewportError::InvalidTextureData { expected: 16, actual: 12 })));
     /// # }
     /// ```
-    pub fn upload_environment_map(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        pixels: &[f32],
-        width: u32,
-        height: u32,
-    ) -> crate::error::ViewportResult<()> {
-        crate::resources::material::environment::upload_environment_map(
-            &mut self.resources,
-            device,
-            queue,
-            pixels,
-            width,
-            height,
-        )?;
-        self.rebuild_camera_bind_groups(device);
-        Ok(())
-    }
-
-    /// Upload an extra environment into the indexed set and return its handle.
-    ///
-    /// Unlike [`upload_environment_map`](Self::upload_environment_map), this does
-    /// not replace the scene default or the skybox: the environment takes its own
-    /// array layer, to be selected per fragment once zone selection lands. Blocks
-    /// until the bake finishes, then rebuilds the camera bind groups.
-    ///
-    /// # Errors
-    ///
-    /// [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
-    /// if `pixels.len()` does not equal `width * height * 4`, or
-    /// [`ViewportError::TooManyEnvironments`](crate::error::ViewportError::TooManyEnvironments)
-    /// once the environment set is full.
     pub fn upload_environment(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        pixels: &[f32],
-        width: u32,
-        height: u32,
+        data: crate::TextureData,
+        options: crate::resources::EnvironmentOptions,
     ) -> crate::error::ViewportResult<crate::resources::EnvironmentMapId> {
-        let env = crate::resources::material::environment::upload_environment(
+        crate::resources::material::environment::upload_environment(
             &mut self.resources,
             device,
             queue,
-            pixels,
-            width,
-            height,
-        )?;
-        self.rebuild_camera_bind_groups(device);
-        Ok(env)
+            data,
+            options,
+        )
+    }
+
+    /// The illuminance `id`'s upper hemisphere (+Z) gives an upward-facing
+    /// surface at a multiplier of 1.0, in lux, or `None` if `id` is freed or
+    /// still baking. [`EnvironmentIntensity::Lux`] scales the environment by its
+    /// target over this.
+    pub fn environment_upper_hemisphere_lux(
+        &self,
+        id: crate::resources::EnvironmentMapId,
+    ) -> Option<f32> {
+        crate::resources::material::environment::environment_upper_hemisphere_lux(
+            &self.resources,
+            id,
+        )
+    }
+
+    /// Release an environment's slot and its source. Returns `false` when `id`
+    /// was already freed. A handle kept past this resolves to nothing.
+    pub fn free_environment(&mut self, id: crate::resources::EnvironmentMapId) -> bool {
+        crate::resources::material::environment::free_environment(&mut self.resources, id)
     }
 
     /// Set the environment-selection zones. Fragments inside a zone are lit by
     /// that zone's environment (from [`upload_environment`](Self::upload_environment)),
     /// blended by influence weight in overlaps; fragments outside every zone use
-    /// the default environment. Replaces any previous set; an empty slice clears
+    /// the lighting environment. Replaces any previous set; an empty slice clears
     /// them. Zones past [`MAX_ENV_ZONES`](crate::resources::material::environment::MAX_ENV_ZONES)
     /// are dropped.
     pub fn set_environment_zones(
@@ -2213,12 +2858,22 @@ impl ViewportRenderer {
     }
 
     /// Clear all environment-selection zones; every fragment reverts to the
-    /// default environment.
+    /// lighting environment.
     pub fn clear_environment_zones(&mut self) {
         crate::resources::material::environment::clear_environment_zones(&mut self.resources);
     }
 
     /// Current state of an in-flight upload job.
+    ///
+    /// A progress probe. `Pending { progress }` is what this is for; a terminal
+    /// status is retained for a bounded run of drain cycles and then dropped
+    /// whether or not anyone read it, so gating a deferred bind on `Ready` here
+    /// is a race against your own poll cadence. Take the typed result
+    /// (`upload_result_*`) or register
+    /// [`on_upload_complete`](crate::resources::DeviceResources::on_upload_complete)
+    /// at submit time instead; both are independent of the window. See
+    /// [`UploadStatus::Unknown`](crate::resources::UploadStatus::Unknown), which
+    /// is terminal rather than transient.
     pub fn upload_status(&self, id: crate::resources::JobId) -> crate::resources::UploadStatus {
         self.resources.upload_status(id)
     }
@@ -2312,27 +2967,6 @@ impl ViewportRenderer {
         self.resources.free_volume(id)
     }
 
-    /// Start an asynchronous marching-cubes-ready volume upload. See
-    /// [`DeviceResources::begin_upload_volume_for_mc`].
-    pub fn begin_upload_volume_for_mc(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        vol: crate::geometry::marching_cubes::VolumeData,
-    ) -> crate::resources::JobId {
-        self.resources
-            .begin_upload_volume_for_mc(device, queue, vol)
-    }
-
-    /// Take the [`McVolumeId`](crate::resources::McVolumeId) produced by a
-    /// completed [`begin_upload_volume_for_mc`](Self::begin_upload_volume_for_mc) job.
-    pub fn upload_result_volume_mc(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::McVolumeId> {
-        self.resources.upload_result_volume_mc(id)
-    }
-
     /// Start an asynchronous boundary-only volume mesh upload. See
     /// [`DeviceResources::begin_upload_volume_mesh`].
     pub fn begin_upload_volume_mesh(
@@ -2375,60 +3009,16 @@ impl ViewportRenderer {
         self.resources.upload_result_clipped_volume_mesh(id)
     }
 
-    /// Start an asynchronous sparse voxel grid upload. See
-    /// [`DeviceResources::begin_upload_sparse_volume_grid_data`].
-    pub fn begin_upload_sparse_volume_grid_data(
-        &mut self,
-        device: &crate::gpu::Device,
-        data: crate::resources::SparseVolumeGridData,
-    ) -> crate::resources::JobId {
-        self.resources
-            .begin_upload_sparse_volume_grid_data(device, data)
-    }
-
-    /// Take the [`MeshId`](crate::resources::mesh::mesh_store::MeshId) produced by a completed
-    /// [`begin_upload_sparse_volume_grid_data`](Self::begin_upload_sparse_volume_grid_data)
-    /// job.
-    pub fn upload_result_sparse_volume_grid(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
-        self.resources.upload_result_sparse_volume_grid(id)
-    }
-
-    /// Start an asynchronous Gaussian splat upload. See
-    /// [`DeviceResources::begin_upload_gaussian_splat`].
-    pub fn begin_upload_gaussian_splat(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        data: crate::renderer::GaussianSplatData,
-    ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        self.resources
-            .begin_upload_gaussian_splat(device, queue, data)
-    }
-
-    /// Take the [`GaussianSplatId`](crate::renderer::GaussianSplatId) produced by a
-    /// completed [`begin_upload_gaussian_splat`](Self::begin_upload_gaussian_splat) job.
-    pub fn upload_result_gaussian_splat(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::renderer::GaussianSplatId> {
-        self.resources.upload_result_gaussian_splat(id)
-    }
-
     /// Start an asynchronous overlay texture upload. See
     /// [`DeviceResources::begin_upload_overlay_texture`].
     pub fn begin_upload_overlay_texture(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba_data: Vec<u8>,
+        data: crate::TextureData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
         self.resources
-            .begin_upload_overlay_texture(device, queue, width, height, rgba_data)
+            .begin_upload_overlay_texture(device, queue, data)
     }
 
     /// Take the [`OverlayTextureId`](crate::renderer::OverlayTextureId) produced by a
@@ -2484,22 +3074,22 @@ impl ViewportRenderer {
         self.resources.on_upload_complete(id, cb);
     }
 
-    /// Start an asynchronous albedo texture upload. See
+    /// Start an asynchronous texture upload. See
     /// [`DeviceResources::begin_upload_texture`] for the semantics.
     pub fn begin_upload_texture(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
+        data: crate::resources::TextureData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        self.resources
-            .begin_upload_texture(device, queue, width, height, rgba)
+        self.resources.begin_upload_texture(device, queue, data)
     }
 
-    /// Start an asynchronous normal-map upload. See
-    /// [`DeviceResources::begin_upload_normal_map`] for the semantics.
+    /// Start an asynchronous normal-map upload.
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: begin_upload_texture(device, queue, TextureData::normal_map(w, h, rgba))"
+    )]
     pub fn begin_upload_normal_map(
         &mut self,
         device: &crate::gpu::Device,
@@ -2508,8 +3098,11 @@ impl ViewportRenderer {
         height: u32,
         rgba: Vec<u8>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        self.resources
-            .begin_upload_normal_map(device, queue, width, height, rgba)
+        self.begin_upload_texture(
+            device,
+            queue,
+            crate::resources::TextureData::normal_map(width, height, rgba),
+        )
     }
 
     /// Take the texture id from a completed async texture upload. See
@@ -2557,45 +3150,48 @@ impl ViewportRenderer {
         self.resources.upload_result_mesh(id)
     }
 
-    /// Start an asynchronous environment-map upload.
+    /// Start an asynchronous environment upload.
     ///
-    /// Returns immediately with a `JobId`. The caller drives the upload-job
-    /// runner from the renderer's prepare path each frame; once the job
-    /// reports `Ready`, the IBL textures are live on the renderer and a
-    /// subsequent call to `rebuild_camera_bind_groups` makes them visible
-    /// to shaders.
-    ///
-    /// Ownership of `pixels` transfers into the background worker.
+    /// Returns a `JobId` immediately; the bake runs on a worker. Once the job
+    /// reports `Ready`, take the handle with
+    /// [`upload_result_environment`](Self::upload_result_environment). The next
+    /// `prepare` picks up the new textures with no further call.
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
-    /// if `pixels.len() != width * height * 4`.
-    pub fn begin_upload_environment_map(
+    /// The same validation and capacity errors as
+    /// [`upload_environment`](Self::upload_environment), before anything is
+    /// submitted.
+    pub fn begin_upload_environment(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        pixels: Vec<f32>,
-        width: u32,
-        height: u32,
+        data: crate::TextureData,
+        options: crate::resources::EnvironmentOptions,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        crate::resources::material::environment::begin_upload_environment_map(
+        crate::resources::material::environment::begin_upload_environment(
             &mut self.resources,
             device,
             queue,
-            pixels,
-            width,
-            height,
+            data,
+            options,
         )
+    }
+
+    /// Take the handle produced by a completed
+    /// [`begin_upload_environment`](Self::begin_upload_environment) job.
+    /// Returns `JobNotReady` while the bake is running.
+    pub fn upload_result_environment(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::EnvironmentMapId> {
+        crate::resources::material::environment::upload_result_environment(&mut self.resources, id)
     }
 
     /// Rebuild the primary and per-viewport camera bind groups.
     ///
-    /// Call after IBL textures are uploaded so the shaders see the new
-    /// environment. The synchronous `upload_environment_map` does this
-    /// internally; consumers driving the async path through
-    /// `begin_upload_environment_map` should call this themselves once the
-    /// matching job reports `Ready`.
+    /// `prepare` does this whenever a resource the groups bind was replaced, so
+    /// it is only needed to see a change before the next `prepare`.
     pub fn rebuild_camera_bind_groups(&mut self, device: &crate::gpu::Device) {
         self.resources.binds.camera_bg = self.resources.create_camera_bind_group(
             device,
@@ -2603,22 +3199,16 @@ impl ViewportRenderer {
             &self.resources.binds.clip_planes_buf,
             &self.resources.shadow.info_buf,
             &self.resources.binds.clip_volume_buf,
-            &self.resources.binds.debug_frag_sentinel_buf,
             "camera_bind_group",
         );
 
         for slot in &mut self.viewport_slots {
-            let dbg_buf = slot
-                .debug_frag_buf
-                .as_ref()
-                .unwrap_or(&self.resources.binds.debug_frag_sentinel_buf);
             slot.camera_bind_group = self.resources.create_camera_bind_group(
                 device,
                 &slot.camera_buf,
                 &slot.clip_planes_buf,
                 &slot.shadow_info_buf,
                 &slot.clip_volume_buf,
-                dbg_buf,
                 "per_viewport_camera_bg",
             );
             slot.foreground_camera_bind_group = self.resources.create_camera_bind_group(
@@ -2627,7 +3217,6 @@ impl ViewportRenderer {
                 &slot.foreground_clip_planes_buf,
                 &slot.shadow_info_buf,
                 &slot.foreground_clip_volume_buf,
-                dbg_buf,
                 "per_viewport_foreground_camera_bg",
             );
         }
@@ -2688,7 +3277,6 @@ impl ViewportRenderer {
                 &clip_planes_buf,
                 &shadow_info_buf,
                 &clip_volume_buf,
-                &self.resources.binds.debug_frag_sentinel_buf,
                 "per_viewport_camera_bg",
             );
 
@@ -2718,7 +3306,6 @@ impl ViewportRenderer {
                 &foreground_clip_planes_buf,
                 &shadow_info_buf,
                 &foreground_clip_volume_buf,
-                &self.resources.binds.debug_frag_sentinel_buf,
                 "per_viewport_foreground_camera_bg",
             );
 
@@ -2749,14 +3336,17 @@ impl ViewportRenderer {
                 grid_bind_group,
                 hdr: None,
                 cull: crate::resources::ViewportCullState::new(),
-                debug_frag_buf: None,
-                debug_frag_dims: (0, 0),
+                debug_readback_dims: None,
                 selection_outlines: SelectionOutlines::default(),
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),
+                constraint_line_pool: Vec::new(),
+                cap_pool: Vec::new(),
                 sub_highlight: None,
                 sub_highlight_generation: u64::MAX,
+                skybox: None,
+                draw_skybox: false,
                 dyn_res: None,
                 hdr_callback: None,
             });
@@ -2837,8 +3427,7 @@ impl ViewportRenderer {
     ///
     /// `scene_effects` carries the scene-global effects: lighting, environment
     /// map, and scatter settings.  Obtain it by constructing [`SceneEffects`]
-    /// directly or via [`EffectsFrame::split`]. Compute filter items are read
-    /// from `frame.scene.compute_filter_items`.
+    /// directly or via [`EffectsFrame::split`].
     pub(crate) fn prepare_scene(
         &mut self,
         device: &crate::gpu::Device,
@@ -2872,6 +3461,20 @@ impl ViewportRenderer {
         );
         let (_, viewport_fx) = frame.effects.split();
         let mut sink = SubmitSink::inline(queue);
+        // The split API never routes through `prepare_into`, so plugin
+        // prepare and cull dispatch here, once per viewport, with this
+        // viewport's camera in the context. The single-call `prepare` path
+        // dispatches from `prepare_into` instead and does not reach this
+        // wrapper.
+        let plugin_bufs = self.dispatch_plugin_prepare(device, queue, frame);
+        if !plugin_bufs.is_empty() {
+            sink.extend(plugin_bufs);
+        }
+        if !self.item_type_plugins.is_empty() {
+            let vp = frame.camera.render_camera.view_proj();
+            let frustum = crate::camera::frustum::Frustum::from_view_proj(&vp);
+            self.dispatch_plugin_cull(&frustum, frame);
+        }
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx, &mut sink);
     }
 
@@ -2898,7 +3501,6 @@ impl ViewportRenderer {
             &self.instancing.batches,
             camera_bg,
             grid_bg,
-            &self.compute_filter_results,
             vp_slot,
             &self.mesh_uniforms.wireframe_bind_groups,
             &self.mesh_uniforms.bind_groups,
@@ -2908,39 +3510,17 @@ impl ViewportRenderer {
             &self.prepared_surfaces,
             self.per_object_bundle.as_ref()
         );
-        emit_scivis_draw_calls!(
-            &self.resources,
-            &mut *render_pass,
-            &self.point_cloud_gpu_data,
-            &self.glyph_gpu_data,
-            &self.polyline_gpu_data,
-            &self.volume_gpu_data,
-            &self.streamtube_gpu_data,
-            camera_bg,
-            &self.tube_gpu_data,
-            &self.image_slice_gpu_data,
-            &self.tensor_glyph_gpu_data,
-            &self.ribbon_gpu_data,
-            &self.volume_surface_slice_gpu_data,
-            &self.sprite_gpu_data,
-            &self.mesh_instance_gpu_data,
-            false
-        );
-        // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
-        render::draw_gaussian_splats(
-            render_pass,
-            &self.resources,
-            &self.gaussian_splat_draw_data,
-            camera_bg,
-            false,
-        );
+        self.draw_line_and_instance_layers(&mut *render_pass, camera_bg, false);
         // TransparentVolumeMesh boundary wireframe overlay.
         if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
             if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
                 render_pass.set_bind_group(0, camera_bg, &[]);
-                for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
-                    if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
-                        render_pass.set_pipeline(&self.resources.scene.wireframe);
+                for (slot, mesh_id) in self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate() {
+                    if let (Some(mesh), Some(wf)) = (
+                        self.resources.mesh_store.get(*mesh_id),
+                        self.resources.scene.wireframe(),
+                    ) {
+                        render_pass.set_pipeline(wf);
                         bind_deform_group!(
                             render_pass,
                             self.resources,
@@ -2956,15 +3536,23 @@ impl ViewportRenderer {
                                 edge_buf.slice(..),
                                 crate::gpu::IndexFormat::Uint32,
                             );
-                            render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                            let slot = slot as u32;
+                            render_pass.draw_indexed(0..mesh.edge_index_count, 0, slot..slot + 1);
                         }
                     }
                 }
             }
         }
+        // Item-type plugin paint (LDR opt-in only): after all built-in scene
+        // content, mirroring the HDR scene-pass position.
+        self.dispatch_plugin_paint(render_pass, frame, false);
         // Shadow atlas viewer overlay.
-        if frame.effects.debug.show_shadow_atlas {
-            render_pass.set_pipeline(&self.resources.shadow.atlas_viewer_pipeline);
+        if let (true, Some(pipeline)) = (
+            frame.effects.debug.show_shadow_atlas,
+            self.resources
+                .guide_pipeline(crate::resources::overlay::guides::GUIDE_ATLAS_VIEWER),
+        ) {
+            render_pass.set_pipeline(pipeline);
             render_pass.set_bind_group(0, &self.resources.shadow.atlas_viewer_bg, &[]);
             render_pass.draw(0..6, 0..1);
         }
@@ -3018,7 +3606,7 @@ impl ViewportRenderer {
 
     /// Ensure per-viewport HDR state exists for `viewport_index` at dimensions `w`x`h`.
     ///
-    /// Calls `ensure_hdr_shared` once to initialise shared pipelines/BGLs/samplers, then
+    /// Calls `ensure_hdr_infra` once to initialise the shared BGLs and samplers, then
     /// lazily creates or resizes the `ViewportHdrState` inside the slot. Idempotent: if the
     /// slot already has HDR state at the correct size nothing is recreated.
     pub(crate) fn ensure_viewport_hdr(
@@ -3030,10 +3618,13 @@ impl ViewportRenderer {
         h: u32,
         ssaa_factor: u32,
         render_scale: f32,
+        needed: crate::resources::TargetGroups,
     ) {
         let format = self.resources.target_format;
-        // Ensure shared infrastructure (pipelines, BGLs, samplers) exists.
-        self.resources.ensure_hdr_shared(device, queue, format);
+        // Ensure shared infrastructure (BGLs, samplers, placeholders) exists. The
+        // post pipelines are not built here: only the HDR path needs them, so it
+        // calls `ensure_hdr_pipelines` itself.
+        self.resources.ensure_hdr_infra(device, queue);
         // When render_scale < 1.0, the HDR upscale path needs the dyn_res
         // pipeline and sampler for the final upscale-blit to output resolution.
         if render_scale < 1.0 - 0.001 {
@@ -3046,26 +3637,63 @@ impl ViewportRenderer {
         // Ensure the slot exists.
         self.ensure_viewport_slot(device, viewport_index);
         let slot = &mut self.viewport_slots[viewport_index];
-        // Create or resize the per-viewport HDR state.
-        let needs_create = match &slot.hdr {
-            None => true,
-            Some(s) => {
-                s.output_size != [w, h]
-                    || s.scene_size != [scene_w.max(1), scene_h.max(1)]
-                    || s.ssaa_factor != ssaa_factor
-            }
-        };
-        if needs_create {
+        // Create the per-viewport state, recreate it at a new size, or promote
+        // the target groups this frame is the first to ask for. A group stays
+        // live once promoted, across later frames and across a resize.
+        let scene_size = [scene_w.max(1), scene_h.max(1)];
+        let resized = slot.hdr.as_ref().is_none_or(|s| {
+            s.output_size != [w, h] || s.scene_size != scene_size || s.ssaa_factor != ssaa_factor
+        });
+        let held = slot
+            .hdr
+            .as_ref()
+            .map_or(crate::resources::TargetGroups::empty(), |s| s.groups);
+        if resized || !held.contains(needed) {
+            let old = slot.hdr.take();
+            // With no size change the old state's live targets carry over.
+            let reuse = if resized { None } else { old.as_ref() };
+            let scene_kept =
+                reuse.is_some() && held.contains(crate::resources::TargetGroups::SCENE);
             slot.hdr = Some(self.resources.create_hdr_viewport_state(
                 device,
                 queue,
                 format,
                 w,
                 h,
-                scene_w.max(1),
-                scene_h.max(1),
+                scene_size[0],
+                scene_size[1],
                 ssaa_factor,
+                held | needed,
+                reuse,
             ));
+            // A promotion that left the scene colour and depth in place has
+            // nothing to tell the post-effect plugins: the views they hold
+            // are still the live ones.
+            if scene_kept {
+                return;
+            }
+            // Tell post-effect producers and stages this viewport's targets
+            // changed so they can reallocate their own. Any still awaiting
+            // deferred `init_gpu` get this signal during that init instead.
+            let hdr = slot.hdr.as_ref().unwrap();
+            let ctx = crate::plugin_api::PostEffectResizeContext {
+                viewport_index,
+                scene_size: hdr.scene_size,
+                output_size: hdr.output_size,
+                scene_colour: &hdr.hdr_view,
+                scene_depth: &hdr.hdr_depth_only_view,
+                target_format: format,
+            };
+            for entry in &mut self.post_effect_producers {
+                if entry.gpu_ready {
+                    entry.producer.on_viewport_resized(device, &ctx);
+                }
+            }
+            for entry in &mut self.post_effect_stages {
+                if entry.gpu_ready {
+                    entry.stage.on_viewport_resized(device, &ctx);
+                }
+            }
         }
     }
 }

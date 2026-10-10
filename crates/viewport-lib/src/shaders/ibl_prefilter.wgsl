@@ -1,21 +1,23 @@
-// GGX-prefiltered specular convolution of an equirectangular HDR skybox.
+// GGX-prefiltered specular convolution of an equirectangular environment.
 //
-// One invocation per destination texel for a single mip level. The roughness
-// for this dispatch is provided as a push-time uniform. Importance-sampled
-// GGX with filtered sampling: each sample reads from a biased mip
-// level of the source skybox (mip0 in this implementation: the source is a
-// single-mip texture) to reduce fireflies on low-PDF samples.
+// One invocation per destination texel for a single mip level. The source is
+// the bake's filter pyramid. Each importance sample reads the pyramid level
+// whose texels match the solid angle the sample stands for (filtered importance
+// sampling), so a small bright sun spreads over the lobe instead of lighting a
+// few texels and missing their neighbours. Roughness 0 is a single read of the
+// pyramid level the size of the destination (`min_lod`).
 //
 // Reusable across both IBL environment prefilter and reflection-probe
 // prefilter; both are GGX roughness convolutions; only the source texture
 // dimensions differ.
 
 const PI: f32 = 3.14159265358979;
-const NUM_SAMPLES: u32 = 256u;
+const NUM_SAMPLES: u32 = 2048u;
 
 struct PrefilterParams {
     roughness: f32,
-    _pad0: f32,
+    // The pyramid level a roughness-0 texel reads.
+    min_lod: f32,
     _pad1: f32,
     _pad2: f32,
 }
@@ -70,8 +72,9 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let u = f32(gid.x) / f32(dims.x);
-    let v = f32(gid.y) / f32(dims.y);
+    // Texel centres.
+    let u = (f32(gid.x) + 0.5) / f32(dims.x);
+    let v = (f32(gid.y) + 0.5) / f32(dims.y);
     let theta_n = PI * (0.5 - v);
     let phi_n = 2.0 * PI * (u - 0.5);
 
@@ -89,14 +92,36 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var color = vec3<f32>(0.0);
     var total_weight: f32 = 0.0;
 
+    let base = textureDimensions(src_tex, 0);
+    let max_lod = f32(textureNumLevels(src_tex) - 1u);
+    // Solid angle of a base-level texel at the equator.
+    let texel_omega = (2.0 * PI / f32(base.x)) * (PI / f32(base.y));
+    let a2 = a * a;
+    if (a == 0.0) {
+        // A mirror lobe is the one direction: read it at the output's size.
+        let c = textureSampleLevel(src_tex, src_sampler, dir_to_equirect_uv(n), params.min_lod).rgb;
+        textureStore(dst_tex, vec2<i32>(gid.xy), vec4<f32>(c, 1.0));
+        return;
+    }
+
     for (var i: u32 = 0u; i < NUM_SAMPLES; i = i + 1u) {
         let xi = hammersley(i, NUM_SAMPLES);
         let h = importance_sample_ggx(xi, n, a);
         let l = normalize(2.0 * dot(v_dir, h) * h - v_dir);
         let n_dot_l = max(dot(n, l), 0.0);
         if (n_dot_l > 0.0) {
+            // With the view along the normal, the sample's pdf is D / 4. The
+            // level whose texels cover the solid angle the sample stands for,
+            // one level blurrier as the published method biases it.
+            let n_dot_h = max(dot(n, h), 0.0);
+            let denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+            let pdf = a2 / (PI * denom * denom) * 0.25;
+            let sample_omega = 1.0 / (f32(NUM_SAMPLES) * pdf + 1e-6);
+            // Texels shrink towards the poles.
+            let cos_lat = max(sqrt(1.0 - l.z * l.z), 1e-3);
+            let lod = max(0.5 * log2(sample_omega / (texel_omega * cos_lat)) + 1.0, 0.0);
             let uv = dir_to_equirect_uv(l);
-            let c = textureSampleLevel(src_tex, src_sampler, uv, 0.0).rgb;
+            let c = textureSampleLevel(src_tex, src_sampler, uv, min(lod, max_lod)).rgb;
             color += c * n_dot_l;
             total_weight += n_dot_l;
         }

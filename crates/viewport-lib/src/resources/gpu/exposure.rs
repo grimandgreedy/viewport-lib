@@ -7,7 +7,7 @@
 //! HDR pass and the tone map in the same submission, so a single dirty render is
 //! correctly exposed on its own frame with no CPU readback.
 
-use crate::gpu::util::DeviceExt;
+use crate::resources::builders::LoggedAlloc;
 
 /// Number of log-luminance histogram bins. Must match `HISTOGRAM_BINS` in
 /// `exposure.wgsl`.
@@ -87,19 +87,39 @@ pub struct ExposureState {
 
 const _: () = assert!(std::mem::size_of::<ExposureState>() == 16);
 
+/// What the three exposure compute builds read: one layout and one module.
+pub struct ExposureRecipe {
+    device: crate::gpu::Device,
+    layout: crate::gpu::PipelineLayout,
+    shader: crate::resources::pipeline_slot::LazyModule,
+}
+
+fn build_exposure(r: &ExposureRecipe, i: usize) -> crate::gpu::ComputePipeline {
+    let (label, entry) = match i {
+        0 => ("exposure_clear_pipeline", "clear_main"),
+        1 => ("exposure_build_pipeline", "build_main"),
+        _ => ("exposure_resolve_pipeline", "resolve_main"),
+    };
+    crate::resources::builders::compute_pipeline(&r.device, label, &r.layout, r.shader.get(), entry)
+}
+
 /// Shared auto-exposure pipelines and bind group layout owned by
 /// `DeviceResources`.
 pub struct ExposureResources {
     /// Bind group layout for all three compute passes (hdr texture, params
     /// uniform, histogram storage, exposure-state storage).
     pub bgl: crate::gpu::BindGroupLayout,
-    clear_pipeline: crate::gpu::ComputePipeline,
-    build_pipeline: crate::gpu::ComputePipeline,
-    resolve_pipeline: crate::gpu::ComputePipeline,
+    /// The clear, build and resolve pipelines, `None` until `ensure_pipelines`
+    /// composes them. A frame whose dispatch finds one still compiling skips
+    /// the pass and keeps the exposure it had.
+    pipelines: Option<
+        crate::resources::pipeline_slot::LazyFamily<ExposureRecipe, 3, crate::gpu::ComputePipeline>,
+    >,
 }
 
 impl ExposureResources {
-    /// Build the shared bind group layout and the clear/build/resolve pipelines.
+    /// Build the shared bind group layout. The pipelines wait for
+    /// `ensure_pipelines`.
     pub fn new(device: &crate::gpu::Device) -> Self {
         let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("exposure_bgl"),
@@ -159,43 +179,49 @@ impl ExposureResources {
             ],
         });
 
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "exposure_shader",
-            crate::resources::builders::wgsl_source!("exposure"),
-        );
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            "exposure_pipeline_layout",
-            &[&bgl],
-        );
-        let clear_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "exposure_clear_pipeline",
-            &layout,
-            &shader,
-            "clear_main",
-        );
-        let build_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "exposure_build_pipeline",
-            &layout,
-            &shader,
-            "build_main",
-        );
-        let resolve_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "exposure_resolve_pipeline",
-            &layout,
-            &shader,
-            "resolve_main",
-        );
-
         Self {
             bgl,
-            clear_pipeline,
-            build_pipeline,
-            resolve_pipeline,
+            pipelines: None,
+        }
+    }
+
+    /// Compose the clear, build and resolve compute pipelines: the layout and
+    /// the module they share, with each pipeline built under the compilation
+    /// policy the first time a dispatch asks for it. A no-op after the first
+    /// call.
+    pub fn ensure_pipelines(
+        &mut self,
+        device: &crate::gpu::Device,
+        compiler: &std::sync::Arc<crate::resources::pipeline_slot::PipelineCompiler>,
+    ) {
+        if self.pipelines.is_some() {
+            return;
+        }
+        let recipe = ExposureRecipe {
+            device: device.clone(),
+            layout: crate::resources::builders::pipeline_layout(
+                device,
+                "exposure_pipeline_layout",
+                &[&self.bgl],
+            ),
+            shader: crate::resources::pipeline_slot::LazyModule::new(
+                device,
+                "exposure_shader",
+                crate::resources::builders::wgsl_source!("exposure"),
+                Default::default(),
+            ),
+        };
+        self.pipelines = Some(crate::resources::pipeline_slot::LazyFamily::new(
+            recipe,
+            std::sync::Arc::clone(compiler),
+            build_exposure,
+        ));
+    }
+
+    /// Ask for all three pipelines, for a warm-up.
+    pub fn request_all(&self) {
+        if let Some(p) = &self.pipelines {
+            p.request_all();
         }
     }
 
@@ -204,7 +230,7 @@ impl ExposureResources {
     pub fn create_viewport_buffers(
         device: &crate::gpu::Device,
     ) -> (crate::gpu::Buffer, crate::gpu::Buffer, crate::gpu::Buffer) {
-        let histogram_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let histogram_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("exposure_histogram_buf"),
             size: (HISTOGRAM_BINS as u64) * 4,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -219,14 +245,14 @@ impl ExposureResources {
             target_ev: 0.0,
             adapting: 0.0,
         };
-        let state_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+        let state_buf = device.logged_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("exposure_state_buf"),
             contents: bytemuck::cast_slice(&[state_seed]),
             usage: crate::gpu::BufferUsages::STORAGE
                 | crate::gpu::BufferUsages::COPY_DST
                 | crate::gpu::BufferUsages::COPY_SRC,
         });
-        let params_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let params_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("exposure_params_buf"),
             size: std::mem::size_of::<ExposureParams>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -293,12 +319,20 @@ impl ExposureResources {
         width: u32,
         height: u32,
     ) {
+        let Some(p) = self.pipelines.as_ref() else {
+            return;
+        };
+        let (Some(clear_pipeline), Some(build_pipeline), Some(resolve_pipeline)) =
+            (p.get(0), p.get(1), p.get(2))
+        else {
+            return;
+        };
         {
             let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some("exposure_clear_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.clear_pipeline);
+            pass.set_pipeline(clear_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(HISTOGRAM_BINS.div_ceil(256), 1, 1);
         }
@@ -307,7 +341,7 @@ impl ExposureResources {
                 label: Some("exposure_build_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.build_pipeline);
+            pass.set_pipeline(build_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(width.div_ceil(16), height.div_ceil(16), 1);
         }
@@ -316,7 +350,7 @@ impl ExposureResources {
                 label: Some("exposure_resolve_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.resolve_pipeline);
+            pass.set_pipeline(resolve_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }

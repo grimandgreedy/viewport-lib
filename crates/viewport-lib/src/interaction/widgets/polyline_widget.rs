@@ -1,9 +1,13 @@
 //! Polyline widget: N draggable waypoints connected by straight line segments.
 
-use crate::geometry::intersect::ray_plane_intersection;
-use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
+use crate::Colour;
+use crate::geometry::maths::intersect::ray_plane_intersection;
+use crate::renderer::PolylineItem;
 
-use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius, ray_point_dist};
+use super::{
+    HandleMarkers, WidgetContext, WidgetResult, ctx_ray, handle_colour, handle_world_radius,
+    ray_point_dist,
+};
 
 /// An interactive polyline widget with N draggable control points.
 ///
@@ -22,8 +26,9 @@ use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius, ray_point
 ///
 /// // Each frame:
 /// let result = pw.update(&ctx);
-/// fd.scene.polylines.push(pw.polyline_item(PL_ID));
-/// fd.scene.glyphs.push(pw.handle_glyphs(HANDLE_ID, &ctx));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(pw.polyline_item(PL_ID));
+/// let markers = pw.handle_markers(HANDLE_ID, &ctx);
+/// fd.scene.mesh_instances.push(markers.to_mesh_instances(handle_mesh));
 /// ```
 pub struct PolylineWidget {
     /// Control point positions in world space.
@@ -55,9 +60,9 @@ impl PolylineWidget {
         }
         Self {
             points,
-            colour: [0.9, 0.5, 0.1, 1.0].into(),
+            colour: Colour::linear(0.9, 0.5, 0.1, 1.0),
             line_width: 2.0,
-            handle_colour: [0.0; 4].into(),
+            handle_colour: Colour::TRANSPARENT,
             hovered_point: None,
             active_point: None,
             drag_plane_normal: glam::Vec3::Y,
@@ -188,40 +193,30 @@ impl PolylineWidget {
         }
     }
 
-    /// Build a `GlyphItem` with sphere handles for each control point.
+    /// Handle markers for the control points.
     ///
-    /// Hovered and active handles appear brighter (scalar = 1.0 vs 0.2).
-    /// `id_base` is the pick ID for the first point; each subsequent point uses `id_base + i`.
-    pub fn handle_glyphs(&self, id_base: u64, ctx: &WidgetContext) -> GlyphItem {
-        let mut positions = Vec::with_capacity(self.points.len());
-        let mut vectors = Vec::with_capacity(self.points.len());
-        let mut scalars = Vec::with_capacity(self.points.len());
-
+    /// Push the visual built from these into the frame; see [`HandleMarkers`].
+    pub fn handle_markers(&self, id_base: u64, ctx: &WidgetContext) -> HandleMarkers {
+        let mut markers = HandleMarkers {
+            pick_id: crate::renderer::PickId(id_base),
+            ..Default::default()
+        };
         for (i, pt) in self.points.iter().enumerate() {
-            let r = handle_world_radius(*pt, &ctx.camera, ctx.viewport_size.y, 9.0);
-            let s = if self.hovered_point == Some(i) || self.active_point == Some(i) {
+            let hot = if self.hovered_point == Some(i) || self.active_point == Some(i) {
                 1.0_f32
             } else {
                 0.2
             };
-            positions.push(pt.to_array());
-            vectors.push([r, 0.0, 0.0]);
-            scalars.push(s);
+            markers.positions.push(*pt);
+            markers.radii.push(handle_world_radius(
+                *pt,
+                &ctx.camera,
+                ctx.viewport_size.y,
+                9.0,
+            ));
+            markers.colours.push(handle_colour(self.handle_colour, hot));
         }
-        let mut g = GlyphItem::default();
-        g.positions = positions;
-        g.vectors = vectors;
-        g.scalars = scalars;
-        g.scalar_range = Some((0.0, 1.0));
-        g.glyph_type = GlyphType::Sphere;
-        g.settings = {
-            let mut s = crate::scene::material::ItemSettings::default();
-            s.pick_id = crate::renderer::PickId(id_base);
-            s
-        };
-        g.default_colour = self.handle_colour.into();
-        g.use_default_colour = self.handle_colour.alpha() > 0.0;
-        g
+        markers
     }
 
     // -----------------------------------------------------------------------
@@ -319,7 +314,7 @@ mod tests {
         let ctx = ctx_at(CENTRE);
         let w = PolylineWidget::new(line());
         assert_eq!(w.polyline_item(1).positions.len(), 3);
-        assert_eq!(w.handle_glyphs(2, &ctx).positions.len(), 3);
+        assert_eq!(w.handle_markers(2, &ctx).positions.len(), 3);
     }
 
     #[test]

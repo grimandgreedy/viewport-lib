@@ -24,7 +24,8 @@
 // `viewport-lib-types`. Re-export the modules so `crate::input::<mod>`
 // paths, and the `super::<mod>` paths in the pipeline files below, keep resolving.
 pub use viewport_lib_types::input::{
-    action, action_frame, binding, context, defaults, event, mode, preset, viewport_binding,
+    action, action_frame, binding, context, cursor, defaults, event, mode, preset, touch,
+    viewport_binding,
 };
 
 /// Per-frame input snapshot and action-state query evaluation.
@@ -44,11 +45,15 @@ pub use query::{ActionState, FrameInput};
 
 // New pipeline re-exports
 pub use action_frame::{ActionFrame, NavigationActions, PointerFrame, ResolvedActionState};
-pub use context::ViewportContext;
-pub use event::{ButtonState, ScrollUnits, Theme, ViewportEvent};
-pub use preset::{BindingPreset, viewport_all_bindings};
+pub use context::{PointerOwnership, ViewportContext, forward_to_viewport};
+pub use cursor::CursorShape;
+pub use event::{ButtonState, ScrollUnits, Theme, TouchId, TouchPhase, ViewportEvent};
+pub use preset::{
+    BindingPreset, viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
+};
+pub use touch::TouchSettings;
 pub use viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};
-pub use viewport_input::ViewportInput;
+pub use viewport_input::{CLICK_THRESHOLD_PX, ViewportInput};
 
 /// Central input system that evaluates action queries against the current
 /// binding table and input mode.

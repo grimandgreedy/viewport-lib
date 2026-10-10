@@ -20,24 +20,32 @@ pub enum LightmapData {
     /// A single RGB radiance texture. Normal maps do not respond to the baked
     /// light in this mode.
     NonDirectional {
-        /// Baked incoming radiance, sampled by UV1.
+        /// Baked incoming radiance, sampled by UV1. Radiance, not colour, so
+        /// upload it linear ([`TextureData::hdr`](crate::resources::TextureData::hdr)
+        /// for values above 1, [`TextureData::linear`](crate::resources::TextureData::linear)
+        /// for 8-bit).
         radiance: TextureId,
     },
     /// A radiance texture plus a per-texel dominant light direction, so a normal
     /// map responds to where the baked light came from. `direction` holds the
     /// unit dominant direction in `xyz` (world space) and a directionality factor
     /// in `w` (`0` = ambient, `1` = a single direction); upload it linear
-    /// (`upload_texture_hdr`) so the signed direction survives.
+    /// ([`TextureData::hdr`](crate::resources::TextureData::hdr)) so the signed
+    /// direction survives.
     DominantDirection {
-        /// Baked incoming radiance, sampled by UV1.
+        /// Baked incoming radiance, sampled by UV1. Radiance, not colour, so
+        /// upload it linear.
         radiance: TextureId,
         /// Per-texel dominant direction + directionality, sampled by UV1.
+        /// Directions, not colour, so upload it linear.
         direction: TextureId,
     },
     /// A single-channel occlusion factor, read from the red channel. Pairs with
     /// [`LightmapMode::AmbientOcclusion`].
     AmbientOcclusion {
-        /// Baked ambient occlusion, sampled by UV1.
+        /// Baked ambient occlusion, sampled by UV1. A factor, not colour, so
+        /// upload it linear
+        /// ([`TextureData::linear`](crate::resources::TextureData::linear)).
         occlusion: TextureId,
     },
     /// A radiance texture plus a per-light static-occluder shadowmask: the RGBA
@@ -51,9 +59,11 @@ pub enum LightmapData {
     /// baked indirect). Mutually exclusive with a directional lightmap: both ride
     /// group-1 binding 18.
     Shadowmask {
-        /// Baked incoming radiance (indirect), sampled by UV1.
+        /// Baked incoming radiance (indirect), sampled by UV1. Radiance, not
+        /// colour, so upload it linear.
         radiance: TextureId,
         /// Per-light static-occluder visibility (RGBA), sampled by UV1.
+        /// Visibility factors, not colour, so upload them linear.
         shadowmask: TextureId,
     },
 }

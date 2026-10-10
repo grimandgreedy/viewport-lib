@@ -38,13 +38,10 @@ pub mod gpu_phase {
     /// audio-reactive displacement, probe capture.
     pub const PRE_PREPARE: i32 = 100;
 
-    /// Reserved priority band between `PRE_PREPARE` and `POST_PAINT`.
-    /// Currently unused; plugins cannot slot work between the renderer's own
-    /// internal passes.
-    pub const _RESERVED_INTERNAL: i32 = 500;
-
-    /// Compute that samples rendered targets (custom AO, motion blur,
-    /// screen-space outline, color grading).
+    /// Work that samples the rendered targets after paint: readbacks,
+    /// capture and export, and effects rendered into a plugin-owned texture
+    /// the host composites. This trait never slots work between the
+    /// renderer's own internal passes.
     pub const POST_PAINT: i32 = 900;
 }
 

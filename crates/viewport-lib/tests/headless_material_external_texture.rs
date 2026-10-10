@@ -10,7 +10,7 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -84,7 +84,11 @@ fn register_update_free_semantics() {
 
     // An owned (CPU-uploaded) texture is rejected by the external update path.
     let owned = res
-        .upload_texture(&device, &queue, 1, 1, &[255u8, 255, 255, 255])
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::srgb(1, 1, [255u8, 255, 255, 255].to_vec()),
+        )
         .unwrap();
     assert!(
         !res.update_texture_view(&device, owned, &v1, 4, 4),
@@ -135,7 +139,7 @@ fn external_view_is_sampled_by_a_material() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    item.material.base_colour = [1.0, 1.0, 1.0].into();
+    item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
     item.material.texture_id = Some(tex);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 

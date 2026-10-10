@@ -138,6 +138,27 @@ impl Default for PerformancePolicy {
     }
 }
 
+/// One item-type plugin's contribution to the last prepared frame.
+///
+/// [`FrameStats`] carries the totals; this is the same measurement per plugin,
+/// which is what an eviction or budget decision needs. Iterate it with
+/// [`ViewportRenderer::plugin_frame_counters`](crate::ViewportRenderer::plugin_frame_counters).
+///
+/// `prepare_ms` is measured by the renderer around the plugin's `prepare` call.
+/// The other two are self-reported, so a plugin that has not implemented them
+/// reads zero whatever it does.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct PluginFrameCounters {
+    /// CPU time in this plugin's `prepare`, in milliseconds. Zero on a frame
+    /// where the plugin had no items and was not dispatched.
+    pub prepare_ms: f32,
+    /// Draw calls this plugin reported for the frame.
+    pub draw_calls: u32,
+    /// Bytes this plugin reported uploading for the frame.
+    pub upload_bytes: u64,
+}
+
 /// CPU time spent in each phase of `prepare()`, in milliseconds.
 ///
 /// `FrameStats::cpu_prepare_ms` is the total. This splits that total across the
@@ -150,10 +171,29 @@ impl Default for PerformancePolicy {
 /// with `Instant`. They measure how long it takes to record and submit the work,
 /// not how long the GPU spends running it; use `gpu_frame_ms` for GPU cost.
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PrepareBreakdown {
-    /// Item-type plugin prepare and cull dispatch. Skinning and other vertex
-    /// deformers run here, so a heavy skinned crowd shows up in this field.
+    /// Item-type plugin prepare, summed across every registered plugin.
+    /// Skinning and other vertex deformers run here, so a heavy skinned crowd
+    /// shows up in this field.
+    ///
+    /// This is the total. Most scenes register many item-type plugins (every
+    /// built-in type past mesh geometry is one), so the total on its own cannot
+    /// say which plugin is expensive; for that use
+    /// [`ViewportRenderer::plugin_frame_counters`](crate::ViewportRenderer::plugin_frame_counters),
+    /// which breaks the same measurement out per plugin name. Cull dispatch is
+    /// measured separately in [`Self::plugin_cull_ms`] and excluded here.
     pub plugin_ms: f32,
+    /// Item-type plugin cull dispatch: one pass over every registered plugin
+    /// with the camera frustum, so plugin paint and shadow calls can skip
+    /// culled items.
+    ///
+    /// Split out of [`Self::plugin_ms`] because the two are different work with
+    /// different fixes: prepare cost follows how much content a plugin uploads
+    /// and rebuilds, cull cost follows how many items it holds. A frame where
+    /// this dominates wants coarser culling granularity, not cheaper uploads.
+    /// One dispatch covers all plugins, so this is not broken out per plugin.
+    pub plugin_cull_ms: f32,
     /// Lighting setup: directional shadow cascade matrices, point-light cube-map
     /// faces, and light clustering.
     pub lighting_ms: f32,
@@ -163,15 +203,27 @@ pub struct PrepareBreakdown {
     /// Building and uploading instanced batches (grouping items by mesh and
     /// material, writing instance data).
     pub instancing_ms: f32,
-    /// Uploading non-mesh geometry: glyphs, point clouds, polylines, decals,
+    /// Uploading non-mesh geometry: fields, point clouds, polylines, decals,
     /// images, tubes, ribbons, slices, and volumes.
     pub geometry_ms: f32,
     /// Recording the shadow depth pass (directional cascades and point-light
     /// cube-map faces) into the atlas.
     pub shadow_ms: f32,
-    /// Per-viewport prepare: camera and clip uniforms, grid, overlays, and
-    /// interaction state. Runs once per viewport.
+    /// Per-viewport prepare: camera and clip uniforms, grid, outlines, and
+    /// interaction state. Runs once per viewport. Overlay prepare is measured
+    /// separately in [`Self::overlay_ms`] and excluded from this field.
     pub viewport_ms: f32,
+    /// Building the screen-space overlay families: laying out and shaping labels
+    /// and glyph runs, tessellating vector shapes and polylines, building clip
+    /// shapes, sorting the cross-family draw order, and creating the vertex
+    /// buffers and bind groups the overlay passes draw from.
+    ///
+    /// Split out of [`Self::viewport_ms`] because a UI toolkit drawn through the
+    /// overlay system makes this a whole-screen per-frame cost, while the rest of
+    /// the viewport phase (camera, grid, interaction) stays roughly constant. A
+    /// consumer that draws its interface here needs to see the two move
+    /// independently.
+    pub overlay_ms: f32,
     /// Remainder of `prepare` not covered by the fields above.
     pub other_ms: f32,
 }
@@ -185,13 +237,22 @@ pub struct PrepareBreakdown {
 /// support `TIMESTAMP_QUERY` (the same condition that leaves
 /// [`FrameStats::gpu_frame_ms`] at `None`).
 ///
+/// An [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin) records its draws
+/// into the passes the renderer owns, so plugin GPU cost is included in
+/// `scene_ms` / `oit_ms` / `shadow_ms` and cannot be separated from built-in
+/// item draws in the same pass. Splitting it would mean a timestamp pair per
+/// plugin per pass, which is not carried. The CPU side is attributable per
+/// plugin: see
+/// [`ViewportRenderer::plugin_frame_counters`](crate::ViewportRenderer::plugin_frame_counters).
+///
 /// These passes are submitted in separate command buffers but resolved
 /// together, so the values are comparable. Like `gpu_frame_ms`, they lag one
 /// frame behind due to async readback. The passes measured here do not cover
-/// every GPU pass (decals, scatter, bloom, depth of field, and the final
-/// overlays are not split out), so the fields do not sum to the full frame GPU
-/// time; treat the remainder as those un-instrumented passes plus present.
+/// every GPU pass (decals, scatter, and depth of field are not split out), so
+/// the fields do not sum to the full frame GPU time; treat the remainder as
+/// those un-instrumented passes plus present.
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct GpuBreakdown {
     /// Main opaque HDR scene pass.
     pub scene_ms: f32,
@@ -202,11 +263,25 @@ pub struct GpuBreakdown {
     /// Tone-map and resolve pass that writes the final LDR image.
     pub post_ms: f32,
     /// Main-camera GPU cull dispatch: the `cull_instances` + `write_indirect_args`
-    /// compute passes that produce the indirect draw args. `0.0` when GPU culling
-    /// is off or the scene has no instanced batches. Shadow-cascade culls are not
-    /// included here. Useful for checking whether the cull pass costs more than it
-    /// saves on a given scene.
+    /// compute passes that produce the indirect draw args, plus the compaction
+    /// between them. `0.0` when GPU culling is off or the scene has no instanced
+    /// batches. Shadow-cascade culls are not included here. Useful for checking
+    /// whether the cull pass costs more than it saves on a given scene.
     pub cull_ms: f32,
+    /// The three dispatches that pack the visible list in instance order, split
+    /// out of [`Self::cull_ms`]: laying out the chunk space, counting survivors
+    /// per chunk, and scattering them into the list.
+    ///
+    /// These are timestamps taken inside a compute pass, so they need
+    /// `TIMESTAMP_QUERY_INSIDE_PASSES` as well as `TIMESTAMP_QUERY` and stay at
+    /// `0.0` without it, even when the rest of the breakdown is populated. Only
+    /// the main-camera cull is split; a frame with shadow cascades runs the same
+    /// three dispatches per cascade and none of that is counted here.
+    pub cull_plan_ms: f32,
+    /// Second cull dispatch: the per-chunk visible-instance count.
+    pub cull_count_ms: f32,
+    /// Third cull dispatch: scattering the surviving instances into the list.
+    pub cull_scatter_ms: f32,
     /// Point-light cubemap shadow faces, spanning the first to the last face
     /// pass rendered this frame (up to casters x 6 depth passes). This work
     /// used to be invisible to the breakdown and can dominate frames with
@@ -221,18 +296,46 @@ pub struct GpuBreakdown {
     pub bloom_ms: f32,
     /// FXAA fullscreen pass. `0.0` when FXAA is off.
     pub fxaa_ms: f32,
+    /// The dedicated screen-space overlay pass: SDF shapes, labels, glyph runs,
+    /// polylines, and retained overlay groups drawn over the resolved image.
+    ///
+    /// `0.0` when the frame drew no overlays, and also when the overlay draws
+    /// were folded into another pass rather than run as their own. That happens
+    /// on the LDR path ([`crate::PipelineMode::Direct`]) without backdrop blur,
+    /// where the overlay is emitted inline at the end of the scene pass and its
+    /// cost lands in [`Self::scene_ms`]. A frame in
+    /// [`crate::PipelineMode::Hdr`], or an LDR frame with a backdrop-blur shape,
+    /// runs the overlay as its own pass and reports it here.
+    pub overlay_ms: f32,
 }
 
 /// Per-frame rendering statistics returned by [`crate::ViewportRenderer::prepare`].
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FrameStats {
-    /// Total objects considered for rendering.
+    /// Total mesh-family objects considered for rendering.
+    ///
+    /// Counted from the surface submission only. Item-type plugin content is
+    /// not included here or in `visible_objects` / `culled_objects`: a plugin
+    /// owns its own item collections and the renderer does not know what an
+    /// item of a plugin's type costs to draw.
     pub total_objects: u32,
-    /// Objects that passed visibility and frustum tests.
+    /// Objects that passed visibility and frustum tests. Excludes plugin
+    /// content, as [`Self::total_objects`] describes.
     pub visible_objects: u32,
-    /// Objects culled by frustum or visibility.
+    /// Objects culled by frustum or visibility. Excludes plugin content, as
+    /// [`Self::total_objects`] describes.
     pub culled_objects: u32,
-    /// Number of draw calls issued in the main pass.
+    /// Number of draw calls issued in the main pass for mesh-family content.
+    ///
+    /// Plugin draws are **not** counted here: an
+    /// [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin) records its own
+    /// draws and reports them through
+    /// [`ItemTypePlugin::draw_calls`](crate::plugin_api::ItemTypePlugin::draw_calls),
+    /// which arrives as [`Self::plugin_draw_calls`]. The two are complementary,
+    /// not double-counted, so the frame's total is the sum of the pair. A scene
+    /// drawn entirely by plugins reads `draw_calls: 0`, which is correct rather
+    /// than broken.
     pub draw_calls: u32,
     /// Number of instanced batches (0 when using per-object path).
     pub instanced_batches: u32,
@@ -247,8 +350,9 @@ pub struct FrameStats {
     /// An item is non-instanceable when it uses a styled back-face policy
     /// (different-colour/tint/pattern) or is two-sided and transparent, uses a
     /// matcap, has a scalar attribute or parameter visualization, carries a
-    /// position/normal override, has per-instance deform data (skinning), or is
-    /// hit by a compute filter. Each such item costs a uniform write and a bind-group
+    /// position/normal override, carries deform slot data (per-mesh or
+    /// per-instance, so skinning and displacement both land here). Each such
+    /// item costs a uniform write and a bind-group
     /// build in `prepare`, so a large count here means `prepare` is paying
     /// per-object cost across much of the scene rather than batching it.
     pub per_object_items: u32,
@@ -274,19 +378,57 @@ pub struct FrameStats {
     /// frames (no upload attempted at all) and when the per-object path is
     /// active.
     pub batches_skipped: u32,
-    /// Decals whose GPU buffer + bind group were built this frame (cache miss).
+    /// Draw calls issued by item-type plugins this frame, summed across every
+    /// registered plugin that reports them.
     ///
-    /// Non-zero only when a decal is new or its content changed. In steady state
-    /// with static decals this is zero after the first frame: a persistent value
-    /// near the decal count means the cache is missing every frame.
-    pub decal_uploads: u32,
-    /// Decals served from the cross-frame cache this frame (cache hit).
+    /// Complements [`Self::draw_calls`], which covers mesh-family content only.
+    /// A plugin reports this itself through
+    /// [`ItemTypePlugin::draw_calls`](crate::plugin_api::ItemTypePlugin::draw_calls)
+    /// and one that has not implemented it contributes zero whatever it draws,
+    /// so this is a floor, not a guarantee. Per-plugin breakdown:
+    /// [`ViewportRenderer::plugin_frame_counters`](crate::ViewportRenderer::plugin_frame_counters).
+    pub plugin_draw_calls: u32,
+    /// Bytes uploaded by item-type plugins this frame, summed across every
+    /// registered plugin that reports them.
     ///
-    /// Together with `decal_uploads` this shows how effective the decal resource
-    /// cache is: `decal_reused` should equal the visible decal count and
-    /// `decal_uploads` should be zero once decals are settled.
-    pub decal_reused: u32,
-    /// Total triangles submitted to the GPU.
+    /// Complements [`Self::upload_bytes`], with the same caveat as
+    /// [`Self::plugin_draw_calls`]: it is what plugins report, not what the
+    /// renderer observed.
+    pub plugin_upload_bytes: u64,
+    /// Items drawn this frame that carried deform-slot data the chosen draw
+    /// path did not apply, so they drew undeformed.
+    ///
+    /// Reads zero in a correct frame. A non-zero value is a wrong picture, not
+    /// a slow one: the deformation the consumer attached is silently absent. It
+    /// happens when an item with per-mesh slot data is admitted to an instanced
+    /// batch, because the instanced draws bind the empty deform group. Assert on
+    /// it in a test rather than watching it.
+    ///
+    /// Covers mesh-family items only. A plugin that binds the deform group in
+    /// its own pipeline reads the slot buffers itself, and deformer bodies are
+    /// composed into mesh-family shaders only, so plugin geometry is not
+    /// counted here and never deforms from a registered deformer.
+    pub deform_slots_ignored: u32,
+    /// Deform slot-storage buffers reallocated since the previous `prepare()`.
+    ///
+    /// A slot write that fits its existing buffer is a `write_buffer` and reads
+    /// zero here. A per-frame deformation is a same-size write, so a steady
+    /// animated scene should read zero: a value that tracks the deformed mesh
+    /// count every frame means the writes are reallocating instead.
+    pub deform_buffer_reallocations: u32,
+    /// Per-mesh deform bind groups rebuilt since the previous `prepare()`.
+    /// One per per-mesh reallocation, since the bind group points at the buffer
+    /// that was replaced.
+    pub deform_mesh_bind_groups_rebuilt: u32,
+    /// Per-instance deform bind groups rebuilt since the previous `prepare()`.
+    ///
+    /// The one that scales: a per-instance reallocation rebuilds one, but a
+    /// per-mesh reallocation rebuilds every instance bind group on that mesh,
+    /// because they bind the mesh buffer too. For a crowd sharing one mesh that
+    /// is one bind group per crowd member per write.
+    pub deform_instance_bind_groups_rebuilt: u32,
+    /// Total triangles submitted to the GPU by mesh-family draws. Excludes
+    /// plugin-owned geometry, for the reason given on [`Self::draw_calls`].
     pub triangles_submitted: u64,
     /// Number of draw calls in the shadow pass.
     pub shadow_draw_calls: u32,
@@ -398,6 +540,9 @@ pub struct FrameStats {
     /// per-object uniform writes for items whose transform or material
     /// changed. A steady frame over a static scene reads 0; a non-zero
     /// value attributes frame cost to CPU-to-GPU transfer.
+    ///
+    /// Plugin-owned traffic is not counted here; it arrives separately as
+    /// [`Self::plugin_upload_bytes`].
     pub upload_bytes: u64,
     /// GPU pipelines compiled lazily since the previous `prepare()` call.
     ///
@@ -407,6 +552,11 @@ pub struct FrameStats {
     /// Counts calls to the internal pipeline builders, so one increment can
     /// cover a small family of pipeline variants built together.
     pub pipelines_built_this_frame: u32,
+    /// Pipelines compiling on the workers when the frame ended, under
+    /// `PipelineCompilation::Background`. Whatever needed one of them was
+    /// skipped this frame and draws once it is ready. Always zero under
+    /// `Blocking`. The same number as `ViewportRenderer::pipelines_pending`.
+    pub pipelines_pending: u32,
     /// True when GPU-driven culling is active this frame.
     ///
     /// False when the device does not support `INDIRECT_FIRST_INSTANCE` or
@@ -445,6 +595,40 @@ pub struct FrameStats {
     /// Set when `allow_effect_throttling` is true and the previous frame missed
     /// the target budget. Always false in [`RuntimeMode::Capture`].
     pub effects_throttled: bool,
+
+    /// Retained overlay groups submitted through `OverlayFrame::retained` this
+    /// frame, whether or not they drew.
+    ///
+    /// Together with [`overlay_retained_drawn`](Self::overlay_retained_drawn)
+    /// this is the ratio a consumer drawing its interface through the overlay
+    /// system needs: the difference is the groups that were submitted and
+    /// silently skipped, because the handle was already freed, the group
+    /// compiled empty, or its world anchor fell outside the view.
+    ///
+    /// Reported for the most recently prepared viewport, not summed across
+    /// them, matching [`PrepareBreakdown::overlay_ms`].
+    pub overlay_retained_submitted: u32,
+    /// Retained overlay groups drawn from their compiled buffers this frame.
+    ///
+    /// Counts groups, not draws: a group carrying both text and SDF-shape
+    /// geometry records two draws and counts once here.
+    pub overlay_retained_drawn: u32,
+    /// Retained overlay groups whose geometry was rebuilt and re-uploaded this
+    /// frame because its baked glyph UVs went stale.
+    ///
+    /// A group carrying glyphs bakes atlas UVs at a physical size, so it is
+    /// re-emitted when the glyph atlas grows or `pixels_per_point` changes. This
+    /// is the only compile work the renderer does on a retained group by itself;
+    /// `compile_overlay_geometry` is called by the consumer and is not counted
+    /// here. A value that stays non-zero frame after frame means groups are
+    /// paying a full rebuild instead of being drawn from their buffers.
+    pub overlay_retained_reemitted: u32,
+    /// Live compiled overlay geometry, in bytes: vertex, shape, and shadow
+    /// buffers across every group that has been compiled and not freed.
+    ///
+    /// A level, not a per-frame count, and independent of what was submitted
+    /// this frame.
+    pub overlay_retained_bytes: u64,
 
     /// Objects that resolved through a LOD group this frame.
     ///
@@ -498,6 +682,12 @@ mod tests {
         assert_eq!(stats.render_scale, 0.0);
         assert!(!stats.missed_budget);
         assert_eq!(stats.upload_bytes, 0);
+        assert_eq!(stats.plugin_draw_calls, 0);
+        assert_eq!(stats.plugin_upload_bytes, 0);
+        assert_eq!(stats.deform_slots_ignored, 0);
+        assert_eq!(stats.deform_buffer_reallocations, 0);
+        assert_eq!(stats.deform_mesh_bind_groups_rebuilt, 0);
+        assert_eq!(stats.deform_instance_bind_groups_rebuilt, 0);
         assert!(!stats.gpu_culling_active);
         assert!(stats.gpu_visible_instances.is_none());
         assert!(!stats.shadows_skipped);

@@ -1,0 +1,22 @@
+[package]
+name = "viewport-lib-examples-iced"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-only"
+description = "iced-hosted viewport-lib example"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+viewport-lib = { path = "../../viewport-lib", default-features = false, features = ["wgpu27"] }
+glam = { workspace = true }
+# iced 0.14 embeds wgpu 27, so this crate is single-leg: it gains leg features
+# when iced ships against a newer wgpu.
+iced = { version = "0.14", features = ["wgpu"] }
+
+[[example]]
+name = "iced-viewport"
+path = "examples/iced_viewport/main.rs"

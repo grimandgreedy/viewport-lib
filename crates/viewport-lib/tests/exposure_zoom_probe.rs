@@ -4,7 +4,7 @@
 //! frame (zoom in -> dark, zoom out -> bright). Metering now skips far-plane
 //! (background) texels, so the metered EV barely moves with framing.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -31,7 +31,7 @@ fn sphere_scene(
         s.mesh_id = sphere_id;
         s.model = glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 1.8, 0.0, 0.0))
             .to_cols_array_2d();
-        s.material = Material::from_colour([0.6, 0.6, 0.6]);
+        s.material = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6));
         items.push(s);
     }
     items
@@ -81,7 +81,7 @@ fn auto_exposure_stable_across_zoom() {
         frame.camera.viewport_size = [size as f32, size as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
-        frame.viewport.background_colour = Some([0.15, 0.15, 0.17, 1.0].into());
+        frame.viewport.background_colour = Some(Colour::linear(0.15, 0.15, 0.17, 1.0));
 
         let mut light = LightSource::default();
         light.kind = LightKind::Directional {
@@ -152,7 +152,7 @@ fn probe_example_scene() {
     g.mesh_id = ground;
     g.model =
         glam::Mat4::from_translation(glam::Vec3::new(span * 0.5, 0.0, -0.2)).to_cols_array_2d();
-    g.material = Material::from_colour([0.45, 0.45, 0.48]);
+    g.material = Material::from_colour(Colour::linear_rgb(0.45, 0.45, 0.48));
     g.material.roughness = 0.95;
     items.push(g);
     for c in 0..cols {
@@ -161,7 +161,7 @@ fn probe_example_scene() {
         s.mesh_id = sphere;
         s.model = glam::Mat4::from_translation(glam::Vec3::new(c as f32 * spacing, 0.8, 0.8))
             .to_cols_array_2d();
-        s.material = Material::from_colour([a, a, a]);
+        s.material = Material::from_colour(Colour::linear_rgb(a, a, a));
         s.material.roughness = 0.6;
         items.push(s);
     }
@@ -191,7 +191,7 @@ fn probe_example_scene() {
         frame.camera.viewport_size = [size as f32, size as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
-        frame.viewport.background_colour = Some([0.12, 0.12, 0.14, 1.0].into());
+        frame.viewport.background_colour = Some(Colour::linear(0.12, 0.12, 0.14, 1.0));
         let mut light = LightSource::default();
         light.cast_shadows = true;
         light.kind = LightKind::Directional {

@@ -1,5 +1,8 @@
 use crate::resources::*;
-use viewport_lib_geometry::mesh_ops;
+use viewport_lib_geometry::mesh::{
+    compute_tangents, expand_cell_to_vertex, expand_edge_to_vertex, expand_face_colours_to_3n,
+    expand_face_scalars_to_3n, validate_mesh_data,
+};
 
 /// Slice size for the chunked async mesh buffer fills, in bytes. The copies
 /// are plain memcpys into mapped buffers, so the size only has to fit a
@@ -53,12 +56,23 @@ pub(crate) struct MeshPrep {
     /// source `MeshData` did not carry its own tangents. `None` means the
     /// source tangents (if any) should be used directly.
     pub computed_tangents: Option<Vec<[f32; 4]>>,
-    /// CPU copies retained on the mesh for picking. Cloned here rather
-    /// than in `assemble_mesh_data` so the async path pays the memcpy on
-    /// the worker thread instead of inside the apply step.
-    pub cpu_positions: Vec<[f32; 3]>,
-    pub cpu_normals: Vec<[f32; 3]>,
-    pub cpu_indices: Vec<u32>,
+    /// Second UV set packed as raw bytes (one `vec2<f32>` per vertex,
+    /// zero-padded to the vertex count) for the parallel uv1 slab stream.
+    /// `None` when the source `MeshData` carried no `uvs1`.
+    pub uv1_bytes: Option<Vec<u8>>,
+    /// CPU copies retained on the mesh for picking, clip-plane cap geometry,
+    /// and the normal-line visualisation. Cloned here rather than in
+    /// `assemble_mesh_data` so the async path pays the memcpy on the worker
+    /// thread instead of inside the apply step. `None` throughout when the
+    /// caller turned retention off with
+    /// `DeviceResources::set_retain_mesh_cpu_geometry`, so the clone is never
+    /// paid at all.
+    pub cpu_positions: Option<Vec<[f32; 3]>>,
+    pub cpu_normals: Option<Vec<[f32; 3]>>,
+    pub cpu_indices: Option<Vec<u32>>,
+    /// `mesh_is_closed` on the source geometry, computed here so the async
+    /// path pays for it on the worker thread.
+    pub closed: bool,
 }
 
 impl DeviceResources {
@@ -114,6 +128,7 @@ impl DeviceResources {
             &self.content.fallback_extension_attr_buf,
             &self.material.metallic_roughness_view,
             &self.material.emissive_view,
+            &self.content.fallback_uv1_buf,
             vertices,
             indices,
         );
@@ -149,9 +164,9 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         data: &MeshData,
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
-        mesh_ops::validate_mesh_data(data)?;
+        validate_mesh_data(data)?;
         Self::validate_mesh_size(device, data)?;
-        let prep = Self::prep_mesh_data(data);
+        let prep = Self::prep_mesh_data(data, self.retain_mesh_cpu_geometry);
         Ok(self.assemble_mesh_data(device, data, prep))
     }
 
@@ -180,11 +195,11 @@ impl DeviceResources {
     /// `begin_upload_mesh_data`. Returns owned buffers; the caller hands
     /// them to `assemble_mesh_data` on the main thread to finish the
     /// upload.
-    pub(crate) fn prep_mesh_data(data: &MeshData) -> MeshPrep {
+    pub(crate) fn prep_mesh_data(data: &MeshData, retain_cpu: bool) -> MeshPrep {
         let computed_tangents: Option<Vec<[f32; 4]>> = if data.tangents.is_none() {
-            data.uvs.as_ref().map(|uvs| {
-                mesh_ops::compute_tangents(&data.positions, &data.normals, uvs, &data.indices)
-            })
+            data.uvs
+                .as_ref()
+                .map(|uvs| compute_tangents(&data.positions, &data.normals, uvs, &data.indices))
         } else {
             None
         };
@@ -222,12 +237,26 @@ impl DeviceResources {
             })
             .collect();
 
+        // Pack the second UV set parallel to the vertices (one vec2 per vertex,
+        // zero-padded / truncated to the vertex count, matching the forgiving
+        // `uvs` lookup). Left `None` when the mesh has no `uvs1`, so meshes
+        // without a second set allocate nothing in the uv1 slab stream.
+        let uv1_bytes = data.uvs1.as_ref().map(|uvs1| {
+            let mut packed: Vec<[f32; 2]> = vec![[0.0, 0.0]; data.positions.len()];
+            for (dst, src) in packed.iter_mut().zip(uvs1.iter()) {
+                *dst = *src;
+            }
+            bytemuck::cast_slice(&packed).to_vec()
+        });
+
         MeshPrep {
             vertices,
             computed_tangents,
-            cpu_positions: data.positions.clone(),
-            cpu_normals: data.normals.clone(),
-            cpu_indices: data.indices.clone(),
+            uv1_bytes,
+            cpu_positions: retain_cpu.then(|| data.positions.clone()),
+            cpu_normals: retain_cpu.then(|| data.normals.clone()),
+            cpu_indices: retain_cpu.then(|| data.indices.clone()),
+            closed: mesh_is_closed(data.positions.iter().copied(), &data.indices),
         }
     }
 
@@ -243,9 +272,11 @@ impl DeviceResources {
         let MeshPrep {
             vertices,
             computed_tangents,
+            uv1_bytes,
             cpu_positions,
             cpu_normals,
             cpu_indices,
+            closed,
         } = prep;
         let tangent_slice = data.tangents.as_deref().or(computed_tangents.as_deref());
 
@@ -269,13 +300,16 @@ impl DeviceResources {
             &self.content.fallback_extension_attr_buf,
             &self.material.metallic_roughness_view,
             &self.material.emissive_view,
+            &self.content.fallback_uv1_buf,
             &vertices,
             &data.indices,
+            uv1_bytes,
             None,
         );
-        mesh.cpu_positions = Some(cpu_positions);
-        mesh.cpu_normals = Some(cpu_normals);
-        mesh.cpu_indices = Some(cpu_indices);
+        mesh.closed = closed;
+        mesh.cpu_positions = cpu_positions;
+        mesh.cpu_normals = cpu_normals;
+        mesh.cpu_indices = cpu_indices;
         mesh.submeshes = data.submeshes.clone();
         let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_colour_bufs, vector_attr_bufs) =
             Self::upload_attributes(
@@ -331,7 +365,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         data: MeshData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        mesh_ops::validate_mesh_data(&data)?;
+        validate_mesh_data(&data)?;
         Self::validate_mesh_size(device, &data)?;
 
         let slot =
@@ -349,11 +383,26 @@ impl DeviceResources {
         let vertex_chunk = self.geometry.vertex_chunk_buffer(vertex_span);
         let index_chunk = self.geometry.index_chunk_buffer(index_span);
 
+        // Second UV set: pack it (cheap vec2 copy) and record the parallel uv1
+        // write now, while `&mut self.geometry` is in scope. The data is small
+        // next to a streamed mesh, so it does not need the chunked GPU step; the
+        // deferred write flushes with the geometry at the next `process_uploads`.
+        if let Some(uvs1) = data.uvs1.as_ref() {
+            let mut packed: Vec<[f32; 2]> = vec![[0.0, 0.0]; data.positions.len()];
+            for (dst, src) in packed.iter_mut().zip(uvs1.iter()) {
+                *dst = *src;
+            }
+            self.geometry.ensure_uv1_chunk(device, vertex_span.chunk);
+            self.geometry
+                .enqueue_uv1(vertex_span, bytemuck::cast_slice(&packed).to_vec());
+        }
+
+        let retain_cpu = self.retain_mesh_cpu_geometry;
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu_then_gpu_chunked(move |progress| {
                 progress.set(0.1);
-                let prep = DeviceResources::prep_mesh_data(&data);
+                let prep = DeviceResources::prep_mesh_data(&data, retain_cpu);
                 let aabb = crate::scene::aabb::Aabb::from_positions(&data.positions);
                 progress.set(0.5);
 
@@ -366,9 +415,13 @@ impl DeviceResources {
                 let MeshPrep {
                     vertices,
                     computed_tangents,
+                    // The uv1 stream is recorded up front in
+                    // `begin_upload_mesh_data`, not through the chunked GPU step.
+                    uv1_bytes: _,
                     cpu_positions,
                     cpu_normals,
                     cpu_indices,
+                    closed,
                 } = prep;
                 let mut voff: usize = 0;
                 let mut ioff: usize = 0;
@@ -466,14 +519,17 @@ impl DeviceResources {
                                 &resources.content.fallback_extension_attr_buf,
                                 &resources.material.metallic_roughness_view,
                                 &resources.material.emissive_view,
+                                &resources.content.fallback_uv1_buf,
                                 vertex_span,
                                 index_span,
                                 data.indices.len() as u32,
                                 aabb,
+                                data.uvs1.is_some(),
                             );
-                            mesh.cpu_positions = Some(cpu_positions);
-                            mesh.cpu_normals = Some(cpu_normals);
-                            mesh.cpu_indices = Some(cpu_indices);
+                            mesh.closed = closed;
+                            mesh.cpu_positions = cpu_positions;
+                            mesh.cpu_normals = cpu_normals;
+                            mesh.cpu_indices = cpu_indices;
                             mesh.submeshes = data.submeshes.clone();
                             let (
                                 attr_bufs,
@@ -598,11 +654,22 @@ impl DeviceResources {
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         pickable: bool,
     ) {
-        if let Some(mesh) = self.mesh_store.get_mut(mesh_id) {
-            if !pickable {
+        if !pickable {
+            // Drops the positions and indices only, so the normal-line copy
+            // survives. Goes through the store so the host byte total stays in
+            // step; `release_mesh_cpu_geometry` is the whole-mesh version.
+            let previous = self
+                .mesh_store
+                .get(mesh_id)
+                .map_or(0, |mesh| mesh.cpu_byte_size());
+            if let Some(mesh) = self.mesh_store.get_mut(mesh_id) {
                 mesh.cpu_positions = None;
                 mesh.cpu_indices = None;
+                if let Ok(mut cache) = mesh.pick_trimesh_cache.lock() {
+                    *cache = None;
+                }
             }
+            self.mesh_store.recharge_cpu_bytes(mesh_id, previous);
         }
     }
 
@@ -1016,6 +1083,14 @@ impl DeviceResources {
         data: crate::resources::lightmap::LightmapData,
         mode: crate::resources::lightmap::LightmapMode,
     ) -> crate::error::ViewportResult<()> {
+        // Lightmaps are radiance, direction, and visibility: all linear. This one
+        // is caught at set time rather than at bind, because the call already
+        // returns a result.
+        use crate::resources::TextureSlot;
+        self.check_texture_slot(Some(data.texture_id()), TextureSlot::LightmapPrimary);
+        self.check_texture_slot(data.direction_texture_id(), TextureSlot::LightmapSecondary);
+        self.texture_slot_mismatch()?;
+
         let store_len = self.mesh_store.len();
         let mesh =
             self.mesh_store
@@ -1264,13 +1339,14 @@ impl DeviceResources {
                 count: self.mesh_store.len(),
             });
         }
-        mesh_ops::validate_mesh_data(data)?;
+        validate_mesh_data(data)?;
         Self::validate_mesh_size(device, data)?;
+        let retain_cpu = self.retain_mesh_cpu_geometry;
 
         let computed_tangents: Option<Vec<[f32; 4]>> = if data.tangents.is_none() {
-            data.uvs.as_ref().map(|uvs| {
-                mesh_ops::compute_tangents(&data.positions, &data.normals, uvs, &data.indices)
-            })
+            data.uvs
+                .as_ref()
+                .map(|uvs| compute_tangents(&data.positions, &data.normals, uvs, &data.indices))
         } else {
             None
         };
@@ -1354,11 +1430,20 @@ impl DeviceResources {
                     queue.write_buffer(nl_buf, 0, cast_slice(&normal_line_verts));
                 }
                 mesh.aabb = aabb;
-                mesh.cpu_positions = Some(data.positions.clone());
-                mesh.cpu_normals = Some(data.normals.clone());
-                mesh.cpu_indices = Some(data.indices.clone());
+                let previous_cpu_bytes = mesh.cpu_byte_size();
+                if retain_cpu {
+                    mesh.cpu_positions = Some(data.positions.clone());
+                    mesh.cpu_normals = Some(data.normals.clone());
+                    mesh.cpu_indices = Some(data.indices.clone());
+                } else {
+                    mesh.cpu_positions = None;
+                    mesh.cpu_normals = None;
+                    mesh.cpu_indices = None;
+                }
                 mesh.submeshes = data.submeshes.clone();
                 mesh.content_rev += 1;
+                self.mesh_store
+                    .recharge_cpu_bytes(mesh_id, previous_cpu_bytes);
 
                 self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
                     + data.indices.len() * std::mem::size_of::<u32>())
@@ -1399,13 +1484,24 @@ impl DeviceResources {
             &self.content.fallback_extension_attr_buf,
             &self.material.metallic_roughness_view,
             &self.material.emissive_view,
+            &self.content.fallback_uv1_buf,
             &vertices,
             &data.indices,
+            data.uvs1.as_ref().map(|uvs1| {
+                let mut packed: Vec<[f32; 2]> = vec![[0.0, 0.0]; data.positions.len()];
+                for (dst, src) in packed.iter_mut().zip(uvs1.iter()) {
+                    *dst = *src;
+                }
+                bytemuck::cast_slice(&packed).to_vec()
+            }),
             None,
         );
-        new_mesh.cpu_positions = Some(data.positions.clone());
-        new_mesh.cpu_normals = Some(data.normals.clone());
-        new_mesh.cpu_indices = Some(data.indices.clone());
+        if retain_cpu {
+            new_mesh.cpu_positions = Some(data.positions.clone());
+            new_mesh.cpu_normals = Some(data.normals.clone());
+            new_mesh.cpu_indices = Some(data.indices.clone());
+        }
+        new_mesh.closed = mesh_is_closed(data.positions.iter().copied(), &data.indices);
         new_mesh.submeshes = data.submeshes.clone();
         let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_colour_bufs, vector_attr_bufs) =
             Self::upload_attributes(
@@ -1483,13 +1579,25 @@ impl DeviceResources {
     /// fallback rendering rather than aliasing the reused slot.
     ///
     /// Returns `true` if a mesh was freed, `false` if `id` did not resolve to a
-    /// live mesh. This is the residency-facing name for [`remove_mesh`]; the two
-    /// are equivalent. To free a mesh that is a member of a LOD group, free the
-    /// group with [`free_lod_group`](Self::free_lod_group) instead so shared
-    /// members are handled.
+    /// live mesh.
     ///
-    /// [`remove_mesh`]: Self::remove_mesh
+    /// A mesh that is a level of a live LOD group is refused: the call returns
+    /// `false`, frees nothing, and logs a warning. Freeing it would leave the
+    /// group pointing at a dead slot, which renders as a silently missing level
+    /// rather than an error, so the refusal surfaces the mistake instead.
+    /// Free the group with [`free_lod_group`](Self::free_lod_group), which drops
+    /// each member unless another live group still owns it, or ask
+    /// [`lod_group_of_mesh`](Self::lod_group_of_mesh) first.
     pub fn free_mesh(&mut self, id: crate::resources::mesh::mesh_store::MeshId) -> bool {
+        if let Some(group) = self.lod_groups.group_of_mesh(id) {
+            tracing::warn!(
+                mesh_index = id.index(),
+                lod_group_index = group.index(),
+                "free_mesh refused: the mesh is a level of a live LOD group. Free the group \
+                 with free_lod_group, which drops members no other group owns."
+            );
+            return false;
+        }
         // Return the mesh's slab windows to the free list before removing it.
         let spans = self
             .mesh_store
@@ -1513,7 +1621,9 @@ impl DeviceResources {
     /// pipeline. Interior faces (shared by two cells) are discarded; only
     /// boundary faces (belonging to exactly one cell) are kept. Per-cell scalar
     /// and colour attributes are remapped to per-face attributes so the
-    /// face-colouring path handles them automatically.
+    /// face-colouring path handles them automatically. Node scalars go on as
+    /// per-vertex attributes and interpolate across each face; select one with
+    /// `AttributeKind::Vertex`.
     ///
     /// The returned item has `transparency: None` and `projected_tet_id: None`;
     /// it renders as an opaque surface mesh. Use
@@ -1545,9 +1655,10 @@ impl DeviceResources {
     /// to `Some(VolumeTransparency { .. })`. Switching modes at runtime is free
     /// because both GPU artifacts are already resident.
     ///
-    /// `scalar_attribute` names a key in `data.cell_scalars`; cells without the
-    /// attribute receive scalar 0.0. The scalar range is auto-detected from the
-    /// data and stored in the per-volume uniform.
+    /// `scalar_attribute` names a key in `data.cell_scalars`, or failing that
+    /// in `data.node_scalars`, where each tet takes the mean of its corner
+    /// values. An unknown name gives every cell 0.0. The scalar range is
+    /// auto-detected from the data and stored in the per-volume uniform.
     pub fn upload_volume_mesh_with_transparency(
         &mut self,
         device: &crate::gpu::Device,
@@ -1582,6 +1693,27 @@ impl DeviceResources {
             crate::resources::volume::volume_mesh::extract_clipped_volume_faces(data, clip_planes);
         let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
         Ok(crate::VolumeMeshItem::new(mesh_id, face_to_cell))
+    }
+
+    /// Replace an existing boundary-mesh slot with the boundary of `data`,
+    /// returning the new `face_to_cell` map.
+    ///
+    /// For a volume whose cells changed: the surface is extracted again and
+    /// written into the same mesh slot, so the item's `boundary_mesh_id` stays
+    /// valid. Hand the returned map to
+    /// [`VolumeMeshItem::update_mesh`](crate::VolumeMeshItem::update_mesh).
+    /// When only the values changed, use
+    /// [`update_volume_mesh_scalar`](Self::update_volume_mesh_scalar) for a
+    /// cell scalar or [`replace_attribute`](Self::replace_attribute) for a
+    /// node scalar; neither extracts anything.
+    pub fn replace_volume_mesh(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        data: &crate::resources::volume::volume_mesh::VolumeMeshData,
+    ) -> crate::error::ViewportResult<Vec<u32>> {
+        self.replace_clipped_volume_mesh(device, queue, mesh_id, data, &[])
     }
 
     /// Replace an existing boundary-mesh slot with a freshly-extracted clipped
@@ -1623,6 +1755,10 @@ impl DeviceResources {
     /// retains from upload) and written to the named per-face scalar buffer
     /// only: no boundary re-extraction, no vertex/index touch, no new mesh slot.
     /// Cost is O(boundary faces) instead of O(total cells).
+    ///
+    /// This is for a cell scalar. A node scalar on an unclipped boundary mesh
+    /// is already in the mesh's vertex order, so it is updated with
+    /// [`replace_attribute`](Self::replace_attribute) directly.
     ///
     /// `face_to_cell` and the boundary must be the ones the mesh was uploaded
     /// with (unchanged since); only the scalar values may differ. The scalar
@@ -1717,40 +1853,6 @@ impl DeviceResources {
         Ok(())
     }
 
-    /// Replace a previously uploaded sparse voxel grid in place.
-    ///
-    /// Equivalent to calling [`upload_sparse_volume_grid_data`](Self::upload_sparse_volume_grid_data)
-    /// and then [`replace_mesh_data`](Self::replace_mesh_data), but without allocating a new slot.
-    /// Use this for per-frame or per-interaction updates (e.g. voxel paint) to avoid leaking GPU memory.
-    pub fn replace_sparse_volume_grid_data(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        mesh_id: crate::resources::mesh::mesh_store::MeshId,
-        data: &crate::resources::volume::sparse_volume::SparseVolumeGridData,
-    ) -> crate::error::ViewportResult<()> {
-        let mesh_data = crate::resources::volume::sparse_volume::extract_sparse_boundary(data);
-        self.replace_mesh_data(device, queue, mesh_id, &mesh_data)
-    }
-
-    /// Upload a sparse voxel grid by extracting its boundary surface and uploading
-    /// the result via [`upload_mesh_data`](Self::upload_mesh_data).
-    ///
-    /// Only quad faces not shared between two active cells are kept.  Per-cell
-    /// scalars and colours are remapped to per-face attributes, and per-node
-    /// scalars are averaged over the 4 quad corners to produce per-face scalars.
-    ///
-    /// Returns the `MeshId`.  Reference cell and node attributes via
-    /// [`AttributeRef { kind: AttributeKind::Face, .. }`](crate::resources::AttributeRef).
-    pub fn upload_sparse_volume_grid_data(
-        &mut self,
-        device: &crate::gpu::Device,
-        data: &crate::resources::volume::sparse_volume::SparseVolumeGridData,
-    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
-        let mesh_data = crate::resources::volume::sparse_volume::extract_sparse_boundary(data);
-        self.upload_mesh_data(device, &mesh_data)
-    }
-
     /// Start an asynchronous boundary-only volume mesh upload.
     ///
     /// Returns a [`JobId`](crate::resources::JobId) immediately. Boundary
@@ -1776,6 +1878,7 @@ impl DeviceResources {
         let slot_for_apply = slot.clone();
         let device_for_apply = device.clone();
 
+        let retain_cpu = self.retain_mesh_cpu_geometry;
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
@@ -1783,8 +1886,8 @@ impl DeviceResources {
                 let (mesh_data, face_to_cell) =
                     crate::resources::volume::volume_mesh::extract_boundary_faces(&data);
                 progress.set(0.5);
-                mesh_ops::validate_mesh_data(&mesh_data)?;
-                let prep = DeviceResources::prep_mesh_data(&mesh_data);
+                validate_mesh_data(&mesh_data)?;
+                let prep = DeviceResources::prep_mesh_data(&mesh_data, retain_cpu);
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut DeviceResources| {
@@ -1849,6 +1952,7 @@ impl DeviceResources {
         let slot_for_apply = slot.clone();
         let device_for_apply = device.clone();
 
+        let retain_cpu = self.retain_mesh_cpu_geometry;
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
@@ -1859,8 +1963,8 @@ impl DeviceResources {
                         &clip_planes,
                     );
                 progress.set(0.5);
-                mesh_ops::validate_mesh_data(&mesh_data)?;
-                let prep = DeviceResources::prep_mesh_data(&mesh_data);
+                validate_mesh_data(&mesh_data)?;
+                let prep = DeviceResources::prep_mesh_data(&mesh_data, retain_cpu);
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut DeviceResources| {
@@ -1904,74 +2008,6 @@ impl DeviceResources {
             Some((mesh_id, face_to_cell)) => {
                 map.remove(&id);
                 Ok(crate::VolumeMeshItem::new(mesh_id, face_to_cell))
-            }
-            None => Err(crate::error::ViewportError::JobNotReady),
-        }
-    }
-
-    /// Start an asynchronous sparse voxel grid upload.
-    pub fn begin_upload_sparse_volume_grid_data(
-        &mut self,
-        device: &crate::gpu::Device,
-        data: crate::resources::volume::sparse_volume::SparseVolumeGridData,
-    ) -> crate::resources::JobId {
-        let slot =
-            crate::resources::ResultSlot::<crate::resources::mesh::mesh_store::MeshId>::new();
-        let slot_for_apply = slot.clone();
-        let device_for_apply = device.clone();
-
-        let id = {
-            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
-            runner.submit_cpu(move |progress| {
-                progress.set(0.1);
-                let mesh_data =
-                    crate::resources::volume::sparse_volume::extract_sparse_boundary(&data);
-                progress.set(0.5);
-                mesh_ops::validate_mesh_data(&mesh_data)?;
-                let prep = DeviceResources::prep_mesh_data(&mesh_data);
-                progress.set(0.95);
-                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut DeviceResources| {
-                        let mesh_id =
-                            resources.assemble_mesh_data(&device_for_apply, &mesh_data, prep);
-                        slot_for_apply.set(mesh_id);
-                    }),
-                ))
-            })
-        };
-
-        self.job_results
-            .sparse_volume_grid
-            .lock()
-            .expect("sparse volume grid result map poisoned")
-            .insert(id, slot);
-        id
-    }
-
-    /// Take the [`MeshId`](crate::resources::mesh::mesh_store::MeshId) produced by a completed
-    /// [`begin_upload_sparse_volume_grid_data`](Self::begin_upload_sparse_volume_grid_data)
-    /// job.
-    pub fn upload_result_sparse_volume_grid(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
-        let mut map = self
-            .job_results
-            .sparse_volume_grid
-            .lock()
-            .expect("sparse volume grid result map poisoned");
-        let slot = match map.get(&id) {
-            Some(s) => s.clone(),
-            None => {
-                return Err(crate::error::ViewportError::JobResultMissing {
-                    reason: "unknown id or wrong upload type",
-                });
-            }
-        };
-        match slot.take() {
-            Some(mesh_id) => {
-                map.remove(&id);
-                Ok(mesh_id)
             }
             None => Err(crate::error::ViewportError::JobNotReady),
         }
@@ -2054,7 +2090,7 @@ impl DeviceResources {
                     ranges.insert(name.clone(), (min, max));
                 }
                 AttributeData::Cell(c) => {
-                    let scalars = mesh_ops::expand_cell_to_vertex(c, positions, indices);
+                    let scalars = expand_cell_to_vertex(c, positions, indices);
                     if scalars.is_empty() {
                         continue;
                     }
@@ -2072,7 +2108,7 @@ impl DeviceResources {
                             device, positions, normals, indices, uvs, tangents,
                         ));
                     }
-                    let expanded = mesh_ops::expand_face_scalars_to_3n(f, n_tris);
+                    let expanded = expand_face_scalars_to_3n(f, n_tris);
                     if expanded.is_empty() {
                         continue;
                     }
@@ -2093,7 +2129,7 @@ impl DeviceResources {
                             device, positions, normals, indices, uvs, tangents,
                         ));
                     }
-                    let expanded = mesh_ops::expand_face_colours_to_3n(colours, n_tris);
+                    let expanded = expand_face_colours_to_3n(colours, n_tris);
                     if expanded.is_empty() {
                         continue;
                     }
@@ -2115,7 +2151,7 @@ impl DeviceResources {
                 AttributeData::Edge(e) => {
                     // Average edge values to vertex values (each edge's scalar is
                     // distributed to its two endpoint vertices).
-                    let scalars = mesh_ops::expand_edge_to_vertex(e, positions, indices);
+                    let scalars = expand_edge_to_vertex(e, positions, indices);
                     if scalars.is_empty() {
                         continue;
                     }
@@ -2150,7 +2186,8 @@ impl DeviceResources {
                 }
                 AttributeData::VertexVector(v) => {
                     // Flatten [f32; 3] -> [f32] with 12-byte per-vertex stride.
-                    // Bound as vertex buffer 1 in the LIC surface pass (location 1).
+                    // An item type binds it as a vertex buffer; the material warp
+                    // reads it as storage.
                     if v.is_empty() {
                         continue;
                     }
@@ -2183,7 +2220,9 @@ impl DeviceResources {
         )
     }
 
-    /// Allocate and fill a STORAGE buffer from a slice of `f32` values.
+    /// Allocate and fill a STORAGE buffer from a slice of `f32` values. It is
+    /// also a vertex buffer, so an item type can bind a per-vertex scalar
+    /// through `MeshDraw::bind_scalar_attribute`.
     fn create_storage_buffer_f32(
         device: &crate::gpu::Device,
         label: &str,
@@ -2192,7 +2231,12 @@ impl DeviceResources {
         let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some(label),
             size: (std::mem::size_of::<f32>() * data.len()) as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            // COPY_SRC so a deformer slot can take the attribute as its per-mesh
+            // source (`set_deform_slot_source_attribute`).
+            usage: crate::gpu::BufferUsages::STORAGE
+                | crate::gpu::BufferUsages::VERTEX
+                | crate::gpu::BufferUsages::COPY_DST
+                | crate::gpu::BufferUsages::COPY_SRC,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(buf.slice(..), bytemuck::cast_slice(data));
@@ -2402,10 +2446,11 @@ impl DeviceResources {
         fallback_extension_attr_buf: &crate::gpu::Buffer,
         fallback_metallic_roughness_view: &crate::gpu::TextureView,
         fallback_emissive_view: &crate::gpu::TextureView,
+        fallback_uv1_buf: &crate::gpu::Buffer,
         vertices: &[Vertex],
         indices: &[u32],
     ) -> GpuMesh {
-        Self::create_mesh_with_normals(
+        let mut mesh = Self::create_mesh_with_normals(
             device,
             geometry,
             object_bgl,
@@ -2425,10 +2470,14 @@ impl DeviceResources {
             fallback_extension_attr_buf,
             fallback_metallic_roughness_view,
             fallback_emissive_view,
+            fallback_uv1_buf,
             vertices,
             indices,
             None,
-        )
+            None,
+        );
+        mesh.closed = mesh_is_closed(vertices.iter().map(|v| v.position), indices);
+        mesh
     }
 
     pub(crate) fn create_mesh_with_normals(
@@ -2451,8 +2500,10 @@ impl DeviceResources {
         fallback_extension_attr_buf: &crate::gpu::Buffer,
         fallback_metallic_roughness_view: &crate::gpu::TextureView,
         fallback_emissive_view: &crate::gpu::TextureView,
+        fallback_uv1_buf: &crate::gpu::Buffer,
         vertices: &[Vertex],
         indices: &[u32],
+        uv1_bytes: Option<Vec<u8>>,
         normal_line_verts: Option<&[Vertex]>,
     ) -> GpuMesh {
         use bytemuck::cast_slice;
@@ -2466,6 +2517,13 @@ impl DeviceResources {
         let index_span = geometry.alloc_index(device, index_bytes);
         geometry.enqueue_vertex(vertex_span, cast_slice(vertices).to_vec());
         geometry.enqueue_index(index_span, cast_slice(indices).to_vec());
+        // Second UV set: record the parallel uv1 write into this mesh's region of
+        // the per-chunk uv1 buffer (created lazily here on first use).
+        let has_uv1 = uv1_bytes.is_some();
+        if let Some(bytes) = uv1_bytes {
+            geometry.ensure_uv1_chunk(device, vertex_span.chunk);
+            geometry.enqueue_uv1(vertex_span, bytes);
+        }
 
         let aabb = crate::scene::aabb::Aabb::from_positions(
             &vertices.iter().map(|v| v.position).collect::<Vec<_>>(),
@@ -2489,10 +2547,12 @@ impl DeviceResources {
             fallback_extension_attr_buf,
             fallback_metallic_roughness_view,
             fallback_emissive_view,
+            fallback_uv1_buf,
             vertex_span,
             index_span,
             indices.len() as u32,
             aabb,
+            has_uv1,
         );
         if let Some(nl_verts) = normal_line_verts
             && !nl_verts.is_empty()
@@ -2538,10 +2598,12 @@ impl DeviceResources {
         fallback_extension_attr_buf: &crate::gpu::Buffer,
         fallback_metallic_roughness_view: &crate::gpu::TextureView,
         fallback_emissive_view: &crate::gpu::TextureView,
+        fallback_uv1_buf: &crate::gpu::Buffer,
         vertex_span: crate::resources::mesh::geometry_slab::SlabSpan,
         index_span: crate::resources::mesh::geometry_slab::SlabSpan,
         index_count: u32,
         aabb: crate::scene::aabb::Aabb,
+        has_uv1: bool,
     ) -> GpuMesh {
         use bytemuck::cast_slice;
 
@@ -2585,7 +2647,10 @@ impl DeviceResources {
             alpha_cutoff: 0.5,
             has_metallic_roughness_tex: 0,
             has_emissive_tex: 0,
-            uv_transform: [0.0, 0.0, 1.0, 1.0],
+            material_id: 0,
+            uv1_base: 0,
+            mesh_closed: 0,
+            _pad_uv: 0,
             deform_flags: 0,
             normal_strength: 1.0,
             ao_range: [0.0, 1.0],
@@ -2603,7 +2668,9 @@ impl DeviceResources {
             lightmap_index: 0,
             has_shadowmask: 0,
             ignore_clip: 0,
-            _pad_ls: 0,
+            // Template uniform for mesh registration; real per-item masks are
+            // written by the prepare path. `!0` = lit by every light.
+            object_mask: !0,
         };
         let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -2702,6 +2769,14 @@ impl DeviceResources {
                         fallback_lightmap_array_view,
                     ),
                 },
+                // 19: second UV set (uv1). Bound to the zero fallback here; the
+                // real per-chunk uv1 buffer is swapped in by the material
+                // bind-group rebuild on the mesh's first prepare when it carries
+                // `MeshData::uvs1`.
+                crate::gpu::BindGroupEntry {
+                    binding: 19,
+                    resource: fallback_uv1_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -2744,7 +2819,10 @@ impl DeviceResources {
             alpha_cutoff: 0.5,
             has_metallic_roughness_tex: 0,
             has_emissive_tex: 0,
-            uv_transform: [0.0, 0.0, 1.0, 1.0],
+            material_id: 0,
+            uv1_base: 0,
+            mesh_closed: 0,
+            _pad_uv: 0,
             deform_flags: 0,
             normal_strength: 1.0,
             ao_range: [0.0, 1.0],
@@ -2762,7 +2840,9 @@ impl DeviceResources {
             lightmap_index: 0,
             has_shadowmask: 0,
             ignore_clip: 0,
-            _pad_ls: 0,
+            // Template uniform for mesh registration; real per-item masks are
+            // written by the prepare path. `!0` = lit by every light.
+            object_mask: !0,
         };
         let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),
@@ -2858,6 +2938,12 @@ impl DeviceResources {
                         fallback_lightmap_array_view,
                     ),
                 },
+                // 19: second UV set (uv1). Normal-line rendering never samples a
+                // texture, so the zero fallback is always correct here.
+                crate::gpu::BindGroupEntry {
+                    binding: 19,
+                    resource: fallback_uv1_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -2865,6 +2951,7 @@ impl DeviceResources {
             vertex_span,
             index_span,
             index_count,
+            closed: false,
             submeshes: Vec::new(),
             // Wireframe edges are built lazily on first use; the indices are
             // retained so any mesh can materialise them.
@@ -2873,6 +2960,7 @@ impl DeviceResources {
             normal_line_buffer: None,
             normal_line_count: 0,
             object_uniform_buf,
+            last_object_uniform: std::sync::Mutex::new(None),
             object_bind_group,
             last_tex_key: (
                 u64::MAX,
@@ -2906,6 +2994,7 @@ impl DeviceResources {
             normal_override_slice: None,
             extension_attr_buffer: None,
             lightmap: None,
+            has_uv1,
             lightmap_gen: 0,
             position_override_gen: 0,
             normal_override_gen: 0,
@@ -2947,8 +3036,14 @@ impl DeviceResources {
                     // binding 1: tet geometry storage buffer (read-only)
                     crate::gpu::BindGroupLayoutEntry {
                         binding: 1,
-                        visibility: crate::gpu::ShaderStages::VERTEX
-                            | crate::gpu::ShaderStages::FRAGMENT,
+                        // Vertex stage only: `projected_tet.wgsl` reads this in
+                        // vs_main and never in fs_main. wgpu sums the per-stage
+                        // storage-buffer count across every group in a pipeline
+                        // layout, and the camera group already spends 7 of the
+                        // default 8 in the fragment stage, so a fragment
+                        // visibility here that nothing uses fails the layout on
+                        // a device with default limits.
+                        visibility: crate::gpu::ShaderStages::VERTEX,
                         ty: crate::gpu::BindingType::Buffer {
                             ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
@@ -2959,8 +3054,14 @@ impl DeviceResources {
                     // binding 2: per-tet scalar storage buffer (read-only)
                     crate::gpu::BindGroupLayoutEntry {
                         binding: 2,
-                        visibility: crate::gpu::ShaderStages::VERTEX
-                            | crate::gpu::ShaderStages::FRAGMENT,
+                        // Vertex stage only: `projected_tet.wgsl` reads this in
+                        // vs_main and never in fs_main. wgpu sums the per-stage
+                        // storage-buffer count across every group in a pipeline
+                        // layout, and the camera group already spends 7 of the
+                        // default 8 in the fragment stage, so a fragment
+                        // visibility here that nothing uses fails the layout on
+                        // a device with default limits.
+                        visibility: crate::gpu::ShaderStages::VERTEX,
                         ty: crate::gpu::BindingType::Buffer {
                             ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
@@ -3513,6 +3614,7 @@ impl DeviceResources {
         };
 
         let initial_uniform = crate::resources::types::ProjectedTetUniform {
+            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             density: 1.0,
             scalar_min: scalar_range.0,
             scalar_max: scalar_range.1,
@@ -3535,6 +3637,223 @@ impl DeviceResources {
         uniform_buffer.unmap();
 
         (pending, scalar_range, uniform_buffer)
+    }
+}
+
+/// Whether a triangle list is a closed, consistently wound surface. Vertices
+/// are welded by position within a tolerance of the mesh extent, so a seam
+/// that duplicates a vertex for its UV or normal, or recomputes it through
+/// `cos` and `sin` a few ulps apart, does not open the surface. Each
+/// undirected edge counts +1 for one traversal direction and -1 for the
+/// other; a closed manifold sums to zero on every edge. Degenerate triangles
+/// (a repeated position) open the surface, as do inconsistent windings,
+/// which is the conservative answer.
+pub(crate) fn mesh_is_closed(positions: impl Iterator<Item = [f32; 3]>, indices: &[u32]) -> bool {
+    if indices.len() < 12 || indices.len() % 3 != 0 {
+        return false;
+    }
+    let pos: Vec<[f32; 3]> = positions.collect();
+    if pos.is_empty() {
+        return false;
+    }
+    let mut lo = pos[0];
+    let mut hi = pos[0];
+    for p in &pos {
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    let extent = (0..3).map(|k| hi[k] - lo[k]).fold(0.0f32, f32::max);
+    let eps = (extent * 1e-5).max(1e-7);
+    // Weld on a grid of cells 16 eps wide: a vertex merges with the first
+    // representative within eps on every axis, found in the one to eight
+    // cells its eps box touches. At most 6250 cells per axis, so a cell
+    // packs into 21 bits per axis. Each cell holds the head of a list of its
+    // representatives, linked through `next_rep`.
+    let cell = eps * 16.0;
+    let cell_of = |v: f32, k: usize| ((v - lo[k]) / cell).floor() as i64 + 1;
+    let key = |c: [i64; 3]| (c[0] as u64) | ((c[1] as u64) << 21) | ((c[2] as u64) << 42);
+    let mut heads: crate::resources::fast_hash::FastMap<u64, u32> =
+        crate::resources::fast_hash::FastMap::with_capacity_and_hasher(
+            pos.len(),
+            Default::default(),
+        );
+    let mut rep_pos: Vec<[f32; 3]> = Vec::with_capacity(pos.len());
+    let mut next_rep: Vec<u32> = Vec::with_capacity(pos.len());
+    let mut remap = Vec::with_capacity(pos.len());
+    for p in &pos {
+        let lo_c = [0, 1, 2].map(|k| cell_of(p[k] - eps, k));
+        let hi_c = [0, 1, 2].map(|k| cell_of(p[k] + eps, k));
+        let mut found = None;
+        'search: for cx in lo_c[0]..=hi_c[0] {
+            for cy in lo_c[1]..=hi_c[1] {
+                for cz in lo_c[2]..=hi_c[2] {
+                    let mut r = heads.get(&key([cx, cy, cz])).copied().unwrap_or(u32::MAX);
+                    while r != u32::MAX {
+                        let q = rep_pos[r as usize];
+                        if (0..3).all(|k| (q[k] - p[k]).abs() <= eps) {
+                            found = Some(r);
+                            break 'search;
+                        }
+                        r = next_rep[r as usize];
+                    }
+                }
+            }
+        }
+        let id = found.unwrap_or_else(|| {
+            let id = rep_pos.len() as u32;
+            rep_pos.push(*p);
+            let home = key([0, 1, 2].map(|k| cell_of(p[k], k)));
+            next_rep.push(heads.insert(home, id).unwrap_or(u32::MAX));
+            id
+        });
+        remap.push(id);
+    }
+    // Directed edges in a compressed adjacency list: closed and consistently
+    // wound means every u -> v occurs as often as v -> u.
+    let mut welded = Vec::with_capacity(indices.len());
+    for &i in indices {
+        let Some(&r) = remap.get(i as usize) else {
+            return false;
+        };
+        welded.push(r);
+    }
+    let mut start = vec![0u32; rep_pos.len() + 1];
+    for tri in welded.chunks_exact(3) {
+        let (a, b, c) = (tri[0], tri[1], tri[2]);
+        if a == b || b == c || a == c {
+            return false;
+        }
+        for u in [a, b, c] {
+            start[u as usize + 1] += 1;
+        }
+    }
+    for i in 1..start.len() {
+        start[i] += start[i - 1];
+    }
+    let mut fill = start.clone();
+    let mut adj = vec![0u32; welded.len()];
+    for tri in welded.chunks_exact(3) {
+        for (u, v) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
+            adj[fill[u as usize] as usize] = v;
+            fill[u as usize] += 1;
+        }
+    }
+    let out = |u: u32| &adj[start[u as usize] as usize..start[u as usize + 1] as usize];
+    (0..rep_pos.len() as u32).all(|u| {
+        out(u).iter().all(|&v| {
+            let fwd = out(u).iter().filter(|&&w| w == v).count();
+            let back = out(v).iter().filter(|&&w| w == u).count();
+            fwd == back
+        })
+    })
+}
+
+#[cfg(test)]
+mod closed_mesh_tests {
+    use super::mesh_is_closed;
+    use crate::geometry::primitives;
+
+    fn closed(data: &crate::MeshData) -> bool {
+        mesh_is_closed(data.positions.iter().copied(), &data.indices)
+    }
+
+    #[test]
+    fn closed_primitives_are_closed_despite_seams() {
+        assert!(closed(&primitives::cube(1.0)), "cube");
+        assert!(closed(&primitives::sphere(1.0, 16, 8)), "sphere");
+        assert!(closed(&primitives::cone(1.0, 2.0, 16)), "cone");
+        assert!(closed(&primitives::cylinder(0.5, 2.0, 16)), "cylinder");
+        assert!(closed(&primitives::torus(1.0, 0.3, 24, 12)), "torus");
+    }
+
+    #[test]
+    fn open_surfaces_are_open() {
+        let mut quad = primitives::cube(1.0);
+        // Drop the last two triangles: one face missing.
+        quad.indices.truncate(quad.indices.len() - 6);
+        assert!(!closed(&quad));
+        let sheet = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ];
+        assert!(!mesh_is_closed(sheet.iter().copied(), &[0, 1, 2, 0, 2, 3]));
+    }
+
+    /// A box with `n` x `n` quads per face and each face's vertices
+    /// duplicated, as a hex-grid boundary is, every copy nudged by up to
+    /// `jitter` on each axis.
+    fn grid_box(n: usize, jitter: f32) -> (Vec<[f32; 3]>, Vec<u32>) {
+        let mut pos = Vec::new();
+        let mut idx = Vec::new();
+        let mut seed = 1u32;
+        let mut nudge = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0
+        };
+        for axis in 0..3 {
+            for side in [0.0f32, 1.0] {
+                let base = pos.len() as u32;
+                for i in 0..=n {
+                    for j in 0..=n {
+                        let mut p = [0.0; 3];
+                        p[axis] = side;
+                        p[(axis + 1) % 3] = i as f32 / n as f32;
+                        p[(axis + 2) % 3] = j as f32 / n as f32;
+                        pos.push(p.map(|v| v + nudge() * jitter));
+                    }
+                }
+                let at = |i: usize, j: usize| base + (i * (n + 1) + j) as u32;
+                for i in 0..n {
+                    for j in 0..n {
+                        let (a, b, c, d) = (at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1));
+                        if side > 0.5 {
+                            idx.extend_from_slice(&[a, b, c, a, c, d]);
+                        } else {
+                            idx.extend_from_slice(&[a, c, b, a, d, c]);
+                        }
+                    }
+                }
+            }
+        }
+        (pos, idx)
+    }
+
+    #[test]
+    fn axis_aligned_grid_box_is_closed() {
+        let (pos, idx) = grid_box(40, 0.0);
+        assert!(mesh_is_closed(pos.iter().copied(), &idx));
+        let (pos, mut idx) = grid_box(40, 0.0);
+        idx.truncate(idx.len() - 3);
+        assert!(!mesh_is_closed(pos.iter().copied(), &idx));
+    }
+
+    #[test]
+    fn welds_copies_that_straddle_a_cell_boundary() {
+        // eps is 1e-5 of the extent; copies jittered by up to 0.4 eps sit
+        // within eps of each other and many land in different weld cells.
+        let (pos, idx) = grid_box(60, 0.4e-5);
+        assert!(mesh_is_closed(pos.iter().copied(), &idx));
+    }
+
+    /// `cargo test --release mesh_is_closed_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn mesh_is_closed_timing() {
+        let (pos, idx) = grid_box(330, 0.0);
+        let t = std::time::Instant::now();
+        assert!(mesh_is_closed(pos.iter().copied(), &idx));
+        println!("{} tris: {:?}", idx.len() / 3, t.elapsed());
+    }
+
+    #[test]
+    fn inconsistent_winding_is_open() {
+        let mut cube = primitives::cube(1.0);
+        cube.indices.swap(0, 1);
+        assert!(!closed(&cube));
     }
 }
 
@@ -4074,6 +4393,116 @@ mod override_tests {
             "freeing the mesh must return resident bytes to the starting total"
         );
     }
+
+    #[test]
+    fn resident_bytes_track_cpu_geometry_and_its_release() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        // Built-in meshes created with the device retain copies of their own, so
+        // measure this upload's charge as a delta from the starting total.
+        let start = resources.resident_bytes().cpu_geometry_bytes;
+        let id = resources
+            .upload_mesh_data(&device, &primitives::cube(1.0))
+            .unwrap();
+        let retained = resources.resident_bytes().cpu_geometry_bytes - start;
+        assert!(
+            retained > 0,
+            "an upload with retention on must charge host bytes for the CPU copies"
+        );
+        let bytes = resources.resident_bytes();
+        assert_eq!(
+            bytes.total(),
+            bytes.combined() - bytes.host_bytes(),
+            "host bytes must sit outside the GPU total and inside the combined figure"
+        );
+
+        let released = resources.release_mesh_cpu_geometry(id);
+        assert_eq!(released, Some(retained));
+        assert_eq!(
+            resources.resident_bytes().cpu_geometry_bytes,
+            start,
+            "releasing the copies must return the host charge to the starting total"
+        );
+
+        // Releasing twice is a no-op, not a double-decrement of the total.
+        assert_eq!(resources.release_mesh_cpu_geometry(id), Some(0));
+        assert_eq!(resources.resident_bytes().cpu_geometry_bytes, start);
+
+        assert!(resources.free_mesh(id));
+        assert_eq!(resources.resident_bytes().cpu_geometry_bytes, start);
+
+        // Every remaining copy, built-ins included, goes in one call.
+        assert_eq!(resources.release_all_mesh_cpu_geometry(), start);
+        assert_eq!(resources.resident_bytes().cpu_geometry_bytes, 0);
+    }
+
+    #[test]
+    fn retention_off_uploads_no_cpu_geometry() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        assert!(resources.retains_mesh_cpu_geometry());
+        resources.set_retain_mesh_cpu_geometry(false);
+        let start = resources.resident_bytes().cpu_geometry_bytes;
+        let id = resources
+            .upload_mesh_data(&device, &primitives::cube(1.0))
+            .unwrap();
+        assert_eq!(
+            resources.resident_bytes().cpu_geometry_bytes,
+            start,
+            "retention off must skip the CPU copies entirely"
+        );
+        assert!(
+            resources.resident_bytes().mesh_bytes > 0,
+            "the mesh itself must still be resident on the GPU"
+        );
+        assert!(resources.free_mesh(id));
+    }
+
+    #[test]
+    fn free_mesh_refuses_a_live_lod_group_member() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let lod0 = resources
+            .upload_mesh_data(&device, &primitives::cube(1.0))
+            .unwrap();
+        let lod1 = resources
+            .upload_mesh_data(&device, &primitives::cube(0.5))
+            .unwrap();
+        let group = resources
+            .register_lod_group(&[lod0, lod1], &[0.5, 0.1])
+            .unwrap();
+
+        assert_eq!(resources.lod_group_of_mesh(lod0), Some(group));
+        assert!(
+            !resources.free_mesh(lod0),
+            "freeing a level of a live group must be refused"
+        );
+        assert!(
+            resources.mesh_store.get(lod0).is_some(),
+            "the refused free must leave the mesh resident"
+        );
+
+        // The group is the composition-aware way out, and it takes its members.
+        assert!(resources.free_lod_group(group));
+        assert!(resources.mesh_store.get(lod0).is_none());
+        assert!(resources.mesh_store.get(lod1).is_none());
+        assert_eq!(resources.lod_group_of_mesh(lod0), None);
+    }
 }
 
 #[cfg(test)]
@@ -4091,7 +4520,7 @@ mod vertex_colour_tests {
 
     #[test]
     fn none_leaves_vertices_white() {
-        let prep = DeviceResources::prep_mesh_data(&tri());
+        let prep = DeviceResources::prep_mesh_data(&tri(), true);
         assert!(
             prep.vertices
                 .iter()
@@ -4107,7 +4536,7 @@ mod vertex_colour_tests {
             [0.0, 1.0, 0.0, 1.0],
             [0.0, 0.0, 1.0, 0.5],
         ]);
-        let prep = DeviceResources::prep_mesh_data(&data);
+        let prep = DeviceResources::prep_mesh_data(&data, true);
         assert_eq!(prep.vertices[0].colour, [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(prep.vertices[1].colour, [0.0, 1.0, 0.0, 1.0]);
         assert_eq!(prep.vertices[2].colour, [0.0, 0.0, 1.0, 0.5]);
@@ -4117,7 +4546,7 @@ mod vertex_colour_tests {
     fn short_colour_slice_defaults_missing_entries_white() {
         let mut data = tri();
         data.vertex_colours = Some(vec![[0.2, 0.4, 0.6, 1.0]]);
-        let prep = DeviceResources::prep_mesh_data(&data);
+        let prep = DeviceResources::prep_mesh_data(&data, true);
         assert_eq!(prep.vertices[0].colour, [0.2, 0.4, 0.6, 1.0]);
         assert_eq!(prep.vertices[1].colour, [1.0, 1.0, 1.0, 1.0]);
         assert_eq!(prep.vertices[2].colour, [1.0, 1.0, 1.0, 1.0]);
@@ -4239,13 +4668,12 @@ mod async_upload_tests {
 
         // Submit an env-map job so we have a live JobId of the wrong type.
         let pixels = vec![0.5f32; 8 * 4 * 4];
-        let other_id = crate::resources::material::environment::begin_upload_environment_map(
+        let other_id = crate::resources::material::environment::begin_upload_environment(
             &mut resources,
             &device,
             &try_make_device().unwrap().1,
-            pixels,
-            8,
-            4,
+            crate::TextureData::hdr(8, 4, pixels),
+            Default::default(),
         )
         .unwrap();
 
@@ -4261,7 +4689,7 @@ mod async_upload_tests {
 mod c4_volume_mesh_tests {
     use crate::DeviceResources;
     use crate::resources::volume::volume_mesh::VolumeMeshData;
-    use crate::resources::{CELL_SENTINEL, SparseVolumeGridData, UploadStatus};
+    use crate::resources::{CELL_SENTINEL, UploadStatus};
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
         let instance = crate::gpu::default_instance();
@@ -4321,14 +4749,6 @@ mod c4_volume_mesh_tests {
         v
     }
 
-    fn single_cell_sparse() -> SparseVolumeGridData {
-        let mut g = SparseVolumeGridData::default();
-        g.active_cells = vec![[0, 0, 0]];
-        g.cell_size = 1.0;
-        g.origin = [0.0, 0.0, 0.0];
-        g
-    }
-
     #[test]
     fn begin_upload_volume_mesh_drains_to_pair() {
         let Some((device, queue)) = try_make_device() else {
@@ -4369,22 +4789,6 @@ mod c4_volume_mesh_tests {
     }
 
     #[test]
-    fn begin_upload_sparse_volume_grid_drains_to_handle() {
-        let Some((device, queue)) = try_make_device() else {
-            eprintln!("skipping: no wgpu adapter available");
-            return;
-        };
-        let mut resources =
-            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let job = resources.begin_upload_sparse_volume_grid_data(&device, single_cell_sparse());
-        drive_until_ready(&mut resources, &device, &queue, job, "sparse_volume_grid");
-        let mesh_id = resources
-            .upload_result_sparse_volume_grid(job)
-            .expect("ready");
-        assert!(resources.mesh_store.get(mesh_id).is_some());
-    }
-
-    #[test]
     fn begin_upload_projected_tet_drains_to_triple() {
         let Some((device, queue)) = try_make_device() else {
             eprintln!("skipping: no wgpu adapter available");
@@ -4414,9 +4818,6 @@ mod c4_volume_mesh_tests {
         let _item2 = resources
             .upload_clipped_volume_mesh(&device, &vol, &[])
             .expect("clipped sync ok");
-        let _grid_id = resources
-            .upload_sparse_volume_grid_data(&device, &single_cell_sparse())
-            .expect("sparse sync ok");
     }
 
     #[test]

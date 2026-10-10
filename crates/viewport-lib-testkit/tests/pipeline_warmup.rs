@@ -4,9 +4,12 @@
 //! is the observable: it counts lazy pipeline builds since the previous
 //! prepare, so a frame that hits a cold pipeline reads non-zero.
 
-use viewport_lib::{
-    CameraFrame, DecalItem, FrameData, Material, SceneFrame, SceneRenderItem, VolumeItem,
-};
+use viewport_lib::Colour;
+use viewport_lib::plugin_api::Uploads;
+use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
+use viewport_lib_plugins::item_types::decal::DecalItem;
+use viewport_lib_plugins::item_types::point_cloud::{PointCloudItem, PointCloudRefItem};
+use viewport_lib_plugins::item_types::volume::VolumeItem;
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
 fn mesh_frame(item: SceneRenderItem, size: [f32; 2]) -> FrameData {
@@ -21,7 +24,11 @@ fn checker_texture(h: &mut Harness) -> viewport_lib::TextureId {
     let tex = viewport_lib_testkit::textures::checker(64, 8, [200, 40, 40], [240, 240, 240]);
     h.renderer
         .resources_mut()
-        .upload_texture(&h.device, &h.queue, tex.width, tex.height, &tex.rgba)
+        .upload_texture(
+            &h.device,
+            &h.queue,
+            viewport_lib::TextureData::srgb(tex.width, tex.height, tex.rgba.to_vec()),
+        )
         .expect("texture upload")
 }
 
@@ -43,7 +50,7 @@ fn first_decal_frame_builds_no_pipelines() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
 
     // Settle: the first frames build the frame-one lazy set (HDR shared,
     // instanced pipelines), which is load-time work, not the decal's.
@@ -59,7 +66,7 @@ fn first_decal_frame_builds_no_pipelines() {
     decal.texture_id = tex_id;
     decal.transform = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
     let mut with_decal = mesh_frame(item, [200.0, 150.0]);
-    with_decal.scene.decals.push(decal);
+    with_decal.scene.items_mut::<DecalItem>().push(decal);
     let _ = h.render(&with_decal, 200, 150);
     assert_eq!(
         h.stats().pipelines_built_this_frame,
@@ -68,10 +75,11 @@ fn first_decal_frame_builds_no_pipelines() {
     );
 }
 
-/// `upload_volume` compiles the volume ray-march pipeline, so the first frame
-/// that draws the uploaded volume compiles nothing.
+/// The point cloud pipelines belong to the point cloud item-type plugin, so
+/// `upload_point_cloud` compiles nothing: it writes buffers and builds one bind
+/// group against a layout the renderer already holds.
 #[test]
-fn volume_upload_warms_its_pipeline() {
+fn point_cloud_pipelines_are_owned_by_the_plugin() {
     let Some(mut h) = Harness::new() else {
         eprintln!("skipping: no GPU adapter");
         return;
@@ -83,7 +91,56 @@ fn volume_upload_warms_its_pipeline() {
         .expect("mesh upload");
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
+    let base = mesh_frame(item.clone(), [200.0, 150.0]);
+    let _ = h.render_two_frames(&base, 200, 150);
+
+    let mut cloud = PointCloudItem::default();
+    cloud.positions = vec![[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]];
+    cloud.size = viewport_lib::SizeSource::Uniform(8.0);
+    let source = h.renderer.upload(&h.device, &h.queue, &cloud).unwrap();
+
+    let _ = h.render(&base, 200, 150);
+    assert_eq!(
+        h.stats().pipelines_built_this_frame,
+        0,
+        "upload_point_cloud writes buffers and compiles nothing"
+    );
+
+    // The first frame that draws the cloud builds the plugin's pipelines, but
+    // they are the plugin's own and so stay off this counter.
+    let mut with_cloud = mesh_frame(item, [200.0, 150.0]);
+    with_cloud
+        .scene
+        .items_mut::<PointCloudRefItem>()
+        .push(PointCloudRefItem::new(source));
+    let _ = h.render(&with_cloud, 200, 150);
+    assert_eq!(
+        h.stats().pipelines_built_this_frame,
+        0,
+        "plugin-owned pipelines are not counted in the lib's pipeline cache"
+    );
+}
+
+/// The volume ray-march pipelines belong to the volume item-type plugin, which
+/// builds them on the first prepare that has a volume to draw. Neither
+/// `upload_volume` nor any frame reports them through
+/// `pipelines_built_this_frame`: that counter tracks the lib's own pipeline
+/// cache, and a plugin owns its pipelines outright.
+#[test]
+fn volume_pipelines_are_owned_by_the_plugin() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let mesh_id = h
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(&h.device, &meshes::stress_sphere(1.0, 3).into())
+        .expect("mesh upload");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     let base = mesh_frame(item.clone(), [200.0, 150.0]);
     let _ = h.render_two_frames(&base, 200, 150);
 
@@ -94,24 +151,28 @@ fn volume_upload_warms_its_pipeline() {
         .resources_mut()
         .upload_volume(&h.device, &h.queue, &data, dims);
 
-    // The compile lands with the upload: the next frame's counter reports it.
+    // The upload is a texture upload only; no pipeline work rides along.
     let _ = h.render(&base, 200, 150);
     assert_eq!(
         h.stats().pipelines_built_this_frame,
-        1,
-        "upload_volume must compile the volume pipeline"
+        0,
+        "upload_volume uploads a texture and compiles nothing"
     );
 
-    // The first frame that actually draws the volume compiles nothing.
+    // The first frame that draws the volume does build the plugin's pipelines,
+    // but they are the plugin's own and so stay off this counter.
     let mut volume = VolumeItem::default();
     volume.volume_id = volume_id;
     let mut with_volume = mesh_frame(item, [200.0, 150.0]);
-    with_volume.scene.volumes.push(volume);
+    with_volume
+        .scene
+        .items_mut::<viewport_lib_plugins::item_types::volume::VolumeItem>()
+        .push(volume);
     let _ = h.render(&with_volume, 200, 150);
     assert_eq!(
         h.stats().pipelines_built_this_frame,
         0,
-        "the first volume frame must not compile a pipeline (upload_volume warmed it)"
+        "plugin-owned pipelines are not counted in the lib's pipeline cache"
     );
 }
 
@@ -136,11 +197,74 @@ fn prebuilt_sidecars_render() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     item.settings.wireframe = true;
     item.show_normals = true;
     let fd = mesh_frame(item, [200.0, 150.0]);
     let stats = h.render_two_frames(&fd, 200, 150);
     assert_eq!(stats.triangles_submitted, expected_tris);
     assert_eq!(stats.pipelines_built_this_frame, 0);
+}
+
+/// The curve mesh pipelines belong to the streamtube, tube and ribbon item-type
+/// plugins, so neither `upload_streamtube` nor the first frame that draws one
+/// reports through `pipelines_built_this_frame`: that counter tracks the lib's
+/// own pipeline cache, and a plugin owns its pipelines outright.
+#[test]
+fn curve_pipelines_are_owned_by_the_plugins() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let mesh_id = h
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(&h.device, &meshes::stress_sphere(1.0, 3).into())
+        .expect("mesh upload");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
+    let base = mesh_frame(item.clone(), [200.0, 150.0]);
+    let _ = h.render_two_frames(&base, 200, 150);
+
+    let mut ribbon = viewport_lib_plugins::item_types::curves::RibbonItem::default();
+    ribbon.positions = vec![[-1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+    ribbon.strip_lengths = vec![3];
+    ribbon.width = 0.5;
+    let source = h.renderer.upload(&h.device, &h.queue, &ribbon).unwrap();
+
+    let _ = h.render(&base, 200, 150);
+    assert_eq!(
+        h.stats().pipelines_built_this_frame,
+        0,
+        "upload_ribbon writes buffers and compiles nothing"
+    );
+
+    // The first frame that draws a curve builds the plugins' pipelines, but they
+    // are the plugins' own and so stay off this counter.
+    let mut with_curves = mesh_frame(item, [200.0, 150.0]);
+    with_curves
+        .scene
+        .items_mut::<viewport_lib_plugins::item_types::curves::RibbonRefItem>()
+        .push(viewport_lib_plugins::item_types::curves::RibbonRefItem::new(source));
+    let mut streamtube = viewport_lib_plugins::item_types::curves::StreamtubeItem::default();
+    streamtube.positions = vec![[-1.0, 0.5, 0.0], [0.0, 0.5, 0.0], [1.0, 0.5, 0.0]];
+    streamtube.strip_lengths = vec![3];
+    with_curves
+        .scene
+        .items_mut::<viewport_lib_plugins::item_types::curves::StreamtubeItem>()
+        .push(streamtube);
+    let mut tube = viewport_lib_plugins::item_types::curves::TubeItem::default();
+    tube.positions = vec![[-1.0, -0.5, 0.0], [0.0, -0.5, 0.0], [1.0, -0.5, 0.0]];
+    tube.strip_lengths = vec![3];
+    with_curves
+        .scene
+        .items_mut::<viewport_lib_plugins::item_types::curves::TubeItem>()
+        .push(tube);
+    let _ = h.render(&with_curves, 200, 150);
+    assert_eq!(
+        h.stats().pipelines_built_this_frame,
+        0,
+        "plugin-owned pipelines are not counted in the lib's pipeline cache"
+    );
 }

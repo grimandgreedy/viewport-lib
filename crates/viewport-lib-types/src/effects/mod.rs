@@ -3,6 +3,7 @@
 //! process). Pure data; the renderer reads it to drive its passes.
 
 pub mod debug;
+pub mod environment;
 pub mod ground;
 pub mod lighting;
 pub mod postprocess;

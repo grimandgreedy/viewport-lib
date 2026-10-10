@@ -37,6 +37,7 @@ pub enum PathSegment {
 /// [`FillRule`], so the inner loop of a letter "O" becomes a hole.
 #[derive(Debug, Clone, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct SubPath {
     /// Start point in path-local logical pixels.
     pub start: [f32; 2],
@@ -55,6 +56,17 @@ impl SubPath {
             start,
             segments: Vec::new(),
             closed: false,
+        }
+    }
+
+    /// Build a subpath from parts. The builder methods below are nicer for
+    /// authoring a path by hand; this is for converting one from another
+    /// representation, where the segments already exist as a list.
+    pub fn from_segments(start: [f32; 2], segments: Vec<PathSegment>, closed: bool) -> Self {
+        Self {
+            start,
+            segments,
+            closed,
         }
     }
 
@@ -79,6 +91,29 @@ impl SubPath {
     /// Mark the subpath closed (the last point connects back to `start`).
     pub fn close(mut self) -> Self {
         self.closed = true;
+        self
+    }
+
+    /// Apply `f` to every point of the subpath: the start, each segment's end
+    /// point, and each control point. Exact for an affine `f` (scale, rotate,
+    /// shear, translate), since a Bezier's control points transform with it;
+    /// any other map bends the curves.
+    pub fn map_points(mut self, f: impl Fn([f32; 2]) -> [f32; 2]) -> Self {
+        self.start = f(self.start);
+        for seg in &mut self.segments {
+            match seg {
+                PathSegment::Line { to } => *to = f(*to),
+                PathSegment::Quad { ctrl, to } => {
+                    *ctrl = f(*ctrl);
+                    *to = f(*to);
+                }
+                PathSegment::Cubic { ctrl1, ctrl2, to } => {
+                    *ctrl1 = f(*ctrl1);
+                    *ctrl2 = f(*ctrl2);
+                    *to = f(*to);
+                }
+            }
+        }
         self
     }
 
@@ -181,6 +216,22 @@ pub fn flatten_contours(subpaths: &[SubPath]) -> Vec<(Vec<[f32; 2]>, bool)> {
         .collect()
 }
 
+/// The bounding box of `subpaths` as `(min, max)` in path-local pixels, or
+/// `None` when there are no points.
+///
+/// Curves are measured along the curve rather than by their control points,
+/// so a bulging control point does not widen the box past what is drawn.
+pub fn path_bounds(subpaths: &[SubPath]) -> Option<([f32; 2], [f32; 2])> {
+    let mut points = subpaths.iter().flat_map(flatten_subpath);
+    let first = points.next()?;
+    Some(points.fold((first, first), |(lo, hi), p| {
+        (
+            [lo[0].min(p[0]), lo[1].min(p[1])],
+            [hi[0].max(p[0]), hi[1].max(p[1])],
+        )
+    }))
+}
+
 /// Point-in-path test for a set of subpaths under a fill rule. `pt` is in the
 /// same path-local space as the subpath coordinates. Curves are flattened at a
 /// fixed resolution, so the boundary is approximate near tight curvature; this
@@ -221,6 +272,47 @@ pub(crate) fn path_contains(subpaths: &[SubPath], fill_rule: FillRule, pt: [f32;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn map_points_reaches_every_control_point() {
+        let sp = SubPath::new([1.0, 2.0])
+            .line_to([3.0, 4.0])
+            .quad_to([5.0, 6.0], [7.0, 8.0])
+            .cubic_to([9.0, 10.0], [11.0, 12.0], [13.0, 14.0])
+            .close();
+        let doubled = sp.clone().map_points(|p| [p[0] * 2.0, p[1] * 2.0]);
+        assert_eq!(doubled.start, [2.0, 4.0]);
+        assert_eq!(
+            doubled.segments,
+            vec![
+                PathSegment::Line { to: [6.0, 8.0] },
+                PathSegment::Quad {
+                    ctrl: [10.0, 12.0],
+                    to: [14.0, 16.0]
+                },
+                PathSegment::Cubic {
+                    ctrl1: [18.0, 20.0],
+                    ctrl2: [22.0, 24.0],
+                    to: [26.0, 28.0]
+                },
+            ]
+        );
+        assert!(doubled.closed);
+    }
+
+    #[test]
+    fn bounds_follow_the_curve_not_its_control_point() {
+        assert_eq!(path_bounds(&[]), None);
+        let square = SubPath::polygon(&[[2.0, 3.0], [12.0, 3.0], [12.0, 8.0], [2.0, 8.0]]);
+        assert_eq!(path_bounds(&[square]), Some(([2.0, 3.0], [12.0, 8.0])));
+
+        // A quad from (0,0) to (10,0) through (5,10) peaks at y = 5, not 10.
+        let arch = SubPath::new([0.0, 0.0]).quad_to([5.0, 10.0], [10.0, 0.0]);
+        let (lo, hi) = path_bounds(&[arch]).unwrap();
+        assert_eq!(lo, [0.0, 0.0]);
+        assert_eq!(hi[0], 10.0);
+        assert!((hi[1] - 5.0).abs() < 1e-3, "peak {}", hi[1]);
+    }
 
     #[test]
     fn square_contains_centre_excludes_outside() {

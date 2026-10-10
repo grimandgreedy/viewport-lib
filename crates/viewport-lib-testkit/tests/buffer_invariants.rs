@@ -155,20 +155,28 @@ fn slab_and_collapse_invariants_hold() {
         let s = harness.render_two_frames(&frame, w, h);
 
         // The catalogue's geometry fits one vertex chunk and one index chunk, so
-        // the slab holds exactly two. A larger value means the slab fragmented.
-        assert_eq!(
-            s.slab_chunk_count, 2,
-            "{}: geometry slab is not two chunks (fragmented?)",
+        // the slab holds two, or none for a scene that uploads no mesh. A larger
+        // value means the slab fragmented.
+        assert!(
+            s.slab_chunk_count <= 2,
+            "{}: geometry slab is more than two chunks (fragmented?)",
             scene.name
         );
-        // Geometry is bound at most once per resident chunk: the slab's whole
-        // point is that batches share one binding instead of one per mesh.
+        // Geometry is bound at most once per resident chunk per instanced loop:
+        // the slab's whole point is that batches share one binding instead of
+        // one per mesh. There are two such loops, the opaque scene pass and the
+        // OIT pass, and `main_buffer_binds` counts both, so a scene carrying
+        // instanced geometry in each binds twice what a single-pass scene does.
+        // The bound scaled by loop count rather than being flat for the same
+        // reason the shadow bound below scales by draw call: the thing being
+        // caught is a bind per *mesh*, which would put this in the hundreds.
+        const MAIN_INSTANCED_LOOPS: u32 = 2;
         assert!(
-            s.main_buffer_binds <= s.slab_chunk_count,
-            "{}: main pass bound geometry more than once per chunk ({} > {})",
+            s.main_buffer_binds <= s.slab_chunk_count * MAIN_INSTANCED_LOOPS,
+            "{}: main pass bound geometry more than once per chunk per pass ({} > {})",
             scene.name,
             s.main_buffer_binds,
-            s.slab_chunk_count
+            s.slab_chunk_count * MAIN_INSTANCED_LOOPS
         );
         assert!(
             s.shadow_buffer_binds <= s.slab_chunk_count * s.shadow_draw_calls.max(1),

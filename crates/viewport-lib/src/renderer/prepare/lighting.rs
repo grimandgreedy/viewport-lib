@@ -2,6 +2,7 @@
 //! cascades, shadow atlas uniform, clustered-light build).
 
 use super::*;
+use crate::renderer::shadow_state::LightingWrites;
 
 impl ViewportRenderer {
     /// Compute this frame's lighting: cull and pack lights, allocate point-light
@@ -16,6 +17,8 @@ impl ViewportRenderer {
         last_cluster_stats: &mut Option<crate::resources::gpu::clustered::ClusterStats>,
         last_frustum_culled_lights: &mut u32,
         viewport_slots: &[ViewportSlot],
+        item_type_plugins: &crate::renderer::item_plugins::registry::ItemPluginRegistry,
+        frame_index: u64,
         scene_fx: &SceneEffects<'_>,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
@@ -108,106 +111,6 @@ impl ViewportRenderer {
             }
         }
 
-        /// Derive virtual point lights from emissive scatter volumes so
-        /// nearby opaque surfaces receive warm light from "fire-like" volumes.
-        ///
-        /// Cheap approximation: one virtual `Point` light per emissive
-        /// volume, placed at the shape's centre. Intensity scales with
-        /// `emission_strength * density`; range scales with the shape's
-        /// longest axis. For `ColourSource::Ramp`, the colour is sampled
-        /// from the CPU-side LUT at the "hot end" of the ramp (the point
-        /// where emission contributes most), then multiplied by the tint.
-        fn derive_scatter_volume_virtual_lights(
-            items: &[crate::renderer::types::ScatterVolumeItem],
-            colourmaps_cpu: &[[[u8; 4]; 256]],
-        ) -> Vec<LightSource> {
-            use crate::scene::scatter_volume::{
-                ColourSource, Emission, EmissionCurve, ScatterShape,
-            };
-            // Sample the LUT at the value where emission peaks. For Linear
-            // and Power curves emission grows with density, so the centre
-            // of the volume (highest local density, typically remap = 1)
-            // dominates the illumination. Threshold emission is a step
-            // function; sampling just past the threshold is the most
-            // representative point.
-            fn lut_sample(lut: &[[u8; 4]; 256], t: f32) -> [f32; 3] {
-                let idx = (t.clamp(0.0, 1.0) * 255.0).round() as usize;
-                let p = lut[idx];
-                // Colourmap bytes are sRGB (see `upload_colourmap`); decode to
-                // linear here so this CPU tint matches the GPU sampler, which
-                // decodes an `Rgba8UnormSrgb` LUT on read.
-                [
-                    crate::srgb_to_linear(p[0] as f32 / 255.0),
-                    crate::srgb_to_linear(p[1] as f32 / 255.0),
-                    crate::srgb_to_linear(p[2] as f32 / 255.0),
-                ]
-            }
-            let mut lights: Vec<LightSource> = Vec::new();
-            for item in items {
-                if item.settings.hidden {
-                    continue;
-                }
-                let (strength, sample_t) = match item.volume.emission {
-                    Emission::None => (0.0, 0.0),
-                    Emission::Strength { strength, curve } => match curve {
-                        EmissionCurve::Linear | EmissionCurve::Power(_) => (strength, 0.95),
-                        EmissionCurve::Threshold(min_d) => {
-                            (strength, (min_d + 0.05).clamp(0.0, 1.0))
-                        }
-                    },
-                };
-                if strength <= 0.0 {
-                    continue;
-                }
-                let centre = item.volume.shape_centre();
-                let (extent, size) = match item.volume.shape {
-                    ScatterShape::Box(b) => {
-                        let half = (b.max - b.min) * 0.5;
-                        let r = half.length();
-                        (r, r)
-                    }
-                    ScatterShape::Sphere { radius, .. } => (radius, radius),
-                };
-                let tint: [f32; 3] = match item.volume.colour {
-                    ColourSource::Flat(rgb) => rgb.to_linear_rgb(),
-                    ColourSource::Ramp(_) => [1.0, 1.0, 1.0],
-                };
-                let ramp_sample: [f32; 3] = match item.volume.colour {
-                    ColourSource::Flat(_) => [1.0, 1.0, 1.0],
-                    ColourSource::Ramp(id) => match colourmaps_cpu.get(id.0) {
-                        Some(lut) => lut_sample(lut, sample_t),
-                        None => [1.0, 1.0, 1.0],
-                    },
-                };
-                let colour = [
-                    tint[0] * ramp_sample[0],
-                    tint[1] * ramp_sample[1],
-                    tint[2] * ramp_sample[2],
-                ];
-                // Intensity model: emission * density folded into a unitless
-                // scalar. Volume size enters through `range` rather than
-                // intensity to keep illumination consistent across resizes.
-                let intensity = strength * item.volume.density * item.settings.opacity;
-                if !(intensity > 0.0) {
-                    continue;
-                }
-                let range = (size * 4.0).max(extent * 2.0);
-                let mut light = LightSource::default();
-                light.kind = crate::renderer::types::LightKind::Point {
-                    position: centre,
-                    range,
-                    // Soft emitter: a volume is not a point source, so give it a
-                    // radius tied to its size to keep the inverse-square falloff
-                    // from spiking right at the centre.
-                    radius: extent.max(0.1),
-                };
-                light.colour = colour;
-                light.intensity = intensity;
-                lights.push(light);
-            }
-            lights
-        }
-
         /// Convert a `LightSource` to `SingleLightUniform`, computing shadow matrix for lights[0].
         fn build_single_light_uniform(
             src: &LightSource,
@@ -226,7 +129,7 @@ impl ViewportRenderer {
                     light_view_proj: shadow_mat.to_cols_array_2d(),
                     pos_or_dir: *direction,
                     light_type: 0,
-                    colour: src.colour,
+                    colour: src.colour.to_linear_rgb(),
                     intensity: src.intensity,
                     range: 0.0,
                     inner_angle: 0.0,
@@ -236,7 +139,8 @@ impl ViewportRenderer {
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
                     radius: 0.0,
-                    _pad: [0.0; 2],
+                    channel_mask: src.channel_mask,
+                    _reserved: 0,
                 },
                 LightKind::Point {
                     position,
@@ -246,7 +150,7 @@ impl ViewportRenderer {
                     light_view_proj: shadow_mat.to_cols_array_2d(),
                     pos_or_dir: *position,
                     light_type: 1,
-                    colour: src.colour,
+                    colour: src.colour.to_linear_rgb(),
                     intensity: src.intensity,
                     range: *range,
                     inner_angle: 0.0,
@@ -256,7 +160,8 @@ impl ViewportRenderer {
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
                     radius: *radius,
-                    _pad: [0.0; 2],
+                    channel_mask: src.channel_mask,
+                    _reserved: 0,
                 },
                 LightKind::Spot {
                     position,
@@ -269,7 +174,7 @@ impl ViewportRenderer {
                     light_view_proj: shadow_mat.to_cols_array_2d(),
                     pos_or_dir: *position,
                     light_type: 2,
-                    colour: src.colour,
+                    colour: src.colour.to_linear_rgb(),
                     intensity: src.intensity,
                     range: *range,
                     inner_angle: *inner_angle,
@@ -279,26 +184,40 @@ impl ViewportRenderer {
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
                     radius: *radius,
-                    _pad: [0.0; 2],
+                    channel_mask: src.channel_mask,
+                    _reserved: 0,
                 },
                 _ => unreachable!("unhandled LightKind variant"),
             }
         }
 
-        // Derive virtual point lights from emissive scatter volumes. These
-        // give nearby opaque surfaces warm illumination from "fire-like"
-        // volumes without the consumer having to author a matching light by
-        // hand. The lights are appended after the consumer's own lights and
-        // are dropped if the per-frame cap is hit.
-        let virtual_scatter_lights = derive_scatter_volume_virtual_lights(
-            &frame.scene.scatter_volumes,
-            &resources.content.colourmaps_cpu,
-        );
+        // Lights contributed by item types. An emissive scatter volume becomes
+        // a virtual point light this way, so nearby opaque surfaces pick up
+        // warm illumination without the consumer authoring a matching light by
+        // hand. Appended after the consumer's own lights, and dropped like any
+        // other if the per-frame cap is hit.
+        let plugin_lights: Vec<LightSource> = {
+            let ctx = crate::plugin_api::LightContext {
+                resources,
+                camera: &frame.camera.render_camera,
+                frame_index,
+            };
+            item_type_plugins
+                .iter()
+                .filter_map(|(name, plugin)| {
+                    let items = crate::plugin_api::ItemCollections::new(
+                        crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+                    );
+                    Some(plugin.contribute_lights(&items, &ctx))
+                })
+                .flatten()
+                .collect()
+        };
         let raw_lights_unculled: Vec<&LightSource> = lighting
             .lights
             .iter()
             .chain(frame.scene.lights.iter())
-            .chain(virtual_scatter_lights.iter())
+            .chain(plugin_lights.iter())
             .collect();
 
         // CPU per-frame frustum cull. Sphere-vs-frustum for point lights,
@@ -494,6 +413,16 @@ impl ViewportRenderer {
                 }
             }
 
+            // The cube array is a placeholder until a frame actually queues
+            // faces. This is that point: the slots are assigned and the depth
+            // passes for them run later in `prepare_shadow_pass`, so the real
+            // array has to exist before either the uniform upload below or any
+            // bind group that samples it.
+            if !point_shadow_faces.is_empty() {
+                resources.ensure_point_shadow_cubes(device);
+                resources.ensure_point_shadow_pipeline(device);
+            }
+
             // Upload per-face uniforms (view_proj + light_pos + range,
             // padded to 256-byte dynamic-offset stride).
             #[repr(C)]
@@ -608,7 +537,7 @@ impl ViewportRenderer {
             1
         };
 
-        // D8: cache shadow stats and log when cascade splits change.
+        // Cache shadow stats and log when cascade splits change.
         {
             if cascade_split_distances != shadow.last_logged_cascade_splits {
                 tracing::debug!(
@@ -676,19 +605,22 @@ impl ViewportRenderer {
                 pcss_light_radius: lighting.shadows.pcss_light_radius,
                 atlas_rects,
             };
-            queue.write_buffer(
-                &resources.shadow.info_buf,
-                0,
-                bytemuck::cast_slice(&[shadow_atlas_uniform]),
-            );
-            // Write to all per-viewport slot buffers so each viewport's bind group
-            // references correctly populated shadow info.
-            for slot in viewport_slots {
+            // The shared buffer and every per-viewport copy, only when the
+            // contents changed. A slot made later is seeded from the cache
+            // below, so it never misses a write.
+            if LightingWrites::changed(&mut shadow.written.shadow_info, shadow_atlas_uniform) {
                 queue.write_buffer(
-                    &slot.shadow_info_buf,
+                    &resources.shadow.info_buf,
                     0,
                     bytemuck::cast_slice(&[shadow_atlas_uniform]),
                 );
+                for slot in viewport_slots {
+                    queue.write_buffer(
+                        &slot.shadow_info_buf,
+                        0,
+                        bytemuck::cast_slice(&[shadow_atlas_uniform]),
+                    );
+                }
             }
             // Cache for viewport slots created later in the frame: a new slot's
             // buffer is seeded from this so its first frame does not sample
@@ -704,20 +636,31 @@ impl ViewportRenderer {
 
         // Upload lights uniform.
         // IBL fields from environment map settings.
-        let (ibl_enabled, ibl_intensity, ibl_rotation, show_skybox) =
-            if let Some(env) = scene_fx.environment {
-                if resources.ibl.irradiance_view.is_some() {
-                    (
-                        1u32,
-                        env.intensity,
-                        env.rotation,
-                        if env.show_skybox { 1u32 } else { 0 },
-                    )
-                } else {
-                    (0, 0.0, 0.0, 0)
-                }
-            } else {
-                (0, 0.0, 0.0, 0)
+        if resources.ibl.zones_dirty {
+            crate::resources::material::environment::write_environment_zones(resources, queue);
+        }
+        let lit = scene_fx.environment.as_ref().filter(|env| {
+            crate::resources::material::environment::select_lighting_environment(
+                resources,
+                device,
+                queue,
+                env.environment,
+            )
+        });
+        let (ibl_enabled, ibl_intensity, ibl_rotation, ibl_diffuse_scale, ibl_specular_scale) =
+            match lit {
+                Some(env) => (
+                    1u32,
+                    crate::resources::material::environment::environment_multiplier(
+                        &resources.ibl,
+                        env.environment,
+                        lighting.environment_intensity,
+                    ),
+                    env.rotation,
+                    env.diffuse_scale,
+                    env.specular_scale,
+                ),
+                None => (0, 0.0, 0.0, 0.0, 0.0),
             };
 
         let debug_vis_mode = frame.effects.debug.debug_vis.pack_mode();
@@ -726,41 +669,47 @@ impl ViewportRenderer {
         } else {
             1.0
         };
-        // The lit pipelines normally compile without the debug-vis block (its
-        // storage write disables early depth rejection); swap in the full
+        // The lit pipelines normally compile without the debug-vis block, so
+        // they do not carry its registers on every draw; swap in the full
         // shader variant while debug vis is active, and back when it stops.
-        resources.set_debug_vis_shaders(device, debug_vis_mode != 0);
+        let keep_debug_block = debug_vis_mode != 0 || resources.force_debug_vis_shaders;
+        resources.set_debug_vis_shaders(device, keep_debug_block);
 
         let lights_uniform = LightsUniform {
             count: light_count,
             shadow_bias: lighting.shadows.bias,
             shadows_enabled: if lighting.shadows.enabled { 1 } else { 0 },
             debug_vis_mode,
-            sky_colour: lighting.sky_colour,
+            sky_colour: lighting.sky_colour.to_linear_rgb(),
             hemisphere_intensity: lighting.hemisphere_intensity,
-            ground_colour: lighting.ground_colour,
+            ground_colour: lighting.ground_colour.to_linear_rgb(),
             debug_vis_scale,
             ibl_enabled,
             ibl_intensity,
             ibl_rotation,
-            show_skybox,
+            ibl_diffuse_scale,
             debug_vis_split_x: if frame.effects.debug.debug_vis.active {
                 frame.effects.debug.debug_vis.split_x.clamp(0.0, 1.0)
             } else {
                 0.5
             },
             env_zone_count: resources.ibl.env_zone_count,
-            _pad_dbg: [0u32; 2],
+            ibl_specular_scale,
+            _pad_dbg: 0,
         };
-        queue.write_buffer(
-            &resources.lighting.uniform_buf,
-            0,
-            bytemuck::cast_slice(&[lights_uniform]),
-        );
+        if LightingWrites::changed(&mut shadow.written.lights, lights_uniform) {
+            queue.write_buffer(
+                &resources.lighting.uniform_buf,
+                0,
+                bytemuck::cast_slice(&[lights_uniform]),
+            );
+        }
         // Upload the per-light array to the storage buffer at binding 13.
         // Slots past `count` are left as-is; the shader bounds its loop on
         // `lights_uniform.count` so stale tail entries are never sampled.
-        if !lights_packed.is_empty() {
+        if !lights_packed.is_empty()
+            && LightingWrites::slice_changed(&mut shadow.written.light_storage, &lights_packed)
+        {
             queue.write_buffer(
                 &resources.lighting.storage_buf,
                 0,
@@ -843,8 +792,21 @@ impl ViewportRenderer {
             // lookup-table indirection at that scale. A consumer-set debug
             // override also forces the fallback path so the two can be A/B'd
             // for correctness checks.
-            let use_clusters = !frame.effects.debug.force_cluster_fallback
+            let want_clusters = !frame.effects.debug.force_cluster_fallback
                 && active_count > crate::resources::gpu::clustered::SMALL_N_THRESHOLD;
+            // The clear is owed only once a build has written the grid, so a
+            // viewport whose light count never reaches the cluster threshold
+            // composes neither compute pipeline. While they compile on a
+            // worker the frame takes the per-light fallback.
+            if want_clusters || resources.clustered.grid_dirty() {
+                if resources
+                    .clustered
+                    .ensure_pipelines(device, &resources.pipeline_compiler)
+                {
+                    resources.camera_bind_groups_dirty = true;
+                }
+            }
+            let use_clusters = want_clusters && resources.clustered.pipelines_ready();
             let fallback_flag = if use_clusters { 0.0 } else { 1.0 };
             let grid_uniform = ClusterGridUniform {
                 dimensions: [
@@ -868,7 +830,9 @@ impl ViewportRenderer {
                 proj_scale: [tan_half_fov_x, tan_half_fov_y, 0.0, 0.0],
                 view: view_mat.to_cols_array_2d(),
             };
-            resources.clustered.write_grid_uniform(queue, &grid_uniform);
+            if LightingWrites::changed(&mut shadow.written.cluster_grid, grid_uniform) {
+                resources.clustered.write_grid_uniform(queue, &grid_uniform);
+            }
 
             // Build the view-space ActiveLight array. Order matches
             // `lights_packed` / `light_storage_buf` so light_indices[j] from
@@ -911,14 +875,12 @@ impl ViewportRenderer {
                     }
                 })
                 .collect();
-            resources
-                .clustered
-                .write_active_lights(queue, &active_lights);
+            if LightingWrites::slice_changed(&mut shadow.written.active_lights, &active_lights) {
+                resources
+                    .clustered
+                    .write_active_lights(queue, &active_lights);
+            }
 
-            let mut encoder =
-                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-                    label: Some("cluster_frame_encoder"),
-                });
             // Pass 0 when below threshold so dispatch_frame runs the clear
             // (keeping the buffers in a defined state) but skips the build.
             let build_count = if use_clusters { active_count } else { 0 };
@@ -933,10 +895,17 @@ impl ViewportRenderer {
             } else {
                 None
             };
-            resources
-                .clustered
-                .dispatch_frame(&mut encoder, build_count, cluster_ts);
-            sink.push(encoder.finish());
+            // Nothing to build and nothing to clear: no command buffer.
+            if build_count > 0 || resources.clustered.grid_dirty() {
+                let mut encoder =
+                    device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                        label: Some("cluster_frame_encoder"),
+                    });
+                resources
+                    .clustered
+                    .dispatch_frame(&mut encoder, build_count, cluster_ts);
+                sink.push(encoder.finish());
+            }
 
             // Optional host readback for the debug stats panel. Synchronous;
             // off by default.
@@ -954,11 +923,14 @@ impl ViewportRenderer {
         // cascade slots up-front; the cascade loop then selects per-slot via dynamic offset.
         const SHADOW_SLOT_STRIDE: u64 = 256;
         for c in 0..4usize {
-            queue.write_buffer(
-                &resources.shadow.uniform_buf,
-                c as u64 * SHADOW_SLOT_STRIDE,
-                bytemuck::cast_slice(&cascade_view_projs[c].to_cols_array_2d()),
-            );
+            let m = cascade_view_projs[c].to_cols_array_2d();
+            if LightingWrites::changed(&mut shadow.written.cascades[c], m) {
+                queue.write_buffer(
+                    &resources.shadow.uniform_buf,
+                    c as u64 * SHADOW_SLOT_STRIDE,
+                    bytemuck::cast_slice(&m),
+                );
+            }
         }
 
         LightingFrame {

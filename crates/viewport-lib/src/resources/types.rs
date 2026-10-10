@@ -1,13 +1,9 @@
 pub use crate::resources::device_resources::ContentResources;
 pub use crate::resources::device_resources::DeviceResources;
-pub(crate) use crate::resources::device_resources::DualPipeline;
-pub(crate) use crate::resources::device_resources::ImageSliceResources;
-pub(crate) use crate::resources::device_resources::ImplicitResources;
+pub use crate::resources::device_resources::DualPipeline;
 pub(crate) use crate::resources::device_resources::OutlineResources;
 pub(crate) use crate::resources::device_resources::PickResources;
 pub(crate) use crate::resources::device_resources::ProjectedTetResources;
-pub(crate) use crate::resources::device_resources::ScatterViewportState;
-pub(crate) use crate::resources::device_resources::ScreenImageResources;
 pub(crate) use crate::resources::device_resources::ShadowCullState;
 pub(crate) use crate::resources::device_resources::SubHighlightResources;
 pub(crate) use crate::resources::device_resources::ViewportCullState;
@@ -24,6 +20,9 @@ pub use crate::resources::material::colourmap_data::ColourmapId;
 pub use crate::resources::material::matcap_data::BuiltinMatcap;
 pub use crate::resources::material::matcap_data::MatcapId;
 pub use crate::resources::material::textures::GpuTexture;
+pub use crate::resources::material::textures::{
+    TextureData, TexturePayload, TextureRole, TextureSlot,
+};
 pub use crate::resources::memory::ResidentBytes;
 pub use crate::resources::memory::TextureMemoryStats;
 pub use crate::resources::memory::VramBudget;
@@ -32,16 +31,11 @@ pub use crate::resources::mesh::instancing::BatchMeta;
 pub(crate) use crate::resources::mesh::instancing::InstanceAabb;
 pub(crate) use crate::resources::mesh::instancing::InstanceData;
 pub(crate) use crate::resources::mesh::instancing::ObjectUniform;
-pub(crate) use crate::resources::mesh::instancing::PickInstance;
+pub use crate::resources::mesh::instancing::PickInstance;
 pub use crate::resources::mesh::meshes::{MeshData, SubmeshRange};
-pub(crate) use crate::resources::overlay::highlight::CurveMeshOutlineItem;
-pub(crate) use crate::resources::overlay::highlight::OutlineEdgeUniform;
+pub use crate::resources::overlay::highlight::OutlineEdgeUniform;
 pub(crate) use crate::resources::overlay::highlight::OutlineObjectBuffers;
 pub(crate) use crate::resources::overlay::highlight::OutlineUniform;
-pub(crate) use crate::resources::overlay::highlight::RawGeomOutlineBuffers;
-pub(crate) use crate::resources::overlay::highlight::ScreenRectOutlineBuffers;
-pub(crate) use crate::resources::overlay::highlight::SplatOutlineBuffers;
-pub(crate) use crate::resources::overlay::highlight::SplatOutlineMaskUniform;
 pub(crate) use crate::resources::overlay::highlight::SubHighlightGpuData;
 pub(crate) use crate::resources::overlay::overlay_shape::ClipShapeGpu;
 pub(crate) use crate::resources::overlay::overlay_shape::OverlayShadowLayerGpu;
@@ -55,11 +49,7 @@ pub(crate) use crate::resources::overlay::overlay_text::OverlayTextVertex;
 pub(crate) use crate::resources::overlay::overlays::BackdropBlurState;
 pub(crate) use crate::resources::overlay::overlays::GridUniform;
 pub(crate) use crate::resources::overlay::overlays::GroundPlaneUniform;
-pub(crate) use crate::resources::overlay::overlays::OverlayUniform;
 pub use crate::resources::overlay::overlays::OverlayVertex;
-pub(crate) use crate::resources::postprocess::lic::LicAdvectUniform;
-pub(crate) use crate::resources::postprocess::lic::LicObjectUniform;
-pub use crate::resources::postprocess::lic::LicSurfaceGpuData;
 pub(crate) use crate::resources::postprocess::uniforms::AtlasBlitUniform;
 pub(crate) use crate::resources::postprocess::uniforms::BloomUniform;
 pub(crate) use crate::resources::postprocess::uniforms::ContactShadowUniform;
@@ -67,28 +57,16 @@ pub(crate) use crate::resources::postprocess::uniforms::DofUniform;
 pub(crate) use crate::resources::postprocess::uniforms::ShadowAtlasUniform;
 pub(crate) use crate::resources::postprocess::uniforms::SsaoUniform;
 pub(crate) use crate::resources::postprocess::uniforms::ToneMapUniform;
-pub(crate) use crate::resources::scivis::gaussian_splat::GaussianSplatDrawData;
-pub(crate) use crate::resources::scivis::gaussian_splat::GaussianSplatStore;
-pub(crate) use crate::resources::scivis::glyph::GlyphBaseMesh;
-pub use crate::resources::scivis::glyph::GlyphGpuData;
-pub use crate::resources::scivis::glyph::TensorGlyphGpuData;
-pub use crate::resources::scivis::image::ScreenImageGpuData;
-pub use crate::resources::scivis::point_cloud::PointCloudGpuData;
 pub use crate::resources::scivis::polyline::PolylineGpuData;
-pub use crate::resources::scivis::sprite::SpriteGpuData;
-pub use crate::resources::scivis::tube::StreamtubeGpuData;
 pub(crate) use crate::resources::volume::tetmesh::GpuProjectedTetMesh;
 pub(crate) use crate::resources::volume::tetmesh::ProjectedTetChunk;
 pub(crate) use crate::resources::volume::tetmesh::ProjectedTetUniform;
-pub(crate) use crate::resources::volume::volumes::ImageSliceGpuData;
-pub use crate::resources::volume::volumes::VolumeGpuData;
-pub(crate) use crate::resources::volume::volumes::VolumeSurfaceSliceGpuData;
 
 pub use viewport_lib_types::ids::{ProjectedTetId, VolumeId};
 
 pub use viewport_lib_types::data::attribute::{AttributeData, AttributeKind, AttributeRef};
 
-pub use viewport_lib_types::colourmap::BuiltinColourmap;
+pub use viewport_lib_types::colourmap::{BuiltinColourmap, UnknownColourmap};
 
 // ---------------------------------------------------------------------------
 // Vertex and uniform structs (bytemuck::Pod for GPU buffer casting)
@@ -219,7 +197,8 @@ pub struct CameraUniform {
 /// - outer_angle:       f32        =  4 bytes
 /// - _pad_align:        u32        =  4 bytes  (bridge to 16-byte boundary for spot_direction)
 /// - spot_direction:    `[f32; 3]` = 12 bytes  (spot only; at offset 112 to match WGSL vec3 align)
-/// - _pad:              `[f32; 5]` = 20 bytes  (tail padding to 144)
+/// - channel_mask:      u32        =  4 bytes  (layer mask; AND-tested per object)
+/// - _reserved:         u32        =  4 bytes  (reserved tail to 144; see the field)
 /// Total: 64+12+4+12+4+4+4+4+4+12+20 = 144 bytes
 ///
 /// Note: WGSL `vec3<f32>` has AlignOf=16, so `spot_direction` must start at offset 112.
@@ -258,8 +237,17 @@ pub struct SingleLightUniform {
     /// Source radius (world units) for point/spot lights: clamps the
     /// inverse-square falloff near the light and sizes a finite emitter.
     pub radius: f32, //  4 bytes, offset 132
-    /// Tail padding to reach 144-byte struct size.
-    pub _pad: [f32; 2], //  8 bytes, offset 136 : total 144
+    /// Layer mask this light illuminates (offset 136). AND-tested in the lit
+    /// mesh shaders against each object's mask; a light whose bits do not
+    /// intersect the object's mask is skipped for that fragment. Wired from
+    /// `LightSource::channel_mask`; `!0` (the default) lights everything.
+    pub channel_mask: u32, //  4 bytes, offset 136
+    /// Reserved tail (one lane, offset 140, to a 144-byte struct). Earmarked for
+    /// one of the remaining light extensions: an area-light size word or a
+    /// cookie/IES handle (only one lane is left after `channel_mask`, so the
+    /// other rides a parallel per-light buffer when it lands). Unread today and
+    /// uploaded as 0.
+    pub _reserved: u32, //  4 bytes, offset 140 : total 144
 }
 
 /// GPU-side lights header uniform (binding 3 of group 0).
@@ -282,9 +270,11 @@ pub struct SingleLightUniform {
 /// - ibl_enabled:          u32            =  4 bytes
 /// - ibl_intensity:        f32            =  4 bytes
 /// - ibl_rotation:         f32            =  4 bytes
-/// - show_skybox:          u32            =  4 bytes
+/// - ibl_diffuse_scale:    f32            =  4 bytes
 /// - debug_vis_split_x:    f32            =  4 bytes
-/// - _pad_dbg:             [u32; 3]       = 12 bytes
+/// - env_zone_count:       u32            =  4 bytes
+/// - ibl_specular_scale:   f32            =  4 bytes
+/// - _pad_dbg:             u32            =  4 bytes
 /// Total: 16 + 16 + 16 + 16 + 16 = 80 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -309,17 +299,19 @@ pub struct LightsUniform {
     pub ibl_enabled: u32, // 4 bytes
     /// IBL intensity multiplier.
     pub ibl_intensity: f32, // 4 bytes
-    /// IBL Y-axis rotation in radians.
+    /// IBL rotation about +Z in radians.
     pub ibl_rotation: f32, // 4 bytes
-    /// 1 = show skybox background, 0 = use background colour.
-    pub show_skybox: u32, // 4 bytes
+    /// Scale on the IBL diffuse term.
+    pub ibl_diffuse_scale: f32, // 4 bytes
     /// Normalized split X position (0..1) for SplitScreen debug mode.
     pub debug_vis_split_x: f32, // 4 bytes
     /// Number of active environment-selection zones (binding 19). 0 = the single
     /// default environment (layer 0); the shaders skip the per-fragment zone loop.
     pub env_zone_count: u32, // 4 bytes
-    /// Reserved for future debug uniform fields.
-    pub _pad_dbg: [u32; 2], // 8 bytes
+    /// Scale on the IBL specular term.
+    pub ibl_specular_scale: f32, // 4 bytes
+    /// Reserved.
+    pub _pad_dbg: u32, // 4 bytes
 }
 
 /// Maximum number of lights packed into `light_storage_buf` per frame.
@@ -374,10 +366,31 @@ pub(crate) struct FrustumUniform {
     /// HiZ mip-0 dimensions in pixels (the depth target the pyramid was built
     /// from).
     pub(crate) viewport: [f32; 2],
-    pub(crate) _pad0: [f32; 2],
+    /// Camera layer mask. The cull kernel rejects an instance when its
+    /// per-object mask (read from the instance buffer at cull binding 8) shares
+    /// no bit with this. Only consulted when `do_mask_cull == 1`; wired from
+    /// `CameraFrame::cull_mask`.
+    pub(crate) cull_mask: u32,
+    /// 1 = run the per-camera layer-mask reject (main cull, real instance buffer
+    /// bound), 0 = skip it (shadow / single-mesh / plugin dispatches bind the
+    /// fallback instance buffer and leave this off).
+    pub(crate) do_mask_cull: u32,
+    /// 1 = the order-free compaction runs after the cull kernel and will write
+    /// both the visible list and the per-batch visible counts, so the cull
+    /// kernel skips its own arrival-order list and counter increments. 0 = the
+    /// compaction scratch this submission needs is past the device's
+    /// storage-buffer binding limit, so the cull kernel writes the list itself,
+    /// in arrival order.
+    pub(crate) compact_enabled: u32,
+    /// Size of the chunk-plan region of the compaction scratch, in u32s
+    /// (`batch_count + 1`). The shader lays the rest of the buffer out after it.
+    pub(crate) plan_cap: u32,
+    /// Size of the per-chunk totals region of the compaction scratch, in u32s.
+    pub(crate) chunk_cap: u32,
+    pub(crate) _pad: [u32; 1],
 }
 
-const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 192);
+const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 208);
 
 /// Clip planes uniform for section-view clipping (binding 4 of camera bind group).
 ///

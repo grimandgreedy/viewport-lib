@@ -24,7 +24,11 @@ pub struct RuntimeFrameContext {
     pub pick_hit: Option<crate::renderer::PickHit>,
     /// True on the frame the primary pointer button was clicked (pressed and released without drag).
     pub clicked: bool,
-    /// True on the frame a primary drag began.
+    /// `true` on the frame to try grabbing what is under the cursor: the
+    /// primary press ([`PointerFrame::pressed`], which the runners pass), or a
+    /// toolkit's own drag start if the host prefers one.
+    ///
+    /// [`PointerFrame::pressed`]: crate::PointerFrame::pressed
     pub drag_started: bool,
     /// True while a primary drag is ongoing.
     pub dragging: bool,

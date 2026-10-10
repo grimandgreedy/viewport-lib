@@ -17,7 +17,7 @@ use crate::resources::DeviceResources;
 use crate::resources::mesh::mesh_store::MeshId;
 use crate::resources::mesh_sidecar::registry::{
     DeformerDesc, DeformerId, MESH_FAMILY_SHADERS, StoredDeformer, allocate_internal_slot,
-    allocate_slot, compose_shader, lookup_source, validate_name, validate_with_wgpu,
+    allocate_slot, compose_shader, defines_keep, lookup_source, validate_name, validate_with_wgpu,
 };
 
 /// Maximum number of registered deformer slots (host range + reserved
@@ -202,49 +202,89 @@ pub(crate) struct DeformationState {
     pub header_cpu: DeformHeader,
     /// Currently registered deformers, in registration order.
     pub registrations: Vec<StoredDeformer>,
+    /// Bit per slot whose registered body defines the optional `keep` hook.
+    /// Kept beside the registrations so the per-item early-Z check does not
+    /// re-scan WGSL every frame.
+    pub keep_slots: u32,
     /// Number of slots (per-mesh and per-instance, across all meshes) currently
     /// bound to an external buffer source. Lets the per-frame copy pass skip its
     /// encoder entirely when nothing is buffer-backed.
     pub external_source_count: usize,
+    /// Slot-write costs accumulated since the last `take_counters`. Read and
+    /// reset once per frame by `prepare`.
+    pub counters: DeformCounters,
 }
+
+/// What deform-slot writes did to their GPU storage since the counters were
+/// last taken.
+///
+/// A slot write that fits its existing buffer is a `write_buffer` and touches
+/// none of these. One that does not reallocates the buffer, which invalidates
+/// every bind group pointing at it, so the rebuild counts are the ones that
+/// scale: a per-mesh reallocation rebuilds one mesh bind group plus one bind
+/// group per instance attached to that mesh.
+///
+/// Surfaced per frame as the `deform_*` fields on
+/// [`FrameStats`](crate::renderer::stats::FrameStats).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeformCounters {
+    /// Slot-storage buffers reallocated, per-mesh and per-instance together.
+    /// Counts only reallocation of storage that already existed; a mesh's or
+    /// instance's first buffer is not counted.
+    pub buffer_reallocations: u32,
+    /// Per-mesh bind groups rebuilt because the mesh's slot buffer was
+    /// replaced.
+    pub mesh_bind_groups_rebuilt: u32,
+    /// Per-instance bind groups rebuilt. A per-instance reallocation rebuilds
+    /// one; a per-mesh reallocation rebuilds every instance bind group on that
+    /// mesh, because they bind the mesh buffer too.
+    pub instance_bind_groups_rebuilt: u32,
+}
+
+/// The `@group(2)` layout: a header uniform plus the per-mesh and per-instance
+/// slot-data storage buffers, all vertex-stage. Named rather than inlined so
+/// `ViewportGpuResources::new` can count the storage buffers it costs and check
+/// them against `ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE`, which
+/// gates whether this group is bound at all.
+pub(crate) const BGL_ENTRIES: [crate::gpu::BindGroupLayoutEntry; 3] = [
+    crate::gpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: crate::gpu::ShaderStages::VERTEX,
+        ty: crate::gpu::BindingType::Buffer {
+            ty: crate::gpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    crate::gpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: crate::gpu::ShaderStages::VERTEX,
+        ty: crate::gpu::BindingType::Buffer {
+            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    crate::gpu::BindGroupLayoutEntry {
+        binding: 2,
+        visibility: crate::gpu::ShaderStages::VERTEX,
+        ty: crate::gpu::BindingType::Buffer {
+            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+];
 
 impl DeformationState {
     pub fn new(device: &crate::gpu::Device) -> Self {
         let bind_group_layout =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("deform_bgl"),
-                entries: &[
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: crate::gpu::ShaderStages::VERTEX,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: crate::gpu::ShaderStages::VERTEX,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: crate::gpu::ShaderStages::VERTEX,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
+                entries: &BGL_ENTRIES,
             });
 
         let header_cpu = DeformHeader::zeroed();
@@ -297,7 +337,9 @@ impl DeformationState {
             meshes: HashMap::new(),
             header_cpu,
             registrations: Vec::new(),
+            keep_slots: 0,
             external_source_count: 0,
+            counters: DeformCounters::default(),
         }
     }
 
@@ -324,6 +366,22 @@ impl DeformationState {
             .unwrap_or(&self.dummy_bind_group)
     }
 
+    /// Take the accumulated slot-write counters, resetting them. Called once
+    /// per frame by `prepare` so each frame's figures cover that frame alone.
+    pub fn take_counters(&mut self) -> DeformCounters {
+        std::mem::take(&mut self.counters)
+    }
+
+    /// Whether `mesh_id` has any *per-mesh* slot data attached, CPU or
+    /// external-buffer-backed.
+    ///
+    /// Deliberately excludes per-instance data, which
+    /// [`Self::has_per_instance_deform_data`] covers: the two route differently
+    /// at draw time, so a caller deciding a draw path needs them apart.
+    pub(crate) fn has_mesh_slot_data(&self, mesh_id: MeshId) -> bool {
+        self.meshes.get(&mesh_id).is_some_and(|m| m.flag_bits != 0)
+    }
+
     /// `deform_flags` value to write into the `ObjectUniform` for `mesh_id`.
     /// Folds per-mesh and per-instance slot activity together: any slot
     /// with data on either side is reported as live so the registered
@@ -333,6 +391,22 @@ impl DeformationState {
             .get(&mesh_id)
             .map(|m| m.flag_bits | m.instance_flag_bits_union)
             .unwrap_or(0)
+    }
+
+    /// Whether a draw of `(mesh_id, instance_id)` runs a deformer that defines
+    /// `keep`, and so may discard. Such a draw cannot take the discard-free
+    /// early-Z pipeline twin, which has every `discard` stripped.
+    pub(crate) fn may_discard(&self, mesh_id: MeshId, instance_id: Option<u32>) -> bool {
+        if self.keep_slots == 0 {
+            return false;
+        }
+        let Some(m) = self.meshes.get(&mesh_id) else {
+            return false;
+        };
+        let instance_bits = instance_id
+            .and_then(|id| m.instances.get(&id))
+            .map_or(0, |i| i.flag_bits);
+        (m.flag_bits | instance_bits) & self.keep_slots != 0
     }
 
     /// Whether `(mesh_id, instance_id)` has any per-instance deformer data
@@ -462,6 +536,8 @@ impl DeformationState {
             &new_buffer,
             &self.dummy_instance_buffer,
         );
+        self.counters.buffer_reallocations += 1;
+        self.counters.mesh_bind_groups_rebuilt += 1;
 
         // Rebuild instance bind groups since they bind this mesh's buffer.
         let instance_ids: Vec<u32> = self
@@ -472,6 +548,7 @@ impl DeformationState {
             .keys()
             .copied()
             .collect();
+        self.counters.instance_bind_groups_rebuilt += instance_ids.len() as u32;
         for id in instance_ids {
             let inst_buf_clone = {
                 let inst = self
@@ -566,6 +643,78 @@ impl DeformationState {
             self.external_source_count -= 1;
         }
         self.refresh(device, mesh_id);
+    }
+
+    /// Overwrite part of one slot's attached data, in place.
+    ///
+    /// The fast path for a deformer that updates its slot every frame.
+    /// [`attach_slot`](Self::attach_slot) is a structural change: it re-packs
+    /// every slot on the mesh, allocates a fresh buffer and rebuilds the mesh
+    /// bind group and every per-instance bind group on it, because a slot's
+    /// length may have changed and the neighbours move. None of that is needed
+    /// when the bytes are the same shape as the ones already there, which is
+    /// what a per-frame update always is.
+    ///
+    /// So this writes `data` at `first_element` within the slot and touches
+    /// nothing else: no re-pack, no allocation, no bind group. The retained
+    /// host copy is updated alongside the GPU buffer, so a later attach or
+    /// detach re-packs from current bytes rather than resurrecting stale ones.
+    ///
+    /// The slot must already hold CPU data of the right stride: this updates
+    /// what is there and cannot establish it. A slot fed by an external buffer
+    /// is rejected, because its bytes come from the per-frame copy pass.
+    pub fn write_slot_range(
+        &mut self,
+        queue: &crate::gpu::Queue,
+        mesh_id: MeshId,
+        slot: usize,
+        first_element: u32,
+        data: &[u8],
+    ) -> crate::error::ViewportResult<()> {
+        assert!(slot < DEFORM_SLOT_COUNT);
+        let not_attached = || crate::error::ViewportError::DeformSlotNotAttached {
+            mesh_id: mesh_id.index(),
+            slot,
+        };
+        let entry = self.meshes.get_mut(&mesh_id).ok_or_else(not_attached)?;
+        if entry.slot_external[slot].is_some() {
+            return Err(not_attached());
+        }
+        let stride_bytes = entry.slot_stride[slot] as usize * 4;
+        let bytes = entry.slot_data[slot].as_mut().ok_or_else(not_attached)?;
+        if stride_bytes == 0 {
+            return Err(not_attached());
+        }
+        if data.is_empty() {
+            return Ok(());
+        }
+        if data.len() % stride_bytes != 0 {
+            return Err(crate::error::ViewportError::DeformSlotWriteOutOfRange {
+                slot,
+                first_element,
+                element_count: 0,
+                slot_elements: (bytes.len() / stride_bytes) as u32,
+            });
+        }
+
+        let element_count = (data.len() / stride_bytes) as u32;
+        let slot_elements = (bytes.len() / stride_bytes) as u32;
+        if first_element.saturating_add(element_count) > slot_elements {
+            return Err(crate::error::ViewportError::DeformSlotWriteOutOfRange {
+                slot,
+                first_element,
+                element_count,
+                slot_elements,
+            });
+        }
+
+        let local = first_element as usize * stride_bytes;
+        bytes[local..local + data.len()].copy_from_slice(data);
+        // The slot's bytes start after the packed header, at the offset `pack`
+        // recorded for it.
+        let offset = entry.slot_offset_words[slot] as u64 * 4 + local as u64;
+        queue.write_buffer(&entry.buffer, offset, data);
+        Ok(())
     }
 
     /// Detach a per-mesh slot. Returns `true` if any data was removed.
@@ -726,6 +875,8 @@ impl DeformationState {
             inst.buffer = new_buffer;
             inst.buffer_capacity = packed_bytes_len;
             inst.bind_group = bg;
+            self.counters.buffer_reallocations += 1;
+            self.counters.instance_bind_groups_rebuilt += 1;
         } else {
             let inst = self
                 .meshes
@@ -809,6 +960,8 @@ impl DeformationState {
                 inst.buffer = new_buffer;
                 inst.buffer_capacity = packed_bytes_len;
                 inst.bind_group = bg;
+                self.counters.buffer_reallocations += 1;
+                self.counters.instance_bind_groups_rebuilt += 1;
             } else {
                 queue.write_buffer(&inst.buffer, 0, bytemuck::cast_slice(&packed_words));
             }
@@ -998,6 +1151,8 @@ impl DeformationState {
             inst.buffer = new_buffer;
             inst.buffer_capacity = packed_bytes_len;
             inst.bind_group = bg;
+            self.counters.buffer_reallocations += 1;
+            self.counters.instance_bind_groups_rebuilt += 1;
         } else {
             let inst = self
                 .meshes
@@ -1206,6 +1361,63 @@ impl DeviceResources {
             .attach_slot(device, mesh_id, slot, stride_bytes / 4, data);
     }
 
+    /// Overwrite part of a mesh's deform-slot data without re-packing it.
+    ///
+    /// The call a deformer that updates every frame should be making.
+    /// [`attach_deform_slot`](Self::attach_deform_slot) is structural: it
+    /// re-packs every slot on the mesh, allocates a new buffer, and rebuilds
+    /// the mesh bind group plus every per-instance bind group on it, because a
+    /// slot's length may have changed and its neighbours move with it. A
+    /// per-frame update never changes the shape, so it needs none of that.
+    ///
+    /// `first_element` is in slot elements, not bytes: element `n` starts at
+    /// `n * stride_bytes` within the slot, using the stride the attach
+    /// established. Pass `0` and the whole slot's worth of bytes to replace it
+    /// entirely, which is still far cheaper than re-attaching, or a window to
+    /// write only the region that moved.
+    ///
+    /// Attach the slot once to establish its length and stride, then write:
+    ///
+    /// ```no_run
+    /// # use viewport_lib::resources::DeviceResources;
+    /// # fn f(resources: &mut DeviceResources, device: &viewport_lib::gpu::Device,
+    /// #      queue: &viewport_lib::gpu::Queue, mesh: viewport_lib::MeshId,
+    /// #      offsets: &[[f32; 3]]) -> viewport_lib::error::ViewportResult<()> {
+    /// resources.attach_deform_slot(device, mesh, 0, 12, bytemuck::cast_slice(offsets));
+    /// // Each frame after that, for the vertices that moved:
+    /// resources.write_deform_slot_range(queue, mesh, 0, 0, bytemuck::cast_slice(offsets))?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// Errors with `DeformSlotNotAttached` when the slot holds no CPU data (a
+    /// slot fed by [`set_deform_slot_source_buffer`](Self::set_deform_slot_source_buffer)
+    /// is filled by the per-frame copy pass and is not writable this way), and
+    /// with `DeformSlotWriteOutOfRange` when the window does not fit what is
+    /// attached or `data` is not a whole number of elements.
+    pub fn write_deform_slot_range(
+        &mut self,
+        queue: &crate::gpu::Queue,
+        mesh_id: MeshId,
+        slot: usize,
+        first_element: u32,
+        data: &[u8],
+    ) -> crate::error::ViewportResult<()> {
+        self.deform
+            .write_slot_range(queue, mesh_id, slot, first_element, data)
+    }
+
+    /// The bytes currently retained for one per-mesh slot, or `None` when the
+    /// slot holds no CPU data. Crate-internal: this is the host mirror of what
+    /// the GPU buffer holds, and exists so a test can check the two agree after
+    /// a ranged write.
+    #[cfg(test)]
+    pub(crate) fn deform_slot_bytes(&self, mesh_id: MeshId, slot: usize) -> Option<Vec<u8>> {
+        self.deform
+            .meshes
+            .get(&mesh_id)
+            .and_then(|m| m.slot_data[slot].clone())
+    }
+
     /// Detach a per-mesh slot's data. Returns `true` if any data was removed.
     pub fn detach_deform_slot(
         &mut self,
@@ -1319,6 +1531,36 @@ impl DeviceResources {
         let src = build_external_source(&buffer, stride_bytes, 0, len_bytes)?;
         self.deform.set_slot_external(device, mesh_id, slot, src);
         Ok(())
+    }
+
+    /// Feed a deformer slot's per-mesh data from one of the mesh's own per-vertex
+    /// scalar attributes, one `f32` per vertex (stride 4), by name.
+    ///
+    /// The attribute is copied into the slot each frame, like any buffer source,
+    /// so a `replace_attribute` on the mesh reaches the deformer with no further
+    /// call. Use it for a deformer that reads a field the mesh already carries,
+    /// rather than uploading the same values again. Returns
+    /// [`ViewportError::AttributeNotFound`] when the mesh has no scalar attribute
+    /// of that name.
+    ///
+    /// [`ViewportError::AttributeNotFound`]: crate::error::ViewportError::AttributeNotFound
+    pub fn set_deform_slot_source_attribute(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh_id: MeshId,
+        slot: usize,
+        name: &str,
+    ) -> ViewportResult<()> {
+        let buffer = self
+            .mesh_store
+            .get(mesh_id)
+            .and_then(|mesh| mesh.attribute_buffers.get(name))
+            .cloned()
+            .ok_or_else(|| crate::error::ViewportError::AttributeNotFound {
+                mesh_id: mesh_id.index(),
+                name: name.to_string(),
+            })?;
+        self.set_deform_slot_source_buffer(device, mesh_id, slot, buffer, 4)
     }
 
     /// As [`set_deform_slot_source_buffer`](Self::set_deform_slot_source_buffer),
@@ -1528,6 +1770,9 @@ impl DeviceResources {
             validate_with_wgpu(device, &label, &composed)?;
         }
 
+        if defines_keep(&candidate) {
+            self.deform.keep_slots |= 1u32 << slot;
+        }
         self.deform.registrations.push(candidate);
         self.mesh_pipelines_dirty = true;
         Ok(DeformerId(slot))
@@ -1563,6 +1808,9 @@ impl DeviceResources {
             validate_with_wgpu(device, &label, &composed)?;
         }
 
+        if defines_keep(&candidate) {
+            self.deform.keep_slots |= 1u32 << slot;
+        }
         self.deform.registrations.push(candidate);
         self.mesh_pipelines_dirty = true;
         Ok(DeformerId(slot))
@@ -1637,385 +1885,88 @@ impl DeviceResources {
         if !self.deform.enabled {
             return;
         }
+        // Every composed source is about to change, so the shared modules
+        // built from the old ones are no use to anyone.
+        self.shader_modules.lock().unwrap().clear();
         // Material-plugin pipeline sets compose on top of the deformer
         // registrations and the debug-vis strip state, both of which changed
         // when this runs. Drop them; the next prepare that references a
         // plugin id rebuilds its set from the fresh composition.
         for plugin in self.material_plugins.values_mut() {
             plugin.pipelines = None;
+            plugin.instanced_pipelines = None;
         }
-        let registrations = self.deform.registrations.clone();
-
-        // mesh.wgsl: LDR + HDR families.
-        if let Some(base) = lookup_source("mesh.wgsl") {
-            let composed = compose_shader(base, &registrations);
-            let final_src = crate::resources::builders::builtin_hook_env(
-                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
-            )
-            .into_owned();
-            let shader = crate::resources::builders::wgsl_module(
-                device,
-                "mesh_shader_composed",
-                final_src.clone(),
-            );
-
-            let ldr_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
-                device,
-                "mesh_pipeline_layout",
-                &self.binds.camera_bgl,
-                &self.binds.object_bgl,
-                Some(&self.deform.bind_group_layout),
-            );
-            let ldr = crate::resources::mesh::mesh_pipelines::build_ldr_mesh_pipelines(
-                device,
-                &ldr_layout,
-                &shader,
-                self.target_format,
-                self.sample_count,
-                None,
-            );
-            self.scene.solid = ldr.solid;
-            self.scene.solid_two_sided = ldr.solid_two_sided;
-            self.scene.transparent = ldr.transparent;
-            self.scene.wireframe = ldr.wireframe;
-
-            if self.scene.hdr_opaque.is_some() {
-                let hdr_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
-                    device,
-                    "hdr_mesh_pipeline_layout",
-                    &self.binds.camera_bgl,
-                    &self.binds.object_bgl,
-                    Some(&self.deform.bind_group_layout),
-                );
-                let hdr = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
-                    device,
-                    &hdr_layout,
-                    &shader,
-                );
-                let hdr_solid = hdr.solid;
-                let hdr_solid_two_sided = hdr.solid_two_sided;
-                self.scene.hdr_transparent = Some(hdr.transparent);
-                self.scene.hdr_wireframe = Some(hdr.wireframe);
-
-                // Discard-free twin, rebuilt from the same fresh composition
-                // so it never lags the discarding pipeline's shading (the
-                // pre-keyed code left this twin stale across a deformer
-                // registration; folding both into one `PipelineVariantSet`
-                // build fixes that for free).
-                let hdr_shader_nodiscard = crate::resources::builders::wgsl_module(
-                    device,
-                    "mesh_shader_hdr_nodiscard",
-                    crate::resources::builders::strip_discards(&final_src),
-                );
-                let hdr_nd = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
-                    device,
-                    &hdr_layout,
-                    &hdr_shader_nodiscard,
-                );
-                self.scene.hdr_opaque = Some(
-                    crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-                        let (solid, solid_two_sided) = if key.no_discard_eligible {
-                            (&hdr_nd.solid, &hdr_nd.solid_two_sided)
-                        } else {
-                            (&hdr_solid, &hdr_solid_two_sided)
-                        };
-                        if key.two_sided {
-                            solid_two_sided.clone()
-                        } else {
-                            solid.clone()
-                        }
-                    }),
-                );
-            }
+        // Every family is rebuilt through its own `ensure_*`, which composes
+        // the registered deformers in, so there is one copy of each build. A
+        // family that has not been built yet is left alone: its first use
+        // builds it from the same composition.
+        if self.scene.ldr.is_some() {
+            self.scene.ldr = None;
+            self.ensure_ldr_mesh_pipelines(device);
         }
-
-        // mesh_oit.wgsl: only present after ensure_hdr_shared has been
-        // called.
+        if self.scene.hdr.is_some() {
+            self.scene.hdr = None;
+            self.ensure_hdr_mesh_pipelines(device);
+        }
         if self.oit.pipeline.is_some() {
-            if let Some(base) = lookup_source("mesh_oit.wgsl") {
-                let composed = compose_shader(base, &registrations);
-                let shader = crate::resources::builders::wgsl_module(
-                    device,
-                    "mesh_oit_shader_composed",
-                    crate::resources::builders::builtin_hook_env(
-                        crate::resources::builders::strip_debug_vis(
-                            composed,
-                            self.debug_vis_shaders,
-                        ),
-                    ),
-                );
-                let oit_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
-                    device,
-                    "oit_pipeline_layout",
-                    &self.binds.camera_bgl,
-                    &self.binds.object_bgl,
-                    Some(&self.deform.bind_group_layout),
-                );
-                self.oit.pipeline = Some(crate::renderer::pipeline_key::PipelineVariantSet::build(
-                    |key| {
-                        crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
-                            device,
-                            &oit_layout,
-                            &shader,
-                            key.two_sided,
-                        )
-                    },
-                ));
-            }
+            self.oit.pipeline = None;
+            self.ensure_oit_mesh_pipelines(device);
         }
-
-        // shadow.wgsl: depth-only cascade pass.
-        if let Some(base) = lookup_source("shadow.wgsl") {
-            let composed = compose_shader(base, &registrations);
-            let shader =
-                crate::resources::builders::wgsl_module(device, "shadow_shader_composed", composed);
-            let layout = crate::resources::builders::pipeline_layout(
-                device,
-                "shadow_pipeline_layout",
-                &[
-                    &self.shadow.camera_bgl,
-                    &self.binds.object_bgl,
-                    &self.deform.bind_group_layout,
-                ],
-            );
-            self.shadow.pipeline =
-                crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-                    let cull_mode = if key.two_sided {
-                        None
-                    } else {
-                        Some(crate::gpu::Face::Front)
-                    };
-                    crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
-                        device, &layout, &shader, cull_mode, key.cutout, None,
-                    )
-                });
+        // The shadow passes run the deformer too: a caster skinned on the GPU
+        // keeps the bind pose in its vertex buffer, so a depth pass that does
+        // not deform rasterises the bind pose and the shadow never moves a limb.
+        if self.shadow.pipeline.is_some() {
+            self.shadow.pipeline = None;
+            self.ensure_cascade_shadow_pipelines(device);
         }
-
-        // outline_mask.wgsl: mask-write pass for the selection silhouette.
-        if let Some(base) = lookup_source("outline_mask.wgsl") {
-            let composed = compose_shader(base, &registrations);
-            let shader = crate::resources::builders::wgsl_module(
-                device,
-                "outline_mask_shader_composed",
-                composed,
-            );
-            let layout = crate::resources::builders::pipeline_layout(
-                device,
-                "outline_pipeline_layout",
-                &[
-                    &self.binds.camera_bgl,
-                    &self.outline.bind_group_layout,
-                    &self.deform.bind_group_layout,
-                ],
-            );
-            let masks = crate::resources::mesh::mesh_pipelines::build_outline_mask_pipelines(
-                device,
-                &layout,
-                &shader,
-                crate::gpu::TextureFormat::R8Unorm,
-                None,
-            );
-            self.outline.mask_pipeline = masks.mask;
-            self.outline.mask_two_sided_pipeline = masks.mask_two_sided;
+        if self.shadow.point_pipeline.is_some() {
+            self.shadow.point_pipeline = None;
+            self.ensure_point_shadow_pipeline(device);
         }
-
-        // mesh_instanced.wgsl: LDR (solid + transparent), HDR (solid +
-        // transparent + additive + premultiplied), and HDR cull. Only
-        // present after `ensure_instanced_pipelines` / its HDR sibling /
-        // `ensure_cull_instance_pipelines` have run.
-        if let Some(base) = lookup_source("mesh_instanced.wgsl") {
-            let composed = compose_shader(base, &registrations);
-            let src = crate::resources::builders::strip_mesh_discards(
-                crate::resources::builders::builtin_hook_env(
-                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
-                ),
-            );
-            let shader = crate::resources::builders::wgsl_module(
-                device,
-                "mesh_instanced_shader_composed",
-                src.as_ref(),
-            );
-            let shader_nodiscard = crate::resources::builders::wgsl_module(
-                device,
-                "mesh_instanced_shader_composed_nodiscard",
-                crate::resources::builders::strip_discards(&src),
-            );
-
-            if let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() {
-                if self.instancing.solid_pipeline.is_some() {
-                    let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
-                        device,
-                        "instanced_pipeline_layout",
-                        &self.binds.camera_bgl,
-                        instance_bgl,
-                        Some(&self.deform.bind_group_layout),
-                    );
-                    let ldr =
-                        crate::resources::mesh::mesh_pipelines::build_ldr_instanced_mesh_pipelines(
-                            device,
-                            &layout,
-                            &shader,
-                            self.target_format,
-                            self.sample_count,
-                        );
-                    self.instancing.solid_pipeline = Some(ldr.solid);
-                    self.instancing.solid_two_sided_pipeline = Some(ldr.solid_two_sided);
-                    self.instancing.transparent_pipeline = Some(ldr.transparent);
-                    let (nd, nd_two_sided) =
-                        crate::resources::mesh::mesh_pipelines::build_instanced_solid_pipelines(
-                            device,
-                            &layout,
-                            &shader_nodiscard,
-                            self.target_format,
-                            self.sample_count,
-                            "solid_instanced_nodiscard_pipeline",
-                            "solid_two_sided_instanced_nodiscard_pipeline",
-                        );
-                    self.instancing.solid_nodiscard_pipeline = Some(nd);
-                    self.instancing.solid_two_sided_nodiscard_pipeline = Some(nd_two_sided);
-                }
-                if self.instancing.hdr_solid_pipeline.is_some() {
-                    let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
-                        device,
-                        "hdr_instanced_pipeline_layout",
-                        &self.binds.camera_bgl,
-                        instance_bgl,
-                        Some(&self.deform.bind_group_layout),
-                    );
-                    let hdr =
-                        crate::resources::mesh::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
-                            device, &layout, &shader,
-                        );
-                    self.instancing.hdr_solid_pipeline = Some(hdr.solid);
-                    self.instancing.hdr_solid_two_sided_pipeline = Some(hdr.solid_two_sided);
-                    self.instancing.hdr_transparent_pipeline = Some(hdr.transparent);
-                    self.instancing.hdr_additive_pipeline = Some(hdr.additive);
-                    self.instancing.hdr_premultiplied_pipeline = Some(hdr.premultiplied);
-                    let (nd, nd_two_sided) =
-                        crate::resources::mesh::mesh_pipelines::build_instanced_solid_pipelines(
-                            device,
-                            &layout,
-                            &shader_nodiscard,
-                            crate::gpu::TextureFormat::Rgba16Float,
-                            1,
-                            "hdr_instanced_solid_nodiscard_pipeline",
-                            "hdr_instanced_solid_two_sided_nodiscard_pipeline",
-                        );
-                    self.instancing.hdr_solid_nodiscard_pipeline = Some(nd);
-                    self.instancing.hdr_solid_two_sided_nodiscard_pipeline = Some(nd_two_sided);
-                }
-            }
-            if let Some(cull_bgl) = self.cull.bind_group_layout.as_ref() {
-                if self.cull.hdr_solid_pipeline.is_some() {
-                    let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
-                        device,
-                        "hdr_instanced_cull_pipeline_layout",
-                        &self.binds.camera_bgl,
-                        cull_bgl,
-                        Some(&self.deform.bind_group_layout),
-                    );
-                    let pl =
-                        crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline(
-                            device, &layout, &shader,
-                        );
-                    self.cull.hdr_solid_pipeline = Some(pl);
-                    let pl_two_sided =
-                        crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_two_sided_pipeline(
-                            device, &layout, &shader,
-                        );
-                    self.cull.hdr_solid_two_sided_pipeline = Some(pl_two_sided);
-                    self.cull.hdr_solid_nodiscard_pipeline = Some(
-                        crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline_with(
-                            device,
-                            &layout,
-                            &shader_nodiscard,
-                            "hdr_solid_instanced_cull_nodiscard_pipeline",
-                            Some(crate::gpu::Face::Back),
-                        ),
-                    );
-                    self.cull.hdr_solid_two_sided_nodiscard_pipeline = Some(
-                        crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline_with(
-                            device,
-                            &layout,
-                            &shader_nodiscard,
-                            "hdr_solid_instanced_cull_two_sided_nodiscard_pipeline",
-                            None,
-                        ),
-                    );
-                }
-            }
+        if self.outline.mask_pipeline.is_some() {
+            self.outline.mask_pipeline = None;
+            self.ensure_outline_pipelines(device);
         }
+        // The object pick deforms too, so a deformed mesh is picked where it is
+        // drawn. Rebuilt on the next pick; its layouts are kept.
+        self.pick.pipeline = None;
 
-        // mesh_instanced_oit.wgsl: non-cull and cull OIT pipelines.
-        if let Some(base) = lookup_source("mesh_instanced_oit.wgsl") {
-            let composed = compose_shader(base, &registrations);
-            let shader = crate::resources::builders::wgsl_module(
-                device,
-                "mesh_instanced_oit_shader_composed",
-                crate::resources::builders::builtin_hook_env(
-                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
-                ),
-            );
-            if let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() {
-                if self.oit.instanced_pipeline.is_some() {
-                    let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
-                        device,
-                        "oit_instanced_pipeline_layout",
-                        &self.binds.camera_bgl,
-                        instance_bgl,
-                        Some(&self.deform.bind_group_layout),
-                    );
-                    let pl = crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-                        device,
-                        &layout,
-                        &shader,
-                        "oit_instanced_pipeline",
-                        "vs_main",
-                        false,
-                    );
-                    let pl_two_sided =
-                        crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-                            device,
-                            &layout,
-                            &shader,
-                            "oit_instanced_pipeline_two_sided",
-                            "vs_main",
-                            true,
-                        );
-                    self.oit.instanced_pipeline = Some(pl);
-                    self.oit.instanced_pipeline_two_sided = Some(pl_two_sided);
-                }
-            }
-            if let Some(cull_bgl) = self.cull.bind_group_layout.as_ref() {
-                if self.cull.oit_pipeline.is_some() {
-                    let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
-                        device,
-                        "oit_instanced_cull_pipeline_layout",
-                        &self.binds.camera_bgl,
-                        cull_bgl,
-                        Some(&self.deform.bind_group_layout),
-                    );
-                    let pl = crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-                        device,
-                        &layout,
-                        &shader,
-                        "oit_instanced_cull_pipeline",
-                        "vs_main_cull",
-                        false,
-                    );
-                    let pl_two_sided =
-                        crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-                            device,
-                            &layout,
-                            &shader,
-                            "oit_instanced_cull_pipeline_two_sided",
-                            "vs_main_cull",
-                            true,
-                        );
-                    self.cull.oit_pipeline = Some(pl);
-                    self.cull.oit_two_sided_pipeline = Some(pl_two_sided);
-                }
-            }
+        // Instanced families (LDR / HDR / OIT / cull) rebuild through the
+        // bindless-aware `ensure_*` functions instead of a second copy of their
+        // build logic. The per-batch/bindless layout choice, the shader
+        // transform, and the explicit-`MeshInstanceItem` split all live in one
+        // place that way, so a bindless bind group can never meet a per-batch
+        // pipeline (a validation error). Clear the cached pipelines so the guarded
+        // `ensure_*` calls rebuild them from the fresh deform composition; nothing
+        // rebuilds unless it was already built. Recreated bind group layouts stay
+        // structurally identical, so the cached instance bind groups remain valid.
+        if self.instancing.bind_group_layout.is_some() {
+            self.instancing.bind_group_layout = None;
+            self.ensure_instanced_pipelines(device);
+        }
+        if self.instancing.ldr.is_some() {
+            self.instancing.ldr = None;
+            self.ensure_ldr_instanced_pipelines(device);
+        }
+        if self.instancing.hdr.is_some() {
+            self.instancing.hdr = None;
+            self.ensure_hdr_instanced_pipelines(device);
+        }
+        if self.oit.instanced.is_some() {
+            self.oit.instanced = None;
+            self.ensure_oit_instanced_pipeline(device);
+        }
+        if self.cull.bind_group_layout.is_some() {
+            self.cull.bind_group_layout = None;
+            self.ensure_cull_instance_pipelines(device);
+        }
+        if self.cull.hdr.is_some() {
+            self.cull.hdr = None;
+            self.ensure_hdr_cull_pipelines(device);
+        }
+        if self.cull.oit.is_some() {
+            self.cull.oit = None;
+            self.ensure_oit_cull_pipelines(device);
         }
     }
 }
@@ -2174,16 +2125,13 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// Registering a deformer that actually reads from `deform_data` must
-    /// produce a rebuilt LDR `mesh.wgsl` pipeline family once the deferred
-    /// rebuild flushes. The simplest proof: if the composed source were
-    /// broken, `register_deformer` would fail at validation; if the rebuild
-    /// path were broken (e.g. shader module created from stale source),
-    /// this test would still pass because no draw is issued. So we also
-    /// re-fetch the LDR pipelines and confirm they are not the originals
-    /// that the renderer was constructed with.
+    /// A deformer that reads from `deform_data` registers before any mesh has
+    /// drawn. The LDR `mesh.wgsl` family does not exist yet, so the deferred
+    /// rebuild leaves it alone, and the first use builds it from the composed
+    /// source. A broken composition would fail `register_deformer` at
+    /// validation; a module that failed to compile would fail the build here.
     #[test]
-    fn register_deformer_rebuilds_ldr_mesh_pipelines() {
+    fn a_registered_deformer_reaches_the_ldr_mesh_pipelines() {
         use crate::renderer::ViewportRenderer;
         let Some((device, _queue)) = headless() else {
             return;
@@ -2191,8 +2139,8 @@ mod tests {
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
 
-        let solid_before: *const crate::gpu::RenderPipeline = &renderer.resources().scene.solid;
-        let wf_before: *const crate::gpu::RenderPipeline = &renderer.resources().scene.wireframe;
+        // Nothing has been drawn, so the base family is not composed yet.
+        assert!(renderer.resources().scene.ldr.is_none());
 
         let body = "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    if (deform_slot_stride(0u) > 0u) {\n        o.position.z = o.position.z + deform_read_f32(0u, v.vertex_index, 0u);\n    }\n    return o;\n}\n";
         let desc = DeformerDesc {
@@ -2211,16 +2159,16 @@ mod tests {
             .resources_mut()
             .flush_mesh_pipeline_rebuild(&device);
 
-        let solid_after: *const crate::gpu::RenderPipeline = &renderer.resources().scene.solid;
-        let wf_after: *const crate::gpu::RenderPipeline = &renderer.resources().scene.wireframe;
-        // The fields themselves moved during the swap, so the addresses
-        // stay the same. Instead, confirm that `solid_pipeline` and
-        // `wireframe_pipeline` are still live wgpu handles by hashing
-        // their global_id, which is unique per device-created pipeline.
-        assert_ne!(solid_before, std::ptr::null());
-        assert_ne!(solid_after, std::ptr::null());
-        assert_ne!(wf_before, std::ptr::null());
-        assert_ne!(wf_after, std::ptr::null());
+        // Nothing has drawn a mesh, so there is still nothing to rebuild.
+        assert!(renderer.resources().scene.ldr.is_none());
+
+        // First use composes the family with the deformer in, and under
+        // `Blocking` a read builds the member asked for.
+        renderer.set_pipeline_compilation(crate::PipelineCompilation::Blocking);
+        renderer.resources_mut().ensure_ldr_mesh_pipelines(&device);
+        assert!(renderer.resources().scene.ldr.is_some());
+        assert!(renderer.resources().scene.solid().is_some());
+        assert!(renderer.resources().scene.wireframe().is_some());
     }
 
     #[test]

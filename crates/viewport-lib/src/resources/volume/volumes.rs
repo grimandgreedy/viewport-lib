@@ -53,30 +53,6 @@ fn encode_volume_texels(format: crate::gpu::TextureFormat, data: &[f32]) -> Vec<
     }
 }
 
-/// Direct volume rendering pipelines, layouts, the cached unit cube geometry,
-/// and the default opacity LUT. All lazily built; the uploaded 3D volume
-/// textures live in a separate flat store.
-#[derive(Default)]
-pub(crate) struct VolumeResources {
-    /// Volume render pipeline. None until first volume is submitted.
-    pub(crate) pipeline: Option<DualPipeline>,
-    /// Bind group layout for volume uniforms (group 1).
-    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Cached unit cube vertex buffer for bounding-box rasterization.
-    pub(crate) cube_vb: Option<crate::gpu::Buffer>,
-    /// Cached unit cube index buffer.
-    pub(crate) cube_ib: Option<crate::gpu::Buffer>,
-    /// Default linear ramp opacity LUT texture (256x1, R8Unorm).
-    pub(crate) default_opacity_lut: Option<crate::gpu::Texture>,
-    pub(crate) default_opacity_lut_view: Option<crate::gpu::TextureView>,
-    /// Volume surface slice render pipeline. None until first slice item.
-    pub(crate) surface_slice_pipeline: Option<DualPipeline>,
-    /// Bind group layout for volume surface slice uniforms (group 1).
-    pub(crate) surface_slice_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Mask-write pipeline for volume AABB cubes. None until first selected volume.
-    pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
-}
-
 impl DeviceResources {
     /// Upload a 3D scalar field to the GPU as a filterable 3D texture
     /// ([`volume_texture_format`]: `R32Float` at full precision, or the
@@ -85,7 +61,7 @@ impl DeviceResources {
     /// `data` must be a flat array of `dims[0] * dims[1] * dims[2]` scalars in
     /// x-fastest order (index = x + y*nx + z*nx*ny).
     ///
-    /// Returns a [`VolumeId`](crate::resources::VolumeId) that can be stored in [`VolumeItem::volume_id`](crate::renderer::VolumeItem::volume_id).
+    /// Returns a [`VolumeId`](crate::resources::VolumeId) that can be stored in `VolumeItem::volume_id`.
     pub fn upload_volume(
         &mut self,
         device: &crate::gpu::Device,
@@ -93,9 +69,6 @@ impl DeviceResources {
         data: &[f32],
         dims: [u32; 3],
     ) -> VolumeId {
-        // Build the ray-march pipeline now so a load-time upload also pays the
-        // pipeline compile, not the first frame that draws the volume.
-        self.ensure_volume_pipeline(device);
         let (texture, view, volume_bytes) = Self::build_volume_texture(device, queue, data, dims);
         self.content
             .volume_textures
@@ -124,19 +97,107 @@ impl DeviceResources {
         if !self.content.volume_textures.contains(id) {
             return false;
         }
-        self.ensure_volume_pipeline(device);
         let (texture, view, volume_bytes) = Self::build_volume_texture(device, queue, data, dims);
-        let replaced = self
-            .content
+        // Nothing to invalidate: every item type that samples a volume builds its
+        // bind group from the item each frame, and the scatter pass clears its
+        // per-volume cache at the top of every prepare. A replace that reallocated
+        // the texture is therefore picked up on the next frame without any signal
+        // from here.
+        self.content
             .volume_textures
             .replace(id, (texture, view), volume_bytes)
-            .is_some();
-        if replaced {
-            // Drop any scatter bind group built against this slot's old texture
-            // so the previous field's GPU memory is actually released.
-            self.invalidate_scatter_density(id.index() as u32);
+            .is_some()
+    }
+
+    /// Overwrite an axis-aligned box of the 3D texture behind `id`, leaving the
+    /// rest of the field alone.
+    ///
+    /// The partial update for volumes. A time-varying field whose change is local
+    /// (a simulation front, an edited brush stroke, a newly streamed tile) pays
+    /// for the box it wrote rather than for the whole grid, where
+    /// [`replace_volume`](Self::replace_volume) reallocates the texture and
+    /// re-uploads every texel.
+    ///
+    /// `data` is `dims[0] * dims[1] * dims[2]` scalars in x-fastest order within
+    /// the box (`index = x + y * dims[0] + z * dims[0] * dims[1]`), not indices
+    /// into the whole volume. The box must fit: this does not resize the texture,
+    /// because resizing means reallocating it, and that is what `replace_volume`
+    /// is for.
+    ///
+    /// # Errors
+    ///
+    /// [`StaleHandle`](crate::error::ViewportError::StaleHandle) for a handle that
+    /// does not resolve, [`VolumeRegionOutOfRange`](crate::error::ViewportError::VolumeRegionOutOfRange)
+    /// for a box that does not fit or has a zero extent, and
+    /// [`VolumeDataLengthMismatch`](crate::error::ViewportError::VolumeDataLengthMismatch)
+    /// when `data` is not the size the box needs.
+    pub fn write_volume_region(
+        &self,
+        queue: &crate::gpu::Queue,
+        id: VolumeId,
+        origin: [u32; 3],
+        dims: [u32; 3],
+        data: &[f32],
+    ) -> crate::error::ViewportResult<()> {
+        let Some((texture, _)) = self.content.volume_textures.get(id) else {
+            return Err(self.content.volume_textures.stale(id));
+        };
+        let volume_dims = [
+            texture.width(),
+            texture.height(),
+            texture.depth_or_array_layers(),
+        ];
+        let fits = (0..3).all(|axis| {
+            dims[axis] > 0
+                && origin[axis]
+                    .checked_add(dims[axis])
+                    .is_some_and(|end| end <= volume_dims[axis])
+        });
+        if !fits {
+            return Err(crate::error::ViewportError::VolumeRegionOutOfRange {
+                origin,
+                dims,
+                volume_dims,
+            });
         }
-        replaced
+        let expected = (dims[0] as usize) * (dims[1] as usize) * (dims[2] as usize);
+        if data.len() != expected {
+            return Err(crate::error::ViewportError::VolumeDataLengthMismatch {
+                actual: data.len(),
+                expected,
+                dims,
+            });
+        }
+
+        let format = texture.format();
+        let bpt = volume_bytes_per_texel(format);
+        let texels = encode_volume_texels(format, data);
+        queue.write_texture(
+            crate::gpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d {
+                    x: origin[0],
+                    y: origin[1],
+                    z: origin[2],
+                },
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            &texels,
+            crate::gpu::TexelCopyBufferLayout {
+                offset: 0,
+                // Rows and layers of the box, not of the volume: the source is
+                // packed to the box and wgpu strides the destination itself.
+                bytes_per_row: Some(dims[0] * bpt),
+                rows_per_image: Some(dims[1]),
+            },
+            crate::gpu::Extent3d {
+                width: dims[0],
+                height: dims[1],
+                depth_or_array_layers: dims[2],
+            },
+        );
+        Ok(())
     }
 
     /// Free the 3D texture behind `id`, reclaiming its slot and byte charge.
@@ -146,11 +207,7 @@ impl DeviceResources {
     /// aliasing whatever next occupies the slot. Returns `false` if `id` was
     /// already freed or is stale.
     pub fn free_volume(&mut self, id: VolumeId) -> bool {
-        let freed = self.content.volume_textures.remove(id).is_some();
-        if freed {
-            self.invalidate_scatter_density(id.index() as u32);
-        }
-        freed
+        self.content.volume_textures.remove(id).is_some()
     }
 
     /// Create a filterable 3D texture from `data`, upload it, and return the
@@ -351,532 +408,12 @@ impl DeviceResources {
             None => Err(crate::error::ViewportError::JobNotReady),
         }
     }
-
-    /// Create the volume render pipeline and bind group layout (lazy init).
-    pub(crate) fn ensure_volume_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.volume.pipeline.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-
-        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-            label: Some("volume_bgl"),
-            entries: &[
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    // Filterable so the ray-march reconstructs the field with
-                    // trilinear interpolation. The bound texture is R16Float
-                    // (baseline filterable) or R32Float (with FLOAT32_FILTERABLE),
-                    // chosen by `volume_texture_format` to keep this valid.
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D3,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
-        let shader_src = include_str!(concat!(env!("OUT_DIR"), "/volume.wgsl"));
-        let shader = crate::resources::builders::wgsl_module(device, "volume_shader", shader_src);
-
-        let pipeline_layout = crate::resources::builders::standard_scene_layout(
-            device,
-            "volume_pipeline_layout",
-            &self.binds.camera_bgl,
-            &bgl,
-        );
-
-        let vol_vert_layout = crate::gpu::VertexBufferLayout {
-            array_stride: 12,
-            step_mode: crate::gpu::VertexStepMode::Vertex,
-            attributes: &[crate::gpu::VertexAttribute {
-                format: crate::gpu::VertexFormat::Float32x3,
-                offset: 0,
-                shader_location: 0,
-            }],
-        };
-        self.volume.pipeline = Some(crate::resources::builders::build_dual_pipeline(
-            device,
-            &crate::resources::builders::DualPipelineDesc {
-                label: "volume_pipeline",
-                layout: &pipeline_layout,
-                shader: &shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[vol_vert_layout.clone()],
-                blend: Some(crate::gpu::BlendState {
-                    color: crate::gpu::BlendComponent {
-                        src_factor: crate::gpu::BlendFactor::SrcAlpha,
-                        dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
-                        operation: crate::gpu::BlendOperation::Add,
-                    },
-                    alpha: crate::gpu::BlendComponent {
-                        src_factor: crate::gpu::BlendFactor::One,
-                        dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
-                        operation: crate::gpu::BlendOperation::Add,
-                    },
-                }),
-                topology: crate::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                depth_write: false,
-                depth_compare: crate::gpu::CompareFunction::Less,
-                sample_count: self.sample_count,
-                ldr_format: self.target_format,
-            },
-        ));
-        self.volume.bgl = Some(bgl);
-    }
-
-    /// Ensure the volume outline mask pipeline exists. This pipeline ray-marches the
-    /// volume in the R8 mask texture so the outline hugs the actual volume silhouette
-    /// rather than the AABB. Requires `ensure_volume_pipeline` to have been called
-    /// first (needs `volume_bgl`).
-    pub(crate) fn ensure_volume_outline_mask_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.volume.outline_mask_pipeline.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let bgl = self.volume.bgl.as_ref().expect(
-            "ensure_volume_pipeline must be called before ensure_volume_outline_mask_pipeline",
-        );
-
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "volume_outline_mask_shader",
-            crate::resources::builders::wgsl_source!("volume_outline_mask"),
-        );
-
-        let layout = crate::resources::builders::standard_scene_layout(
-            device,
-            "volume_outline_mask_pipeline_layout",
-            &self.binds.camera_bgl,
-            bgl,
-        );
-
-        let vert_attrs = [crate::gpu::VertexAttribute {
-            offset: 0,
-            shader_location: 0,
-            format: crate::gpu::VertexFormat::Float32x3,
-        }];
-        let vert_layout = crate::gpu::VertexBufferLayout {
-            array_stride: 12,
-            step_mode: crate::gpu::VertexStepMode::Vertex,
-            attributes: &vert_attrs,
-        };
-
-        self.volume.outline_mask_pipeline =
-            Some(crate::resources::builders::build_outline_mask_pipeline(
-                device,
-                "volume_outline_mask_pipeline",
-                &layout,
-                &shader,
-                crate::gpu::TextureFormat::R8Unorm,
-                &[vert_layout],
-                None,
-                true,
-                crate::gpu::CompareFunction::Less,
-            ));
-    }
-
-    /// Ensure the unit cube vertex + index buffers for volume bounding box proxy exist.
-    pub(crate) fn ensure_volume_cube(&mut self, device: &crate::gpu::Device) {
-        if self.volume.cube_vb.is_some() {
-            return;
-        }
-
-        #[rustfmt::skip]
-        let vertices: [[f32; 3]; 8] = [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 1.0],
-            [1.0, 1.0, 1.0],
-            [0.0, 1.0, 1.0],
-        ];
-
-        #[rustfmt::skip]
-        let indices: [u32; 36] = [
-            0, 2, 1,  0, 3, 2,
-            4, 5, 6,  4, 6, 7,
-            0, 4, 7,  0, 7, 3,
-            1, 2, 6,  1, 6, 5,
-            0, 1, 5,  0, 5, 4,
-            3, 7, 6,  3, 6, 2,
-        ];
-
-        let vbuf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("volume_cube_vb"),
-            size: std::mem::size_of_val(&vertices) as u64,
-            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(vbuf.slice(..), bytemuck::cast_slice(&vertices));
-        vbuf.unmap();
-
-        let ibuf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("volume_cube_ib"),
-            size: std::mem::size_of_val(&indices) as u64,
-            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(ibuf.slice(..), bytemuck::cast_slice(&indices));
-        ibuf.unmap();
-
-        self.volume.cube_vb = Some(vbuf);
-        self.volume.cube_ib = Some(ibuf);
-    }
-
-    /// Ensure the default linear ramp opacity LUT exists.
-    fn ensure_default_opacity_lut(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-    ) {
-        if self.volume.default_opacity_lut.is_some() {
-            return;
-        }
-
-        let mut data = [0u8; 256];
-        for (i, v) in data.iter_mut().enumerate() {
-            *v = i as u8;
-        }
-
-        let texture = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("volume_default_opacity_lut"),
-            size: crate::gpu::Extent3d {
-                width: 256,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::R8Unorm,
-            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            crate::gpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: crate::gpu::Origin3d::ZERO,
-                aspect: crate::gpu::TextureAspect::All,
-            },
-            &data,
-            crate::gpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(256),
-                rows_per_image: Some(1),
-            },
-            crate::gpu::Extent3d {
-                width: 256,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
-        self.volume.default_opacity_lut = Some(texture);
-        self.volume.default_opacity_lut_view = Some(view);
-    }
-
-    /// Prepare per-frame GPU data for a single volume item.
-    pub(crate) fn upload_volume_frame(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: &crate::renderer::VolumeItem,
-        clip_objects: &[crate::renderer::ClipObject],
-        // Multiplier applied to the computed step size (1.0 = normal, >1.0 = coarser/faster).
-        step_scale_multiplier: f32,
-    ) -> VolumeGpuData {
-        self.ensure_volume_cube(device);
-        self.ensure_default_opacity_lut(device, queue);
-
-        let vol_id = item.volume_id;
-        let dims = {
-            let uploaded = self.content.volume_textures.len();
-            let (tex, _) = self.content.volume_textures.get(vol_id).unwrap_or_else(|| {
-                panic!("invalid VolumeId: {vol_id:?} (only {uploaded} volumes live)")
-            });
-            let size = tex.size();
-            [size.width, size.height, size.depth_or_array_layers]
-        };
-
-        let item_model = glam::Mat4::from_cols_array_2d(&item.model);
-        let bbox_min = glam::Vec3::from(item.bbox_min);
-        let bbox_max = glam::Vec3::from(item.bbox_max);
-        let extent = bbox_max - bbox_min;
-        let bbox_model = glam::Mat4::from_translation(bbox_min) * glam::Mat4::from_scale(extent);
-        let model = item_model * bbox_model;
-        let inv_model = model.inverse();
-
-        let max_dim = dims[0].max(dims[1]).max(dims[2]) as f32;
-        let step_size = (item.step_scale * step_scale_multiplier) / max_dim.max(1.0);
-
-        let mut clip_plane_data = [[0.0f32; 4]; 6];
-        let mut num_clip = 0u32;
-        for obj in clip_objects.iter().filter(|o| o.enabled) {
-            if num_clip >= 6 {
-                break;
-            }
-            if let crate::renderer::ClipShape::Plane {
-                normal, distance, ..
-            } = obj.shape
-            {
-                clip_plane_data[num_clip as usize] = [normal[0], normal[1], normal[2], distance];
-                num_clip += 1;
-            }
-        }
-
-        let mut uniform_data = [0u8; 304];
-        {
-            let mut offset = 0usize;
-            let model_arr = model.to_cols_array();
-            uniform_data[offset..offset + 64].copy_from_slice(bytemuck::bytes_of(&model_arr));
-            offset += 64;
-            let inv_model_arr = inv_model.to_cols_array();
-            uniform_data[offset..offset + 64].copy_from_slice(bytemuck::bytes_of(&inv_model_arr));
-            offset += 64;
-            uniform_data[offset..offset + 12].copy_from_slice(bytemuck::bytes_of(&item.bbox_min));
-            offset += 12;
-            uniform_data[offset..offset + 4].copy_from_slice(bytemuck::bytes_of(&step_size));
-            offset += 4;
-            uniform_data[offset..offset + 12].copy_from_slice(bytemuck::bytes_of(&item.bbox_max));
-            offset += 12;
-            uniform_data[offset..offset + 4]
-                .copy_from_slice(bytemuck::bytes_of(&item.opacity_scale));
-            offset += 4;
-            uniform_data[offset..offset + 4]
-                .copy_from_slice(bytemuck::bytes_of(&item.scalar_range.0));
-            offset += 4;
-            uniform_data[offset..offset + 4]
-                .copy_from_slice(bytemuck::bytes_of(&item.scalar_range.1));
-            offset += 4;
-            uniform_data[offset..offset + 4]
-                .copy_from_slice(bytemuck::bytes_of(&item.threshold_min));
-            offset += 4;
-            uniform_data[offset..offset + 4]
-                .copy_from_slice(bytemuck::bytes_of(&item.threshold_max));
-            offset += 4;
-            // ItemSettings.unlit forces gradient shading off regardless of the
-            // per-item enable_shading toggle. The volume ray-marcher's only
-            // lighting path is gradient Phong, gated by VolumeUniform.enable_shading;
-            // ORing unlit here gives consumers a uniform way to disable lighting
-            // across all item types.
-            let shading_u32: u32 = if item.enable_shading && !item.settings.unlit {
-                1
-            } else {
-                0
-            };
-            uniform_data[offset..offset + 4].copy_from_slice(bytemuck::bytes_of(&shading_u32));
-            offset += 4;
-            uniform_data[offset..offset + 4].copy_from_slice(bytemuck::bytes_of(&num_clip));
-            offset += 4;
-            let use_nan_colour_u32: u32 = if item.nan_colour.is_some() { 1 } else { 0 };
-            uniform_data[offset..offset + 4]
-                .copy_from_slice(bytemuck::bytes_of(&use_nan_colour_u32));
-            offset += 4;
-            offset += 4;
-            let nan_colour = item
-                .nan_colour
-                .map(|c| c.to_linear_rgba())
-                .unwrap_or([0.0f32; 4]);
-            uniform_data[offset..offset + 16].copy_from_slice(bytemuck::bytes_of(&nan_colour));
-            offset += 16;
-            for cp in &clip_plane_data {
-                uniform_data[offset..offset + 16].copy_from_slice(bytemuck::bytes_of(cp));
-                offset += 16;
-            }
-            debug_assert_eq!(offset, 304);
-        }
-
-        let uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("volume_uniform_buf"),
-            size: 304,
-            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(uniform_buf.slice(..), &uniform_data);
-        uniform_buf.unmap();
-
-        let volume_view = &self
-            .content
-            .volume_textures
-            .get(vol_id)
-            .expect("VolumeId validated above")
-            .1;
-
-        let colour_lut_view = if let Some(cmap_id) = item.colour_lut {
-            self.content
-                .colourmap_views
-                .get(cmap_id.0)
-                .unwrap_or(&self.content.fallback_lut_view)
-        } else if let Some(ids) = &self.content.builtin_colourmap_ids {
-            self.content
-                .colourmap_views
-                .get(ids[0].0)
-                .unwrap_or(&self.content.fallback_lut_view)
-        } else {
-            &self.content.fallback_lut_view
-        };
-
-        let opacity_lut_view = if let Some(cmap_id) = item.opacity_lut {
-            self.content
-                .colourmap_views
-                .get(cmap_id.0)
-                .unwrap_or(self.volume.default_opacity_lut_view.as_ref().unwrap())
-        } else {
-            self.volume.default_opacity_lut_view.as_ref().unwrap()
-        };
-
-        // Trilinear sampling of the scalar field (A1): the volume texture is
-        // filterable (R16Float, or R32Float with FLOAT32_FILTERABLE), so a linear
-        // clamp sampler reconstructs it smoothly instead of nearest-neighbor.
-        let volume_sampler =
-            crate::resources::builders::clamp_linear_sampler(device, "volume_sampler");
-
-        let linear_sampler =
-            crate::resources::builders::clamp_linear_mip_sampler(device, "volume_lut_sampler");
-
-        let bgl = self
-            .volume
-            .bgl
-            .as_ref()
-            .expect("ensure_volume_pipeline not called");
-
-        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("volume_bind_group"),
-            layout: bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::TextureView(volume_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&volume_sampler),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 3,
-                    resource: crate::gpu::BindingResource::TextureView(colour_lut_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 4,
-                    resource: crate::gpu::BindingResource::TextureView(opacity_lut_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 5,
-                    resource: crate::gpu::BindingResource::Sampler(&linear_sampler),
-                },
-            ],
-        });
-
-        #[rustfmt::skip]
-        let vertices: [[f32; 3]; 8] = [
-            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0], [0.0, 1.0, 1.0],
-        ];
-        #[rustfmt::skip]
-        let indices: [u32; 36] = [
-            0,2,1, 0,3,2, 4,5,6, 4,6,7,
-            0,4,7, 0,7,3, 1,2,6, 1,6,5,
-            0,1,5, 0,5,4, 3,7,6, 3,6,2,
-        ];
-
-        let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("volume_cube_vb_frame"),
-            size: std::mem::size_of_val(&vertices) as u64,
-            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(
-            vertex_buffer.slice(..),
-            bytemuck::cast_slice(&vertices),
-        );
-        vertex_buffer.unmap();
-
-        let index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("volume_cube_ib_frame"),
-            size: std::mem::size_of_val(&indices) as u64,
-            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(
-            index_buffer.slice(..),
-            bytemuck::cast_slice(&indices),
-        );
-        index_buffer.unmap();
-
-        VolumeGpuData {
-            bind_group,
-            vertex_buffer,
-            index_buffer,
-            _dims: dims,
-            _uniform_buf: uniform_buf,
-            wireframe: false,
-            pick_id: item.settings.pick_id,
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::DeviceResources;
-    use crate::geometry::marching_cubes::VolumeData;
+
     use crate::resources::UploadStatus;
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
@@ -908,15 +445,6 @@ mod tests {
         data
     }
 
-    fn sample_volume_struct() -> VolumeData {
-        VolumeData {
-            data: sample_volume_data(),
-            dims: [8, 8, 8],
-            origin: [0.0, 0.0, 0.0],
-            spacing: [1.0, 1.0, 1.0],
-        }
-    }
-
     fn drive_until_ready(
         resources: &mut DeviceResources,
         device: &crate::gpu::Device,
@@ -936,6 +464,113 @@ mod tests {
             }
         }
         panic!("{label} upload did not complete in time");
+    }
+
+    /// The partial update: a box inside the grid is written and the handle, the
+    /// texture and the byte charge are all untouched.
+    #[test]
+    fn a_region_write_keeps_the_texture_and_the_charge() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+        let before = resources.resident_bytes().volume_bytes;
+
+        resources
+            .write_volume_region(&queue, id, [2, 2, 2], [4, 4, 4], &vec![1.0; 64])
+            .expect("a box inside an 8x8x8 grid");
+
+        assert_eq!(
+            resources.resident_bytes().volume_bytes,
+            before,
+            "a region write allocates nothing, so the charge cannot move"
+        );
+        assert_eq!(resources.volume_dims(id), Some([8, 8, 8]));
+        assert!(
+            resources.volume_view(id).is_some(),
+            "the handle still resolves"
+        );
+    }
+
+    /// The whole grid as one box is the degenerate case and has to work, because
+    /// it is what a consumer reaches for before it knows its dirty extent.
+    #[test]
+    fn a_region_write_covering_the_whole_grid_is_accepted() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+        assert!(
+            resources
+                .write_volume_region(&queue, id, [0, 0, 0], [8, 8, 8], &sample_volume_data())
+                .is_ok()
+        );
+    }
+
+    /// A box that runs off the grid, a zero extent, and the wrong data length are
+    /// each refused rather than clamped: the texture does not resize, and a
+    /// miscounted feed is a failure and not silently short geometry.
+    #[test]
+    fn a_region_write_refuses_a_box_that_does_not_fit() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+
+        let overrun = resources
+            .write_volume_region(&queue, id, [6, 0, 0], [4, 4, 4], &vec![0.0; 64])
+            .expect_err("x runs from 6 to 10 in an 8-wide grid");
+        assert!(
+            matches!(
+                overrun,
+                crate::error::ViewportError::VolumeRegionOutOfRange { .. }
+            ),
+            "{overrun}"
+        );
+
+        let empty = resources
+            .write_volume_region(&queue, id, [0, 0, 0], [4, 0, 4], &[])
+            .expect_err("a zero extent writes nothing and is a caller mistake");
+        assert!(matches!(
+            empty,
+            crate::error::ViewportError::VolumeRegionOutOfRange { .. }
+        ));
+
+        let short = resources
+            .write_volume_region(&queue, id, [0, 0, 0], [4, 4, 4], &vec![0.0; 63])
+            .expect_err("63 scalars do not fill a 4x4x4 box");
+        assert!(matches!(
+            short,
+            crate::error::ViewportError::VolumeDataLengthMismatch { .. }
+        ));
+    }
+
+    /// A freed handle stops taking writes, the same way `replace_volume` refuses
+    /// one.
+    #[test]
+    fn a_region_write_refuses_a_freed_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+        assert!(resources.free_volume(id));
+        assert!(
+            resources
+                .write_volume_region(&queue, id, [0, 0, 0], [1, 1, 1], &[1.0])
+                .is_err()
+        );
     }
 
     #[test]
@@ -1088,72 +723,4 @@ mod tests {
             crate::error::ViewportError::JobResultMissing { .. }
         ));
     }
-
-    #[test]
-    fn begin_upload_volume_for_mc_drains_to_handle() {
-        let Some((device, queue)) = try_make_device() else {
-            eprintln!("skipping: no wgpu adapter available");
-            return;
-        };
-        let mut resources =
-            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let job = resources.begin_upload_volume_for_mc(&device, &queue, sample_volume_struct());
-        drive_until_ready(&mut resources, &device, &queue, job, "volume_mc");
-        let _id = resources.upload_result_volume_mc(job).expect("ready");
-    }
-
-    #[test]
-    fn sync_upload_volume_for_mc_still_works() {
-        let Some((device, queue)) = try_make_device() else {
-            eprintln!("skipping: no wgpu adapter available");
-            return;
-        };
-        let mut resources =
-            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let vol = sample_volume_struct();
-        let _id = resources
-            .upload_volume_for_mc(&device, &queue, &vol)
-            .expect("upload ok");
-    }
-}
-
-/// Per-frame GPU data for one volume item, created in `prepare()`.
-pub struct VolumeGpuData {
-    /// Bind group (group 1): volume uniform + 3D texture + sampler + colour LUT + opacity LUT.
-    pub(crate) bind_group: crate::gpu::BindGroup,
-    /// Vertex buffer for the unit cube bounding box proxy.
-    pub(crate) vertex_buffer: crate::gpu::Buffer,
-    /// Index buffer for the unit cube (36 indices).
-    pub(crate) index_buffer: crate::gpu::Buffer,
-    /// Grid dimensions (stored for reference).
-    pub(crate) _dims: [u32; 3],
-    // Keep the uniform buffer alive.
-    pub(crate) _uniform_buf: crate::gpu::Buffer,
-    /// When true, skip the volume ray-march draw; an OBB wireframe polyline is rendered instead.
-    pub(crate) wireframe: bool,
-    /// Item pick id, used by the GPU pick pass to raymarch this volume's cube and
-    /// tag the first in-threshold voxel. `NONE` when the item is not pickable.
-    pub(crate) pick_id: crate::renderer::PickId,
-}
-
-/// Per-frame GPU data for one image slice item, created in `prepare()`.
-pub(crate) struct ImageSliceGpuData {
-    /// Bind group (group 1): uniform + 3D texture + sampler + LUT + LUT sampler.
-    pub(crate) bind_group: crate::gpu::BindGroup,
-    // Keep buffers/samplers alive.
-    pub(crate) _uniform_buf: crate::gpu::Buffer,
-    /// The item's pick id (from `settings.pick_id`); `PickId::NONE` when not pickable.
-    pub(crate) pick_id: crate::renderer::PickId,
-}
-
-/// Per-frame GPU data for one volume surface slice item, created in `prepare()`.
-pub(crate) struct VolumeSurfaceSliceGpuData {
-    /// Bind group (group 1): uniform + 3D texture + sampler + LUT + LUT sampler.
-    pub(crate) bind_group: crate::gpu::BindGroup,
-    // Keep uniform buffer alive.
-    pub(crate) _uniform_buf: crate::gpu::Buffer,
-    /// Mesh to draw (vertex + index buffers looked up from mesh_store at render time).
-    pub(crate) mesh_id: crate::resources::mesh::mesh_store::MeshId,
-    /// The item's pick id (from `settings.pick_id`); `PickId::NONE` when not pickable.
-    pub(crate) pick_id: crate::renderer::PickId,
 }

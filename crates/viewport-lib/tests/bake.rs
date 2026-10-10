@@ -7,7 +7,7 @@
 #![cfg(feature = "bake")]
 
 use glam::Mat4;
-use viewport_lib::bake::{TexelGeometry, rasterize_texel_gbuffer};
+use viewport_lib::bake::{TexelGeometry, begin_texel_gbuffer, rasterize_texel_gbuffer};
 
 mod common;
 use common::device_queue;
@@ -144,4 +144,37 @@ fn empty_mesh_is_all_invalid() {
     let gb = rasterize_texel_gbuffer(&device, &queue, &geom, 8, 8);
     assert_eq!(gb.covered_count(), 0);
     assert!(gb.world_pos.iter().all(|p| p[3] == 0.0));
+}
+
+/// Polling a G-buffer job until it lands gives what the blocking call gives,
+/// and the job hands it over once.
+#[test]
+fn a_polled_gbuffer_matches_the_blocking_one() {
+    let Some((device, queue)) = device_queue() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let (pos, nrm, uv, idx) = full_quad();
+    let geom = TexelGeometry {
+        positions: &pos,
+        normals: &nrm,
+        uv1: &uv,
+        indices: &idx,
+        model: glam::Mat4::from_rotation_z(0.4),
+    };
+    let blocking = rasterize_texel_gbuffer(&device, &queue, &geom, 24, 16);
+    let mut job = begin_texel_gbuffer(&device, &queue, &geom, 24, 16);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let polled = loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the G-buffer never arrived"
+        );
+        if let Some(g) = job.poll(&device) {
+            break g;
+        }
+    };
+    assert!(job.poll(&device).is_none());
+    assert_eq!(polled.world_pos, blocking.world_pos);
+    assert_eq!(polled.world_normal, blocking.world_normal);
 }

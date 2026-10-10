@@ -225,6 +225,28 @@ impl CameraAnimator {
         self.flight = None;
     }
 
+    /// The camera as it will be when the current flight lands: `camera` with the
+    /// flight's target centre, distance, orientation and projection applied, or
+    /// `camera` unchanged when no flight is active.
+    ///
+    /// Use this as the starting point for a move relative to the view, such as
+    /// a quarter turn clicked while a flight is still under way, so it composes
+    /// with where the camera is heading rather than with a half-interpolated
+    /// orientation. Damped orbit, pan and zoom momentum has no fixed endpoint
+    /// and is not included.
+    pub fn destination(&self, camera: &Camera) -> Camera {
+        let mut out = camera.clone();
+        if let Some(flight) = &self.flight {
+            out.set_center(flight.target_center);
+            out.set_distance(flight.target_distance);
+            out.set_orientation(flight.target_orientation);
+            if let Some(proj) = flight.target_projection {
+                out.projection = proj;
+            }
+        }
+        out
+    }
+
     /// Returns `true` if the animator has residual velocity or an active flight.
     pub fn is_animating(&self) -> bool {
         if self.flight.is_some() {
@@ -371,6 +393,51 @@ mod tests {
             "distance should match target: {}",
             cam.distance
         );
+    }
+
+    #[test]
+    fn destination_without_flight_is_the_camera() {
+        let anim = CameraAnimator::with_default_damping();
+        let cam = default_camera();
+        let dest = anim.destination(&cam);
+        assert_eq!(dest.center, cam.center);
+        assert_eq!(dest.distance, cam.distance);
+        assert_eq!(dest.orientation, cam.orientation);
+    }
+
+    #[test]
+    fn destination_mid_flight_is_where_the_flight_lands() {
+        let mut anim = CameraAnimator::with_default_damping();
+        let mut cam = default_camera();
+        let target_orient = glam::Quat::from_rotation_z(1.2) * glam::Quat::from_rotation_x(0.4);
+        anim.fly_to_full(
+            &cam,
+            glam::Vec3::new(3.0, -2.0, 5.0),
+            12.0,
+            target_orient,
+            Some(Projection::Orthographic),
+            0.5,
+            Easing::EaseInOutCubic,
+        );
+        for _ in 0..10 {
+            anim.update(1.0 / 60.0, &mut cam);
+        }
+        assert!(anim.is_animating(), "flight should still be under way");
+        let dest = anim.destination(&cam);
+        assert!(
+            cam.orientation.angle_between(target_orient) > 0.1,
+            "the camera should be part-way, not at the target"
+        );
+
+        for _ in 0..60 {
+            anim.update(1.0 / 60.0, &mut cam);
+        }
+        assert!(!anim.is_animating());
+        assert!((dest.center - cam.center).length() < 1e-4);
+        assert!((dest.distance - cam.distance).abs() < 1e-4);
+        assert!(dest.orientation.angle_between(cam.orientation) < 1e-3);
+        assert_eq!(dest.projection, cam.projection);
+        assert_eq!(dest.projection, Projection::Orthographic);
     }
 
     #[test]

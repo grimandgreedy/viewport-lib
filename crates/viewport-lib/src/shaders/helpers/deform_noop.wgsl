@@ -26,6 +26,10 @@ struct DeformHeader {
     slot_params: array<vec4<f32>, 32>,
 };
 
+fn deform_bound_flags() -> u32 {
+    return 0u;
+}
+
 fn viewport_deform_object_space(v: DeformVertex, ctx: DeformContext) -> DeformVertex {
     var out = v;
     // <viewport-deform-slots:object>
@@ -38,4 +42,8 @@ fn viewport_deform_world_space(v: DeformVertex, ctx: DeformContext) -> DeformVer
     // <viewport-deform-slots:world>
     // </viewport-deform-slots:world>
     return out;
+}
+
+fn viewport_deform_keep(v: DeformVertex, ctx: DeformContext) -> f32 {
+    return 1.0;
 }

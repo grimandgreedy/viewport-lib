@@ -56,8 +56,13 @@ struct PickInstance {
 
 // #include "helpers/clip_volume_test.wgsl"
 
+// Per-vertex deformation hook contract, so a mesh is picked where its
+// deformers draw it, and a deformer's `keep` removes surface here too.
+// #include "helpers/deform.wgsl"
+
 struct VertexIn {
     @location(0) position: vec3<f32>,
+    @builtin(vertex_index) vertex_index: u32,
     // Other vertex attributes (normal, colour, uv, tangent) are present in the
     // buffer but ignored : the 64-byte stride handles them automatically.
 };
@@ -66,14 +71,22 @@ struct VertexOut {
     @builtin(position) clip_pos:  vec4<f32>,
     @location(0) @interpolate(flat) object_id: u32,
     @location(1) world_pos: vec3<f32>,
+    // Kept-surface value from deformers that define `keep`; see deform.wgsl.
+    // <viewport-deform-keep> @location(2) deform_keep: f32,
 };
 
 @vertex
 fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     let inst = pick_instances[idx];
     let model = mat4x4<f32>(inst.model_c0, inst.model_c1, inst.model_c2, inst.model_c3);
-    let world = model * vec4<f32>(in.position, 1.0);
+    var dv = DeformVertex(in.position, vec3<f32>(0.0, 0.0, 1.0), in.vertex_index);
+    let dctx = DeformContext(model, model[3].xyz, 0.0, deform_bound_flags(), 0u);
+    dv = viewport_deform_object_space(dv, dctx);
+    dv.position = (model * vec4<f32>(dv.position, 1.0)).xyz;
+    dv = viewport_deform_world_space(dv, dctx);
+    let world = vec4<f32>(dv.position, 1.0);
     var out: VertexOut;
+    // <viewport-deform-keep> out.deform_keep = viewport_deform_keep(dv, dctx);
     out.clip_pos  = camera.view_proj * world;
     out.object_id = inst.object_id;
     out.world_pos = world.xyz;
@@ -94,6 +107,7 @@ struct FragOut {
 @fragment
 fn fs_main(in: VertexOut) -> FragOut {
     if !clip_volume_test(in.world_pos) { discard; }
+    // <viewport-deform-keep> if in.deform_keep < 0.0 { discard; }
     var out: FragOut;
     out.object_id = in.object_id;
     out.primitive_id = 0u;

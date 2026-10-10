@@ -1,5 +1,6 @@
 //! Vector shape overlay items (rectangles, ellipses, and paths).
 
+use crate::colour::Colour;
 use crate::overlay::*;
 
 /// Shape type for an `OverlayShapeItem`.
@@ -93,19 +94,27 @@ pub enum OverlayShape {
     /// vector art (paths). Subpath coordinates are path-local logical pixels,
     /// placed at the item's `position`.
     ///
-    /// A vector shape honours the coverage- and box-relative fields of
-    /// [`OverlayShapeItem`]: `fill` (solid and gradients), `opacity`,
-    /// `z_order`, the AABB clip (`clip_id`), `rotation` / `rotation_pivot`, and
-    /// `border_colour` / `border_width` (drawn as an outline stroke of the
-    /// contours, not an SDF band). `position` places the path origin and
-    /// `size` sets the rotation centre; the fill and gradient bounds come from
-    /// the path's own extent, not `size`.
+    /// A vector shape honours most of [`OverlayShapeItem`]: `style.fill` as a
+    /// solid or a gradient, `style.shadows` and `style.inner_shadows` (drawn as
+    /// geometry running alongside the contour rather than from a distance
+    /// field, so the curve differs slightly from an analytic shape's),
+    /// `style.opacity`, `style.tint`, `z_order`, `clip`, `animations`, and the
+    /// whole `transform`. `position` places the path origin and `size` sets the
+    /// rotation centre; the fill and gradient bounds come from the path's own
+    /// extent, not `size`.
     ///
-    /// Fields that depend on the distance field or the bounding quad have no
-    /// effect on a vector shape and are ignored: `shadows` / `inner_shadows` /
-    /// the legacy `shadow_*` (no distance field to fall off), `backdrop_blur`
-    /// and its filters, `texture` / `nine_slice` / `texture_transform` (the
-    /// fill still draws).
+    /// Two things need the distance field this variant does not have, and are
+    /// ignored: `style.backdrop` and its filters, and an `OverlayFill::Texture`
+    /// fill (a solid or gradient fill still draws). Ask
+    /// [`OverlayStyleSupport::for_shape`] rather than hard-coding that list.
+    ///
+    /// A vector shape also cannot serve as a clip mask. Setting `provides_mask`
+    /// on one registers no mask, so items naming that id draw unclipped, the
+    /// same as naming an id that was never provided. Masks are evaluated per
+    /// fragment from a distance field, and clipping to the bounding box instead
+    /// would silently clip the wrong region.
+    ///
+    /// [`OverlayStyleSupport::for_shape`]: crate::overlay::OverlayStyleSupport::for_shape
     Vector {
         /// The contours that make up the shape.
         subpaths: Vec<SubPath>,
@@ -116,31 +125,120 @@ pub enum OverlayShape {
 
 /// One soft drop or inset shadow.
 ///
-/// Used with [`OverlayShapeItem::shadows`] (drawn behind the fill) and
-/// [`OverlayShapeItem::inner_shadows`] (drawn on top of the fill, under the
-/// border) to stack several shadow effects on a single shape: a soft ambient
-/// shadow for depth plus a tighter one for contact, or an outer glow for
-/// focus.
+/// Used with [`OverlayShapeItem::shadows`] (drawn behind the item, clipped to
+/// outside it) and [`OverlayShapeItem::inner_shadows`] (drawn over it, eroding
+/// inward from the boundary) to stack several effects on one item: a soft
+/// ambient shadow for depth plus a tighter one for contact, an outer glow for
+/// focus, or a plain contour band for a border.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct ShadowLayer {
     /// RGBA colour of the shadow, linear float format. The alpha scales the
     /// shadow strength.
     pub colour: crate::colour::Colour,
-    /// Blur spread in logical pixels. `0.0` produces no visible shadow.
-    pub radius: f32,
-    /// Offset of the shadow from the shape centre in logical pixels.
+    /// Blur distance in logical pixels: how far the shadow fades from fully
+    /// opaque to fully transparent, measured outward from the (spread) edge.
+    /// `0.0` gives a hard edge.
+    pub blur: f32,
+    /// Offset of the shadow from the item in logical pixels.
     /// Positive X shifts right, positive Y shifts down.
     pub offset: [f32; 2],
+    /// Grow the silhouette by this many logical pixels before blurring and
+    /// offsetting. Matches the third length of the CSS `box-shadow` shorthand.
+    ///
+    /// This is the knob that makes a shadow work on thin shapes and small text,
+    /// where an offset alone leaves the shadow hidden under the stroke it is
+    /// meant to back. A contour is spread with no blur and no offset: see
+    /// [`ShadowLayer::outline`].
+    pub spread: f32,
+    /// Exponent shaping the blur falloff curve. Default `1.0`, which is the
+    /// plain fade. Above `1.0` concentrates the shadow against the item and
+    /// leaves a longer, lighter tail; below `1.0` broadens it towards a glow.
+    ///
+    /// Has no effect when `blur` is `0.0`, since there is no gradient to shape.
+    pub falloff: f32,
+}
+
+impl Default for ShadowLayer {
+    fn default() -> Self {
+        Self {
+            colour: Colour::linear(0.0, 0.0, 0.0, 0.0),
+            blur: 0.0,
+            offset: [0.0, 0.0],
+            spread: 0.0,
+            falloff: 1.0,
+        }
+    }
 }
 
 impl ShadowLayer {
-    /// Build a shadow layer from colour, blur radius, and offset.
-    pub fn new(colour: impl Into<crate::colour::Colour>, radius: f32, offset: [f32; 2]) -> Self {
+    /// Build a shadow layer from colour, blur distance, and offset, with no
+    /// spread and the default falloff.
+    pub fn new(colour: impl Into<crate::colour::Colour>, blur: f32, offset: [f32; 2]) -> Self {
         Self {
             colour: colour.into(),
-            radius,
+            blur,
             offset,
+            ..Default::default()
         }
+    }
+
+    /// Build a contour: a shadow dilated by `width` with no blur and no offset,
+    /// so it reads as an outline hugging the item on every side.
+    ///
+    /// This is how text and thin strokes get an outline; there is no separate
+    /// outline field. Stacking a blurred layer behind one of these gives an
+    /// outlined item with a drop shadow, ordered by position in the list.
+    pub fn outline(colour: impl Into<crate::colour::Colour>, width: f32) -> Self {
+        Self {
+            colour: colour.into(),
+            spread: width,
+            ..Default::default()
+        }
+    }
+
+    /// Set the shadow colour.
+    pub fn with_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
+        self.colour = colour.into();
+        self
+    }
+
+    /// Set the blur distance in logical pixels.
+    pub fn with_blur(mut self, blur: f32) -> Self {
+        self.blur = blur;
+        self
+    }
+
+    /// Set the offset in logical pixels.
+    pub fn with_offset(mut self, offset: [f32; 2]) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    /// Set the spread: how far the silhouette grows before blur and offset.
+    pub fn with_spread(mut self, spread: f32) -> Self {
+        self.spread = spread;
+        self
+    }
+
+    /// Set the falloff exponent shaping the blur curve.
+    pub fn with_falloff(mut self, falloff: f32) -> Self {
+        self.falloff = falloff;
+        self
+    }
+
+    /// How far beyond the item's own bounds this layer can draw, in logical
+    /// pixels. Geometry that emits a shadow pads its bounds by this.
+    pub fn extent(&self) -> f32 {
+        let reach = self.spread + self.blur;
+        reach + self.offset[0].abs().max(self.offset[1].abs())
+    }
+
+    /// Whether this layer draws anything at all.
+    pub fn is_visible(&self) -> bool {
+        let shaped = self.blur > 0.0 || self.spread > 0.0;
+        let displaced = self.offset[0] != 0.0 || self.offset[1] != 0.0;
+        self.colour.to_linear_rgba()[3] > 0.0 && (shaped || displaced)
     }
 }
 
@@ -168,220 +266,149 @@ impl Default for OverlayShape {
     }
 }
 
-/// A screen-space overlay shape rendered with a signed-distance function.
+/// A screen-space overlay shape: a region, plus options for drawing it.
 ///
-/// Each item becomes a single bounding quad on the GPU. The fragment shader
-/// evaluates an SDF to produce anti-aliased fill, border, and discard regions.
+/// `shape` says what the region is and `size` gives its extent; everything else
+/// on the item is how to draw it. That split is the whole model, and it is why
+/// an arbitrary vector path is an [`OverlayShape`] variant rather than a
+/// separate item type: a path is another way of specifying a region.
 ///
-/// `fill` controls the interior colour. Use `OverlayFill::Solid` for a flat
-/// colour or `OverlayFill::LinearGradient` for a two-colour gradient.
+/// # Two coverage backends
 ///
-/// When `texture` is set the shape samples the uploaded image as its fill.
-/// In that case `fill` must be `OverlayFill::Solid`; the solid colour acts as
-/// a tint multiplied with each texel. Use `[1.0, 1.0, 1.0, 1.0]` for no tint.
-/// The SDF boundary, border, and AA apply the same way regardless of fill mode.
+/// The analytic variants (`Rect`, `Circle`, `Ring`, and the rest) have a
+/// closed-form signed-distance function. Each becomes one bounding quad, and
+/// the fragment shader evaluates the SDF to produce anti-aliased fill, shadow,
+/// and discard regions at any scale.
+///
+/// [`OverlayShape::Vector`] has no closed-form distance field. It is flattened
+/// and tessellated to triangles and drawn on the text pipeline instead, with
+/// its shadow layers re-emitted as geometry.
+///
+/// The item hides which backend runs, but it cannot hide that they differ in
+/// what they can express: the options that need a distance field
+/// (`style.backdrop`, and a texture fill with or without its nine-patch) do
+/// nothing on a vector path. Ask
+/// [`OverlayStyleSupport::for_shape`](crate::overlay::OverlayStyleSupport::for_shape)
+/// rather than memorising that, and see the per-variant note on
+/// [`OverlayShape::Vector`].
+///
+/// # Fill
+///
+/// `style.fill` is what the interior is filled with: `OverlayFill::Solid` for
+/// a flat colour, one of the gradient variants, or `OverlayFill::Texture` for
+/// an uploaded image. A fully transparent solid, which is the default, draws no
+/// fill and leaves the shadow layers on their own.
+///
+/// A texture fill samples the image across the shape, with the variant's `tint`
+/// multiplied into each texel (white for no tint) and its `nine_slice` holding
+/// the corners at their authored size. The boundary, the shadow layers, and
+/// anti-aliasing apply the same way whichever fill is set.
 ///
 /// # Examples
 ///
 /// ```rust
-/// # use viewport_lib_types::overlay::{OverlayShapeItem, OverlayShape, OverlayFill};
+/// # use viewport_lib_types::colour::Colour;
+/// # use viewport_lib_types::overlay::{OutlineMode, OverlayShapeItem, OverlayShape, OverlayFill};
 /// // Rounded-rect panel background.
 /// let panel = OverlayShapeItem::new(
 ///     OverlayShape::Rect { corner_radius: 8.0 },
 ///     [20.0, 20.0],
 ///     [300.0, 200.0],
 /// )
-/// .with_fill(OverlayFill::Solid([0.1, 0.1, 0.1, 0.85].into()))
-/// .with_border([0.4, 0.4, 0.4, 1.0], 1.0);
+/// .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.1, 0.1, 0.85)))
+/// .with_outline(Colour::srgb(0.4, 0.4, 0.4, 1.0), 1.0, OutlineMode::Inset);
 ///
 /// // Circle with a left-to-right gradient.
 /// let grad_dot = OverlayShapeItem::new(OverlayShape::Circle, [100.0, 100.0], [60.0, 60.0])
 ///     .with_fill(OverlayFill::LinearGradient {
-///         start_colour: [0.0, 0.4, 1.0, 1.0].into(),
-///         end_colour: [0.0, 1.0, 0.5, 1.0].into(),
+///         start_colour: Colour::srgb(0.0, 0.4, 1.0, 1.0),
+///         end_colour: Colour::srgb(0.0, 1.0, 0.5, 1.0),
 ///         angle: 0.0,
 ///     });
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct OverlayShapeItem {
-    /// Where the shape hangs from: a viewport corner (default top-left) or a
-    /// projected world point. `position` is a screen-pixel nudge from this
-    /// origin and `align_x` / `align_y` place the bounding box onto it. The
-    /// default `Viewport { Left, Top }` resolves to `[0, 0]`, so with the
-    /// default alignment `position` is the absolute top-left.
-    pub anchor: OverlayAnchor,
-    /// Placement in logical pixels relative to the resolved `anchor` origin.
-    /// With the default `anchor` and alignment this is the absolute top-left
-    /// from the viewport top-left. This is the channel the `animations.position`
-    /// track drives, so animating it orbits the shape around its anchor.
-    pub position: [f32; 2],
-    /// How the bounding box sits horizontally on `anchor` + `position`: `Left`
-    /// (default) puts the left edge there, `Middle` centres, `Right` the right
-    /// edge.
-    pub align_x: AnchorX,
-    /// How the bounding box sits vertically on `anchor` + `position`: `Top`
-    /// (default) puts the top edge there, `Middle` centres, `Bottom` the bottom
-    /// edge.
-    pub align_y: AnchorY,
-    /// Width and height in logical pixels.
-    pub size: [f32; 2],
-    /// Which SDF shape to render.
+    /// The region this item draws: an analytic variant, or an arbitrary vector
+    /// path. This specifies the items shape; every other field specifies how and where to draw it.
     pub shape: OverlayShape,
-    /// Fill style: solid colour or linear gradient.
+    /// Extent of the shape's bounding box in logical pixels.
     ///
-    /// When `texture` is `Some` only `OverlayFill::Solid` is used; the colour
-    /// becomes a tint multiplied with each texture sample.
-    pub fill: OverlayFill,
-    /// Overall opacity multiplier applied to both fill and border. Range 0.0-1.0.
-    pub opacity: f32,
-    /// RGBA border colour in linear float format.
-    pub border_colour: crate::colour::Colour,
-    /// Border thickness in logical pixels. `0.0` disables the border.
-    pub border_width: f32,
-    /// Where the border sits relative to the shape edge. Default: `Inset`.
-    pub border_mode: BorderMode,
+    /// For an analytic variant this is the shape: a `Circle` is round because
+    /// it is inscribed in this box. For [`OverlayShape::Vector`] the path
+    /// carries its own extent, so this only sets the box the transform pivots
+    /// and the alignment resolve against.
+    pub size: [f32; 2],
+    /// Where the item hangs from and which point of its own box lands there.
+    ///
+    /// `transform.translate` is a nudge from the resolved origin, and a world
+    /// origin behind the camera or off screen culls the item for the frame.
+    pub anchoring: OverlayAnchoring,
+    /// Translate, rotate, and scale, in logical pixels and radians.
+    ///
+    /// `translate` is the nudge from the resolved `anchor` origin, so with the
+    /// default anchor and alignment it is the absolute screen placement.
+    /// Rotation turns the item inside its extent box, which stays
+    /// axis-aligned, so `anchoring.align` places the unrotated box and the
+    /// content turns within it. See [`OverlayTransform`] for how an item's
+    /// transform composes with the transform of a retained group containing
+    /// it.
+    pub transform: OverlayTransform,
+    /// Baked appearance: fill, shadow layers, and backdrop effects.
+    ///
+    /// Shared across the overlay item types, so a field can be present and
+    /// inert here. Ask
+    /// [`OverlayStyleSupport`](crate::overlay::OverlayStyleSupport) for what
+    /// this family draws.
+    pub style: OverlayStyle,
+    /// What this item is clipped to: an axis-aligned box, a mask shape, or
+    /// both. The default clips nothing.
+    pub clip: OverlayClip,
     /// Draw order relative to other shapes. Lower values render first (further back).
     pub z_order: i32,
-    /// Optional texture fill. When set the shape samples the image uploaded
-    /// via `DeviceResources::upload_overlay_texture`, clipped by the SDF
-    /// boundary. `fill` acts as a tint when this is `Some`.
-    pub texture: Option<OverlayTextureId>,
-    /// RGBA colour of the outer shadow/glow halo. Default: transparent (no shadow).
-    pub shadow_colour: crate::colour::Colour,
-    /// Blur spread of the shadow in logical pixels. `0.0` disables the shadow.
-    pub shadow_radius: f32,
-    /// Offset of the shadow centre from the shape centre in logical pixels.
-    /// Positive X shifts right, positive Y shifts down. Default: `[0.0, 0.0]`.
-    pub shadow_offset: [f32; 2],
-    /// Opacity animation. Resolved each frame during `prepare()` using
-    /// `OverlayFrame::time`. Default: `OverlayAnimation::None`.
-    pub animation: OverlayAnimation,
-    /// Backdrop blur radius in logical pixels. When greater than zero the scene
-    /// content behind the shape is blurred (frosted glass effect) and the
-    /// `fill` colour is composited on top as a tint. `0.0` disables the
-    /// effect. Only active in render paths where the renderer owns the command
-    /// encoder (`render`, `render_viewport`); in `paint`/`paint_to` paths
-    /// blur shapes fall back to a regular solid fill.
-    pub backdrop_blur: f32,
-    /// Marks this shape as a clip mask. The shape itself is not drawn; its
-    /// bounding box defines a clipping rectangle for any shape whose
-    /// `clip_id` equals this value. `None` means the shape is not a mask.
+    /// Marks this shape as a clip mask under this id: other items whose
+    /// `clip.mask` matches are clipped to it. The shape itself is not drawn.
+    /// `None` (the default) means the shape is not a mask.
     ///
-    /// A `clip_mask_id` must be unique within a frame. If two shapes carry the
+    /// The id must be unique within a frame. If two shapes carry the
     /// same id, the first one in submission order is used as the mask and the
     /// rest are ignored. When several independent sources emit into one frame,
     /// offset their ids so they do not collide.
     ///
     /// Used for scroll containers, masked panels, and composite widgets.
-    /// Only the solid (non-textured, non-blur) shape path participates in
-    /// clipping; textured and backdrop-blur shapes ignore both
-    /// `clip_id` and `clip_mask_id`.
+    /// Backdrop-blur shapes are composited by a separate pass and are not
+    /// clipped; every other overlay family is, textured shapes included.
     ///
-    /// Current limitation: the clip uses the mask shape's axis-aligned
-    /// bounding box, not its SDF. For `Rect` and `RoundedRect` masks this
-    /// matches the visible bounds; for `Circle`, `Ellipse`, and other
-    /// curved shapes the clip is the enclosing square/rectangle.
-    pub clip_mask_id: Option<u32>,
-    /// When set, this shape is clipped to the bounding box of the mask shape
-    /// whose `clip_mask_id` matches this value. Fragments outside the mask's
-    /// bounding rect are discarded. `None` means the shape is drawn
-    /// unclipped. If no mask with the matching id is present in the frame,
-    /// the shape is also drawn unclipped.
-    pub clip_id: Option<u32>,
-    /// Rotation around the shape centre in radians. Positive rotates
-    /// counter-clockwise in math coordinates. `0.0` keeps the default
-    /// orientation. Applies to fill, border, shadow, and gradient direction;
-    /// the bounding box (`position` + `size`) stays axis-aligned, so the
-    /// rotated shape is drawn inside the unrotated box.
-    pub rotation: f32,
-    /// 9-slice texture sampling for the shape's `texture` fill. When `None`
-    /// the texture stretches to fill the bounding box (default).
-    pub nine_slice: Option<NineSlice>,
-    /// Affine transform applied to the texture sample before lookup. Lets a
-    /// single texture pan, scale, rotate, tile, and flip independently of
-    /// the shape it fills. Ignored when `nine_slice` is also set on the
-    /// same shape.
-    pub texture_transform: TextureTransform,
-    /// When `true`, the existing `shadow_*` fields render as an *inset*
-    /// (inner) shadow that fades from the edge inward instead of an outer
-    /// drop shadow. Default `false` (outer shadow, the legacy behaviour).
+    /// The clip follows the mask's shape, not its bounding box: the mask's SDF
+    /// is evaluated per fragment, so a `Circle` mask clips to a circle. Masks
+    /// nest, and a fragment must be inside the whole parent chain to survive.
+    /// The bounding box is still used, as a cheap reject before the SDF.
+    pub provides_mask: Option<u32>,
+    /// Animation tracks resolved each frame against `OverlayFrame::time`. Each
+    /// `Some` track replaces the matching field on the item for the frame. See
+    /// [`OverlayAnimations`] for why the channel list is what it is.
     ///
-    /// Use for pressed buttons, dropdowns, text inputs, scroll wells, and
-    /// other recessed UI surfaces.
-    ///
-    /// A shape currently carries either an outer or an inner shadow, not
-    /// both at once.
-    pub shadow_inset: bool,
-    /// Multi-channel animation tracks for `position`, `size`, `fill`,
-    /// `border_colour`, `rotation`, and `opacity`. Each `Some` track
-    /// replaces the matching field on the item for the frame. The
-    /// `opacity` track takes precedence over the legacy
-    /// [`Self::animation`] field when both are set.
-    pub animations: OverlayAnimations,
-    /// Saturation multiplier applied to the blurred backdrop. `1.0` leaves
-    /// saturation unchanged, `0.0` produces greyscale. Only affects shapes
-    /// with `backdrop_blur > 0.0`.
-    pub backdrop_saturation: f32,
-    /// Brightness multiplier applied to the blurred backdrop. `1.0` is
-    /// unchanged. Only affects shapes with `backdrop_blur > 0.0`.
-    pub backdrop_brightness: f32,
-    /// Hue rotation applied to the blurred backdrop, in radians. `0.0` is
-    /// unchanged. Only affects shapes with `backdrop_blur > 0.0`.
-    pub backdrop_hue_shift: f32,
-    /// Point to rotate around, in logical pixels measured from the shape
-    /// centre. `[0.0, 0.0]` (default) rotates around the centre. Positive X
-    /// is right, positive Y is down, matching the screen-space axes. Applies
-    /// together with [`Self::rotation`] on solid (non-textured) shapes.
-    pub rotation_pivot: [f32; 2],
-    /// Stacked outer shadow layers, drawn behind the fill in order (first
-    /// entry furthest back). Up to [`OVERLAY_MAX_SHADOW_LAYERS`] are honoured.
-    ///
-    /// When non-empty this replaces the single legacy `shadow_*` outer
-    /// shadow. Only the solid (non-textured, non-blur) shape path draws
-    /// stacked layers; textured and backdrop-blur shapes fall back to the
-    /// single legacy `shadow_*` shadow.
-    pub shadows: Vec<ShadowLayer>,
-    /// Stacked inner (inset) shadow layers, drawn on top of the fill and
-    /// under the border, in order. Up to [`OVERLAY_MAX_SHADOW_LAYERS`] are
-    /// honoured. Same path limitation as [`Self::shadows`].
-    pub inner_shadows: Vec<ShadowLayer>,
+    /// Boxed and `None` for a static shape: the track block is several times
+    /// the size of the rest of the item, so only shapes that animate pay for
+    /// it.
+    pub animations: Option<Box<OverlayAnimations>>,
 }
 
 impl Default for OverlayShapeItem {
     fn default() -> Self {
         Self {
-            anchor: OverlayAnchor::default(),
-            position: [0.0, 0.0],
-            align_x: AnchorX::Left,
-            align_y: AnchorY::Top,
+            anchoring: crate::overlay::OverlayAnchoring::default(),
+            transform: OverlayTransform::IDENTITY,
+            style: OverlayStyle {
+                fill: OverlayFill::Solid(Colour::linear(1.0, 1.0, 1.0, 1.0)),
+                ..Default::default()
+            },
+            clip: OverlayClip::default(),
             size: [100.0, 100.0],
             shape: OverlayShape::default(),
-            fill: OverlayFill::default(),
-            opacity: 1.0,
-            border_colour: [1.0, 1.0, 1.0, 1.0].into(),
-            border_width: 0.0,
-            border_mode: BorderMode::Inset,
             z_order: 0,
-            texture: None,
-            shadow_colour: [0.0, 0.0, 0.0, 0.0].into(),
-            shadow_radius: 0.0,
-            shadow_offset: [0.0, 0.0],
-            animation: OverlayAnimation::None,
-            backdrop_blur: 0.0,
-            clip_mask_id: None,
-            clip_id: None,
-            rotation: 0.0,
-            nine_slice: None,
-            shadow_inset: false,
-            texture_transform: TextureTransform::default(),
-            animations: OverlayAnimations::default(),
-            backdrop_saturation: 1.0,
-            backdrop_brightness: 1.0,
-            backdrop_hue_shift: 0.0,
-            rotation_pivot: [0.0, 0.0],
-            shadows: Vec::new(),
-            inner_shadows: Vec::new(),
+            provides_mask: None,
+            animations: None,
         }
     }
 }
@@ -608,7 +635,7 @@ impl OverlayShapeItem {
     pub fn new(shape: OverlayShape, position: [f32; 2], size: [f32; 2]) -> Self {
         Self {
             shape,
-            position,
+            transform: OverlayTransform::at(position),
             size,
             ..Default::default()
         }
@@ -624,9 +651,9 @@ impl OverlayShapeItem {
     /// `anchor_y` pin the image to a viewport edge or centre (e.g. `Right` /
     /// `Bottom` for the bottom-right corner). Pair `texture` with a streaming
     /// `OverlayTextureId` updated each frame for a live image, or a static
-    /// uploaded one for a fixed image. The fill is left as a white tint, so the
-    /// texture is drawn unmodified; set `opacity` or a non-white fill afterwards
-    /// to tint or fade it.
+    /// uploaded one for a fixed image. The fill's tint is left white, so the
+    /// texture is drawn unmodified; set `opacity`, or the fill's tint, to fade
+    /// or colour it.
     pub fn textured_image(
         texture: OverlayTextureId,
         natural_size: [f32; 2],
@@ -638,9 +665,7 @@ impl OverlayShapeItem {
         let size = [natural_size[0] * scale, natural_size[1] * scale];
         let position =
             super::anchor::viewport_anchored_top_left(anchor_x, anchor_y, size, viewport_size);
-        Self::new(OverlayShape::Rect { corner_radius: 0.0 }, position, size)
-            .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
-            .with_texture(texture)
+        Self::new(OverlayShape::Rect { corner_radius: 0.0 }, position, size).with_texture(texture)
     }
 
     /// Build an arbitrary vector shape from `subpaths` combined under
@@ -669,28 +694,108 @@ impl OverlayShapeItem {
         )
     }
 
-    /// Set the fill style (solid colour or gradient).
+    /// Build a filled polygon from points in screen space (logical pixels).
+    ///
+    /// The points' bounding box becomes the item's position and size, and the
+    /// path is shifted into the item's local space, so the polygon draws where
+    /// the points are. Uses [`FillRule::NonZero`]. Fewer than three points
+    /// gives an empty, zero-size item.
+    pub fn polygon(points: &[[f32; 2]]) -> Self {
+        if points.len() < 3 {
+            return Self::vector(Vec::new(), FillRule::NonZero, [0.0, 0.0], [0.0, 0.0]);
+        }
+        let (lo, hi) = points
+            .iter()
+            .skip(1)
+            .fold((points[0], points[0]), |(lo, hi), p| {
+                (
+                    [lo[0].min(p[0]), lo[1].min(p[1])],
+                    [hi[0].max(p[0]), hi[1].max(p[1])],
+                )
+            });
+        let path = SubPath::polygon(points).map_points(|p| [p[0] - lo[0], p[1] - lo[1]]);
+        Self::vector(
+            vec![path],
+            FillRule::NonZero,
+            lo,
+            [hi[0] - lo[0], hi[1] - lo[1]],
+        )
+    }
+
+    /// Set `size`, and for an [`OverlayShape::Vector`] scale the path with it.
+    ///
+    /// An analytic shape always fills its box, but a vector path keeps the
+    /// coordinates it was drawn with, so changing `size` alone leaves the path
+    /// where it was. This scales the path by `size / self.size` on each axis,
+    /// so it keeps its place within its box, padding included. An axis whose
+    /// current size is zero is left unscaled. For an analytic shape this is
+    /// the same as setting `size`.
+    pub fn with_size_fitted(mut self, size: [f32; 2]) -> Self {
+        if let OverlayShape::Vector { subpaths, .. } = &mut self.shape {
+            let factor = |new: f32, old: f32| if old > 0.0 { new / old } else { 1.0 };
+            let fx = factor(size[0], self.size[0]);
+            let fy = factor(size[1], self.size[1]);
+            for sp in subpaths.iter_mut() {
+                *sp = std::mem::take(sp).map_points(|p| [p[0] * fx, p[1] * fy]);
+            }
+        }
+        self.size = size;
+        self
+    }
+
+    /// Set the whole baked appearance at once.
+    pub fn with_style(mut self, style: OverlayStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Set the area fill.
     pub fn with_fill(mut self, fill: OverlayFill) -> Self {
-        self.fill = fill;
+        self.style.fill = fill;
         self
     }
 
     /// Set the overall opacity multiplier (0.0 to 1.0).
     pub fn with_opacity(mut self, opacity: f32) -> Self {
-        self.opacity = opacity;
+        self.style.opacity = opacity;
         self
     }
 
-    /// Set the border colour and width. A width of `0.0` disables the border.
-    pub fn with_border(mut self, colour: impl Into<crate::colour::Colour>, width: f32) -> Self {
-        self.border_colour = colour.into();
-        self.border_width = width;
-        self
-    }
-
-    /// Set where the border sits relative to the shape edge.
-    pub fn with_border_mode(mut self, mode: BorderMode) -> Self {
-        self.border_mode = mode;
+    /// Add an outline: a band of `width` logical pixels on the item's edge,
+    /// placed by `mode`. A width of `0.0` adds nothing.
+    ///
+    /// An outline is a shadow layer with no blur, so this pushes one (or two, for
+    /// [`OutlineMode::Centre`]) onto [`OverlayStyle::shadows`] and
+    /// [`OverlayStyle::inner_shadows`]. That is the whole implementation: there
+    /// is no separate border in the renderer, and the band draws through the
+    /// same code as every other layer, on every coverage backend.
+    ///
+    /// It costs a layer out of [`OVERLAY_MAX_SHADOW_LAYERS`] per list, so a
+    /// shape with four drop shadows cannot also take an outline.
+    ///
+    /// Calling this twice adds two bands rather than replacing the first.
+    ///
+    /// [`OverlayStyle::shadows`]: crate::overlay::OverlayStyle::shadows
+    /// [`OverlayStyle::inner_shadows`]: crate::overlay::OverlayStyle::inner_shadows
+    pub fn with_outline(
+        mut self,
+        colour: impl Into<crate::colour::Colour>,
+        width: f32,
+        mode: OutlineMode,
+    ) -> Self {
+        if width <= 0.0 {
+            return self;
+        }
+        let colour = colour.into();
+        let band = |spread: f32| ShadowLayer::new(colour, 0.0, [0.0, 0.0]).with_spread(spread);
+        match mode {
+            OutlineMode::Inset => self.style.inner_shadows.push(band(width)),
+            OutlineMode::Outer => self.style.shadows.push(band(width)),
+            OutlineMode::Centre => {
+                self.style.inner_shadows.push(band(width * 0.5));
+                self.style.shadows.push(band(width * 0.5));
+            }
+        }
         self
     }
 
@@ -701,46 +806,28 @@ impl OverlayShapeItem {
     }
 
     /// Fill the shape with an uploaded overlay texture, clipped by the SDF.
+    /// Replaces any colour or gradient fill: an item has one fill.
     pub fn with_texture(mut self, texture: OverlayTextureId) -> Self {
-        self.texture = Some(texture);
-        self
-    }
-
-    /// Set the outer (or inset) shadow colour, blur radius, and offset.
-    pub fn with_shadow(
-        mut self,
-        colour: impl Into<crate::colour::Colour>,
-        radius: f32,
-        offset: [f32; 2],
-    ) -> Self {
-        self.shadow_colour = colour.into();
-        self.shadow_radius = radius;
-        self.shadow_offset = offset;
-        self
-    }
-
-    /// Render the shadow as an inner (inset) shadow instead of an outer one.
-    pub fn with_shadow_inset(mut self, inset: bool) -> Self {
-        self.shadow_inset = inset;
+        self.style.fill = OverlayFill::texture(texture);
         self
     }
 
     /// Set the backdrop blur radius (frosted-glass effect) in logical pixels.
     pub fn with_backdrop_blur(mut self, radius: f32) -> Self {
-        self.backdrop_blur = radius;
+        self.style.backdrop.blur = radius;
         self
     }
 
     /// Set the rotation around the shape centre, in radians.
     pub fn with_rotation(mut self, radians: f32) -> Self {
-        self.rotation = radians;
+        self.transform.rotation = radians;
         self
     }
 
     /// Set the point to rotate around, in logical pixels from the shape
     /// centre. `[0.0, 0.0]` rotates around the centre (the default).
     pub fn with_rotation_pivot(mut self, pivot: [f32; 2]) -> Self {
-        self.rotation_pivot = pivot;
+        self.transform.pivot = pivot;
         self
     }
 
@@ -753,95 +840,93 @@ impl OverlayShapeItem {
         brightness: f32,
         hue_shift: f32,
     ) -> Self {
-        self.backdrop_saturation = saturation;
-        self.backdrop_brightness = brightness;
-        self.backdrop_hue_shift = hue_shift;
+        self.style.backdrop.saturation = saturation;
+        self.style.backdrop.brightness = brightness;
+        self.style.backdrop.hue_shift = hue_shift;
         self
     }
 
     /// Set the stacked outer shadow layers (drawn behind the fill). Replaces
     /// the single legacy `with_shadow` outer shadow on the solid shape path.
     pub fn with_shadows(mut self, shadows: Vec<ShadowLayer>) -> Self {
-        self.shadows = shadows;
+        self.style.shadows = shadows;
         self
     }
 
-    /// Set the stacked inner (inset) shadow layers (drawn on top of the fill,
-    /// under the border).
+    /// Add one outer shadow layer, in front of any already set.
+    pub fn with_shadow(mut self, shadow: ShadowLayer) -> Self {
+        self.style.shadows.push(shadow);
+        self
+    }
+
+    /// Add one inner shadow layer, over any already set.
+    pub fn with_inner_shadow(mut self, shadow: ShadowLayer) -> Self {
+        self.style.inner_shadows.push(shadow);
+        self
+    }
+
+    /// Set the stacked inner (inset) shadow layers, drawn on top of the fill.
     pub fn with_inner_shadows(mut self, shadows: Vec<ShadowLayer>) -> Self {
-        self.inner_shadows = shadows;
+        self.style.inner_shadows = shadows;
         self
     }
 
-    /// Flip the texture fill horizontally and/or vertically. Convenience over
-    /// [`TextureTransform::flip_x`] / [`TextureTransform::flip_y`]; sets those
-    /// fields on the shape's texture transform.
-    pub fn with_texture_flip(mut self, flip_x: bool, flip_y: bool) -> Self {
-        self.texture_transform.flip_x = flip_x;
-        self.texture_transform.flip_y = flip_y;
-        self
-    }
-
-    /// Mark this shape as a clip mask with the given id. Other shapes whose
-    /// clip id matches are clipped to this shape's bounding box.
-    pub fn with_clip_mask(mut self, mask_id: u32) -> Self {
-        self.clip_mask_id = Some(mask_id);
+    /// Mark this shape as a clip mask under `mask_id`. Items whose `clip.mask`
+    /// matches are clipped to it, and the mask itself is not drawn.
+    ///
+    /// The clip follows the mask's distance field, not its bounding box, so a
+    /// `Circle` mask clips to a circle; the bounding box is only a cheap reject
+    /// ahead of the field. Masks nest, and a fragment must be inside the whole
+    /// parent chain to survive.
+    pub fn provides_mask(mut self, mask_id: u32) -> Self {
+        self.provides_mask = Some(mask_id);
         self
     }
 
     /// Clip this shape to the mask shape with this id. The mask's SDF (not just
     /// its bounding box) is used, and masks may nest.
     pub fn with_clip(mut self, clip_id: u32) -> Self {
-        self.clip_id = Some(clip_id);
-        self
-    }
-
-    /// Set 9-slice sampling for the texture fill.
-    pub fn with_nine_slice(mut self, nine_slice: NineSlice) -> Self {
-        self.nine_slice = Some(nine_slice);
-        self
-    }
-
-    /// Set the affine transform applied to the texture sample before lookup.
-    pub fn with_texture_transform(mut self, transform: TextureTransform) -> Self {
-        self.texture_transform = transform;
-        self
-    }
-
-    /// Set the single-property opacity animation.
-    pub fn with_animation(mut self, animation: OverlayAnimation) -> Self {
-        self.animation = animation;
+        self.clip.mask = Some(clip_id);
         self
     }
 
     /// Set the multi-channel animation tracks.
     pub fn with_animations(mut self, animations: OverlayAnimations) -> Self {
-        self.animations = animations;
+        self.animations = Some(Box::new(animations));
         self
     }
 
     /// Set the origin the shape hangs from (a viewport corner or a world point).
-    pub fn with_anchor(mut self, anchor: OverlayAnchor) -> Self {
-        self.anchor = anchor;
+    pub fn with_anchor(mut self, anchor: OverlayOrigin) -> Self {
+        self.anchoring.origin = anchor;
         self
     }
 
     /// Pin the shape to a 3D world position, projected to screen each frame.
-    /// Sugar for `with_anchor(OverlayAnchor::World(pos))`.
+    /// Sugar for `with_anchor(OverlayOrigin::World(pos))`.
     pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
-        self.anchor = OverlayAnchor::World(pos);
+        self.anchoring.origin = OverlayOrigin::World(pos);
+        self
+    }
+
+    /// Pin the item to a fixed screen position in logical pixels from the
+    /// top-left. Sugar for the default viewport origin with `position` set to
+    /// `pos`.
+    pub fn with_screen_anchor(mut self, pos: [f32; 2]) -> Self {
+        self.anchoring =
+            crate::overlay::OverlayAnchoring::default().with_align(self.anchoring.align);
+        self.transform.translate = pos;
         self
     }
 
     /// Set how the bounding box aligns onto the resolved anchor origin.
-    pub fn with_align(mut self, align_x: AnchorX, align_y: AnchorY) -> Self {
-        self.align_x = align_x;
-        self.align_y = align_y;
+    pub fn with_align(mut self, align: Alignment) -> Self {
+        self.anchoring.align = align;
         self
     }
 
     /// Resolve the effective top-left pixel of the bounding box for a frame:
-    /// the `anchor` origin, plus `position`, shifted by `align_x` / `align_y`
+    /// the resolved origin, plus `position`, shifted by `anchoring.align`
     /// for the current `size`. Returns `None` when a `World` anchor projects
     /// behind the camera or off-screen (the shape is skipped that frame).
     ///
@@ -854,10 +939,14 @@ impl OverlayShapeItem {
         view: &glam::Mat4,
         proj: &glam::Mat4,
     ) -> Option<[f32; 2]> {
-        let origin = resolve_anchor_origin(&self.anchor, viewport_size, view, proj)?;
+        let origin = resolve_anchor_origin(&self.anchoring.origin, viewport_size, view, proj)?;
         Some([
-            origin[0] + self.position[0] + self.align_x.align_shift(self.size[0]),
-            origin[1] + self.position[1] + self.align_y.align_shift(self.size[1]),
+            origin[0]
+                + self.transform.translate[0]
+                + self.anchoring.align.x.align_shift(self.size[0]),
+            origin[1]
+                + self.transform.translate[1]
+                + self.anchoring.align.y.align_shift(self.size[1], None),
         ])
     }
 
@@ -867,8 +956,10 @@ impl OverlayShapeItem {
     /// same coordinate space as `position`). Negative values mean the point is
     /// inside the shape; positive values mean it is outside.
     ///
-    /// This evaluates the same SDF used by the GPU shader, so the boundary
-    /// matches what is rendered on screen (ignoring sub-pixel AA).
+    /// This evaluates the same SDF used by the GPU shader, under the item's
+    /// rotation, pivot and scale, so the boundary matches what is rendered on
+    /// screen (ignoring sub-pixel AA). A scale that is zero, negative or not
+    /// finite draws nothing, so every point is outside.
     ///
     /// `position` is treated as the box's absolute top-left. For a shape with a
     /// non-default `anchor` (a viewport corner or a world point), first resolve
@@ -876,22 +967,37 @@ impl OverlayShapeItem {
     /// whose `position` is that value, so the test frame matches where the shape
     /// draws.
     pub fn distance(&self, point: [f32; 2]) -> f32 {
+        let scale = self.transform.scale;
+        if !(scale.is_finite() && scale > 0.0) {
+            return f32::INFINITY;
+        }
         let hw = self.size[0] * 0.5;
         let hh = self.size[1] * 0.5;
-        let cx = self.position[0] + hw;
-        let cy = self.position[1] + hh;
+        let cx = self.transform.translate[0] + hw;
+        let cy = self.transform.translate[1] + hh;
         let dx = point[0] - cx;
         let dy = point[1] - cy;
-        // Rotate the query point by -rotation around the rotation pivot (an
-        // offset from the shape centre) so the SDF evaluates in the unrotated
-        // frame, matching the fragment shader. With a zero pivot this reduces
-        // to rotation around the centre.
-        let c = (-self.rotation).cos();
-        let s = (-self.rotation).sin();
-        let piv = self.rotation_pivot;
+        // Undo the item transform around the pivot (an offset from the shape
+        // centre): rotate by -rotation, then divide out the scale, so the SDF
+        // evaluates in the shape's own frame, matching the renderer.
+        let c = (-self.transform.rotation).cos();
+        let s = (-self.transform.rotation).sin();
+        let piv = self.transform.pivot;
         let rx = dx - piv[0];
         let ry = dy - piv[1];
-        let p = [c * rx - s * ry + piv[0], s * rx + c * ry + piv[1]];
+        let inv = 1.0 / scale;
+        let p = [
+            (c * rx - s * ry) * inv + piv[0],
+            (s * rx + c * ry) * inv + piv[1],
+        ];
+        // The SDF is in the shape's own pixels; scale it back to screen pixels.
+        self.local_distance(p) * scale
+    }
+
+    /// Signed distance from a point in the shape's centred, untransformed frame.
+    fn local_distance(&self, p: [f32; 2]) -> f32 {
+        let hw = self.size[0] * 0.5;
+        let hh = self.size[1] * 0.5;
         let hs = [hw, hh];
 
         match &self.shape {
@@ -978,6 +1084,36 @@ impl OverlayShapeItem {
     pub fn contains(&self, point: [f32; 2]) -> bool {
         self.distance(point) <= 0.0
     }
+
+    /// Set the transform: translate, rotate, scale, and pivot at once.
+    pub fn with_transform(mut self, transform: OverlayTransform) -> Self {
+        self.transform = transform;
+        self
+    }
+
+    /// Set the translation in logical pixels from the resolved anchor origin.
+    pub fn with_position(mut self, position: [f32; 2]) -> Self {
+        self.transform.translate = position;
+        self
+    }
+
+    /// Set the uniform scale about the transform pivot.
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.transform.scale = scale;
+        self
+    }
+
+    /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
+    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
+        self.style.tint = tint;
+        self
+    }
+
+    /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
+    pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
+        self.clip.rect = Some(clip_rect);
+        self
+    }
 }
 
 #[cfg(test)]
@@ -986,7 +1122,7 @@ mod tests {
 
     fn shape_at(x: f32, y: f32, w: f32, h: f32, shape: OverlayShape) -> OverlayShapeItem {
         OverlayShapeItem {
-            position: [x, y],
+            transform: OverlayTransform::at([x, y]),
             size: [w, h],
             shape,
             ..Default::default()
@@ -1157,6 +1293,136 @@ mod tests {
             s.distance([0.0, 0.0]) > 0.0,
             "far corner should be positive"
         );
+    }
+
+    #[test]
+    fn scaled_rect_hits_its_drawn_size() {
+        // 100x100 box centred on (50, 50). Scaled about the centre, the right
+        // edge sits at 50 + 50 * scale.
+        for scale in [2.0, 0.5] {
+            let s = shape_at(
+                0.0,
+                0.0,
+                100.0,
+                100.0,
+                OverlayShape::Rect { corner_radius: 0.0 },
+            )
+            .with_scale(scale);
+            let edge = 50.0 + 50.0 * scale;
+            assert!(s.contains([edge - 1.0, 50.0]), "scale {scale}");
+            assert!(!s.contains([edge + 1.0, 50.0]), "scale {scale}");
+            // Distance stays in screen pixels.
+            let d = s.distance([edge + 10.0, 50.0]);
+            assert!((d - 10.0).abs() < 1e-3, "scale {scale}: {d}");
+        }
+    }
+
+    #[test]
+    fn scaled_vector_shape_hits_its_drawn_size() {
+        let square = SubPath::polygon(&[[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]]);
+        for scale in [2.0, 0.5] {
+            let s = OverlayShapeItem::vector(
+                vec![square.clone()],
+                FillRule::NonZero,
+                [0.0, 0.0],
+                [100.0, 100.0],
+            )
+            .with_scale(scale);
+            let edge = 50.0 + 50.0 * scale;
+            assert!(s.contains([edge - 1.0, 50.0]), "scale {scale}");
+            assert!(!s.contains([edge + 1.0, 50.0]), "scale {scale}");
+        }
+    }
+
+    #[test]
+    fn scale_rotation_and_pivot_match_the_transform() {
+        let transform = OverlayTransform {
+            translate: [40.0, 30.0],
+            rotation: 0.6,
+            pivot: [15.0, -10.0],
+            scale: 1.7,
+        };
+        let s = shape_at(
+            0.0,
+            0.0,
+            80.0,
+            60.0,
+            OverlayShape::Rect { corner_radius: 0.0 },
+        )
+        .with_transform(transform);
+        // `apply` takes points relative to the item's centre and returns them
+        // relative to the centre's untranslated position.
+        let centre = [40.0 + 40.0, 30.0 + 30.0];
+        let to_screen = |local: [f32; 2]| {
+            let t = OverlayTransform {
+                translate: [0.0, 0.0],
+                ..transform
+            }
+            .apply(local);
+            [centre[0] + t[0], centre[1] + t[1]]
+        };
+        for (corner, inward) in [
+            ([-40.0, -30.0], [1.0, 1.0]),
+            ([40.0, -30.0], [-1.0, 1.0]),
+            ([40.0, 30.0], [-1.0, -1.0]),
+            ([-40.0, 30.0], [1.0, -1.0]),
+        ] {
+            let d = s.distance(to_screen(corner));
+            assert!(d.abs() < 1e-3, "corner {corner:?} at distance {d}");
+            let inside = [corner[0] + inward[0], corner[1] + inward[1]];
+            let outside = [corner[0] - inward[0], corner[1] - inward[1]];
+            assert!(s.contains(to_screen(inside)), "inside {corner:?}");
+            assert!(!s.contains(to_screen(outside)), "outside {corner:?}");
+        }
+    }
+
+    #[test]
+    fn polygon_draws_where_its_points_are() {
+        let pts = [[100.0, 50.0], [160.0, 70.0], [120.0, 130.0]];
+        let s = OverlayShapeItem::polygon(&pts);
+        assert_eq!(s.transform.translate, [100.0, 50.0]);
+        assert_eq!(s.size, [60.0, 80.0]);
+        let centroid = [
+            (pts[0][0] + pts[1][0] + pts[2][0]) / 3.0,
+            (pts[0][1] + pts[1][1] + pts[2][1]) / 3.0,
+        ];
+        assert!(s.contains(centroid));
+        assert!(
+            !s.contains([101.0, 129.0]),
+            "inside the box, outside the triangle"
+        );
+
+        let empty = OverlayShapeItem::polygon(&pts[..2]);
+        assert_eq!(empty.size, [0.0, 0.0]);
+        assert!(!empty.contains([100.0, 50.0]));
+    }
+
+    #[test]
+    fn size_fitted_scales_a_vector_path_with_its_box() {
+        // A 10x10 square drawn in a 20x20 box with 5 px of padding all round.
+        let square = SubPath::polygon(&[[5.0, 5.0], [15.0, 5.0], [15.0, 15.0], [5.0, 15.0]]);
+        let s = OverlayShapeItem::vector(vec![square], FillRule::NonZero, [0.0, 0.0], [20.0, 20.0])
+            .with_size_fitted([40.0, 80.0]);
+        assert_eq!(s.size, [40.0, 80.0]);
+        let OverlayShape::Vector { subpaths, .. } = &s.shape else {
+            unreachable!()
+        };
+        assert_eq!(path_bounds(subpaths), Some(([10.0, 20.0], [30.0, 60.0])));
+        assert!(s.contains([20.0, 40.0]));
+        assert!(!s.contains([5.0, 10.0]), "the padding scaled too");
+
+        // An analytic shape just takes the size.
+        let c = OverlayShapeItem::new(OverlayShape::Circle, [0.0, 0.0], [10.0, 10.0])
+            .with_size_fitted([30.0, 30.0]);
+        assert_eq!(c.size, [30.0, 30.0]);
+    }
+
+    #[test]
+    fn degenerate_scale_hits_nothing() {
+        for scale in [0.0, -1.0, f32::NAN] {
+            let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Circle).with_scale(scale);
+            assert!(!s.contains([50.0, 50.0]), "scale {scale}");
+        }
     }
 
     #[test]
@@ -1370,61 +1636,18 @@ mod tests {
     }
 
     #[test]
-    fn bezier_path_hits_endpoints() {
-        // Cubic with p0 = (0,0), p3 = (100, 0) and arched control handles.
-        let track = PathTrack::<[f32; 2]>::bezier(
-            0.0,
-            1.0,
-            [[0.0, 0.0], [25.0, -40.0], [75.0, -40.0], [100.0, 0.0]],
-        );
-        let a = track.sample(0.0);
-        let b = track.sample(1.0);
-        assert!((a[0] - 0.0).abs() < 1e-3 && (a[1] - 0.0).abs() < 1e-3);
-        assert!((b[0] - 100.0).abs() < 1e-3 && (b[1] - 0.0).abs() < 1e-3);
-        // Midpoint should sit on the arch above the baseline.
-        let m = track.sample(0.5);
-        assert!((m[0] - 50.0).abs() < 1e-3);
-        assert!(m[1] < -20.0);
-    }
-
-    #[test]
-    fn polyline_path_hits_waypoints() {
-        let track =
-            PathTrack::<[f32; 2]>::polyline(0.0, 1.0, vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]]);
-        let a = track.sample(0.0);
-        let mid = track.sample(0.5);
-        let end = track.sample(1.0);
-        assert!((a[0] - 0.0).abs() < 1e-3 && (a[1] - 0.0).abs() < 1e-3);
-        assert!((mid[0] - 10.0).abs() < 1e-3 && (mid[1] - 0.0).abs() < 1e-3);
-        assert!((end[0] - 10.0).abs() < 1e-3 && (end[1] - 10.0).abs() < 1e-3);
-    }
-
-    #[test]
-    fn path_track_custom_closure_loops() {
-        // A non-curve path: harmonic motion via a custom closure.
-        let track = PathTrack::<f32>::new(0.0, 1.0, |t| (t * std::f32::consts::TAU).sin())
-            .with_repeat(RepeatMode::Loop);
-        let a = track.sample(0.0);
-        let b = track.sample(0.25);
-        let c = track.sample(0.5);
-        assert!(a.abs() < 1e-3);
-        assert!((b - 1.0).abs() < 1e-3);
-        assert!(c.abs() < 1e-3);
-    }
-
-    #[test]
     fn rotation_affects_hit_test() {
         // 100x40 capsule. Without rotation, (50, 80) sits below the shape
         // (outside). Rotated 90 degrees, the capsule's long axis becomes
         // vertical and that point is inside the body.
         let mut s = OverlayShapeItem {
-            position: [0.0, 30.0],
+            transform: OverlayTransform::at([0.0, 30.0]),
             size: [100.0, 40.0],
             shape: OverlayShape::Capsule,
             ..Default::default()
         };
         assert!(!s.contains([50.0, 80.0]));
-        s.rotation = std::f32::consts::FRAC_PI_2;
+        s.transform.rotation = std::f32::consts::FRAC_PI_2;
         assert!(s.contains([50.0, 80.0]));
     }
 
@@ -1435,16 +1658,15 @@ mod tests {
         // from the centre swings the whole shape elsewhere, so a point that is
         // inside under centre-rotation falls outside under pivot-rotation.
         let mut s = OverlayShapeItem {
-            position: [0.0, 0.0],
+            transform: OverlayTransform::IDENTITY.with_rotation(std::f32::consts::FRAC_PI_2),
             size: [80.0, 40.0],
             shape: OverlayShape::Rect { corner_radius: 0.0 },
-            rotation: std::f32::consts::FRAC_PI_2,
             ..Default::default()
         };
         // Centre is always inside regardless of pivot.
         assert!(s.contains([40.0, 20.0]));
         // With a large pivot offset the shape rotates away from the centre.
-        s.rotation_pivot = [200.0, 0.0];
+        s.transform.pivot = [200.0, 0.0];
         assert!(!s.contains([40.0, 20.0]));
     }
 
@@ -1468,11 +1690,11 @@ mod tests {
             [0.0, 0.0],
             [50.0, 20.0],
         )
-        .with_anchor(OverlayAnchor::Viewport {
-            x: AnchorX::Right,
-            y: AnchorY::Bottom,
-        })
-        .with_align(AnchorX::Right, AnchorY::Bottom);
+        .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+            AnchorX::Right,
+            AnchorY::Bottom,
+        )))
+        .with_align(Alignment::new(AnchorX::Right, AnchorY::Bottom));
         let id = glam::Mat4::IDENTITY;
         let a = s.resolve_top_left([800.0, 600.0], &id, &id).unwrap();
         assert_eq!(a, [750.0, 580.0]);
@@ -1489,17 +1711,17 @@ mod tests {
             [0.0, 0.0],
             [80.0, 60.0],
         )
-        .with_anchor(OverlayAnchor::Viewport {
-            x: AnchorX::Middle,
-            y: AnchorY::Middle,
-        })
-        .with_align(AnchorX::Middle, AnchorY::Middle);
+        .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+            AnchorX::Middle,
+            AnchorY::Middle,
+        )))
+        .with_align(Alignment::new(AnchorX::Middle, AnchorY::Middle));
         let id = glam::Mat4::IDENTITY;
         let tl = s.resolve_top_left([800.0, 600.0], &id, &id).unwrap();
         assert_eq!(tl, [360.0, 270.0]); // 400-40, 300-30
         // The centre of the resolved box is the viewport centre.
         let mut drawn = s.clone();
-        drawn.position = tl;
+        drawn.transform.translate = tl;
         assert!(drawn.contains([400.0, 300.0]));
     }
 
@@ -1508,11 +1730,11 @@ mod tests {
         // `position` layers on top of the resolved origin, so it nudges an
         // anchored box away from the corner (the animatable channel does the same).
         let s = OverlayShapeItem::new(OverlayShape::Circle, [12.0, -8.0], [20.0, 20.0])
-            .with_anchor(OverlayAnchor::Viewport {
-                x: AnchorX::Right,
-                y: AnchorY::Top,
-            })
-            .with_align(AnchorX::Right, AnchorY::Top);
+            .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+                AnchorX::Right,
+                AnchorY::Top,
+            )))
+            .with_align(Alignment::new(AnchorX::Right, AnchorY::Top));
         let id = glam::Mat4::IDENTITY;
         let tl = s.resolve_top_left([500.0, 500.0], &id, &id).unwrap();
         // origin x = 500, align Right shifts by -20, position adds [12, -8].
@@ -1550,16 +1772,37 @@ mod tests {
     fn rotation_pivot_zero_matches_centre_rotation() {
         // A zero pivot must reproduce plain centre rotation exactly.
         let base = OverlayShapeItem {
-            position: [10.0, 10.0],
+            transform: OverlayTransform::at([10.0, 10.0]).with_rotation(0.7),
             size: [100.0, 30.0],
             shape: OverlayShape::Capsule,
-            rotation: 0.7,
             ..Default::default()
         };
         let mut piv = base.clone();
-        piv.rotation_pivot = [0.0, 0.0];
+        piv.transform.pivot = [0.0, 0.0];
         for pt in [[60.0, 25.0], [20.0, 20.0], [90.0, 40.0]] {
             assert!((base.distance(pt) - piv.distance(pt)).abs() < 1e-4);
         }
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+
+    /// The animation block is boxed, so a static shape carries a pointer
+    /// rather than a track per channel. Assert both halves so neither can
+    /// regress: the field is one word, and the item stays inside its budget.
+    #[test]
+    fn shape_item_stays_small_without_animation_state() {
+        assert_eq!(
+            std::mem::size_of::<Option<Box<OverlayAnimations>>>(),
+            std::mem::size_of::<usize>(),
+            "the animation block is no longer boxed"
+        );
+        let item = std::mem::size_of::<OverlayShapeItem>();
+        assert!(
+            item <= 512,
+            "OverlayShapeItem grew to {item} bytes (budget 512)"
+        );
     }
 }

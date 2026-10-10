@@ -24,6 +24,7 @@ fn ensure_object_data_buffer(
         mapped_at_creation: false,
     });
     state.object_data_buf = Some(buf);
+    state.object_data_written.clear();
     state.object_data_capacity = new_cap;
     state.object_data_gen += 1;
     // The previously built bind groups reference the old buffer at binding 0.
@@ -39,6 +40,7 @@ pub(super) fn build_object_uniform(
     item: &SceneRenderItem,
     wireframe_mode: bool,
     light_probe_index: Option<u32>,
+    material_id: u32,
 ) -> ObjectUniform {
     let m = &item.material;
     // Compute scalar attribute range.
@@ -56,7 +58,7 @@ pub(super) fn build_object_uniform(
     } else {
         (0u32, 0.0, 1.0)
     };
-    let cm = common_material(item);
+    let cm = common_material(item, resources.resolve_material_slots(&item.material));
     ObjectUniform {
         model: cm.model,
         colour: cm.colour,
@@ -101,6 +103,8 @@ pub(super) fn build_object_uniform(
             crate::scene::material::BackfacePolicy::DifferentColour(_) => 2,
             crate::scene::material::BackfacePolicy::Tint(_) => 3,
             crate::scene::material::BackfacePolicy::Pattern(cfg) => 4 + cfg.pattern as u32,
+            // Forward-compat: an unknown future policy renders as Cull (the default).
+            _ => 0,
         },
         backface_colour: match m.backface_policy {
             crate::scene::material::BackfacePolicy::DifferentColour(c) => {
@@ -152,6 +156,8 @@ pub(super) fn build_object_uniform(
             // The OIT fragment shader reads 3 as "RGB is already premultiplied":
             // it skips the `* alpha` it applies to straight-blend colour.
             crate::scene::material::AlphaMode::BlendPremultiplied => 3,
+            // Forward-compat: an unknown future mode renders as Opaque (the default).
+            _ => 0,
         },
         alpha_cutoff: match m.alpha_mode {
             crate::scene::material::AlphaMode::Mask(c) => c,
@@ -167,7 +173,25 @@ pub(super) fn build_object_uniform(
         } else {
             0
         },
-        uv_transform: cm.uv_transform,
+        material_id,
+        uv1_base: {
+            // Per-object draws bind a mesh vertex sub-slice, so the vertex index
+            // the shader sees is mesh-local. Add the mesh's base vertex to index
+            // the whole-chunk uv1 buffer. 0 when the mesh has no second UV set
+            // (it binds the zero fallback and the index is clamped to entry 0).
+            resources
+                .mesh_store
+                .get(item.mesh_id)
+                .filter(|mesh| mesh.has_uv1)
+                .map_or(0, |mesh| {
+                    resources.geometry.base_vertex(mesh.vertex_span) as u32
+                })
+        },
+        mesh_closed: resources
+            .mesh_store
+            .get(item.mesh_id)
+            .is_some_and(|m| m.closed) as u32,
+        _pad_uv: 0,
         deform_flags: resources.deform.flag_bits(item.mesh_id),
         normal_strength: cm.normal_strength,
         ao_range: cm.ao_range,
@@ -226,7 +250,7 @@ pub(super) fn build_object_uniform(
             .and_then(|mesh| mesh.lightmap.as_ref())
             .map_or(0, |lm| lm.is_shadowmask as u32),
         ignore_clip: item.settings.ignore_clip as u32,
-        _pad_ls: 0,
+        object_mask: item.settings.visibility_mask,
     }
 }
 
@@ -305,11 +329,22 @@ impl ViewportRenderer {
         // in FrameStats so a cache that is silently missing is visible.
         let mut bind_groups_built = 0u32;
 
-        // Purge the deduped material bind-group map when a texture or mesh was
-        // freed, so no bind group keeps freed GPU memory alive.
-        if mesh_uniforms.free_epoch != resources.resource_free_epoch {
-            mesh_uniforms.free_epoch = resources.resource_free_epoch;
-            mesh_uniforms.material_bind_groups.clear();
+        // Drop material bind groups that no longer match what they sample, so no
+        // bind group keeps freed GPU memory alive or draws a texture that has
+        // been swapped underneath it. A free keeps every entry whose deps still
+        // resolve: under a streaming eviction budget almost nothing in this map
+        // references what a given frame freed, and rebuilding all of it was the
+        // dominant cost.
+        match mesh_uniforms.deps_gate.poll(resources) {
+            crate::resources::resource_deps::Revalidate::RebuildAll => {
+                mesh_uniforms.material_bind_groups.clear();
+            }
+            crate::resources::resource_deps::Revalidate::CheckEach => {
+                mesh_uniforms
+                    .material_bind_groups
+                    .retain(|_, bg| bg.resources_resolve(resources));
+            }
+            crate::resources::resource_deps::Revalidate::Valid => {}
         }
 
         // Reset this frame's per-item slot maps. Slots for items on the
@@ -405,11 +440,16 @@ impl ViewportRenderer {
                     );
                     continue;
                 };
+                let resolved = resources.resolve_material_slots(&item.material);
+                let material_id = resources
+                    .material_gpu_builder
+                    .intern(&item.material, resolved);
                 let obj_uniform = build_object_uniform(
                     resources,
                     item,
                     frame.viewport.wireframe_mode,
                     probe_indices[item_idx],
+                    material_id,
                 );
 
                 // Collect per-item uniform for wireframe per-item bind groups.
@@ -459,7 +499,10 @@ impl ViewportRenderer {
                         alpha_cutoff: 0.5,
                         has_metallic_roughness_tex: 0,
                         has_emissive_tex: 0,
-                        uv_transform: [0.0, 0.0, 1.0, 1.0],
+                        material_id: 0,
+                        uv1_base: 0,
+                        mesh_closed: 0,
+                        _pad_uv: 0,
                         deform_flags: 0,
                         normal_strength: 1.0,
                         ao_range: [0.0, 1.0],
@@ -477,7 +520,7 @@ impl ViewportRenderer {
                         lightmap_index: 0,
                         has_shadowmask: 0,
                         ignore_clip: item.settings.ignore_clip as u32,
-                        _pad_ls: 0,
+                        object_mask: item.settings.visibility_mask,
                     };
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
                         queue.write_buffer(
@@ -511,12 +554,20 @@ impl ViewportRenderer {
                 // caster case was already a shared-buffer approximation).
                 if shared_written.insert(item.mesh_id) {
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                        queue.write_buffer(
-                            &mesh.object_uniform_buf,
-                            0,
-                            bytemuck::cast_slice(&[obj_uniform]),
-                        );
-                        resources.frame_upload_bytes += std::mem::size_of::<ObjectUniform>() as u64;
+                        let mut last = mesh.last_object_uniform.lock().unwrap();
+                        let unchanged = last.as_ref().is_some_and(|u| {
+                            bytemuck::bytes_of(u) == bytemuck::bytes_of(&obj_uniform)
+                        });
+                        if !unchanged {
+                            queue.write_buffer(
+                                &mesh.object_uniform_buf,
+                                0,
+                                bytemuck::cast_slice(&[obj_uniform]),
+                            );
+                            *last = Some(obj_uniform);
+                            resources.frame_upload_bytes +=
+                                std::mem::size_of::<ObjectUniform>() as u64;
+                        }
                     }
                 }
 
@@ -540,11 +591,16 @@ impl ViewportRenderer {
                     let mut range_indices: Vec<u32> = Vec::with_capacity(mats.len());
                     for (r, mat) in mats.iter().enumerate() {
                         range_item.material = mat.clone();
+                        let range_material_id = resources.material_gpu_builder.intern(
+                            &range_item.material,
+                            resources.resolve_material_slots(&range_item.material),
+                        );
                         let range_uniform = build_object_uniform(
                             resources,
                             &range_item,
                             frame.viewport.wireframe_mode,
                             probe_indices[item_idx],
+                            range_material_id,
                         );
                         let ridx = object_data.len() as u32;
                         object_data.push(range_uniform);
@@ -565,10 +621,14 @@ impl ViewportRenderer {
             // bind groups against it (deduped by mesh+material fingerprint).
             ensure_object_data_buffer(mesh_uniforms, device, object_data.len());
             if !object_data.is_empty() {
-                if let Some(buf) = mesh_uniforms.object_data_buf.as_ref() {
-                    queue.write_buffer(buf, 0, bytemuck::cast_slice(&object_data));
-                    resources.frame_upload_bytes +=
-                        (object_data.len() * std::mem::size_of::<ObjectUniform>()) as u64;
+                let data: &[u8] = bytemuck::cast_slice(&object_data);
+                if let Some(buf) = mesh_uniforms.object_data_buf.as_ref()
+                    && mesh_uniforms.object_data_written.as_slice() != data
+                {
+                    queue.write_buffer(buf, 0, data);
+                    resources.frame_upload_bytes += data.len() as u64;
+                    mesh_uniforms.object_data_written.clear();
+                    mesh_uniforms.object_data_written.extend_from_slice(data);
                 }
             }
             let data_gen = mesh_uniforms.object_data_gen;
@@ -592,6 +652,7 @@ impl ViewportRenderer {
                         item.warp_attribute.as_deref(),
                         mat.metallic_roughness_texture_id,
                         mat.emissive_texture_id,
+                        mat.selected_sampler(),
                     ) else {
                         continue;
                     };
@@ -613,6 +674,7 @@ impl ViewportRenderer {
                             item.warp_attribute.as_deref(),
                             mat.metallic_roughness_texture_id,
                             mat.emissive_texture_id,
+                            mat.selected_sampler(),
                             None,
                         ) {
                             bind_groups_built += 1;
@@ -622,6 +684,16 @@ impl ViewportRenderer {
                                     bind_group: bg,
                                     data_gen,
                                     last_frame: frame_index,
+                                    deps: crate::resources::resource_deps::ResourceDeps {
+                                        mesh_id: Some(item.mesh_id),
+                                        texture_ids: [
+                                            mat.texture_id,
+                                            mat.normal_map_id,
+                                            mat.ao_map_id,
+                                            mat.metallic_roughness_texture_id,
+                                            mat.emissive_texture_id,
+                                        ],
+                                    },
                                 },
                             );
                         }
@@ -803,6 +875,10 @@ impl ViewportRenderer {
                                 &resources.material.texture_array_view,
                             ),
                         },
+                        crate::gpu::BindGroupEntry {
+                            binding: 19,
+                            resource: resources.content.fallback_uv1_buf.as_entire_binding(),
+                        },
                     ],
                 });
                 mesh_uniforms.wireframe_uniform_bufs.push(buf);
@@ -877,7 +953,11 @@ impl ViewportRenderer {
                 item.material.emissive_texture_id,
             );
 
-            let obj_uniform = build_object_uniform(resources, item, false, None);
+            let material_id = resources.material_gpu_builder.intern(
+                &item.material,
+                resources.resolve_material_slots(&item.material),
+            );
+            let obj_uniform = build_object_uniform(resources, item, false, None, material_id);
             let entry = &mut entries[idx];
             let uniform_changed = entry.last_uniform.as_ref().map_or(true, |u| {
                 bytemuck::bytes_of(u) != bytemuck::bytes_of(&obj_uniform)
@@ -902,6 +982,7 @@ impl ViewportRenderer {
                 item.warp_attribute.as_deref(),
                 item.material.metallic_roughness_texture_id,
                 item.material.emissive_texture_id,
+                item.material.selected_sampler(),
                 prev_key,
             );
             if let Some((bg, key)) = built {
@@ -915,8 +996,8 @@ impl ViewportRenderer {
     ///
     /// Eligible frames are the all-per-object case (instancing selected but no
     /// batch formed) with plain solid meshes: no wireframe mode or per-item
-    /// wireframe/normals/attribute/warp/deform features, no compute-filter
-    /// index overrides, no registered deformers, and the LDR path (the HDR
+    /// wireframe/normals/attribute/warp/deform features, no registered
+    /// deformers, and the LDR path (the HDR
     /// path records its own scene pass). The bundle stores the opaque draws
     /// in item order; blended items are listed for immediate depth-sorted
     /// drawing after the bundle. Per-item transforms and colours flow through
@@ -933,10 +1014,10 @@ impl ViewportRenderer {
         /// caching against.
         const MIN_BUNDLE_ITEMS: usize = 64;
         self.last_stats.per_object_bundle_cached = false;
-        // Measurement kill-switch so the bundle can be A/B'd in one binary.
+        // Measurement kill-switch (`dev-knobs` feature) so the bundle can be
+        // A/B'd in one binary.
         static DISABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *DISABLE.get_or_init(|| std::env::var_os("VIEWPORT_DISABLE_PER_OBJECT_BUNDLE").is_some())
-        {
+        if *DISABLE.get_or_init(|| dev_knob!("VIEWPORT_DISABLE_PER_OBJECT_BUNDLE").is_some()) {
             self.per_object_bundle = None;
             return;
         }
@@ -956,7 +1037,6 @@ impl ViewportRenderer {
             .any(|o| o.enabled && o.clip_geometry);
         let plan = 'plan: {
             if frame.viewport.wireframe_mode
-                || !self.compute_filter_results.is_empty()
                 || !self.instancing.use_instancing
                 || !self.instancing.batches.is_empty()
                 || !self.resources.deform.meshes.is_empty()
@@ -964,7 +1044,7 @@ impl ViewportRenderer {
             {
                 break 'plan None;
             }
-            if hdr && self.resources.scene.hdr_opaque.is_none() {
+            if hdr && self.resources.scene.hdr.is_none() {
                 break 'plan None;
             }
             use std::hash::{Hash, Hasher};
@@ -1041,6 +1121,25 @@ impl ViewportRenderer {
             return;
         };
 
+        // A bundle records its pipelines up front, so until both solids are
+        // built the items draw one by one (and skip while compiling).
+        let both_solids_ready = [false, true].iter().all(|&two_sided| {
+            let key = PipelineKey {
+                two_sided,
+                no_discard_eligible: no_discard,
+                ..PipelineKey::default()
+            };
+            if hdr {
+                self.resources.scene.hdr_opaque(key).is_some()
+            } else {
+                self.resources.scene.ldr_opaque(key).is_some()
+            }
+        });
+        if !both_solids_ready {
+            self.per_object_bundle = None;
+            return;
+        }
+
         // Churn gate. A single isolated change re-records immediately (the
         // measured cost of one re-record is a wash against immediate draws),
         // but a set that changes twice in short succession backs the bundle
@@ -1072,14 +1171,15 @@ impl ViewportRenderer {
                 self.per_object_bundle_gate.suppressed = false;
             }
         }
-        // Diagnostic kill-switch for the churn gate: with it set, sustained
+        // Diagnostic kill-switch for the churn gate (`dev-knobs` feature): with
+        // it set, sustained
         // churn re-records the bundle every frame instead of backing off.
         // Exists for leak retests on wgpu versions that ship the
         // render-bundle drop fix (gfx-rs/wgpu#8661); leave it unset
         // otherwise, since per-frame re-record costs more than it saves.
         static GATE_DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let gate_disabled = *GATE_DISABLED
-            .get_or_init(|| std::env::var_os("VIEWPORT_DISABLE_BUNDLE_CHURN_GATE").is_some());
+            .get_or_init(|| dev_knob!("VIEWPORT_DISABLE_BUNDLE_CHURN_GATE").is_some());
         if self.per_object_bundle_gate.suppressed && !gate_disabled {
             self.per_object_bundle = None;
             return;
@@ -1130,22 +1230,21 @@ impl ViewportRenderer {
         } else {
             (resources.target_format, resources.sample_count)
         };
-        let (solid, solid_two_sided) = if hdr {
-            let hdr_opaque = self.resources.scene.hdr_opaque.as_ref().unwrap();
-            (
-                hdr_opaque.get(PipelineKey {
-                    no_discard_eligible: no_discard,
-                    ..PipelineKey::default()
-                }),
-                hdr_opaque.get(PipelineKey {
-                    two_sided: true,
-                    no_discard_eligible: no_discard,
-                    ..PipelineKey::default()
-                }),
-            )
-        } else {
-            (&resources.scene.solid, &resources.scene.solid_two_sided)
+        // The caller checked both are built.
+        let opaque = |two_sided: bool| {
+            let key = PipelineKey {
+                two_sided,
+                no_discard_eligible: no_discard,
+                ..PipelineKey::default()
+            };
+            if hdr {
+                resources.scene.hdr_opaque(key)
+            } else {
+                resources.scene.ldr_opaque(key)
+            }
+            .expect("the bundle is only recorded once its pipelines are built")
         };
+        let (solid, solid_two_sided) = (opaque(false), opaque(true));
         let mut enc = crate::resources::builders::render_bundle_encoder(
             device,
             "per_object_bundle",

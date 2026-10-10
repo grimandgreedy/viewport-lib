@@ -3,7 +3,7 @@
 //! Part of the headless integration suite (split from the former single
 //! headless.rs). Shared device and mesh helpers live in tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -52,9 +52,8 @@ fn debug_vis_toggle_rebuilds_lit_pipelines() {
 /// with `max_bind_groups: 2` and gives consumers no way to raise it, so any
 /// unconditional `set_bind_group(2, ...)` fails wgpu validation the moment a
 /// mesh, shadow, or HDR pass draws on that device. This has been fixed and
-/// silently reintroduced by new draw sites multiple times (see
-/// `docs/issues/iced-max-bind-groups-2-draw-path-incomplete.md`) because the
-/// only thing that previously caught it was manually running the iced
+/// silently reintroduced by new draw sites several times, because the only
+/// thing that previously caught it was manually running the iced
 /// example. This test exercises the same crash surface headlessly on every
 /// `cargo test`, with no reliance on remembering to gate a new call site.
 ///
@@ -150,9 +149,10 @@ fn per_object_items_select_distinct_object_data() {
     let make = |x: f32, colour: [f32; 3]| {
         let mut it = SceneRenderItem::default();
         it.mesh_id = mesh_id;
-        it.material.base_colour = colour.into();
+        it.material.base_colour = Colour::from_linear_rgb_array(colour);
         // Styled back faces => is_instanceable is false => per-object path.
-        it.material.backface_policy = BackfacePolicy::DifferentColour([0.0, 0.0, 0.0].into());
+        it.material.backface_policy =
+            BackfacePolicy::DifferentColour(Colour::linear_rgb(0.0, 0.0, 0.0));
         it.settings.unlit = true;
         it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
         it
@@ -215,7 +215,8 @@ fn renderer_fits_recommended_device_limits() {
     // pass (default lighting casts shadows) all build under the capped limits.
     let mut opaque = SceneRenderItem::default();
     opaque.mesh_id = mesh_id;
-    opaque.material.backface_policy = BackfacePolicy::DifferentColour([0.0, 0.0, 0.0].into());
+    opaque.material.backface_policy =
+        BackfacePolicy::DifferentColour(Colour::linear_rgb(0.0, 0.0, 0.0));
     let mut transparent = SceneRenderItem::default();
     transparent.mesh_id = mesh_id;
     transparent.settings.opacity = 0.5;
@@ -268,7 +269,7 @@ fn render_tuning_round_trips() {
 /// over a mid-grey background must leave visible non-background pixels.
 #[test]
 fn overlay_shape_shadow_layers_and_pivot_render() {
-    use viewport_lib::{OverlayFill, OverlayShape, OverlayShapeItem, ShadowLayer};
+    use viewport_lib::{OutlineMode, OverlayFill, OverlayShape, OverlayShapeItem, ShadowLayer};
 
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
@@ -287,7 +288,7 @@ fn overlay_shape_shadow_layers_and_pivot_render() {
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.3, 0.3, 0.3, 1.0));
 
     // A shape with two outer shadow layers plus two inner shadow layers,
     // rotated about an off-centre pivot. Fill is bright so it stands out.
@@ -297,17 +298,17 @@ fn overlay_shape_shadow_layers_and_pivot_render() {
             [24.0, 24.0],
             [48.0, 48.0],
         )
-        .with_fill(OverlayFill::Solid([0.9, 0.2, 0.1, 1.0].into()))
-        .with_border([1.0, 1.0, 1.0, 1.0], 2.0)
+        .with_fill(OverlayFill::Solid(Colour::linear(0.9, 0.2, 0.1, 1.0)))
+        .with_outline(Colour::linear(1.0, 1.0, 1.0, 1.0), 2.0, OutlineMode::Inset)
         .with_rotation(0.5)
         .with_rotation_pivot([10.0, 6.0])
         .with_shadows(vec![
-            ShadowLayer::new([0.0, 0.0, 0.0, 0.5], 12.0, [0.0, 6.0]),
-            ShadowLayer::new([0.0, 0.0, 0.0, 0.6], 4.0, [0.0, 2.0]),
+            ShadowLayer::new(Colour::linear(0.0, 0.0, 0.0, 0.5), 12.0, [0.0, 6.0]),
+            ShadowLayer::new(Colour::linear(0.0, 0.0, 0.0, 0.6), 4.0, [0.0, 2.0]),
         ])
         .with_inner_shadows(vec![
-            ShadowLayer::new([1.0, 1.0, 1.0, 0.3], 5.0, [0.0, -2.0]),
-            ShadowLayer::new([0.0, 0.0, 0.0, 0.4], 8.0, [0.0, 3.0]),
+            ShadowLayer::new(Colour::linear(1.0, 1.0, 1.0, 0.3), 5.0, [0.0, -2.0]),
+            ShadowLayer::new(Colour::linear(0.0, 0.0, 0.0, 0.4), 8.0, [0.0, 3.0]),
         ]),
     ];
 
@@ -349,11 +350,11 @@ fn overlay_shape_backdrop_filters_render() {
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.2, 0.5, 0.8, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.2, 0.5, 0.8, 1.0));
 
     frame.overlays.shapes = vec![
         OverlayShapeItem::new(OverlayShape::Circle, [24.0, 24.0], [48.0, 48.0])
-            .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.1].into()))
+            .with_fill(OverlayFill::Solid(Colour::linear(1.0, 1.0, 1.0, 0.1)))
             .with_backdrop_blur(8.0)
             .with_backdrop_filters(0.4, 0.9, 1.0),
     ];
@@ -390,13 +391,13 @@ fn overlay_shape_pivot_rotation_not_clipped() {
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.1, 0.1, 0.1, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.1, 0.1, 0.1, 1.0));
 
     // Tall narrow capsule: box x in [60, 76], centre (68, 80). Pivot at the
     // bottom end; rotate 90 degrees so the hand swings out horizontally.
     frame.overlays.shapes = vec![
         OverlayShapeItem::new(OverlayShape::Capsule, [60.0, 20.0], [16.0, 120.0])
-            .with_fill(OverlayFill::Solid([0.95, 0.75, 0.2, 1.0].into()))
+            .with_fill(OverlayFill::Solid(Colour::linear(0.95, 0.75, 0.2, 1.0)))
             .with_rotation(std::f32::consts::FRAC_PI_2)
             .with_rotation_pivot([0.0, 60.0]),
     ];

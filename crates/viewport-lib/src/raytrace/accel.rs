@@ -9,9 +9,9 @@
 //! lookup, exactly as the compute traversal's `best_tri` did.
 //!
 //! Only compiled with the `raytrace-hardware` feature and only built on a device
-//! that advertises [`RAY_QUERY_FEATURE`](crate::gpu::RAY_QUERY_FEATURE). It is
-//! unsupported on Metal and the web, so it cannot be exercised on the primary dev
-//! platform; the kernel that consumes it lives in `raytrace.wgsl`.
+//! that advertises [`RAY_QUERY_FEATURE`](crate::gpu::RAY_QUERY_FEATURE) (Vulkan,
+//! DX12, and Metal from wgpu 30). The kernel that consumes it lives in
+//! `raytrace.wgsl`.
 
 use crate::gpu::util::DeviceExt;
 

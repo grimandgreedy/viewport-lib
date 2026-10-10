@@ -19,9 +19,12 @@ pub enum ResolvedActionState {
 ///
 /// Produced by `ViewportInput` after processing all events for a frame.
 /// Non-zero fields indicate active input in that direction.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct NavigationActions {
-    /// Orbit delta in radians (x = yaw, y = pitch). Zero if no orbit input.
+    /// Orbit drag delta in viewport pixels (x = yaw, y = pitch). Zero if no
+    /// orbit input. A camera controller turns it into an angle with its own
+    /// sensitivity.
     pub orbit: glam::Vec2,
     /// Pan delta in viewport-local pixels (x = right, y = down). Zero if no pan input.
     pub pan: glam::Vec2,
@@ -45,13 +48,48 @@ pub struct PointerFrame {
     pub cursor: Option<glam::Vec2>,
     /// Pointer movement in viewport pixels accumulated this frame.
     pub delta: glam::Vec2,
-    /// True on the frame the primary button was released as a click (press and
-    /// release without crossing the drag threshold).
+    /// True on the frame the primary button was released as a click: the
+    /// pointer never got the drag threshold away from where it was pressed.
     pub clicked: bool,
-    /// True on the frame the primary button was pressed (a drag may begin).
+    /// True on the frame the primary button was pressed.
+    pub pressed: bool,
+    /// True on the first frame a held primary press has moved the drag
+    /// threshold or more from where it went down. Fires at most once per
+    /// press, and a press that fires it never ends as a click.
+    pub drag_began: bool,
+    /// True on the frame the primary button was pressed. Same value as
+    /// [`pressed`](Self::pressed); despite the name, the pointer need not have
+    /// moved. See [`drag_began`](Self::drag_began) for the frame a press
+    /// becomes a drag.
+    #[deprecated(note = "use `pressed`, or `drag_began` for the frame the press becomes a drag")]
     pub drag_started: bool,
     /// True while the primary button is held.
     pub dragging: bool,
+    /// True on the frame a touch contact lifted without having travelled far enough
+    /// to be a drag. The touch counterpart of [`clicked`](Self::clicked).
+    ///
+    /// A double tap sets this as well, on its second tap: telling the two apart
+    /// needs a delay that only the application can decide to pay.
+    pub tapped: bool,
+    /// True on the frame a second tap landed soon enough, and close enough, to the
+    /// one before it.
+    ///
+    /// Needs a clock: only resolves when the frame is begun with
+    /// `ViewportInput::begin_frame_at`.
+    pub double_tapped: bool,
+    /// True on the frame a contact has been down and still long enough to count as a
+    /// long press. Fires once, while the finger is still down, and suppresses the tap
+    /// that contact would otherwise have produced when it lifts.
+    ///
+    /// Needs a clock: only resolves when the frame is begun with
+    /// `ViewportInput::begin_frame_at`.
+    pub long_pressed: bool,
+    /// Where the last touch event landed, in viewport-local pixels. `None` until one
+    /// arrives; it is not cleared when the contact lifts, so a tap can be
+    /// hit-tested on the frame it is reported.
+    pub touch_position: Option<glam::Vec2>,
+    /// How many touch contacts are down.
+    pub contacts: u8,
 }
 
 /// Per-frame resolved action output.

@@ -70,11 +70,11 @@ fn sample_shadow_csm(
     eye_pos: vec3<f32>,
     surface_normal: vec3<f32>,
     light_dir: vec3<f32>,
-    // 1 when the receiver material renders two-sided (styled backface
-    // policy). Two-sided receivers need a much smaller bias floor; see the
-    // bias comment below. The instanced path passes 0: two-sidedness is a
-    // per-batch pipeline property there and is not carried per instance,
-    // so instanced two-sided receivers keep the one-sided bias.
+    // 1 when the receiver is a styled back-face policy on an open mesh, the
+    // cull-none caster path. Two-sided receivers need a much smaller bias
+    // floor and skip the contact rule; see the comments below. The per-object
+    // path derives it from the object uniform, the instanced path from bit 2
+    // of the instance's receive_shadows word.
     receiver_two_sided: u32,
 ) -> ShadowSample {
     // cascade_count == 0: the primary light casts no shadows and the atlas
@@ -182,6 +182,43 @@ fn sample_shadow_csm(
         return ShadowSample(s, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     }
 
+    // Contact rule. When the surface recorded at the receiver's own texel
+    // sits only a few texel-depths in front of it, the receiver is touching
+    // its occluder: a wall under the ceiling it meets, a floor under the
+    // object resting on it. The filter footprint then straddles the occluder
+    // itself, and taps on the far side of the contact line read the
+    // occluder's back face where it continues beyond the corner, deeper than
+    // the receiver plane and so "lit". That is a leak, not a penumbra: the
+    // occluder's front face, which the cull-front caster pass never records,
+    // is what blocks those taps. A receiver in contact takes the centre tap
+    // alone (the hardware 2x2 compare) instead of the filtered average, so
+    // the filter never reaches across the contact line. Shadow edges away
+    // from contact are untouched: their occluder is far in front of the
+    // receiver.
+    //
+    // The margins are in texel-depths, so they scale with the cascade like
+    // the rest of the bias. The occluder has to be at least one texel in
+    // front of the receiver's own unbiased depth, which keeps the rule off a
+    // lit face's own silhouette edge (a cube's edge, a cylinder's rim, a thin
+    // slab's far edge), where the texel straddling the edge records the far
+    // side at the receiver's depth give or take its quantisation. Six
+    // texel-depths covers a caster the light grazes at 75 degrees across the
+    // 1.5-texel PCF radius. One-sided receivers under a directional light
+    // only: cull-none casters record both faces and cannot leak this way,
+    // and the perspective matrices of point and spot lights do not map
+    // texels to depth like this.
+    if primary_light_type == 0u && receiver_two_sided == 0u {
+        let centre_coords = vec2<i32>(atlas_uv * shadow_atlas.atlas_size);
+        let centre_depth = textureLoad(shadow_map, centre_coords, 0);
+        let texel_depth = texel_world * length(vp_row2);
+        let in_front = surface_depth - centre_depth;
+        let occludes = centre_depth < biased_depth;
+        if occludes && in_front > 1.0 * texel_depth && in_front < 6.0 * texel_depth {
+            let s = textureSampleCompareLevel(shadow_map, shadow_sampler, atlas_uv, biased_depth);
+            return ShadowSample(s, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
+        }
+    }
+
     // Receiver-plane depth bias: tilt the comparison reference for each filter
     // tap to follow the receiver surface's depth gradient in light space. With
     // a flat reference, taps on the up-slope side of a tilted receiver read as
@@ -210,6 +247,7 @@ fn sample_shadow_csm(
     ) * rp_gate;
 
     let texel_size = 1.0 / shadow_atlas.atlas_size;
+
     let noise = fract(52.9829189 * fract(dot(world_pos.xz, vec2<f32>(0.06711056, 0.00583715))));
     let rot = noise * 6.28318530;
     let sin_r = sin(rot);

@@ -22,9 +22,16 @@ pub struct CapturedHdr {
     pub width: u32,
     /// Capture height in pixels.
     pub height: u32,
-    /// Linear RGBA radiance, `width * height * 4` floats in row-major order. The
-    /// alpha channel is scene coverage: 0.0 on background pixels (matching the
-    /// HDR scene clear), > 0.0 where geometry or the skybox was drawn.
+    /// Linear RGBA radiance, `width * height * 4` floats in row-major order,
+    /// premultiplied by coverage.
+    ///
+    /// The alpha channel is scene coverage: 0.0 on background pixels, > 0.0
+    /// where geometry or the skybox was drawn. A background pixel is zero in
+    /// all four channels, because the HDR scene target is cleared to nothing.
+    /// `ViewportFrame::background_colour` does not reach a capture: it is
+    /// composited by the tone map, which a capture does not run. Bake a
+    /// backdrop into a probe with a skybox, which draws and carries coverage,
+    /// or composite one under the result.
     pub rgba: Vec<f32>,
 }
 
@@ -72,6 +79,8 @@ impl ViewportRenderer {
         camera: RenderCamera,
         size: u32,
     ) -> CapturedHdr {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let size = size.max(1);
         self.render_capture_frame(device, queue, frame, camera, size);
 
@@ -121,9 +130,11 @@ impl ViewportRenderer {
 
         // Mark this an auxiliary render for its duration: it reads the resident
         // scene and must not advance shared per-frame state. `render_mode`
-        // suppresses the upload pump, the frame-counter bump, the HiZ prev-depth
-        // store, and item-type plugins' prepare / cull; `last_stats` is a
-        // multi-site value, so snapshot and restore it so the caller's
+        // suppresses the upload pump, the frame-counter bump and the HiZ
+        // prev-depth store. Item-type plugin prepare / cull still runs: it
+        // prepares against the capture camera so the matching paint draws
+        // right-camera geometry (see `dispatch_plugin_prepare`). `last_stats` is
+        // a multi-site value, so snapshot and restore it so the caller's
         // `last_frame_stats()` keeps reflecting their presented frame.
         let saved_render_mode = self.render_mode;
         let saved_last_stats = self.last_stats;
@@ -260,6 +271,8 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> CapturedHdr {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let face_size = face_size.max(1);
         let eq_h = equirect_height.max(1);
         let eq_w = eq_h * 2;
@@ -363,6 +376,8 @@ impl ViewportRenderer {
         camera: RenderCamera,
         size: u32,
     ) -> CapturedHdrGpu {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let size = size.max(1);
         let texture = new_hdr_target(device, "capture_hdr_gpu", size, size, 1, false);
         self.copy_capture_face(device, queue, frame, camera, size, &texture, 0);
@@ -398,6 +413,8 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> CapturedHdrGpu {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let face_size = face_size.max(1);
         let eq_h = equirect_height.max(1);
         let eq_w = eq_h * 2;
@@ -519,6 +536,8 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> crate::resources::LightProbeSet {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let probes = positions
             .iter()
             .map(|&position| {
@@ -592,6 +611,8 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> crate::resources::LightProbeVolume {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let dims = [dims[0].max(1), dims[1].max(1), dims[2].max(1)];
         let count = (dims[0] * dims[1] * dims[2]) as usize;
         let mut sh = Vec::with_capacity(count);
@@ -647,6 +668,8 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> crate::error::ViewportResult<crate::resources::EnvironmentZone> {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let zones = self.capture_reflection_probes(
             device,
             queue,
@@ -665,7 +688,7 @@ impl ViewportRenderer {
     /// centre. Returns one parallax-enabled
     /// [`EnvironmentZone`](crate::resources::EnvironmentZone) per entry, in order,
     /// ready to hand to [`set_environment_zones`](Self::set_environment_zones).
-    /// Probes are captured under the current scene lighting (the default
+    /// Probes are captured under the current scene lighting (the lighting
     /// environment), not each other, so this is a single-bounce bake.
     pub fn capture_reflection_probes(
         &mut self,
@@ -676,6 +699,8 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> crate::error::ViewportResult<Vec<crate::resources::EnvironmentZone>> {
+        // Hands the result back, so nothing may be skipped while it compiles.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let mut zones = Vec::with_capacity(probes.len());
         for &(bounds, fade_distance) in probes {
             let center = bounds.center().to_array();
@@ -687,9 +712,8 @@ impl ViewportRenderer {
                 &mut self.resources,
                 device,
                 queue,
-                &panorama.rgba,
-                panorama.width,
-                panorama.height,
+                crate::TextureData::hdr(panorama.width, panorama.height, panorama.rgba),
+                crate::resources::EnvironmentOptions::default(),
             )?;
             zones.push(crate::resources::EnvironmentZone {
                 bounds,
@@ -1007,6 +1031,7 @@ fn resolve_faces_to_equirect(
 
 #[cfg(test)]
 mod tests {
+    use crate::Colour;
     use crate::camera::Camera;
     use crate::renderer::types::FrameData;
     use crate::renderer::{
@@ -1086,8 +1111,8 @@ mod tests {
     }
 
     // The reflection-probe bake uploads an environment per probe, which blocks
-    // on a runner drain. That drain must not clear the promotion window and
-    // strand a streaming consumer's in-flight mesh upload.
+    // on a runner drain. That drain must not age the retention window and reap
+    // a streaming consumer's completed mesh upload before they poll it.
     #[test]
     fn reflection_bake_does_not_strand_a_pending_upload() {
         let Some((device, queue)) = headless_device() else {
@@ -1101,28 +1126,47 @@ mod tests {
             .resources_mut()
             .begin_upload_mesh_data(&device, crate::primitives::cube(1.0))
             .unwrap();
-        assert!(matches!(
-            renderer.upload_status(job),
-            UploadStatus::Pending { .. }
-        ));
+
+        // Bring the mesh to `Ready` with the same retaining pump the bake
+        // uses, so the case does not depend on whether the mesh worker
+        // finishes before the bake's environment worker. Waiting on the bake
+        // to promote it raced the two workers and failed on a busy machine.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !matches!(renderer.upload_status(job), UploadStatus::Ready) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the mesh upload did not finish"
+            );
+            renderer
+                .resources_mut()
+                .process_uploads_retaining(&device, &queue);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
 
         let mut fd = empty_frame();
         let bounds = crate::scene::aabb::Aabb {
             min: glam::Vec3::splat(-1.0),
             max: glam::Vec3::splat(1.0),
         };
+        let cycle = |r: &ViewportRenderer| r.resources.jobs.lock().unwrap().retain_cycle();
+        let before = cycle(&renderer);
         let _zone = renderer
             .capture_reflection_probe(&device, &queue, &mut fd, bounds, 1.0, 8, 8)
             .unwrap();
 
-        // The bake's environment upload drained the runner, promoting the mesh,
-        // but retained the promotion window, so the consumer's next poll still
-        // observes `Ready` rather than a reaped `Unknown`. (Do not pump again
-        // here: an ordinary clearing `process_uploads` is exactly what the
-        // consumer's next presented prepare does, after they have observed it.)
+        // A bake pumps far fewer times than the window is long, so the status
+        // test alone would pass with a clearing drain. The clock is the
+        // direct check: the bake must not advance it at all.
+        assert_eq!(
+            cycle(&renderer),
+            before,
+            "the reflection bake aged the upload retention window"
+        );
+        // So the consumer's next poll still observes `Ready` rather than a
+        // reaped `Unknown`.
         assert!(
             matches!(renderer.upload_status(job), UploadStatus::Ready),
-            "reflection bake must promote and retain the pending upload, not strand it"
+            "the reflection bake reaped a completed upload the consumer had not polled"
         );
     }
 
@@ -1210,7 +1254,7 @@ mod tests {
         assert!(renderer.frame_fully_resident(&fd));
 
         // Remove the mesh: both queries flip.
-        assert!(renderer.resources_mut().remove_mesh(mesh));
+        assert!(renderer.resources_mut().free_mesh(mesh));
         assert!(
             !renderer.mesh_resident(mesh),
             "removed mesh is not resident"
@@ -1219,6 +1263,202 @@ mod tests {
             !renderer.frame_fully_resident(&fd),
             "a frame referencing a non-resident mesh is not fully resident"
         );
+    }
+
+    // The GPU cull kernel honours the per-camera layer mask. The shared scene
+    // prepare runs with `cull_mask = !0` (so the CPU collect cull keeps every
+    // instance), then each viewport's GPU cull applies its own `cull_mask`.
+    // A viewport whose mask is disjoint from the instances'
+    // `visibility_mask` must draw none of them; a matching viewport draws all.
+    // Asserted through the cull breakdown (`gpu_visible_instances`), so it reads
+    // the kernel's decision directly rather than inferring it from pixels.
+    #[test]
+    fn gpu_cull_honours_layer_mask_per_viewport() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping gpu_cull_honours_layer_mask_per_viewport: no GPU adapter");
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        if !renderer.is_gpu_culling_supported() {
+            eprintln!("skipping gpu_cull_honours_layer_mask_per_viewport: no GPU-driven cull");
+            return;
+        }
+        let vp = renderer.create_viewport(&device);
+        let mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &crate::primitives::cube(0.5))
+            .unwrap();
+
+        // Eight boxes spread across the view, all in layer 0b01. More than the
+        // instancing threshold, so they batch and the GPU cull runs. Occlusion
+        // stays off (default) so only frustum + the layer mask can reject them.
+        let mut items = Vec::new();
+        for i in 0..8 {
+            let x = (i as f32 - 3.5) * 1.2;
+            let mut item = crate::SceneRenderItem {
+                mesh_id: mesh,
+                ..Default::default()
+            };
+            item.model =
+                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+            item.settings.visibility_mask = 0b01;
+            items.push(item);
+        }
+
+        let cam = Camera {
+            center: glam::Vec3::ZERO,
+            distance: 18.0,
+            ..Camera::default()
+        };
+        let mut frame = FrameData::default();
+        frame.camera.render_camera = {
+            let mut rc = RenderCamera::from_camera(&cam);
+            rc.aspect = 1.0;
+            rc
+        };
+        frame.camera.viewport_size = [64.0, 64.0];
+        frame.camera.viewport_index = vp.0;
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame.effects.display.mode = crate::PipelineMode::Hdr;
+        frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+
+        let offscreen = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("mask_cull_target"),
+            size: crate::gpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Bgra8UnormSrgb,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = offscreen.create_view(&crate::gpu::TextureViewDescriptor::default());
+
+        // Run a few frames so the cull-stats readback lands, then report the
+        // drawn count for a given per-viewport cull_mask. The shared prepare
+        // always uses !0 so the CPU collect cull keeps all eight.
+        let mut drawn_for = |renderer: &mut ViewportRenderer, cull_mask: u32| -> Option<u32> {
+            let mut last = None;
+            for _ in 0..4 {
+                frame.camera.cull_mask = !0;
+                {
+                    let (scene_fx, _) = frame.effects.split();
+                    renderer.prepare_scene(&device, &queue, &frame, &scene_fx);
+                }
+                frame.camera.cull_mask = cull_mask;
+                renderer.prepare_viewport(&device, &queue, vp, &frame);
+                let cmd = renderer.render_viewport(&device, &queue, &view, vp, &frame);
+                queue.submit(std::iter::once(cmd));
+                device
+                    .poll(crate::gpu::PollType::Wait {
+                        submission_index: None,
+                        timeout: Some(std::time::Duration::from_secs(5)),
+                    })
+                    .unwrap();
+                let stats = renderer.last_frame_stats();
+                if stats.gpu_culling_active {
+                    last = stats.gpu_visible_instances;
+                }
+            }
+            last
+        };
+
+        // Matching layer: every instance survives the mask test and is drawn.
+        if let Some(drawn) = drawn_for(&mut renderer, 0b01) {
+            assert_eq!(drawn, 8, "a matching cull_mask must draw all 8 instances");
+        } else {
+            eprintln!("skipping assertions: cull stats never read back");
+            return;
+        }
+
+        // Disjoint layer: the GPU kernel rejects every instance.
+        let drawn = drawn_for(&mut renderer, 0b10)
+            .expect("cull stats read back for the matching case, so they must here too");
+        assert_eq!(
+            drawn, 0,
+            "a disjoint cull_mask must cull all instances in the GPU kernel (drawn={drawn})",
+        );
+    }
+
+    // The per-camera layer cull also reaches the foreground object pass: a
+    // foreground item whose visibility_mask is disjoint from the viewport's
+    // cull_mask is dropped, matching the scene pass. (Foreground items bypass the
+    // shared scene collect, so this is enforced in prepare_foreground_objects.)
+    #[test]
+    fn foreground_objects_honour_the_cull_mask() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping foreground_objects_honour_the_cull_mask: no GPU adapter");
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &crate::primitives::cube(1.0))
+            .unwrap();
+
+        let build_frame = |cull_mask: u32, mode: crate::PipelineMode| {
+            let cam = Camera {
+                center: glam::Vec3::ZERO,
+                distance: 5.0,
+                ..Camera::default()
+            };
+            let mut frame = FrameData::default();
+            frame.camera.render_camera = {
+                let mut rc = RenderCamera::from_camera(&cam);
+                rc.aspect = 1.0;
+                rc
+            };
+            frame.camera.viewport_size = [64.0, 64.0];
+            frame.camera.cull_mask = cull_mask;
+            frame.viewport.show_grid = false;
+            frame.viewport.show_axes_indicator = false;
+            frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
+            frame.effects.display.mode = mode;
+
+            // A bright unlit box, submitted only as a foreground item (not a
+            // scene surface), in layer 0b01.
+            let mut item = crate::SceneRenderItem {
+                mesh_id: mesh,
+                ..Default::default()
+            };
+            item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            item.settings.unlit = true;
+            item.settings.visibility_mask = 0b01;
+            frame.scene.foreground_items = vec![item];
+            frame
+        };
+
+        let coverage = |px: &[u8]| px.chunks_exact(4).filter(|p| p[0] > 20).count();
+
+        // Both render paths draw the foreground pass from their own item list, so
+        // check each.
+        for mode in [crate::PipelineMode::Direct, crate::PipelineMode::Hdr] {
+            // Matching layer: the foreground box draws.
+            let frame = build_frame(0b01, mode);
+            let lit = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+            let lit_cov = coverage(&lit);
+            assert!(
+                lit_cov > 50,
+                "a matching cull_mask must draw the foreground box ({mode:?}, coverage {lit_cov})"
+            );
+
+            // Disjoint layer: the foreground box is culled, leaving the black clear.
+            let frame = build_frame(0b10, mode);
+            let culled = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+            let culled_cov = coverage(&culled);
+            assert_eq!(
+                culled_cov, 0,
+                "a disjoint cull_mask must drop the foreground box ({mode:?}, coverage \
+                 {culled_cov})"
+            );
+        }
     }
 
     // Records how often each dispatched item-type plugin hook was called.
@@ -1231,18 +1471,22 @@ mod tests {
 
     struct MockPlugin {
         calls: std::sync::Arc<PluginCalls>,
+        draws_ldr: bool,
     }
 
     impl crate::plugin_api::ItemTypePlugin for MockPlugin {
         fn type_name(&self) -> &'static str {
             "mock"
         }
+        fn draws_ldr(&self) -> bool {
+            self.draws_ldr
+        }
         fn prepare(
             &mut self,
             _device: &crate::gpu::Device,
             _queue: &crate::gpu::Queue,
             _ctx: &crate::plugin_api::ItemFrameContext<'_>,
-            _items: &dyn crate::plugin_api::PluginItemCollection,
+            _items: &crate::plugin_api::ItemCollections<'_>,
         ) -> Vec<crate::gpu::CommandBuffer> {
             self.calls
                 .prepare
@@ -1253,17 +1497,17 @@ mod tests {
             &mut self,
             _frustum: &crate::camera::frustum::Frustum,
             _ctx: &crate::plugin_api::ItemFrameContext<'_>,
-            _items: &dyn crate::plugin_api::PluginItemCollection,
+            _items: &crate::plugin_api::ItemCollections<'_>,
         ) {
             self.calls
                 .cull
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
-        fn paint<'a>(
-            &'a self,
-            _pass: &mut crate::gpu::RenderPass<'a>,
-            _ctx: &crate::plugin_api::PaintContext<'a>,
-            _items: &'a dyn crate::plugin_api::PluginItemCollection,
+        fn paint(
+            &self,
+            _pass: &mut crate::gpu::RenderPass<'_>,
+            _ctx: &crate::plugin_api::PaintContext<'_>,
+            _items: &crate::plugin_api::ItemCollections<'_>,
         ) {
             self.calls
                 .paint
@@ -1285,17 +1529,22 @@ mod tests {
         fn as_any(&self) -> &dyn std::any::Any {
             self
         }
+
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
     }
 
-    // A derivative render (bake) must not dispatch any item-type plugin hook:
-    // not the `&mut self` prepare / cull (which advance plugin state), nor the
-    // draw passes (which would render stale, wrong-camera geometry, since cull
-    // was skipped). A presented render dispatches all three.
+    // A derivative render (bake) dispatches the same plugin hooks as a
+    // presented render: each capture face runs its own prepare and cull
+    // against the capture camera, so the matching paint draws current,
+    // right-camera geometry and plugin items appear in probes and captures
+    // the same way built-in item types do.
     #[test]
-    fn bake_does_not_dispatch_item_type_plugins() {
+    fn bake_dispatches_item_type_plugins() {
         use std::sync::atomic::Ordering::Relaxed;
         let Some((device, queue)) = headless_device() else {
-            eprintln!("skipping bake_does_not_dispatch_item_type_plugins: no GPU adapter");
+            eprintln!("skipping bake_dispatches_item_type_plugins: no GPU adapter");
             return;
         };
         let mut renderer =
@@ -1305,6 +1554,7 @@ mod tests {
             &device,
             Box::new(MockPlugin {
                 calls: calls.clone(),
+                draws_ldr: false,
             }),
         );
 
@@ -1357,22 +1607,82 @@ mod tests {
             calls.paint.load(Relaxed),
         );
 
-        // The bake is a derivative render: no plugin hook should fire.
+        // The bake renders capture faces; each one dispatches the full hook set.
         let _ = renderer.bake_light_probes(&device, &queue, &mut fd, &[[0.0, 0.0, 0.0]], 8, 8);
-        assert_eq!(
-            calls.prepare.load(Relaxed),
-            p,
-            "bake must not call plugin prepare"
+        assert!(calls.prepare.load(Relaxed) > p, "bake calls plugin prepare");
+        assert!(calls.cull.load(Relaxed) > c, "bake calls plugin cull");
+        assert!(calls.paint.load(Relaxed) > pt, "bake calls plugin paint");
+    }
+
+    // The LDR pipeline (PipelineMode::Direct) dispatches plugin paint only
+    // for plugins that opt in via draws_ldr; prepare and cull run for every
+    // plugin on both paths.
+    #[test]
+    fn ldr_render_paints_only_opted_in_plugins() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping ldr_render_paints_only_opted_in_plugins: no GPU adapter");
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let calls = std::sync::Arc::new(PluginCalls::default());
+        renderer.with_item_type_plugin(
+            &device,
+            Box::new(MockPlugin {
+                calls: calls.clone(),
+                draws_ldr: false,
+            }),
         );
-        assert_eq!(
-            calls.cull.load(Relaxed),
-            c,
-            "bake must not call plugin cull"
+
+        let mut fd = empty_frame();
+        fd.effects.display.mode = crate::renderer::types::PipelineMode::Direct;
+        fd.scene.submit_plugin_items(
+            "mock",
+            MockItems {
+                settings: crate::scene::material::ItemSettings::default(),
+            },
         );
+
+        let target = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("ldr_plugin_target"),
+            size: crate::gpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Bgra8UnormSrgb,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = target.create_view(&crate::gpu::TextureViewDescriptor::default());
+        let cmd = renderer.render(&device, &queue, &view, &fd);
+        queue.submit(std::iter::once(cmd));
+
+        assert!(calls.prepare.load(Relaxed) >= 1, "LDR render runs prepare");
+        assert!(calls.cull.load(Relaxed) >= 1, "LDR render runs cull");
         assert_eq!(
             calls.paint.load(Relaxed),
-            pt,
-            "bake must not call plugin paint"
+            0,
+            "a plugin without draws_ldr is not painted on the LDR path"
+        );
+
+        // Re-register as an opted-in plugin: paint now runs.
+        renderer.with_item_type_plugin(
+            &device,
+            Box::new(MockPlugin {
+                calls: calls.clone(),
+                draws_ldr: true,
+            }),
+        );
+        let cmd = renderer.render(&device, &queue, &view, &fd);
+        queue.submit(std::iter::once(cmd));
+        assert!(
+            calls.paint.load(Relaxed) >= 1,
+            "an opted-in plugin is painted on the LDR path"
         );
     }
 }

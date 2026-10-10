@@ -1,4 +1,5 @@
 use super::*;
+use crate::Colour;
 use crate::interaction::manipulation::gizmo::{GizmoAxis, GizmoMode};
 use crate::interaction::query::snap::ConstraintOverlay;
 use crate::renderer::SubSelectionRef;
@@ -136,6 +137,16 @@ pub struct CameraFrame {
     pub pixels_per_point: f32,
     /// Multi-viewport slot index. Default: 0 (single-viewport mode).
     pub viewport_index: usize,
+    /// Layers this camera draws, as a 32-bit mask. Default `!0` (draw every
+    /// layer). An item is culled on this camera when its
+    /// `ItemSettings::visibility_mask` shares no bit with this mask
+    /// (`visibility_mask & cull_mask == 0`). This is a CPU-side cull applied at
+    /// scene collect, so it costs nothing at the default and needs no GPU
+    /// carrier; it is the per-viewport layer filter for quad-view and editor
+    /// layouts. Note the GPU-driven instanced cull path does not yet honour the
+    /// mask, so an instanced batch culled only by layer still runs its GPU cull
+    /// (it is skipped CPU-side before reaching that path).
+    pub cull_mask: u32,
 }
 
 impl Default for CameraFrame {
@@ -145,6 +156,7 @@ impl Default for CameraFrame {
             viewport_size: [800.0, 600.0],
             pixels_per_point: 1.0,
             viewport_index: 0,
+            cull_mask: !0,
         }
     }
 }
@@ -157,7 +169,16 @@ impl CameraFrame {
             viewport_size,
             pixels_per_point: 1.0,
             viewport_index: 0,
+            cull_mask: !0,
         }
+    }
+
+    /// Restrict this camera to the layers whose bits are set in `mask`. Items
+    /// whose `ItemSettings::visibility_mask` shares no bit with `mask` are
+    /// culled CPU-side for this camera. Default is `!0` (every layer).
+    pub fn with_cull_mask(mut self, mask: u32) -> Self {
+        self.cull_mask = mask;
+        self
     }
 
     /// Build a camera frame from an app-side camera and viewport size.
@@ -212,43 +233,6 @@ impl Default for SurfaceSubmission {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Surface LIC
-// ---------------------------------------------------------------------------
-
-/// Configuration for Surface Line Integral Convolution.
-///
-/// Controls the advection quality and visual strength of the LIC effect.
-/// All fields have sensible defaults via [`SurfaceLICConfig::default`].
-///
-/// The noise texture is viewport-sized (one independent random value per screen pixel).
-/// Advection kernel length is `steps * step_size` pixels in each direction. Longer kernels
-/// produce clearer, smoother streaks; shorter kernels give more contrast at lower GPU cost.
-#[non_exhaustive]
-#[derive(Debug, Clone)]
-pub struct SurfaceLICConfig {
-    /// Number of advection steps taken in each direction (forward and backward) from each pixel.
-    /// More steps produce longer, clearer streaks at the cost of GPU time. Default: 20.
-    pub steps: u32,
-    /// Distance advanced per step, in screen pixels. Together with `steps`, controls total
-    /// streak length: `steps * step_size` pixels each way. Default: 1.5.
-    pub step_size: f32,
-    /// How strongly the LIC intensity modulates the surface colour. At 0 there is no effect;
-    /// at 1.0 the surface colour is scaled by up to 2x brighter or darkened to black depending
-    /// on the local LIC value. Values above 1.0 increase contrast further. Default: 1.0.
-    pub strength: f32,
-}
-
-impl Default for SurfaceLICConfig {
-    fn default() -> Self {
-        Self {
-            steps: 20,
-            step_size: 1.5,
-            strength: 1.0,
-        }
-    }
-}
-
 /// World-space scene content for one frame.
 ///
 /// Groups all renderable world-space content submitted to the renderer.
@@ -263,40 +247,6 @@ pub struct SceneFrame {
     pub generation: u64,
     /// Surface geometry submission (opaque and transparent meshes).
     pub surfaces: SurfaceSubmission,
-    /// Point cloud items to render this frame.
-    pub point_clouds: Vec<PointCloudItem>,
-    /// References to pre-uploaded point clouds.
-    pub point_cloud_refs: Vec<PointCloudRefItem>,
-    /// Instanced glyph items to render this frame.
-    pub glyphs: Vec<GlyphItem>,
-    /// References to pre-uploaded glyph sets.
-    pub glyph_set_refs: Vec<GlyphSetRefItem>,
-    /// Polyline (streamline) items to render this frame.
-    pub polylines: Vec<PolylineItem>,
-    /// References to pre-uploaded polylines (one entry per draw). Each
-    /// `PolylineRefItem` carries a handle into the renderer's polyline store
-    /// plus a per-frame model matrix and item settings.
-    pub polyline_refs: Vec<PolylineRefItem>,
-    /// Volume items to render this frame via GPU ray-marching.
-    pub volumes: Vec<VolumeItem>,
-    /// Isoline (contour line) items to render on mesh surfaces.
-    pub isolines: Vec<crate::geometry::isoline::IsolineItem>,
-    /// Streamtube items to render this frame.
-    pub streamtube_items: Vec<StreamtubeItem>,
-    /// References to pre-uploaded streamtubes.
-    pub streamtube_refs: Vec<StreamtubeRefItem>,
-    /// Screen-space image overlay items to render this frame.
-    pub screen_images: Vec<ScreenImageItem>,
-    /// GPU implicit surface items to render this frame.
-    pub gpu_implicit: Vec<crate::resources::GpuImplicitItem>,
-    /// GPU marching cubes items to dispatch this frame.
-    pub gpu_mc_items: Vec<crate::resources::GpuMarchingCubesItem>,
-    /// GPU compute filter items dispatched before the render pass.
-    ///
-    /// Each item references a pre-uploaded mesh and a compute kernel that
-    /// rewrites its index buffer (culling, LOD selection). Empty by default;
-    /// an empty list adds no dispatch and no allocations.
-    pub compute_filter_items: Vec<ComputeFilterItem>,
     /// Unstructured volume meshes submitted this frame.
     ///
     /// Each [`VolumeMeshItem`] renders either as a boundary surface (default,
@@ -307,41 +257,8 @@ pub struct SceneFrame {
     /// Cell-level picking, selection outlines, and wireframe overlays are
     /// driven from this collection regardless of mode.
     pub volume_meshes: Vec<VolumeMeshItem>,
-    /// General tube items to render this frame.
-    pub tube_items: Vec<TubeItem>,
-    /// References to pre-uploaded tubes.
-    pub tube_refs: Vec<TubeRefItem>,
-    /// 2D image slice items to render this frame.
-    pub image_slices: Vec<ImageSliceItem>,
-    /// Tensor glyph items to render this frame.
-    pub tensor_glyphs: Vec<TensorGlyphItem>,
-    /// References to pre-uploaded tensor glyph sets.
-    pub tensor_glyph_set_refs: Vec<TensorGlyphSetRefItem>,
-    /// Ribbon items to render this frame.
-    pub ribbon_items: Vec<RibbonItem>,
-    /// References to pre-uploaded ribbons.
-    pub ribbon_refs: Vec<RibbonRefItem>,
-    /// Volume surface slice items to render this frame.
-    pub volume_surface_slices: Vec<VolumeSurfaceSliceItem>,
-    /// Billboard sprite items to render this frame.
-    pub sprite_items: Vec<SpriteItem>,
-    /// References to pre-uploaded sprite sets (static billboards).
-    pub sprite_set_refs: Vec<SpriteSetRefItem>,
-    /// References to pre-uploaded sprite instance sets (entity sprites).
-    pub sprite_instance_set_refs: Vec<SpriteInstanceSetRefItem>,
     /// Mesh-instance batches to render this frame (mesh-based particles).
     pub mesh_instances: Vec<MeshInstanceItem>,
-    /// GPU particle systems to advance and draw this frame.
-    pub gpu_particle_systems: Vec<GpuParticleSystemItem>,
-    /// External instance sets to draw this frame (mesh per element of a
-    /// caller-supplied GPU positions buffer).
-    pub external_instances: Vec<ExternalInstancesItem>,
-    /// Gaussian splat items to render this frame.
-    pub gaussian_splats: Vec<GaussianSplatItem>,
-    /// Screen-space decal items to render this frame.
-    pub decals: Vec<DecalItem>,
-    /// Participating-media volumes (fog, smoke, clouds) to render this frame.
-    pub scatter_volumes: Vec<ScatterVolumeItem>,
     /// Scene-graph light sources to union with `EffectsFrame::lighting.lights`.
     ///
     /// Populate via [`crate::scene::scene::Scene::collect_lights`]. The renderer
@@ -366,8 +283,10 @@ pub struct SceneFrame {
     /// renderer iterates this map during `prepare` / `paint` and dispatches
     /// to the matching registered plugin. Entries whose `type_name` is not
     /// registered on the renderer are silently ignored.
-    pub plugin_items:
-        std::collections::HashMap<&'static str, Box<dyn crate::plugin_api::PluginItemCollection>>,
+    pub plugin_items: std::collections::HashMap<
+        &'static str,
+        Vec<Box<dyn crate::plugin_api::PluginItemCollection>>,
+    >,
 }
 
 impl Default for SceneFrame {
@@ -375,38 +294,8 @@ impl Default for SceneFrame {
         Self {
             generation: 0,
             surfaces: SurfaceSubmission::default(),
-            point_clouds: Vec::new(),
-            point_cloud_refs: Vec::new(),
-            glyphs: Vec::new(),
-            glyph_set_refs: Vec::new(),
-            polylines: Vec::new(),
-            polyline_refs: Vec::new(),
-            volumes: Vec::new(),
-            isolines: Vec::new(),
-            streamtube_items: Vec::new(),
-            streamtube_refs: Vec::new(),
-            screen_images: Vec::new(),
-            gpu_implicit: Vec::new(),
-            gpu_mc_items: Vec::new(),
-            compute_filter_items: Vec::new(),
             volume_meshes: Vec::new(),
-            tube_items: Vec::new(),
-            tube_refs: Vec::new(),
-            image_slices: Vec::new(),
-            tensor_glyphs: Vec::new(),
-            tensor_glyph_set_refs: Vec::new(),
-            ribbon_items: Vec::new(),
-            ribbon_refs: Vec::new(),
-            volume_surface_slices: Vec::new(),
-            sprite_items: Vec::new(),
-            sprite_set_refs: Vec::new(),
-            sprite_instance_set_refs: Vec::new(),
             mesh_instances: Vec::new(),
-            gpu_particle_systems: Vec::new(),
-            external_instances: Vec::new(),
-            gaussian_splats: Vec::new(),
-            decals: Vec::new(),
-            scatter_volumes: Vec::new(),
             lights: Vec::new(),
             foreground_items: Vec::new(),
             plugin_items: std::collections::HashMap::new(),
@@ -476,7 +365,55 @@ impl SceneFrame {
         type_name: &'static str,
         items: C,
     ) {
-        self.plugin_items.insert(type_name, Box::new(items));
+        self.plugin_items
+            .entry(type_name)
+            .or_default()
+            .push(Box::new(items));
+    }
+
+    /// The submitted items of type `T`, creating an empty collection if this
+    /// frame has none yet.
+    ///
+    /// This is the typed submission path: `frame.scene.items_mut::<crate::PointCloudItem>().push(item)`
+    /// reaches the same collection the plugin reads back with
+    /// [`ItemFrameContext::items_of`](crate::plugin_api::ItemFrameContext::items_of).
+    /// An item type with several forms keeps one collection per form, all
+    /// under [`PluginItem::TYPE_NAME`](crate::plugin_api::PluginItem::TYPE_NAME).
+    pub fn items_mut<T: crate::plugin_api::PluginItem>(&mut self) -> &mut Vec<T> {
+        let slot = self.plugin_items.entry(T::TYPE_NAME).or_default();
+        if let Some(index) = slot
+            .iter()
+            .position(|c| c.as_any().downcast_ref::<Vec<T>>().is_some())
+        {
+            return slot[index]
+                .as_any_mut()
+                .downcast_mut::<Vec<T>>()
+                .expect("position() just matched this collection's concrete type");
+        }
+        slot.push(Box::new(Vec::<T>::new()));
+        slot.last_mut()
+            .expect("just pushed")
+            .as_any_mut()
+            .downcast_mut::<Vec<T>>()
+            .expect("just pushed a Vec<T>")
+    }
+
+    /// The submitted items of type `T`, or an empty slice if this frame
+    /// carries none. Read-only counterpart to [`items_mut`](Self::items_mut).
+    pub fn items_of<T: crate::plugin_api::PluginItem>(&self) -> &[T] {
+        self.plugin_items
+            .get(T::TYPE_NAME)
+            .and_then(|slot| {
+                slot.iter()
+                    .find_map(|c| c.as_any().downcast_ref::<Vec<T>>())
+            })
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Replace the submitted items of type `T` with `items`.
+    pub fn submit<T: crate::plugin_api::PluginItem>(&mut self, items: Vec<T>) {
+        *self.items_mut::<T>() = items;
     }
 
     /// Build a scene frame from an already-allocated shared slice.
@@ -512,15 +449,19 @@ impl SceneFrame {
     ) -> Self {
         let items = scene.collect_render_items(selection);
         let lights = scene.collect_lights();
-        let (light_glyphs, light_polylines) = crate::scene::build_light_glyphs(scene, selection);
-        Self {
+        // The influence-volume outlines for a selected light need no mesh, so
+        // they come through here. The indicator bodies do need one, so they
+        // are opt-in: see `scene::build_light_indicators` and
+        // `LightIndicators::to_mesh_instances`.
+        let indicators = crate::scene::build_light_indicators(scene, selection);
+        let mut frame = Self {
             generation: scene.version(),
             surfaces: SurfaceSubmission::Flat(items.into()),
             lights,
-            glyphs: light_glyphs,
-            polylines: light_polylines,
             ..Self::default()
-        }
+        };
+        *frame.items_mut::<crate::PolylineItem>() = indicators.outlines;
+        frame
     }
 }
 
@@ -530,7 +471,25 @@ impl SceneFrame {
 /// independent of world-space content.
 #[non_exhaustive]
 pub struct ViewportFrame {
-    /// Optional background/clear colour [r, g, b, a]. None = adapter default.
+    /// The background the scene is composited over. `None` = renderer default.
+    ///
+    /// Treated as premultiplied: the output is `scene over background`, so the
+    /// alpha decides what the background *is* rather than only tinting it.
+    ///
+    /// - Alpha 1 (including [`Colour::BLACK`](crate::Colour::BLACK) and any
+    ///   `Colour::srgb_rgb` value) is an opaque background, which is what a
+    ///   viewport drawn into a window wants.
+    /// - [`Colour::TRANSPARENT`](crate::Colour::TRANSPARENT) is no background at
+    ///   all. The render carries only what was drawn, with alpha as coverage, so
+    ///   it can be composited over something this renderer knows nothing about:
+    ///   a UI plate, a document, another render.
+    /// - In between is a translucent plate the scene sits on.
+    ///
+    /// The output is **premultiplied**, on both the HDR and `Direct` paths, so
+    /// composite it with `One` / `OneMinusSrcAlpha` rather than
+    /// `SrcAlpha` / `OneMinusSrcAlpha`. Bloom and other glow deliberately carry
+    /// no coverage of their own, which under that blend reads as the additive
+    /// glow it is instead of occluding whatever is behind the viewport.
     pub background_colour: Option<crate::Colour>,
     /// Whether to render the scene in wireframe mode. Default: false.
     pub wireframe_mode: bool,
@@ -546,6 +505,10 @@ pub struct ViewportFrame {
     pub grid_colour: Option<crate::Colour>,
     /// Whether to draw the axes orientation indicator overlay. Default: true.
     pub show_axes_indicator: bool,
+    /// What this viewport draws behind the scene. Default: the lighting
+    /// environment, or `background_colour` when there is none. Drawn only on
+    /// the HDR pipeline.
+    pub environment_background: EnvironmentBackground,
 }
 
 impl Default for ViewportFrame {
@@ -559,6 +522,7 @@ impl Default for ViewportFrame {
             grid_z: 0.0,
             grid_colour: None,
             show_axes_indicator: true,
+            environment_background: EnvironmentBackground::default(),
         }
     }
 }
@@ -626,13 +590,13 @@ impl Default for InteractionFrame {
             gizmo_space_orientation: glam::Quat::IDENTITY,
             constraint_overlays: Vec::new(),
             outline_selected: false,
-            outline_colour: [1.0, 1.0, 1.0, 1.0].into(),
+            outline_colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
             outline_width_px: 2.0,
             xray_selected: false,
-            xray_colour: [0.3, 0.7, 1.0, 0.25].into(),
+            xray_colour: Colour::linear(0.3, 0.7, 1.0, 0.25),
             sub_selection: None,
-            sub_highlight_face_fill_colour: [1.0, 0.85, 0.0, 0.25].into(),
-            sub_highlight_edge_colour: [1.0, 0.85, 0.0, 1.0].into(),
+            sub_highlight_face_fill_colour: Colour::linear(1.0, 0.85, 0.0, 0.25),
+            sub_highlight_edge_colour: Colour::linear(1.0, 0.85, 0.0, 1.0),
             sub_highlight_edge_width_px: 2.0,
             sub_highlight_vertex_size_px: 10.0,
         }
@@ -657,43 +621,11 @@ impl InteractionFrame {
 // viewport-lib-types; re-exported so `crate::renderer::types::*` paths hold.
 pub use viewport_lib_types::effects::ground::{GroundPlane, GroundPlaneMode};
 
-/// When set on `EffectsFrame::environment`, the renderer uses the environment
-/// map for PBR ambient lighting (irradiance + specular) and optionally renders
-/// it as the scene background (skybox).
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct EnvironmentSettings {
-    /// Absolute luminance scale in **nits** applied to the sampled environment -
-    /// both the IBL contribution (diffuse irradiance + specular reflections) and
-    /// the skybox background, so the lit surfaces and the visible sky stay
-    /// physically consistent. Default: `1.0`.
-    ///
-    /// The stored environment map carries relative radiance; this scales it to
-    /// the physical brightness the sky should read at, on the same nits scale as
-    /// emissive surfaces (see [`Material::emissive_strength`](crate::Material)).
-    /// A clear daytime sky is on the order of thousands of nits, so under
-    /// photometric exposure a value near `1.0` leaves the environment nearly
-    /// black; raise it to the sky's real luminance. The metering of an HDRI's
-    /// own peaks is unchanged - this is a single physical multiplier, not a
-    /// tonemap.
-    pub intensity: f32,
-    /// Y-axis rotation in radians. Default: 0.0.
-    pub rotation: f32,
-    /// Whether to render the environment as a visible skybox background.
-    /// When false, IBL still contributes lighting but the background uses
-    /// `ViewportFrame::background_colour`. Default: true.
-    pub show_skybox: bool,
-}
-
-impl Default for EnvironmentSettings {
-    fn default() -> Self {
-        Self {
-            intensity: 1.0,
-            rotation: 0.0,
-            show_skybox: true,
-        }
-    }
-}
+// Environment settings live in viewport-lib-types; re-exported so
+// `crate::renderer::types::*` paths hold.
+pub use viewport_lib_types::effects::environment::{
+    BackgroundSource, EnvironmentBackground, EnvironmentIntensity, EnvironmentLighting,
+};
 
 // Scatter-volume pass config (`ScatterQuality`, `ScatterSettings`) lives in
 // viewport-lib-types; re-exported so `crate::renderer::types::*` paths hold.
@@ -765,8 +697,9 @@ pub struct EffectsFrame {
     /// The pass itself is driven by `SceneFrame::foreground_items`; this only
     /// carries pass-wide settings.
     pub foreground: Option<ForegroundPass>,
-    /// Optional environment settings for IBL and skybox. Default: None.
-    pub environment: Option<EnvironmentSettings>,
+    /// The environment that lights the scene. Default: None. What each viewport
+    /// draws behind the scene is `ViewportFrame::environment_background`.
+    pub environment: Option<EnvironmentLighting>,
     /// Ground plane configuration. Default: mode = None (not drawn, zero overhead).
     pub ground_plane: GroundPlane,
     /// Debug overlays (shadow-atlas viewer). Default: off.
@@ -819,8 +752,7 @@ pub use viewport_lib_types::effects::debug::EffectsDebug;
 ///
 /// Groups the lighting, environment, and scatter configuration that applies
 /// to the whole scene (not per-viewport). Construct directly or obtain via
-/// [`EffectsFrame::split`]. Compute filter items travel with the scene content
-/// on [`SceneFrame::compute_filter_items`].
+/// [`EffectsFrame::split`].
 ///
 /// # Multi-viewport usage
 /// Call [`ViewportRenderer::prepare_scene`] once per frame with this struct.
@@ -829,8 +761,8 @@ pub use viewport_lib_types::effects::debug::EffectsDebug;
 pub struct SceneEffects<'a> {
     /// Per-frame lighting configuration (drives the shadow pass and light uniform).
     pub lighting: &'a LightingSettings,
-    /// Optional environment settings for IBL and skybox.
-    pub environment: &'a Option<EnvironmentSettings>,
+    /// The environment that lights the scene.
+    pub environment: &'a Option<EnvironmentLighting>,
     /// Participating-media quality settings (scene-global).
     pub scatter: &'a ScatterSettings,
 }
@@ -882,6 +814,9 @@ pub enum LightingPosture {
     /// Physically-scaled daylight: real photometric magnitudes
     /// ([`LightingSettings::daylight`]) mapped down by an adaptive camera
     /// ([`ExposureSettings::automatic`]) so the sun does not clip to white.
+    /// The environment intensity is a lux target matched to the daylight fill,
+    /// so an HDRI sky lights the scene beside the sun whatever its stored
+    /// brightness.
     PhysicalDaylight,
 }
 
@@ -900,8 +835,11 @@ impl EffectsFrame {
     /// let effects = EffectsFrame::default().with_posture(LightingPosture::PhysicalDaylight);
     /// ```
     ///
-    /// Leaves other display fields (pipeline mode, tone-map operator) and the
-    /// per-material [`ShadingModel`](crate::ShadingModel) untouched.
+    /// The environment intensity is part of [`LightingSettings`], so it follows
+    /// the posture too: a multiplier of 1.0 for `Faithful`, a lux target for
+    /// `PhysicalDaylight`. Set the environment itself afterwards; it is not
+    /// touched. Leaves other display fields (pipeline mode, tone-map operator)
+    /// and the per-material [`ShadingModel`](crate::ShadingModel) untouched.
     pub fn with_posture(mut self, posture: LightingPosture) -> Self {
         match posture {
             LightingPosture::Faithful => {

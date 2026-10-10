@@ -3,7 +3,7 @@
 //! Part of the headless integration suite (split from the former single
 //! headless.rs). Shared device and mesh helpers live in tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -37,7 +37,7 @@ fn tonemap_frame(size: u32, background: [f32; 4]) -> FrameData {
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some(background.into());
+    frame.viewport.background_colour = Some(Colour::from_linear_array(background));
     frame
 }
 
@@ -69,7 +69,7 @@ fn transparent_over_empty_background_not_darker() {
     item.mesh_id = mesh;
     // Cover the centre but leave the corners as background.
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
-    item.material = Material::from_colour([0.6, 0.6, 0.6]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6));
     item.settings.unlit = true;
     item.settings.opacity = 0.3;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -125,8 +125,8 @@ fn bloom_glows_into_empty_background() {
         // Small, so there is surrounding background for the halo to fall on.
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.6)).to_cols_array_2d();
         // Emissive well above the bloom threshold; opaque (sharp alpha edge).
-        item.material = Material::from_colour([0.02, 0.02, 0.02]);
-        item.material.emissive = [6.0, 6.0, 6.0].into();
+        item.material = Material::from_colour(Colour::linear_rgb(0.02, 0.02, 0.02));
+        item.material.emissive = Colour::linear_rgb(6.0, 6.0, 6.0);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
         frame.effects.post_process.bloom.enabled = bloom;
@@ -193,7 +193,7 @@ fn coloured_item(mesh_id: MeshId, colour: [f32; 3], model: glam::Mat4) -> SceneR
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.material = Material::default();
-    item.material.base_colour = colour.into();
+    item.material.base_colour = Colour::from_linear_rgb_array(colour);
     item.model = model.to_cols_array_2d();
     item
 }
@@ -466,6 +466,10 @@ fn plugin_paint_foreground_draws_into_pass() {
         fn as_any(&self) -> &dyn std::any::Any {
             self
         }
+
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
     }
 
     struct FgPlugin {
@@ -478,11 +482,11 @@ fn plugin_paint_foreground_draws_into_pass() {
         fn draws_foreground(&self) -> bool {
             true
         }
-        fn paint_foreground<'a>(
-            &'a self,
-            pass: &mut wgpu::RenderPass<'a>,
-            _ctx: &viewport_lib::plugin_api::PaintContext<'a>,
-            _items: &'a dyn PluginItemCollection,
+        fn paint_foreground(
+            &self,
+            pass: &mut wgpu::RenderPass<'_>,
+            _ctx: &viewport_lib::plugin_api::PaintContext<'_>,
+            _items: &viewport_lib::plugin_api::ItemCollections<'_>,
         ) {
             pass.set_pipeline(&self.pipeline);
             pass.draw(0..3, 0..1);
@@ -599,10 +603,13 @@ fn lit_clamp_hdr_passes_above_one_ldr_saturates() {
         renderer.render_offscreen(&device, &queue, &frame, 64, 64)
     };
 
-    // Both intensities are far past the old saturation point for every lit
-    // pixel, so under a [0, 1] clamp they render identically.
-    let hdr_lo = render_at(50.0, true, &mut renderer);
-    let hdr_hi = render_at(500.0, true, &mut renderer);
+    // Both intensities are past the old saturation point for every lit pixel, so
+    // under a [0, 1] clamp they would render identically. Keep them inside the
+    // tone curve's responsive range: far enough up (50 and beyond) every value
+    // quantises to 255 in the 8-bit target and the comparison stops measuring
+    // the clamp.
+    let hdr_lo = render_at(2.0, true, &mut renderer);
+    let hdr_hi = render_at(20.0, true, &mut renderer);
     assert_ne!(
         hdr_lo, hdr_hi,
         "HDR path: lit output must respond to intensity above 1.0 (clamp should not saturate before tone mapping)"
@@ -662,8 +669,8 @@ fn bloom_firefly_cap_bounds_blob_size() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    let mut mat = Material::from_colour([1.0, 1.0, 1.0]);
-    mat.emissive = [400.0, 400.0, 400.0].into();
+    let mut mat = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
+    mat.emissive = Colour::linear_rgb(400.0, 400.0, 400.0);
     item.material = mat;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
@@ -687,5 +694,535 @@ fn bloom_firefly_cap_bounds_blob_size() {
     assert!(
         c < 64 * 64 / 10,
         "capped bloom blob should stay small; got {c} bright pixels"
+    );
+}
+
+/// Vignette: enabling it must darken the corners while leaving the image
+/// centre unchanged, and the default (disabled) state must not move a pixel.
+#[test]
+fn vignette_darkens_corners_only() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let size = 64u32;
+    let bg = [0.5, 0.5, 0.5, 1.0];
+    let mut render = |vignette: bool| -> Vec<u8> {
+        let mut frame = tonemap_frame(size, bg);
+        if vignette {
+            frame.effects.post_process.vignette.enabled = true;
+            frame.effects.post_process.vignette.amount = 0.8;
+            frame.effects.post_process.vignette.radius = 0.2;
+            frame.effects.post_process.vignette.softness = 0.3;
+        }
+        renderer.render_offscreen(&device, &queue, &frame, size, size)
+    };
+
+    let off = render(false);
+    let on = render(true);
+    let luma = |px: &[u8], x: u32, y: u32| {
+        let i = ((y * size + x) * 4) as usize;
+        px[i] as i32 + px[i + 1] as i32 + px[i + 2] as i32
+    };
+
+    let centre_off = luma(&off, size / 2, size / 2);
+    let centre_on = luma(&on, size / 2, size / 2);
+    let corner_off = luma(&off, 1, 1);
+    let corner_on = luma(&on, 1, 1);
+
+    // Centre sits inside the vignette radius: unchanged.
+    assert!(
+        (centre_off - centre_on).abs() <= 3,
+        "vignette changed the centre: {centre_off} -> {centre_on}"
+    );
+    // Corner is at full falloff: clearly darker.
+    assert!(
+        corner_on < corner_off - 100,
+        "vignette did not darken the corner: {corner_off} -> {corner_on}"
+    );
+}
+
+/// Colour-grading LUT: a strip LUT that zeroes the red channel must remove
+/// red from the output while leaving green essentially unchanged, and an
+/// unset `grade_lut` must not change the image.
+#[test]
+fn grade_lut_remaps_colour() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // 16-slice strip LUT (64x... width n*n = 256, height 16): identity in
+    // green and blue, red forced to zero. Uploaded through the linear
+    // (non-sRGB) path so the values pass through unmodified.
+    let n = 16u32;
+    let mut lut = Vec::with_capacity((n * n * n * 4) as usize);
+    for g in 0..n {
+        for b in 0..n {
+            for r in 0..n {
+                let _ = r;
+                let unit = |v: u32| ((v as f32 / (n - 1) as f32) * 255.0).round() as u8;
+                lut.extend_from_slice(&[0, unit(g), unit(b), 255]);
+            }
+        }
+    }
+    let lut_id = renderer
+        .resources_mut()
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::normal_map(n * n, n, lut.to_vec()),
+        )
+        .unwrap();
+
+    let size = 32u32;
+    let bg = [0.5, 0.25, 0.25, 1.0];
+    let mut render = |grade: bool| -> Vec<u8> {
+        let mut frame = tonemap_frame(size, bg);
+        if grade {
+            frame.effects.post_process.grade_lut = Some(lut_id);
+        }
+        renderer.render_offscreen(&device, &queue, &frame, size, size)
+    };
+
+    let off = render(false);
+    let on = render(true);
+    let at = |px: &[u8], c: usize| px[(((size / 2) * size + size / 2) * 4) as usize + c] as i32;
+
+    // Red is zeroed by the LUT; green survives roughly unchanged.
+    assert!(
+        at(&off, 0) > 100,
+        "background red unexpectedly dim with grading off: {}",
+        at(&off, 0)
+    );
+    assert!(
+        at(&on, 0) < 20,
+        "grade LUT did not zero red: {} -> {}",
+        at(&off, 0),
+        at(&on, 0)
+    );
+    assert!(
+        (at(&off, 1) - at(&on, 1)).abs() <= 12,
+        "grade LUT shifted green too far: {} -> {}",
+        at(&off, 1),
+        at(&on, 1)
+    );
+}
+
+/// External post-effect producer lifecycle: deferred `init_gpu`, the
+/// per-viewport resize signal, per-frame `prepare` + `encode` while enabled,
+/// the self-gate, and removal.
+#[test]
+fn post_effect_producer_lifecycle() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    struct Probe {
+        log: Arc<Mutex<Vec<String>>>,
+        enabled: Arc<AtomicBool>,
+    }
+
+    impl viewport_lib::PostEffectProducer for Probe {
+        fn type_name(&self) -> &'static str {
+            "probe"
+        }
+        fn slot(&self) -> viewport_lib::PostEffectSlot {
+            viewport_lib::PostEffectSlot::Bloom
+        }
+        fn enabled(&self) -> bool {
+            self.enabled.load(Ordering::Relaxed)
+        }
+        fn init_gpu(&mut self, _device: &wgpu::Device) {
+            self.log.lock().unwrap().push("init_gpu".into());
+        }
+        fn on_viewport_resized(
+            &mut self,
+            _device: &wgpu::Device,
+            ctx: &viewport_lib::PostEffectResizeContext<'_>,
+        ) {
+            self.log.lock().unwrap().push(format!(
+                "resize:{}:{}x{}",
+                ctx.viewport_index, ctx.scene_size[0], ctx.scene_size[1]
+            ));
+        }
+        fn prepare(&mut self, _queue: &wgpu::Queue, ctx: &viewport_lib::PostEffectContext<'_>) {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("prepare:{}", ctx.viewport_index));
+        }
+        fn encode<'a>(
+            &'a mut self,
+            _encoder: &mut wgpu::CommandEncoder,
+            ctx: &viewport_lib::PostEffectContext<'_>,
+        ) -> Option<&'a wgpu::TextureView> {
+            assert_eq!(ctx.scene_size, [64, 64]);
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("encode:{}", ctx.viewport_index));
+            None
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let enabled = Arc::new(AtomicBool::new(true));
+    let id = renderer.add_post_effect_producer(Box::new(Probe {
+        log: log.clone(),
+        enabled: enabled.clone(),
+    }));
+
+    let size = 64u32;
+    let frame = tonemap_frame(size, [0.3, 0.3, 0.3, 1.0]);
+
+    // Frame 1: deferred init runs against the live viewport, then the
+    // per-frame pair.
+    renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert_eq!(
+        log.lock().unwrap().as_slice(),
+        ["init_gpu", "resize:0:64x64", "prepare:0", "encode:0"]
+    );
+
+    // Frame 2: only the per-frame pair.
+    log.lock().unwrap().clear();
+    renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert_eq!(log.lock().unwrap().as_slice(), ["prepare:0", "encode:0"]);
+
+    // Disabled: the self-gate skips both calls.
+    enabled.store(false, Ordering::Relaxed);
+    log.lock().unwrap().clear();
+    renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(log.lock().unwrap().is_empty());
+
+    // Removed: nothing fires even when re-enabled.
+    enabled.store(true, Ordering::Relaxed);
+    renderer.remove_post_effect_producer(id);
+    log.lock().unwrap().clear();
+    renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(log.lock().unwrap().is_empty());
+}
+
+/// External producer slot contribution: a producer that fills the
+/// ambient-occlusion composite slot with a 0.25 grey (via a clear pass on
+/// its own texture) must darken covered geometry even though the built-in
+/// SSAO is off, because its returned view is bound at the slot and the
+/// enable lane is forced on.
+#[test]
+fn post_effect_producer_fills_slot() {
+    struct GreyAo {
+        views: std::collections::HashMap<usize, (wgpu::Texture, wgpu::TextureView)>,
+    }
+
+    impl viewport_lib::PostEffectProducer for GreyAo {
+        fn type_name(&self) -> &'static str {
+            "grey_ao"
+        }
+        fn slot(&self) -> viewport_lib::PostEffectSlot {
+            viewport_lib::PostEffectSlot::AmbientOcclusion
+        }
+        fn enabled(&self) -> bool {
+            true
+        }
+        fn on_viewport_resized(
+            &mut self,
+            device: &wgpu::Device,
+            ctx: &viewport_lib::PostEffectResizeContext<'_>,
+        ) {
+            let tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("grey_ao_texture"),
+                size: wgpu::Extent3d {
+                    width: ctx.scene_size[0],
+                    height: ctx.scene_size[1],
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            self.views.insert(ctx.viewport_index, (tex, view));
+        }
+        fn encode<'a>(
+            &'a mut self,
+            encoder: &mut wgpu::CommandEncoder,
+            ctx: &viewport_lib::PostEffectContext<'_>,
+        ) -> Option<&'a wgpu::TextureView> {
+            let (_, view) = self.views.get(&ctx.viewport_index)?;
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("grey_ao_clear"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.25,
+                            g: 0.25,
+                            b: 0.25,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                // The rest defaults: the tail fields differ between the
+                // wgpu legs (29 added multiview_mask).
+                ..Default::default()
+            });
+            Some(view)
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+
+    let size = 64u32;
+    let render = |with_producer: bool| -> Vec<u8> {
+        let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &quad_mesh())
+            .unwrap();
+        if with_producer {
+            renderer.add_post_effect_producer(Box::new(GreyAo {
+                views: std::collections::HashMap::new(),
+            }));
+        }
+        let mut frame = tonemap_frame(size, [0.1, 0.1, 0.1, 1.0]);
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
+        item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6));
+        item.settings.unlit = true;
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        renderer.render_offscreen(&device, &queue, &frame, size, size)
+    };
+
+    let base = render(false);
+    let with_ao = render(true);
+    let luma = |px: &[u8], x: u32, y: u32| {
+        let i = ((y * size + x) * 4) as usize;
+        px[i] as i32 + px[i + 1] as i32 + px[i + 2] as i32
+    };
+    let base_centre = luma(&base, size / 2, size / 2);
+    let ao_centre = luma(&with_ao, size / 2, size / 2);
+    assert!(
+        ao_centre < base_centre - 60,
+        "external AO slot did not darken geometry: base {base_centre}, with producer {ao_centre}"
+    );
+}
+
+/// External stage chained after the composite: a stage built with
+/// `build_post_effect_pipeline` and the shared fullscreen vertex stage
+/// inverts the frame; the chain must route the composite into the stage's
+/// input and the stage into the final target with no host plumbing.
+#[test]
+fn post_effect_stage_inverts_output() {
+    struct Invert {
+        pipeline: wgpu::RenderPipeline,
+        bgl: wgpu::BindGroupLayout,
+        sampler: wgpu::Sampler,
+        per_viewport:
+            std::collections::HashMap<usize, (wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
+    }
+
+    impl viewport_lib::PostEffectStage for Invert {
+        fn type_name(&self) -> &'static str {
+            "invert"
+        }
+        fn enabled(&self) -> bool {
+            true
+        }
+        fn on_viewport_resized(
+            &mut self,
+            device: &wgpu::Device,
+            ctx: &viewport_lib::PostEffectResizeContext<'_>,
+        ) {
+            let tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("invert_input"),
+                size: wgpu::Extent3d {
+                    width: ctx.scene_size[0],
+                    height: ctx.scene_size[1],
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("invert_bg"),
+                layout: &self.bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            });
+            self.per_viewport
+                .insert(ctx.viewport_index, (tex, view, bg));
+        }
+        fn input_view(&self, viewport_index: usize) -> &wgpu::TextureView {
+            &self.per_viewport[&viewport_index].1
+        }
+        fn encode(
+            &mut self,
+            encoder: &mut wgpu::CommandEncoder,
+            target: &wgpu::TextureView,
+            ctx: &viewport_lib::PostEffectContext<'_>,
+        ) {
+            let (_, _, bg) = &self.per_viewport[&ctx.viewport_index];
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("invert_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                // The rest defaults: the tail fields differ between the
+                // wgpu legs (29 added multiview_mask).
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+
+    let size = 64u32;
+    let render = |with_stage: bool| -> Vec<u8> {
+        let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &quad_mesh())
+            .unwrap();
+        if with_stage {
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("invert_bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+            let src = format!(
+                "{}{}",
+                viewport_lib::plugin_api::shared_wgsl::POST_EFFECT_VS_WGSL,
+                r#"
+@group(0) @binding(0) var input_texture: texture_2d<f32>;
+@group(0) @binding(1) var input_sampler: sampler;
+
+@fragment
+fn fs_main(in: ViewportPostVsOut) -> @location(0) vec4<f32> {
+    let c = textureSample(input_texture, input_sampler, in.uv);
+    return vec4<f32>(vec3<f32>(1.0) - c.rgb, 1.0);
+}
+"#
+            );
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("invert_shader"),
+                source: wgpu::ShaderSource::Wgsl(src.into()),
+            });
+            let pipeline = renderer.resources().build_post_effect_pipeline(
+                &device,
+                "invert_pipeline",
+                &shader,
+                &bgl,
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+                None,
+            );
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            });
+            renderer.add_post_effect_stage(
+                Box::new(Invert {
+                    pipeline,
+                    bgl,
+                    sampler,
+                    per_viewport: std::collections::HashMap::new(),
+                }),
+                viewport_lib::plugin_api::post_effect::stage_order::EXTERNAL_DEFAULT,
+            );
+        }
+        let mut frame = tonemap_frame(size, [0.1, 0.1, 0.1, 1.0]);
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).to_cols_array_2d();
+        item.material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
+        item.settings.unlit = true;
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        renderer.render_offscreen(&device, &queue, &frame, size, size)
+    };
+
+    let base = render(false);
+    let inverted = render(true);
+    let luma = |px: &[u8], x: u32, y: u32| {
+        let i = ((y * size + x) * 4) as usize;
+        px[i] as i32 + px[i + 1] as i32 + px[i + 2] as i32
+    };
+    // Dark background corner must flip bright; bright quad centre must flip
+    // dark. In sRGB bytes: linear 0.1 background is ~89 per channel (~267
+    // luma) and its inverse ~246 (~738); the linear 0.8 quad is ~231 (~693)
+    // and its inverse ~124 (~371).
+    let base_corner = luma(&base, 2, 2);
+    let inv_corner = luma(&inverted, 2, 2);
+    let base_centre = luma(&base, size / 2, size / 2);
+    let inv_centre = luma(&inverted, size / 2, size / 2);
+    assert!(
+        base_corner < 350 && inv_corner > 600,
+        "background did not invert: base {base_corner}, inverted {inv_corner}"
+    );
+    assert!(
+        base_centre > 600 && inv_centre < base_centre - 200,
+        "quad did not invert: base {base_centre}, inverted {inv_centre}"
     );
 }

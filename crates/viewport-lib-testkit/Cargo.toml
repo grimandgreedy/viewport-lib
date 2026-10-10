@@ -23,14 +23,19 @@ exclude = ["tests/snapshots/*.png"]
 # wgpu through `viewport_lib::wgpu`, so it always matches the library's leg.
 [dependencies]
 viewport-lib = { path = "../viewport-lib", version = "0.22", default-features = false }
+viewport-lib-plugins = { path = "../viewport-lib-plugins", version = "0.1", default-features = false, features = ["item-types"] }
 glam = { version = "=0.30.10", features = ["bytemuck"] }
 pollster = "0.4"
-viewport-lib-io = { version = "0.7", optional = true }
+viewport-lib-io = { version = "0.8", optional = true }
 # PNG load/save for the golden module; optional so the core does not pull it.
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+# For the startup-cost examples: they read the library's own init-phase marks off
+# the `viewport_lib::init` tracing target.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # For the perf-bench / catalogue-viewer example UIs (moved here from
 # viewport-lib so the library's example builds do not pull the testkit).
 eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
@@ -59,9 +64,9 @@ counters = []
 # wgpu leg selection, forwarded to viewport-lib. Used when the testkit is built
 # standalone; as viewport-lib's dev-dependency the leg comes from the library
 # via Cargo feature unification.
-wgpu27 = ["viewport-lib/wgpu27"]
-wgpu29 = ["viewport-lib/wgpu29"]
-wgpu30 = ["viewport-lib/wgpu30"]
+wgpu27 = ["viewport-lib/wgpu27", "viewport-lib-plugins/wgpu27"]
+wgpu29 = ["viewport-lib/wgpu29", "viewport-lib-plugins/wgpu29"]
+wgpu30 = ["viewport-lib/wgpu30", "viewport-lib-plugins/wgpu30"]
 # Load real models (Suzanne, Stanford bunny, CAD parts) through viewport-lib-io.
 # Off by default so the base build needs no external model files. Implies
 # `scenes` because the loaders build catalogue scenes.
@@ -76,3 +81,25 @@ required-features = ["wgpu27", "scenes"]
 name = "catalogue-viewer"
 path = "examples/catalogue_viewer/main.rs"
 required-features = ["wgpu27", "scenes"]
+
+[[example]]
+name = "scene_dump"
+path = "examples/scene_dump/main.rs"
+required-features = ["scenes"]
+
+# Startup and per-viewport cost harnesses. Named with hyphens to match the other
+# example targets here; each needs only the leg, not the scene catalogue.
+[[example]]
+name = "overlay-only-cost"
+path = "examples/overlay_only_cost.rs"
+required-features = ["wgpu27"]
+
+[[example]]
+name = "viewport-registration-cost"
+path = "examples/viewport_registration_cost.rs"
+required-features = ["wgpu27"]
+
+[[example]]
+name = "viewport-size-sweep"
+path = "examples/viewport_size_sweep.rs"
+required-features = ["wgpu27"]

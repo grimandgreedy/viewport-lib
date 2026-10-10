@@ -17,15 +17,23 @@ use crate::gpu::ShaderStages;
 ///
 /// `source` accepts a baked `&'static str` (via [`wgsl_source!`]) or an owned
 /// `String` (a shader composed at runtime, e.g. by the deform registry).
-pub(crate) fn wgsl_module<'a>(
+pub fn wgsl_module<'a>(
     device: &crate::gpu::Device,
     label: &str,
     source: impl Into<std::borrow::Cow<'a, str>>,
 ) -> crate::gpu::ShaderModule {
-    device.create_shader_module(crate::gpu::ShaderModuleDescriptor {
+    let build_start = web_time::Instant::now();
+    let module = device.create_shader_module(crate::gpu::ShaderModuleDescriptor {
         label: Some(label),
         source: crate::gpu::ShaderSource::Wgsl(source.into()),
-    })
+    });
+    if build_log::enabled() {
+        build_log::record(
+            &format!("module {label}"),
+            build_start.elapsed().as_secs_f32() * 1000.0,
+        );
+    }
+    module
 }
 
 /// Prepend the module directive `@builtin(primitive_index)` needs on the
@@ -33,7 +41,7 @@ pub(crate) fn wgsl_module<'a>(
 /// declaration, naga 27 rejects the directive. Only for sources compiled on a
 /// device with [`PRIMITIVE_INDEX_FEATURE`](crate::gpu::PRIMITIVE_INDEX_FEATURE)
 /// (the directive itself fails validation without the feature).
-pub(crate) fn with_primitive_index_enable(src: &str) -> String {
+pub fn with_primitive_index_enable(src: &str) -> String {
     format!(
         "{}{}",
         crate::plugin_api::shared_wgsl::PICK_PRIM_ENABLE_WGSL,
@@ -45,14 +53,13 @@ pub(crate) fn with_primitive_index_enable(src: &str) -> String {
 /// `END_DEBUG_VIS` in debug_vis.wgsl) from a lit shader source unless `keep`
 /// is set.
 ///
-/// The block writes per-fragment values to the `debug_frag_buf` storage
-/// buffer. A fragment shader with a buffer write has an observable side
-/// effect, so the driver cannot reject occluded fragments with the early
-/// depth test: every rasterized fragment of every hidden surface runs the
-/// full lit shader. On the roman_mix reference scene that costs the scene
-/// pass an order of magnitude. The lit pipelines therefore compile without
-/// the block by default and are rebuilt from the full source only while
-/// `DebugVis` is active (see `rebuild_mesh_pipelines`).
+/// The block declares a 24-element array of candidate quantities. It sits under
+/// a uniform branch, so it does no work unless debug vis is on, but a lit
+/// shader carrying the allocation pays for it in registers on every draw:
+/// measured at about 5% of scene time on a fragment-bound scene, with identical
+/// pixels either way. The lit pipelines therefore compile without the block by
+/// default and are rebuilt from the full source only while `DebugVis` is active
+/// (see `rebuild_mesh_pipelines`).
 pub(crate) fn strip_debug_vis<'a>(
     source: impl Into<std::borrow::Cow<'a, str>>,
     keep: bool,
@@ -75,7 +82,8 @@ pub(crate) fn strip_debug_vis<'a>(
     std::borrow::Cow::Owned(out)
 }
 
-/// Diagnostic knob: with `VIEWPORT_MESH_NO_DISCARD` set in the environment,
+/// Diagnostic knob (`dev-knobs` feature): with `VIEWPORT_MESH_NO_DISCARD` set
+/// in the environment,
 /// strip every `discard;` statement from the given mesh-shader source before
 /// module creation. A fragment shader that contains `discard` forces the GPU
 /// to defer depth writes, which weakens or disables early depth rejection, so
@@ -89,20 +97,21 @@ pub(crate) fn strip_mesh_discards<'a>(
     source: impl Into<std::borrow::Cow<'a, str>>,
 ) -> std::borrow::Cow<'a, str> {
     let source = source.into();
-    if std::env::var_os("VIEWPORT_MESH_NO_DISCARD").is_none() {
+    if dev_knob!("VIEWPORT_MESH_NO_DISCARD").is_none() {
         return source;
     }
     static NOTICE: std::sync::Once = std::sync::Once::new();
     NOTICE.call_once(|| {
         eprintln!(
-            "viewport-lib: VIEWPORT_MESH_NO_DISCARD active: mesh shaders compiled without \
+            "VIEWPORT_MESH_NO_DISCARD active: mesh shaders compiled without \
              discard (clip planes, clip volumes, and alpha mask are no-ops)"
         );
     });
     std::borrow::Cow::Owned(strip_discards(&source))
 }
 
-/// Diagnostic knob: with `VIEWPORT_MESH_PBR_ONLY` set in the environment, remove
+/// Diagnostic knob (`dev-knobs` feature): with `VIEWPORT_MESH_PBR_ONLY` set in
+/// the environment, remove
 /// the alternate-shading-model regions bracketed by `// BEGIN_PBR_STRIP` /
 /// `// END_PBR_STRIP` (Blinn-Phong, matcap, uv-vis, per-face colour) from the mesh
 /// shader source before module creation, leaving a PBR-only fragment shader.
@@ -118,7 +127,7 @@ pub(crate) fn strip_mesh_non_pbr<'a>(
     source: impl Into<std::borrow::Cow<'a, str>>,
 ) -> std::borrow::Cow<'a, str> {
     let source = source.into();
-    if std::env::var_os("VIEWPORT_MESH_PBR_ONLY").is_none() {
+    if dev_knob!("VIEWPORT_MESH_PBR_ONLY").is_none() {
         return source;
     }
     const BEGIN: &str = "// BEGIN_PBR_STRIP";
@@ -128,14 +137,15 @@ pub(crate) fn strip_mesh_non_pbr<'a>(
     static NOTICE: std::sync::Once = std::sync::Once::new();
     NOTICE.call_once(|| {
         eprintln!(
-            "viewport-lib: VIEWPORT_MESH_PBR_ONLY active: mesh shaders compiled PBR-only \
+            "VIEWPORT_MESH_PBR_ONLY active: mesh shaders compiled PBR-only \
              (Blinn-Phong, matcap, uv-vis, and per-face colour paths removed)"
         );
     });
     std::borrow::Cow::Owned(strip_pbr_regions(&source))
 }
 
-/// Diagnostic knob: with `VIEWPORT_MESH_BUILTIN_HOOK` set in the environment,
+/// Diagnostic knob (`dev-knobs` feature): with `VIEWPORT_MESH_BUILTIN_HOOK`
+/// set in the environment,
 /// compose every lit mesh shader with the internal `builtin_pbr` shading hook
 /// before module creation, so the built-in Cook-Torrance lighting runs
 /// through the fragment-shading seam instead of inline.
@@ -153,7 +163,7 @@ pub(crate) fn builtin_hook_env<'a>(
     source: impl Into<std::borrow::Cow<'a, str>>,
 ) -> std::borrow::Cow<'a, str> {
     let source = source.into();
-    if std::env::var_os("VIEWPORT_MESH_BUILTIN_HOOK").is_none() {
+    if dev_knob!("VIEWPORT_MESH_BUILTIN_HOOK").is_none() {
         return source;
     }
     let Some(composed) = crate::resources::mesh_sidecar::shade::compose_builtin_pbr_hook(&source)
@@ -163,7 +173,7 @@ pub(crate) fn builtin_hook_env<'a>(
     static NOTICE: std::sync::Once = std::sync::Once::new();
     NOTICE.call_once(|| {
         eprintln!(
-            "viewport-lib: VIEWPORT_MESH_BUILTIN_HOOK active: built-in PBR lighting runs \
+            "VIEWPORT_MESH_BUILTIN_HOOK active: built-in PBR lighting runs \
              through the shading-hook seam (render PBR materials only)"
         );
     });
@@ -238,10 +248,7 @@ macro_rules! wgsl_source {
 pub(crate) use wgsl_source;
 
 /// A uniform-buffer bind group layout entry (non-dynamic, no min size).
-pub(crate) fn uniform_entry(
-    binding: u32,
-    visibility: ShaderStages,
-) -> crate::gpu::BindGroupLayoutEntry {
+pub fn uniform_entry(binding: u32, visibility: ShaderStages) -> crate::gpu::BindGroupLayoutEntry {
     crate::gpu::BindGroupLayoutEntry {
         binding,
         visibility,
@@ -255,10 +262,7 @@ pub(crate) fn uniform_entry(
 }
 
 /// A filterable float 2D texture bind group layout entry.
-pub(crate) fn texture_entry(
-    binding: u32,
-    visibility: ShaderStages,
-) -> crate::gpu::BindGroupLayoutEntry {
+pub fn texture_entry(binding: u32, visibility: ShaderStages) -> crate::gpu::BindGroupLayoutEntry {
     crate::gpu::BindGroupLayoutEntry {
         binding,
         visibility,
@@ -272,10 +276,7 @@ pub(crate) fn texture_entry(
 }
 
 /// A filtering sampler bind group layout entry.
-pub(crate) fn sampler_entry(
-    binding: u32,
-    visibility: ShaderStages,
-) -> crate::gpu::BindGroupLayoutEntry {
+pub fn sampler_entry(binding: u32, visibility: ShaderStages) -> crate::gpu::BindGroupLayoutEntry {
     crate::gpu::BindGroupLayoutEntry {
         binding,
         visibility,
@@ -285,7 +286,7 @@ pub(crate) fn sampler_entry(
 }
 
 /// Bind group layout with a single uniform buffer at binding 0.
-pub(crate) fn uniform_bgl(
+pub fn uniform_bgl(
     device: &crate::gpu::Device,
     label: &str,
     visibility: ShaderStages,
@@ -299,7 +300,7 @@ pub(crate) fn uniform_bgl(
 /// Bind group layout: filterable texture at binding 0 + filtering sampler at
 /// binding 1, both visible to `visibility`. The common shape for a
 /// full-screen composite / blit pass.
-pub(crate) fn texture_sampler_bgl(
+pub fn texture_sampler_bgl(
     device: &crate::gpu::Device,
     label: &str,
     visibility: ShaderStages,
@@ -314,7 +315,7 @@ pub(crate) fn texture_sampler_bgl(
 /// a filterable texture at binding 1, and a filtering sampler at binding 2
 /// (both visible to `tex_vis`). The standard scivis per-item layout: an item
 /// uniform plus an optional colour-LUT texture and sampler.
-pub(crate) fn uniform_texture_sampler_bgl(
+pub fn uniform_texture_sampler_bgl(
     device: &crate::gpu::Device,
     label: &str,
     uniform_vis: ShaderStages,
@@ -332,10 +333,7 @@ pub(crate) fn uniform_texture_sampler_bgl(
 
 /// Linear-filtered sampler clamped to edge on all axes. The default sampler for
 /// texture lookups that must not wrap (LUTs, composite targets, most content).
-pub(crate) fn clamp_linear_sampler(
-    device: &crate::gpu::Device,
-    label: &str,
-) -> crate::gpu::Sampler {
+pub fn clamp_linear_sampler(device: &crate::gpu::Device, label: &str) -> crate::gpu::Sampler {
     device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
         address_mode_u: crate::gpu::AddressMode::ClampToEdge,
@@ -349,10 +347,7 @@ pub(crate) fn clamp_linear_sampler(
 
 /// Nearest-filtered sampler clamped to edge on all axes. Used where
 /// interpolation would blur discrete data (index buffers, nearest blits).
-pub(crate) fn clamp_nearest_sampler(
-    device: &crate::gpu::Device,
-    label: &str,
-) -> crate::gpu::Sampler {
+pub fn clamp_nearest_sampler(device: &crate::gpu::Device, label: &str) -> crate::gpu::Sampler {
     device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
         address_mode_u: crate::gpu::AddressMode::ClampToEdge,
@@ -367,7 +362,7 @@ pub(crate) fn clamp_nearest_sampler(
 /// Linear-filtered sampler that repeats on all axes. Used for tiling textures
 /// (decals, patterned materials). `mipmap_filter` varies: most callers want
 /// `Nearest`, uploaded user textures pick it from the mip chain at runtime.
-pub(crate) fn repeat_linear_sampler(
+pub fn repeat_linear_sampler(
     device: &crate::gpu::Device,
     label: &str,
     mipmap_filter: crate::gpu::FilterMode,
@@ -380,6 +375,51 @@ pub(crate) fn repeat_linear_sampler(
         mag_filter: crate::gpu::FilterMode::Linear,
         min_filter: crate::gpu::FilterMode::Linear,
         mipmap_filter: dmipmap(mipmap_filter),
+        ..Default::default()
+    })
+}
+
+/// Build a sampler from a material [`SamplerKey`](crate::scene::material::SamplerKey).
+///
+/// Maps the crate's wrap/filter enums onto the current wgpu version's
+/// `SamplerDescriptor`. Anisotropy is clamped to `1..=16`, and because wgpu
+/// requires linear min/mag/mip filtering whenever `anisotropy_clamp > 1`, a
+/// `Nearest` key pins anisotropy back to `1` rather than silently forcing
+/// linear.
+pub(crate) fn sampler_from_key(
+    device: &crate::gpu::Device,
+    label: &str,
+    key: &crate::scene::material::SamplerKey,
+) -> crate::gpu::Sampler {
+    use crate::scene::material::{TextureFilter, WrapMode};
+    let wrap = |w: WrapMode| match w {
+        WrapMode::Repeat => crate::gpu::AddressMode::Repeat,
+        WrapMode::ClampToEdge => crate::gpu::AddressMode::ClampToEdge,
+        WrapMode::MirrorRepeat => crate::gpu::AddressMode::MirrorRepeat,
+    };
+    let filter = match key.filter {
+        TextureFilter::Nearest => crate::gpu::FilterMode::Nearest,
+        TextureFilter::Linear => crate::gpu::FilterMode::Linear,
+    };
+    // Anisotropy only applies with linear filtering (wgpu constraint); keep it
+    // at 1 for a nearest key so the descriptor stays valid.
+    let anisotropy = match key.filter {
+        TextureFilter::Linear => key.anisotropy.clamp(1, 16),
+        TextureFilter::Nearest => 1,
+    };
+    device.create_sampler(&crate::gpu::SamplerDescriptor {
+        label: Some(label),
+        address_mode_u: wrap(key.wrap_u),
+        address_mode_v: wrap(key.wrap_v),
+        address_mode_w: wrap(key.wrap_u),
+        mag_filter: filter,
+        min_filter: filter,
+        mipmap_filter: dmipmap(filter),
+        anisotropy_clamp: anisotropy,
+        // `key.lod_bias` is intentionally not applied here: wgpu samplers carry
+        // no LOD bias (it is a shader-side `textureSampleBias`), so the field is
+        // reserved until the lit shaders take a bias. Wrap/filter/aniso are the
+        // live parts.
         ..Default::default()
     })
 }
@@ -417,7 +457,7 @@ pub(crate) fn env_sampler(device: &crate::gpu::Device, label: &str) -> crate::gp
 
 /// Additive blend: `dst.rgb + src.rgb`, alpha unchanged. Used by the sprite and
 /// particle draw paths for glowing / emissive accumulation.
-pub(crate) const ADDITIVE_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
+pub const ADDITIVE_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
     color: crate::gpu::BlendComponent {
         src_factor: crate::gpu::BlendFactor::One,
         dst_factor: crate::gpu::BlendFactor::One,
@@ -433,7 +473,7 @@ pub(crate) const ADDITIVE_BLEND: crate::gpu::BlendState = crate::gpu::BlendState
 /// Premultiplied-alpha blend: `src.rgb + dst.rgb * (1 - src.a)`. Used by the
 /// sprite and particle draw paths when the source colour already carries its
 /// alpha premultiplied.
-pub(crate) const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
+pub const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
     color: crate::gpu::BlendComponent {
         src_factor: crate::gpu::BlendFactor::One,
         dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
@@ -451,18 +491,30 @@ pub(crate) const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::Blend
 /// bias, `ColorWrites::ALL`, default front face, no multiview or cache) is held
 /// constant by [`build_dual_pipeline`]. The vertex and fragment stages share
 /// one shader module, which is the shape every scivis feature uses.
-pub(crate) struct DualPipelineDesc<'a> {
+pub struct DualPipelineDesc<'a> {
+    /// Debug label; the LDR and HDR variants are suffixed from it.
     pub label: &'a str,
+    /// Pipeline layout, listing the shared group 0 first.
     pub layout: &'a crate::gpu::PipelineLayout,
+    /// Shader module holding both entry points.
     pub shader: &'a crate::gpu::ShaderModule,
+    /// Vertex entry point name.
     pub vertex_entry: &'a str,
+    /// Fragment entry point name.
     pub fragment_entry: &'a str,
+    /// Vertex buffer layouts, in bind-slot order.
     pub vertex_buffers: &'a [crate::gpu::VertexBufferLayout<'a>],
+    /// Colour blend state. `None` writes opaque.
     pub blend: Option<crate::gpu::BlendState>,
+    /// Primitive topology.
     pub topology: crate::gpu::PrimitiveTopology,
+    /// Face to cull. `None` draws both sides.
     pub cull_mode: Option<crate::gpu::Face>,
+    /// Whether the pipeline writes depth.
     pub depth_write: bool,
+    /// Depth comparison function.
     pub depth_compare: crate::gpu::CompareFunction,
+    /// MSAA sample count; must match the target the pipeline draws into.
     pub sample_count: u32,
     /// LDR swapchain format; the HDR variant is always `Rgba16Float`.
     pub ldr_format: crate::gpu::TextureFormat,
@@ -473,47 +525,60 @@ pub(crate) struct DualPipelineDesc<'a> {
 /// state constant. The two variants differ only in colour target format
 /// (`desc.ldr_format` vs `Rgba16Float`), which is the invariant `DualPipeline`
 /// encodes.
-pub(crate) fn build_dual_pipeline(
+pub fn build_dual_pipeline(
     device: &crate::gpu::Device,
     desc: &DualPipelineDesc,
 ) -> crate::resources::types::DualPipeline {
-    let make = |format: crate::gpu::TextureFormat| {
-        render_pipeline(
-            device,
-            RenderPipelineDesc {
-                label: desc.label,
-                layout: desc.layout,
-                vertex_module: desc.shader,
-                vertex_entry: desc.vertex_entry,
-                vertex_buffers: desc.vertex_buffers,
-                fragment: Some(crate::gpu::FragmentState {
-                    module: desc.shader,
-                    entry_point: Some(desc.fragment_entry),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format,
-                        blend: desc.blend,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: desc.topology,
-                    cull_mode: desc.cull_mode,
-                    ..Default::default()
-                },
-                depth_stencil: Some(scene_depth_stencil(desc.depth_write, desc.depth_compare)),
-                multisample: crate::gpu::MultisampleState {
-                    count: desc.sample_count,
-                    ..Default::default()
-                },
-                cache: None,
-            },
-        )
-    };
     crate::resources::types::DualPipeline {
-        ldr: make(desc.ldr_format),
-        hdr: make(crate::gpu::TextureFormat::Rgba16Float),
+        ldr: build_dual_pipeline_variant(device, desc, false),
+        hdr: build_dual_pipeline_variant(device, desc, true),
     }
+}
+
+/// One half of [`build_dual_pipeline`]: the HDR (`Rgba16Float`) pipeline when
+/// `hdr`, else the LDR one in `desc.ldr_format`. For a type that builds each
+/// on first use rather than both together.
+pub fn build_dual_pipeline_variant(
+    device: &crate::gpu::Device,
+    desc: &DualPipelineDesc,
+    hdr: bool,
+) -> crate::gpu::RenderPipeline {
+    let format = if hdr {
+        crate::gpu::TextureFormat::Rgba16Float
+    } else {
+        desc.ldr_format
+    };
+    render_pipeline(
+        device,
+        RenderPipelineDesc {
+            label: desc.label,
+            layout: desc.layout,
+            vertex_module: desc.shader,
+            vertex_entry: desc.vertex_entry,
+            vertex_buffers: desc.vertex_buffers,
+            fragment: Some(crate::gpu::FragmentState {
+                module: desc.shader,
+                entry_point: Some(desc.fragment_entry),
+                targets: &[Some(crate::gpu::ColorTargetState {
+                    format,
+                    blend: desc.blend,
+                    write_mask: crate::gpu::ColorWrites::ALL,
+                })],
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: crate::gpu::PrimitiveState {
+                topology: desc.topology,
+                cull_mode: desc.cull_mode,
+                ..Default::default()
+            },
+            depth_stencil: Some(scene_depth_stencil(desc.depth_write, desc.depth_compare)),
+            multisample: crate::gpu::MultisampleState {
+                count: desc.sample_count,
+                ..Default::default()
+            },
+            cache: None,
+        },
+    )
 }
 
 /// Build a full-screen pass pipeline: one triangle-list draw covering the
@@ -523,7 +588,7 @@ pub(crate) fn build_dual_pipeline(
 /// composite passes (tone map, bloom, SSAO, FXAA, OIT composite, upscales, the
 /// scatter composites) all share this shape and differ only in target format
 /// and blend.
-pub(crate) fn build_fullscreen_pipeline(
+pub fn build_fullscreen_pipeline(
     device: &crate::gpu::Device,
     label: &str,
     layout: &crate::gpu::PipelineLayout,
@@ -572,7 +637,7 @@ pub(crate) fn build_fullscreen_pipeline(
 /// exactly the pixels that survived the depth test in the colour pass. `cull` is
 /// `Back` for closed solids and `None` otherwise; `depth_write` is off for
 /// billboards and screen-space items that do not own scene depth.
-pub(crate) fn build_outline_mask_pipeline(
+pub fn build_outline_mask_pipeline(
     device: &crate::gpu::Device,
     label: &str,
     layout: &crate::gpu::PipelineLayout,
@@ -613,25 +678,111 @@ pub(crate) fn build_outline_mask_pipeline(
     )
 }
 
+/// Build a surface-mask pipeline: the item's geometry drawn into the scene
+/// stencil, depth-tested against the scene so only its visible pixels are
+/// stamped with the pass's stencil reference. Used from
+/// [`ItemTypePlugin::surface_mask`](crate::plugin_api::ItemTypePlugin::surface_mask).
+///
+/// The vertex layout and cull mode vary per item and are passed in; the rest is
+/// fixed: triangle list, `Depth24PlusStencil8`, no colour target, no depth
+/// write, single sample, both stages `vs_main` / `fs_main`. The fragment stage
+/// has nothing to output: leave it empty, or have it `discard` where the item's
+/// own fragment stage would, so a cut-out stamps only what it drew.
+///
+/// The depth test is `LessEqual` with a small bias towards the camera. This is
+/// a second draw of geometry the opaque pass already drew, and without the
+/// bias rounding differences between the two passes leave holes in the stamp.
+pub fn build_surface_mask_pipeline(
+    device: &crate::gpu::Device,
+    label: &str,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+    vertex_buffers: &[crate::gpu::VertexBufferLayout],
+    cull: Option<crate::gpu::Face>,
+) -> crate::gpu::RenderPipeline {
+    render_pipeline(
+        device,
+        RenderPipelineDesc {
+            label,
+            layout,
+            vertex_module: shader,
+            vertex_entry: "vs_main",
+            vertex_buffers,
+            fragment: Some(crate::gpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[],
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: crate::gpu::PrimitiveState {
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: cull,
+                ..Default::default()
+            },
+            depth_stencil: Some(surface_mask_depth_stencil()),
+            multisample: crate::gpu::MultisampleState::default(),
+            cache: None,
+        },
+    )
+}
+
+/// The depth-stencil state of a surface-mask pipeline: test against the scene
+/// depth without writing it, and replace the stencil with the pass's reference
+/// where the test passes.
+pub(crate) fn surface_mask_depth_stencil() -> crate::gpu::DepthStencilState {
+    let stamp = crate::gpu::StencilFaceState {
+        compare: crate::gpu::CompareFunction::Always,
+        fail_op: crate::gpu::StencilOperation::Keep,
+        depth_fail_op: crate::gpu::StencilOperation::Keep,
+        pass_op: crate::gpu::StencilOperation::Replace,
+    };
+    crate::gpu::DepthStencilState {
+        format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+        depth_write_enabled: dwrite(false),
+        depth_compare: dcompare(crate::gpu::CompareFunction::LessEqual),
+        stencil: crate::gpu::StencilState {
+            front: stamp,
+            back: stamp,
+            read_mask: 0xff,
+            write_mask: 0xff,
+        },
+        bias: crate::gpu::DepthBiasState {
+            constant: -2,
+            slope_scale: 0.0,
+            clamp: 0.0,
+        },
+    }
+}
+
 /// Create a compute pipeline. Every compute pipeline in the crate has the same
 /// shape: a shader, its layout, and an entry point, with default compilation
-/// options and no cache. This is the one place the crate calls
+/// options, created against the device's pipeline cache when it has one (see
+/// [`device_pipeline_cache`]). This is the one place the crate calls
 /// `create_compute_pipeline`, so a wgpu upgrade only has to be audited here.
-pub(crate) fn compute_pipeline(
+pub fn compute_pipeline(
     device: &crate::gpu::Device,
     label: &str,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
     entry: &str,
 ) -> crate::gpu::ComputePipeline {
-    device.create_compute_pipeline(&crate::gpu::ComputePipelineDescriptor {
+    let build_start = web_time::Instant::now();
+    let cache = device_pipeline_cache::get(device);
+    let pipeline = device.create_compute_pipeline(&crate::gpu::ComputePipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
         module: shader,
         entry_point: Some(entry),
         compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-        cache: None,
-    })
+        cache: cache.as_ref(),
+    });
+    if build_log::enabled() {
+        build_log::record(
+            &format!("compute {label}"),
+            build_start.elapsed().as_secs_f32() * 1000.0,
+        );
+    }
+    pipeline
 }
 
 /// Pipeline layout from a list of bind group layouts, with no push-constant
@@ -667,7 +818,7 @@ pub fn pipeline_layout<'a>(
 
 /// Pipeline layout with the standard scene binding convention:
 /// group 0 = camera, group 1 = the feature's per-item bind group layout.
-pub(crate) fn standard_scene_layout(
+pub fn standard_scene_layout(
     device: &crate::gpu::Device,
     label: &str,
     camera_bgl: &crate::gpu::BindGroupLayout,
@@ -702,7 +853,9 @@ pub struct RenderPipelineDesc<'a> {
     pub depth_stencil: Option<crate::gpu::DepthStencilState>,
     /// Multisample (MSAA) state.
     pub multisample: crate::gpu::MultisampleState,
-    /// Optional pipeline cache to speed up creation.
+    /// Pipeline cache to create against. `None` uses the cache the renderer
+    /// registered for the device, when the device has one, so a site does not
+    /// have to name it.
     pub cache: Option<&'a crate::gpu::PipelineCache>,
 }
 
@@ -730,7 +883,14 @@ pub fn render_pipeline(
         buffers: &vbufs,
         compilation_options: crate::gpu::PipelineCompilationOptions::default(),
     };
-    device.create_render_pipeline(&crate::gpu::RenderPipelineDescriptor {
+    let build_start = web_time::Instant::now();
+    let build_label = desc.label;
+    let device_cache = match desc.cache {
+        Some(_) => None,
+        None => device_pipeline_cache::get(device),
+    };
+    let cache = desc.cache.or(device_cache.as_ref());
+    let pipeline = device.create_render_pipeline(&crate::gpu::RenderPipelineDescriptor {
         label: Some(desc.label),
         layout: Some(desc.layout),
         vertex,
@@ -743,8 +903,392 @@ pub fn render_pipeline(
         multiview: None,
         #[cfg(any(wgpu29, wgpu30))]
         multiview_mask: None,
-        cache: desc.cache,
-    })
+        cache,
+    });
+    build_log::record(build_label, build_start.elapsed().as_secs_f32() * 1000.0);
+    pipeline
+}
+
+/// The pipeline cache each device's pipelines are created against.
+///
+/// wgpu takes the cache per pipeline descriptor, and pipelines are created all
+/// over the crate and by item-type plugins. Naming the cache at every site is
+/// how sites get missed, so each renderer registers its cache here and
+/// [`render_pipeline`] and [`compute_pipeline`] look it up by device.
+///
+/// The lookup answers only when it cannot be wrong. wgpu compares devices by
+/// an id that is unique within one wgpu instance and not across them, so two
+/// devices from two instances can compare equal, and a cache used with the
+/// other instance's device is a panic inside wgpu. Every renderer registers,
+/// with or without a cache, and a device that matches more than one
+/// registration gets no cache from the lookup: its pipelines are still built,
+/// uncached, unless the site names the cache itself. Two renderers on one
+/// device are indistinguishable from that case and are treated the same way.
+pub(crate) mod device_pipeline_cache {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct Entry<D, C> {
+        id: u64,
+        device: D,
+        cache: Option<C>,
+    }
+
+    struct Registry<D, C> {
+        entries: Vec<Entry<D, C>>,
+    }
+
+    impl<D: PartialEq, C: Clone> Registry<D, C> {
+        fn get(&self, device: &D) -> Option<C> {
+            let mut matching = self.entries.iter().filter(|e| e.device == *device);
+            let only = matching.next()?;
+            if matching.next().is_some() {
+                return None;
+            }
+            only.cache.clone()
+        }
+    }
+
+    static CACHES: Mutex<Registry<crate::gpu::Device, crate::gpu::PipelineCache>> =
+        Mutex::new(Registry {
+            entries: Vec::new(),
+        });
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    /// Register a renderer on `device` and the cache it holds, if any. The
+    /// registration lasts as long as the returned lease.
+    pub(crate) fn register(
+        device: &crate::gpu::Device,
+        cache: Option<&crate::gpu::PipelineCache>,
+    ) -> Lease {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        CACHES.lock().unwrap().entries.push(Entry {
+            id,
+            device: device.clone(),
+            cache: cache.cloned(),
+        });
+        Lease(id)
+    }
+
+    /// The cache to build `device`'s pipelines against, when exactly one
+    /// renderer is registered for it.
+    pub(crate) fn get(device: &crate::gpu::Device) -> Option<crate::gpu::PipelineCache> {
+        CACHES.lock().unwrap().get(device)
+    }
+
+    /// One renderer's registration, removed when dropped.
+    pub(crate) struct Lease(u64);
+
+    impl Drop for Lease {
+        fn drop(&mut self) {
+            let mut caches = CACHES.lock().unwrap();
+            caches.entries.retain(|e| e.id != self.0);
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{Entry, Registry};
+
+        fn registry(entries: &[(u32, Option<&'static str>)]) -> Registry<u32, &'static str> {
+            Registry {
+                entries: entries
+                    .iter()
+                    .enumerate()
+                    .map(|(id, (device, cache))| Entry {
+                        id: id as u64,
+                        device: *device,
+                        cache: *cache,
+                    })
+                    .collect(),
+            }
+        }
+
+        #[test]
+        fn a_device_registered_once_gets_its_cache() {
+            let r = registry(&[(1, Some("a")), (2, Some("b")), (3, None)]);
+            assert_eq!(r.get(&1), Some("a"));
+            assert_eq!(r.get(&2), Some("b"));
+            assert_eq!(r.get(&3), None);
+            assert_eq!(r.get(&4), None);
+        }
+
+        /// Two registrations that compare equal may be two devices, so neither
+        /// is handed the other's cache, whichever of them holds one.
+        #[test]
+        fn a_device_registered_twice_gets_no_cache() {
+            assert_eq!(registry(&[(1, Some("a")), (1, Some("b"))]).get(&1), None);
+            assert_eq!(registry(&[(1, Some("a")), (1, None)]).get(&1), None);
+            assert_eq!(registry(&[(1, None), (1, Some("b"))]).get(&1), None);
+        }
+    }
+}
+
+#[cfg(test)]
+mod device_pipeline_cache_tests {
+    use super::device_pipeline_cache;
+
+    fn device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::default_instance();
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+                #[cfg(wgpu30)]
+                apply_limit_buckets: false,
+            },
+        ))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
+            required_features: crate::ViewportRenderer::recommended_device_features(&adapter),
+            required_limits: crate::ViewportRenderer::recommended_device_limits(&adapter),
+            ..Default::default()
+        }))
+        .ok()
+    }
+
+    /// Two renderers on one device each hold their own cache, and the lookup
+    /// answers for neither. A device without the feature gets no cache.
+    ///
+    /// Every test in this binary registers its renderers in the same
+    /// registry, and devices from different instances can compare equal, so
+    /// only what another test cannot change is asserted here.
+    #[test]
+    fn two_renderers_on_one_device_keep_their_own_caches() {
+        let Some((device, _queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let format = crate::gpu::TextureFormat::Rgba8UnormSrgb;
+        let has_cache = device
+            .features()
+            .contains(crate::gpu::Features::PIPELINE_CACHE);
+
+        let first = crate::DeviceResources::new(&device, format, 1);
+        assert_eq!(first.pipeline_cache.is_some(), has_cache);
+        if !has_cache {
+            assert!(device_pipeline_cache::get(&device).is_none());
+            eprintln!("this backend has no pipeline cache; checked that none is handed out");
+            return;
+        }
+
+        // Two renderers on one device: each holds its own cache and the
+        // lookup answers for neither.
+        let second = crate::DeviceResources::new(&device, format, 1);
+        assert!(first.pipeline_cache != second.pipeline_cache);
+        assert!(device_pipeline_cache::get(&device).is_none());
+        drop(second);
+        drop(first);
+    }
+}
+
+/// `create_buffer` and `create_texture` with the allocation reported to
+/// [`build_log`]. For what the renderer allocates for itself, so a startup
+/// breakdown can list it.
+pub(crate) trait LoggedAlloc {
+    fn logged_buffer(&self, desc: &crate::gpu::BufferDescriptor) -> crate::gpu::Buffer;
+    fn logged_buffer_init(
+        &self,
+        desc: &crate::gpu::util::BufferInitDescriptor,
+    ) -> crate::gpu::Buffer;
+    fn logged_texture(&self, desc: &crate::gpu::TextureDescriptor) -> crate::gpu::Texture;
+}
+
+impl LoggedAlloc for crate::gpu::Device {
+    fn logged_buffer(&self, desc: &crate::gpu::BufferDescriptor) -> crate::gpu::Buffer {
+        let buffer = self.create_buffer(desc);
+        if build_log::enabled() {
+            build_log::record_allocation(desc.label.unwrap_or("buffer"), desc.size);
+        }
+        buffer
+    }
+
+    fn logged_buffer_init(
+        &self,
+        desc: &crate::gpu::util::BufferInitDescriptor,
+    ) -> crate::gpu::Buffer {
+        use crate::gpu::util::DeviceExt;
+        let buffer = self.create_buffer_init(desc);
+        if build_log::enabled() {
+            build_log::record_allocation(desc.label.unwrap_or("buffer"), buffer.size());
+        }
+        buffer
+    }
+
+    fn logged_texture(&self, desc: &crate::gpu::TextureDescriptor) -> crate::gpu::Texture {
+        let texture = self.create_texture(desc);
+        if build_log::enabled() {
+            build_log::record_allocation(desc.label.unwrap_or("texture"), texture_bytes(desc));
+        }
+        texture
+    }
+}
+
+/// Bytes a texture descriptor asks for, summed over its mip chain. Depth and
+/// stencil formats have no copy size and are counted at 4 bytes per texel.
+pub(crate) fn texture_bytes(desc: &crate::gpu::TextureDescriptor) -> u64 {
+    let texel = desc.format.block_copy_size(None).unwrap_or(4) as u64;
+    let (bw, bh) = desc.format.block_dimensions();
+    let layers = match desc.dimension {
+        crate::gpu::TextureDimension::D3 => 1,
+        _ => desc.size.depth_or_array_layers as u64,
+    };
+    let mut total = 0u64;
+    for mip in 0..desc.mip_level_count {
+        let w = (desc.size.width >> mip).max(1) as u64;
+        let h = (desc.size.height >> mip).max(1) as u64;
+        let d = match desc.dimension {
+            crate::gpu::TextureDimension::D3 => {
+                (desc.size.depth_or_array_layers >> mip).max(1) as u64
+            }
+            _ => 1,
+        };
+        total += w.div_ceil(bw as u64) * h.div_ceil(bh as u64) * d * texel;
+    }
+    total * layers * desc.sample_count as u64
+}
+
+/// Optional record of what each pipeline, shader module, render target, and
+/// other GPU allocation cost to create.
+///
+/// Off by default. Switch it on with [`enable`](build_log::enable), or by setting
+/// `VPL_BUILD_LOG` in the environment on a platform that has one. Every
+/// [`render_pipeline`], [`compute_pipeline`], and [`wgsl_module`] call then
+/// appends its label and wall-clock cost, every per-viewport render target
+/// appends its label and size, and so does every buffer and texture the renderer
+/// allocates for itself (uniform and storage buffers, the geometry slab, the
+/// shadow maps, the glyph atlas). Mesh and texture uploads the application asks
+/// for are not recorded here; [`resident_bytes`] accounts for those.
+///
+/// [`resident_bytes`]: crate::ViewportRenderer::resident_bytes
+///
+/// Startup on a GPU backend is dominated by shader compilation, and a phase
+/// breakdown cannot say which pipeline is expensive. This attributes it per
+/// object. Read it back with [`drain`](build_log::drain),
+/// [`drain_textures`](build_log::drain_textures) and
+/// [`drain_allocations`](build_log::drain_allocations), which each return what
+/// was recorded since the last call.
+pub mod build_log {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Mutex, OnceLock};
+
+    /// Seeded from the environment on first use, then settable at runtime.
+    ///
+    /// A web build has no environment: under `wasm32` `std::env::var` always
+    /// reports the variable missing, so `VPL_BUILD_LOG` can never be set there
+    /// and [`enable`] is the only way in. That is the platform where startup
+    /// attribution is most wanted, so the flag is not env-only.
+    static ENABLED: OnceLock<AtomicBool> = OnceLock::new();
+
+    fn flag() -> &'static AtomicBool {
+        ENABLED.get_or_init(|| AtomicBool::new(std::env::var("VPL_BUILD_LOG").is_ok()))
+    }
+
+    /// Start recording. Call before building the renderer; anything created
+    /// earlier is not in the log.
+    pub fn enable() {
+        flag().store(true, Ordering::Relaxed);
+    }
+
+    /// Stop recording. What is already recorded stays until drained.
+    pub fn disable() {
+        flag().store(false, Ordering::Relaxed);
+    }
+
+    /// Whether recording is on.
+    pub fn enabled() -> bool {
+        flag().load(Ordering::Relaxed)
+    }
+
+    static PIPELINES: OnceLock<Mutex<Vec<(String, f32)>>> = OnceLock::new();
+    static TEXTURES: OnceLock<Mutex<Vec<(String, u64)>>> = OnceLock::new();
+    static ALLOCATIONS: OnceLock<Mutex<Vec<(String, u64)>>> = OnceLock::new();
+
+    pub(super) fn record(label: &str, ms: f32) {
+        if enabled() {
+            PIPELINES
+                .get_or_init(|| Mutex::new(Vec::new()))
+                .lock()
+                .unwrap()
+                .push((label.to_string(), ms));
+        }
+    }
+
+    /// Record a render target allocation and its size. The other half of what a
+    /// consumer pays before drawing anything: per-viewport target memory.
+    pub(crate) fn record_texture(label: &str, bytes: u64) {
+        if enabled() {
+            TEXTURES
+                .get_or_init(|| Mutex::new(Vec::new()))
+                .lock()
+                .unwrap()
+                .push((label.to_string(), bytes));
+        }
+    }
+
+    /// Record a buffer or texture the renderer allocated for itself, other than
+    /// a per-viewport render target.
+    pub(crate) fn record_allocation(label: &str, bytes: u64) {
+        if enabled() {
+            ALLOCATIONS
+                .get_or_init(|| Mutex::new(Vec::new()))
+                .lock()
+                .unwrap()
+                .push((label.to_string(), bytes));
+        }
+    }
+
+    /// Take every pipeline and shader module recorded since the last call, in
+    /// creation order, with each one's wall-clock cost in milliseconds.
+    pub fn drain() -> Vec<(String, f32)> {
+        match PIPELINES.get() {
+            Some(l) => std::mem::take(&mut *l.lock().unwrap()),
+            None => Vec::new(),
+        }
+    }
+
+    /// Take every render target recorded since the last call, in allocation
+    /// order, with each one's size in bytes.
+    pub fn drain_textures() -> Vec<(String, u64)> {
+        match TEXTURES.get() {
+            Some(l) => std::mem::take(&mut *l.lock().unwrap()),
+            None => Vec::new(),
+        }
+    }
+
+    /// Take every buffer and non-target texture recorded since the last call,
+    /// in allocation order, with each one's size in bytes.
+    pub fn drain_allocations() -> Vec<(String, u64)> {
+        match ALLOCATIONS.get() {
+            Some(l) => std::mem::take(&mut *l.lock().unwrap()),
+            None => Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        /// `enable` works with no environment variable set, which is the only
+        /// route a web build has. Records after enabling, nothing before.
+        #[test]
+        fn enable_switches_recording_on_at_runtime() {
+            // Not asserting the initial state: the env seeds it, and another
+            // test in this binary may have enabled it already.
+            super::disable();
+            let _ = super::drain();
+            super::record("before", 1.0);
+            assert!(super::drain().is_empty(), "a disabled log records nothing");
+
+            super::enable();
+            assert!(super::enabled());
+            super::record("after", 2.0);
+            let got = super::drain();
+            assert_eq!(got.len(), 1, "an enabled log records");
+            assert_eq!(got[0].0, "after");
+            assert!(super::drain().is_empty(), "drain takes what it returned");
+            super::disable();
+        }
+    }
 }
 
 /// Wrap a depth-write flag for the current wgpu version's `DepthStencilState`.
@@ -867,10 +1411,7 @@ pub(crate) fn comparison_sampler(
 /// Linear-filtered sampler clamped to edge on all axes, with linear mip
 /// filtering. Like [`clamp_linear_sampler`] but samples across the mip chain
 /// (used by the volume LUT lookups).
-pub(crate) fn clamp_linear_mip_sampler(
-    device: &crate::gpu::Device,
-    label: &str,
-) -> crate::gpu::Sampler {
+pub fn clamp_linear_mip_sampler(device: &crate::gpu::Device, label: &str) -> crate::gpu::Sampler {
     device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
         address_mode_u: crate::gpu::AddressMode::ClampToEdge,
@@ -891,16 +1432,27 @@ pub(crate) fn capture_validation<T>(
     device: &crate::gpu::Device,
     f: impl FnOnce() -> T,
 ) -> (T, Option<crate::gpu::Error>) {
+    // WebGPU resolves `pop_error_scope` through a JavaScript promise, which only
+    // settles when the browser event loop turns. A synchronous spin never lets
+    // it turn, so waiting here would hang the tab rather than return an error.
+    // Run the work and report nothing captured; a validation failure still
+    // reaches the browser console through WebGPU's own uncaptured-error event.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = device;
+        return (f(), None);
+    }
+
     // 27 pops the scope through a `Device::pop_error_scope` future; 29 and 30's
     // `push_error_scope` returns a guard whose `pop()` is the future.
-    #[cfg(wgpu27)]
+    #[cfg(all(wgpu27, not(target_arch = "wasm32")))]
     {
         device.push_error_scope(crate::gpu::ErrorFilter::Validation);
         let value = f();
         let captured = block_on_simple(device.pop_error_scope());
         (value, captured)
     }
-    #[cfg(any(wgpu29, wgpu30))]
+    #[cfg(all(any(wgpu29, wgpu30), not(target_arch = "wasm32")))]
     {
         let guard = device.push_error_scope(crate::gpu::ErrorFilter::Validation);
         let value = f();
@@ -913,6 +1465,7 @@ pub(crate) fn capture_validation<T>(
 /// `pop_error_scope` resolves on the next driver poll, which the device itself
 /// drives; spinning here is fine because validation completes without going
 /// through the device's command queue.
+#[cfg(not(target_arch = "wasm32"))]
 fn block_on_simple<F: std::future::Future>(mut fut: F) -> F::Output {
     use std::pin::Pin;
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
@@ -953,13 +1506,13 @@ mod strip_debug_vis_tests {
         ];
         for (name, src) in sources {
             assert!(
-                src.contains("debug_frag_buf["),
+                src.contains("dbg_vals["),
                 "{name}: baked source lost the debug block; markers moved?"
             );
             let stripped = super::strip_debug_vis(src, false);
             assert!(
-                !stripped.contains("debug_frag_buf["),
-                "{name}: stripped module still writes debug_frag_buf"
+                !stripped.contains("dbg_vals["),
+                "{name}: stripped module still carries the debug block"
             );
             assert!(
                 !stripped.contains("BEGIN_DEBUG_VIS"),
@@ -967,7 +1520,7 @@ mod strip_debug_vis_tests {
             );
             let kept = super::strip_debug_vis(src, true);
             assert!(
-                kept.contains("debug_frag_buf["),
+                kept.contains("dbg_vals["),
                 "{name}: debug variant lost the write"
             );
         }
@@ -1001,5 +1554,100 @@ mod strip_debug_vis_tests {
             !stripped.contains("{ discard;"),
             "real discard statement survived: {stripped}"
         );
+    }
+}
+
+/// Vertex buffer layout of the meshes in the shared arena.
+///
+/// A plugin that draws a [`MeshId`](crate::resources::MeshId) through
+/// [`MeshGeometry`](crate::resources::MeshGeometry) binds those buffers
+/// directly, so its pipeline has to declare the layout they were uploaded
+/// with. Locations 0 to 4 are position, normal, colour, uv and tangent.
+pub fn mesh_vertex_layout() -> crate::gpu::VertexBufferLayout<'static> {
+    use crate::resources::types::VertexBufferLayoutExt as _;
+    crate::resources::types::Vertex::buffer_layout()
+}
+
+/// One single-attribute table per shader location 0 to 15, so an attribute
+/// layout can be handed out as `'static`.
+const fn attribute_location_table(
+    format: crate::gpu::VertexFormat,
+) -> [[crate::gpu::VertexAttribute; 1]; 16] {
+    let mut table = [[crate::gpu::VertexAttribute {
+        offset: 0,
+        shader_location: 0,
+        format,
+    }]; 16];
+    let mut i = 0;
+    while i < 16 {
+        table[i][0].shader_location = i as u32;
+        i += 1;
+    }
+    table
+}
+
+/// Vertex buffer layout of a mesh's per-vertex vector attribute: one
+/// `Float32x3` per vertex at `location`.
+///
+/// Pairs with
+/// [`MeshDraw::bind_vector_attribute`](crate::resources::MeshDraw::bind_vector_attribute),
+/// which binds the buffer this describes.
+///
+/// # Panics
+///
+/// When `location` is 16 or more.
+pub fn vector_attribute_layout(location: u32) -> crate::gpu::VertexBufferLayout<'static> {
+    static TABLE: [[crate::gpu::VertexAttribute; 1]; 16] =
+        attribute_location_table(crate::gpu::VertexFormat::Float32x3);
+    crate::gpu::VertexBufferLayout {
+        array_stride: 12,
+        step_mode: crate::gpu::VertexStepMode::Vertex,
+        attributes: &TABLE[location as usize],
+    }
+}
+
+/// Vertex buffer layout of a mesh's per-vertex scalar attribute: one
+/// `Float32` per vertex at `location`.
+///
+/// Pairs with
+/// [`MeshDraw::bind_scalar_attribute`](crate::resources::MeshDraw::bind_scalar_attribute),
+/// which binds the buffer this describes.
+///
+/// # Panics
+///
+/// When `location` is 16 or more.
+pub fn scalar_attribute_layout(location: u32) -> crate::gpu::VertexBufferLayout<'static> {
+    static TABLE: [[crate::gpu::VertexAttribute; 1]; 16] =
+        attribute_location_table(crate::gpu::VertexFormat::Float32);
+    crate::gpu::VertexBufferLayout {
+        array_stride: 4,
+        step_mode: crate::gpu::VertexStepMode::Vertex,
+        attributes: &TABLE[location as usize],
+    }
+}
+
+#[cfg(test)]
+mod attribute_layout_tests {
+    #[test]
+    fn layout_carries_the_requested_location() {
+        for location in [0, 1, 7, 15] {
+            let layout = super::vector_attribute_layout(location);
+            assert_eq!(layout.array_stride, 12);
+            assert_eq!(layout.attributes.len(), 1);
+            assert_eq!(layout.attributes[0].shader_location, location);
+            assert_eq!(
+                layout.attributes[0].format,
+                crate::gpu::VertexFormat::Float32x3
+            );
+
+            let layout = super::scalar_attribute_layout(location);
+            assert_eq!(layout.array_stride, 4);
+            assert_eq!(layout.attributes.len(), 1);
+            assert_eq!(layout.attributes[0].shader_location, location);
+            assert_eq!(
+                layout.attributes[0].format,
+                crate::gpu::VertexFormat::Float32
+            );
+        }
     }
 }

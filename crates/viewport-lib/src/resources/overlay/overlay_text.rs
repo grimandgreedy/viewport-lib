@@ -169,6 +169,15 @@ pub(crate) struct OverlayTextVertex {
     /// no box clip. A cheap pre-clip that contains rectangular masks exactly and
     /// bounds the SDF test for the rest.
     pub clip_rect: [f32; 4],
+    /// Whether a retained group's per-frame tint reaches this vertex: `1.0` for
+    /// the item's own content, `0.0` for a shadow layer baked into the same
+    /// stream.
+    ///
+    /// A tint never reaches a shadow layer, and on the retained path the
+    /// shadows are geometry in this very buffer, so the rule has to ride the
+    /// vertex. Immediate draws take the identity instance, whose tint changes
+    /// nothing either way.
+    pub group_tint: f32,
 }
 
 impl OverlayTextVertex {
@@ -213,6 +222,12 @@ impl OverlayTextVertex {
                     offset: 40,
                     shader_location: 5,
                     format: crate::gpu::VertexFormat::Float32x4,
+                },
+                // location 6: group_tint f32
+                crate::gpu::VertexAttribute {
+                    offset: 56,
+                    shader_location: 6,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
             ],
         }

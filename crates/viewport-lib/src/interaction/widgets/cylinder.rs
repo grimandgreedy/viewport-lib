@@ -1,13 +1,14 @@
 //! Cylinder widget: two endpoint handles controlling the axis, plus a radius handle.
 
-use crate::geometry::intersect::ray_plane_intersection;
-use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
+use crate::Colour;
+use crate::geometry::maths::intersect::ray_plane_intersection;
+use crate::renderer::PolylineItem;
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 
 use super::{
-    WidgetContext, WidgetResult, any_perpendicular, any_perpendicular_pair, ctx_ray,
-    handle_world_radius, ray_point_dist,
+    HandleMarkers, WidgetContext, WidgetResult, any_perpendicular, any_perpendicular_pair, ctx_ray,
+    handle_colour, handle_world_radius, ray_point_dist,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -31,8 +32,9 @@ enum CylinderHandle {
 ///
 /// // Each frame:
 /// cyl.update(&ctx);
-/// fd.scene.polylines.push(cyl.wireframe_item(CYL_ID));
-/// fd.scene.glyphs.push(cyl.handle_glyphs(HANDLE_ID, &ctx));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(cyl.wireframe_item(CYL_ID));
+/// let markers = cyl.handle_markers(HANDLE_ID, &ctx);
+/// fd.scene.mesh_instances.push(markers.to_mesh_instances(handle_mesh));
 /// ```
 pub struct CylinderWidget {
     /// World-space position of the first endpoint (bottom cap center).
@@ -60,8 +62,8 @@ impl CylinderWidget {
             start,
             end,
             radius: radius.max(0.01),
-            colour: [0.4, 0.9, 0.5, 1.0].into(),
-            handle_colour: [0.0; 4].into(),
+            colour: Colour::linear(0.4, 0.9, 0.5, 1.0),
+            handle_colour: Colour::TRANSPARENT,
             hovered_handle: None,
             active_handle: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -168,11 +170,25 @@ impl CylinderWidget {
         let mut strip_lengths: Vec<u32> = Vec::new();
 
         // Bottom cap circle
-        crate::geometry::polyline::push_circle_loop(&mut positions, self.start, u, v, r, STEPS);
+        crate::geometry::primitives::wire::push_circle_loop(
+            &mut positions,
+            self.start,
+            u,
+            v,
+            r,
+            STEPS,
+        );
         strip_lengths.push((STEPS + 1) as u32);
 
         // Top cap circle
-        crate::geometry::polyline::push_circle_loop(&mut positions, self.end, u, v, r, STEPS);
+        crate::geometry::primitives::wire::push_circle_loop(
+            &mut positions,
+            self.end,
+            u,
+            v,
+            r,
+            STEPS,
+        );
         strip_lengths.push((STEPS + 1) as u32);
 
         // Four longitudinal lines at 0, 90, 180, 270 degrees
@@ -200,42 +216,32 @@ impl CylinderWidget {
         }
     }
 
-    /// Build a `GlyphItem` with three sphere handles: start, end, and radius.
+    /// Handle markers for both end caps and the radius grip.
     ///
-    /// `id_base` = start, `id_base + 1` = end, `id_base + 2` = radius handle.
-    pub fn handle_glyphs(&self, id_base: u64, ctx: &WidgetContext) -> GlyphItem {
+    /// Push the visual built from these into the frame; see [`HandleMarkers`].
+    pub fn handle_markers(&self, id_base: u64, ctx: &WidgetContext) -> HandleMarkers {
         let rh = self.handle_pos(CylinderHandle::Radius);
-
-        let rs = handle_world_radius(self.start, &ctx.camera, ctx.viewport_size.y, 10.0);
-        let re = handle_world_radius(self.end, &ctx.camera, ctx.viewport_size.y, 10.0);
-        let rr = handle_world_radius(rh, &ctx.camera, ctx.viewport_size.y, 8.0);
-
-        let scalar = |h: CylinderHandle| {
+        let hot = |h: CylinderHandle| {
             if self.hovered_handle == Some(h) || self.active_handle == Some(h) {
                 1.0_f32
             } else {
                 0.2
             }
         };
-
-        let mut g = GlyphItem::default();
-        g.positions = vec![self.start.to_array(), self.end.to_array(), rh.to_array()];
-        g.vectors = vec![[rs, 0.0, 0.0], [re, 0.0, 0.0], [rr, 0.0, 0.0]];
-        g.scalars = vec![
-            scalar(CylinderHandle::Start),
-            scalar(CylinderHandle::End),
-            scalar(CylinderHandle::Radius),
-        ];
-        g.scalar_range = Some((0.0, 1.0));
-        g.glyph_type = GlyphType::Sphere;
-        g.settings = {
-            let mut s = crate::scene::material::ItemSettings::default();
-            s.pick_id = crate::renderer::PickId(id_base);
-            s
-        };
-        g.default_colour = self.handle_colour.into();
-        g.use_default_colour = self.handle_colour.alpha() > 0.0;
-        g
+        HandleMarkers {
+            positions: vec![self.start, self.end, rh],
+            radii: vec![
+                handle_world_radius(self.start, &ctx.camera, ctx.viewport_size.y, 10.0),
+                handle_world_radius(self.end, &ctx.camera, ctx.viewport_size.y, 10.0),
+                handle_world_radius(rh, &ctx.camera, ctx.viewport_size.y, 8.0),
+            ],
+            colours: vec![
+                handle_colour(self.handle_colour, hot(CylinderHandle::Start)),
+                handle_colour(self.handle_colour, hot(CylinderHandle::End)),
+                handle_colour(self.handle_colour, hot(CylinderHandle::Radius)),
+            ],
+            pick_id: crate::renderer::PickId(id_base),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -340,7 +346,7 @@ mod tests {
         let ctx = ctx_at(CENTRE);
         let w = CylinderWidget::new(Vec3::new(0.0, -1.0, 0.0), Vec3::new(0.0, 1.0, 0.0), 1.0);
         assert!(!w.wireframe_item(1).positions.is_empty());
-        assert!(!w.handle_glyphs(2, &ctx).positions.is_empty());
+        assert!(!w.handle_markers(2, &ctx).positions.is_empty());
     }
 
     #[test]

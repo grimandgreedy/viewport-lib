@@ -1,6 +1,300 @@
 //! Instanced (GPU-driven) mesh draw preparation.
 
 use super::*;
+use crate::resources::mesh::instanced_bindless::MaterialTextureBinding;
+use viewport_lib_types::ids::TextureId;
+
+/// The batch grouping key for one instanced item: items with an equal key share
+/// a batch (same pipeline state and, under `PerBatch`, the same texture bind
+/// group). `mesh_id` and `two_sided` are always part of the key; the five
+/// material texture ids are only included under `PerBatch` binding. Under
+/// `Bindless` the shader indexes a texture array by a per-material index, so the
+/// texture ids collapse to `None` and instances of one mesh with different
+/// materials batch together.
+///
+/// One exception under `Bindless`: an alpha-masked material keeps its albedo id
+/// in the key. The shadow-cutout pass stays on the per-batch binding (it does not
+/// bind the material buffer), so it needs one albedo per batch to alpha-test
+/// against. Opaque materials cast shadows through the discard-free pipeline that
+/// samples no texture, so they collapse fully.
+///
+/// A material plugin also splits the key: plugin items select a per-plugin
+/// pipeline set and a per-variant group-3 bind group that apply to the whole
+/// draw, so two items batch together only when their plugin selection matches
+/// (`None` for built-in shading). Carried as `(plugin_index, variant_index)`.
+///
+/// Used by both the sort comparator and the batch-split predicate below, so the
+/// two cannot drift out of sync.
+type BatchGroupKey = (
+    usize,
+    Option<TextureId>,
+    Option<TextureId>,
+    Option<TextureId>,
+    Option<TextureId>,
+    Option<TextureId>,
+    bool,
+    bool,
+    Option<(u32, u32)>,
+);
+
+/// Form the opaque and OIT draw groups for GPU-driven submission and size + upload
+/// the buffers the compaction pass and the count-multi-draw need. Returns whether
+/// the path is active (bindless + native multi-draw + built cull pipelines + at
+/// least one group); when inactive it clears the group lists so the draw loop falls
+/// back to CPU run-forming.
+///
+/// The group key mirrors the draw loop's run key exactly (transparency,
+/// two-sidedness, discard-free eligibility, and geometry chunk over contiguous
+/// batches), so the groups drawn here match the runs the CPU path would have
+/// formed. The texture bind group is constant under bindless, so it is not part of
+/// the key. Each group also carries that geometry chunk and its pipeline selectors,
+/// so the draw loop binds and draws straight from the group without a per-group
+/// mesh-store lookup.
+///
+/// The group lists and their per-batch metadata are cached on
+/// `(batches_gen, clipping_active)`: while those hold the batch topology
+/// is unchanged, so a steady frame skips the batch-list walk and the group-buffer
+/// upload entirely (only the per-viewport compaction sizing runs on the CPU, and
+/// the compaction itself on the GPU).
+fn build_and_upload_draw_groups(
+    resources: &DeviceResources,
+    instancing: &mut InstancingState,
+    cull_state: &mut crate::resources::ViewportCullState,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    frame: &FrameData,
+) -> bool {
+    let bindless =
+        resources.instancing.material_texture_binding == MaterialTextureBinding::Bindless;
+    // `multi_draw_supported` (native MULTI_DRAW_INDIRECT_COUNT), not
+    // `multi_draw_active()`: the count variant cannot be emulated, so the
+    // `multi_draw_forced` diagnostic override must not reach this path.
+    let active = bindless && instancing.multi_draw_supported && resources.cull.hdr.is_some();
+    if !active {
+        instancing.draw_groups.clear();
+        instancing.oit_draw_groups.clear();
+        instancing.draw_group_cache_key = None;
+        return false;
+    }
+    let clipping_active = frame
+        .effects
+        .clip
+        .objects
+        .iter()
+        .any(|o| o.enabled && o.clip_geometry);
+
+    let n = instancing.batches.len();
+    // The group structure is a pure function of the batch list (`batches_gen`
+    // bumps on any batch change), the clip state, and discard-free eligibility.
+    // While all three hold, the groups and their per-batch metadata are still
+    // valid: skip re-walking the batch list and re-uploading the group buffers,
+    // so a topology-stable frame does no CPU group forming at all. The per-viewport
+    // compaction buffers are still sized below (a new or grown viewport), and the
+    // GPU compaction still runs each frame.
+    let want = (instancing.batches_gen, clipping_active);
+    let cached = instancing.draw_group_cache_key == Some(want)
+        && instancing.group_id_buf.is_some()
+        && (!instancing.draw_groups.is_empty() || !instancing.oit_draw_groups.is_empty());
+
+    if !cached {
+        let mut group_id = vec![crate::renderer::indirect::NO_GROUP; n];
+        let mut group_arg_base = vec![0u32; n];
+        let mut opaque_groups: Vec<crate::renderer::instancing_state::DrawGroup> = Vec::new();
+        let mut oit_groups: Vec<crate::renderer::instancing_state::DrawGroup> = Vec::new();
+        // Opaque and transparent batches are grouped in one pass so both draws share
+        // a single compaction and one `draw_counts` slot space. The run key includes
+        // `is_transparent`, so a group is always a maximal contiguous batch range of
+        // one kind: consecutive groups have adjacent arg ranges and never overlap in
+        // the compacted buffer, whichever way the two kinds interleave. `next_group`
+        // is the global slot each group takes in `draw_counts` (its `count_index`).
+        let mut next_group = 0u32;
+        // (run key, index within the group vec the key's transparency bit selects).
+        let mut cur: Option<((bool, bool, bool, u32, u32), usize)> = None;
+        for (b, batch) in instancing.batches.iter().enumerate() {
+            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                cur = None;
+                continue;
+            };
+            // Material-plugin batches draw through their own composed pipeline plus
+            // a per-variant group-3 bind, which the built-in count-multi-draw path
+            // cannot supply, so they are left out of the groups (their `group_id`
+            // stays `NO_GROUP`, so the compaction skips them and the count draw
+            // never emits them). They draw in the dedicated plugin sub-loop instead.
+            // Breaking the run here also splits two same-key built-in runs that a
+            // plugin batch sits between into separate groups, which is correct: each
+            // built-in group's compacted args occupy its own arg-base range and the
+            // skipped plugin slot is simply never read.
+            if batch.shading_plugin.is_some() {
+                cur = None;
+                continue;
+            }
+            let transparent = batch.is_transparent;
+            // OIT has no discard-free variant; only the opaque pass keys on it.
+            let no_discard = !transparent && !clipping_active && !batch.has_alpha_mask;
+            let vertex_chunk = mesh.vertex_span.chunk;
+            let index_chunk = mesh.index_span.chunk;
+            let key = (
+                transparent,
+                batch.two_sided,
+                no_discard,
+                vertex_chunk,
+                index_chunk,
+            );
+            let vec_ref = if transparent {
+                &mut oit_groups
+            } else {
+                &mut opaque_groups
+            };
+            let gv = match cur {
+                Some((k, gv)) if k == key => {
+                    vec_ref[gv].size += 1;
+                    gv
+                }
+                _ => {
+                    let count_index = next_group;
+                    next_group += 1;
+                    vec_ref.push(crate::renderer::instancing_state::DrawGroup {
+                        arg_base: b as u32,
+                        size: 1,
+                        two_sided: batch.two_sided,
+                        no_discard,
+                        vertex_chunk,
+                        index_chunk,
+                        count_index,
+                    });
+                    let gv = vec_ref.len() - 1;
+                    cur = Some((key, gv));
+                    gv
+                }
+            };
+            group_id[b] = vec_ref[gv].count_index;
+            group_arg_base[b] = vec_ref[gv].arg_base;
+        }
+
+        if opaque_groups.is_empty() && oit_groups.is_empty() {
+            instancing.draw_groups.clear();
+            instancing.oit_draw_groups.clear();
+            instancing.draw_group_cache_key = None;
+            return false;
+        }
+
+        // Per-batch group metadata (scene-global): grow to `n` batches.
+        if instancing.group_buf_capacity < n {
+            let cap = (n * 2).max(64);
+            let mk = |label: &str| {
+                device.create_buffer(&crate::gpu::BufferDescriptor {
+                    label: Some(label),
+                    size: (cap * std::mem::size_of::<u32>()) as u64,
+                    usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                })
+            };
+            instancing.group_id_buf = Some(mk("draw_group_id_buf"));
+            instancing.group_arg_base_buf = Some(mk("draw_group_arg_base_buf"));
+            instancing.group_buf_capacity = cap;
+        }
+        queue.write_buffer(
+            instancing.group_id_buf.as_ref().unwrap(),
+            0,
+            bytemuck::cast_slice(&group_id),
+        );
+        queue.write_buffer(
+            instancing.group_arg_base_buf.as_ref().unwrap(),
+            0,
+            bytemuck::cast_slice(&group_arg_base),
+        );
+
+        instancing.draw_groups = opaque_groups;
+        instancing.oit_draw_groups = oit_groups;
+        instancing.draw_group_cache_key = Some(want);
+    }
+
+    // Per-viewport compaction outputs: compacted args (one DrawIndexedIndirect =
+    // 20 bytes per batch slot) and per-group survivor counts (u32; at most `n`).
+    // Sized every call (independent of the topology cache): a viewport added or
+    // resized this frame needs its own buffers even when the groups are unchanged.
+    if cull_state.compact_capacity < n {
+        let cap = (n * 2).max(64);
+        cull_state.compacted_args_buf = Some(device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("compacted_draw_args_buf"),
+            size: (cap * 20) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE
+                | crate::gpu::BufferUsages::INDIRECT
+                | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        cull_state.draw_counts_buf = Some(device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("draw_counts_buf"),
+            size: (cap * std::mem::size_of::<u32>()) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE
+                | crate::gpu::BufferUsages::INDIRECT
+                | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        cull_state.compact_capacity = cap;
+    }
+
+    true
+}
+
+fn batch_group_key(item: &SceneRenderItem, binding: MaterialTextureBinding) -> BatchGroupKey {
+    let m = &item.material;
+    let textured = binding == MaterialTextureBinding::PerBatch;
+    // Under bindless the texture ids drop out of the key (the array is bound
+    // once per frame); keep them only for the per-batch binding path.
+    let keep = |id: Option<TextureId>| if textured { id } else { None };
+    // Albedo is kept for an alpha-masked material even under bindless, so the
+    // per-batch shadow-cutout pass has a single albedo to sample per batch.
+    let is_masked = matches!(m.alpha_mode, crate::scene::material::AlphaMode::Mask(_));
+    let albedo = if textured || is_masked {
+        m.texture_id
+    } else {
+        None
+    };
+    (
+        item.mesh_id.index(),
+        albedo,
+        keep(m.normal_map_id),
+        keep(m.ao_map_id),
+        keep(m.metallic_roughness_texture_id),
+        keep(m.emissive_texture_id),
+        m.is_two_sided(),
+        // The batch draws opaque or through OIT as a whole, so opaque and
+        // translucent copies of a mesh must not share one.
+        item.settings.opacity < 1.0,
+        m.shading_plugin
+            .map(|p| (p.plugin_index(), p.variant_index())),
+    )
+}
+
+/// Whether every resource a cached batch list names is still resident.
+///
+/// The batch list holds ids, not views, so a free is the only thing that can
+/// invalidate it: if every `mesh_id` and every texture id still resolves, the
+/// cached batches describe exactly the same draws they did last frame and the
+/// rebuild can be skipped. Ids are generational, so a slot that was freed and
+/// reused since resolves through a different id and is correctly seen as gone.
+///
+/// O(batches), against a rebuild measured at O(items) or worse, and batches are
+/// one to two orders of magnitude fewer than items in the scenes this matters for.
+pub(crate) fn cached_batches_resolve(
+    resources: &DeviceResources,
+    batches: &[InstancedBatch],
+) -> bool {
+    batches.iter().all(|b| {
+        crate::resources::resource_deps::ResourceDeps {
+            mesh_id: Some(b.mesh_id),
+            texture_ids: [
+                b.texture_id,
+                b.normal_map_id,
+                b.ao_map_id,
+                b.metallic_roughness_id,
+                b.emissive_id,
+            ],
+        }
+        .resolves(resources)
+    })
+}
 
 impl ViewportRenderer {
     /// Build instanced batches for the current frame: filter eligible items,
@@ -16,37 +310,59 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        hdr_family: bool,
     ) -> (u32, u32) {
         let mut batches_reuploaded = 0u32;
         let mut batches_skipped = 0u32;
+        // The shared layout and shadow pipelines, then the colour pipelines of
+        // the family this frame is drawn with. The OIT instanced pipeline is
+        // built by the HDR path on the first frame with a transparent batch.
         resources.ensure_instanced_pipelines(device);
-        resources.ensure_hdr_instanced_pipelines(device);
-        resources.ensure_oit_instanced_pipeline(device);
+        if hdr_family {
+            resources.ensure_hdr_instanced_pipelines(device);
+        } else {
+            resources.ensure_ldr_instanced_pipelines(device);
+        }
 
         // Generation-based cache: skip batch rebuild and GPU upload when nothing changed.
         // wireframe_mode removed from cache key : wireframe rendering
         // uses the per-object wireframe_pipeline, not the instanced path, so
         // instance data is now viewport-agnostic.
         //
-        // Items with active_attribute, two-sided policy, matcap, or param_vis are
-        // excluded from the instanced batch filter. Items whose mesh has an active
-        // compute filter result are also excluded so the per-object path can apply
-        // the filtered index buffer (instanced draws always use the full index buffer).
+        // Items with active_attribute, matcap, warp, deform slot data (per-mesh
+        // or per-instance), submesh materials, or overrides are excluded from
+        // the instanced batch filter (see `is_instanceable`).
         // These flags are set on render items AFTER collect_render_items() (per-frame
         // mutations), so they do NOT bump the scene generation. Use last_instancable_count
         // as a cache key instead of a blanket has_per_frame_mutations flag; this allows
         // scenes that mix instanced and non-instanced items (e.g. one two-sided mesh +
         // many static boxes) to still hit the instanced batch cache on frames where the
         // filtered set is unchanged.
+        //
+        // Material identity (texture ids, emissive/plugin selection) is NOT in this
+        // cache key: a change to it is a scene change and must bump
+        // `frame.scene.generation`, like any other material edit. Emissive-textured
+        // and shading-plugin items now instance (they used to fall per-object), so a
+        // per-frame swap of those no longer changes `instancable_count` on its own;
+        // the generation bump is what rebuilds the batch list for them.
         let instancable_count = instanceable.iter().filter(|&&b| b).count();
         let cache_valid = instancable_count == instancing.last_instancable_count
             && frame.scene.generation == instancing.last_scene_generation
             && frame.interaction.selection_generation == instancing.last_selection_generation
             && scene_items.len() == instancing.last_scene_items_count
-            // Cached batches reference mesh ids by slot; a free (which bumps this
-            // epoch) can leave them pointing at freed meshes, so every instanced
-            // draw is skipped. Rebuild when it moves, as the per-object path does.
-            && resources.resource_free_epoch == instancing.last_resource_free_epoch
+            // Cached batches reference mesh and texture ids by slot, so a free can
+            // leave them naming resources that are gone. The epoch says something
+            // was freed but not what, and under a streaming eviction budget that is
+            // true on most frames while the batches themselves are almost always
+            // untouched. So when it moves, check rather than discard: if every id
+            // the cached batches name still resolves, they are still correct.
+            //
+            // A replace is excluded from the check deliberately. It swaps the view
+            // behind a live id, which no liveness test can see, so the view epoch
+            // keeps its unconditional rebuild.
+            && resources.resource_view_epoch == instancing.last_resource_view_epoch
+            && (resources.resource_free_epoch == instancing.last_resource_free_epoch
+                || cached_batches_resolve(resources, &instancing.cached_batches))
             // The global wireframe toggle is baked into each instance's
             // per-instance wireframe flag (see the `InstanceData` push below), so
             // flipping it with no other scene change must still force a rebuild.
@@ -63,24 +379,13 @@ impl ViewportRenderer {
                 .filter(|(idx, _)| instanceable[*idx])
                 .collect();
 
+            let binding = resources.instancing.material_texture_binding;
             sorted_items.sort_unstable_by(|(_, a), (_, b)| {
-                // Batch grouping key (must match the batch-split condition).
-                // two_sided is part of the key because the two pipelines differ
-                // in cull mode, so a batch must not mix one- and two-sided items.
-                let batch_ord = (
-                    a.mesh_id.index(),
-                    a.material.texture_id,
-                    a.material.normal_map_id,
-                    a.material.ao_map_id,
-                    a.material.is_two_sided(),
-                )
-                    .cmp(&(
-                        b.mesh_id.index(),
-                        b.material.texture_id,
-                        b.material.normal_map_id,
-                        b.material.ao_map_id,
-                        b.material.is_two_sided(),
-                    ));
+                // Batch grouping key (shared with the batch-split condition
+                // below). two_sided is part of the key because the two pipelines
+                // differ in cull mode, so a batch must not mix one- and
+                // two-sided items.
+                let batch_ord = batch_group_key(a, binding).cmp(&batch_group_key(b, binding));
                 if batch_ord != std::cmp::Ordering::Equal {
                     return batch_ord;
                 }
@@ -120,11 +425,7 @@ impl ViewportRenderer {
                     let key_changed = !at_end && {
                         let a = sorted_items[batch_start].1;
                         let b = sorted_items[i].1;
-                        a.mesh_id != b.mesh_id
-                            || a.material.texture_id != b.material.texture_id
-                            || a.material.normal_map_id != b.material.normal_map_id
-                            || a.material.ao_map_id != b.material.ao_map_id
-                            || a.material.is_two_sided() != b.material.is_two_sided()
+                        batch_group_key(a, binding) != batch_group_key(b, binding)
                     };
 
                     if at_end || key_changed {
@@ -154,7 +455,32 @@ impl ViewportRenderer {
                             .unwrap_or((0, 0));
 
                         for (orig_idx, item) in batch_items {
-                            let cm = common_material(item);
+                            let resolved = resources.resolve_material_slots(&item.material);
+                            let cm = common_material(item, resolved);
+                            let material_id = resources
+                                .material_gpu_builder
+                                .intern(&item.material, resolved);
+                            let custom_data_id = resources
+                                .custom_data_builder
+                                .intern(item.settings.custom_data);
+                            // Styled back-face `Pattern` world scale: transform the
+                            // mesh AABB by this instance's model to get its world
+                            // extent, then divide the pattern scale by it. Mirrors
+                            // the per-object derivation (`per_object.rs`). Zero for
+                            // every non-Pattern policy.
+                            let backface_pattern_scale = match item.material.backface_policy {
+                                crate::scene::material::BackfacePolicy::Pattern(cfg) => {
+                                    let world_extent = batch_mesh
+                                        .map(|m| {
+                                            let model = glam::Mat4::from_cols_array_2d(&item.model);
+                                            m.aabb.transformed(&model).longest_side()
+                                        })
+                                        .unwrap_or(1.0)
+                                        .max(1e-6);
+                                    cfg.scale / world_extent
+                                }
+                                _ => 0.0,
+                            };
                             // Recover this item's light-probe SH block (assigned
                             // in the shared prepass, keyed by scene-item index).
                             let probe = probe_indices[*orig_idx];
@@ -173,30 +499,37 @@ impl ViewportRenderer {
                                 wireframe: (frame.viewport.wireframe_mode
                                     || item.settings.wireframe)
                                     as u32,
-                                ambient: cm.ambient,
-                                diffuse: cm.diffuse,
-                                specular: cm.specular,
-                                shininess: cm.shininess,
                                 has_texture: cm.has_texture,
-                                use_pbr: cm.use_pbr,
-                                metallic: cm.metallic,
-                                roughness: cm.roughness,
                                 has_normal_map: cm.has_normal_map,
                                 has_ao_map: cm.has_ao_map,
                                 unlit: cm.unlit,
-                                receive_shadows: cm.receive_shadows,
-                                use_flat: cm.use_flat,
-                                normal_strength: cm.normal_strength,
-                                uv_transform: cm.uv_transform,
-                                ao_range: cm.ao_range,
-                                alpha_cutoff: cm.alpha_cutoff,
-                                alpha_flag: cm.alpha_flag,
-                                emissive: cm.emissive,
-                                _pad_emissive: 0.0,
+                                // Bit 1 carries `GpuMesh::closed`, bit 2 the
+                                // two-sided receiver flag (see the field doc).
+                                receive_shadows: cm.receive_shadows
+                                    | ((batch_mesh.is_some_and(|m| m.closed) as u32) << 1)
+                                    | ((item.material.is_two_sided()
+                                        && !batch_mesh.is_some_and(|m| m.closed))
+                                        as u32)
+                                        << 2,
+                                // Shading scalars (PBR terms, ranges, emissive,
+                                // use_pbr/use_flat) live in material_gpu_buf, read
+                                // via material_id; alpha stays per-instance for the
+                                // shadow-cutout pass.
+                                material_id,
+                                alpha_cutoff: match item.material.alpha_mode {
+                                    crate::scene::material::AlphaMode::Mask(c) => c,
+                                    _ => 0.5,
+                                },
+                                alpha_flag: matches!(
+                                    item.material.alpha_mode,
+                                    crate::scene::material::AlphaMode::Mask(_)
+                                ) as u32,
                                 has_light_probe: probe.map_or(0, |_| 1),
                                 light_probe_index: probe.unwrap_or(0),
                                 ignore_clip: item.settings.ignore_clip as u32,
-                                _pad_lp: 0,
+                                custom_data_id,
+                                backface_pattern_scale,
+                                object_mask: item.settings.visibility_mask,
                             });
                             if let Some(mesh) = batch_mesh {
                                 let model = glam::Mat4::from_cols_array_2d(&item.model);
@@ -221,7 +554,7 @@ impl ViewportRenderer {
                             vis_offset: instance_offset,
                             is_transparent: if is_transparent { 1 } else { 0 },
                             base_vertex: mesh_base_vertex,
-                            _pad: 0,
+                            _reserved_flags: 0,
                         });
 
                         instanced_batches.push(InstancedBatch {
@@ -229,6 +562,8 @@ impl ViewportRenderer {
                             texture_id: rep.material.texture_id,
                             normal_map_id: rep.material.normal_map_id,
                             ao_map_id: rep.material.ao_map_id,
+                            metallic_roughness_id: rep.material.metallic_roughness_texture_id,
+                            emissive_id: rep.material.emissive_texture_id,
                             instance_offset,
                             instance_count: batch_items.len() as u32,
                             is_transparent,
@@ -247,6 +582,10 @@ impl ViewportRenderer {
                                         crate::scene::material::AlphaMode::Mask(_)
                                     )
                                 }),
+                            // Batch-uniform: `shading_plugin` is part of the
+                            // batch key, so every item in the batch selects the
+                            // same plugin (or built-in shading).
+                            shading_plugin: rep.material.shading_plugin,
                         });
 
                         batch_start = i;
@@ -357,22 +696,55 @@ impl ViewportRenderer {
             instancing.last_scene_items_count = scene_items.len();
             instancing.last_instancable_count = sorted_items.len();
             instancing.last_resource_free_epoch = resources.resource_free_epoch;
+            instancing.last_resource_view_epoch = resources.resource_view_epoch;
 
             for batch in &instancing.batches {
+                let uv1_chunk = resources
+                    .mesh_store
+                    .get(batch.mesh_id)
+                    .map(|m| m.vertex_span.chunk)
+                    .unwrap_or(u32::MAX);
                 resources.get_instance_bind_group(
                     device,
                     batch.texture_id,
                     batch.normal_map_id,
                     batch.ao_map_id,
+                    batch.metallic_roughness_id,
+                    batch.emissive_id,
+                    uv1_chunk,
+                );
+                // Under bindless, the direct colour draws bind one texture-array
+                // group per vertex-slab chunk (the chunk supplies the uv1 buffer);
+                // a no-op on the per-batch binding.
+                resources.ensure_bindless_colour_bind_group(
+                    device,
+                    instancing.instance_gen,
+                    uv1_chunk,
                 );
             }
         } else {
             for batch in &instancing.batches {
+                let uv1_chunk = resources
+                    .mesh_store
+                    .get(batch.mesh_id)
+                    .map(|m| m.vertex_span.chunk)
+                    .unwrap_or(u32::MAX);
                 resources.get_instance_bind_group(
                     device,
                     batch.texture_id,
                     batch.normal_map_id,
                     batch.ao_map_id,
+                    batch.metallic_roughness_id,
+                    batch.emissive_id,
+                    uv1_chunk,
+                );
+                // Under bindless, the direct colour draws bind one texture-array
+                // group per vertex-slab chunk (the chunk supplies the uv1 buffer);
+                // a no-op on the per-batch binding.
+                resources.ensure_bindless_colour_bind_group(
+                    device,
+                    instancing.instance_gen,
+                    uv1_chunk,
                 );
             }
         }
@@ -397,6 +769,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        hdr_family: bool,
         sink: &mut crate::renderer::SubmitSink,
     ) {
         if !instancing.gpu_culling_enabled
@@ -411,35 +784,60 @@ impl ViewportRenderer {
         let batch_count = instancing.batches.len() as u32;
 
         // Do all mutable borrows before taking immutable borrows from resources.
-        if instancing.cull_resources.is_none() {
-            instancing.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
-        }
         resources.ensure_cull_instance_pipelines(device);
+        if hdr_family {
+            resources.ensure_hdr_cull_pipelines(device);
+        }
         cull_state.ensure_outputs(device, instance_count, batch_count);
         // Drop cull bind groups whose binding-0 instance storage buffer was
         // rebuilt this frame; `ensure_outputs` already handles a resized vis
-        // buffer. Also drop them when the free epoch moved: these bind groups
-        // sample the albedo/normal/ao views (bindings 1/3/4) and double as the
-        // indirect draw's group-1, and `replace_texture` swaps the view under a
-        // stable id without changing the cache key, so a texture update would
-        // otherwise keep drawing the old pixels. Mirrors the eviction
-        // `replace_texture` already does for the non-culled instance bind groups.
-        if cull_state.built_gen != instancing.instance_gen
-            || cull_state.built_free_epoch != resources.resource_free_epoch
-        {
+        // buffer. These bind groups also sample the albedo/normal/ao views
+        // (bindings 1/3/4) and double as the indirect draw's group-1, so they
+        // must drop whenever a texture they name stops being the one they were
+        // built against. Two ways that happens, and they need different tests:
+        // a replace swaps the view under a live id and is invisible to any
+        // liveness check, so the view epoch drops them unconditionally; a free
+        // removes the id, which the same validation the batch list uses detects.
+        // When neither applies the bind groups are still correct, which under a
+        // streaming eviction budget is almost every frame.
+        let cull_bgs_stale = cull_state.built_view_epoch != resources.resource_view_epoch
+            || (cull_state.built_free_epoch != resources.resource_free_epoch
+                && !cached_batches_resolve(resources, &instancing.batches));
+        if cull_state.built_gen != instancing.instance_gen || cull_bgs_stale {
             cull_state.instance_cull_bind_groups.clear();
+            cull_state.bindless_cull_bind_groups.clear();
             cull_state.built_gen = instancing.instance_gen;
             cull_state.built_free_epoch = resources.resource_free_epoch;
+            cull_state.built_view_epoch = resources.resource_view_epoch;
         }
         for batch in &instancing.batches.clone() {
+            let uv1_chunk = resources
+                .mesh_store
+                .get(batch.mesh_id)
+                .map(|m| m.vertex_span.chunk)
+                .unwrap_or(u32::MAX);
             resources.get_instance_cull_bind_group(
                 cull_state,
                 device,
                 batch.texture_id,
                 batch.normal_map_id,
                 batch.ao_map_id,
+                batch.metallic_roughness_id,
+                batch.emissive_id,
+                uv1_chunk,
             );
+            // Under bindless the culled colour draws bind one texture-array group
+            // per viewport per vertex-slab chunk (the per-batch groups above still
+            // serve the shadow-cutout cull path); a no-op on the per-batch binding.
+            resources.get_bindless_cull_bind_group(cull_state, device, uv1_chunk);
         }
+
+        // GPU-driven submission: form the opaque draw groups and size the
+        // per-viewport compaction buffers. Active only under the bindless +
+        // native-multi-draw path; leaves `draw_groups` empty otherwise, so the
+        // draw loop keeps the CPU run-forming path.
+        let gpu_driven =
+            build_and_upload_draw_groups(resources, instancing, cull_state, device, queue, frame);
 
         // Now take immutable borrows to the GPU buffers for dispatch.
         if let (
@@ -458,7 +856,10 @@ impl ViewportRenderer {
             let vp_mat = frame.camera.render_camera.view_proj();
             let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(&vp_mat);
 
-            let cull = instancing.cull_resources.as_ref().unwrap();
+            // `gpu_culling_enabled` is only set once the compute is built.
+            let Some(cull) = instancing.cull_resources.ready() else {
+                return;
+            };
             let mut encoder =
                 device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                     label: Some("cull_encoder"),
@@ -493,6 +894,12 @@ impl ViewportRenderer {
                 viewport: hiz_dims,
                 hiz_view,
                 do_occlusion: built,
+                // Per-object masks ride the instance storage buffer (aligned with
+                // the AABB index). With it bound, the cull AND-tests each against
+                // this viewport's cull_mask, so a per-viewport layer filter
+                // narrows the shared instanced batches.
+                instance_data: resources.instancing.storage_buf.as_ref(),
+                cull_mask: frame.camera.cull_mask,
             };
             cull.dispatch(
                 &mut encoder,
@@ -504,6 +911,30 @@ impl ViewportRenderer {
                 cull_ts,
                 Some(&extras),
             );
+
+            // GPU-driven submission: compact the per-batch cull args into one
+            // multi-draw range per group. Same encoder, after the cull, so the
+            // storage barrier orders it after the args were written.
+            if gpu_driven {
+                if let (Some(group_id), Some(group_arg_base), Some(compacted), Some(counts)) = (
+                    instancing.group_id_buf.as_ref(),
+                    instancing.group_arg_base_buf.as_ref(),
+                    cull_state.compacted_args_buf.as_ref(),
+                    cull_state.draw_counts_buf.as_ref(),
+                ) {
+                    cull.compact_draws(
+                        &mut encoder,
+                        device,
+                        queue,
+                        batch_count,
+                        indirect_buf,
+                        group_arg_base,
+                        group_id,
+                        compacted,
+                        counts,
+                    );
+                }
+            }
 
             // Copy indirect_args_buf to the CPU-readable staging buffer so the
             // visible instance count can be read back on a later frame. The
@@ -552,6 +983,131 @@ impl ViewportRenderer {
                 instancing.indirect_readback_batch_count = batch_count;
                 instancing.indirect_readback_pending = true;
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod batch_key_tests {
+    use super::*;
+
+    fn item_with(mesh: usize, tex: Option<u64>, two_sided: bool) -> SceneRenderItem {
+        let mut item = SceneRenderItem::default();
+        // MeshId is a generational slot handle; the key only reads its index.
+        item.mesh_id = crate::resources::mesh::mesh_store::MeshId::from_index(mesh as u32);
+        item.material.texture_id = tex.map(TextureId::from_raw);
+        if two_sided {
+            item.material.backface_policy = crate::scene::material::BackfacePolicy::Identical;
+        }
+        item
+    }
+
+    #[test]
+    fn per_batch_splits_on_texture_id() {
+        let a = item_with(0, Some(1), false);
+        let b = item_with(0, Some(2), false);
+        assert_ne!(
+            batch_group_key(&a, MaterialTextureBinding::PerBatch),
+            batch_group_key(&b, MaterialTextureBinding::PerBatch),
+            "per-batch binding must split two textures into separate batches",
+        );
+    }
+
+    #[test]
+    fn bindless_collapses_texture_id() {
+        let a = item_with(0, Some(1), false);
+        let b = item_with(0, Some(2), false);
+        assert_eq!(
+            batch_group_key(&a, MaterialTextureBinding::Bindless),
+            batch_group_key(&b, MaterialTextureBinding::Bindless),
+            "bindless binding must collapse different textures on one mesh into one batch",
+        );
+    }
+
+    #[test]
+    fn mesh_and_two_sided_always_split() {
+        // Different mesh never batches together, in either mode.
+        for binding in [
+            MaterialTextureBinding::PerBatch,
+            MaterialTextureBinding::Bindless,
+        ] {
+            let a = item_with(0, None, false);
+            let b = item_with(1, None, false);
+            assert_ne!(batch_group_key(&a, binding), batch_group_key(&b, binding));
+        }
+        // two_sided stays in the key even under bindless (the pipelines differ
+        // in cull mode), so it splits regardless of texture collapse.
+        let one_sided = item_with(0, Some(5), false);
+        let two_sided = item_with(0, Some(5), true);
+        assert_ne!(
+            batch_group_key(&one_sided, MaterialTextureBinding::Bindless),
+            batch_group_key(&two_sided, MaterialTextureBinding::Bindless),
+        );
+    }
+
+    #[test]
+    fn opaque_and_translucent_copies_split() {
+        // A batch is drawn opaque or through OIT as a whole, so an opaque and
+        // a translucent copy of one mesh must land in separate batches. Two
+        // translucent copies at different opacities still share one: opacity
+        // itself travels per instance.
+        for binding in [
+            MaterialTextureBinding::PerBatch,
+            MaterialTextureBinding::Bindless,
+        ] {
+            let opaque = item_with(0, None, false);
+            let mut half = item_with(0, None, false);
+            half.settings.opacity = 0.5;
+            let mut quarter = item_with(0, None, false);
+            quarter.settings.opacity = 0.25;
+            assert_ne!(
+                batch_group_key(&opaque, binding),
+                batch_group_key(&half, binding)
+            );
+            assert_eq!(
+                batch_group_key(&half, binding),
+                batch_group_key(&quarter, binding)
+            );
+        }
+    }
+
+    #[test]
+    fn shading_plugin_splits_and_matches() {
+        use crate::scene::material::MaterialPluginId;
+        for binding in [
+            MaterialTextureBinding::PerBatch,
+            MaterialTextureBinding::Bindless,
+        ] {
+            let plain = item_with(0, None, false);
+            let mut plug_a = item_with(0, None, false);
+            plug_a.material.shading_plugin = Some(MaterialPluginId::from_parts(3, 0));
+            let mut plug_a2 = item_with(0, None, false);
+            plug_a2.material.shading_plugin = Some(MaterialPluginId::from_parts(3, 0));
+            let mut plug_b_variant = item_with(0, None, false);
+            plug_b_variant.material.shading_plugin = Some(MaterialPluginId::from_parts(3, 1));
+            let mut plug_c = item_with(0, None, false);
+            plug_c.material.shading_plugin = Some(MaterialPluginId::from_parts(4, 0));
+
+            // Built-in shading never batches with a plugin.
+            assert_ne!(
+                batch_group_key(&plain, binding),
+                batch_group_key(&plug_a, binding),
+            );
+            // Same plugin and variant batch together.
+            assert_eq!(
+                batch_group_key(&plug_a, binding),
+                batch_group_key(&plug_a2, binding),
+            );
+            // A different variant of the same plugin splits (its group-3 params
+            // and textures differ), as does a different plugin.
+            assert_ne!(
+                batch_group_key(&plug_a, binding),
+                batch_group_key(&plug_b_variant, binding),
+            );
+            assert_ne!(
+                batch_group_key(&plug_a, binding),
+                batch_group_key(&plug_c, binding),
+            );
         }
     }
 }

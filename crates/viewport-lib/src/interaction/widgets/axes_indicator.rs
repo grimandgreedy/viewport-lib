@@ -8,6 +8,7 @@
 //! - `hit_test`: given a click position in pixels, returns the target
 //!   (yaw, pitch) if an axis circle was hit.
 
+use crate::Colour;
 use crate::{OverlayFill, OverlayShape, OverlayShapeItem};
 
 // ---------------------------------------------------------------------------
@@ -134,7 +135,7 @@ fn segment(
         [mid.x - len * 0.5, mid.y - thickness * 0.5],
         [len, thickness],
     )
-    .with_fill(OverlayFill::Solid(colour.into()))
+    .with_fill(OverlayFill::Solid(Colour::from_linear_array(colour)))
     .with_rotation(angle)
     .with_z_order(z)
 }
@@ -160,7 +161,7 @@ fn disc(
         [centre.x - radius, centre.y - radius],
         [radius * 2.0, radius * 2.0],
     )
-    .with_fill(OverlayFill::Solid(colour.into()))
+    .with_fill(OverlayFill::Solid(Colour::from_linear_array(colour)))
     .with_z_order(z)
 }
 
@@ -301,8 +302,8 @@ mod tests {
         build_axes_overlays(800.0, 600.0, glam::Quat::IDENTITY, &mut shapes);
         // Every shape's centre is near the bottom-left origin region.
         for s in &shapes {
-            let cx = s.position[0] + s.size[0] * 0.5;
-            let cy = s.position[1] + s.size[1] * 0.5;
+            let cx = s.transform.translate[0] + s.size[0] * 0.5;
+            let cy = s.transform.translate[1] + s.size[1] * 0.5;
             assert!(cx < 120.0, "shape too far right: {cx}");
             assert!(cy > 480.0, "shape too far up: {cy}");
         }

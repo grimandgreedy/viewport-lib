@@ -10,8 +10,11 @@
 /// the HDR scene buffer alongside built-in mesh items.
 #[derive(Clone, Copy, Debug)]
 pub struct OpaqueTargetDesc {
-    /// Colour target format. `Rgba16Float` on the HDR path; matches the
-    /// swap-chain format on the LDR path.
+    /// Colour target format. `Rgba16Float` from
+    /// [`opaque_target_desc`](crate::resources::DeviceResources::opaque_target_desc)
+    /// (the HDR scene buffer); the renderer's configured output format from
+    /// [`ldr_opaque_target_desc`](crate::resources::DeviceResources::ldr_opaque_target_desc)
+    /// (the LDR scene pass).
     pub color_format: crate::gpu::TextureFormat,
     /// Depth-stencil format. `Depth24PlusStencil8` everywhere today.
     pub depth_format: crate::gpu::TextureFormat,
@@ -66,8 +69,8 @@ pub struct OitTargetDesc {
 /// against the opaque depth without writing it.
 #[derive(Clone, Copy, Debug)]
 pub struct DepthReadTargetDesc {
-    /// Colour target format. `Rgba16Float` on the HDR path; matches the
-    /// swap-chain format on the LDR path.
+    /// Colour target format. `Rgba16Float`: the read-only-depth pass exists
+    /// on the HDR path only.
     pub color_format: crate::gpu::TextureFormat,
     /// Depth-stencil attachment, bound read-only (`depth_ops: None`). The
     /// pipeline tests against it but must not write; `Depth24PlusStencil8`.

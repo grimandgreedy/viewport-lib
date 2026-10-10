@@ -37,21 +37,116 @@ pub use wgpu29::vertex_attr_array;
 #[cfg(wgpu30)]
 pub use wgpu30::vertex_attr_array;
 
-/// Construct a wgpu `Instance` with default options. This papers over the
-/// `InstanceDescriptor` construction that differs across wgpu versions: 27
-/// derives `Default`, while 29 and 30 gained a display-handle field and
-/// construct through `new_without_display_handle`. Used for headless setup and
-/// by the test harness (in this crate and the testkit).
+/// Push a validation error scope, returning a handle that pops it. wgpu 27
+/// pushes on the device and pops through the device again; 29 and 30 hand back
+/// a guard that owns the pop. Both drive as `push_error_scope(&device, filter)`
+/// followed by awaiting `scope.pop()`.
 #[cfg(wgpu27)]
-#[doc(hidden)]
+pub struct ErrorScope<'a> {
+    device: &'a Device,
+}
+#[cfg(wgpu27)]
+impl ErrorScope<'_> {
+    pub fn pop(self) -> impl std::future::Future<Output = Option<Error>> {
+        self.device.pop_error_scope()
+    }
+}
+#[cfg(wgpu27)]
+pub fn push_error_scope(device: &Device, filter: ErrorFilter) -> ErrorScope<'_> {
+    device.push_error_scope(filter);
+    ErrorScope { device }
+}
+#[cfg(any(wgpu29, wgpu30))]
+pub struct ErrorScope {
+    guard: ErrorScopeGuard,
+}
+#[cfg(any(wgpu29, wgpu30))]
+impl ErrorScope {
+    pub fn pop(self) -> impl std::future::Future<Output = Option<Error>> {
+        self.guard.pop()
+    }
+}
+#[cfg(any(wgpu29, wgpu30))]
+pub fn push_error_scope(device: &Device, filter: ErrorFilter) -> ErrorScope {
+    ErrorScope {
+        guard: device.push_error_scope(filter),
+    }
+}
+
+/// The wgpu major version this build resolved to: 27, 29 or 30.
+///
+/// Cargo unifies the wgpu crate across the whole graph, but a sibling crate
+/// that spells its own version seams as `#[cfg(feature = "wgpu29")]` keys off
+/// its own features, which a dependency edge can leave unset or set to a
+/// different leg. Such a crate should assert its own leg against this constant
+/// so the disagreement is a compile error rather than the wrong arm of every
+/// seam compiling quietly.
+#[cfg(wgpu27)]
+pub const WGPU_LEG: u32 = 27;
+#[cfg(wgpu29)]
+pub const WGPU_LEG: u32 = 29;
+#[cfg(wgpu30)]
+pub const WGPU_LEG: u32 = 30;
+
+/// Construct a wgpu `Instance` with default options.
+///
+/// There is no `InstanceDescriptor` literal that compiles on every leg, so this
+/// is the portable spelling rather than a convenience: wgpu 27 derives `Default`
+/// and takes the descriptor by reference, while 29 and 30 dropped `Default`,
+/// added a display-handle field and take it by value. A consumer writing
+/// `InstanceDescriptor { .. , ..Default::default() }` is writing 27-only code.
+///
+/// Use this, [`instance_with_backends`] or [`instance_from_env`] as the first
+/// call of a runner, alongside [`headless_adapter_options`],
+/// [`runner_surface_config`], [`acquire_surface`] and [`present`].
+#[cfg(wgpu27)]
 pub fn default_instance() -> Instance {
     Instance::new(&InstanceDescriptor::default())
 }
 // 29 and 30 also take the descriptor by value rather than by reference.
 #[cfg(any(wgpu29, wgpu30))]
-#[doc(hidden)]
 pub fn default_instance() -> Instance {
     Instance::new(InstanceDescriptor::new_without_display_handle())
+}
+
+/// Construct a wgpu `Instance` limited to `backends`.
+///
+/// For a host that has to pin the backend rather than take whatever wgpu picks:
+/// Vulkan on Android so the driver does not vary by device, Metal on Apple,
+/// `Backends::BROWSER_WEBGPU` on the web. `backends` is a public field of
+/// `InstanceDescriptor` on every leg; only the construction around it differs.
+#[cfg(wgpu27)]
+pub fn instance_with_backends(backends: Backends) -> Instance {
+    Instance::new(&InstanceDescriptor {
+        backends,
+        ..Default::default()
+    })
+}
+#[cfg(any(wgpu29, wgpu30))]
+pub fn instance_with_backends(backends: Backends) -> Instance {
+    // No `Default` to spread from on these legs, so start from the constructor
+    // and set the one field.
+    let mut desc = InstanceDescriptor::new_without_display_handle();
+    desc.backends = backends;
+    Instance::new(desc)
+}
+
+/// Construct a wgpu `Instance` honouring wgpu's own environment overrides
+/// (`WGPU_BACKEND`, `WGPU_ADAPTER_NAME` and friends).
+///
+/// Covers the whole descriptor, not just the backend mask: flags and backend
+/// options read the environment too. `Backends::from_env` is spelled the same on
+/// every leg, so a consumer wanting only the backend mask can keep using it with
+/// [`instance_with_backends`]; the descriptor-level constructor is the part that
+/// is named differently per leg (27 `from_env_or_default`, 29 and 30
+/// `new_without_display_handle_from_env`).
+#[cfg(wgpu27)]
+pub fn instance_from_env() -> Instance {
+    Instance::new(&InstanceDescriptor::from_env_or_default())
+}
+#[cfg(any(wgpu29, wgpu30))]
+pub fn instance_from_env() -> Instance {
+    Instance::new(InstanceDescriptor::new_without_display_handle_from_env())
 }
 
 /// The outcome of acquiring the next surface texture, normalised across wgpu legs.
@@ -196,6 +291,27 @@ pub const PRIMITIVE_INDEX_FEATURE: Features = Features::PRIMITIVE_INDEX;
 #[doc(hidden)]
 pub const RAY_QUERY_FEATURE: Features = Features::EXPERIMENTAL_RAY_QUERY;
 
+/// The feature set the bindless material-texture path needs: a sampled-texture
+/// `binding_array` and non-uniform (per-instance) indexing into it. Named the
+/// same on every wgpu leg.
+///
+/// `PARTIALLY_BOUND_BINDING_ARRAY` is deliberately not in here. The renderer
+/// fills every entry of the texture array, binding a neutral fallback view for
+/// slots that hold no texture, so the array is never partially bound and a device
+/// without that feature can still take this path.
+///
+/// Support is a property of the adapter, not of the backend: ask the adapter
+/// rather than assuming from the platform. Apple silicon reports both through
+/// Metal argument buffers, so a Mac takes the bindless path, and WebGPU does not.
+/// `recommended_device_features` requests these when the adapter has them, which
+/// is what selects
+/// [`MaterialTextureBinding::Bindless`](crate::resources::mesh::instanced_bindless::MaterialTextureBinding);
+/// [`ViewportRenderer::material_texture_binding`](crate::ViewportRenderer::material_texture_binding)
+/// reports which path a renderer actually took.
+#[doc(hidden)]
+pub const BINDLESS_TEXTURE_FEATURES: Features = Features::TEXTURE_BINDING_ARRAY
+    .union(Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING);
+
 // Version-portability helpers, surfaced here (the version seam) so tests and
 // consumers that build wgpu pipelines directly can do so without their own
 // per-version `#[cfg]`. Each helper is the single place a new wgpu leg grows a
@@ -205,3 +321,19 @@ pub use crate::resources::builders::{
     RenderPipelineDesc, dcompare, depth_stencil, dmipmap, dwrite, pipeline_layout, render_pipeline,
     scene_depth_stencil, write_mapped,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The point of these three is that one source builds on every leg: the
+    // descriptor is spelled differently on 27 than on 29 and 30, and there is no
+    // literal that covers both. Constructing each one here is the guard, since a
+    // leg that needed a fourth arm would fail to compile before it ran.
+    #[test]
+    fn instance_constructors_build_on_this_leg() {
+        let _ = default_instance();
+        let _ = instance_with_backends(Backends::all());
+        let _ = instance_from_env();
+    }
+}

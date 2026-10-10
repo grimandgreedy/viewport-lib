@@ -27,7 +27,7 @@
 //! AABBs, or per-frame refresh against deformed positions). GPU picking
 //! (`crate::renderer::picking`) reads the rasterised object-ID buffer and therefore
 //! picks the deformed silhouette automatically.
-use crate::geometry::marching_cubes::VolumeData;
+use crate::geometry::volume::grid::VolumeData;
 use crate::renderer::{PickHit, SubObjectRef};
 use crate::resources::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
 use crate::resources::{AttributeData, AttributeKind, AttributeRef};
@@ -161,7 +161,7 @@ pub fn pick_scene_nodes_cpu(
     // Light glyphs render on top of meshes and are small, so test them first.
     // Any hit short-circuits the underlying mesh raycast (matches what the GPU
     // pick path produces naturally because the glyph rasterises on top).
-    if let Some(hit) = pick_light_glyphs_cpu(ray_origin, ray_dir, scene) {
+    if let Some(hit) = pick_light_indicators_cpu(ray_origin, ray_dir, scene) {
         return Some(hit);
     }
 
@@ -171,12 +171,12 @@ pub fn pick_scene_nodes_cpu(
 
 /// Half-extent (world units) of the bounding sphere used for picking a
 /// light glyph. Slightly larger than the visual glyph so clicks near the
-/// edge still land. Matches the visual `GLYPH_SIZE` in `scene::light_glyphs`.
+/// edge still land. Matches the visual `GLYPH_SIZE` in `scene::light_indicators`.
 const LIGHT_GLYPH_PICK_RADIUS: f32 = 0.35;
 
 /// Ray-test against the bounding sphere of each scene-graph light glyph.
 /// Returns the nearest hit (along the ray) if any.
-fn pick_light_glyphs_cpu(
+fn pick_light_indicators_cpu(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
     scene: &crate::scene::scene::Scene,
@@ -465,10 +465,10 @@ pub fn pick_scene_accelerated_with_probe_cpu(
 pub struct RectPickResult {
     /// Per-object typed sub-object references.
     ///
-    /// Key = object identifier: [`crate::renderer::PickId`]`.0` (the scene node id)
-    /// for mesh scene items, [`crate::renderer::PointCloudItem::id`] for point clouds.
+    /// Key = object identifier: [`crate::renderer::PickId`]`.0`, the scene node
+    /// id for mesh scene items and the item's pick id for an item type.
     /// Value = [`SubObjectRef`]s inside the rect : `Face` for mesh triangles,
-    /// `Point` for point cloud points.
+    /// `Point` for the point-set types.
     pub hits: std::collections::HashMap<u64, Vec<SubObjectRef>>,
 }
 
@@ -541,17 +541,38 @@ fn ray_aabb_volume(
     Some((t_min, t_max, entry_axis, entry_sign))
 }
 
+/// Where a volume sits and which scalars it shows, as the CPU volume picks
+/// need it.
+///
+/// The three helpers below test a ray or a rectangle against a ray-marched
+/// box. All they need from a submission is its placement and its scalar
+/// window, so they take this rather than the item struct, which lets an item
+/// type that owns its own submission form keep using them.
+#[derive(Debug, Clone, Copy)]
+pub struct VolumeRegion {
+    /// World transform of the unit box the volume occupies.
+    pub model: [[f32; 4]; 4],
+    /// Minimum corner of the volume's bounding box, before `model`.
+    pub bbox_min: [f32; 3],
+    /// Maximum corner of the volume's bounding box, before `model`.
+    pub bbox_max: [f32; 3],
+    /// Scalars below this are treated as empty space.
+    pub threshold_min: f32,
+    /// Scalars above this are treated as empty space.
+    pub threshold_max: f32,
+}
+
 /// Ray-cast a single volume using Amanatides-Woo DDA traversal.
 ///
 /// Walks voxels in exact ray order and returns a
 /// [`PickHit`] for the first voxel whose raw scalar value falls within
-/// `[item.threshold_min, item.threshold_max]`.
+/// `[region.threshold_min, region.threshold_max]`.
 ///
 /// # Arguments
 /// * `ray_origin` : world-space ray origin
 /// * `ray_dir` : world-space ray direction (normalized)
 /// * `id` : caller-assigned object identifier, copied into [`PickHit::id`]
-/// * `item` : volume render parameters (bounding box, transform, thresholds)
+/// * `region` : the volume's placement and scalar window
 /// * `volume` : CPU-side scalar field: same data passed to
 ///   [`upload_volume`](crate::resources::DeviceResources::upload_volume)
 ///
@@ -569,7 +590,7 @@ pub fn pick_volume_cpu(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
     id: u64,
-    item: &crate::renderer::VolumeItem,
+    region: &VolumeRegion,
     volume: &VolumeData,
 ) -> Option<PickHit> {
     let [nx, ny, nz] = volume.dims;
@@ -578,13 +599,13 @@ pub fn pick_volume_cpu(
     }
 
     // Transform ray to model-local space (handles rotation, scale, translation).
-    let model = glam::Mat4::from_cols_array_2d(&item.model);
+    let model = glam::Mat4::from_cols_array_2d(&region.model);
     let inv_model = model.inverse();
     let local_origin = inv_model.transform_point3(ray_origin);
     let local_dir = inv_model.transform_vector3(ray_dir);
 
-    let bbox_min = glam::Vec3::from(item.bbox_min);
-    let bbox_max = glam::Vec3::from(item.bbox_max);
+    let bbox_min = glam::Vec3::from(region.bbox_min);
+    let bbox_max = glam::Vec3::from(region.bbox_max);
 
     let (t_entry, t_exit, entry_axis, entry_sign) =
         ray_aabb_volume(local_origin, local_dir, bbox_min, bbox_max)?;
@@ -678,7 +699,7 @@ pub fn pick_volume_cpu(
         let scalar = volume.data[flat as usize];
 
         // Skip NaN and out-of-threshold voxels (mirrors the shader behaviour).
-        if !scalar.is_nan() && scalar >= item.threshold_min && scalar <= item.threshold_max {
+        if !scalar.is_nan() && scalar >= region.threshold_min && scalar <= region.threshold_max {
             let local_hit = local_origin + t_voxel_entry * local_dir;
             let world_pos = model.transform_point3(local_hit);
             // Normals transform by the inverse-transpose to handle non-uniform scale.
@@ -735,7 +756,7 @@ pub fn pick_volume_cpu(
 /// `(world_min, world_max)` suitable for positioning a highlight wireframe
 /// around the selected voxel.
 ///
-/// When `item.model` contains rotation or non-uniform scale the returned AABB
+/// When `region.model` contains rotation or non-uniform scale the returned AABB
 /// is the world-space envelope of the (non-axis-aligned) voxel. Computed by
 /// transforming all 8 corners.
 ///
@@ -745,7 +766,7 @@ pub fn pick_volume_cpu(
 pub fn voxel_world_aabb(
     flat_index: u32,
     volume: &VolumeData,
-    item: &crate::renderer::VolumeItem,
+    region: &VolumeRegion,
 ) -> (glam::Vec3, glam::Vec3) {
     let [nx, ny, nz] = volume.dims;
     let ix = flat_index % nx;
@@ -758,15 +779,15 @@ pub fn voxel_world_aabb(
         volume.dims
     );
 
-    let bbox_min = glam::Vec3::from(item.bbox_min);
-    let bbox_max = glam::Vec3::from(item.bbox_max);
+    let bbox_min = glam::Vec3::from(region.bbox_min);
+    let bbox_max = glam::Vec3::from(region.bbox_max);
     let cell = (bbox_max - bbox_min) / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
 
     let local_lo =
         bbox_min + glam::Vec3::new(ix as f32 * cell.x, iy as f32 * cell.y, iz as f32 * cell.z);
     let local_hi = local_lo + cell;
 
-    let model = glam::Mat4::from_cols_array_2d(&item.model);
+    let model = glam::Mat4::from_cols_array_2d(&region.model);
     let corners = [
         glam::Vec3::new(local_lo.x, local_lo.y, local_lo.z),
         glam::Vec3::new(local_hi.x, local_lo.y, local_lo.z),
@@ -788,41 +809,6 @@ pub fn voxel_world_aabb(
         .fold(glam::Vec3::splat(f32::NEG_INFINITY), |acc, c| acc.max(c));
 
     (world_min, world_max)
-}
-
-/// Pick the closest point in a [`crate::renderer::PointCloudItem`] to a screen-space click.
-///
-/// Projects every point through `view_proj` and returns the closest one whose
-/// screen-space distance to `click_pos` is within `radius_px` pixels.  Returns
-/// `None` when no point is within that radius.
-///
-/// # Arguments
-/// * `click_pos`     - screen-space click position in viewport pixels (top-left origin)
-/// * `id`            - object identifier to embed in the returned [`PickHit`]
-/// * `item`          - the point cloud item to search
-/// * `view_proj`     - combined view x projection matrix
-/// * `viewport_size` - viewport width x height in pixels
-/// * `radius_px`     - maximum screen-space distance in pixels to accept as a hit
-pub fn pick_point_cloud_cpu(
-    click_pos: glam::Vec2,
-    id: u64,
-    item: &crate::renderer::PointCloudItem,
-    view_proj: glam::Mat4,
-    viewport_size: glam::Vec2,
-    radius_px: f32,
-) -> Option<PickHit> {
-    // Same screen-space nearest-point search as gaussian splats, just sourced
-    // from a PointCloudItem instead of a bare position slice.
-    let model = glam::Mat4::from_cols_array_2d(&item.model);
-    pick_gaussian_splat_cpu(
-        click_pos,
-        id,
-        &item.positions,
-        model,
-        view_proj,
-        viewport_size,
-        radius_px,
-    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1134,14 +1120,14 @@ fn in_rect(sx: f32, sy: f32, rect_min: glam::Vec2, rect_max: glam::Vec2) -> bool
 ///
 /// Projects each voxel center through `view_proj` and collects those that fall
 /// inside the selection rectangle and have a scalar value within
-/// `[item.threshold_min, item.threshold_max]`.
+/// `[region.threshold_min, region.threshold_max]`.
 ///
 /// Returns a [`RectPickResult`] with [`SubObjectRef::Voxel`] entries keyed by `id`.
 ///
 /// # Arguments
 /// * `rect_min/max`  - selection rectangle corners in viewport pixels (top-left origin)
 /// * `id`            - object identifier used as the key in the result
-/// * `item`          - volume render item (provides model, bbox, thresholds)
+/// * `region`        - the volume's placement and scalar window
 /// * `volume`        - CPU-side volume data (scalar field and grid dimensions)
 /// * `view_proj`     - combined view x projection matrix
 /// * `viewport_size` - viewport width x height in pixels
@@ -1149,7 +1135,7 @@ pub fn pick_volume_rect(
     rect_min: glam::Vec2,
     rect_max: glam::Vec2,
     id: u64,
-    item: &crate::renderer::VolumeItem,
+    region: &VolumeRegion,
     volume: &VolumeData,
     view_proj: glam::Mat4,
     viewport_size: glam::Vec2,
@@ -1158,9 +1144,9 @@ pub fn pick_volume_rect(
     if id == 0 {
         return result;
     }
-    let model = glam::Mat4::from_cols_array_2d(&item.model);
-    let bbox_min = glam::Vec3::from(item.bbox_min);
-    let bbox_max = glam::Vec3::from(item.bbox_max);
+    let model = glam::Mat4::from_cols_array_2d(&region.model);
+    let bbox_min = glam::Vec3::from(region.bbox_min);
+    let bbox_max = glam::Vec3::from(region.bbox_max);
     let [nx, ny, nz] = volume.dims;
     let cell = (bbox_max - bbox_min) / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
     let mvp = view_proj * model;
@@ -1171,7 +1157,8 @@ pub fn pick_volume_rect(
             for ix in 0..nx {
                 let flat = ix + iy * nx + iz * nx * ny;
                 let scalar = volume.data[flat as usize];
-                if scalar.is_nan() || scalar < item.threshold_min || scalar > item.threshold_max {
+                if scalar.is_nan() || scalar < region.threshold_min || scalar > region.threshold_max
+                {
                     continue;
                 }
                 let local_center = bbox_min
@@ -1715,19 +1702,19 @@ mod tests {
         bbox_max: [f32; 3],
         threshold_min: f32,
         threshold_max: f32,
-    ) -> crate::renderer::VolumeItem {
-        crate::renderer::VolumeItem {
+    ) -> VolumeRegion {
+        VolumeRegion {
+            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             bbox_min,
             bbox_max,
             threshold_min,
             threshold_max,
-            ..crate::renderer::VolumeItem::default()
         }
     }
 
-    fn make_volume_data(dims: [u32; 3], fill: f32) -> crate::geometry::marching_cubes::VolumeData {
+    fn make_volume_data(dims: [u32; 3], fill: f32) -> crate::geometry::volume::grid::VolumeData {
         let n = (dims[0] * dims[1] * dims[2]) as usize;
-        crate::geometry::marching_cubes::VolumeData {
+        crate::geometry::volume::grid::VolumeData {
             data: vec![fill; n],
             dims,
             origin: [0.0; 3],

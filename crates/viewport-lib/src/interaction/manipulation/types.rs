@@ -143,7 +143,11 @@ pub struct ManipulationContext {
     pub selection_center: Option<glam::Vec3>,
     /// Gizmo state for this frame. `None` disables gizmo drag detection.
     pub gizmo: Option<GizmoInfo>,
-    /// `true` on the frame a primary drag begins.
+    /// `true` on the frame to try grabbing what is under the cursor: the
+    /// primary press ([`PointerFrame::pressed`], which the runners pass), or a
+    /// toolkit's own drag start if the host prefers one.
+    ///
+    /// [`PointerFrame::pressed`]: crate::PointerFrame::pressed
     pub drag_started: bool,
     /// `true` while a primary drag is ongoing.
     pub dragging: bool,

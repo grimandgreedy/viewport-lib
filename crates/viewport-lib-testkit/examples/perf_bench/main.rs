@@ -30,6 +30,7 @@
 
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
+use viewport_lib::Colour;
 
 use viewport_lib::wgpu;
 use viewport_lib::{
@@ -394,7 +395,11 @@ fn build_meshes(
         let rgba = solid_texture(i);
         let id = renderer
             .resources_mut()
-            .upload_texture(device, queue, 8, 8, &rgba)
+            .upload_texture(
+                device,
+                queue,
+                viewport_lib::TextureData::srgb(8, 8, rgba.to_vec()),
+            )
             .expect("texture upload");
         textures.push(id);
     }
@@ -481,7 +486,7 @@ fn make_item(mesh: MeshId, model: glam::Mat4, m: &Meshes, run: &Run, idx: u32) -
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = model.to_cols_array_2d();
-    item.material = Material::flat([0.8, 0.8, 0.8]);
+    item.material = Material::flat(Colour::linear_rgb(0.8, 0.8, 0.8));
     if run.textured {
         item.material.texture_id = Some(m.textures[(idx as usize) % m.textures.len()]);
     }
@@ -513,6 +518,7 @@ struct Samples {
     prep_geometry_ms: Vec<f32>,
     prep_shadow_ms: Vec<f32>,
     prep_viewport_ms: Vec<f32>,
+    prep_overlay_ms: Vec<f32>,
     prep_other_ms: Vec<f32>,
     visible: Vec<f32>,
     frustum_vis: Vec<f32>,
@@ -556,6 +562,9 @@ fn main() {
     }
 
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // Build on this thread, so no timed frame skips a draw whose pipeline is
+    // still compiling.
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let meshes = build_meshes(
         &mut renderer,
         &device,
@@ -775,6 +784,7 @@ fn run_one(
         b.prep_geometry_ms.push(pb.geometry_ms);
         b.prep_shadow_ms.push(pb.shadow_ms);
         b.prep_viewport_ms.push(pb.viewport_ms);
+        b.prep_overlay_ms.push(pb.overlay_ms);
         b.prep_other_ms.push(pb.other_ms);
         b.batches_reuploaded.push(st.batches_reuploaded as f32);
         b.batches_skipped.push(st.batches_skipped as f32);
@@ -856,6 +866,7 @@ fn write_header(f: &mut std::fs::File) {
         "prep_geometry_ms_p50",
         "prep_shadow_ms_p50",
         "prep_viewport_ms_p50",
+        "prep_overlay_ms_p50",
         "prep_other_ms_p50",
         "paint_ms_p50",
         "total_ms_p50",
@@ -876,7 +887,7 @@ fn write_header(f: &mut std::fs::File) {
 fn write_row(f: &mut std::fs::File, run: &Run, segment: &str, s: &mut Samples) {
     let n = s.total_ms.len();
     let row = format!(
-        "{},{},{},{},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0}",
+        "{},{},{},{},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0}",
         scene_name(run.scene),
         cull_name(run.cull),
         run.textured,
@@ -900,6 +911,7 @@ fn write_row(f: &mut std::fs::File, run: &Run, segment: &str, s: &mut Samples) {
         pct(&mut s.prep_geometry_ms, 0.50),
         pct(&mut s.prep_shadow_ms, 0.50),
         pct(&mut s.prep_viewport_ms, 0.50),
+        pct(&mut s.prep_overlay_ms, 0.50),
         pct(&mut s.prep_other_ms, 0.50),
         pct(&mut s.paint_ms, 0.50),
         pct(&mut s.total_ms, 0.50),

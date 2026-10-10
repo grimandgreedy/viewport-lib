@@ -1,23 +1,40 @@
 //! GPU-driven culling compute dispatch.
 //!
-//! `CullResources` holds the two compute pipelines used by every cull
-//! submission: `cull_instances` tests each AABB against the frustum and
-//! claims a slot in the visibility list via atomic add, then
-//! `write_indirect_args` packs the per-batch counts into
-//! `DrawIndexedIndirect` entries and zeroes the counter for the next call.
+//! `CullResources` holds the compute pipelines used by every cull submission:
+//! `cull_instances` tests each AABB against the frustum and records its
+//! verdict, three more dispatches pack the survivors into the visible list in
+//! instance order, and `write_indirect_args` turns the per-batch counts into
+//! `DrawIndexedIndirect` entries.
 //!
 //! All callers, internal and plugin, go through one entry point: `dispatch`
 //! takes a [`CullSubmission`] and a CPU [`Frustum`], picks the main or a
-//! cascade frustum slot, uploads, builds the bind group, and issues both
-//! compute passes. wgpu inserts an automatic storage-buffer barrier between
-//! compute passes so the second pass sees the first pass's writes.
+//! cascade frustum slot, uploads, builds the bind group, and issues the compute
+//! passes. wgpu inserts an automatic storage-buffer barrier between compute
+//! passes so each pass sees the writes of the ones before it.
 
 use crate::camera::frustum::Frustum;
 use crate::plugin_api::{BatchMeta, CullSubmission};
 use crate::resources::{FrustumPlane, FrustumUniform};
 
 /// Bind group layout entry count for the cull compute pass.
-const CULL_BGL_ENTRY_COUNT: usize = 8;
+const CULL_BGL_ENTRY_COUNT: usize = 10;
+
+/// Instances per compaction chunk. Matches `CHUNK` in `cull.wgsl`.
+const COMPACT_CHUNK: u32 = 256;
+
+/// The compaction scratch a submission needs, in u32s, as the three region
+/// sizes `cull.wgsl` lays the buffer out from: chunk plan, per-chunk totals,
+/// per-instance verdicts.
+///
+/// These size to the submission, so there is no scene shape that outgrows the
+/// compaction and falls back to an unreproducible draw order. The only bound
+/// left is the device's own storage-buffer limit, checked in `dispatch`.
+fn compact_regions(batch_count: u32, instance_count: u32) -> (u32, u32, u32) {
+    let plan_cap = batch_count + 1;
+    let chunk_cap = (instance_count.div_ceil(COMPACT_CHUNK) + batch_count).max(1);
+    let verdict_cap = instance_count.max(1);
+    (plan_cap, chunk_cap, verdict_cap)
+}
 
 /// Per-frame inputs for the HiZ occlusion test, supplied only by the
 /// main-camera cull. Shadow and single-mesh dispatches pass `None`, which
@@ -33,7 +50,23 @@ pub(super) struct MainCullExtras<'a> {
     /// Caller's request to run the occlusion test. Ignored when `hiz_view`
     /// is `None`.
     pub(super) do_occlusion: bool,
+    /// Per-instance record buffer (the instanced `InstanceData` storage buffer),
+    /// read by the cull for each instance's `object_mask`. `None` leaves the
+    /// layer-mask reject off and binds the fallback buffer.
+    pub(super) instance_data: Option<&'a crate::gpu::Buffer>,
+    /// Camera layer mask AND-tested against each instance's `object_mask`.
+    /// `!0` (and the default) keeps everything; only consulted when
+    /// `instance_data` is `Some`.
+    pub(super) cull_mask: u32,
 }
+
+/// Per-batch group assignment for GPU draw-list compaction: which pipeline group
+/// a batch belongs to (`group_id`, keying the survivor counter) and the batch
+/// index at which that group's compacted args start (`group_arg_base`). Opaque
+/// and transparent (OIT) batches both get real groups; a batch in neither pass
+/// (additive / premultiplied, or when the GPU-driven path is inactive) carries
+/// `group_id = NO_GROUP` and is skipped by the compaction pass.
+pub(super) const NO_GROUP: u32 = u32::MAX;
 
 /// Cull compute pipelines and the lib's shared scratch buffers.
 pub(super) struct CullResources {
@@ -41,8 +74,36 @@ pub(super) struct CullResources {
     cull_instances_pipeline: crate::gpu::ComputePipeline,
     /// Compute pipeline for `write_indirect_args` (workgroup 64).
     write_indirect_args_pipeline: crate::gpu::ComputePipeline,
+    /// The order-free compaction's three steps: lay out the chunk space (one
+    /// entry per batch), count survivors per chunk, then scatter survivors into
+    /// the visible list at `chunk base + rank`, where the scatter derives each
+    /// chunk's base by summing its predecessors' counts.
+    plan_chunks_pipeline: crate::gpu::ComputePipeline,
+    chunk_counts_pipeline: crate::gpu::ComputePipeline,
+    scatter_visible_pipeline: crate::gpu::ComputePipeline,
+
+    /// The compaction's scratch: chunk plan, per-chunk survivor counts, and
+    /// per-instance cull verdicts, in fixed regions of one buffer (see the
+    /// region constants in `cull.wgsl`). One buffer because this entry takes the
+    /// cull layout to wgpu's default limit of 8 storage buffers per stage.
+    ///
+    /// Grown on demand for the instance region: the dispatch borrows `&self`
+    /// and the size is only known from the submission, so it lives behind a lock
+    /// rather than forcing every call site to take `&mut`. Uncontended in
+    /// practice (one renderer thread drives the culls).
+    compact_scratch_buf: std::sync::Mutex<Option<(crate::gpu::Buffer, u32)>>,
     /// Shared bind group layout for both pipelines (6 entries, all COMPUTE).
     bgl: crate::gpu::BindGroupLayout,
+    /// Compute pipeline for `compact_draws`: packs each pipeline group's visible
+    /// batch draw args to the front of its range and counts the survivors, so the
+    /// colour pass issues one multi_draw_indexed_indirect_count per group. Only
+    /// used on the GPU-driven submission path (bindless + native multi-draw).
+    compact_pipeline: crate::gpu::ComputePipeline,
+    /// Bind group layout for `compact_pipeline` (6 entries, all COMPUTE).
+    compact_bgl: crate::gpu::BindGroupLayout,
+    /// Uniform (batch_count) for the compaction dispatch. One slot, overwritten
+    /// each dispatch.
+    compact_params_buf: crate::gpu::Buffer,
     /// Frustum uniform for the main-camera dispatch. One slot, overwritten
     /// each frame.
     pub(super) frustum_buf: crate::gpu::Buffer,
@@ -60,6 +121,11 @@ pub(super) struct CullResources {
     /// pyramid (shadow, single-mesh, or occlusion disabled). Keeps the bind
     /// group layout satisfied; never sampled because `do_occlusion` is 0.
     fallback_hiz_view: crate::gpu::TextureView,
+    /// One 144-byte `InstanceData` slot bound at binding 8 when a dispatch does
+    /// not run the layer-mask reject (shadow, single-mesh, plugin submissions).
+    /// Keeps the bind group layout satisfied; never read because `do_mask_cull`
+    /// is 0.
+    fallback_instance_data: crate::gpu::Buffer,
     /// Cull breakdown counters for the main dispatch: [total, frustum_visible].
     /// Cleared each main dispatch, copied to the readback staging buffer.
     main_stats_buf: crate::gpu::Buffer,
@@ -100,6 +166,56 @@ impl CullResources {
             &shader,
             "write_indirect_args",
         );
+
+        let plan_chunks_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "plan_chunks_pipeline",
+            &layout,
+            &shader,
+            "plan_chunks",
+        );
+        let chunk_counts_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "chunk_counts_pipeline",
+            &layout,
+            &shader,
+            "chunk_counts",
+        );
+        let scatter_visible_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "scatter_visible_pipeline",
+            &layout,
+            &shader,
+            "scatter_visible",
+        );
+
+        let compact_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("draw_compact_bgl"),
+            entries: &Self::compact_bgl_entries(),
+        });
+        let compact_shader = crate::resources::builders::wgsl_module(
+            device,
+            "draw_compact_shader",
+            crate::resources::builders::wgsl_source!("draw_compact"),
+        );
+        let compact_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "draw_compact_pipeline_layout",
+            &[&compact_bgl],
+        );
+        let compact_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "draw_compact_pipeline",
+            &compact_layout,
+            &compact_shader,
+            "compact_draws",
+        );
+        let compact_params_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("draw_compact_params_buf"),
+            size: 16, // vec4-aligned CompactUniform (batch_count + pad)
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         let frustum_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cull_frustum_buf"),
@@ -147,6 +263,15 @@ impl CullResources {
         let fallback_hiz_view =
             fallback_hiz.create_view(&crate::gpu::TextureViewDescriptor::default());
 
+        // One InstanceData-sized slot for dispatches that do not run the
+        // layer-mask reject. Zeroed; never read (do_mask_cull = 0 for them).
+        let fallback_instance_data = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("cull_fallback_instance_data"),
+            size: std::mem::size_of::<crate::resources::mesh::instancing::InstanceData>() as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         // Two u32 counters: [total, frustum_visible]. COPY_SRC for the readback
         // copy, COPY_DST for the per-frame clear.
         let main_stats_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -167,12 +292,20 @@ impl CullResources {
         Self {
             cull_instances_pipeline,
             write_indirect_args_pipeline,
+            plan_chunks_pipeline,
+            chunk_counts_pipeline,
+            scatter_visible_pipeline,
+            compact_scratch_buf: std::sync::Mutex::new(None),
             bgl,
+            compact_pipeline,
+            compact_bgl,
+            compact_params_buf,
             frustum_buf,
             cascade_frustum_bufs,
             scratch_meta_buf,
             scratch_counter_buf,
             fallback_hiz_view,
+            fallback_instance_data,
             main_stats_buf,
             scratch_stats_buf,
         }
@@ -233,6 +366,15 @@ impl CullResources {
         let hiz_view = extras
             .and_then(|e| e.hiz_view)
             .unwrap_or(&self.fallback_hiz_view);
+        // Layer-mask reject runs only when the main cull supplies the instance
+        // buffer. Without it, bind the fallback and leave the reject off.
+        let instance_data_buf = extras
+            .and_then(|e| e.instance_data)
+            .unwrap_or(&self.fallback_instance_data);
+        let (cull_mask, do_mask_cull): (u32, u32) = match extras {
+            Some(e) if e.instance_data.is_some() => (e.cull_mask, 1),
+            _ => (!0, 0),
+        };
         // The main cull records its breakdown; other dispatches scribble into
         // the scratch slot so they do not clobber the readback counters.
         let stats_buf = if extras.is_some() {
@@ -240,6 +382,22 @@ impl CullResources {
         } else {
             &self.scratch_stats_buf
         };
+
+        // The compaction's scratch regions size to this submission. The only
+        // way it does not fit is the device refusing a storage buffer that
+        // large, which is decided here because the cull kernel needs to know:
+        // when the compaction runs it owns both the visible list and the
+        // per-batch counts, and the kernel skips the arrival-order list and the
+        // per-instance counter increment.
+        let (plan_cap, chunk_cap, verdict_cap) =
+            compact_regions(sub.batch_count, sub.instance_count);
+        let chunk_upper_bound = chunk_cap;
+        let scratch_u32s = u64::from(plan_cap) + u64::from(chunk_cap) + u64::from(verdict_cap);
+        let max_storage = u64::from(device.limits().max_storage_buffer_binding_size);
+        let plan_fits = scratch_u32s * 4 <= max_storage;
+        if !plan_fits {
+            crate::renderer::warn_once_cull_plan_capacity(sub.batch_count, sub.instance_count);
+        }
 
         let frustum_uniform = FrustumUniform {
             planes: std::array::from_fn(|i| FrustumPlane {
@@ -252,7 +410,12 @@ impl CullResources {
             do_occlusion,
             view_proj,
             viewport,
-            _pad0: [0.0, 0.0],
+            cull_mask,
+            do_mask_cull,
+            compact_enabled: u32::from(plan_fits),
+            plan_cap,
+            chunk_cap,
+            _pad: [0; 1],
         };
         queue.write_buffer(
             frustum_buf,
@@ -267,6 +430,33 @@ impl CullResources {
             None => "cull_bg".to_string(),
             Some(c) => format!("cull_shadow_bg_{c}"),
         };
+        // Per-instance cull verdicts for the compaction. Grown to fit the
+        // submission and kept for later frames; one store per instance, so the
+        // buffer tracks the instance count rather than the visible count.
+        let scratch_guard = {
+            let mut slot = self.compact_scratch_buf.lock().unwrap();
+            // One allocation for all three regions. Rounded up so a scene that
+            // grows by an instance at a time does not reallocate every frame.
+            let need = scratch_u32s.min(max_storage / 4) as u32;
+            let fits = slot.as_ref().is_some_and(|(_, cap)| *cap >= need);
+            if !fits {
+                // Rounded up, but never past what the device will bind: at
+                // the very top of the range the limit itself is the capacity.
+                let cap = need
+                    .next_power_of_two()
+                    .min((max_storage / 4).min(u64::from(u32::MAX)) as u32);
+                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                    label: Some("cull_compact_scratch"),
+                    size: u64::from(cap) * 4,
+                    usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                *slot = Some((buf, cap));
+            }
+            slot
+        };
+        let compact_scratch = &scratch_guard.as_ref().expect("compaction scratch").0;
+
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some(&label),
             layout: &self.bgl,
@@ -303,16 +493,26 @@ impl CullResources {
                     binding: 7,
                     resource: stats_buf.as_entire_binding(),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 8,
+                    resource: instance_data_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 9,
+                    resource: compact_scratch.as_entire_binding(),
+                },
             ],
         });
 
-        let (pass1_label, pass2_label) = match cascade {
+        let (pass1_label, compact_label, pass2_label) = match cascade {
             None => (
                 "cull_instances_pass".to_string(),
+                "cull_compact_pass".to_string(),
                 "write_indirect_args_pass".to_string(),
             ),
             Some(c) => (
                 format!("shadow_cull_instances_pass_{c}"),
+                format!("shadow_cull_compact_pass_{c}"),
                 format!("shadow_write_indirect_args_pass_{c}"),
             ),
         };
@@ -348,6 +548,52 @@ impl CullResources {
             pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups(sub.instance_count.div_ceil(64), 1, 1);
         }
+        // Order-free compaction: pack the visible list in instance order so an
+        // unchanged scene submits its draws identically every frame. Three
+        // dispatches (plan, count, scatter), all pure functions of the instance
+        // index. Skipped when the submission outgrows the fixed chunk plan,
+        // which leaves the arrival-order list the cull kernel wrote instead.
+        if plan_fits {
+            // Per-dispatch timing for the timed main-camera cull, when the
+            // device can take a timestamp inside a pass. Splitting the pass in
+            // three to use pass-boundary timestamps instead would add two pass
+            // boundaries and so measure something other than what ships.
+            let phase_ts = ts.filter(|_| {
+                device
+                    .features()
+                    .contains(crate::gpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES)
+            });
+            let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
+                label: Some(&compact_label),
+                timestamp_writes: None,
+            });
+            pass.set_bind_group(0, &bind_group, &[]);
+
+            let phase = |pass: &mut crate::gpu::ComputePass<'_>, slot: u32, begin: bool| {
+                if let Some((qs, mask)) = phase_ts {
+                    if begin {
+                        mask.fetch_or(1 << slot, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    pass.write_timestamp(qs, slot * 2 + u32::from(!begin));
+                }
+            };
+
+            phase(&mut pass, crate::renderer::GPU_TS_CULL_PLAN, true);
+            pass.set_pipeline(&self.plan_chunks_pipeline);
+            pass.dispatch_workgroups(1, 1, 1);
+            phase(&mut pass, crate::renderer::GPU_TS_CULL_PLAN, false);
+
+            phase(&mut pass, crate::renderer::GPU_TS_CULL_COUNT, true);
+            pass.set_pipeline(&self.chunk_counts_pipeline);
+            pass.dispatch_workgroups(chunk_upper_bound.max(1), 1, 1);
+            phase(&mut pass, crate::renderer::GPU_TS_CULL_COUNT, false);
+
+            phase(&mut pass, crate::renderer::GPU_TS_CULL_SCATTER, true);
+            pass.set_pipeline(&self.scatter_visible_pipeline);
+            pass.dispatch_workgroups(chunk_upper_bound.max(1), 1, 1);
+            phase(&mut pass, crate::renderer::GPU_TS_CULL_SCATTER, false);
+        }
+
         {
             let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some(&pass2_label),
@@ -367,8 +613,115 @@ impl CullResources {
         (&self.scratch_meta_buf, &self.scratch_counter_buf)
     }
 
+    /// Run the draw-list compaction pass: read the per-batch cull args from
+    /// `src_args`, pack each pipeline group's visible batches to the front of its
+    /// range in `dst_args`, and write the survivor count per group into
+    /// `draw_counts`. `draw_counts` is zeroed first (its atomics accumulate the
+    /// per-group counts). Runs in its own compute pass so the automatic
+    /// storage barrier orders it after the cull that filled `src_args`.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn compact_draws(
+        &self,
+        encoder: &mut crate::gpu::CommandEncoder,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        batch_count: u32,
+        src_args: &crate::gpu::Buffer,
+        group_arg_base: &crate::gpu::Buffer,
+        group_id: &crate::gpu::Buffer,
+        dst_args: &crate::gpu::Buffer,
+        draw_counts: &crate::gpu::Buffer,
+    ) {
+        queue.write_buffer(
+            &self.compact_params_buf,
+            0,
+            bytemuck::cast_slice(&[batch_count, 0u32, 0u32, 0u32]),
+        );
+        // The survivor counters accumulate via atomicAdd, so start from zero.
+        encoder.clear_buffer(draw_counts, 0, None);
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("draw_compact_bg"),
+            layout: &self.compact_bgl,
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.compact_params_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 1,
+                    resource: src_args.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 2,
+                    resource: group_arg_base.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 3,
+                    resource: group_id.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 4,
+                    resource: dst_args.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 5,
+                    resource: draw_counts.as_entire_binding(),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
+            label: Some("draw_compact_pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.compact_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(batch_count.div_ceil(64), 1, 1);
+    }
+
+    fn compact_bgl_entries() -> [crate::gpu::BindGroupLayoutEntry; 6] {
+        let compute = crate::gpu::ShaderStages::COMPUTE;
+        let storage = |binding: u32, read_only: bool| crate::gpu::BindGroupLayoutEntry {
+            binding,
+            visibility: compute,
+            ty: crate::gpu::BindingType::Buffer {
+                ty: crate::gpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        [
+            // binding 0: params uniform (batch_count)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: compute,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            storage(1, true),  // src_args
+            storage(2, true),  // group_arg_base
+            storage(3, true),  // group_id
+            storage(4, false), // dst_args
+            storage(5, false), // draw_counts (atomic)
+        ]
+    }
+
     fn bgl_entries() -> [crate::gpu::BindGroupLayoutEntry; CULL_BGL_ENTRY_COUNT] {
         let compute = crate::gpu::ShaderStages::COMPUTE;
+        let storage_rw = |binding: u32| crate::gpu::BindGroupLayoutEntry {
+            binding,
+            visibility: compute,
+            ty: crate::gpu::BindingType::Buffer {
+                ty: crate::gpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
         [
             // binding 0: frustum uniform
             crate::gpu::BindGroupLayoutEntry {
@@ -459,6 +812,278 @@ impl CullResources {
                 },
                 count: None,
             },
+            // binding 8: per-instance records (read-only storage), read for the
+            // per-object layer mask in the camera cull reject.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 8,
+                visibility: compute,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 9: the compaction's scratch (chunk plan, chunk owners,
+            // chunk counts, per-instance verdicts) in one buffer. This takes the
+            // layout to exactly wgpu's default limit of 8 storage buffers per
+            // compute stage; a second entry would break devices created with
+            // default limits.
+            storage_rw(9),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CullResources;
+    use crate::gpu;
+
+    fn headless_device() -> Option<(gpu::Device, gpu::Queue)> {
+        let instance = gpu::default_instance();
+        let adapter = pollster::block_on(instance.request_adapter(&gpu::RequestAdapterOptions {
+            power_preference: gpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+            #[cfg(wgpu30)]
+            apply_limit_buckets: false,
+        }))
+        .ok()?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&gpu::DeviceDescriptor {
+            label: Some("compaction_tests"),
+            required_limits: crate::renderer::ViewportRenderer::recommended_device_limits(&adapter),
+            ..Default::default()
+        }))
+        .ok()?;
+        Some((device, queue))
+    }
+
+    fn storage_buf(
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        data: &[u32],
+        usage: gpu::BufferUsages,
+    ) -> gpu::Buffer {
+        let buf = device.create_buffer(&gpu::BufferDescriptor {
+            label: None,
+            size: (data.len() * 4) as u64,
+            usage,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buf, 0, bytemuck::cast_slice(data));
+        buf
+    }
+
+    fn read_words(device: &gpu::Device, buf: &gpu::Buffer) -> Vec<u32> {
+        let slice = buf.slice(..);
+        slice.map_async(gpu::MapMode::Read, |_| {});
+        let _ = device.poll(gpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(5)),
+        });
+        let words = bytemuck::cast_slice::<u8, u32>(&gpu::mapped_range(slice)).to_vec();
+        buf.unmap();
+        words
+    }
+
+    /// Dispatch `compact_draws` over the crafted inputs and read back
+    /// `(per-group survivor counts, compacted dst args as words)`. `batches` are
+    /// `DrawIndirect` 5-tuples; `group_id[b]` / `group_arg_base[b]` are the CPU
+    /// grouping; `count_slots` sizes the per-group counter buffer.
+    fn run_compaction(
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        cull: &CullResources,
+        batches: &[[u32; 5]],
+        group_id: &[u32],
+        group_arg_base: &[u32],
+        count_slots: usize,
+    ) -> (Vec<u32>, Vec<u32>) {
+        let src: Vec<u32> = batches.iter().flatten().copied().collect();
+        let storage = gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST;
+        let src_args = storage_buf(device, queue, &src, storage);
+        let group_arg_base_buf = storage_buf(device, queue, group_arg_base, storage);
+        let group_id_buf = storage_buf(device, queue, group_id, storage);
+        let dst_args = storage_buf(
+            device,
+            queue,
+            &vec![0u32; batches.len() * 5],
+            storage | gpu::BufferUsages::COPY_SRC,
+        );
+        let draw_counts = device.create_buffer(&gpu::BufferDescriptor {
+            label: None,
+            size: (count_slots * 4) as u64,
+            usage: storage | gpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&gpu::CommandEncoderDescriptor {
+            label: Some("compaction_test_encoder"),
+        });
+        cull.compact_draws(
+            &mut encoder,
+            device,
+            queue,
+            batches.len() as u32,
+            &src_args,
+            &group_arg_base_buf,
+            &group_id_buf,
+            &dst_args,
+            &draw_counts,
+        );
+
+        let dst_bytes = (batches.len() * 5 * 4) as u64;
+        let counts_bytes = (count_slots * 4) as u64;
+        let read_usage = gpu::BufferUsages::COPY_DST | gpu::BufferUsages::MAP_READ;
+        let dst_staging = device.create_buffer(&gpu::BufferDescriptor {
+            label: None,
+            size: dst_bytes,
+            usage: read_usage,
+            mapped_at_creation: false,
+        });
+        let counts_staging = device.create_buffer(&gpu::BufferDescriptor {
+            label: None,
+            size: counts_bytes,
+            usage: read_usage,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(&dst_args, 0, &dst_staging, 0, dst_bytes);
+        encoder.copy_buffer_to_buffer(&draw_counts, 0, &counts_staging, 0, counts_bytes);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        (
+            read_words(device, &counts_staging),
+            read_words(device, &dst_staging),
+        )
+    }
+
+    /// Reconstruct the `DrawIndirect` 5-tuple compacted into `dst` slot `slot`.
+    fn entry(dst: &[u32], slot: usize) -> [u32; 5] {
+        [
+            dst[slot * 5],
+            dst[slot * 5 + 1],
+            dst[slot * 5 + 2],
+            dst[slot * 5 + 3],
+            dst[slot * 5 + 4],
+        ]
+    }
+
+    /// The compaction pass is pure compute, so it runs on any backend (including
+    /// Metal, where the `_count` draw path it feeds is dormant). Drive it directly
+    /// with crafted per-batch cull args and check it packs each group's visible
+    /// batches to the front of the group's arg range and counts the survivors.
+    #[test]
+    fn compact_draws_packs_survivors_per_group() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping compact_draws_packs_survivors_per_group: no GPU adapter");
+            return;
+        };
+        let cull = CullResources::new(&device);
+
+        // Six batches in two contiguous groups of three. `instance_count == 0`
+        // marks a batch the cull emptied (dropped from the draw list). Each batch
+        // carries a unique `first_index` so a compacted arg can be traced back to
+        // its source batch. Layout matches `DrawIndirect`:
+        // (index_count, instance_count, first_index, base_vertex, first_instance).
+        let batches: [[u32; 5]; 6] = [
+            [100, 5, 0, 0, 0],
+            [101, 0, 1, 1, 1], // culled
+            [102, 7, 2, 2, 2],
+            [103, 0, 3, 3, 3], // culled
+            [104, 3, 4, 4, 4],
+            [105, 9, 5, 5, 5],
+        ];
+        // Group 0 = batches 0..3 (arg base 0), group 1 = batches 3..6 (arg base 3).
+        let group_id = [0u32, 0, 0, 1, 1, 1];
+        let group_arg_base = [0u32, 0, 0, 3, 3, 3];
+
+        let (counts, dst) = run_compaction(
+            &device,
+            &queue,
+            &cull,
+            &batches,
+            &group_id,
+            &group_arg_base,
+            2,
+        );
+
+        // Two survivors per group (one of each three was culled).
+        assert_eq!(counts, vec![2, 2], "per-group survivor counts");
+
+        // Within a group the atomic slot order is unspecified, so compare as sets
+        // and trace each survivor back to its source batch by `first_index`.
+        let group0: std::collections::HashSet<u32> =
+            [entry(&dst, 0)[2], entry(&dst, 1)[2]].into_iter().collect();
+        assert_eq!(
+            group0,
+            [0u32, 2].into_iter().collect(),
+            "group 0 survivors packed to [0, 2)"
+        );
+        let group1: std::collections::HashSet<u32> =
+            [entry(&dst, 3)[2], entry(&dst, 4)[2]].into_iter().collect();
+        assert_eq!(
+            group1,
+            [4u32, 5].into_iter().collect(),
+            "group 1 survivors packed to [3, 5)"
+        );
+        // Every compacted arg is a faithful, whole copy of its source batch.
+        for slot in [0usize, 1, 3, 4] {
+            let e = entry(&dst, slot);
+            assert_eq!(
+                e, batches[e[2] as usize],
+                "arg at slot {slot} copied verbatim"
+            );
+        }
+    }
+
+    /// A batch with `group_id == NO_GROUP` (a transparent or additive batch under
+    /// the opaque compaction, say) must be skipped entirely: it must not inflate a
+    /// group's survivor count nor scatter its args into `group_arg_base` slot 0.
+    #[test]
+    fn compact_draws_skips_ungrouped_batches() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping compact_draws_skips_ungrouped_batches: no GPU adapter");
+            return;
+        };
+        let cull = CullResources::new(&device);
+
+        // Batch 1 is ungrouped but visible (instance_count 8). It sits inside
+        // group 0's batch range with `group_arg_base == 0`, so a missing skip would
+        // corrupt group 0 (inflated count, a stray arg at slot 0).
+        let batches: [[u32; 5]; 3] = [
+            [100, 5, 0, 0, 0],
+            [101, 8, 1, 1, 1], // NO_GROUP: must be dropped despite being visible
+            [102, 7, 2, 2, 2],
+        ];
+        let group_id = [0u32, super::NO_GROUP, 0];
+        let group_arg_base = [0u32, 0, 0];
+
+        let (counts, dst) = run_compaction(
+            &device,
+            &queue,
+            &cull,
+            &batches,
+            &group_id,
+            &group_arg_base,
+            1,
+        );
+
+        // Only batches 0 and 2 survive; the ungrouped batch is not counted.
+        assert_eq!(
+            counts,
+            vec![2],
+            "ungrouped batch excluded from the group count"
+        );
+        let survivors: std::collections::HashSet<u32> =
+            [entry(&dst, 0)[2], entry(&dst, 1)[2]].into_iter().collect();
+        assert_eq!(
+            survivors,
+            [0u32, 2].into_iter().collect(),
+            "group 0 holds only its own batches"
+        );
+        assert!(
+            !survivors.contains(&1),
+            "ungrouped batch 1 must not appear in any group"
+        );
     }
 }

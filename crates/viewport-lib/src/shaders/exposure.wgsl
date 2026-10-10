@@ -90,13 +90,15 @@ fn build_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let coord = vec2<i32>(i32(gid.x), i32(gid.y));
-    // Skip background (far-plane) texels: the HDR target is cleared to the flat
-    // background fill, which is not scene content and must not bias the meter.
-    // (Matches the tone map's own background test.)
-    if textureLoad(depth_texture, coord, 0) >= 0.999999 {
+    let texel = textureLoad(hdr_texture, coord, 0);
+    // Skip empty background: a far-plane texel nothing was drawn into. The HDR
+    // target is cleared to zero alpha and the flat background fill is only added
+    // by the tone map, so it is not scene content and must not bias the meter. A
+    // skybox, or transparent content over the background, writes alpha and is
+    // metered like geometry. This is the tone map's own background test.
+    if textureLoad(depth_texture, coord, 0) >= 0.999999 && texel.a < 0.001 {
         return;
     }
-    let texel = textureLoad(hdr_texture, coord, 0);
     let lum = luminance(texel.rgb);
     let bin = bin_for_lum(lum);
     // Bin 0 is a raw (unweighted) count of lit texels, used by resolve_main as a

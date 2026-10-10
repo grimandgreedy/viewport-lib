@@ -15,7 +15,11 @@ fn uploaded_textures_carry_a_mip_chain() {
     let _id = h
         .renderer
         .resources_mut()
-        .upload_texture(&h.device, &h.queue, size, size, &tex.rgba)
+        .upload_texture(
+            &h.device,
+            &h.queue,
+            viewport_lib::TextureData::srgb(size, size, tex.rgba.to_vec()),
+        )
         .expect("upload");
 
     // A full RGBA8 chain for 256x256 is 349,524 bytes; a single level is

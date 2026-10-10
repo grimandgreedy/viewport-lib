@@ -17,12 +17,23 @@ impl TextureId {
     /// for it. Use it as the default / placeholder value.
     pub const INVALID: TextureId = TextureId(u64::MAX);
 
-    /// The raw slot index this handle points at.
+    /// The raw slot index this handle points at, without the generation.
+    ///
+    /// Not a cache key. A freed slot is reused by a later upload, so two
+    /// different textures share an index; only the full [`raw`](Self::raw) value
+    /// distinguishes them. Keying a cache on the index alone, or truncating
+    /// `raw()` to `u32`, looks correct until the first free-and-reuse and then
+    /// samples another object's texture.
     pub fn index(&self) -> usize {
         (self.0 as u32) as usize
     }
 
     /// The packed raw value, for keying caches and crossing the plugin boundary.
+    ///
+    /// Keep the whole value. The generation sits above the index, so the index
+    /// alone aliases across a free-and-reuse; a cache keyed on it hands one
+    /// object another's texture. `DeviceResources::per_item_object_bg_key` hashes
+    /// index and generation together for that reason.
     #[doc(hidden)]
     pub fn raw(&self) -> u64 {
         self.0

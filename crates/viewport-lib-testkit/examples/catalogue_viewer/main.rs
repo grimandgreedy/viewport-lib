@@ -10,13 +10,13 @@
 //!   Right drag         : pan
 //!   Scroll             : zoom
 
+use viewport_lib::Colour;
 mod viewport_callback;
 
 use eframe::egui;
-use viewport_lib::wgpu;
 use viewport_lib::{
     ButtonState, Camera, CameraFrame, FrameData, Modifiers, MouseButton, OrbitCameraController,
-    SceneFrame, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
+    SceneFrame, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
 };
 use viewport_lib_testkit::{BuildCtx, BuiltScene, NamedCamera, catalogue};
 
@@ -47,7 +47,7 @@ fn main() -> eframe::Result {
             for scene in catalogue() {
                 let built = {
                     let mut ctx = BuildCtx {
-                        res: renderer.resources_mut(),
+                        renderer: &mut renderer,
                         device,
                         queue,
                     };
@@ -67,7 +67,8 @@ fn main() -> eframe::Result {
                 cameras,
                 selected: 0,
                 camera,
-                controller: OrbitCameraController::viewport_primitives(),
+                controller: OrbitCameraController::new_stateless(),
+                input: ViewportInput::from_preset(viewport_lib::BindingPreset::Viewer),
                 cursor: None,
                 cursor_prev: None,
             }))
@@ -82,6 +83,9 @@ struct App {
     selected: usize,
     camera: Camera,
     controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
     cursor: Option<glam::Vec2>,
     cursor_prev: Option<glam::Vec2>,
 }
@@ -110,14 +114,17 @@ impl eframe::App for App {
                 let (rect, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-                self.controller.begin_frame(ViewportContext {
+                self.input.begin_frame(ViewportContext {
                     hovered: response.hovered(),
                     focused: response.has_focus(),
                     viewport_size: [rect.width(), rect.height()],
                 });
+                // Pan reads the viewport height off the controller.
+                self.controller
+                    .set_viewport_size([rect.width(), rect.height()]);
 
                 ui.input(|i| {
-                    self.controller
+                    self.input
                         .push_event(ViewportEvent::ModifiersChanged(Modifiers {
                             alt: i.modifiers.alt,
                             shift: i.modifiers.shift,
@@ -130,7 +137,7 @@ impl eframe::App for App {
                     self.cursor_prev = self.cursor;
                     self.cursor = local;
                     if let Some(pos) = local {
-                        self.controller
+                        self.input
                             .push_event(ViewportEvent::PointerMoved { position: pos });
                     }
                     for event in &i.events {
@@ -144,7 +151,7 @@ impl eframe::App for App {
                                     egui::PointerButton::Middle => MouseButton::Middle,
                                     _ => continue,
                                 };
-                                self.controller.push_event(ViewportEvent::MouseButton {
+                                self.input.push_event(ViewportEvent::MouseButton {
                                     button: vp,
                                     state: if *pressed {
                                         ButtonState::Pressed
@@ -159,7 +166,7 @@ impl eframe::App for App {
                                     egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
                                     egui::MouseWheelUnit::Page => ScrollUnits::Pages,
                                 };
-                                self.controller.push_event(ViewportEvent::Wheel {
+                                self.input.push_event(ViewportEvent::Wheel {
                                     delta: glam::Vec2::new(delta.x, delta.y),
                                     units,
                                 });
@@ -170,7 +177,8 @@ impl eframe::App for App {
                 });
 
                 let (w, h) = (rect.width(), rect.height());
-                self.controller.apply_to_camera(&mut self.camera);
+                let action_frame = self.input.resolve();
+                self.controller.apply(&mut self.camera, &action_frame);
                 self.camera.set_aspect_ratio(w, h);
 
                 let built = &self.builts[self.selected];
@@ -181,7 +189,7 @@ impl eframe::App for App {
                 );
                 fd.effects.lighting = built.lighting.clone();
                 if let Some(bg) = built.background {
-                    fd.viewport.background_colour = Some(bg);
+                    fd.viewport.background_colour = Some(Colour::from_linear_array(bg));
                 }
 
                 ui.painter()

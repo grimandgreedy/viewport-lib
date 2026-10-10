@@ -1,9 +1,13 @@
 //! Line probe widget: two draggable endpoint handles connected by a line segment.
 
-use crate::geometry::intersect::ray_plane_intersection;
-use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
+use crate::Colour;
+use crate::geometry::maths::intersect::ray_plane_intersection;
+use crate::renderer::PolylineItem;
 
-use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius, ray_point_dist};
+use super::{
+    HandleMarkers, WidgetContext, WidgetResult, ctx_ray, handle_colour, handle_world_radius,
+    ray_point_dist,
+};
 
 /// A two-endpoint line handle rendered in the viewport.
 ///
@@ -24,8 +28,9 @@ use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius, ray_point
 ///                           drag_started, dragging, released };
 /// probe.update(&ctx);
 ///
-/// fd.scene.polylines.push(probe.polyline_item(LINE_ID));
-/// fd.scene.glyphs.push(probe.handle_glyphs(HANDLE_ID_BASE, &ctx));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(probe.polyline_item(LINE_ID));
+/// let markers = probe.handle_markers(HANDLE_ID_BASE, &ctx);
+/// fd.scene.mesh_instances.push(markers.to_mesh_instances(handle_mesh));
 ///
 /// // Suppress orbit while dragging:
 /// if probe.is_active() { orbit.resolve(); } else { orbit.apply_to_camera(&mut camera); }
@@ -55,9 +60,9 @@ impl LineProbeWidget {
         Self {
             start,
             end,
-            colour: [1.0, 0.6, 0.1, 1.0].into(),
+            colour: Colour::linear(1.0, 0.6, 0.1, 1.0),
             line_width: 2.0,
-            handle_colour: [0.0; 4].into(),
+            handle_colour: Colour::TRANSPARENT,
             hovered_endpoint: None,
             active_endpoint: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -145,43 +150,29 @@ impl LineProbeWidget {
         }
     }
 
-    /// Build a `GlyphItem` containing sphere handles at both endpoints.
+    /// Handle markers for the two endpoints.
     ///
-    /// Handle size is constant in screen space (approximately 10 px radius).
-    /// `id_base` is the pick ID for the start handle; the end handle uses `id_base + 1`.
-    ///
-    /// Colour is driven by the colourmap (viridis by default). The scalar for each
-    /// handle is `0.0` when idle and `1.0` when hovered or active, so the two
-    /// states map to distinct colourmap colours.
-    pub fn handle_glyphs(&self, id_base: u64, ctx: &WidgetContext) -> GlyphItem {
-        let r0 = handle_world_radius(self.start, &ctx.camera, ctx.viewport_size.y, 10.0);
-        let r1 = handle_world_radius(self.end, &ctx.camera, ctx.viewport_size.y, 10.0);
-
-        let s0 = if self.hovered_endpoint == Some(0) || self.active_endpoint == Some(0) {
-            1.0_f32
-        } else {
-            0.0
+    /// Push the visual built from these into the frame; see [`HandleMarkers`].
+    pub fn handle_markers(&self, id_base: u64, ctx: &WidgetContext) -> HandleMarkers {
+        let hot = |i: usize| {
+            if self.hovered_endpoint == Some(i) || self.active_endpoint == Some(i) {
+                1.0_f32
+            } else {
+                0.0
+            }
         };
-        let s1 = if self.hovered_endpoint == Some(1) || self.active_endpoint == Some(1) {
-            1.0_f32
-        } else {
-            0.0
-        };
-
-        let mut g = GlyphItem::default();
-        g.positions = vec![self.start.to_array(), self.end.to_array()];
-        g.vectors = vec![[r0, 0.0, 0.0], [r1, 0.0, 0.0]];
-        g.scalars = vec![s0, s1];
-        g.scalar_range = Some((0.0, 1.0));
-        g.glyph_type = GlyphType::Sphere;
-        g.settings = {
-            let mut s = crate::scene::material::ItemSettings::default();
-            s.pick_id = crate::renderer::PickId(id_base);
-            s
-        };
-        g.default_colour = self.handle_colour.into();
-        g.use_default_colour = self.handle_colour.alpha() > 0.0;
-        g
+        HandleMarkers {
+            positions: vec![self.start, self.end],
+            radii: vec![
+                handle_world_radius(self.start, &ctx.camera, ctx.viewport_size.y, 10.0),
+                handle_world_radius(self.end, &ctx.camera, ctx.viewport_size.y, 10.0),
+            ],
+            colours: vec![
+                handle_colour(self.handle_colour, hot(0)),
+                handle_colour(self.handle_colour, hot(1)),
+            ],
+            pick_id: crate::renderer::PickId(id_base),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -250,8 +241,8 @@ mod tests {
         let w = LineProbeWidget::new(Vec3::new(-1.0, 0.0, 0.0), Vec3::new(1.0, 2.0, 0.0));
         let line = w.polyline_item(7);
         assert_eq!(line.positions, vec![[-1.0, 0.0, 0.0], [1.0, 2.0, 0.0]]);
-        let glyphs = w.handle_glyphs(9, &ctx);
-        assert_eq!(glyphs.positions.len(), 2, "one glyph per endpoint");
+        let markers = w.handle_markers(9, &ctx);
+        assert_eq!(markers.positions.len(), 2, "one marker per endpoint");
     }
 
     #[test]

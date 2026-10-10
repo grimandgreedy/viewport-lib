@@ -13,12 +13,16 @@ struct ToneMapUniform {
     background_colour:        vec4<f32>,
     near_plane:              f32,
     far_plane:               f32,
-    lic_enabled:             u32,
-    lic_strength:            f32,
+    _spare0:                 u32,
+    _spare1:                 f32,
     foreground_enabled:      u32,
+    vignette_amount:         f32,
+    vignette_radius:         f32,
+    vignette_softness:       f32,
+    grade_enabled:           u32,
+    grade_lut_size:          f32,
     _pad0:                   u32,
     _pad1:                   u32,
-    _pad2:                   u32,
 }
 
 @group(0) @binding(0) var hdr_texture:  texture_2d<f32>;
@@ -28,9 +32,8 @@ struct ToneMapUniform {
 @group(0) @binding(4) var ao_texture:    texture_2d<f32>;
 @group(0) @binding(5) var cs_texture:    texture_2d<f32>;
 @group(0) @binding(6) var depth_texture: texture_depth_2d;
-@group(0) @binding(7) var lic_texture:   texture_2d<f32>;
 // Foreground pass coverage mask: depth < 1.0 where foreground geometry was
-// drawn. The screen-space terms below (AO, contact shadows, EDL, LIC) are
+// drawn. The screen-space terms below (AO, contact shadows, EDL) are
 // computed from scene depth, which is unrelated to what a covered pixel
 // shows, so they are skipped there.
 @group(0) @binding(8) var foreground_depth: texture_depth_2d;
@@ -46,6 +49,49 @@ struct ExposureState {
     adapting:   f32,
 }
 @group(0) @binding(9) var<storage, read> exposure_state: ExposureState;
+
+// Colour-grading strip LUT: n slices of n x n laid out horizontally (width
+// n*n, height n = params.grade_lut_size). Red indexes across a slice, green
+// down it, blue selects the slice. Neutral placeholder when grading is off.
+@group(0) @binding(10) var grade_lut: texture_2d<f32>;
+
+// Sample the strip LUT for a display-space colour, interpolating between the
+// two nearest blue slices.
+fn grade(colour: vec3<f32>) -> vec3<f32> {
+    let n = params.grade_lut_size;
+    let c = clamp(colour, vec3<f32>(0.0), vec3<f32>(1.0));
+    let b = c.b * (n - 1.0);
+    let slice0 = floor(b);
+    let slice1 = min(slice0 + 1.0, n - 1.0);
+    let f = b - slice0;
+    let u0 = (slice0 * n + c.r * (n - 1.0) + 0.5) / (n * n);
+    let u1 = (slice1 * n + c.r * (n - 1.0) + 0.5) / (n * n);
+    let v = (c.g * (n - 1.0) + 0.5) / n;
+    let s0 = textureSampleLevel(grade_lut, hdr_sampler, vec2<f32>(u0, v), 0.0).rgb;
+    let s1 = textureSampleLevel(grade_lut, hdr_sampler, vec2<f32>(u1, v), 0.0).rgb;
+    return mix(s0, s1, f);
+}
+
+// Final display-space treatment shared by every exit: colour grading, then
+// the vignette. Applied on the pure-background fast path too, so grading and
+// corner darkening cover empty regions.
+fn display_finish(colour_in: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+    var colour = colour_in;
+    if params.grade_enabled != 0u {
+        colour = grade(colour);
+    }
+    if params.vignette_amount > 0.0 {
+        // Distance normalised so 1.0 is the centre-to-corner distance.
+        let d = length(uv - vec2<f32>(0.5)) * 1.4142135;
+        let falloff = smoothstep(
+            params.vignette_radius,
+            params.vignette_radius + max(params.vignette_softness, 0.001),
+            d,
+        );
+        colour = colour * (1.0 - params.vignette_amount * falloff);
+    }
+    return colour;
+}
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
@@ -107,10 +153,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let depth = textureLoad(depth_texture, depth_coord, 0);
     // With no opaque geometry at this pixel (depth at the far plane), the HDR
     // buffer holds only premultiplied *transparent* contributions (additive /
-    // OIT particles) blended over a transparent-black clear; the flat background
-    // colour is composited under them after tone mapping, below. The buffer is
-    // cleared with alpha=0 and transparent draws raise alpha, so alpha ~ 0 means
-    // nothing was drawn here and this is a pure background pixel.
+    // OIT particles) over a transparent-black clear; the background is
+    // composited under them after tone mapping, below, and nowhere else. The
+    // buffer is cleared to zero in both colour and alpha and transparent draws
+    // raise alpha, so alpha ~ 0 means nothing was drawn here and this is a pure
+    // background pixel.
     var covered = false;
     if params.foreground_enabled != 0u {
         let fg_dims = textureDimensions(foreground_depth);
@@ -130,7 +177,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         bloom = textureSample(bloom_texture, hdr_sampler, in.uv).rgb;
     }
     if is_background && hdr.a < 0.001 && dot(bloom, vec3<f32>(1.0)) < 0.0003 {
-        return params.background_colour;
+        // The uniform is premultiplied, so this is already the right pair: an
+        // opaque background unchanged, a transparent one zero in every channel
+        // rather than a colour at zero coverage (which no compositor can use).
+        return vec4<f32>(
+            display_finish(params.background_colour.rgb, in.uv),
+            params.background_colour.a,
+        );
     }
 
     // Add bloom additively before tone mapping.
@@ -191,14 +244,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour = colour * (1.0 - edl_factor);
     }
 
-    // Surface LIC: modulate colour by LIC intensity (0.5 = neutral, no change).
-    // A surface effect, so it only applies where geometry was shaded.
-    if !is_background && !covered && params.lic_enabled != 0u {
-        let lic_val = textureSampleLevel(lic_texture, hdr_sampler, in.uv, 0.0).r;
-        let lic_factor = 1.0 + params.lic_strength * (lic_val * 2.0 - 1.0);
-        colour = colour * max(0.0, lic_factor);
-    }
-
     // Pre-tone-mapping exposure (from the exposure state buffer).
     colour = colour * exposure_state.exposure;
 
@@ -211,17 +256,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour = khronos_neutral(colour);
     }
 
-    // Composite transparent HDR content over the flat background colour. Without
-    // this, a faint particle over empty scene replaces the background with its
-    // own dim premultiplied value (reading as near-black) instead of adding to
-    // it. Skipped when opaque geometry is present (it already supplied the base
+    // Composite transparent HDR content over the background. Without this, a
+    // faint particle over empty scene replaces the background with its own dim
+    // premultiplied value (reading as near-black) instead of adding to it.
+    // Skipped when opaque geometry is present (it already supplied the base
     // colour tone-mapped above). Done in display space, after tone mapping, so
-    // pure-background pixels match the early-out above exactly. Alpha is the
-    // transparent coverage (>1 possible from stacked additive draws), clamped so
-    // saturated regions fully replace the background.
+    // pure-background pixels match the early-out above exactly. This is the only
+    // place the background enters: the HDR buffer is cleared to zero, so the
+    // quantity added here is added once. Coverage is the transparent alpha (>1
+    // possible from stacked additive draws), clamped so saturated regions fully
+    // replace the background.
+    var coverage = 1.0;
     if is_background {
-        colour = colour + params.background_colour.rgb * (1.0 - clamp(hdr.a, 0.0, 1.0));
+        let scene = clamp(hdr.a, 0.0, 1.0);
+        colour = colour + params.background_colour.rgb * (1.0 - scene);
+        // Scene over background, so the two coverages compose. An opaque
+        // background still gives 1 here, which is what every consumer that
+        // renders to a window wants and what the alpha-1 case has always been.
+        // Bloom deliberately contributes none of this: it rides in RGB with no
+        // coverage of its own, which composites as the additive glow it is
+        // rather than occluding whatever is behind the viewport.
+        coverage = scene + params.background_colour.a * (1.0 - scene);
     }
 
-    return vec4<f32>(colour, 1.0);
+    return vec4<f32>(display_finish(colour, in.uv), coverage);
 }

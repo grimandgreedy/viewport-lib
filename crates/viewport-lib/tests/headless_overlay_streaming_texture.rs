@@ -10,7 +10,7 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -31,7 +31,7 @@ fn overlay_frame(size: u32) -> FrameData {
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.3, 0.3, 0.3, 1.0));
     frame
 }
 
@@ -52,7 +52,7 @@ fn textured_shape(tex: viewport_lib::OverlayTextureId) -> OverlayShapeItem {
         [16.0, 16.0],
         [32.0, 32.0],
     )
-    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
+    .with_fill(OverlayFill::Solid(Colour::linear(1.0, 1.0, 1.0, 1.0)))
     .with_texture(tex)
 }
 
@@ -74,9 +74,12 @@ fn streaming_texture_updates_in_place() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let (tw, th) = (8u32, 8u32);
-    let tex = renderer
-        .resources_mut()
-        .create_streaming_overlay_texture(&device, tw, th);
+    let tex = renderer.resources_mut().create_streaming_overlay_texture(
+        &device,
+        tw,
+        th,
+        viewport_lib::ColourSpace::Srgb,
+    );
 
     // First frame: fill red.
     renderer.resources_mut().update_overlay_texture(
@@ -128,9 +131,12 @@ fn streaming_texture_resizes_under_same_id() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    let tex = renderer
-        .resources_mut()
-        .create_streaming_overlay_texture(&device, 4, 4);
+    let tex = renderer.resources_mut().create_streaming_overlay_texture(
+        &device,
+        4,
+        4,
+        viewport_lib::ColourSpace::Srgb,
+    );
     renderer.resources_mut().update_overlay_texture(
         &device,
         &queue,
@@ -172,9 +178,12 @@ fn freeing_overlay_texture_invalidates_the_id() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    let tex = renderer
-        .resources_mut()
-        .create_streaming_overlay_texture(&device, 4, 4);
+    let tex = renderer.resources_mut().create_streaming_overlay_texture(
+        &device,
+        4,
+        4,
+        viewport_lib::ColourSpace::Srgb,
+    );
     renderer.resources_mut().update_overlay_texture(
         &device,
         &queue,
@@ -215,5 +224,62 @@ fn freeing_overlay_texture_invalidates_the_id() {
     assert!(
         r.abs_diff(g) < 30 && g.abs_diff(b) < 30,
         "expected flat grey background after free, got ({r}, {g}, {b})"
+    );
+}
+
+/// The colour space is fixed at creation. A linear streaming texture fed grey
+/// bytes draws them as the value 0.5, brighter than an sRGB one fed the same
+/// bytes, and keeps doing so after an update resizes it.
+#[test]
+fn streaming_texture_keeps_its_colour_space() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let size = 64u32;
+    let grey = [128u8, 128, 128, 255];
+    let mut draw = |renderer: &mut ViewportRenderer, tex| {
+        let mut frame = overlay_frame(size);
+        frame.overlays.shapes = vec![textured_shape(tex)];
+        let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+        centre_rgb(&px, size).0
+    };
+
+    let mut fed = |space| {
+        let tex = renderer
+            .resources_mut()
+            .create_streaming_overlay_texture(&device, 4, 4, space);
+        renderer.resources_mut().update_overlay_texture(
+            &device,
+            &queue,
+            tex,
+            4,
+            4,
+            &solid_rgba(4, 4, grey),
+        );
+        tex
+    };
+    let srgb = fed(viewport_lib::ColourSpace::Srgb);
+    let linear = fed(viewport_lib::ColourSpace::Linear);
+    let srgb_red = draw(&mut renderer, srgb);
+    let linear_red = draw(&mut renderer, linear);
+    assert!(
+        linear_red > srgb_red + 40,
+        "linear {linear_red} should draw brighter than sRGB {srgb_red}"
+    );
+
+    renderer.resources_mut().update_overlay_texture(
+        &device,
+        &queue,
+        linear,
+        8,
+        8,
+        &solid_rgba(8, 8, grey),
+    );
+    let resized_red = draw(&mut renderer, linear);
+    assert!(
+        resized_red.abs_diff(linear_red) <= 2,
+        "a resize should keep the linear format: {linear_red} then {resized_red}"
     );
 }

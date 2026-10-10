@@ -33,7 +33,7 @@
 //!
 //! // Draw the plane indicator: build the outline from `visual` and submit it as an
 //! // ordinary scene polyline, tagged `ignore_clip` so it stays visible through the cut:
-//! frame.scene.polylines.push(visual::outline(&clip.shape, extent, colour));
+//! frame.scene.items_mut::<crate::PolylineItem>().push(visual::outline(&clip.shape, extent, colour));
 //! ```
 
 use crate::camera::camera::Camera;
@@ -126,7 +126,7 @@ pub fn plane_from_axis_preset(axis: ClipAxis, distance: f32) -> ClipObject {
     }
 }
 
-pub use crate::geometry::intersect::ray_plane_intersection;
+pub use crate::geometry::maths::intersect::ray_plane_intersection;
 
 // ---------------------------------------------------------------------------
 // Hit testing
@@ -279,7 +279,11 @@ pub struct ClipPlaneContext {
     pub cursor_viewport: Option<glam::Vec2>,
     /// Mouse movement in pixels since last frame.
     pub pointer_delta: glam::Vec2,
-    /// `true` on the frame a primary drag begins.
+    /// `true` on the frame to try grabbing what is under the cursor: the
+    /// primary press ([`PointerFrame::pressed`], which the runners pass), or a
+    /// toolkit's own drag start if the host prefers one.
+    ///
+    /// [`PointerFrame::pressed`]: crate::PointerFrame::pressed
     pub drag_started: bool,
     /// `true` while a primary drag is ongoing.
     pub dragging: bool,

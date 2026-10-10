@@ -74,6 +74,24 @@ impl PickHit {
             sub_object_world_pos: None,
         }
     }
+
+    /// Name the sub-object this hit landed on.
+    ///
+    /// Chains off [`object_hit`](Self::object_hit) for an item type that picks
+    /// finer than whole objects, which out-of-crate code cannot express with a
+    /// struct literal.
+    ///
+    /// ```
+    /// use viewport_lib::{PickHit, SubObjectRef};
+    /// use glam::Vec3;
+    ///
+    /// let hit = PickHit::object_hit(7, Vec3::ZERO, Vec3::Z).with_sub_object(SubObjectRef::Segment(2));
+    /// assert_eq!(hit.sub_object, Some(SubObjectRef::Segment(2)));
+    /// ```
+    pub fn with_sub_object(mut self, sub_object: crate::renderer::SubObjectRef) -> Self {
+        self.sub_object = Some(sub_object);
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------

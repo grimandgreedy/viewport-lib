@@ -88,6 +88,105 @@ pub enum ViewportError {
         offset_bytes: u64,
     },
 
+    /// A ranged write does not fit a [`ContentBuffer`]: either the window runs
+    /// past the allocation, or the byte length is not a whole number of
+    /// elements at the buffer's stride.
+    ///
+    /// The buffer does not grow to accommodate a write. Growing behind a call
+    /// the caller believes is cheap is the cost this whole family of APIs
+    /// exists to remove, so `reserve` is an explicit step.
+    ///
+    /// [`ContentBuffer`]: https://docs.rs/viewport-lib
+    #[error(
+        "content buffer write [{first_element}..{first_element}+{element_count}) at stride {stride_bytes} does not fit {capacity} elements"
+    )]
+    ContentBufferWriteOutOfRange {
+        /// First element of the requested window.
+        first_element: u32,
+        /// Elements the supplied bytes cover, or `0` when the byte length is
+        /// not a whole multiple of the stride.
+        element_count: u32,
+        /// Elements the current allocation holds.
+        capacity: u32,
+        /// Bytes per element.
+        stride_bytes: u32,
+    },
+
+    /// A ranged deform-slot write does not fit the data attached to that slot:
+    /// `first_element + element_count` exceeds what the slot holds.
+    #[error(
+        "deform slot {slot} write [{first_element}..{first_element}+{element_count}) exceeds the slot's {slot_elements} elements"
+    )]
+    DeformSlotWriteOutOfRange {
+        /// The slot the write targeted.
+        slot: usize,
+        /// First element of the requested window.
+        first_element: u32,
+        /// Number of elements in the requested window.
+        element_count: u32,
+        /// How many elements the slot's attached data holds.
+        slot_elements: u32,
+    },
+
+    /// A ranged deform-slot write named a slot with no CPU data attached.
+    /// Attach the slot first with `attach_deform_slot`, which establishes its
+    /// length and stride; a ranged write only updates what is already there.
+    #[error("deform slot {slot} on mesh {mesh_id} has no attached data to write into")]
+    DeformSlotNotAttached {
+        /// The mesh the write targeted.
+        mesh_id: usize,
+        /// The slot the write targeted.
+        slot: usize,
+    },
+
+    /// A volume sub-region write does not fit inside the volume it addresses:
+    /// `origin + dims` exceeds the texture's own dimensions on at least one
+    /// axis, or `dims` has a zero extent.
+    ///
+    /// The texture does not grow to accommodate a region write. Resizing a 3D
+    /// texture means reallocating it, which is what
+    /// `replace_volume` is for.
+    #[error("volume region at {origin:?} sized {dims:?} does not fit a {volume_dims:?} volume")]
+    VolumeRegionOutOfRange {
+        /// First texel of the requested box.
+        origin: [u32; 3],
+        /// Size of the requested box.
+        dims: [u32; 3],
+        /// Dimensions of the volume being written.
+        volume_dims: [u32; 3],
+    },
+
+    /// A ranged channel write named a channel the stored object does not hold.
+    ///
+    /// Which channels an object has is fixed when it is uploaded: a point cloud
+    /// uploaded with one flat colour has no per-point colour buffer, and a
+    /// binding cannot appear later without reallocating and rebuilding the bind
+    /// group, which is exactly the cost a ranged write exists to avoid. Upload
+    /// the channel populated, even with placeholder values, and then write it.
+    #[error("the object has no {channel} channel to write into")]
+    ChannelNotPresent {
+        /// Item type name the write was addressed to.
+        type_name: &'static str,
+        /// Channel named by the write.
+        channel: &'static str,
+    },
+
+    /// A ranged write to a channel whose colourmap or size domain is derived
+    /// from the values rather than supplied.
+    ///
+    /// The domain spans the whole array, so a write that touches part of it
+    /// cannot know the new extremes without rescanning everything, which is the
+    /// cost being avoided. Supply the domain (`ColourSource::Scalar { range:
+    /// Some(..) }`, `SizeSource::Scalar { domain: Some(..) }`) and the write is
+    /// well defined; leave it derived and replace the object whole.
+    #[error("channel {channel} has a derived domain, so a ranged write cannot maintain it")]
+    ChannelDomainNotFixed {
+        /// Item type name the write was addressed to.
+        type_name: &'static str,
+        /// Channel named by the write.
+        channel: &'static str,
+    },
+
     /// A sliced override binding does not fit inside the supplied buffer:
     /// `base_element + element_count` vec3 elements (12 bytes each) exceed
     /// the buffer's size.
@@ -167,12 +266,58 @@ pub enum ViewportError {
         actual: usize,
     },
 
-    /// `upload_environment` was called after the environment set filled its
-    /// fixed layer capacity. The default (layer 0) and up to `max - 1` extra
-    /// environments fit; beyond that, callers must reuse an existing handle.
-    #[error("too many environments: the set holds at most {max} layers")]
+    /// A texture was bound into a slot that needs the other colour space.
+    ///
+    /// The space travels on the [`TextureData`](crate::data::texture::TextureData)
+    /// the texture was uploaded with, and each slot documents the space it needs.
+    /// Uploading a data map through the colour path renders a plausible but wrong
+    /// image (a neutral 128 in a normal map decodes to 0.216 instead of 0), so it
+    /// is reported here rather than drawn. Rebuild the payload with the named
+    /// constructor; if the bytes really are meant to be read as given, say so with
+    /// the matching constructor rather than working around this.
+    #[error(
+        "{slot} was given a texture uploaded as {found}; build it with {constructor} (texture {texture})"
+    )]
+    TextureColourSpaceMismatch {
+        /// The slot field, as a consumer writes it.
+        slot: &'static str,
+        /// The space the texture was uploaded in.
+        found: &'static str,
+        /// The `TextureData` constructor that produces what the slot needs.
+        constructor: &'static str,
+        /// Raw id of the offending texture.
+        texture: u64,
+    },
+
+    /// A [`TextureData`](crate::data::texture::TextureData) carries a colour
+    /// space that cannot be right for its contents: an sRGB normal map, sRGB
+    /// float pixels, or a data-only compressed format labelled sRGB. Usually a
+    /// [`with_colour_space`](crate::data::texture::TextureData::with_colour_space)
+    /// relabel that went the wrong way.
+    #[error("invalid texture colour space: {reason}")]
+    InvalidTextureColourSpace {
+        /// What is wrong with the label.
+        reason: &'static str,
+    },
+
+    /// An upload was given a well-formed
+    /// [`TextureData`](crate::data::texture::TextureData) that its slot cannot
+    /// take: the wrong colour space or size, a payload kind the slot does not
+    /// sample, or a normal map where none is used. Match on `reason` to fix it,
+    /// for example by relabelling the colour space and retrying.
+    #[error("{slot} cannot take this texture: {reason}")]
+    UnsupportedTextureData {
+        /// The kind of upload that rejected it.
+        slot: crate::data::texture::UploadSlot,
+        /// Why.
+        reason: crate::data::texture::TextureRejection,
+    },
+
+    /// `upload_environment` was called while every environment slot was in
+    /// use. Free one with `free_environment` before uploading another.
+    #[error("too many environments: the set holds at most {max}")]
     TooManyEnvironments {
-        /// The fixed environment-array capacity.
+        /// How many environments the set holds.
         max: u32,
     },
 
@@ -346,6 +491,16 @@ pub enum ViewportError {
     PluginInstallMissing {
         /// Name of the missing piece, e.g. "a ViewportRuntime".
         needed: &'static str,
+    },
+
+    /// Content was uploaded for, or freed from, an item type whose plugin is
+    /// not registered with the renderer. The item type that owns a store is
+    /// the only thing that can hold its content, so the call had nowhere to
+    /// go. The message names the type.
+    #[error("no item type plugin registered under {type_name}")]
+    ItemTypePluginMissing {
+        /// Registered name of the item type that owns the content.
+        type_name: &'static str,
     },
 
     /// A LOD group was registered with no levels.

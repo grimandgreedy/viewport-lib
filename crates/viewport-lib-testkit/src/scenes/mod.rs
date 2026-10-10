@@ -9,27 +9,49 @@
 //! built scene with one of its [`NamedCamera`]s through [`frame_for`] to get a
 //! `FrameData` ready to render.
 
+use viewport_lib::Colour;
 // The corpus the catalogue builds from: procedural meshes, lighting rigs,
 // textures, and (optionally) real model files. All behind the `scenes` feature
 // with this module.
+pub mod item_types;
 pub mod meshes;
+pub mod overlays;
 #[cfg(feature = "real_models")]
 pub mod real_models;
 pub mod rigs;
+pub mod shadows;
 pub mod textures;
 
 use glam::{Mat4, Quat, Vec3};
 use viewport_lib::wgpu;
 use viewport_lib::{
-    BackfacePolicy, Camera, CameraFrame, FrameData, GlyphItem, LightingSettings, Material,
-    MeshData, MeshId, PointCloudItem, PolylineItem, SceneFrame, SceneRenderItem,
-    ViewportGpuResources, primitives,
+    BackfacePolicy, Camera, CameraFrame, FrameData, LightingSettings, Material, MeshData, MeshId,
+    MeshInstanceItem, PolylineItem, ScatterSettings, SceneFrame, SceneRenderItem, ViewportRenderer,
+    primitives,
+};
+use viewport_lib_plugins::item_types::decal::DecalItem;
+use viewport_lib_plugins::item_types::gpu_marching_cubes::GpuMarchingCubesItem;
+use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
+use viewport_lib_plugins::item_types::scatter_volume::ScatterVolumeItem;
+use viewport_lib_plugins::item_types::volume::VolumeItem;
+use viewport_lib_plugins::item_types::{
+    curves::{RibbonItem, StreamtubeItem, TubeItem},
+    sprite::SpriteItem,
+    tensor_field::TensorFieldItem,
+    vector_field::VectorFieldItem,
+};
+use viewport_lib_plugins::item_types::{
+    gaussian_splat::GaussianSplatItem, gpu_implicit::GpuImplicitItem, image_slice::ImageSliceItem,
+    volume_surface_slice::VolumeSurfaceSliceItem,
 };
 
 /// Resources a scene's `build` function may upload into.
 pub struct BuildCtx<'a> {
-    /// Long-lived GPU resources (mesh and texture stores).
-    pub res: &'a mut ViewportGpuResources,
+    /// The renderer the scene uploads into. Content an item type holds itself
+    /// (splat sets, marching-cubes volumes) is uploaded straight through here;
+    /// shared content (meshes, textures, volumes) through
+    /// `renderer.resources_mut()`.
+    pub renderer: &'a mut ViewportRenderer,
     /// The wgpu device.
     pub device: &'a wgpu::Device,
     /// The wgpu queue (needed for texture uploads).
@@ -56,12 +78,77 @@ pub struct BuiltScene {
     pub point_clouds: Vec<PointCloudItem>,
     /// Polyline items.
     pub polylines: Vec<PolylineItem>,
-    /// Glyph (arrow/sphere/cube instance) items.
-    pub glyphs: Vec<GlyphItem>,
+    /// Vector field items.
+    pub vector_fields: Vec<VectorFieldItem>,
+    /// Tensor field items.
+    pub tensor_fields: Vec<TensorFieldItem>,
+    /// Tube items.
+    pub tube_items: Vec<TubeItem>,
+    /// Streamtube items.
+    pub streamtube_items: Vec<StreamtubeItem>,
+    /// Ribbon items.
+    pub ribbon_items: Vec<RibbonItem>,
+    /// Sprite (billboard) items.
+    pub sprite_items: Vec<SpriteItem>,
+    /// GPU particle systems advanced and drawn each frame. The simulation runs
+    /// on the GPU and carries state between frames, so a scene using these is
+    /// only reproducible because the emit RNG is seeded from a frame counter
+    /// rather than from the clock, and the harness pumps a fixed number of
+    /// frames.
+    pub gpu_particle_systems:
+        Vec<viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystemItem>,
+    /// Ray-marched volume items.
+    pub volumes: Vec<VolumeItem>,
+    /// Gaussian splat items.
+    pub gaussian_splats: Vec<GaussianSplatItem>,
+    /// Axis-aligned volume slice items.
+    pub image_slices: Vec<ImageSliceItem>,
+    /// Mesh-sampled volume slice items.
+    pub volume_surface_slices: Vec<VolumeSurfaceSliceItem>,
+    /// GPU implicit-surface items.
+    pub gpu_implicit: Vec<GpuImplicitItem>,
+    /// GPU marching-cubes items.
+    pub gpu_mc_items: Vec<GpuMarchingCubesItem>,
+    /// Scatter (participating media) volume items.
+    pub scatter_volumes: Vec<ScatterVolumeItem>,
+    /// Decal items.
+    pub decals: Vec<DecalItem>,
+    /// Surface LIC items.
+    pub surface_lics: Vec<viewport_lib_plugins::item_types::surface_lic::SurfaceLicItem>,
+    /// Surface contour items.
+    pub surface_contours:
+        Vec<viewport_lib_plugins::item_types::surface_contour::SurfaceContourItem>,
+    /// Mesh-instance batch items.
+    pub mesh_instances: Vec<MeshInstanceItem>,
+    /// Volume mesh items.
+    pub volume_meshes: Vec<viewport_lib::VolumeMeshItem>,
+    /// Scatter pass settings override. Scenes with scatter volumes pin these
+    /// so the still image is deterministic (no temporal blend, no jitter).
+    pub scatter_settings: Option<ScatterSettings>,
+    /// Post-process settings override, for a scene that exists to exercise a
+    /// post-process configuration (supersampling, say) rather than an item
+    /// type. `None` leaves the frame's defaults alone.
+    pub post_process: Option<viewport_lib::PostProcessSettings>,
+    /// Screen-space overlay items: shapes, labels, glyph runs, polylines, and
+    /// retained groups compiled during `build`.
+    pub overlays: viewport_lib::OverlayFrame,
+    /// Scene-content version stamped onto `SceneFrame::generation`.
+    ///
+    /// The renderer's instanced-batch cache trusts this: two consecutive
+    /// frames with the same generation and the same item count reuse the
+    /// previous frame's batches. A harness renders many different scenes
+    /// through one renderer, so every built scene needs a distinct value or a
+    /// scene can be painted with its predecessor's meshes.
+    /// [`Harness::build_scene`](crate::Harness::build_scene) assigns it.
+    pub generation: u64,
     /// Lighting rig for this scene.
     pub lighting: LightingSettings,
     /// Optional background clear colour (linear RGBA).
     pub background: Option<[f32; 4]>,
+    /// Clip objects applied to the frame, for scenes that open a solid to
+    /// show its interior, with the cap-fill flag. `None` leaves the frame's
+    /// defaults alone.
+    pub clip: Option<(Vec<viewport_lib::ClipObject>, bool)>,
 }
 
 /// A catalogue entry: a name, the cameras to view it from, and a function that
@@ -127,20 +214,66 @@ pub const TEST_BACKGROUND: [f32; 4] = [0.0437, 0.0437, 0.0513, 1.0];
 /// off so it never draws over the scene.
 pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -> FrameData {
     let mut sf = SceneFrame::from_surface_items(scene.items.clone());
-    sf.point_clouds = scene.point_clouds.clone();
-    sf.polylines = scene.polylines.clone();
-    sf.glyphs = scene.glyphs.clone();
+    sf.generation = scene.generation;
+    *sf.items_mut::<PointCloudItem>() = scene.point_clouds.clone();
+    *sf.items_mut::<viewport_lib::PolylineItem>() = scene.polylines.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::vector_field::VectorFieldItem>() =
+        scene.vector_fields.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::tensor_field::TensorFieldItem>() =
+        scene.tensor_fields.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::curves::TubeItem>() =
+        scene.tube_items.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::curves::StreamtubeItem>() =
+        scene.streamtube_items.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::curves::RibbonItem>() =
+        scene.ribbon_items.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::sprite::SpriteItem>() =
+        scene.sprite_items.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystemItem>() =
+        scene.gpu_particle_systems.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::volume::VolumeItem>() = scene.volumes.clone();
+    *sf.items_mut::<GaussianSplatItem>() = scene.gaussian_splats.clone();
+    *sf.items_mut::<ImageSliceItem>() = scene.image_slices.clone();
+    *sf.items_mut::<VolumeSurfaceSliceItem>() = scene.volume_surface_slices.clone();
+    *sf.items_mut::<GpuImplicitItem>() = scene.gpu_implicit.clone();
+    *sf.items_mut::<GpuMarchingCubesItem>() = scene.gpu_mc_items.clone();
+    *sf.items_mut::<ScatterVolumeItem>() = scene.scatter_volumes.clone();
+    *sf.items_mut::<DecalItem>() = scene.decals.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::surface_lic::SurfaceLicItem>() =
+        scene.surface_lics.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::surface_contour::SurfaceContourItem>() =
+        scene.surface_contours.clone();
+    sf.mesh_instances = scene.mesh_instances.clone();
+    sf.volume_meshes = scene.volume_meshes.clone();
     let mut fd = FrameData::new(CameraFrame::from_camera(camera, viewport_size), sf);
     fd.effects.lighting = scene.lighting.clone();
-    fd.viewport.background_colour = Some(scene.background.unwrap_or(TEST_BACKGROUND).into());
+    if let Some(scatter) = scene.scatter_settings.clone() {
+        fd.effects.scatter = scatter;
+    }
+    if let Some(post) = scene.post_process.clone() {
+        fd.effects.post_process = post;
+    }
+    if let Some((objects, cap_fill)) = scene.clip.clone() {
+        fd.effects.clip.objects = objects;
+        fd.effects.clip.cap_fill_enabled = cap_fill;
+    }
+    fd.overlays = scene.overlays.clone();
+    fd.viewport.background_colour = Some(Colour::from_linear_array(
+        scene.background.unwrap_or(TEST_BACKGROUND),
+    ));
     fd.viewport.show_axes_indicator = false;
+    // Scenes mark an item selected to put the selection outline in the
+    // reference image; without this the flag is off and the outline pass never
+    // runs, so those marks render nothing.
+    fd.interaction.outline_selected = true;
     fd
 }
 
 // --- small build helpers ---------------------------------------------------
 
 fn upload(ctx: &mut BuildCtx<'_>, mesh: &MeshData) -> MeshId {
-    ctx.res
+    ctx.renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, mesh)
         .expect("mesh upload")
 }
@@ -177,7 +310,7 @@ fn ground(ctx: &mut BuildCtx<'_>, top: f32) -> SceneRenderItem {
     item(
         mesh,
         Vec3::new(0.0, 0.0, top - 0.2),
-        Material::pbr([0.55, 0.55, 0.58], 0.0, 0.9),
+        Material::pbr(Colour::linear_rgb(0.55, 0.55, 0.58), 0.0, 0.9),
     )
 }
 
@@ -192,17 +325,17 @@ fn build_primitives_trio(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             item(
                 s,
                 Vec3::new(-2.5, 0.0, 0.0),
-                Material::pbr([0.9, 0.5, 0.2], 0.2, 0.5),
+                Material::pbr(Colour::linear_rgb(0.9, 0.5, 0.2), 0.2, 0.5),
             ),
             item(
                 c,
                 Vec3::new(0.0, 0.0, 0.0),
-                Material::pbr([0.4, 0.6, 0.9], 0.6, 0.4),
+                Material::pbr(Colour::linear_rgb(0.4, 0.6, 0.9), 0.6, 0.4),
             ),
             item(
                 t,
                 Vec3::new(2.5, 0.0, 0.0),
-                Material::pbr([0.3, 0.8, 0.4], 0.3, 0.5),
+                Material::pbr(Colour::linear_rgb(0.3, 0.8, 0.4), 0.3, 0.5),
             ),
         ],
         lighting: rigs::from_above(),
@@ -217,7 +350,7 @@ fn build_torus_knot(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![item_model(
             k,
             Mat4::from_scale(Vec3::splat(0.9)),
-            Material::pbr([0.85, 0.45, 0.5], 0.4, 0.4),
+            Material::pbr(Colour::linear_rgb(0.85, 0.45, 0.5), 0.4, 0.4),
         )],
         lighting: rigs::grazing(),
         background: None,
@@ -231,7 +364,7 @@ fn build_gear(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![item(
             g,
             Vec3::ZERO,
-            Material::pbr([0.7, 0.7, 0.75], 0.9, 0.35),
+            Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.75), 0.9, 0.35),
         )],
         lighting: rigs::three_point(),
         background: None,
@@ -245,7 +378,7 @@ fn build_bowl(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![two_sided(item(
             b,
             Vec3::ZERO,
-            Material::pbr([0.8, 0.78, 0.7], 0.1, 0.6),
+            Material::pbr(Colour::linear_rgb(0.8, 0.78, 0.7), 0.1, 0.6),
         ))],
         lighting: rigs::from_above(),
         background: None,
@@ -262,7 +395,7 @@ fn build_castellated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             item(
                 bar,
                 Vec3::new(0.0, 0.0, 0.5),
-                Material::pbr([0.6, 0.4, 0.35], 0.0, 0.7),
+                Material::pbr(Colour::linear_rgb(0.6, 0.4, 0.35), 0.0, 0.7),
             ),
         ],
         lighting: rigs::grazing(),
@@ -277,7 +410,7 @@ fn build_heightfield(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![item(
             h,
             Vec3::ZERO,
-            Material::pbr([0.4, 0.55, 0.35], 0.0, 0.85),
+            Material::pbr(Colour::linear_rgb(0.4, 0.55, 0.35), 0.0, 0.85),
         )],
         lighting: rigs::grazing(),
         background: None,
@@ -291,7 +424,7 @@ fn build_thin_sheet(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![two_sided(item(
             sheet,
             Vec3::ZERO,
-            Material::pbr([0.85, 0.3, 0.35], 0.0, 0.5),
+            Material::pbr(Colour::linear_rgb(0.85, 0.3, 0.35), 0.0, 0.5),
         ))],
         lighting: rigs::backlit(),
         background: None,
@@ -305,7 +438,7 @@ fn build_stress_sphere(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![item(
             s,
             Vec3::ZERO,
-            Material::pbr([0.6, 0.6, 0.85], 0.3, 0.3),
+            Material::pbr(Colour::linear_rgb(0.6, 0.6, 0.85), 0.3, 0.3),
         )],
         lighting: rigs::from_above(),
         background: None,
@@ -324,12 +457,12 @@ fn build_concave_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
                 k,
                 Mat4::from_translation(Vec3::new(-1.6, 0.0, 1.4))
                     * Mat4::from_scale(Vec3::splat(0.7)),
-                Material::pbr([0.8, 0.5, 0.3], 0.4, 0.4),
+                Material::pbr(Colour::linear_rgb(0.8, 0.5, 0.3), 0.4, 0.4),
             ),
             two_sided(item(
                 b,
                 Vec3::new(1.8, 0.0, 0.6),
-                Material::pbr([0.75, 0.75, 0.8], 0.1, 0.6),
+                Material::pbr(Colour::linear_rgb(0.75, 0.75, 0.8), 0.1, 0.6),
             )),
         ],
         lighting: rigs::grazing(),
@@ -341,11 +474,16 @@ fn build_concave_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 fn build_textured_checker(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let tex = textures::checker(512, 8, [230, 230, 230], [40, 40, 50]);
     let tex_id = ctx
-        .res
-        .upload_texture(ctx.device, ctx.queue, tex.width, tex.height, &tex.rgba)
+        .renderer
+        .resources_mut()
+        .upload_texture(
+            ctx.device,
+            ctx.queue,
+            viewport_lib::TextureData::srgb(tex.width, tex.height, tex.rgba.to_vec()),
+        )
         .expect("texture upload");
     let s = upload(ctx, &primitives::sphere(1.2, 48, 24));
-    let mut mat = Material::pbr([1.0, 1.0, 1.0], 0.0, 0.6);
+    let mut mat = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.6);
     mat.texture_id = Some(tex_id);
     BuiltScene {
         items: vec![item(s, Vec3::ZERO, mat)],
@@ -358,11 +496,16 @@ fn build_textured_checker(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 fn build_textured_normalmap(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let nm = textures::normal_bumps(512, 8);
     let nm_id = ctx
-        .res
-        .upload_normal_map(ctx.device, ctx.queue, nm.width, nm.height, &nm.rgba)
+        .renderer
+        .resources_mut()
+        .upload_texture(
+            ctx.device,
+            ctx.queue,
+            viewport_lib::TextureData::normal_map(nm.width, nm.height, nm.rgba.to_vec()),
+        )
         .expect("normal map upload");
     let s = upload(ctx, &primitives::sphere(1.3, 64, 32));
-    let mut mat = Material::pbr([0.7, 0.7, 0.75], 0.1, 0.5);
+    let mut mat = Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.75), 0.1, 0.5);
     mat.normal_map_id = Some(nm_id);
     BuiltScene {
         items: vec![item(s, Vec3::ZERO, mat)],
@@ -381,7 +524,11 @@ fn build_transparent(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .map(|(i, c)| {
             let x = (i as f32 - 1.0) * 1.1;
             with_opacity(
-                item(s, Vec3::new(x, 0.0, 0.0), Material::pbr(c, 0.0, 0.4)),
+                item(
+                    s,
+                    Vec3::new(x, 0.0, 0.0),
+                    Material::pbr(Colour::from_linear_rgb_array(c), 0.0, 0.4),
+                ),
                 0.5,
             )
         })
@@ -390,6 +537,81 @@ fn build_transparent(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items,
         lighting: rigs::from_above(),
         background: None,
+        ..Default::default()
+    }
+}
+
+/// Transparent background: the three kinds of pixel a compositing consumer gets.
+///
+/// `background: Some([0, 0, 0, 0])` is `Colour::TRANSPARENT`, so the render
+/// carries only what was drawn with alpha as coverage. The reference PNG keeps
+/// its alpha channel, which is what gates this: coverage is a channel of the
+/// comparison rather than something a visual check has to infer.
+///
+/// Three regions on purpose, because they take three different paths through
+/// the composite and only one of them was ever right:
+///
+/// - the opaque sphere, which reaches the main return with geometry at the pixel
+///   and must come back fully covered,
+/// - the half-transparent slab in front of it, which reaches the same return as
+///   a background pixel with transparent coverage: this is the region that used
+///   to come back opaque with the background mixed into it,
+/// - the empty corners, which take the early-out and must be zero in all four
+///   channels rather than a colour at zero coverage.
+///
+/// The emissive bar drives bloom, which spreads past its own silhouette over
+/// nothing. Bloom carries no coverage of its own, so those pixels are expected
+/// to hold colour at low alpha: under a premultiplied blend that reads as the
+/// additive glow it is, and folding bloom into coverage would make the glow
+/// occlude whatever the viewport is composited over.
+fn build_transparent_background(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // Two meshes and two items, which is the most this can hold and still keep
+    // the geometry slab's invariant that the main pass binds geometry at most
+    // once per resident chunk. Three primitives bind four times. One shared mesh
+    // batches the transparent item in with the opaque one, which costs it its
+    // blending and leaves the frame with no partial coverage at all, which is
+    // the region this scene exists to gate.
+    let s = upload(ctx, &primitives::sphere(1.0, 32, 16));
+    let slab = upload(ctx, &primitives::cuboid(2.6, 0.14, 2.0));
+
+    // Emissive, so the opaque subject also drives the bloom that spreads past
+    // its own silhouette over nothing.
+    let mut glow = Material::pbr(Colour::linear_rgb(0.95, 0.62, 0.30), 0.0, 0.4);
+    glow.emissive = Colour::linear(0.95, 0.62, 0.30, 1.0);
+    glow.emissive_strength = 18.0;
+
+    let items = vec![
+        item(s, Vec3::new(-0.9, 0.9, 0.0), glow),
+        // Half transparent and nearer the camera, so it covers part of the
+        // sphere and part of nothing. `alpha_mode` has to be set as well as the
+        // opacity: opacity alone leaves the item on the opaque pipeline, which
+        // writes depth and comes back fully covered.
+        with_opacity(
+            {
+                let mut it = item(
+                    slab,
+                    Vec3::new(-0.3, -1.1, 0.3),
+                    Material::pbr(Colour::linear_rgb(0.35, 0.65, 0.90), 0.0, 0.25),
+                );
+                it.material.alpha_mode = viewport_lib::AlphaMode::Blend;
+                it
+            },
+            0.45,
+        ),
+    ];
+
+    // `PostProcessSettings` is non-exhaustive, so mutate the default rather than
+    // naming fields in a literal.
+    let mut post = viewport_lib::PostProcessSettings::default();
+    post.bloom.enabled = true;
+    post.bloom.threshold = 1.0;
+    post.bloom.intensity = 0.9;
+
+    BuiltScene {
+        items,
+        lighting: rigs::three_point(),
+        background: Some([0.0, 0.0, 0.0, 0.0]),
+        post_process: Some(post),
         ..Default::default()
     }
 }
@@ -405,7 +627,7 @@ fn build_materials_pbr(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             items.push(item(
                 s,
                 pos,
-                Material::pbr([0.85, 0.82, 0.78], metallic, roughness),
+                Material::pbr(Colour::linear_rgb(0.85, 0.82, 0.78), metallic, roughness),
             ));
         }
     }
@@ -434,7 +656,7 @@ fn build_many_objects(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             items.push(item(
                 mesh,
                 Vec3::new(x, y, 0.0),
-                Material::pbr(colour, 0.2, 0.5),
+                Material::pbr(Colour::from_linear_rgb_array(colour), 0.2, 0.5),
             ));
         }
     }
@@ -454,7 +676,7 @@ fn build_lights_eight(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items.push(item(
             s,
             Vec3::new((i as f32 - 1.0) * 2.0, 0.0, 0.0),
-            Material::pbr([0.85, 0.85, 0.85], 0.1, 0.4),
+            Material::pbr(Colour::linear_rgb(0.85, 0.85, 0.85), 0.1, 0.4),
         ));
     }
     BuiltScene {
@@ -483,7 +705,7 @@ fn build_game_mix(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             items.push(item(
                 building,
                 Vec3::new(x, y, 1.5),
-                Material::pbr([0.6, 0.6, 0.62], 0.1, 0.8),
+                Material::pbr(Colour::linear_rgb(0.6, 0.6, 0.62), 0.1, 0.8),
             ));
         }
     }
@@ -492,7 +714,7 @@ fn build_game_mix(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items.push(item(
             character,
             Vec3::new(a.cos() * 6.0, a.sin() * 6.0, 0.6),
-            Material::pbr([0.8, 0.5, 0.4], 0.0, 0.6),
+            Material::pbr(Colour::linear_rgb(0.8, 0.5, 0.4), 0.0, 0.6),
         ));
     }
     for i in 0..40 {
@@ -501,7 +723,7 @@ fn build_game_mix(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items.push(item(
             prop,
             Vec3::new(a.cos() * r, a.sin() * r, 0.2),
-            Material::pbr([0.7, 0.7, 0.3], 0.3, 0.5),
+            Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.3), 0.3, 0.5),
         ));
     }
     BuiltScene {
@@ -530,10 +752,31 @@ fn build_point_cloud(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
     let mut pc = PointCloudItem::default();
     pc.positions = positions;
-    pc.scalars = scalars;
-    pc.point_size = 5.0;
+    pc.colour = viewport_lib::ColourSource::Scalar {
+        values: scalars,
+        range: None,
+        colourmap: None,
+    };
+    pc.size = viewport_lib::SizeSource::Uniform(5.0);
+
+    // A second, much coarser cloud off to one side, marked selected so the
+    // reference carries a legible per-point selection outline. Outlining the
+    // 3000-point sphere instead would ring every point and fill the silhouette.
+    let mut selected = PointCloudItem::default();
+    selected.positions = (0..8)
+        .map(|i| {
+            let t = i as f32 / 8.0 * std::f32::consts::TAU;
+            [2.3 + t.cos() * 0.5, 0.0, t.sin() * 0.5]
+        })
+        .collect();
+    selected.size = viewport_lib::SizeSource::Uniform(14.0);
+    selected.colour =
+        viewport_lib::ColourSource::Solid(viewport_lib::Colour::srgb_rgb(0.85, 0.15, 0.15));
+    selected.settings.pick_id = viewport_lib::PickId(1614);
+    selected.settings.selected = true;
+
     BuiltScene {
-        point_clouds: vec![pc],
+        point_clouds: vec![pc, selected],
         lighting: rigs::from_above(),
         ..Default::default()
     }
@@ -563,34 +806,10 @@ fn build_polyline(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
 }
 
-fn build_glyphs(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
-    // An 8x8 grid of arrow glyphs following a simple swirl field.
-    let mut positions = Vec::new();
-    let mut vectors = Vec::new();
-    for i in 0..8 {
-        for j in 0..8 {
-            let x = (i as f32 - 3.5) * 0.7;
-            let y = (j as f32 - 3.5) * 0.7;
-            positions.push([x, y, 0.0]);
-            // Swirl: vector perpendicular to the radius, rising slightly.
-            vectors.push([-y * 0.3, x * 0.3, 0.25]);
-        }
-    }
-    let mut g = GlyphItem::default();
-    g.positions = positions;
-    g.vectors = vectors;
-    g.scale = 0.6;
-    BuiltScene {
-        glyphs: vec![g],
-        lighting: rigs::from_above(),
-        ..Default::default()
-    }
-}
-
 /// The full catalogue of named scenes. The same list drives the counter tests,
 /// the snapshot tests, the benches, and the `catalogue_viewer` example.
 pub fn catalogue() -> Vec<NamedScene> {
-    vec![
+    let mut scenes = vec![
         NamedScene {
             name: "primitives_trio",
             cameras: standard_cameras(Vec3::ZERO, 9.0),
@@ -652,6 +871,11 @@ pub fn catalogue() -> Vec<NamedScene> {
             build: build_transparent,
         },
         NamedScene {
+            name: "transparent_background",
+            cameras: standard_cameras(Vec3::ZERO, 7.0),
+            build: build_transparent_background,
+        },
+        NamedScene {
             name: "materials_pbr",
             cameras: standard_cameras(Vec3::ZERO, 14.0),
             build: build_materials_pbr,
@@ -681,12 +905,11 @@ pub fn catalogue() -> Vec<NamedScene> {
             cameras: standard_cameras(Vec3::ZERO, 7.0),
             build: build_polyline,
         },
-        NamedScene {
-            name: "glyphs",
-            cameras: standard_cameras(Vec3::ZERO, 8.0),
-            build: build_glyphs,
-        },
-    ]
+    ];
+    scenes.extend(item_types::scenes());
+    scenes.extend(overlays::scenes());
+    scenes.extend(shadows::scenes());
+    scenes
 }
 
 /// Look up a scene by name.

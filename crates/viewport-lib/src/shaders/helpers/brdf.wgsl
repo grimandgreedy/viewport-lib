@@ -70,3 +70,31 @@ fn pbr_light_contrib(
     let specular = (D * G * F) / (4.0 * NdotV * NdotL + 0.001);
     return (kD * base_colour / 3.14159265 + specular) * radiance * NdotL;
 }
+
+// ---------------------------------------------------------------------------
+// Specular anti-aliasing.
+//
+// Widens the specular lobe where the shading normal changes fast across a
+// pixel, so a tight highlight does not alias into sparkle or banding. Lives
+// here with the rest of the direct BRDF because every caller that needs it is
+// evaluating that BRDF; the screen-space decal pass needs it without the IBL
+// samplers, which is why it is not in ambient.wgsl.
+// ---------------------------------------------------------------------------
+
+/// `kernel` is the caller-supplied normal-variance kernel
+/// (`min(0.5 * (dot(dpdx(N), dpdx(N)) + dot(dpdy(N), dpdy(N))), 0.18)`),
+/// computed in uniform control flow.
+fn specular_aa_roughness_kernel(roughness: f32, kernel: f32) -> f32 {
+    let alpha = roughness * roughness;
+    return sqrt(sqrt(clamp(alpha * alpha + kernel, 0.0, 1.0)));
+}
+
+/// `specular_aa_roughness_kernel` with the variance kernel taken in place.
+/// Uniform control flow only.
+fn specular_aa_roughness(N: vec3<f32>, roughness: f32) -> f32 {
+    let du = dpdx(N);
+    let dv = dpdy(N);
+    let variance = 0.25 * (dot(du, du) + dot(dv, dv));
+    let kernel = min(2.0 * variance, 0.18);
+    return specular_aa_roughness_kernel(roughness, kernel);
+}

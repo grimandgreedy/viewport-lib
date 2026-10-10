@@ -1,13 +1,14 @@
 //! Disk widget: a bounded circular plane with center, normal, and radius handles.
 
-use crate::geometry::intersect::ray_plane_intersection;
-use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
+use crate::Colour;
+use crate::geometry::maths::intersect::ray_plane_intersection;
+use crate::renderer::PolylineItem;
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 
 use super::{
-    WidgetContext, WidgetResult, any_perpendicular, any_perpendicular_pair, ctx_ray,
-    handle_world_radius, ray_point_dist,
+    HandleMarkers, WidgetContext, WidgetResult, any_perpendicular, any_perpendicular_pair, ctx_ray,
+    handle_colour, handle_world_radius, ray_point_dist,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -29,8 +30,9 @@ enum DiskHandle {
 ///
 /// // Each frame:
 /// disk.update(&ctx);
-/// fd.scene.polylines.push(disk.wireframe_item(DISK_ID));
-/// fd.scene.glyphs.push(disk.handle_glyphs(HANDLE_ID, &ctx));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(disk.wireframe_item(DISK_ID));
+/// let markers = disk.handle_markers(HANDLE_ID, &ctx);
+/// fd.scene.mesh_instances.push(markers.to_mesh_instances(handle_mesh));
 /// ```
 pub struct DiskWidget {
     /// World-space center of the disk.
@@ -68,8 +70,8 @@ impl DiskWidget {
             center,
             normal,
             radius: radius.max(0.01),
-            colour: [0.9, 0.6, 0.1, 1.0].into(),
-            handle_colour: [0.0; 4].into(),
+            colour: Colour::linear(0.9, 0.6, 0.1, 1.0),
+            handle_colour: Colour::TRANSPARENT,
             normal_display_length: 2.0,
             hovered_handle: None,
             active_handle: None,
@@ -166,7 +168,7 @@ impl DiskWidget {
         let r = self.radius;
 
         let mut positions: Vec<[f32; 3]> = Vec::with_capacity(STEPS + 1 + 2);
-        crate::geometry::polyline::push_circle_loop(&mut positions, c, u, v, r, STEPS);
+        crate::geometry::primitives::wire::push_circle_loop(&mut positions, c, u, v, r, STEPS);
         positions.push(c.to_array());
         positions.push(self.normal_tip_pos().to_array());
 
@@ -185,43 +187,33 @@ impl DiskWidget {
         }
     }
 
-    /// Build a `GlyphItem` with three sphere handles: center, normal tip, and radius edge.
+    /// Handle markers for the centre, the normal tip and the radius grip.
     ///
-    /// `id_base` = center, `id_base + 1` = normal tip, `id_base + 2` = radius handle.
-    pub fn handle_glyphs(&self, id_base: u64, ctx: &WidgetContext) -> GlyphItem {
+    /// Push the visual built from these into the frame; see [`HandleMarkers`].
+    pub fn handle_markers(&self, id_base: u64, ctx: &WidgetContext) -> HandleMarkers {
         let tip = self.normal_tip_pos();
         let rh = self.radius_handle_pos();
-
-        let rc = handle_world_radius(self.center, &ctx.camera, ctx.viewport_size.y, 10.0);
-        let rt = handle_world_radius(tip, &ctx.camera, ctx.viewport_size.y, 8.0);
-        let rr = handle_world_radius(rh, &ctx.camera, ctx.viewport_size.y, 8.0);
-
-        let scalar = |h: DiskHandle| {
+        let hot = |h: DiskHandle| {
             if self.hovered_handle == Some(h) || self.active_handle == Some(h) {
                 1.0_f32
             } else {
                 0.2
             }
         };
-
-        let mut g = GlyphItem::default();
-        g.positions = vec![self.center.to_array(), tip.to_array(), rh.to_array()];
-        g.vectors = vec![[rc, 0.0, 0.0], [rt, 0.0, 0.0], [rr, 0.0, 0.0]];
-        g.scalars = vec![
-            scalar(DiskHandle::Center),
-            scalar(DiskHandle::NormalTip),
-            scalar(DiskHandle::Radius),
-        ];
-        g.scalar_range = Some((0.0, 1.0));
-        g.glyph_type = GlyphType::Sphere;
-        g.settings = {
-            let mut s = crate::scene::material::ItemSettings::default();
-            s.pick_id = crate::renderer::PickId(id_base);
-            s
-        };
-        g.default_colour = self.handle_colour.into();
-        g.use_default_colour = self.handle_colour.alpha() > 0.0;
-        g
+        HandleMarkers {
+            positions: vec![self.center, tip, rh],
+            radii: vec![
+                handle_world_radius(self.center, &ctx.camera, ctx.viewport_size.y, 10.0),
+                handle_world_radius(tip, &ctx.camera, ctx.viewport_size.y, 8.0),
+                handle_world_radius(rh, &ctx.camera, ctx.viewport_size.y, 8.0),
+            ],
+            colours: vec![
+                handle_colour(self.handle_colour, hot(DiskHandle::Center)),
+                handle_colour(self.handle_colour, hot(DiskHandle::NormalTip)),
+                handle_colour(self.handle_colour, hot(DiskHandle::Radius)),
+            ],
+            pick_id: crate::renderer::PickId(id_base),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -299,7 +291,7 @@ mod tests {
         let ctx = ctx_at(CENTRE);
         let w = DiskWidget::new(Vec3::ZERO, Vec3::Z, 2.0);
         assert!(!w.wireframe_item(1).positions.is_empty());
-        assert!(!w.handle_glyphs(2, &ctx).positions.is_empty());
+        assert!(!w.handle_markers(2, &ctx).positions.is_empty());
     }
 
     #[test]

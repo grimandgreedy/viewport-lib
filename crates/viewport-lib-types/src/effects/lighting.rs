@@ -158,8 +158,15 @@ pub enum LightKind {
 pub struct LightSource {
     /// The type and geometric parameters of this light.
     pub kind: LightKind,
-    /// RGB light colour in linear 0..1. Default [1.0, 1.0, 1.0].
-    pub colour: [f32; 3],
+    /// Light colour: pure chromaticity, with the photometric magnitude carried
+    /// separately by [`intensity`](Self::intensity). Default white.
+    ///
+    /// Build it however the value arrives: [`Colour::rgb`](crate::colour::Colour::rgb)
+    /// or [`Colour::hex`](crate::colour::Colour::hex) for a value off a colour
+    /// picker or a Kelvin table, or
+    /// [`Colour::linear_rgb`](crate::colour::Colour::linear_rgb) for one already
+    /// in linear space.
+    pub colour: crate::colour::Colour,
     /// Photometric brightness, in the unit that matches [`Self::kind`]:
     /// **lux** ([`Lux`]) for [`LightKind::Directional`] (illuminance delivered to
     /// every surface), and **candela** ([`Candela`]) for [`LightKind::Point`] and
@@ -194,6 +201,15 @@ pub struct LightSource {
     ///
     /// Default: true. Disable per-light to skip the shadow render work.
     pub cast_shadows: bool,
+    /// Which layers this light illuminates, as a 32-bit mask. Default `!0`
+    /// (every layer). A light only contributes to an item when this mask
+    /// shares a bit with the item's `ItemSettings::visibility_mask`
+    /// (`channel_mask & visibility_mask != 0`), so the default lights
+    /// everything. Use it to confine a light to a subset of the scene (a rig
+    /// light that must not touch the environment, a highlight light for the
+    /// selected layer). Honoured by the mesh-family lit paths; the AND-test
+    /// runs per light in the shader.
+    pub channel_mask: u32,
 }
 
 impl Default for LightSource {
@@ -204,7 +220,7 @@ impl Default for LightSource {
                 // ~65 deg elevation: mostly overhead, slight front-right bias.
                 direction: [0.4, 0.3, 1.5],
             },
-            colour: [1.0, 1.0, 1.0],
+            colour: crate::colour::Colour::WHITE,
             // Faithful default: a modest key light, not a physical daylight
             // magnitude. With the energy-normalised (albedo/pi) diffuse, an
             // illuminance of ~pi reproduces the classic `albedo * intensity` look
@@ -214,6 +230,7 @@ impl Default for LightSource {
             intensity: core::f32::consts::PI,
             importance: 1.0,
             cast_shadows: true,
+            channel_mask: !0,
         }
     }
 }
@@ -374,10 +391,16 @@ pub enum ShadowFilter {
 pub struct LightingSettings {
     /// Active light sources (max 8). Default: one directional light.
     pub lights: Vec<LightSource>,
-    /// Sky colour for hemisphere ambient. Default [0.8, 0.9, 1.0].
-    pub sky_colour: [f32; 3],
-    /// Ground colour for hemisphere ambient. Default [0.5, 0.55, 0.6].
-    pub ground_colour: [f32; 3],
+    /// Sky colour for the hemisphere ambient fill: the tint of light arriving
+    /// from above, with the magnitude in
+    /// [`hemisphere_intensity`](Self::hemisphere_intensity). Default white.
+    ///
+    /// This is not the skybox, which comes from the environment map; with IBL
+    /// off, this and `ground_colour` are what a surface picks up as ambient.
+    pub sky_colour: crate::colour::Colour,
+    /// Ground colour for the hemisphere ambient fill: the tint of light bounced
+    /// from below. Default a neutral grey, a little darker than the sky.
+    pub ground_colour: crate::colour::Colour,
     /// Hemisphere (sky/ground) ambient fill, in the same linear scale as the
     /// lights' lux/candela. `0.0` disables it. The default is a gentle fill so
     /// shadowed surfaces stay readable rather than pitch black without washing
@@ -387,16 +410,23 @@ pub struct LightingSettings {
     pub hemisphere_intensity: f32,
     /// Shadow-map configuration (cascades, atlas, filtering, bias, ...).
     pub shadows: ShadowSettings,
+    /// Brightness of the environment that lights the scene
+    /// (`EffectsFrame::environment`), and of the background unless the viewport
+    /// sets its own. Default: a multiplier of 1.0; [`daylight`](Self::daylight)
+    /// sets a lux target to match its sun.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub environment_intensity: crate::effects::environment::EnvironmentIntensity,
 }
 
 impl Default for LightingSettings {
     fn default() -> Self {
         Self {
             lights: vec![LightSource::default()],
-            sky_colour: [1.0, 1.0, 1.0],
-            ground_colour: [0.6, 0.6, 0.6],
+            sky_colour: crate::colour::Colour::WHITE,
+            ground_colour: crate::colour::Colour::linear_rgb(0.6, 0.6, 0.6),
             hemisphere_intensity: 0.4,
             shadows: ShadowSettings::default(),
+            environment_intensity: Default::default(),
         }
     }
 }
@@ -467,6 +497,11 @@ impl LightingSettings {
             // Clear-sky fill proportional to the daylight key (~8% of the sun),
             // so shadowed surfaces stay readable once exposure maps the scene down.
             hemisphere_intensity: 8_000.0,
+            // The illuminance that fill gives an upward-facing surface, so an
+            // HDRI environment sits beside the sun at a real sky's brightness.
+            environment_intensity: crate::effects::environment::EnvironmentIntensity::Lux(
+                8_000.0 * PI,
+            ),
             ..Self::default()
         }
     }

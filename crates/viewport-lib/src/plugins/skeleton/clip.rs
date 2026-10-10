@@ -25,6 +25,7 @@ use super::skeleton::Pose;
 
 /// Which component of a joint's local transform a track drives.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Channel {
     /// Drives the joint's local translation (Vec3 sampler values).
     Translation,
@@ -36,6 +37,7 @@ pub enum Channel {
 
 /// How a sampler blends between adjacent keyframes.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Interpolation {
     /// Hold the value of the lower keyframe until the next one starts.
     Step,
@@ -46,6 +48,7 @@ pub enum Interpolation {
 /// Sampled value at a point in time. Variant must match the parent track's
 /// channel: `Translation`/`Scale` produce `Vec3`, `Rotation` produces `Quat`.
 #[derive(Copy, Clone, Debug)]
+#[non_exhaustive]
 pub enum TrackValue {
     /// Translation or scale sample.
     Vec3(glam::Vec3),
@@ -56,6 +59,7 @@ pub enum TrackValue {
 /// Per-keyframe values for a track. The variant must match the channel of any
 /// track using this sampler.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum TrackValues {
     /// Keyframe values for translation or scale tracks.
     Vec3(Vec<glam::Vec3>),

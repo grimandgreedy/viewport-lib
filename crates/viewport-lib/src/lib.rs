@@ -68,6 +68,38 @@
 //! let cmd1 = renderer.owned().render_viewport(&device, &queue, &view1, vp_top,   &frame_top);
 //! queue.submit([cmd0, cmd1]);
 //! ```
+//!
+//! # Reproducing a frame exactly
+//!
+//! Rendering the same [`FrameData`] twice on one device gives a bit-identical
+//! image, which is what regression capture, visual diff tooling and golden-image
+//! tests rest on. That holds as long as you submit the same items in the same
+//! order.
+//!
+//! Order matters because a fragment shader computes screen-space derivatives
+//! (`dpdx` / `dpdy`) over a 2x2 pixel quad, so each fragment's result depends in
+//! part on its neighbours in that quad. Where two surfaces meet inside a quad,
+//! which of them contributes depends on which draw got there first. The
+//! difference is a handful of ULPs, and on most of the frame it is invisible,
+//! but a low-roughness specular highlight amplifies it enough to move a pixel.
+//!
+//! So keep your submission order stable across frames when you need
+//! reproducibility: iterate scene items in a fixed order rather than out of a
+//! hash map, and keep any sort you apply total rather than leaving ties to
+//! resolve arbitrarily. The renderer's own ordering is fixed and does not vary
+//! between frames.
+
+// Reads a benchmarking switch from the environment. Without the `dev-knobs`
+// feature it is always `None` and the switch's name is compiled out.
+macro_rules! dev_knob {
+    ($name:literal) => {{
+        #[cfg(feature = "dev-knobs")]
+        let value = std::env::var($name).ok();
+        #[cfg(not(feature = "dev-knobs"))]
+        let value: Option<String> = None;
+        value
+    }};
+}
 
 // Internal alias for the selected wgpu version (see the module). Consumers name
 // wgpu through the `wgpu` re-export below, not this module directly.
@@ -104,7 +136,7 @@ pub use ::winit;
 pub use viewport_lib_types as vplt;
 
 /// The CPU geometry crate (`viewport-lib-geometry`), re-exported under the short
-/// `vplg` alias: `viewport_lib::vplg::marching_cubes::extract_isosurface`.
+/// `vplg` alias: `viewport_lib::vplg::volume::marching_cubes::extract_isosurface`.
 pub use viewport_lib_geometry as vplg;
 
 /// The input crate (`viewport-lib-input`: pipeline + camera controllers),
@@ -115,6 +147,8 @@ pub use viewport_lib_input as vpli;
 
 /// Error types for the viewport library.
 pub mod error;
+
+mod util;
 
 /// Arcball camera, frustum, view presets, and animator.
 pub mod camera;
@@ -127,8 +161,6 @@ pub mod interaction;
 pub mod plugin_api;
 /// Built-in plugins: skinning, animation, constraints, physics, skeleton.
 pub mod plugins;
-/// On-surface vector quantities (intrinsic vectors, Whitney one-forms).
-pub mod quantities;
 /// Main viewport renderer wrapping all GPU resources.
 pub mod renderer;
 /// GPU resource container (pipelines, buffers, bind groups).
@@ -172,11 +204,6 @@ pub use interaction::widgets::axes_indicator;
 pub use renderer::sub_object;
 pub use scene::aabb;
 pub use scene::material;
-pub use scene::scatter_volume;
-pub use scene::scatter_volume::{
-    ColourSource, DensityRemap, Emission, EmissionCurve, NoiseDriver, RefractionParams,
-    ScatterShape, ScatterVolume,
-};
 pub use scene::traits;
 
 // ---------------------------------------------------------------------------
@@ -192,7 +219,11 @@ pub use scene::traits;
 
 pub use error::{ViewportError, ViewportResult};
 
-pub use plugin_api::{PluginInstallCtx, ViewportPlugin, install_plugin};
+pub use plugin_api::{
+    Handles, PluginInstallCtx, PluginInstaller, PostEffectContext, PostEffectProducer,
+    PostEffectProducerId, PostEffectResizeContext, PostEffectSlot, PostEffectStage,
+    PostEffectStageId, Uploads, build_post_effect_pipeline, install_plugin,
+};
 
 pub use camera::camera::{Camera, CameraTarget, Projection};
 pub use camera::controllers::TurntableController;
@@ -202,22 +233,27 @@ pub use camera::track::{CameraTrack, interpolate_camera};
 pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;
-pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, srgb_to_linear};
 pub use scene::material::{
     AlphaMode, BackfacePattern, BackfacePolicy, ItemSettings, Material, MaterialPluginId, ParamVis,
-    ParamVisMode, PatternConfig, ShadingModel,
+    ParamVisMode, PatternConfig, SamplerKey, ShadingModel, TextureFilter, TextureSlot, UvTransform,
+    WrapMode,
 };
-pub use scene::scene::{
-    DecalHandle, Group, GroupId, Layer, LayerId, LiveDecal, Scene, SceneNode, SceneStats,
-};
+pub use scene::scene::{Group, GroupId, Layer, LayerId, Scene, SceneNode, SceneStats};
 pub use scene::traits::{RenderMode, ViewportObject};
+/// How an item maps its per-sample data to colour and size. See
+/// [`ColourSource`] and [`SizeSource`].
+pub use viewport_lib_types::encoding;
+pub use viewport_lib_types::encoding::{ColourSource, SizeSource};
+pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, srgb_to_linear};
+pub use vplt::data::texture::{
+    AstcBlock, CompressedFormat, TextureData, TexturePayload, TextureRejection, TextureRole,
+    UploadSlot,
+};
 
 pub use geometry::bvh::PickAccelerator;
-pub use geometry::implicit::{
-    ImplicitRenderOptions, march_implicit_surface, march_implicit_surface_colour,
-};
-pub use geometry::isoline::{IsolineItem, extract_isolines};
-pub use geometry::marching_cubes::{VolumeData, extract_isosurface};
+pub use geometry::mesh::isoline::{Isoline, extract_isolines, isoline_strips};
+pub use geometry::volume::grid::VolumeData;
+pub use geometry::volume::marching_cubes::extract_isosurface;
 
 #[allow(deprecated)]
 pub use interaction::input::{
@@ -233,9 +269,10 @@ pub use camera::controllers::{
     wish_xy_from_actions,
 };
 pub use interaction::input::{
-    ActionFrame, BindingPreset, ButtonState, ModifiersMatch, NavigationActions, PointerFrame,
-    ResolvedActionState, ScrollUnits, Theme, ViewportBinding, ViewportContext, ViewportEvent,
-    ViewportGesture, ViewportInput, viewport_all_bindings,
+    ActionFrame, BindingPreset, ButtonState, CursorShape, ModifiersMatch, NavigationActions,
+    PointerFrame, PointerOwnership, ResolvedActionState, ScrollUnits, Theme, TouchId, TouchPhase,
+    TouchSettings, ViewportBinding, ViewportContext, ViewportEvent, ViewportGesture, ViewportInput,
+    forward_to_viewport, viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
 };
 pub use interaction::manipulation::solvers::{
     angular_rotation_from_cursor, constrained_scale, constrained_translation,
@@ -257,7 +294,7 @@ pub use interaction::clip_plane::{
 };
 pub use interaction::query::picking::{
     ProbeBinding, RectPickResult, nearest_vertex_on_hit, pick_gaussian_splat_cpu,
-    pick_gaussian_splat_rect, pick_point_cloud_cpu, pick_scene_accelerated_with_probe_cpu,
+    pick_gaussian_splat_rect, pick_scene_accelerated_with_probe_cpu,
     pick_scene_nodes_with_probe_cpu, pick_scene_with_probe_cpu, pick_transparent_volume_mesh_cpu,
     pick_transparent_volume_mesh_rect, pick_volume_cpu, pick_volume_rect, voxel_world_aabb,
 };
@@ -266,6 +303,8 @@ pub use interaction::select::selection::{NodeId, Selection};
 
 pub use interaction::widgets::axes_indicator::AxisView;
 
+pub use renderer::PipelineSet;
+pub use renderer::RendererConfig;
 pub use renderer::ShadowDebugStats;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{
@@ -273,37 +312,31 @@ pub use renderer::stats::{
 };
 pub use renderer::tuning::{RenderDiagnostics, RenderTuning};
 pub use renderer::{
-    AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BloomSettings, BorderMode,
-    CameraFrame, Candela, CellSelectionInfo, ClipObject, ClipShape, ComputeFilterItem,
-    ComputeFilterKind, ContactShadowSettings, CylindricalFacing, DebugOutputMode, DebugQuantity,
-    DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, DisplaySettings,
-    DofSettings, EdlSettings, EffectsFrame, EmitterConfig, EnvironmentSettings, ExposureMode,
-    ExposureReadback, ExposureSettings, ExternalInstancesItem, FillRule, FilterMode, ForceField,
-    ForegroundPass, ForegroundProjection, FrameData, GaussianSplatData, GaussianSplatId,
-    GaussianSplatItem, GlyphItem, GlyphRunItem, GlyphSetRefItem, GlyphType, GpuContext,
-    GpuParticleSystemItem, GpuPickHit, GradientStop, GroundPlane, GroundPlaneMode, ImageSliceItem,
-    IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
-    LicOverlay, LightKind, LightSource, LightingPosture, LightingSettings, LineCap, LineJoin,
-    Lumen, Lux, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS,
-    OverlayAnchor, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill, OverlayFrame,
-    OverlayGeometryId, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId,
-    OwnedPath,
-    ParticleMeshAlign, PassPath, PassView, PathSegment, PathTrack, PickBackend, PickHit, PickId,
-    PickMask, PickPoll, PickRectResult, PipelineMode, PointCloudItem, PointCloudRefItem,
-    PointRenderMode, PolylineCap, PolylineItem, PolylineRefItem, PolylineSelectionInfo,
-    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, RibbonItem,
-    RibbonRefItem,
-    ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
-    ScreenImageItem, ShDegree, ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis, SpawnShape,
-    SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
-    SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem,
-    StrokePattern, SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceLICConfig,
-    SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode,
-    ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
-    ViewportFrame, ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem, VolumeSelectionInfo,
-    VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline, sphere_wireframe_polyline,
+    Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
+    BackgroundSource, BloomSettings, CameraFrame, Candela, CellSelectionInfo, ClipObject,
+    ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings,
+    DofSettings, EdlSettings, EffectsFrame, EnvironmentBackground, EnvironmentIntensity,
+    EnvironmentLighting, ExposureMode, ExposureReadback, ExposureSettings, FillRule,
+    ForegroundPass, ForegroundProjection, FrameData, GlyphRunItem, GpuContext, GpuPickHit,
+    GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource, InteractionFrame, LabelAnchor,
+    LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource, LightingPosture, LightingSettings,
+    LineCap, LineJoin, Lumen, Lux, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
+    OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
+    OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
+    OverlayStyleSupport, OverlayTextureId, OverlayTransform, OwnedPath, PassPath, PassView,
+    PathSegment, PickBackend, PickHit, PickId, PickMask, PickPoll, PickRectResult, PipelineMode,
+    PolylineCap, PolylineItem, PolylineRefItem, PolylineSelectionInfo, PositionedGlyph,
+    PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality,
+    ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer,
+    ShadowSettings, SnapHit, SnapPoll, SpriteBlend, StrokePattern, SubObjectRef, SubPath,
+    SubSelection, SubSelectionRef, SurfaceSubmission, TextureTransform, TileMode, ToneMapping,
+    TriangleDirection, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer,
+    VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
+    aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
+pub use resources::PipelineCompilation;
 
 pub use runners::{ExtraId, OffscreenViewportTarget, ViewportInstance};
 
@@ -315,12 +348,7 @@ pub use runners::viewport_app_v2::{
     AppConfigV2, FrameCtxV2, InputCtxV2, PaintCtxV2, ViewportAppV2, WindowConfig, WindowId,
 };
 
-pub use quantities::{
-    edge_one_form_to_glyphs, face_intrinsic_to_glyphs, polyline_edge_vectors_to_glyphs,
-    polyline_node_vectors_to_glyphs, vertex_intrinsic_to_glyphs,
-    volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
-};
-
+pub use resources::PolylineId;
 #[allow(deprecated)]
 pub use resources::ViewportGpuResources;
 pub use resources::material::colourmap_data::{
@@ -331,29 +359,23 @@ pub use resources::mesh::lod::{
     LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size,
 };
 pub use resources::mesh::mesh_store::MeshId;
-pub use resources::volume::sparse_volume::SparseVolumeGridData;
 pub use resources::volume::tetmesh::{TetMesh, TetMeshAttributes};
 pub use resources::volume::volume_mesh::{
-    CELL_SENTINEL, ConversionReport, ToTetMeshError, VolumeMeshData, extract_clipped_volume_faces,
+    CELL_SENTINEL, ConversionReport, GridCells, ToTetMeshError, VolumeMeshData,
+    extract_clipped_volume_faces,
 };
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
-    ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc, ComputeFilterResult,
-    DeviceResources, EnvironmentMapId, EnvironmentZone, FontError, FontHandle, FrameBudget,
-    GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode,
-    ImplicitPrimitive, JobId, MatcapId, McVolumeId, MeshData, ProgressHandle, ResidentBytes,
-    SubmeshRange, TextMetrics, TextureId, TextureMemoryStats, UploadStatus, VolumeId, VramBudget,
-    lerp_attributes, supports_texture_format, vram_budget,
+    ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc, DeviceResources,
+    EnvironmentMapId, EnvironmentOptions, EnvironmentZone, FontError, FontHandle, FrameBudget,
+    JobId, MatcapId, MeshData, ProgressHandle, ResidentBytes, SubmeshRange, TextMetrics, TextureId,
+    TextureMemoryStats, UnknownColourmap, UploadStatus, VolumeId, VramBudget, lerp_attributes,
+    supports_texture_format, vram_budget,
 };
 pub use resources::{
     DEFORM_PARAMS_PER_SLOT_PUB as DEFORM_PARAMS_PER_SLOT,
     DEFORM_SLOT_COUNT_PUB as DEFORM_SLOT_COUNT, DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle,
     DeformSourceSlice, DeformStage, DeformerDesc, DeformerId, deform_slot_params_byte_offset,
-};
-pub use resources::{
-    ExternalInstanceSetConfig, ExternalInstanceSetId, GlyphSetId, GpuParticleSystemConfig,
-    GpuParticleSystemId, ParticleRender, PointCloudId, PolylineId, RibbonId, SpriteInstanceSetId,
-    SpriteSetId, StreamtubeId, TensorGlyphSetId, TubeId,
 };
 pub use resources::{
     MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, MaterialPluginStats,

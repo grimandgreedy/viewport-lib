@@ -88,6 +88,10 @@ var<private> object: Object;
 // Per-vertex deformation hook contract.
 // #include "helpers/deform.wgsl"
 
+// The keep value `shadow_clip_position` found, for the cutout entry point to
+// pass on. Only written when some deformer defines `keep`.
+var<private> shadow_keep: f32 = 1.0;
+
 fn shadow_clip_position(position: vec3<f32>, vertex_index: u32, instance_index: u32) -> vec4<f32> {
     object = objects[instance_index];
     // Override replaces the vertex-buffer position outright, matching the main
@@ -110,6 +114,7 @@ fn shadow_clip_position(position: vec3<f32>, vertex_index: u32, instance_index: 
     let world_pos4 = object.model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;
     dv = viewport_deform_world_space(dv, dctx);
+    // <viewport-deform-keep> shadow_keep = viewport_deform_keep(dv, dctx);
     return light.view_proj * vec4<f32>(dv.position, 1.0);
 }
 
@@ -129,6 +134,10 @@ struct CutoutOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) obj_idx: u32,
+    // Kept-surface value from deformers that define `keep`. A caster that can
+    // be cut draws through this cutout path, since the plain one has no
+    // fragment stage to discard in.
+    // <viewport-deform-keep> @location(2) deform_keep: f32,
 };
 
 @vertex
@@ -142,6 +151,7 @@ fn vs_cutout(
     out.clip_pos = shadow_clip_position(position, vertex_index, instance_index);
     out.uv = uv;
     out.obj_idx = instance_index;
+    // <viewport-deform-keep> out.deform_keep = shadow_keep;
     return out;
 }
 
@@ -153,6 +163,7 @@ fn fs_cutout(in: CutoutOut) {
     // derivative is rejected by strict WGSL validators.
     let uv_ddx = dpdx(in.uv);
     let uv_ddy = dpdy(in.uv);
+    // <viewport-deform-keep> if in.deform_keep < 0.0 { discard; }
     let obj = objects[in.obj_idx];
     if obj.alpha_mode == 1u && obj.has_texture == 1u {
         let mat_uv = in.uv * obj.uv_transform.zw + obj.uv_transform.xy;

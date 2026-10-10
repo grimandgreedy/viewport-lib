@@ -21,10 +21,7 @@
 //!
 //! // After step: convert accumulated primitives to render items.
 //! if let Some(dd) = runtime.resources().get::<DebugDraw>() {
-//!     frame_data.scene.polylines.extend(dd.to_polylines());
-//!     if let Some(pc) = dd.to_point_cloud() {
-//!         frame_data.scene.point_clouds.push(pc);
-//!     }
+//!     frame_data.scene.items_mut::<crate::PolylineItem>().extend(dd.to_polylines());
 //!     frame_data.overlays.labels.extend(dd.to_labels());
 //! }
 //! ```
@@ -55,10 +52,7 @@
 //! ```rust,ignore
 //! // After step():
 //! if let Some(dd) = runtime.resources().get::<DebugDraw>() {
-//!     frame_data.scene.polylines.extend(dd.to_polylines());
-//!     if let Some(pc) = dd.to_point_cloud() {
-//!         frame_data.scene.point_clouds.push(pc);
-//!     }
+//!     frame_data.scene.items_mut::<crate::PolylineItem>().extend(dd.to_polylines());
 //!     frame_data.overlays.labels.extend(dd.to_labels());
 //! }
 //! ```
@@ -66,12 +60,13 @@
 //! If this conversion step is omitted, nothing will appear on screen even if
 //! plugins submitted primitives during `step`.
 //!
-//! See `examples/eframe_showcase/showcase_46_debug_draw.rs` for a complete
+//! See the `eframe-showcase` example (showcase 46) for a complete
 //! end-to-end example.
 
+use crate::Colour;
 use std::collections::HashMap;
 
-use crate::renderer::{LabelItem, PointCloudItem, PolylineItem};
+use crate::renderer::{LabelItem, PolylineItem};
 
 // ---------------------------------------------------------------------------
 // DebugLayer
@@ -622,53 +617,14 @@ impl DebugDraw {
             .map(|(positions, strip_lengths, node_colours)| PolylineItem {
                 positions,
                 strip_lengths,
-                node_colours: node_colours.into_iter().map(Into::into).collect(),
+                node_colours: node_colours
+                    .into_iter()
+                    .map(Colour::from_linear_array)
+                    .collect(),
                 line_width: 1.5,
                 ..PolylineItem::default()
             })
             .collect()
-    }
-
-    /// Convert accumulated point primitives to a single point cloud render item.
-    ///
-    /// Returns `None` when no point primitives are present or when `enabled` is `false`.
-    /// Dev-layer points are skipped when [`dev_enabled`](Self::dev_enabled) is `false`.
-    pub fn to_point_cloud(&self) -> Option<PointCloudItem> {
-        if !self.enabled {
-            return None;
-        }
-
-        let mut positions = Vec::new();
-        let mut colours = Vec::new();
-        let mut radii = Vec::new();
-
-        for prim in self.prims() {
-            if prim.layer() == DebugLayer::Dev && !self.dev_enabled {
-                continue;
-            }
-            if let DebugPrim::Point {
-                position,
-                radius,
-                colour,
-                ..
-            } = prim
-            {
-                positions.push((*position).into());
-                colours.push((*colour).into());
-                radii.push(*radius);
-            }
-        }
-
-        if positions.is_empty() {
-            return None;
-        }
-
-        Some(PointCloudItem {
-            positions,
-            colours,
-            radii,
-            ..PointCloudItem::default()
-        })
     }
 
     /// Convert accumulated label primitives to label render items.
@@ -693,11 +649,10 @@ impl DebugDraw {
             } = prim
             {
                 let mut label = LabelItem::default();
-                label.anchor = crate::renderer::OverlayAnchor::World((*position).into());
+                label.anchoring.origin = crate::renderer::OverlayOrigin::World((*position).into());
                 label.text = text.clone();
-                label.colour = (*colour).into();
-                label.leader_line = true;
-                label.font_size = 12.0;
+                label.style.fill = crate::renderer::OverlayFill::Solid((*colour).into());
+                label.text_style.size = 12.0;
                 out.push(label);
             }
         }
@@ -738,7 +693,11 @@ mod tests {
     #[test]
     fn test_line_accumulates() {
         let mut dd = DebugDraw::new();
-        dd.line(glam::Vec3::ZERO, glam::Vec3::X, red());
+        dd.line(
+            glam::Vec3::ZERO,
+            glam::Vec3::X,
+            Colour::from_linear_array(red()),
+        );
         assert_eq!(dd.transient_count(), 1);
         assert!(matches!(dd.prims().next(), Some(DebugPrim::Line { .. })));
     }
@@ -746,7 +705,7 @@ mod tests {
     #[test]
     fn test_point_accumulates() {
         let mut dd = DebugDraw::new();
-        dd.point(glam::Vec3::Y, 4.0, green());
+        dd.point(glam::Vec3::Y, 4.0, Colour::from_linear_array(green()));
         assert_eq!(dd.transient_count(), 1);
         assert!(matches!(dd.prims().next(), Some(DebugPrim::Point { .. })));
     }
@@ -754,21 +713,25 @@ mod tests {
     #[test]
     fn test_aabb_accumulates() {
         let mut dd = DebugDraw::new();
-        dd.aabb(glam::Vec3::NEG_ONE, glam::Vec3::ONE, red());
+        dd.aabb(
+            glam::Vec3::NEG_ONE,
+            glam::Vec3::ONE,
+            Colour::from_linear_array(red()),
+        );
         assert_eq!(dd.transient_count(), 1);
     }
 
     #[test]
     fn test_sphere_accumulates() {
         let mut dd = DebugDraw::new();
-        dd.sphere(glam::Vec3::ZERO, 1.0, green());
+        dd.sphere(glam::Vec3::ZERO, 1.0, Colour::from_linear_array(green()));
         assert_eq!(dd.transient_count(), 1);
     }
 
     #[test]
     fn test_label_accumulates() {
         let mut dd = DebugDraw::new();
-        dd.label(glam::Vec3::ZERO, "hello", red());
+        dd.label(glam::Vec3::ZERO, "hello", Colour::from_linear_array(red()));
         assert_eq!(dd.transient_count(), 1);
         assert!(matches!(dd.prims().next(), Some(DebugPrim::Label { .. })));
     }
@@ -776,9 +739,17 @@ mod tests {
     #[test]
     fn test_multiple_prims_accumulate() {
         let mut dd = DebugDraw::new();
-        dd.line(glam::Vec3::ZERO, glam::Vec3::X, red());
-        dd.line(glam::Vec3::ZERO, glam::Vec3::Y, green());
-        dd.point(glam::Vec3::Z, 5.0, red());
+        dd.line(
+            glam::Vec3::ZERO,
+            glam::Vec3::X,
+            Colour::from_linear_array(red()),
+        );
+        dd.line(
+            glam::Vec3::ZERO,
+            glam::Vec3::Y,
+            Colour::from_linear_array(green()),
+        );
+        dd.point(glam::Vec3::Z, 5.0, Colour::from_linear_array(red()));
         assert_eq!(dd.transient_count(), 3);
     }
 
@@ -787,8 +758,12 @@ mod tests {
     #[test]
     fn test_begin_frame_clears_transient() {
         let mut dd = DebugDraw::new();
-        dd.line(glam::Vec3::ZERO, glam::Vec3::X, red());
-        dd.sphere(glam::Vec3::ZERO, 1.0, green());
+        dd.line(
+            glam::Vec3::ZERO,
+            glam::Vec3::X,
+            Colour::from_linear_array(red()),
+        );
+        dd.sphere(glam::Vec3::ZERO, 1.0, Colour::from_linear_array(green()));
         assert_eq!(dd.transient_count(), 2);
 
         dd.begin_frame();
@@ -804,7 +779,7 @@ mod tests {
             DebugPrim::Line {
                 start: glam::Vec3::ZERO,
                 end: glam::Vec3::X,
-                colour: red().into(),
+                colour: Colour::from_linear_array(red()),
                 layer: DebugLayer::Dev,
             },
         );
@@ -824,7 +799,7 @@ mod tests {
             DebugPrim::Sphere {
                 center: glam::Vec3::ZERO,
                 radius: 1.0,
-                colour: green().into(),
+                colour: Colour::from_linear_array(green()),
                 layer: DebugLayer::Dev,
             },
         );
@@ -845,13 +820,17 @@ mod tests {
     #[test]
     fn test_persistent_and_transient_both_in_prims() {
         let mut dd = DebugDraw::new();
-        dd.line(glam::Vec3::ZERO, glam::Vec3::X, red());
+        dd.line(
+            glam::Vec3::ZERO,
+            glam::Vec3::X,
+            Colour::from_linear_array(red()),
+        );
         dd.add_persistent(
             1,
             DebugPrim::Sphere {
                 center: glam::Vec3::ZERO,
                 radius: 1.0,
-                colour: green().into(),
+                colour: Colour::from_linear_array(green()),
                 layer: DebugLayer::Dev,
             },
         );
@@ -866,7 +845,7 @@ mod tests {
             DebugPrim::Point {
                 position: glam::Vec3::ZERO,
                 radius: 4.0,
-                colour: red().into(),
+                colour: Colour::from_linear_array(red()),
                 layer: DebugLayer::Dev,
             },
         );
@@ -875,7 +854,7 @@ mod tests {
             DebugPrim::Point {
                 position: glam::Vec3::X,
                 radius: 4.0,
-                colour: green().into(),
+                colour: Colour::from_linear_array(green()),
                 layer: DebugLayer::Dev,
             },
         );
@@ -889,12 +868,15 @@ mod tests {
     fn test_enabled_false_is_noop() {
         let mut dd = DebugDraw::new();
         dd.enabled = false;
-        dd.line(glam::Vec3::ZERO, glam::Vec3::X, red());
-        dd.sphere(glam::Vec3::ZERO, 1.0, green());
-        dd.label(glam::Vec3::ZERO, "text", red());
+        dd.line(
+            glam::Vec3::ZERO,
+            glam::Vec3::X,
+            Colour::from_linear_array(red()),
+        );
+        dd.sphere(glam::Vec3::ZERO, 1.0, Colour::from_linear_array(green()));
+        dd.label(glam::Vec3::ZERO, "text", Colour::from_linear_array(red()));
         assert_eq!(dd.transient_count(), 0);
         assert!(dd.to_polylines().is_empty());
-        assert!(dd.to_point_cloud().is_none());
         assert!(dd.to_labels().is_empty());
     }
 
@@ -904,7 +886,11 @@ mod tests {
         dd.dev_enabled = false;
 
         // Dev-layer line: should not appear in submission output.
-        dd.line(glam::Vec3::ZERO, glam::Vec3::X, red()); // uses Dev layer by default
+        dd.line(
+            glam::Vec3::ZERO,
+            glam::Vec3::X,
+            Colour::from_linear_array(red()),
+        ); // uses Dev layer by default
         // The method is a no-op when dev_enabled is false.
         assert_eq!(dd.transient_count(), 0);
         assert!(dd.to_polylines().is_empty());
@@ -916,7 +902,11 @@ mod tests {
         dd.dev_enabled = false;
 
         // Overlay-layer line should still be submitted.
-        dd.line_overlay(glam::Vec3::ZERO, glam::Vec3::X, red());
+        dd.line_overlay(
+            glam::Vec3::ZERO,
+            glam::Vec3::X,
+            Colour::from_linear_array(red()),
+        );
         assert_eq!(dd.transient_count(), 1);
         assert!(!dd.to_polylines().is_empty());
     }
@@ -930,7 +920,7 @@ mod tests {
             DebugPrim::Line {
                 start: glam::Vec3::ZERO,
                 end: glam::Vec3::X,
-                colour: red().into(),
+                colour: Colour::from_linear_array(red()),
                 layer: DebugLayer::Dev,
             },
         );
@@ -946,7 +936,11 @@ mod tests {
     #[test]
     fn test_to_polylines_produces_output_for_lines() {
         let mut dd = DebugDraw::new();
-        dd.line(glam::Vec3::ZERO, glam::Vec3::X, red());
+        dd.line(
+            glam::Vec3::ZERO,
+            glam::Vec3::X,
+            Colour::from_linear_array(red()),
+        );
         let polylines = dd.to_polylines();
         assert!(!polylines.is_empty());
         let total_positions: usize = polylines.iter().map(|p| p.positions.len()).sum();
@@ -956,7 +950,11 @@ mod tests {
     #[test]
     fn test_to_polylines_aabb_18_positions() {
         let mut dd = DebugDraw::new();
-        dd.aabb(glam::Vec3::NEG_ONE, glam::Vec3::ONE, red());
+        dd.aabb(
+            glam::Vec3::NEG_ONE,
+            glam::Vec3::ONE,
+            Colour::from_linear_array(red()),
+        );
         let polylines = dd.to_polylines();
         assert!(!polylines.is_empty());
         // The AABB wireframe has 18 positions (5+5+2+2+2+2).
@@ -967,7 +965,7 @@ mod tests {
     #[test]
     fn test_to_polylines_sphere_three_circles() {
         let mut dd = DebugDraw::new();
-        dd.sphere(glam::Vec3::ZERO, 1.0, green());
+        dd.sphere(glam::Vec3::ZERO, 1.0, Colour::from_linear_array(green()));
         let polylines = dd.to_polylines();
         assert!(!polylines.is_empty());
         // 3 circles * 33 points each (32 segs + close).
@@ -976,23 +974,10 @@ mod tests {
     }
 
     #[test]
-    fn test_to_point_cloud_produces_output() {
-        let mut dd = DebugDraw::new();
-        dd.point(glam::Vec3::ZERO, 5.0, red());
-        dd.point(glam::Vec3::X, 3.0, green());
-        let pc = dd.to_point_cloud();
-        assert!(pc.is_some());
-        let pc = pc.unwrap();
-        assert_eq!(pc.positions.len(), 2);
-        assert_eq!(pc.colours.len(), 2);
-        assert_eq!(pc.radii.len(), 2);
-    }
-
-    #[test]
     fn test_to_labels_produces_output() {
         let mut dd = DebugDraw::new();
-        dd.label(glam::Vec3::ZERO, "A", red());
-        dd.label(glam::Vec3::X, "B", green());
+        dd.label(glam::Vec3::ZERO, "A", Colour::from_linear_array(red()));
+        dd.label(glam::Vec3::X, "B", Colour::from_linear_array(green()));
         let labels = dd.to_labels();
         assert_eq!(labels.len(), 2);
         assert_eq!(labels[0].text, "A");
@@ -1002,8 +987,16 @@ mod tests {
     #[test]
     fn test_same_colour_grouped_into_one_polyline() {
         let mut dd = DebugDraw::new();
-        dd.line(glam::Vec3::ZERO, glam::Vec3::X, red());
-        dd.line(glam::Vec3::Y, glam::Vec3::Z, red());
+        dd.line(
+            glam::Vec3::ZERO,
+            glam::Vec3::X,
+            Colour::from_linear_array(red()),
+        );
+        dd.line(
+            glam::Vec3::Y,
+            glam::Vec3::Z,
+            Colour::from_linear_array(red()),
+        );
         // Both lines share the same colour; they should be in a single PolylineItem.
         let polylines = dd.to_polylines();
         assert_eq!(polylines.len(), 1);
@@ -1014,8 +1007,16 @@ mod tests {
     #[test]
     fn test_different_colours_produce_separate_polylines() {
         let mut dd = DebugDraw::new();
-        dd.line(glam::Vec3::ZERO, glam::Vec3::X, red());
-        dd.line(glam::Vec3::Y, glam::Vec3::Z, green());
+        dd.line(
+            glam::Vec3::ZERO,
+            glam::Vec3::X,
+            Colour::from_linear_array(red()),
+        );
+        dd.line(
+            glam::Vec3::Y,
+            glam::Vec3::Z,
+            Colour::from_linear_array(green()),
+        );
         let polylines = dd.to_polylines();
         assert_eq!(polylines.len(), 2);
     }

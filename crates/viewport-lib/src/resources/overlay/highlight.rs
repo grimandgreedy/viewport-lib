@@ -510,7 +510,7 @@ impl DeviceResources {
                         }
                     }
                     SubObjectRef::Instance(i) | SubObjectRef::Splat(i) => {
-                        // Instanced items (glyphs, tensor glyphs, sprites) and
+                        // Instanced items (vector and tensor fields, sprites) and
                         // Gaussian splats highlight as a sprite marker at the
                         // instance position, transformed by the node model.
                         if let Some(positions) = sel.instance_lookup.get(node_id) {
@@ -661,78 +661,96 @@ pub(crate) struct OutlineObjectBuffers {
     /// drawn with that bind group so the selection halo tracks the deformed
     /// silhouette.
     pub deform_instance: Option<u32>,
-    pub _mask_uniform_buf: crate::gpu::Buffer,
-    pub mask_bind_group: crate::gpu::BindGroup,
+    pub mask: OutlineBinding,
 }
 
-/// Per-item uniform for the Gaussian splat outline mask pass (112 bytes).
-///
-/// Padded to 112 bytes to match `OutlineUniform`. Both structs share the same
-/// bind group layout (`outline_bgl`) and wgpu enforces the maximum required
-/// size across all pipelines using that layout.
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct SplatOutlineMaskUniform {
-    pub(crate) model: [[f32; 4]; 4], // 64 bytes
-    pub(crate) viewport_w: f32,      //  4 bytes
-    pub(crate) viewport_h: f32,      //  4 bytes
-    pub(crate) pixel_radius: f32,    //  4 bytes
-    pub(crate) _pad: [f32; 9],       // 36 bytes  (total: 112)
-}
-
-/// Per-frame GPU buffers for one selected Gaussian splat set's outline mask draw.
-pub(crate) struct SplatOutlineBuffers {
-    /// Object-space positions as `[f32; 3]` per splat, instance-stepped.
-    pub(crate) position_buf: crate::gpu::Buffer,
-    /// Per-instance pixel radius as `f32`, instance-stepped.
-    pub(crate) size_buf: crate::gpu::Buffer,
-    /// Number of splats (= instance count).
-    pub(crate) instance_count: u32,
-    /// Uniform buffer kept alive for the duration of the frame.
-    pub(crate) _uniform_buf: crate::gpu::Buffer,
-    /// Bind group for group 1 (SplatOutlineMaskUniform).
-    pub(crate) bind_group: crate::gpu::BindGroup,
-}
-
-/// Inline geometry outline buffers for flat world-space quads (image slices).
-///
-/// Unlike `OutlineObjectBuffers`, the vertex/index data is owned here rather than
-/// looked up via a `MeshId`.
-pub(crate) struct RawGeomOutlineBuffers {
-    pub vertex_buf: crate::gpu::Buffer,
-    pub index_buf: crate::gpu::Buffer,
-    pub index_count: u32,
-    pub two_sided: bool,
-    pub _uniform_buf: crate::gpu::Buffer,
-    pub mask_bind_group: crate::gpu::BindGroup,
-}
-
-/// Per-frame outline item for a tube/streamtube/ribbon mesh.
-///
-/// Holds an index into the per-frame gpu_data array and a mask bind group
-/// that supplies an identity model matrix to the outline_mask shader.
-pub(crate) struct CurveMeshOutlineItem {
-    pub index: usize,
-    pub two_sided: bool,
-    pub _mask_uniform_buf: crate::gpu::Buffer,
-    pub mask_bind_group: crate::gpu::BindGroup,
-}
-
-/// NDC-space rect outline for screen image overlays.
-pub(crate) struct ScreenRectOutlineBuffers {
-    pub _uniform_buf: crate::gpu::Buffer,
+/// A uniform buffer and bind group over the outline layout for one mask or
+/// x-ray draw, kept across frames: the next frame's draw at the same position
+/// rewrites the uniform only when it changed and rebuilds the bind group only
+/// when the position-override buffer did.
+pub(crate) struct OutlineBinding {
     pub bind_group: crate::gpu::BindGroup,
+    buf: crate::gpu::Buffer,
+    uniform: OutlineUniform,
+    override_buf: crate::gpu::Buffer,
 }
 
-/// Uniform for the fullscreen outline edge-detection pass (32 bytes).
+impl OutlineBinding {
+    pub(crate) fn reuse_or_new(
+        old: Option<Self>,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        layout: &crate::gpu::BindGroupLayout,
+        uniform: OutlineUniform,
+        override_buf: &crate::gpu::Buffer,
+        label: &'static str,
+    ) -> Self {
+        if let Some(mut old) = old {
+            if bytemuck::bytes_of(&old.uniform) != bytemuck::bytes_of(&uniform) {
+                queue.write_buffer(&old.buf, 0, bytemuck::bytes_of(&uniform));
+                old.uniform = uniform;
+            }
+            if old.override_buf != *override_buf {
+                old.bind_group = Self::bind_group(device, layout, &old.buf, override_buf, label);
+                old.override_buf = override_buf.clone();
+            }
+            return old;
+        }
+        let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some(label),
+            size: std::mem::size_of::<OutlineUniform>() as u64,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buf, 0, bytemuck::bytes_of(&uniform));
+        Self {
+            bind_group: Self::bind_group(device, layout, &buf, override_buf, label),
+            buf,
+            uniform,
+            override_buf: override_buf.clone(),
+        }
+    }
+
+    fn bind_group(
+        device: &crate::gpu::Device,
+        layout: &crate::gpu::BindGroupLayout,
+        buf: &crate::gpu::Buffer,
+        override_buf: &crate::gpu::Buffer,
+        label: &'static str,
+    ) -> crate::gpu::BindGroup {
+        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some(label),
+            layout,
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 1,
+                    resource: override_buf.as_entire_binding(),
+                },
+            ],
+        })
+    }
+}
+
+/// Uniform for the fullscreen outline edge-detection pass (32 bytes), the
+/// one [`SHARED_OUTLINE_EDGE_WGSL`](crate::plugin_api::shared_wgsl::SHARED_OUTLINE_EDGE_WGSL)
+/// reads.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct OutlineEdgeUniform {
-    pub(crate) colour: [f32; 4], // 16 bytes
-    pub(crate) radius: f32,      //  4 bytes
-    pub(crate) viewport_w: f32,  //  4 bytes
-    pub(crate) viewport_h: f32,  //  4 bytes
-    pub(crate) _pad: f32,        //  4 bytes
+pub struct OutlineEdgeUniform {
+    /// Ring colour, linear RGBA.
+    pub colour: [f32; 4],
+    /// Ring width in pixels.
+    pub radius: f32,
+    /// Width of the target in pixels.
+    pub viewport_w: f32,
+    /// Height of the target in pixels.
+    pub viewport_h: f32,
+    #[doc(hidden)]
+    pub _pad: f32,
 }
 
 /// Per-frame uniform for the sub-object highlight pass (48 bytes).

@@ -128,6 +128,15 @@ pub fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
 /// Create a headless `wgpu` device and queue for `profile`, or `None` when no
 /// adapter is available or the adapter lacks a required feature.
 pub fn headless_device_with(profile: &DeviceProfile) -> Option<(wgpu::Device, wgpu::Queue)> {
+    headless_device_with_info(profile).map(|(device, queue, _)| (device, queue))
+}
+
+/// Like [`headless_device_with`], additionally returning the adapter info, so a
+/// caller can key machine-dependent artifacts (golden references) on the
+/// backend the device actually runs on.
+pub fn headless_device_with_info(
+    profile: &DeviceProfile,
+) -> Option<(wgpu::Device, wgpu::Queue, wgpu::AdapterInfo)> {
     let instance = wgpu::default_instance();
     let adapter = pollster::block_on(
         instance.request_adapter(&wgpu::headless_adapter_options(profile.power_preference)),
@@ -152,6 +161,7 @@ pub fn headless_device_with(profile: &DeviceProfile) -> Option<(wgpu::Device, wg
         required_limits.max_bind_groups = max;
     }
 
+    let info = adapter.get_info();
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some(profile.label),
         required_features,
@@ -159,5 +169,5 @@ pub fn headless_device_with(profile: &DeviceProfile) -> Option<(wgpu::Device, wg
         ..Default::default()
     }))
     .ok()?;
-    Some((device, queue))
+    Some((device, queue, info))
 }

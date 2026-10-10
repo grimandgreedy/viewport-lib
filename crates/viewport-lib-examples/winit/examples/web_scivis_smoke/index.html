@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>viewport-lib: web scivis smoke check</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #101014;
+        color: #cfcfd6;
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      /* winit appends its <canvas> to <body>. Give it a fixed viewport-relative
+         CSS size: winit's resize observer sets the backing store from the CSS
+         size times devicePixelRatio, so a size that does NOT depend on the
+         backing store is required, otherwise the two feed back and the canvas
+         grows without bound. */
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        outline: none;
+      }
+      /* The report sits over the canvas and never intercepts orbit or zoom. */
+      #report {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        max-width: 560px;
+        padding: 10px 14px;
+        border-radius: 6px;
+        background: rgba(16, 16, 20, 0.72);
+        pointer-events: none;
+        z-index: 1;
+      }
+      #report h1 {
+        margin: 0 0 6px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      #report p {
+        margin: 0 0 8px;
+        opacity: 0.7;
+      }
+      #results {
+        margin: 0;
+        padding-left: 18px;
+      }
+      #results li {
+        margin: 2px 0;
+      }
+      #results li.ok {
+        color: #7fd18a;
+      }
+      #results li.bad {
+        color: #e8736a;
+      }
+      #results li.wait {
+        color: #cfcfd6;
+        opacity: 0.6;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="report">
+      <h1>CPU paths on the web</h1>
+      <p>
+        Iso-surface extraction, pick accelerator build, and a ray query, run in
+        this browser. Drag to orbit, scroll to zoom, click the surface to pick.
+      </p>
+      <ul id="results">
+        <li class="wait">Starting. Needs a WebGPU-capable browser.</li>
+      </ul>
+    </div>
+    <!-- winit appends its own <canvas> to <body>; nothing to declare here. -->
+    <script type="module">
+      // When a harness is watching (scripts/check_web.sh), post the report back
+      // to it as soon as the page has one, so the check does not have to guess
+      // how long the GPU and the extraction will take. Served any other way the
+      // POST simply fails and nothing here cares.
+      function reportToHarness(lines) {
+        fetch("/report", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(lines),
+        }).catch(() => {});
+      }
+      function watchResults() {
+        const host = document.getElementById("results");
+        const read = () =>
+          [...host.querySelectorAll("li")].map((li) => ({
+            state: li.className,
+            text: li.textContent,
+          }));
+        const settled = (lines) =>
+          lines.length > 0 && lines.every((l) => l.state !== "wait");
+        const observer = new MutationObserver(() => {
+          const lines = read();
+          if (settled(lines)) {
+            observer.disconnect();
+            reportToHarness(lines);
+          }
+        });
+        observer.observe(host, { childList: true, subtree: true });
+      }
+      watchResults();
+
+      import init from "./pkg/web-scivis-smoke.js";
+      init().catch((err) => {
+        // wasm-bindgen throws a control-flow exception to unwind out of the
+        // winit event loop start on the web; that one is expected, log the rest.
+        if (String(err).includes("Using exceptions for control flow")) {
+          return;
+        }
+        console.error(err);
+        const results = document.getElementById("results");
+        results.innerHTML = "";
+        const li = document.createElement("li");
+        li.className = "bad";
+        li.textContent = String(err);
+        results.appendChild(li);
+      });
+    </script>
+  </body>
+</html>

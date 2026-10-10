@@ -19,6 +19,22 @@ pub(crate) struct MaterialBindGroup {
     pub(crate) data_gen: u64,
     /// Frame index this entry was last used, for capacity-based pruning.
     pub(crate) last_frame: u64,
+    /// The mesh and texture ids this bind group samples, kept so the entry can
+    /// be validated when something is freed. The map's key is a hash, so the ids
+    /// cannot be recovered from it; without them the only safe response to a
+    /// free is to clear the whole map.
+    pub(crate) deps: crate::resources::resource_deps::ResourceDeps,
+}
+
+impl MaterialBindGroup {
+    /// Whether every resource this bind group samples is still resident.
+    ///
+    /// A texture whose pixels were replaced under a live id is NOT detected
+    /// here and never can be, which is why the view epoch clears the map
+    /// unconditionally.
+    pub(crate) fn resources_resolve(&self, resources: &crate::resources::DeviceResources) -> bool {
+        self.deps.resolves(resources)
+    }
 }
 
 /// A pre-recorded render bundle covering the opaque per-object draws for the
@@ -99,11 +115,14 @@ pub(crate) struct PerObjectState {
     /// selects its element with an object-data index, so items sharing a material
     /// share one bind group. Persists across frames; pruned by capacity and on a
     /// resource-free epoch bump.
-    pub(crate) material_bind_groups: HashMap<u64, MaterialBindGroup>,
+    pub(crate) material_bind_groups: crate::resources::fast_hash::FastMap<u64, MaterialBindGroup>,
     /// Shared storage buffer holding this frame's `array<ObjectUniform>`. Binding
     /// 0 of every per-object group-1 bind group. Grown (reallocated) when the
     /// per-frame object count exceeds its capacity.
     pub(crate) object_data_buf: Option<crate::gpu::Buffer>,
+    /// `object_data_buf`'s contents as last written; cleared when the buffer
+    /// is replaced. A static scene's array is not written again.
+    pub(crate) object_data_written: Vec<u8>,
     /// Capacity of `object_data_buf` in `ObjectUniform` elements.
     pub(crate) object_data_capacity: usize,
     /// Bumped whenever `object_data_buf` is reallocated. A change clears
@@ -114,10 +133,10 @@ pub(crate) struct PerObjectState {
     /// `Some`; a `None` slot falls back to the mesh's single-element bind group
     /// and draws at instance 0.
     pub(crate) object_indices: Vec<u32>,
-    /// `DeviceResources::resource_free_epoch` as of the last prepare. When the
-    /// epoch moves (a texture or mesh was freed), the material bind-group map is
-    /// purged so its bind groups stop pinning the freed resource's memory.
-    pub(crate) free_epoch: u64,
+    /// Resource epochs as of the last prepare. A free keeps only the entries
+    /// whose deps still resolve; a replace clears the map, since a swapped
+    /// view behind a live id cannot be validated per entry.
+    pub(crate) deps_gate: crate::resources::resource_deps::ResourceGate,
     /// Per-item bind groups for the current frame, indexed by the item's position
     /// in the frame's item list. Populated from `material_bind_groups` each frame
     /// (cheap reference-counted clones) so the render path can index by item slot.
@@ -138,8 +157,11 @@ pub(crate) struct PerObjectState {
     pub(crate) wireframe_bind_groups: Vec<crate::gpu::BindGroup>,
     /// TransparentVolumeMesh boundary wireframe mesh IDs to draw.
     pub(crate) tvm_wireframe_draws: Vec<MeshId>,
-    /// Shared wireframe uniform (identity matrix, wireframe = 1) for TVM draws.
+    /// Object records for the TVM draws, one per entry of
+    /// `tvm_wireframe_draws`, each carrying its item's model matrix.
     pub(crate) tvm_wireframe_buf: Option<crate::gpu::Buffer>,
+    /// How many records `tvm_wireframe_buf` holds.
+    pub(crate) tvm_wireframe_capacity: usize,
     /// Bind group for the TVM wireframe draws.
     pub(crate) tvm_wireframe_bg: Option<crate::gpu::BindGroup>,
 }
@@ -147,12 +169,13 @@ pub(crate) struct PerObjectState {
 impl PerObjectState {
     pub(crate) fn new() -> Self {
         Self {
-            material_bind_groups: HashMap::new(),
+            material_bind_groups: Default::default(),
             object_data_buf: None,
+            object_data_written: Vec::new(),
             object_data_capacity: 0,
             object_data_gen: 0,
             object_indices: Vec::new(),
-            free_epoch: 0,
+            deps_gate: crate::resources::resource_deps::ResourceGate::default(),
             bind_groups: Vec::new(),
             submesh_bind_groups: HashMap::new(),
             submesh_indices: HashMap::new(),
@@ -160,6 +183,7 @@ impl PerObjectState {
             wireframe_bind_groups: Vec::new(),
             tvm_wireframe_draws: Vec::new(),
             tvm_wireframe_buf: None,
+            tvm_wireframe_capacity: 0,
             tvm_wireframe_bg: None,
         }
     }

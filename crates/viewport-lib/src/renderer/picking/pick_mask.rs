@@ -36,7 +36,7 @@ bitflags::bitflags! {
         const CELL          = 1 << 3;   // volume mesh cell (boundary or interior)
         const VOXEL         = 1 << 4;   // ray-marched volume voxel
         const SPLAT         = 1 << 5;   // gaussian splat
-        const INSTANCE      = 1 << 6;   // glyph / tensor glyph / sprite instance
+        const INSTANCE      = 1 << 6;   // vector / tensor field / sprite instance
         const POLY_NODE     = 1 << 7;   // polyline node
         // bits 8-39: reserved for future point-like types
 

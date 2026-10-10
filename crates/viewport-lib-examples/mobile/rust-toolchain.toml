@@ -1,0 +1,6 @@
+# rustup installs these when cargo is invoked from this directory, so a fresh
+# clone does not have to add the mobile targets by hand. A cargo that is not a
+# rustup proxy (Homebrew's, for one) ignores this file: see README.md.
+[toolchain]
+channel = "stable"
+targets = ["aarch64-linux-android", "aarch64-apple-ios", "aarch64-apple-ios-sim"]

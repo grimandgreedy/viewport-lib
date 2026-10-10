@@ -12,7 +12,7 @@
 /// validation error. Every mesh-family deform bind goes through this macro so
 /// the guard lives in one greppable place; do not open-code a deform group-2
 /// bind at a draw site. Group-2 binds for features that fundamentally need a
-/// third group (soft body, refraction, scivis LUT, volumes, glyph/tensor
+/// third group (soft body, refraction, scivis LUT, volumes, vector/tensor
 /// instance data, GPU picking) are not deform binds and are not gated: those
 /// features do not run on 2-group devices. The invariant is enforced
 /// headlessly by `two_bind_group_device_renders_without_validation_errors`.
@@ -51,6 +51,8 @@ pub(crate) struct InstancedBatch {
     pub texture_id: Option<crate::resources::TextureId>,
     pub normal_map_id: Option<crate::resources::TextureId>,
     pub ao_map_id: Option<crate::resources::TextureId>,
+    pub metallic_roughness_id: Option<crate::resources::TextureId>,
+    pub emissive_id: Option<crate::resources::TextureId>,
     pub instance_offset: u32,
     pub instance_count: u32,
     pub is_transparent: bool,
@@ -66,12 +68,19 @@ pub(crate) struct InstancedBatch {
     /// discard-free early-Z pipeline: a batch with a masked instance must keep
     /// the full shader so the per-fragment alpha discard still runs.
     pub has_alpha_mask: bool,
+    /// The material plugin whose composed instanced shading this batch draws
+    /// with, or `None` for built-in shading. All items in the batch share it
+    /// (it is part of the batch key). A plugin batch draws through the plugin's
+    /// instanced pipeline plus its group-3 params bind, outside the GPU-cull /
+    /// count-multi-draw run-forming, so the field also flags "skip me" in those
+    /// loops.
+    pub shading_plugin: Option<crate::scene::material::MaterialPluginId>,
 }
 
 mod clip;
 pub mod debug;
 mod frame;
-mod items;
+pub(crate) mod items;
 mod lighting;
 mod overlay;
 mod postprocess;
@@ -94,7 +103,7 @@ pub use self::postprocess::*;
 pub struct FrameData {
     /// Camera state, viewport size, and viewport slot.
     pub camera: CameraFrame,
-    /// World-space scene content (surfaces, point clouds, glyphs, etc.).
+    /// World-space scene content (surfaces, point clouds, fields, etc.).
     pub scene: SceneFrame,
     /// Viewport presentation settings (background, grid, axes indicator).
     pub viewport: ViewportFrame,
@@ -213,15 +222,13 @@ impl FrameData {
 /// ~90 lines of rendering code while satisfying Rust's lifetime invariance
 /// on `&mut RenderPass<'a>`.
 macro_rules! emit_draw_calls {
-    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr, $wireframe_bgs:expr, $per_item_bgs:expr, $submesh_bgs:expr, $object_indices:expr, $submesh_indices:expr, $scene_items:expr, $po_bundle:expr) => {{
+    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $slot:expr, $wireframe_bgs:expr, $per_item_bgs:expr, $submesh_bgs:expr, $object_indices:expr, $submesh_indices:expr, $scene_items:expr, $po_bundle:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let frame = $frame;
         let use_instancing: bool = $use_instancing;
         let po_bundle: Option<&crate::renderer::per_object_state::PerObjectBundle> = $po_bundle;
         let _vp_slot: Option<&ViewportSlot> = $slot;
-        // Compute filter results: used by per-object path to override index buffers.
-        let compute_filter_results: &[crate::resources::ComputeFilterResult] = $compute_filter_results;
         let batches: &[InstancedBatch] = $batches;
         let camera_bg: &crate::gpu::BindGroup = $camera_bg;
         let grid_bg: &crate::gpu::BindGroup = $grid_bg;
@@ -266,8 +273,12 @@ macro_rules! emit_draw_calls {
         // Grid pass : full-screen analytical shader drawn first so scene geometry
         // occludes it. No vertex buffer; depth is written via @builtin(frag_depth).
         // Camera bind group is restored immediately after for subsequent passes.
-        if frame.viewport.show_grid {
-            render_pass.set_pipeline(&resources.guides.grid_pipeline);
+        if let (true, Some(pipeline)) = (
+            frame.viewport.show_grid,
+            resources.guide_pipeline(crate::resources::overlay::guides::GUIDE_GRID),
+        )
+        {
+            render_pass.set_pipeline(pipeline);
             render_pass.set_bind_group(0, grid_bg, &[]);
             render_pass.draw(0..3, 0..1);
             render_pass.set_bind_group(0, camera_bg, &[]);
@@ -279,7 +290,7 @@ macro_rules! emit_draw_calls {
             frame.effects.ground_plane.mode,
             crate::renderer::types::GroundPlaneMode::None
         ) {
-            render_pass.set_pipeline(&resources.ground.pipeline);
+            render_pass.set_pipeline(resources.ground.pipeline());
             render_pass.set_bind_group(0, &resources.ground.bind_group, &[]);
             render_pass.draw(0..3, 0..1);
             render_pass.set_bind_group(0, camera_bg, &[]);
@@ -297,8 +308,7 @@ macro_rules! emit_draw_calls {
                                 && resources.mesh_store.get(item.mesh_id).is_some()
                                 && !crate::renderer::prepare::is_instanceable(
                                     item,
-                                    resources,
-                                    compute_filter_results,
+                                    resources
                                 )
                         })
                         .collect();
@@ -317,10 +327,7 @@ macro_rules! emit_draw_calls {
 
                     // Draw opaque instanced batches.
                     if !opaque_batches.is_empty() && !frame.viewport.wireframe_mode {
-                        if let (Some(pipeline), Some(pipeline_two_sided)) = (
-                            &resources.instancing.solid_pipeline,
-                            &resources.instancing.solid_two_sided_pipeline,
-                        ) {
+                        if resources.instancing.ldr.is_some() {
                             // Early-Z fast path: discard-free pipeline twin for
                             // opaque batches when no clip object or alpha-mask
                             // instance can discard this frame.
@@ -329,10 +336,6 @@ macro_rules! emit_draw_calls {
                                 .clip.objects
                                 .iter()
                                 .any(|o| o.enabled && o.clip_geometry);
-                            let nodiscard_pipes = (
-                                resources.instancing.solid_nodiscard_pipeline.as_ref(),
-                                resources.instancing.solid_two_sided_nodiscard_pipeline.as_ref(),
-                            );
                             bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
                             // Batches are sorted with two_sided in the key, so one- and
                             // two-sided runs are contiguous; switch pipeline on change.
@@ -342,25 +345,31 @@ macro_rules! emit_draw_calls {
                             let mut cur_pipe: Option<(bool, bool)> = None;
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for batch in &opaque_batches {
+                                // Plugin batches draw in the dedicated plugin
+                                // sub-loop below (their own pipeline + group-3
+                                // params bind); the built-in pipeline would shade
+                                // them without the plugin hook.
+                                if batch.shading_plugin.is_some() { continue; }
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
                                     batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                 );
                                 // Combined (instance storage + texture) bind group, primed in prepare().
-                                let Some(inst_tex_bg) = resources.instancing.bind_groups.get(&mat_key) else { continue };
-                                let no_discard = !clipping_active
-                                    && !batch.has_alpha_mask
-                                    && nodiscard_pipes.0.is_some()
-                                    && nodiscard_pipes.1.is_some();
+                                let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
+                                let no_discard = !clipping_active && !batch.has_alpha_mask;
                                 if cur_pipe != Some((batch.two_sided, no_discard)) {
-                                    render_pass.set_pipeline(match (no_discard, batch.two_sided) {
-                                        (true, true) => nodiscard_pipes.1.unwrap(),
-                                        (true, false) => nodiscard_pipes.0.unwrap(),
-                                        (false, true) => pipeline_two_sided,
-                                        (false, false) => pipeline,
-                                    });
+                                    // A pipeline still compiling skips the batch this frame.
+                                    let Some(pipeline) = resources.instancing.ldr_opaque(PipelineKey {
+                                        two_sided: batch.two_sided,
+                                        no_discard_eligible: no_discard,
+                                        ..PipelineKey::default()
+                                    }) else { cur_pipe = None; continue };
+                                    render_pass.set_pipeline(pipeline);
                                     cur_pipe = Some((batch.two_sided, no_discard));
                                 }
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
@@ -381,20 +390,76 @@ macro_rules! emit_draw_calls {
                         }
                     }
 
+                    // Material-plugin opaque instanced batches (LDR): one call
+                    // each through the plugin's composed instanced pipeline plus
+                    // its group-3 params bind. The built-in opaque loop above
+                    // skips these. Mirrors the HDR plugin sub-loop; drawn before
+                    // the transparent batches so depth ordering matches built-in.
+                    if !frame.viewport.wireframe_mode
+                        && opaque_batches.iter().any(|b| b.shading_plugin.is_some())
+                    {
+                        bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
+                        let mut cur_chunks: Option<(u32, u32)> = None;
+                        let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
+                        for batch in &opaque_batches {
+                            if batch.shading_plugin.is_none() { continue; }
+                            let Some((plug_pipes, mat_bg)) =
+                                resources.material_plugin_instanced_draw(batch.shading_plugin) else { continue };
+                            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
+                            let mat_key = (
+                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                resources.uv1_chunk_key(mesh.vertex_span.chunk),
+                            );
+                            let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
+                            let Some(pipeline) = plug_pipes.ldr_opaque(
+                                crate::renderer::pipeline_key::PipelineKey::two_sided(batch.two_sided),
+                            ) else { continue };
+                            if cur_pipe != Some(pipeline as *const _) {
+                                render_pass.set_pipeline(pipeline);
+                                cur_pipe = Some(pipeline as *const _);
+                            }
+                            render_pass.set_bind_group(1, inst_tex_bg, &[]);
+                            bind_material_group!(render_pass, mat_bg);
+                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                            if cur_chunks != Some(chunks) {
+                                render_pass.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
+                                render_pass.set_index_buffer(resources.geometry.index_chunk_slice(chunks.1), crate::gpu::IndexFormat::Uint32);
+                                cur_chunks = Some(chunks);
+                            }
+                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                            let first_index = resources.geometry.first_index(mesh.index_span);
+                            render_pass.draw_indexed(
+                                first_index..first_index + mesh.index_count,
+                                base_vertex,
+                                batch.instance_offset..batch.instance_offset + batch.instance_count,
+                            );
+                        }
+                    }
+
                     // Draw transparent instanced batches.
                     if !transparent_batches.is_empty() && !frame.viewport.wireframe_mode {
-                        if let Some(ref pipeline) = resources.instancing.transparent_pipeline {
+                        if let Some(pipeline) = resources.instancing.ldr_transparent() {
                             render_pass.set_pipeline(pipeline);
                             bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for batch in &transparent_batches {
+                                // Plugin batches draw in the dedicated plugin
+                                // sub-loop below.
+                                if batch.shading_plugin.is_some() { continue; }
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
                                     batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                 );
-                                let Some(inst_tex_bg) = resources.instancing.bind_groups.get(&mat_key) else { continue };
+                                let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
                                 let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
                                 if cur_chunks != Some(chunks) {
@@ -413,6 +478,52 @@ macro_rules! emit_draw_calls {
                         }
                     }
 
+                    // Material-plugin transparent instanced batches (LDR): the
+                    // alpha-blend plugin pipeline, drawn after the transparent
+                    // built-in loop above (which skips them).
+                    if !frame.viewport.wireframe_mode
+                        && transparent_batches.iter().any(|b| b.shading_plugin.is_some())
+                    {
+                        bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
+                        let mut cur_chunks: Option<(u32, u32)> = None;
+                        let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
+                        for batch in &transparent_batches {
+                            if batch.shading_plugin.is_none() { continue; }
+                            let Some((plug_pipes, mat_bg)) =
+                                resources.material_plugin_instanced_draw(batch.shading_plugin) else { continue };
+                            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
+                            let mat_key = (
+                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                resources.uv1_chunk_key(mesh.vertex_span.chunk),
+                            );
+                            let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
+                            let Some(pipeline) = plug_pipes.ldr_transparent() else { continue };
+                            if cur_pipe != Some(pipeline as *const _) {
+                                render_pass.set_pipeline(pipeline);
+                                cur_pipe = Some(pipeline as *const _);
+                            }
+                            render_pass.set_bind_group(1, inst_tex_bg, &[]);
+                            bind_material_group!(render_pass, mat_bg);
+                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                            if cur_chunks != Some(chunks) {
+                                render_pass.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
+                                render_pass.set_index_buffer(resources.geometry.index_chunk_slice(chunks.1), crate::gpu::IndexFormat::Uint32);
+                                cur_chunks = Some(chunks);
+                            }
+                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                            let first_index = resources.geometry.first_index(mesh.index_span);
+                            render_pass.draw_indexed(
+                                first_index..first_index + mesh.index_count,
+                                base_vertex,
+                                batch.instance_offset..batch.instance_offset + batch.instance_count,
+                            );
+                        }
+                    }
+
                     // Wireframe mode fallback: draw per-object using per-item bind
                     // groups so that items sharing a MeshId each get their own uniform.
                     if frame.viewport.wireframe_mode {
@@ -420,7 +531,8 @@ macro_rules! emit_draw_calls {
                         for item in scene_items {
                             if item.settings.hidden { continue; }
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else { continue };
-                            render_pass.set_pipeline(&resources.scene.wireframe);
+                            let Some(wf) = resources.scene.wireframe() else { continue };
+                            render_pass.set_pipeline(wf);
                             bind_deform_group!(
                                 render_pass,
                                 resources,
@@ -463,21 +575,21 @@ macro_rules! emit_draw_calls {
                             let is_blended = item.settings.opacity < 1.0
                                 || item.material.is_blend();
                             let plug = resources.material_plugin_draw(item.material.shading_plugin);
-                            let pipeline: &crate::gpu::RenderPipeline = if let Some((pp, _)) = plug {
+                            let pipeline = if let Some((pp, _)) = plug {
                                 if is_blended {
-                                    &pp.ldr.transparent
-                                } else if item.material.is_two_sided() {
-                                    &pp.ldr.solid_two_sided
+                                    pp.ldr_transparent()
                                 } else {
-                                    &pp.ldr.solid
+                                    pp.ldr_opaque(PipelineKey::two_sided(item.material.is_two_sided()))
                                 }
                             } else if is_blended {
-                                &resources.scene.transparent
+                                resources.scene.transparent()
                             } else if item.material.is_two_sided() {
-                                &resources.scene.solid_two_sided
+                                resources.scene.solid_two_sided()
                             } else {
-                                &resources.scene.solid
+                                resources.scene.solid()
                             };
+                            // A plugin pipeline still compiling skips the item this frame.
+                            let Some(pipeline) = pipeline else { continue };
                             if cur_pipeline != Some(pipeline as *const _) {
                                 render_pass.set_pipeline(pipeline);
                                 cur_pipeline = Some(pipeline as *const _);
@@ -534,22 +646,20 @@ macro_rules! emit_draw_calls {
                                         item.settings.opacity < 1.0 || mat.is_blend();
                                     let plug_r =
                                         resources.material_plugin_draw(mat.shading_plugin);
-                                    let pl: &crate::gpu::RenderPipeline =
-                                        if let Some((pp, _)) = plug_r {
-                                            if blended_r {
-                                                &pp.ldr.transparent
-                                            } else if mat.is_two_sided() {
-                                                &pp.ldr.solid_two_sided
-                                            } else {
-                                                &pp.ldr.solid
-                                            }
-                                        } else if blended_r {
-                                            &resources.scene.transparent
-                                        } else if mat.is_two_sided() {
-                                            &resources.scene.solid_two_sided
+                                    let pl = if let Some((pp, _)) = plug_r {
+                                        if blended_r {
+                                            pp.ldr_transparent()
                                         } else {
-                                            &resources.scene.solid
-                                        };
+                                            pp.ldr_opaque(PipelineKey::two_sided(mat.is_two_sided()))
+                                        }
+                                    } else if blended_r {
+                                        resources.scene.transparent()
+                                    } else if mat.is_two_sided() {
+                                        resources.scene.solid_two_sided()
+                                    } else {
+                                        resources.scene.solid()
+                                    };
+                                    let Some(pl) = pl else { continue };
                                     if cur_pipeline != Some(pl as *const _) {
                                         render_pass.set_pipeline(pl);
                                         cur_pipeline = Some(pl as *const _);
@@ -708,8 +818,10 @@ macro_rules! emit_draw_calls {
                         });
 
                         if frame.viewport.wireframe_mode {
-                            if let Some(edge_buf) = &mesh.edge_index_buffer {
-                                set_pipeline_cached!(&resources.scene.wireframe);
+                            if let (Some(edge_buf), Some(wf)) =
+                                (&mesh.edge_index_buffer, resources.scene.wireframe())
+                            {
+                                set_pipeline_cached!(wf);
                                 set_deform_cached!(deform_bg);
                                 render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                                 render_pass.set_index_buffer(
@@ -730,18 +842,9 @@ macro_rules! emit_draw_calls {
                                 cur_geometry = None;
                             }
                         } else {
-                            // Check for a compute-filtered index buffer override.
-                            let filter_result = compute_filter_results
-                                .iter()
-                                .find(|r| r.mesh_id == item.mesh_id);
-                            let ranges = if filter_result.is_none() {
-                                // A compute-filtered index buffer is compacted,
-                                // so the mesh's ranges no longer address it.
+                            let ranges =
                                 crate::renderer::prepare::active_submesh_materials(item, mesh)
-                                    .zip(submesh_bind_groups.get(&item_idx))
-                            } else {
-                                None
-                            };
+                                    .zip(submesh_bind_groups.get(&item_idx));
                             if let Some((mats, bgs)) = ranges {
                                 set_deform_cached!(deform_bg);
                                 if cur_geometry != Some((item.mesh_id, false)) {
@@ -759,22 +862,20 @@ macro_rules! emit_draw_calls {
                                         item.settings.opacity < 1.0 || mat.is_blend();
                                     let plug_r =
                                         resources.material_plugin_draw(mat.shading_plugin);
-                                    let pl: &crate::gpu::RenderPipeline =
-                                        if let Some((pp, _)) = plug_r {
-                                            if blended_r {
-                                                &pp.ldr.transparent
-                                            } else if mat.is_two_sided() {
-                                                &pp.ldr.solid_two_sided
-                                            } else {
-                                                &pp.ldr.solid
-                                            }
-                                        } else if blended_r {
-                                            &resources.scene.transparent
-                                        } else if mat.is_two_sided() {
-                                            &resources.scene.solid_two_sided
+                                    let pl = if let Some((pp, _)) = plug_r {
+                                        if blended_r {
+                                            pp.ldr_transparent()
                                         } else {
-                                            &resources.scene.solid
-                                        };
+                                            pp.ldr_opaque(PipelineKey::two_sided(mat.is_two_sided()))
+                                        }
+                                    } else if blended_r {
+                                        resources.scene.transparent()
+                                    } else if mat.is_two_sided() {
+                                        resources.scene.solid_two_sided()
+                                    } else {
+                                        resources.scene.solid()
+                                    };
+                                    let Some(pl) = pl else { continue };
                                     set_pipeline_cached!(pl);
                                     // Prefer the range's own bind group + index;
                                     // fall back to the item's whole-mesh slot, then
@@ -812,33 +913,25 @@ macro_rules! emit_draw_calls {
                                 set_pipeline_cached!($pipeline);
                                 set_deform_cached!(deform_bg);
                                 let inst = object_inst(item_idx);
-                                if let Some(fr) = filter_result {
-                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
+                                if cur_geometry != Some((item.mesh_id, false)) {
+                                    render_pass
+                                        .set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                                     render_pass.set_index_buffer(
-                                        fr.index_buffer.slice(..),
+                                        resources.geometry.index_slice(mesh.index_span),
                                         crate::gpu::IndexFormat::Uint32,
                                     );
-                                    render_pass.draw_indexed(0..fr.index_count, 0, inst..inst + 1);
-                                    cur_geometry = None;
-                                } else {
-                                    if cur_geometry != Some((item.mesh_id, false)) {
-                                        render_pass
-                                            .set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-                                        render_pass.set_index_buffer(
-                                            resources.geometry.index_slice(mesh.index_span),
-                                            crate::gpu::IndexFormat::Uint32,
-                                        );
-                                        cur_geometry = Some((item.mesh_id, false));
-                                    }
-                                    render_pass.draw_indexed(0..mesh.index_count, 0, inst..inst + 1);
+                                    cur_geometry = Some((item.mesh_id, false));
                                 }
+                                render_pass.draw_indexed(0..mesh.index_count, 0, inst..inst + 1);
                             }
                         }
 
                         if item.show_normals {
-                            if let Some(ref nl_buf) = mesh.normal_line_buffer {
+                            if let (Some(nl_buf), Some(wf)) =
+                                (&mesh.normal_line_buffer, resources.scene.wireframe())
+                            {
                                 if mesh.normal_line_count > 0 {
-                                    set_pipeline_cached!(&resources.scene.wireframe);
+                                    set_pipeline_cached!(wf);
                                     set_deform_cached!(&resources.deform.dummy_bind_group);
                                     render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
                                     render_pass.set_vertex_buffer(0, nl_buf.slice(..));
@@ -853,26 +946,25 @@ macro_rules! emit_draw_calls {
                 for entry in &opaque {
                     let plug = resources.material_plugin_draw(entry.1.material.shading_plugin);
                     let pl = if let Some((pp, _)) = plug {
-                        if entry.1.material.is_two_sided() {
-                            &pp.ldr.solid_two_sided
-                        } else {
-                            &pp.ldr.solid
-                        }
+                        pp.ldr_opaque(PipelineKey::two_sided(entry.1.material.is_two_sided()))
                     } else if entry.1.material.is_two_sided() {
-                        &resources.scene.solid_two_sided
+                        resources.scene.solid_two_sided()
                     } else {
-                        &resources.scene.solid
+                        resources.scene.solid()
                     };
+                    // A plugin pipeline still compiling skips the item this frame.
+                    let Some(pl) = pl else { continue };
                     draw_item!((entry.0, entry.1), pl);
                 }
                 for entry in &transparent {
                     let pl = if let Some((pp, _)) =
                         resources.material_plugin_draw(entry.1.material.shading_plugin)
                     {
-                        &pp.ldr.transparent
+                        pp.ldr_transparent()
                     } else {
-                        &resources.scene.transparent
+                        resources.scene.transparent()
                     };
+                    let Some(pl) = pl else { continue };
                     draw_item!((entry.0, entry.1), pl);
                 }
             }
@@ -883,8 +975,11 @@ macro_rules! emit_draw_calls {
 
         // Constraint guide line pass.
         if let Some(slot) = _vp_slot {
-            if !slot.constraint_line_buffers.is_empty() {
-                render_pass.set_pipeline(&resources.guides.overlay_line_pipeline);
+            if let (false, Some(pipeline)) = (
+                slot.constraint_line_buffers.is_empty(),
+                resources.guide_pipeline(crate::resources::overlay::guides::GUIDE_LINES),
+            ) {
+                render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for (vbuf, ibuf, index_count, _ubuf, bg) in &slot.constraint_line_buffers {
                     render_pass.set_bind_group(1, bg, &[]);
@@ -897,8 +992,13 @@ macro_rules! emit_draw_calls {
 
         // Cap fill pass (section view cross-section fill).
         if let Some(slot) = _vp_slot {
-            if !slot.cap_buffers.is_empty() {
-                render_pass.set_pipeline(&resources.guides.overlay_pipeline);
+            if let (false, Some(pipeline)) =
+                (
+                slot.cap_buffers.is_empty(),
+                resources.guide_pipeline(crate::resources::overlay::guides::GUIDE_TRIANGLES),
+            )
+            {
+                render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.cap_buffers {
                     render_pass.set_bind_group(1, bg, &[]);
@@ -913,11 +1013,15 @@ macro_rules! emit_draw_calls {
         // X-ray pass: render selected objects as semi-transparent overlay through geometry.
         if let Some(slot) = _vp_slot {
             if !slot.xray_object_buffers.is_empty() {
-                render_pass.set_pipeline(&resources.outline.xray_pipeline);
+                render_pass.set_pipeline(resources.outline.xray_pipeline());
                 render_pass.set_bind_group(0, camera_bg, &[]);
-                for (mesh_id, _buf, bg) in &slot.xray_object_buffers {
+                // The x-ray pipeline shares the outline layout, so group 2 is
+                // part of it whenever deformers are enabled. X-ray draws the
+                // undeformed mesh, so the dummy group is what it wants.
+                bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
+                for (mesh_id, xray) in &slot.xray_object_buffers {
                     let Some(mesh) = resources.mesh_store.get(*mesh_id) else { continue };
-                    render_pass.set_bind_group(1, bg, &[]);
+                    render_pass.set_bind_group(1, &xray.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                     render_pass.set_index_buffer(resources.geometry.index_slice(mesh.index_span), crate::gpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -941,480 +1045,15 @@ macro_rules! emit_outline_composite {
         let render_pass = $render_pass;
         if let Some(slot) = $vp_slot {
             if !slot.selection_outlines.outline_object_buffers.is_empty()
-                || !slot.selection_outlines.splat_outline_buffers.is_empty()
-                || !slot.selection_outlines.streamtube_outline_items.is_empty()
-                || !slot.selection_outlines.tube_outline_items.is_empty()
-                || !slot.selection_outlines.ribbon_outline_items.is_empty()
-                || !slot.selection_outlines.polyline_outline_indices.is_empty()
-                || !slot.selection_outlines.volume_outline_indices.is_empty()
-                || !slot.selection_outlines.glyph_outline_indices.is_empty()
-                || !slot
-                    .selection_outlines
-                    .tensor_glyph_outline_indices
-                    .is_empty()
-                || !slot.selection_outlines.sprite_outline_indices.is_empty()
                 || slot.selection_outlines.plugin_outline_present
             {
                 let composite_bg = slot.hdr.as_ref().map(|h| &h.outline_composite_bind_group);
-                let pipeline = resources
-                    .outline
-                    .composite_pipeline_msaa
-                    .as_ref()
-                    .or(resources.outline.composite_pipeline_single.as_ref());
+                // Skipped while the pipeline is on a worker.
+                let pipeline = resources.outline.composite_ldr(resources.sample_count);
                 if let (Some(pipeline), Some(bg)) = (pipeline, composite_bg) {
                     render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(0, bg, &[]);
                     render_pass.draw(0..3, 0..1);
-                }
-            }
-        }
-    }};
-}
-
-/// Draw point cloud and glyph items from per-frame GPU data prepared in `prepare()`.
-///
-/// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
-macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $volume_surface_slice_gpu_data:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
-        let resources = $resources;
-        let render_pass = $render_pass;
-        let camera_bg: &crate::gpu::BindGroup = $camera_bg;
-        let _is_hdr: bool = $is_hdr;
-
-        // Point cloud pass.
-        if !$pc_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.point_cloud.pipeline {
-                render_pass.set_pipeline(dual.for_format(_is_hdr));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for pc in $pc_gpu_data.iter() {
-                    render_pass.set_bind_group(1, &pc.bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, pc.vertex_buffer.slice(..));
-                    // 6 vertices per point (billboard quad = 2 triangles), point_count instances.
-                    render_pass.draw(0..6, 0..pc.point_count);
-                }
-            }
-        }
-
-        // Glyph pass.
-        if !$glyph_gpu_data.is_empty() {
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for glyph in $glyph_gpu_data.iter() {
-                let pipeline = if glyph.wireframe {
-                    resources
-                        .glyph
-                        .wireframe_pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                } else {
-                    resources
-                        .glyph
-                        .pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                };
-                if let Some(pipeline) = pipeline {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(1, &glyph.uniform_bind_group, &[]);
-                    render_pass.set_bind_group(2, &glyph.instance_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, glyph.mesh_vertex_buffer.slice(..));
-                    if glyph.wireframe {
-                        render_pass.set_index_buffer(
-                            glyph.mesh_edge_index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(
-                            0..glyph.mesh_edge_index_count,
-                            0,
-                            0..glyph.instance_count,
-                        );
-                    } else {
-                        render_pass.set_index_buffer(
-                            glyph.mesh_index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(
-                            0..glyph.mesh_index_count,
-                            0,
-                            0..glyph.instance_count,
-                        );
-                    }
-                }
-            }
-        }
-
-        // Polyline pass : screen-space thick lines via instanced quad expansion.
-        // Each segment instance is drawn as 6 vertices (2 triangles).
-        // Items with skip_clip=true (clip object wireframe overlays) use the clip-exempt
-        // pipeline so they are always fully visible regardless of active clip volumes.
-        // Items with wireframe=true use the thin 1px LineList pipeline instead, still
-        // honouring skip_clip (see `PolylineKey`).
-        if !$polyline_gpu_data.is_empty() && resources.polyline.pipelines.is_some() {
-            let polyline_pipelines = resources.polyline.pipelines.as_ref();
-            for pl in $polyline_gpu_data.iter() {
-                if pl.segment_count == 0 {
-                    continue;
-                }
-                let key = crate::resources::PolylineKey {
-                    skip_clip: pl.skip_clip,
-                    wireframe: pl.wireframe,
-                };
-                if pl.wireframe {
-                    if let (Some(wf_pipeline), Some(wf_bg)) = (
-                        polyline_pipelines.map(|ps| ps.get(key).for_format(_is_hdr)),
-                        pl.wireframe_bind_group.as_ref(),
-                    ) {
-                        render_pass.set_pipeline(wf_pipeline);
-                        render_pass.set_bind_group(0, camera_bg, &[]);
-                        render_pass.set_bind_group(1, wf_bg, &[]);
-                        render_pass.draw(0..2, 0..pl.segment_count);
-                    }
-                    continue;
-                }
-                if let Some(pipeline) = polyline_pipelines.map(|ps| ps.get(key).for_format(_is_hdr))
-                {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(0, camera_bg, &[]);
-                    render_pass.set_bind_group(1, &pl.bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, pl.vertex_buffer.slice(..));
-                    render_pass.draw(0..6, 0..pl.segment_count);
-                }
-            }
-        }
-
-        // Volume pass (after glyphs : volumes are translucent, rendered last).
-        if !$volume_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.volume.pipeline {
-                render_pass.set_pipeline(dual.for_format(_is_hdr));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for vol in $volume_gpu_data.iter() {
-                    if vol.wireframe {
-                        continue;
-                    }
-                    render_pass.set_bind_group(1, &vol.bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, vol.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        vol.index_buffer.slice(..),
-                        crate::gpu::IndexFormat::Uint32,
-                    );
-                    render_pass.draw_indexed(0..36, 0, 0..1);
-                }
-            }
-        }
-
-        // Streamtube pass: connected tube mesh per strip set).
-        if !$streamtube_gpu_data.is_empty() {
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for tube in $streamtube_gpu_data.iter() {
-                if tube.index_count == 0 && tube.edge_index_count == 0 {
-                    continue;
-                }
-                let pipeline = if tube.wireframe {
-                    resources
-                        .streamtube
-                        .wireframe_pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                } else {
-                    resources
-                        .streamtube
-                        .pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                };
-                if let Some(pipeline) = pipeline {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(1, &tube.uniform_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, tube.vertex_buffer.slice(..));
-                    if tube.wireframe {
-                        render_pass.set_index_buffer(
-                            tube.edge_index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..tube.edge_index_count, 0, 0..1);
-                    } else {
-                        render_pass.set_index_buffer(
-                            tube.index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
-                    }
-                }
-            }
-        }
-
-        // General tube pass (uses same streamtube pipeline, per-vertex colour).
-        if !$tube_gpu_data.is_empty() {
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for tube in $tube_gpu_data.iter() {
-                if tube.index_count == 0 && tube.edge_index_count == 0 {
-                    continue;
-                }
-                let pipeline = if tube.wireframe {
-                    resources
-                        .streamtube
-                        .wireframe_pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                } else {
-                    resources
-                        .streamtube
-                        .pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                };
-                if let Some(pipeline) = pipeline {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(1, &tube.uniform_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, tube.vertex_buffer.slice(..));
-                    if tube.wireframe {
-                        render_pass.set_index_buffer(
-                            tube.edge_index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..tube.edge_index_count, 0, 0..1);
-                    } else {
-                        render_pass.set_index_buffer(
-                            tube.index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
-                    }
-                }
-            }
-        }
-
-        // Image slice pass (no vertex buffer, 6 vertices generated by shader).
-        if !$image_slice_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.image_slice.pipeline {
-                render_pass.set_pipeline(dual.for_format(_is_hdr));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for slice in $image_slice_gpu_data.iter() {
-                    render_pass.set_bind_group(1, &slice.bind_group, &[]);
-                    render_pass.draw(0..6, 0..1);
-                }
-            }
-        }
-
-        // Tensor glyph pass (instanced ellipsoids for stress/strain tensors).
-        if !$tensor_glyph_gpu_data.is_empty() {
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for tg in $tensor_glyph_gpu_data.iter() {
-                let pipeline = if tg.wireframe {
-                    resources
-                        .tensor_glyph
-                        .wireframe_pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                } else {
-                    resources
-                        .tensor_glyph
-                        .pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                };
-                if let Some(pipeline) = pipeline {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(1, &tg.uniform_bind_group, &[]);
-                    render_pass.set_bind_group(2, &tg.instance_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, tg.mesh_vertex_buffer.slice(..));
-                    if tg.wireframe {
-                        render_pass.set_index_buffer(
-                            tg.mesh_edge_index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(
-                            0..tg.mesh_edge_index_count,
-                            0,
-                            0..tg.instance_count,
-                        );
-                    } else {
-                        render_pass.set_index_buffer(
-                            tg.mesh_index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..tg.mesh_index_count, 0, 0..tg.instance_count);
-                    }
-                }
-            }
-        }
-
-        // Volume surface slice pass (arbitrary mesh sampled from volume).
-        if !$volume_surface_slice_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.volume.surface_slice_pipeline {
-                render_pass.set_pipeline(dual.for_format(_is_hdr));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for slice in $volume_surface_slice_gpu_data.iter() {
-                    if let Some(mesh) = resources.mesh_store.get(slice.mesh_id) {
-                        render_pass.set_bind_group(1, &slice.bind_group, &[]);
-                        render_pass.set_vertex_buffer(
-                            0,
-                            resources.geometry.vertex_slice(mesh.vertex_span),
-                        );
-                        render_pass.set_index_buffer(
-                            resources.geometry.index_slice(mesh.index_span),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                    }
-                }
-            }
-        }
-
-        // Ribbon pass (flat quad strips, two-sided pipeline). Blend mode
-        // routes through the matching pipeline variant; the default
-        // AlphaBlend path is unchanged.
-        if !$ribbon_gpu_data.is_empty() {
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for ribbon in $ribbon_gpu_data.iter() {
-                if ribbon.index_count == 0 && ribbon.edge_index_count == 0 {
-                    continue;
-                }
-                // OIT-eligible ribbons draw through the HDR path's dedicated
-                // `oit_pass` instead (see `hdr_path.rs`); this is HDR-only,
-                // so the LDR path (`_is_hdr == false`) still draws them here
-                // -- there is no OIT pass to route them to on that path.
-                if _is_hdr && ribbon.oit_eligible {
-                    continue;
-                }
-                let key = crate::resources::RibbonKey {
-                    blend: ribbon.blend,
-                    wireframe: ribbon.wireframe,
-                };
-                let pipeline = resources
-                    .ribbon
-                    .pipelines
-                    .as_ref()
-                    .map(|ps| ps.get(key).for_format(_is_hdr));
-                if let Some(pipeline) = pipeline {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(1, &ribbon.uniform_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, ribbon.vertex_buffer.slice(..));
-                    if ribbon.wireframe {
-                        render_pass.set_index_buffer(
-                            ribbon.edge_index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..ribbon.edge_index_count, 0, 0..1);
-                    } else {
-                        render_pass.set_index_buffer(
-                            ribbon.index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..ribbon.index_count, 0, 0..1);
-                    }
-                }
-            }
-        }
-
-        // Mesh-instance pass: one draw call per host-built batch, routed by
-        // blend mode. Reuses the scene-graph instanced mesh pipeline family.
-        if !$mesh_instance_gpu_data.is_empty() {
-            let mesh_buckets: [(
-                crate::renderer::SpriteBlend,
-                Option<&crate::gpu::RenderPipeline>,
-            ); 3] = [
-                (
-                    crate::renderer::SpriteBlend::AlphaBlend,
-                    resources.instancing.hdr_transparent_pipeline.as_ref(),
-                ),
-                (
-                    crate::renderer::SpriteBlend::Additive,
-                    resources.instancing.hdr_additive_pipeline.as_ref(),
-                ),
-                (
-                    crate::renderer::SpriteBlend::Premultiplied,
-                    resources.instancing.hdr_premultiplied_pipeline.as_ref(),
-                ),
-            ];
-            for (blend, pipeline) in mesh_buckets {
-                let Some(pipeline) = pipeline else { continue };
-                let mut set = false;
-                for batch in $mesh_instance_gpu_data.iter() {
-                    if batch.blend != blend {
-                        continue;
-                    }
-                    let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
-                        continue;
-                    };
-                    if mesh.index_count == 0 {
-                        continue;
-                    }
-                    if !set {
-                        render_pass.set_pipeline(pipeline);
-                        render_pass.set_bind_group(0, camera_bg, &[]);
-                        set = true;
-                    }
-                    render_pass.set_bind_group(1, &batch.bind_group, &[]);
-                    // mesh_instanced.wgsl's pipeline layout includes the deform
-                    // bind group at index 2. MeshInstanceItem does not expose
-                    // per-instance deform handles, so bind the per-mesh
-                    // fallback (or the dummy group when the mesh has no
-                    // attached deform data).
-                    let deform_bg = resources
-                        .deform
-                        .instance_bind_group_for(batch.mesh_id, None);
-                    bind_deform_group!(render_pass, resources, deform_bg);
-                    render_pass
-                        .set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-                    render_pass.set_index_buffer(
-                        resources.geometry.index_slice(mesh.index_span),
-                        crate::gpu::IndexFormat::Uint32,
-                    );
-                    render_pass.draw_indexed(0..mesh.index_count, 0, 0..batch.instance_count);
-                }
-            }
-        }
-
-        // Sprite billboard pass: route by (depth_write, blend mode).
-        // Depth-write items first (opaque-style markers), then the no-depth-write
-        // batches (transparent / additive / premultiplied particle effects).
-        if !$sprite_gpu_data.is_empty() {
-            // Unlit buckets only: this macro path has no group-3 lit normal-map
-            // bind group plumbing, so lit sprites are not drawn here (see the
-            // separate lit-aware loop in `render/hdr_path.rs`).
-            let sprite_pipelines = resources.sprite.pipelines.as_ref();
-            let buckets: Vec<(
-                bool,
-                crate::renderer::SpriteBlend,
-                Option<&crate::resources::DualPipeline>,
-            )> = crate::resources::SpriteKey::all()
-                .filter(|key| !key.lit)
-                .map(|key| {
-                    (
-                        key.depth_write,
-                        key.blend,
-                        sprite_pipelines.map(|ps| ps.get(key)),
-                    )
-                })
-                .collect();
-            // Group 2 (sprite_soft_bgl) carries the scene-depth resolve consumed
-            // by soft-particle fade. Inline sprite draws inside the main HDR or
-            // LDR pass cannot bind the live scene depth (it is still being
-            // written), so they bind a placeholder. The shader gates the fade
-            // sample on a positive soft_particle_distance, so non-fade items
-            // ignore this binding's contents. Soft fade itself is applied in the
-            // separate transparent-sprite post-pass driven from `render.rs`.
-            let soft_bg = resources.sprite.soft_fallback_bg.as_ref();
-            for (depth_write, blend, pipeline) in buckets {
-                let Some(dual) = pipeline else { continue };
-                let Some(soft_bg) = soft_bg else { continue };
-                let mut set = false;
-                for sprite in $sprite_gpu_data.iter() {
-                    if sprite.wireframe
-                        || sprite.depth_write != depth_write
-                        || sprite.blend != blend
-                    {
-                        continue;
-                    }
-                    if !set {
-                        render_pass.set_pipeline(dual.for_format(_is_hdr));
-                        render_pass.set_bind_group(0, camera_bg, &[]);
-                        render_pass.set_bind_group(2, soft_bg, &[]);
-                        set = true;
-                    }
-                    render_pass.set_bind_group(1, &sprite.bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
-                    render_pass.draw(0..6, 0..sprite.sprite_count);
                 }
             }
         }

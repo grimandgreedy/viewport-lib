@@ -185,7 +185,7 @@ impl RuntimePlugin for AnimationPlugin {
     }
 }
 
-impl crate::plugin_api::ViewportPlugin for AnimationPlugin {
+impl crate::plugin_api::PluginInstaller for AnimationPlugin {
     type Handle = ();
 
     /// Register the configured plugin on the runtime. Build the tracks first,

@@ -1,0 +1,31 @@
+# Not a member of the parent workspace: Slint pairs with wgpu 29 through its
+# `unstable-wgpu-29` feature, so this crate pins viewport-lib's `wgpu29` leg.
+# Features unify across a workspace build, so a member here would turn the 29 leg
+# on for every crate that defaults to 27 and trip viewport-lib's one-leg
+# `compile_error!`. An empty `[workspace]` table detaches it into its own
+# workspace root, exactly like the testkit.
+[workspace]
+
+[package]
+name = "viewport-lib-examples-slint"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-only"
+description = "Slint-hosted viewport-lib example (wgpu 29 leg)"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+viewport-lib = { path = "../../viewport-lib", default-features = false, features = ["wgpu29"] }
+glam = { version = "=0.30.10", features = ["bytemuck"] }
+# Tilde requirement per Slint's own guidance: the wgpu feature is re-issued per
+# wgpu major, so a minor bump can move the embedded wgpu.
+pollster = "0.4"
+slint = { version = "~1.17", features = ["unstable-wgpu-29", "renderer-femtovg-wgpu"] }
+
+[[example]]
+name = "slint-minimal"
+path = "examples/slint_minimal/main.rs"

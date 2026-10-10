@@ -29,10 +29,11 @@ jobs:
 
       # Publish bottom-up in dependency order: the pure-data types crate first,
       # then the geometry and input crates that depend on it, then the renderer
-      # that depends on all three, and finally the testkit which depends on the
-      # renderer. Each is skipped if that exact version is already on crates.io, so
-      # a release that only bumped one crate does not fail on the unchanged ones
-      # (the crates version independently).
+      # that depends on all three, then the plugins, which are an ordinary
+      # consumer of the renderer, and finally the testkit, which depends on both
+      # of the last two. Each is skipped if that exact version is already on
+      # crates.io, so a release that only bumped one crate does not fail on the
+      # unchanged ones (the crates version independently).
       #
       # The testkit is NOT a member of this workspace (it has its own `[workspace]`
       # table so `cargo publish -p viewport-lib` stays clean), so it is published
@@ -67,7 +68,15 @@ jobs:
           publish_if_new viewport-lib-geometry crates/viewport-lib-geometry/Cargo.toml
           publish_if_new viewport-lib-input    crates/viewport-lib-input/Cargo.toml
           publish_if_new viewport-lib          crates/viewport-lib/Cargo.toml
+          publish_if_new viewport-lib-plugins  crates/viewport-lib-plugins/Cargo.toml
           publish_if_new viewport-lib-testkit  crates/viewport-lib-testkit/Cargo.toml
+
+      # `cargo publish` unpacks each crate into `target/package/<name>-<version>/`
+      # and verifies it there. That is a source tree, not a build profile, so the
+      # cache action's post-job clean walks errors, expecting cargo's layout.
+      - name: Remove publish scratch directory
+        if: always()
+        run: rm -rf target/package
 
       - name: Get changelog entry
         id: changelog

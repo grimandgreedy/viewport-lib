@@ -3,6 +3,7 @@
 /// Returned by [`crate::ViewportRenderer::shadow_debug_stats`]. All values reflect
 /// the most recently completed `prepare` call (one frame behind the display).
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ShadowDebugStats {
     /// True when the current frame uses the instanced draw path.
     ///

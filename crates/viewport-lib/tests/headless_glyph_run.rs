@@ -7,7 +7,7 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -28,7 +28,7 @@ fn overlay_frame(size: u32) -> FrameData {
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.3, 0.3, 0.3, 1.0));
     frame
 }
 
@@ -85,7 +85,7 @@ fn glyph_run_draws_its_glyphs() {
     frame.overlays.glyph_runs = vec![
         GlyphRunItem::new(glyph_grid())
             .with_font_size(24.0)
-            .with_colour([1.0, 1.0, 1.0, 1.0]),
+            .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0)),
     ];
 
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
@@ -110,17 +110,17 @@ fn empty_glyph_run_draws_nothing() {
     frame.overlays.glyph_runs = vec![
         GlyphRunItem::new(Vec::new())
             .with_font_size(24.0)
-            .with_colour([1.0, 1.0, 1.0, 1.0]),
+            .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0)),
     ];
 
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
     assert_eq!(bright_pixels(&px), 0, "an empty run must not draw");
 }
 
-/// Per-glyph `colours` route through layout: a run whose first half is red and
-/// second half blue draws both colours.
+/// Per-glyph tints route through layout: a white-filled run whose first half is
+/// multiplied red and second half blue draws both colours.
 #[test]
-fn per_glyph_colours_apply() {
+fn per_glyph_tints_apply() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -130,7 +130,7 @@ fn per_glyph_colours_apply() {
     let size = 128u32;
     let glyphs = glyph_grid();
     let half = glyphs.len() / 2;
-    let colours: Vec<[f32; 4]> = (0..glyphs.len())
+    let glyph_tints: Vec<[f32; 4]> = (0..glyphs.len())
         .map(|i| {
             if i < half {
                 [1.0, 0.0, 0.0, 1.0]
@@ -144,7 +144,8 @@ fn per_glyph_colours_apply() {
     frame.overlays.glyph_runs = vec![
         GlyphRunItem::new(glyphs)
             .with_font_size(24.0)
-            .with_colours(colours),
+            .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
+            .with_glyph_tints(glyph_tints),
     ];
 
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
@@ -152,5 +153,40 @@ fn per_glyph_colours_apply() {
     assert!(
         red > 5 && blue > 5,
         "expected both red and blue glyphs, got red {red} blue {blue}"
+    );
+}
+
+/// Glyph ids with no codepoint draw. These are outlined in the font but
+/// unreachable from `cmap`, which is the shape of an OpenType MATH size variant:
+/// the id a shaper hands over for a grown delimiter or large operator.
+#[test]
+fn glyph_run_draws_ids_with_no_codepoint() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // Outlined in Inter and unreachable from its cmap.
+    let no_codepoint: [u16; 6] = [646, 888, 892, 2880, 2881, 2891];
+    let glyphs: Vec<PositionedGlyph> = no_codepoint
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| PositionedGlyph::new(id, 6.0 + i as f32 * 20.0, 60.0))
+        .collect();
+
+    let size = 160u32;
+    let mut frame = overlay_frame(size);
+    frame.overlays.glyph_runs = vec![
+        GlyphRunItem::new(glyphs)
+            .with_font_size(40.0)
+            .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0)),
+    ];
+
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    let bright = bright_pixels(&px);
+    assert!(
+        bright > 20,
+        "expected the codepoint-less glyph ids to draw, got {bright} bright pixels"
     );
 }

@@ -33,6 +33,8 @@ struct ClipPlanes {
 };
 
 struct PtUniforms {
+    // Local to world transform of the volume.
+    model:         mat4x4<f32>,
     density:       f32,
     scalar_min:    f32,
     scalar_max:    f32,
@@ -44,7 +46,7 @@ struct PtUniforms {
 };
 
 // One tetrahedron on the GPU: four vec4 slots (64 bytes, 16-byte aligned).
-// v0..v3.xyz = world positions (all w unused; the per-tet scalar lives in the
+// v0..v3.xyz = local positions (all w unused; the per-tet scalar lives in the
 // separate `tet_scalars` buffer so a scalar-only refresh never touches geometry).
 struct GpuTet {
     v0: vec4<f32>,
@@ -132,11 +134,18 @@ fn vs_main(
         return culled;
     }
 
+    // Bring the tet into world space. Everything below, the fragment stage's
+    // ray test included, works on these, so thickness is in world units.
+    let p0 = (uniforms.model * vec4<f32>(tet.v0.xyz, 1.0)).xyz;
+    let p1 = (uniforms.model * vec4<f32>(tet.v1.xyz, 1.0)).xyz;
+    let p2 = (uniforms.model * vec4<f32>(tet.v2.xyz, 1.0)).xyz;
+    let p3 = (uniforms.model * vec4<f32>(tet.v3.xyz, 1.0)).xyz;
+
     // Project all 4 world-space vertices to clip space, then NDC.
-    let c0 = camera.view_proj * vec4<f32>(tet.v0.xyz, 1.0);
-    let c1 = camera.view_proj * vec4<f32>(tet.v1.xyz, 1.0);
-    let c2 = camera.view_proj * vec4<f32>(tet.v2.xyz, 1.0);
-    let c3 = camera.view_proj * vec4<f32>(tet.v3.xyz, 1.0);
+    let c0 = camera.view_proj * vec4<f32>(p0, 1.0);
+    let c1 = camera.view_proj * vec4<f32>(p1, 1.0);
+    let c2 = camera.view_proj * vec4<f32>(p2, 1.0);
+    let c3 = camera.view_proj * vec4<f32>(p3, 1.0);
 
     // Perspective divide to NDC. Clamp w to avoid division by zero.
     let eps = 1e-6;
@@ -170,13 +179,13 @@ fn vs_main(
     out.clip_pos = vec4<f32>(ndc_x, ndc_y, clamp(quad_z, 0.0, 1.0), 1.0);
     // Pack the per-tet scalar into v0.w for the fragment shader (which reads
     // in.v0.w), sourced from the separate scalar buffer rather than geometry.
-    out.v0       = vec4<f32>(tet.v0.xyz, scalar);
-    out.v1       = tet.v1.xyz;
+    out.v0       = vec4<f32>(p0, scalar);
+    out.v1       = p1;
     // Precompute the 4 outward face normals (per-tet-constant).
-    out.n0       = outward_normal(tet.v1.xyz, tet.v2.xyz, tet.v3.xyz, tet.v0.xyz);
-    out.n1       = outward_normal(tet.v0.xyz, tet.v2.xyz, tet.v3.xyz, tet.v1.xyz);
-    out.n2       = outward_normal(tet.v0.xyz, tet.v1.xyz, tet.v3.xyz, tet.v2.xyz);
-    out.n3       = outward_normal(tet.v0.xyz, tet.v1.xyz, tet.v2.xyz, tet.v3.xyz);
+    out.n0       = outward_normal(p1, p2, p3, p0);
+    out.n1       = outward_normal(p0, p2, p3, p1);
+    out.n2       = outward_normal(p0, p1, p3, p2);
+    out.n3       = outward_normal(p0, p1, p2, p3);
     // Homogeneous near/far world points for this corner's ray.
     out.world_near_h = camera.inv_view_proj * vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
     out.world_far_h  = camera.inv_view_proj * vec4<f32>(ndc_x, ndc_y, 1.0, 1.0);

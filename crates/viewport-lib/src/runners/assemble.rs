@@ -1,6 +1,7 @@
 //! Frame assembly and the camera-driving entry points.
 
 use super::ViewportInstance;
+use crate::Colour;
 use crate::interaction::input::ViewportContext;
 use crate::interaction::manipulation::gizmo::{GizmoAxis, GizmoMode, compute_gizmo_scale};
 use crate::interaction::manipulation::{ManipResult, ManipulationContext};
@@ -50,7 +51,7 @@ impl ViewportInstance {
     ///
     /// ```rust,ignore
     /// session.update_orbit_with(&mut orbit, |frame| {
-    ///     frame.scene.point_clouds.push(cloud);
+    ///     frame.scene.items_mut::<crate::PointCloudItem>().push(cloud);
     ///     frame.overlays.labels.push(label);
     /// });
     /// ```
@@ -98,7 +99,7 @@ impl ViewportInstance {
             pointer_delta: pointer.delta,
             cursor_viewport: pointer.cursor,
             clicked: pointer.clicked,
-            drag_started: pointer.drag_started,
+            drag_started: pointer.pressed,
             dragging: pointer.dragging,
             shift_held: self.input.modifiers().shift,
             ..Default::default()
@@ -122,7 +123,7 @@ impl ViewportInstance {
             pointer_delta: pointer.delta,
             selection_center,
             gizmo: None,
-            drag_started: pointer.drag_started,
+            drag_started: pointer.pressed,
             dragging: pointer.dragging,
             clicked: pointer.clicked,
         };
@@ -162,7 +163,7 @@ impl ViewportInstance {
         self.frame.scene = SceneFrame::from_scene(&mut self.scene, &self.selection);
         self.frame.interaction = InteractionFrame::from_selection(&self.selection);
         self.frame.interaction.outline_selected = self.outline_selected;
-        self.frame.interaction.outline_colour = self.outline_colour.into();
+        self.frame.interaction.outline_colour = Colour::from_linear_array(self.outline_colour);
         self.frame.interaction.outline_width_px = self.outline_width_px;
         self.stamp_gizmo();
         self.frame.overlays = OverlayFrame::default();

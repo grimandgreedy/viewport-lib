@@ -3,6 +3,7 @@
 //! indirect path: same cascade frusta, same visible-caster sets, only the
 //! index compaction moves to the CPU.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use viewport_lib::{
     CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
@@ -12,11 +13,9 @@ use viewport_lib_testkit::{meshes, orbit_camera};
 
 fn device_with(indirect: bool) -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
+    let adapter = pollster::block_on(instance.request_adapter(
+        &viewport_lib::gpu::headless_adapter_options(wgpu::PowerPreference::HighPerformance),
+    ))
     .ok()?;
     let mut features = wgpu::Features::empty();
     if indirect {
@@ -54,7 +53,7 @@ fn render(indirect: bool) -> Option<Vec<u8>> {
     let mut items = Vec::new();
     let mut ground = SceneRenderItem::default();
     ground.mesh_id = ground_id;
-    ground.material = Material::from_colour([0.7, 0.7, 0.7]);
+    ground.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     items.push(ground);
     for i in 0..24 {
         let ang = i as f32 * 0.7;
@@ -67,7 +66,7 @@ fn render(indirect: bool) -> Option<Vec<u8>> {
             12.0 + (i % 3) as f32 * 6.0,
         ))
         .to_cols_array_2d();
-        ball.material = Material::from_colour([0.8, 0.3, 0.3]);
+        ball.material = Material::from_colour(Colour::linear_rgb(0.8, 0.3, 0.3));
         items.push(ball);
     }
 

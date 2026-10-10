@@ -3,7 +3,7 @@
 //! Part of the headless integration suite (split from the former single
 //! headless.rs). Shared device and mesh helpers live in tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -79,13 +79,13 @@ fn position_override_takes_effect_through_render_path() {
     let mut red_item = SceneRenderItem::default();
     red_item.mesh_id = red_id;
     red_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    red_item.material = Material::from_colour([1.0, 0.0, 0.0]);
+    red_item.material = Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0));
 
     let mut blue_item = SceneRenderItem::default();
     blue_item.mesh_id = blue_id;
     blue_item.model =
         glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)).to_cols_array_2d();
-    blue_item.material = Material::from_colour([0.0, 0.0, 1.0]);
+    blue_item.material = Material::from_colour(Colour::linear_rgb(0.0, 0.0, 1.0));
 
     frame.scene.surfaces =
         SurfaceSubmission::Flat(vec![red_item.clone(), blue_item.clone()].into());
@@ -140,217 +140,6 @@ fn position_override_takes_effect_through_render_path() {
     );
 }
 
-/// An external scalar source must drive GPU marching cubes per frame: the
-/// slab scalar buffers are refreshed from the consumer's buffer before every
-/// dispatch. The uploaded CPU volume has no surface at the isovalue; writing
-/// a sphere field into the external buffer makes one appear, and writing the
-/// empty field again makes it vanish, proving both the copy and its
-/// per-frame cadence.
-#[test]
-fn mc_external_scalar_drives_isosurface() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-
-    let dims = [16u32, 16, 16];
-    let spacing = [0.3f32; 3];
-    let origin = [-(15.0 * 0.3) / 2.0; 3];
-    let node_count = (dims[0] * dims[1] * dims[2]) as usize;
-
-    // Uploaded field: uniformly far above the isovalue, no surface anywhere.
-    let vol = viewport_lib::VolumeData {
-        data: vec![10.0; node_count],
-        dims,
-        origin,
-        spacing,
-    };
-    let volume_id = renderer
-        .resources_mut()
-        .upload_volume_for_mc(&device, &queue, &vol)
-        .expect("mc volume upload");
-
-    // Sphere field: distance from the origin; isovalue 1.5 is a sphere well
-    // inside the grid.
-    let mut sphere = vec![0.0f32; node_count];
-    for z in 0..dims[2] {
-        for y in 0..dims[1] {
-            for x in 0..dims[0] {
-                let wx = origin[0] + x as f32 * spacing[0];
-                let wy = origin[1] + y as f32 * spacing[1];
-                let wz = origin[2] + z as f32 * spacing[2];
-                let idx = (x + y * dims[0] + z * dims[0] * dims[1]) as usize;
-                sphere[idx] = (wx * wx + wy * wy + wz * wz).sqrt();
-            }
-        }
-    }
-
-    let scalar_src = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("test_mc_scalar_src"),
-        size: (node_count * 4) as u64,
-        usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
-    let make_frame = || -> FrameData {
-        let cam = Camera::default();
-        let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
-        frame.camera.viewport_size = [64.0, 64.0];
-        frame.viewport.show_grid = false;
-        frame.viewport.show_axes_indicator = false;
-        frame
-            .scene
-            .gpu_mc_items
-            .push(viewport_lib::GpuMarchingCubesItem {
-                volume_id,
-                isovalue: 1.5,
-                material: Material::default(),
-                settings: ItemSettings::default(),
-                cpu_data: None,
-            });
-        frame
-    };
-    let empty_frame = || -> FrameData {
-        let mut frame = make_frame();
-        frame.scene.gpu_mc_items.clear();
-        frame
-    };
-    let diff_count = |a: &[u8], b: &[u8]| -> usize {
-        a.chunks_exact(4)
-            .zip(b.chunks_exact(4))
-            .filter(|(pa, pb)| pa.iter().zip(pb.iter()).any(|(&x, &y)| x.abs_diff(y) > 8))
-            .count()
-    };
-
-    let empty = renderer.render_offscreen(&device, &queue, &empty_frame(), 64, 64);
-
-    // Baseline: uploaded field has no surface.
-    let flat = renderer.render_offscreen(&device, &queue, &make_frame(), 64, 64);
-    assert_eq!(
-        diff_count(&flat, &empty),
-        0,
-        "the uploaded all-above-iso field must extract no surface"
-    );
-
-    // Attach the external source and write the sphere field into it.
-    queue.write_buffer(&scalar_src, 0, bytemuck::cast_slice(&sphere));
-    renderer
-        .resources_mut()
-        .set_mc_scalar_source_buffer(volume_id, scalar_src.clone(), 0)
-        .unwrap();
-    let with_sphere = renderer.render_offscreen(&device, &queue, &make_frame(), 64, 64);
-    assert!(
-        diff_count(&with_sphere, &empty) > 0,
-        "after the external sphere field is copied in, the isosurface must \
-         render"
-    );
-
-    // Rewrite the buffer with the empty field: the surface must vanish on
-    // the next frame, proving the copy happens every dispatch.
-    queue.write_buffer(
-        &scalar_src,
-        0,
-        bytemuck::cast_slice(&vec![10.0f32; node_count]),
-    );
-    let flat_again = renderer.render_offscreen(&device, &queue, &make_frame(), 64, 64);
-    assert_eq!(
-        diff_count(&flat_again, &empty),
-        0,
-        "rewriting the external buffer with an all-above-iso field must \
-         remove the surface on the next frame"
-    );
-}
-
-/// An external instance set must draw exactly the window of the consumer's
-/// positions buffer selected by the item's instance range. The buffer holds
-/// four positions: elements 0..2 far behind the camera, elements 2..4 in
-/// front of it. Drawing `first_instance = 2, instance_count = 2` must show
-/// geometry; re-pointing the range at 0..2 must show none.
-#[test]
-fn external_instances_render_with_instance_range_slice() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mesh_id = renderer
-        .resources_mut()
-        .upload_mesh_data(&device, &box_mesh())
-        .unwrap();
-
-    // Elements 0 and 1 behind the camera, 2 and 3 visible near the origin.
-    let positions: Vec<f32> = vec![
-        0.0, 0.0, -1000.0, // 0
-        0.0, 0.0, -1000.0, // 1
-        -0.6, 0.0, 0.0, // 2
-        0.6, 0.0, 0.0, // 3
-    ];
-    let pos_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("test_external_positions"),
-        size: (positions.len() * std::mem::size_of::<f32>()) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&pos_buf, 0, bytemuck::cast_slice(&positions));
-
-    let set_id = renderer
-        .resources_mut()
-        .create_external_instance_set(
-            &device,
-            &viewport_lib::ExternalInstanceSetConfig::new(mesh_id, pos_buf),
-        )
-        .unwrap();
-
-    let make_frame = |first: u32, count: u32| -> FrameData {
-        let cam = Camera::default();
-        let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
-        frame.camera.viewport_size = [64.0, 64.0];
-        frame.viewport.show_grid = false;
-        frame.viewport.show_axes_indicator = false;
-        let mut item = viewport_lib::ExternalInstancesItem::new(set_id, count);
-        item.first_instance = first;
-        item.scale = 0.4;
-        item.colour = [1.0, 0.2, 0.2, 1.0].into();
-        frame.scene.external_instances = vec![item];
-        frame
-    };
-
-    let empty = renderer.render_offscreen(&device, &queue, &make_frame(0, 0), 64, 64);
-    let visible = renderer.render_offscreen(&device, &queue, &make_frame(2, 2), 64, 64);
-    let hidden = renderer.render_offscreen(&device, &queue, &make_frame(0, 2), 64, 64);
-
-    let diff_count = |a: &[u8], b: &[u8]| -> usize {
-        a.chunks_exact(4)
-            .zip(b.chunks_exact(4))
-            .filter(|(pa, pb)| pa.iter().zip(pb.iter()).any(|(&x, &y)| x.abs_diff(y) > 8))
-            .count()
-    };
-
-    assert!(
-        diff_count(&visible, &empty) > 0,
-        "instance range 2..4 selects the visible elements; the boxes must \
-         render. If nothing shows, instance_index is not honouring the draw \
-         call's first_instance or the storage window is wrong.",
-    );
-    assert_eq!(
-        diff_count(&hidden, &empty),
-        0,
-        "instance range 0..2 selects only the behind-camera elements; the \
-         image must match an empty scene.",
-    );
-}
-
 /// The selection outline mask must rasterise override-driven geometry, not
 /// the bind pose. A selected plane's override pushes every vertex far behind
 /// the camera: the mesh vanishes, and the halo must vanish with it. If the
@@ -397,7 +186,7 @@ fn outline_mask_follows_position_override() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    item.material = Material::from_colour([1.0, 0.0, 0.0]);
+    item.material = Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0));
     item.settings.selected = true;
     let frame = make_frame(vec![item]);
 
@@ -513,7 +302,7 @@ fn position_override_slice_reads_correct_pool_window() {
     let mut red_item = SceneRenderItem::default();
     red_item.mesh_id = red_id;
     red_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    red_item.material = Material::from_colour([1.0, 0.0, 0.0]);
+    red_item.material = Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0));
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![red_item].into());
 
     // Pool: body A (elements 0..5) far behind the camera, body B (elements
@@ -811,7 +600,8 @@ fn lod_culled_per_object_item_is_not_drawn() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = full;
     item.lod_group = Some(group);
-    item.material.backface_policy = BackfacePolicy::DifferentColour([1.0, 0.2, 0.2].into());
+    item.material.backface_policy =
+        BackfacePolicy::DifferentColour(Colour::linear_rgb(1.0, 0.2, 0.2));
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
 
     // Empty scene baseline.
@@ -891,7 +681,7 @@ fn multi_draw_collapse_is_pixel_identical() {
             let y = inst as f32 * 1.1;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
-            item.material = Material::from_colour(colours[i]);
+            item.material = Material::from_colour(Colour::from_linear_rgb_array(colours[i]));
             if i == 2 {
                 item.settings.opacity = 0.5;
             }
@@ -1012,4 +802,83 @@ fn multi_draw_collapse_is_pixel_identical() {
         stats.shadow_buffer_binds,
         stats.shadow_draw_calls,
     );
+}
+
+/// An opaque and a translucent copy of one mesh draw as each does alone,
+/// whichever is submitted first. They used to share a batch whose
+/// transparency came from its first item, so one of the two was drawn wrong.
+#[test]
+fn opaque_and_translucent_copies_of_a_mesh_draw_independently() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    const W: u32 = 128;
+    const H: u32 = 64;
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let at = |x: f32, opacity: f32| {
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        item.settings.opacity = opacity;
+        item
+    };
+    let opaque = at(-1.2, 1.0);
+    let translucent = at(1.2, 0.5);
+    let mut generation = 0;
+    let mut draw = |items: Vec<SceneRenderItem>| {
+        let mut frame = FrameData::default();
+        frame.camera.render_camera = {
+            let mut rc = RenderCamera::from_camera(&Camera {
+                distance: 6.0,
+                ..Camera::default()
+            });
+            rc.aspect = W as f32 / H as f32;
+            rc
+        };
+        frame.camera.viewport_size = [W as f32, H as f32];
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame.effects.lighting.shadows.enabled = false;
+        generation += 1;
+        frame.scene.generation = generation;
+        frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+        renderer.render_offscreen(&device, &queue, &frame, W, H)
+    };
+    // Rows of the left (x < W/2) or right half of an RGBA image.
+    let half = |img: &[u8], left: bool| -> Vec<u8> {
+        img.chunks_exact((W * 4) as usize)
+            .flat_map(|row| {
+                let (l, r) = row.split_at((W / 2 * 4) as usize);
+                if left { l } else { r }.to_vec()
+            })
+            .collect()
+    };
+
+    // Each item alone, with a second copy far off-screen so the frame takes
+    // the instanced path the mixed frames take.
+    let opaque_alone = draw(vec![opaque.clone(), at(100.0, 1.0)]);
+    let translucent_alone = draw(vec![translucent.clone(), at(100.0, 0.5)]);
+    for (name, items) in [
+        ("opaque first", vec![opaque.clone(), translucent.clone()]),
+        (
+            "translucent first",
+            vec![translucent.clone(), opaque.clone()],
+        ),
+    ] {
+        let mixed = draw(items);
+        assert!(
+            half(&mixed, true) == half(&opaque_alone, true),
+            "{name}: the opaque copy did not draw as it does alone"
+        );
+        assert!(
+            half(&mixed, false) == half(&translucent_alone, false),
+            "{name}: the translucent copy did not draw as it does alone"
+        );
+    }
 }

@@ -45,7 +45,8 @@ struct SingleLight {
     point_shadow_slot: i32,
     point_shadow_near: f32,
     radius:            f32,
-    _pad1:             f32,
+    channel_mask:      u32,
+    _pad1:             u32,
 };
 
 struct Lights {
@@ -60,10 +61,10 @@ struct Lights {
     ibl_enabled:          u32,
     ibl_intensity:        f32,
     ibl_rotation:         f32,
-    show_skybox:          u32,
+    ibl_diffuse_scale:    f32,
     debug_vis_split_x:    f32,
     env_zone_count:       u32,
-    _pad_dbg_b:           u32,
+    ibl_specular_scale:   f32,
     _pad_dbg_c:           u32,
 };
 
@@ -206,6 +207,14 @@ struct LightEval {
     radiance: vec3<f32>,
     in_range: bool,
 };
+
+// Layer test for light channels: a light contributes to an object only when
+// their masks intersect. `object_mask == !0` (the default) passes every light,
+// so the channel feature is inert unless a consumer narrows either mask. Called
+// at each lit mesh loop right after fetching the light.
+fn light_in_channel(light: SingleLight, object_mask: u32) -> bool {
+    return (light.channel_mask & object_mask) != 0u;
+}
 
 fn eval_light(light: SingleLight, world_pos: vec3<f32>) -> LightEval {
     var ev: LightEval;

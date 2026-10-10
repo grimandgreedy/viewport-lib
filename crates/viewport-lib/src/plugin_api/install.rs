@@ -7,7 +7,7 @@
 //! and which object each one registers on. Adding a piece to a feature then
 //! breaks every host's setup code.
 //!
-//! [`ViewportPlugin`] moves that knowledge into the feature. The host builds a
+//! [`PluginInstaller`] moves that knowledge into the feature. The host builds a
 //! [`PluginInstallCtx`] from the two objects it already owns (the renderer and,
 //! if it uses one, the runtime) and makes one call:
 //!
@@ -29,7 +29,7 @@ use crate::runtime::ViewportRuntime;
 /// The objects a feature borrows at install time.
 ///
 /// Constructed by the host from what it already owns and passed to
-/// [`ViewportPlugin::install`]. The fields are borrows: nothing here owns the
+/// [`PluginInstaller::install`]. The fields are borrows: nothing here owns the
 /// renderer or the runtime, and the two stay independent of each other.
 ///
 /// `runtime` is optional because the runtime is optional: the minimal hosts
@@ -100,7 +100,7 @@ impl<'a> PluginInstallCtx<'a> {
 /// reuse its id instead of erroring. Runtime and GPU plugins are multi-instance
 /// by contract, so `install` is a once-per-feature call, not a deduplicating
 /// one.
-pub trait ViewportPlugin {
+pub trait PluginInstaller {
     /// What the host gets back and keeps: an upload handle, a query handle, or
     /// `()`.
     type Handle;
@@ -118,9 +118,9 @@ pub trait ViewportPlugin {
 /// ```
 ///
 /// Equivalent to building a [`PluginInstallCtx`] and calling
-/// [`ViewportPlugin::install`]. Pass `None` for `runtime` on a host that does
+/// [`PluginInstaller::install`]. Pass `None` for `runtime` on a host that does
 /// not use one.
-pub fn install_plugin<P: ViewportPlugin>(
+pub fn install_plugin<P: PluginInstaller>(
     feature: P,
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
@@ -187,7 +187,7 @@ mod tests {
         deformer_id: crate::resources::mesh_sidecar::registry::DeformerId,
     }
 
-    impl ViewportPlugin for TestFeature {
+    impl PluginInstaller for TestFeature {
         type Handle = TestHandle;
 
         fn install(self, ctx: &mut PluginInstallCtx<'_>) -> ViewportResult<TestHandle> {

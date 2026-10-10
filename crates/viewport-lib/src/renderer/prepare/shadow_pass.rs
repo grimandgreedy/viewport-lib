@@ -2,6 +2,28 @@
 
 use super::*;
 
+/// Whether the shadow cull bind groups no longer match the resources they were
+/// built against.
+///
+/// The same split the main-pass cull uses: a replace swaps a view behind a live
+/// id and cannot be detected by checking ids, so it always invalidates; a free
+/// removes the id, which checking the batches' resources detects. Under a
+/// streaming eviction budget the common case is a free of something these
+/// batches never named, and that leaves the bind groups correct.
+fn shadow_cull_bind_groups_stale(
+    resources: &DeviceResources,
+    instancing: &crate::renderer::instancing_state::InstancingState,
+) -> bool {
+    if instancing.shadow_cull.built_view_epoch != resources.resource_view_epoch {
+        return true;
+    }
+    instancing.shadow_cull.built_free_epoch != resources.resource_free_epoch
+        && !crate::renderer::prepare::instanced::cached_batches_resolve(
+            resources,
+            &instancing.batches,
+        )
+}
+
 impl ViewportRenderer {
     /// Render the shadow depth pass: directional CSM cascades into the atlas
     /// tiles and point-light cube-map faces, including per-cascade plugin draws.
@@ -10,16 +32,12 @@ impl ViewportRenderer {
         resources: &mut DeviceResources,
         instancing: &mut InstancingState,
         shadow: &mut crate::renderer::shadow_state::ShadowState,
-        compute_filter_results: &[crate::resources::ComputeFilterResult],
-        plugins: &std::collections::HashMap<
-            &'static str,
-            Box<dyn crate::plugin_api::ItemTypePlugin>,
-        >,
+        plugins: &crate::renderer::item_plugins::registry::ItemPluginRegistry,
         plugin_frame_index: u64,
         lighting: &crate::renderer::types::LightingSettings,
         scene_items: &[SceneRenderItem],
-        ribbon_gpu_data: &[crate::resources::StreamtubeGpuData],
-        mc_gpu_data: &[crate::resources::volume::gpu_marching_cubes::McFrameData],
+        // `is_instanceable` per scene item, computed once by the caller.
+        instanceable: &[bool],
         light: &LightingFrame,
         shadows_skipped: bool,
         last_stats: &mut crate::renderer::stats::FrameStats,
@@ -28,16 +46,29 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        // The colour family the frame draws with; a caster whose colour
+        // pipeline is still compiling casts nothing until it is drawn.
+        colour_hdr: bool,
         sink: &mut crate::renderer::SubmitSink,
     ) {
-        // Shadow-pass instrumentation. The stall reported on some mobile backends
-        // shows up at `present` because the shadow depth work is GPU-bound and only
-        // forced to completion later. When the `viewport_lib::shadow` target is
-        // enabled at debug level, bracket the pass and poll the device to completion
-        // so the shadow GPU cost is attributed here instead of hiding inside present.
-        // The poll is skipped entirely (zero overhead) when the target is off.
-        // Enable with `RUST_LOG=viewport_lib::shadow=debug`. For non-perturbing
-        // timing in shipping builds, use GPU timestamp queries instead.
+        let clipping_active = DeviceResources::clipping_active(frame);
+        // Which batches cast this frame, as a hash: a batch whose colour
+        // pipeline is still compiling is left out, and the cached shadow
+        // bundles have to be re-recorded when that changes.
+        let casters_hash = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            for batch in &instancing.batches {
+                resources
+                    .batch_colour_ready(batch, colour_hdr, clipping_active)
+                    .hash(&mut h);
+            }
+            h.finish()
+        };
+        // Shadow-pass instrumentation: with the `viewport_lib::shadow` target
+        // at debug level, log the pass's CPU encode time and counts
+        // (`RUST_LOG=viewport_lib::shadow=debug`). Its GPU time is in the GPU
+        // timestamps.
         let shadow_instrument =
             tracing::enabled!(target: "viewport_lib::shadow", tracing::Level::DEBUG);
         let shadow_start = web_time::Instant::now();
@@ -46,11 +77,26 @@ impl ViewportRenderer {
         // Skip the pass entirely when over budget and shadow reduction is allowed.
         // ------------------------------------------------------------------
         let skip_shadows = shadows_skipped;
+        // Item-type plugins cast into the cascades too, so a scene of plugin
+        // items alone still has casters.
+        let has_casters = !scene_items.is_empty()
+            || plugins.iter().any(|(name, _)| {
+                !crate::plugin_api::ItemCollections::new(
+                    crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+                )
+                .is_empty()
+            });
 
-        // When skipping the shadow pass (budget pressure or empty scene), clear the
+        // When skipping the shadow pass (budget pressure or no casters), clear the
         // atlas to max depth so that stale values from a previous frame or a previous
         // showcase don't produce phantom shadows.
-        if lighting.shadows.enabled && (skip_shadows || scene_items.is_empty()) {
+        //
+        // Only once: the atlas holds a constant after the clear, so repeating it
+        // every frame is pure cost. An app that draws no casters at all (an
+        // overlay-only consumer, or one whose scene is empty this frame) pays
+        // for a 4096-square depth clear it never reads otherwise.
+        if lighting.shadows.enabled && (skip_shadows || !has_casters) && !shadow.atlas_cleared {
+            shadow.atlas_cleared = true;
             let mut enc = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                 label: Some("shadow_clear_encoder"),
             });
@@ -78,10 +124,19 @@ impl ViewportRenderer {
         // carries cascade_count 0), so the atlas needs neither rendering nor a
         // clear.
         if lighting.shadows.enabled
-            && !scene_items.is_empty()
+            && has_casters
             && !skip_shadows
             && light.effective_cascade_count > 0
         {
+            // Cascades are about to be rasterised into the atlas, so this is
+            // where the real texture has to exist: until now it has been a 1x1
+            // placeholder. Promoting replaces the texture, so whatever the old
+            // one held is gone and the clear flag resets either way.
+            resources.ensure_shadow_atlas(device);
+            resources.ensure_cascade_shadow_pipelines(device);
+            // Casters are about to be drawn into the atlas, so it no longer
+            // holds the cleared value and the next empty frame must clear again.
+            shadow.atlas_cleared = false;
             // ------------------------------------------------------------------
             // Shadow GPU cull dispatch
             //
@@ -103,10 +158,6 @@ impl ViewportRenderer {
                 && instancing.cached_instance_count > 0
             {
                 // Mutable operations first.
-                if instancing.cull_resources.is_none() {
-                    instancing.cull_resources =
-                        Some(crate::renderer::indirect::CullResources::new(device));
-                }
                 resources.ensure_cull_instance_pipelines(device);
 
                 let instance_count = instancing.cached_instance_count as u32;
@@ -116,20 +167,22 @@ impl ViewportRenderer {
                     .ensure_outputs(device, instance_count, batch_count);
                 // Drop shadow cull bind groups whose binding-0 instance storage
                 // buffer was rebuilt this frame; ensure_outputs already handles a
-                // resized shadow-vis buffer. Also drop the cutout bind groups when the
-                // free epoch moved: they sample a caster's albedo view, which
-                // replace_texture swaps under a stable id.
-                let free_epoch_moved =
-                    instancing.shadow_cull.built_free_epoch != resources.resource_free_epoch;
-                if instancing.shadow_cull.built_gen != instancing.instance_gen || free_epoch_moved {
+                // resized shadow-vis buffer. The cutout bind groups sample a caster's
+                // albedo view, so they must also drop when that view is no longer the
+                // one they were built against: unconditionally on a replace (which
+                // swaps the view under a live id), and on a free only when a resource
+                // the batches name has actually gone.
+                let bgs_stale = shadow_cull_bind_groups_stale(resources, instancing);
+                if instancing.shadow_cull.built_gen != instancing.instance_gen || bgs_stale {
                     instancing.shadow_cull.shadow_cull_instance_bgs = [None, None, None, None];
                     instancing.shadow_cull.shadow_cutout_cull_bgs.clear();
                     instancing.shadow_cull.built_gen = instancing.instance_gen;
                     instancing.shadow_cull.built_free_epoch = resources.resource_free_epoch;
+                    instancing.shadow_cull.built_view_epoch = resources.resource_view_epoch;
                     // The cached bundles baked the old cutout bind group, so force a
                     // re-record when a cutout caster exists; non-cutout shadow scenes
                     // keep replaying the bundle unchanged.
-                    if free_epoch_moved && instancing.batches.iter().any(|b| b.is_cutout) {
+                    if bgs_stale && instancing.batches.iter().any(|b| b.is_cutout) {
                         instancing.shadow_cull.bundle_key = None;
                     }
                 }
@@ -141,12 +194,13 @@ impl ViewportRenderer {
                     );
                 }
 
-                if let (Some(aabb_buf), Some(meta_buf), Some(counter_buf)) = (
+                // `gpu_culling_enabled` is only set once the compute is built.
+                if let (Some(aabb_buf), Some(meta_buf), Some(counter_buf), Some(cull)) = (
                     resources.cull.aabb_buf.as_ref(),
                     resources.cull.batch_meta_buf.as_ref(),
                     instancing.shadow_cull.batch_counter_buf.as_ref(),
+                    instancing.cull_resources.ready(),
                 ) {
-                    let cull = instancing.cull_resources.as_ref().unwrap();
                     let mut shadow_cull_encoder =
                         device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                             label: Some("shadow_cull_encoder"),
@@ -193,24 +247,21 @@ impl ViewportRenderer {
                 // per-cascade visibility buffers; only the index compaction
                 // moves to the CPU.
                 resources.ensure_cull_instance_pipelines(device);
-                if resources.cull.shadow_pipeline.is_some() {
+                if resources.cull.shadow.is_some() {
                     let instance_count = instancing.cached_instance_count as u32;
                     let batch_count = instancing.batches.len() as u32;
                     instancing
                         .shadow_cull
                         .ensure_outputs(device, instance_count, batch_count);
-                    // As above: also drop the cutout bind groups when the free epoch
-                    // moved, since they sample a caster's albedo view.
-                    let free_epoch_moved =
-                        instancing.shadow_cull.built_free_epoch != resources.resource_free_epoch;
-                    if instancing.shadow_cull.built_gen != instancing.instance_gen
-                        || free_epoch_moved
-                    {
+                    // As above: the cutout bind groups sample a caster's albedo view.
+                    let bgs_stale = shadow_cull_bind_groups_stale(resources, instancing);
+                    if instancing.shadow_cull.built_gen != instancing.instance_gen || bgs_stale {
                         instancing.shadow_cull.shadow_cull_instance_bgs = [None, None, None, None];
                         instancing.shadow_cull.shadow_cutout_cull_bgs.clear();
                         instancing.shadow_cull.built_gen = instancing.instance_gen;
                         instancing.shadow_cull.built_free_epoch = resources.resource_free_epoch;
-                        if free_epoch_moved && instancing.batches.iter().any(|b| b.is_cutout) {
+                        instancing.shadow_cull.built_view_epoch = resources.resource_view_epoch;
+                        if bgs_stale && instancing.batches.iter().any(|b| b.is_cutout) {
                             instancing.shadow_cull.bundle_key = None;
                         }
                     }
@@ -237,6 +288,10 @@ impl ViewportRenderer {
                             let start = indices.len() as u32;
                             let lo = batch.instance_offset as usize;
                             let hi = lo + batch.instance_count as usize;
+                            if !resources.batch_colour_ready(batch, colour_hdr, clipping_active) {
+                                batch_ranges.push((start, 0));
+                                continue;
+                            }
                             for (i, ia) in instancing.cached_aabbs[lo..hi].iter().enumerate() {
                                 if ia.cast_shadows == 0 {
                                     continue;
@@ -309,7 +364,7 @@ impl ViewportRenderer {
 
                 if instancing.use_instancing {
                     let use_shadow_indirect = instancing.gpu_culling_enabled
-                        && resources.cull.shadow_pipeline.is_some()
+                        && resources.cull.shadow.is_some()
                         && instancing.shadow_cull.shadow_vis_bufs[0].is_some();
 
                     // On backends with native multi-draw the per-cascade shadow
@@ -334,6 +389,7 @@ impl ViewportRenderer {
                             instancing.batches_gen,
                             instancing.shadow_cull.outputs_gen,
                             light.effective_cascade_count,
+                            casters_hash,
                         );
                         if !shadow_multi_draw
                             && instancing.shadow_cull.bundle_key != Some(bundle_key)
@@ -364,19 +420,13 @@ impl ViewportRenderer {
                                 }
                             }
 
+                            // A bundle records its pipelines, so one left out
+                            // while compiling keeps the bundle from being kept.
+                            let mut complete = true;
                             for cascade in 0..light.effective_cascade_count {
-                                let Some(pipeline) = resources.cull.shadow_pipeline.as_ref() else {
+                                if resources.cull.shadow.is_none() {
                                     continue;
-                                };
-                                let Some(pipeline_two_sided) =
-                                    resources.cull.shadow_two_sided_pipeline.as_ref()
-                                else {
-                                    continue;
-                                };
-                                let cutout_pipeline =
-                                    resources.cull.shadow_cutout_pipeline.as_ref();
-                                let cutout_pipeline_two_sided =
-                                    resources.cull.shadow_cutout_two_sided_pipeline.as_ref();
+                                }
                                 let Some(cascade_bg) =
                                     resources.instancing.shadow_cascade_bgs[cascade].as_ref()
                                 else {
@@ -423,12 +473,20 @@ impl ViewportRenderer {
                                 let mut draws = 0u32;
                                 let mut binds = 0u32;
                                 for (bi, batch) in instancing.batches.iter().enumerate() {
-                                    if batch.is_transparent {
+                                    if batch.is_transparent
+                                        || !resources.batch_colour_ready(
+                                            batch,
+                                            colour_hdr,
+                                            clipping_active,
+                                        )
+                                    {
                                         continue;
                                     }
                                     let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                         continue;
                                     };
+                                    // See the per-item pipeline key: closed meshes cast cull-front.
+                                    let two_sided = batch.two_sided && !mesh.closed;
                                     // Resolve the cutout bind group; fall back to the opaque
                                     // path if the cutout pipeline or bind group is missing.
                                     let cutout_bg = if batch.is_cutout {
@@ -445,19 +503,18 @@ impl ViewportRenderer {
                                     } else {
                                         None
                                     };
-                                    let use_cutout = cutout_bg.is_some()
-                                        && cutout_pipeline.is_some()
-                                        && cutout_pipeline_two_sided.is_some();
+                                    let use_cutout = cutout_bg.is_some();
 
-                                    if cur_pipe != Some((batch.two_sided, use_cutout)) {
-                                        let pipe = match (use_cutout, batch.two_sided) {
-                                            (true, true) => cutout_pipeline_two_sided.unwrap(),
-                                            (true, false) => cutout_pipeline.unwrap(),
-                                            (false, true) => pipeline_two_sided,
-                                            (false, false) => pipeline,
+                                    if cur_pipe != Some((two_sided, use_cutout)) {
+                                        let Some(pipe) =
+                                            resources.cull.shadow(two_sided, use_cutout)
+                                        else {
+                                            complete = false;
+                                            cur_pipe = None;
+                                            continue;
                                         };
                                         bundle_enc.set_pipeline(pipe);
-                                        cur_pipe = Some((batch.two_sided, use_cutout));
+                                        cur_pipe = Some((two_sided, use_cutout));
                                     }
                                     if use_cutout {
                                         bundle_enc.set_bind_group(1, cutout_bg.unwrap(), &[]);
@@ -491,7 +548,9 @@ impl ViewportRenderer {
                                 instancing.shadow_cull.bundle_draws += draws;
                                 instancing.shadow_cull.bundle_binds += binds;
                             }
-                            instancing.shadow_cull.bundle_key = Some(bundle_key);
+                            if complete {
+                                instancing.shadow_cull.bundle_key = Some(bundle_key);
+                            }
                         }
 
                         if shadow_multi_draw {
@@ -503,6 +562,8 @@ impl ViewportRenderer {
                                 instancing,
                                 light,
                                 tile_px,
+                                colour_hdr,
+                                clipping_active,
                             );
                             shadow_draws += counts.batch_draws;
                             shadow_draw_cmds += counts.draw_commands;
@@ -549,11 +610,9 @@ impl ViewportRenderer {
                             shadow_draw_cmds += instancing.shadow_cull.bundle_draws;
                             shadow_binds += instancing.shadow_cull.bundle_binds;
                         }
-                    } else if let (Some(ranges), Some(pipeline), Some(pipeline_two_sided)) = (
-                        cpu_cull_ranges.as_ref(),
-                        resources.cull.shadow_pipeline.as_ref(),
-                        resources.cull.shadow_two_sided_pipeline.as_ref(),
-                    ) {
+                    } else if let (Some(ranges), true) =
+                        (cpu_cull_ranges.as_ref(), resources.cull.shadow.is_some())
+                    {
                         // CPU-culled direct path: same pipelines and bind groups
                         // as the indirect path, but each batch draws the
                         // compacted sub-range computed on the CPU above.
@@ -601,10 +660,6 @@ impl ViewportRenderer {
                                     a,
                                 );
                             }
-                            let cutout_pipeline = resources.cull.shadow_cutout_pipeline.as_ref();
-                            let cutout_pipeline_two_sided =
-                                resources.cull.shadow_cutout_two_sided_pipeline.as_ref();
-
                             let Some(cascade_bg) =
                                 resources.instancing.shadow_cascade_bgs[cascade].as_ref()
                             else {
@@ -621,7 +676,13 @@ impl ViewportRenderer {
                             let mut cur_group1_opaque = false;
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for (bi, batch) in instancing.batches.iter().enumerate() {
-                                if batch.is_transparent {
+                                if batch.is_transparent
+                                    || !resources.batch_colour_ready(
+                                        batch,
+                                        colour_hdr,
+                                        clipping_active,
+                                    )
+                                {
                                     continue;
                                 }
                                 let Some(&(start, count)) = ranges[cascade].get(bi) else {
@@ -633,6 +694,8 @@ impl ViewportRenderer {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
+                                // See the per-item pipeline key: closed meshes cast cull-front.
+                                let two_sided = batch.two_sided && !mesh.closed;
                                 let cutout_bg = if batch.is_cutout {
                                     let key = (
                                         cascade,
@@ -644,19 +707,17 @@ impl ViewportRenderer {
                                 } else {
                                     None
                                 };
-                                let use_cutout = cutout_bg.is_some()
-                                    && cutout_pipeline.is_some()
-                                    && cutout_pipeline_two_sided.is_some();
+                                let use_cutout = cutout_bg.is_some();
 
-                                if cur_pipe != Some((batch.two_sided, use_cutout)) {
-                                    let pipe = match (use_cutout, batch.two_sided) {
-                                        (true, true) => cutout_pipeline_two_sided.unwrap(),
-                                        (true, false) => cutout_pipeline.unwrap(),
-                                        (false, true) => pipeline_two_sided,
-                                        (false, false) => pipeline,
+                                if cur_pipe != Some((two_sided, use_cutout)) {
+                                    // Still compiling: the batch casts next frame.
+                                    let Some(pipe) = resources.cull.shadow(two_sided, use_cutout)
+                                    else {
+                                        cur_pipe = None;
+                                        continue;
                                     };
                                     shadow_pass.set_pipeline(pipe);
-                                    cur_pipe = Some((batch.two_sided, use_cutout));
+                                    cur_pipe = Some((two_sided, use_cutout));
                                 }
                                 if use_cutout {
                                     shadow_pass.set_bind_group(1, cutout_bg.unwrap(), &[]);
@@ -689,14 +750,25 @@ impl ViewportRenderer {
                                 shadow_draw_cmds += 1;
                             }
                         }
-                    } else if let (Some(pipeline), Some(pipeline_two_sided), Some(instance_bg)) = (
-                        &resources.instancing.shadow_pipeline,
-                        &resources.instancing.shadow_two_sided_pipeline,
+                    } else if let (true, Some(instance_bg)) = (
+                        resources.instancing.shadow.is_some(),
                         instancing.batches.first().and_then(|b| {
+                            // Shadow depth draws only need the instance storage at
+                            // binding 0; any matching bind group works, but the key
+                            // must include the batch's uv1 chunk discriminator to
+                            // find one.
+                            let uv1_key = resources
+                                .mesh_store
+                                .get(b.mesh_id)
+                                .map(|m| resources.uv1_chunk_key(m.vertex_span.chunk))
+                                .unwrap_or(u32::MAX);
                             resources.instancing.bind_groups.get(&(
                                 b.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 b.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 b.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                b.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                b.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                uv1_key,
                             ))
                         }),
                     ) {
@@ -732,24 +804,26 @@ impl ViewportRenderer {
                             let cascade_bg = resources.instancing.shadow_cascade_bgs[cascade]
                                 .as_ref()
                                 .expect("shadow_instanced_cascade_bgs not allocated");
-                            let cutout_pipeline =
-                                resources.instancing.shadow_cutout_pipeline.as_ref();
-                            let cutout_pipeline_two_sided = resources
-                                .instancing
-                                .shadow_cutout_two_sided_pipeline
-                                .as_ref();
                             shadow_pass.set_bind_group(0, cascade_bg, &[]);
 
                             let mut cur_pipe: Option<(bool, bool)> = None;
                             let mut cur_group1_opaque = false;
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for batch in &instancing.batches {
-                                if batch.is_transparent {
+                                if batch.is_transparent
+                                    || !resources.batch_colour_ready(
+                                        batch,
+                                        colour_hdr,
+                                        clipping_active,
+                                    )
+                                {
                                     continue;
                                 }
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
+                                // See the per-item pipeline key: closed meshes cast cull-front.
+                                let two_sided = batch.two_sided && !mesh.closed;
                                 // Cutout batches sample the albedo alpha, so they need the
                                 // batch's own texture bind group (not the shared first-batch
                                 // one) at group 1.
@@ -758,23 +832,28 @@ impl ViewportRenderer {
                                         batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                         batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                         batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        batch
+                                            .metallic_roughness_id
+                                            .map(|t| t.raw())
+                                            .unwrap_or(u64::MAX),
+                                        batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                     ))
                                 } else {
                                     None
                                 };
-                                let use_cutout = cutout_bg.is_some()
-                                    && cutout_pipeline.is_some()
-                                    && cutout_pipeline_two_sided.is_some();
+                                let use_cutout = cutout_bg.is_some();
 
-                                if cur_pipe != Some((batch.two_sided, use_cutout)) {
-                                    let pipe = match (use_cutout, batch.two_sided) {
-                                        (true, true) => cutout_pipeline_two_sided.unwrap(),
-                                        (true, false) => cutout_pipeline.unwrap(),
-                                        (false, true) => pipeline_two_sided,
-                                        (false, false) => pipeline,
+                                if cur_pipe != Some((two_sided, use_cutout)) {
+                                    // Still compiling: the batch casts next frame.
+                                    let Some(pipe) =
+                                        resources.instancing.shadow(two_sided, use_cutout)
+                                    else {
+                                        cur_pipe = None;
+                                        continue;
                                     };
                                     shadow_pass.set_pipeline(pipe);
-                                    cur_pipe = Some((batch.two_sided, use_cutout));
+                                    cur_pipe = Some((two_sided, use_cutout));
                                 }
                                 if use_cutout {
                                     shadow_pass.set_bind_group(1, cutout_bg.unwrap(), &[]);
@@ -824,7 +903,6 @@ impl ViewportRenderer {
                     // (group 0 = `shadow_bind_group` with cascade dynamic
                     // offset, group 1 = mesh.object_bind_group, group 2 =
                     // per-mesh deform sidecar).
-                    let filter_results = compute_filter_results;
                     for cascade in 0..light.effective_cascade_count {
                         let tile_col = (cascade % 2) as f32;
                         let tile_row = (cascade / 2) as f32;
@@ -851,11 +929,13 @@ impl ViewportRenderer {
                         let cascade_frustum = crate::camera::frustum::Frustum::from_view_proj(
                             &light.cascade_view_projs[cascade],
                         );
+                        let mut bound = BoundCaster::default();
 
-                        for item in scene_items.iter() {
+                        for (item_idx, item) in scene_items.iter().enumerate() {
                             if item.settings.hidden
                                 || !item.settings.cast_shadows
                                 || item.settings.opacity < 1.0
+                                || !resources.item_colour_ready(item, colour_hdr, clipping_active)
                             {
                                 continue;
                             }
@@ -863,24 +943,14 @@ impl ViewportRenderer {
                                 continue;
                             };
 
-                            // Mirror the inclusion filter from
-                            // `sorted_items` (instancing builder). When
-                            // every condition holds, the item was drawn by
-                            // the instanced shadow path and must not be
-                            // drawn again here. Two-sided (`Identical`) meshes
-                            // are now in the instanced batches, so they are
-                            // excluded here via `backface_needs_per_object`.
-                            let in_instanced_batch = item.active_attribute.is_none()
-                                && !backface_needs_per_object(item)
-                                && item.material.matcap_id().is_none()
-                                && item.material.param_vis.is_none()
-                                && !filter_results.iter().any(|r| r.mesh_id == item.mesh_id)
-                                && !resources.deform.has_per_instance_deform_data(
-                                    item.mesh_id,
-                                    item.deform_instance,
-                                )
-                                && mesh.position_override_buffer.is_none()
-                                && mesh.normal_override_buffer.is_none();
+                            // Mirror the instanced-batch inclusion filter
+                            // (`is_instanceable`). When the item is in a batch it
+                            // was already drawn by the instanced shadow path above
+                            // and must not be drawn again here. All back-face
+                            // policies and param-vis now instance, so they are not
+                            // excluded; matcap, emissive texture, submesh, plugin,
+                            // warp, deform, and overrides still fall here.
+                            let in_instanced_batch = instanceable[item_idx];
                             if in_instanced_batch {
                                 continue;
                             }
@@ -892,40 +962,69 @@ impl ViewportRenderer {
                                 continue;
                             }
 
-                            // Two-sided materials cast through the cull-none
-                            // pipeline so both faces rasterise; its larger
-                            // caster-side bias keeps the surface from
-                            // self-shadowing where it is its own receiver. A
-                            // masked material casts through the cutout
+                            // Two-sided materials on open surfaces cast
+                            // through the cull-none pipeline so both faces
+                            // rasterise; its larger caster-side bias keeps the
+                            // surface from self-shadowing where it is its own
+                            // receiver. A closed mesh keeps the cull-front
+                            // pipeline whatever its policy: its back faces are
+                            // the casters, so it never compares against itself
+                            // and the cull-none slope bias cannot leak through
+                            // it. A masked material casts through the cutout
                             // pipeline, punching holes instead of a solid
                             // silhouette.
                             let key = PipelineKey {
-                                two_sided: item.material.is_two_sided(),
+                                two_sided: item.material.is_two_sided() && !mesh.closed,
+                                // A caster a deformer can cut needs the
+                                // cutout pipeline's fragment stage to discard in.
                                 cutout: matches!(
                                     item.material.alpha_mode,
                                     crate::scene::material::AlphaMode::Mask(_)
-                                ),
+                                ) || resources
+                                    .deform
+                                    .may_discard(item.mesh_id, item.deform_instance),
                                 ..PipelineKey::default()
                             };
-                            shadow_pass.set_pipeline(resources.shadow.pipeline.get(key));
-                            shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                            bind_deform_group!(
-                                shadow_pass,
-                                resources,
-                                resources
-                                    .deform
-                                    .instance_bind_group_for(item.mesh_id, item.deform_instance,)
+                            // Still compiling: the caster waits a frame.
+                            let Some(pl) = resources.shadow.cascade(key) else {
+                                continue;
+                            };
+                            if bound.pipeline != Some(key) {
+                                shadow_pass.set_pipeline(pl);
+                                bound.pipeline = Some(key);
+                            }
+                            let group1 = &mesh.object_bind_group;
+                            if bound.group1 != Some(group1 as *const _) {
+                                shadow_pass.set_bind_group(1, group1, &[]);
+                                bound.group1 = Some(group1 as *const _);
+                            }
+                            let group2 = resources
+                                .deform
+                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
+                            if bound.group2 != Some(group2 as *const _) {
+                                bind_deform_group!(shadow_pass, resources, group2);
+                                bound.group2 = Some(group2 as *const _);
+                            }
+                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                            if bound.chunks != Some(chunks) {
+                                shadow_pass.set_vertex_buffer(
+                                    0,
+                                    resources.geometry.vertex_chunk_slice(chunks.0),
+                                );
+                                shadow_pass.set_index_buffer(
+                                    resources.geometry.index_chunk_slice(chunks.1),
+                                    crate::gpu::IndexFormat::Uint32,
+                                );
+                                shadow_binds += 2;
+                                bound.chunks = Some(chunks);
+                            }
+                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                            let first_index = resources.geometry.first_index(mesh.index_span);
+                            shadow_pass.draw_indexed(
+                                first_index..first_index + mesh.index_count,
+                                base_vertex,
+                                0..1,
                             );
-                            shadow_pass.set_vertex_buffer(
-                                0,
-                                resources.geometry.vertex_slice(mesh.vertex_span),
-                            );
-                            shadow_pass.set_index_buffer(
-                                resources.geometry.index_slice(mesh.index_span),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
-                            shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                            shadow_binds += 2;
                             shadow_draws += 1;
                             shadow_draw_cmds += 1;
                         }
@@ -958,6 +1057,7 @@ impl ViewportRenderer {
                         let cascade_frustum = crate::camera::frustum::Frustum::from_view_proj(
                             &light.cascade_view_projs[cascade],
                         );
+                        let mut bound = BoundCaster::default();
 
                         for item in scene_items.iter() {
                             if item.settings.hidden {
@@ -966,7 +1066,9 @@ impl ViewportRenderer {
                             if !item.settings.cast_shadows {
                                 continue;
                             }
-                            if item.settings.opacity < 1.0 {
+                            if item.settings.opacity < 1.0
+                                || !resources.item_colour_ready(item, colour_hdr, clipping_active)
+                            {
                                 continue;
                             }
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
@@ -983,145 +1085,59 @@ impl ViewportRenderer {
                             // Two-sided and cutout selection as the instanced
                             // path above.
                             let key = PipelineKey {
-                                two_sided: item.material.is_two_sided(),
+                                two_sided: item.material.is_two_sided() && !mesh.closed,
+                                // A caster a deformer can cut needs the
+                                // cutout pipeline's fragment stage to discard in.
                                 cutout: matches!(
                                     item.material.alpha_mode,
                                     crate::scene::material::AlphaMode::Mask(_)
-                                ),
+                                ) || resources
+                                    .deform
+                                    .may_discard(item.mesh_id, item.deform_instance),
                                 ..PipelineKey::default()
                             };
-                            shadow_pass.set_pipeline(resources.shadow.pipeline.get(key));
-                            shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                            bind_deform_group!(
-                                shadow_pass,
-                                resources,
-                                resources
-                                    .deform
-                                    .instance_bind_group_for(item.mesh_id, item.deform_instance,)
-                            );
-                            shadow_pass.set_vertex_buffer(
-                                0,
-                                resources.geometry.vertex_slice(mesh.vertex_span),
-                            );
-                            shadow_pass.set_index_buffer(
-                                resources.geometry.index_slice(mesh.index_span),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
-                            shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                            shadow_binds += 2;
-                            shadow_draws += 1;
-                            shadow_draw_cmds += 1;
-                        }
-                    }
-                }
-
-                // Ribbon shadow casters. Ribbon geometry is regenerated fresh
-                // each frame into `ribbon_gpu_data` (no per-object storage
-                // array like the mesh family), so this is its own small draw
-                // path: group 0 is the same shadow camera bind group as the
-                // mesh loop above; group 1 reuses each ribbon's own
-                // solid-draw `uniform_bind_group` (only the leading `model`
-                // field is read by `ribbon_shadow.wgsl`). One pipeline covers
-                // every ribbon -- there is no two-sided/cutout axis to key
-                // on, ribbons are always thin two-sided quad strips. No
-                // per-item cascade-frustum cull: `StreamtubeGpuData` carries
-                // no world AABB today (unlike mesh items), so every visible
-                // ribbon casts into every cascade its distance would put it
-                // in; add a bounding-sphere test here if ribbon shadow cost
-                // becomes measurable in a scene with many off-screen ribbons.
-                if !ribbon_gpu_data.is_empty() {
-                    if let Some(ribbon_shadow_pipeline) = resources.ribbon.shadow_pipeline.as_ref()
-                    {
-                        for cascade in 0..light.effective_cascade_count {
-                            let tile_col = (cascade % 2) as f32;
-                            let tile_row = (cascade / 2) as f32;
-                            shadow_pass.set_viewport(
-                                tile_col * tile_px,
-                                tile_row * tile_px,
-                                tile_px,
-                                tile_px,
-                                0.0,
-                                1.0,
-                            );
-                            shadow_pass.set_scissor_rect(
-                                (tile_col * tile_px) as u32,
-                                (tile_row * tile_px) as u32,
-                                light.tile_size,
-                                light.tile_size,
-                            );
-                            shadow_pass.set_bind_group(
-                                0,
-                                &resources.shadow.bind_group,
-                                &[cascade as u32 * 256],
-                            );
-                            shadow_pass.set_pipeline(ribbon_shadow_pipeline);
-                            for data in ribbon_gpu_data.iter() {
-                                if !data.cast_shadows || data.index_count == 0 {
-                                    continue;
-                                }
-                                shadow_pass.set_bind_group(1, &data.uniform_bind_group, &[]);
-                                shadow_pass.set_vertex_buffer(0, data.vertex_buffer.slice(..));
+                            // Still compiling: the caster waits a frame.
+                            let Some(pl) = resources.shadow.cascade(key) else {
+                                continue;
+                            };
+                            if bound.pipeline != Some(key) {
+                                shadow_pass.set_pipeline(pl);
+                                bound.pipeline = Some(key);
+                            }
+                            let group1 = &mesh.object_bind_group;
+                            if bound.group1 != Some(group1 as *const _) {
+                                shadow_pass.set_bind_group(1, group1, &[]);
+                                bound.group1 = Some(group1 as *const _);
+                            }
+                            let group2 = resources
+                                .deform
+                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
+                            if bound.group2 != Some(group2 as *const _) {
+                                bind_deform_group!(shadow_pass, resources, group2);
+                                bound.group2 = Some(group2 as *const _);
+                            }
+                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                            if bound.chunks != Some(chunks) {
+                                shadow_pass.set_vertex_buffer(
+                                    0,
+                                    resources.geometry.vertex_chunk_slice(chunks.0),
+                                );
                                 shadow_pass.set_index_buffer(
-                                    data.index_buffer.slice(..),
+                                    resources.geometry.index_chunk_slice(chunks.1),
                                     crate::gpu::IndexFormat::Uint32,
                                 );
-                                shadow_pass.draw_indexed(0..data.index_count, 0, 0..1);
                                 shadow_binds += 2;
-                                shadow_draws += 1;
-                                shadow_draw_cmds += 1;
+                                bound.chunks = Some(chunks);
                             }
-                        }
-                    }
-                }
-
-                // GPU marching cubes shadow casters. MC vertices are already
-                // world-space (no per-item model matrix anywhere in the MC
-                // path), so there is no group 1 at all -- just the shadow
-                // camera bind group at group 0, then one non-indexed
-                // `draw_indirect` per slab, mirroring the solid draw's own
-                // per-slab loop. Always casts from the solid `vertex_buf`/
-                // `indirect_buf` slab data regardless of `wireframe`: shadows
-                // reflect the actual surface, not its display mode. No
-                // per-item cascade cull, matching the ribbon loop above (MC
-                // frame data carries no world AABB either).
-                if !mc_gpu_data.is_empty() {
-                    if let Some(mc_shadow_pipeline) = resources.mc.shadow_pipeline.as_ref() {
-                        for cascade in 0..light.effective_cascade_count {
-                            let tile_col = (cascade % 2) as f32;
-                            let tile_row = (cascade / 2) as f32;
-                            shadow_pass.set_viewport(
-                                tile_col * tile_px,
-                                tile_row * tile_px,
-                                tile_px,
-                                tile_px,
-                                0.0,
-                                1.0,
+                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                            let first_index = resources.geometry.first_index(mesh.index_span);
+                            shadow_pass.draw_indexed(
+                                first_index..first_index + mesh.index_count,
+                                base_vertex,
+                                0..1,
                             );
-                            shadow_pass.set_scissor_rect(
-                                (tile_col * tile_px) as u32,
-                                (tile_row * tile_px) as u32,
-                                light.tile_size,
-                                light.tile_size,
-                            );
-                            shadow_pass.set_bind_group(
-                                0,
-                                &resources.shadow.bind_group,
-                                &[cascade as u32 * 256],
-                            );
-                            shadow_pass.set_pipeline(mc_shadow_pipeline);
-                            for mc in mc_gpu_data.iter() {
-                                if !mc.cast_shadows {
-                                    continue;
-                                }
-                                let vol = &resources.mc.volumes[mc.volume_idx];
-                                for slab in &vol.slabs {
-                                    shadow_pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
-                                    shadow_pass.draw_indirect(&slab.indirect_buf, 0);
-                                    shadow_binds += 1;
-                                    shadow_draws += 1;
-                                    shadow_draw_cmds += 1;
-                                }
-                            }
+                            shadow_draws += 1;
+                            shadow_draw_cmds += 1;
                         }
                     }
                 }
@@ -1130,7 +1146,7 @@ impl ViewportRenderer {
                 // with viewport + scissor + cascade bind group set up by
                 // the lib. The plugin map is read through a raw pointer
                 // captured before the mutable resources borrow split off.
-                if !plugins.is_empty() && !frame.scene.plugin_items.is_empty() {
+                if !plugins.is_empty() {
                     for cascade in 0..light.effective_cascade_count {
                         let tile_col = (cascade % 2) as f32;
                         let tile_row = (cascade / 2) as f32;
@@ -1161,8 +1177,13 @@ impl ViewportRenderer {
                             frame_index: plugin_frame_index,
                         };
                         for (name, plugin) in plugins.iter() {
-                            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                                plugin.cast_shadow_pass(&mut shadow_pass, &ctx, items.as_ref());
+                            let items = crate::plugin_api::ItemCollections::new(
+                                crate::renderer::item_plugins::plugin_collections_slice(
+                                    frame, name,
+                                ),
+                            );
+                            if !items.is_empty() {
+                                plugin.cast_shadow_pass(&mut shadow_pass, &ctx, &items);
                             }
                         }
                     }
@@ -1185,10 +1206,16 @@ impl ViewportRenderer {
         // via `shadow_point_pipeline`. Per-face culling uses the standard
         // CPU frustum from the face's view-projection.
         // ----------------------------------------------------------------
+        // The slot hashes below record what was rendered, so while the
+        // pipeline is still on a worker the whole block waits rather than
+        // marking a cubemap up to date that was never drawn.
+        let point_pipeline = resources.shadow.point();
         if lighting.shadows.enabled
             && !scene_items.is_empty()
             && !light.point_shadow_faces.is_empty()
+            && point_pipeline.is_some()
         {
+            let point_pipeline = point_pipeline.expect("checked above");
             // Collect the caster list once: item filter, mesh lookup, and
             // world AABB are shared by every slot and face below instead of
             // being recomputed per (face, item).
@@ -1302,6 +1329,9 @@ impl ViewportRenderer {
                         0,
                         bytemuck::cast_slice(&c.item.model),
                     );
+                    // The per-object prepare's record of this buffer no
+                    // longer holds.
+                    *c.mesh.last_object_uniform.lock().unwrap() = None;
                 }
             }
 
@@ -1355,7 +1385,7 @@ impl ViewportRenderer {
                         timestamp_writes: ts_writes,
                         occlusion_query_set: None,
                     });
-                    pass.set_pipeline(&resources.shadow.point_pipeline);
+                    pass.set_pipeline(point_pipeline);
                     let dyn_offset = layer * POINT_FACE_STRIDE as u32;
                     pass.set_bind_group(0, &resources.shadow.point_face_bind_group, &[dyn_offset]);
 
@@ -1390,16 +1420,9 @@ impl ViewportRenderer {
         }
 
         if shadow_instrument && lighting.shadows.enabled {
-            // Force the just-submitted shadow work to finish so the measured time
-            // reflects shadow GPU execution rather than landing later at present.
-            // Other work submitted before this point in prepare is minor, so this
-            // is a good attribution of the shadow cost.
-            device
-                .poll(crate::gpu::PollType::Wait {
-                    submission_index: None,
-                    timeout: Some(std::time::Duration::from_millis(2000)),
-                })
-                .ok();
+            // CPU encode time only. The pass's GPU time is in the frame's GPU
+            // timestamps; waiting on the device here to measure it would stall
+            // every frame for anyone with a permissive subscriber.
             tracing::debug!(
                 target: "viewport_lib::shadow",
                 ms = shadow_start.elapsed().as_secs_f32() * 1000.0,
@@ -1407,7 +1430,7 @@ impl ViewportRenderer {
                 atlas = resources.shadow.atlas_size,
                 draws = last_stats.shadow_draw_calls,
                 point_faces = light.point_shadow_faces.len(),
-                "shadow pass + gpu completion"
+                "shadow pass encoded"
             );
         }
     }
@@ -1431,15 +1454,12 @@ fn draw_shadow_cascades_multi_draw(
     instancing: &mut InstancingState,
     light: &LightingFrame,
     tile_px: f32,
+    colour_hdr: bool,
+    clipping_active: bool,
 ) -> ShadowDrawCounts {
-    let Some(pipeline) = resources.cull.shadow_pipeline.as_ref() else {
+    if resources.cull.shadow.is_none() {
         return ShadowDrawCounts::default();
-    };
-    let Some(pipeline_two_sided) = resources.cull.shadow_two_sided_pipeline.as_ref() else {
-        return ShadowDrawCounts::default();
-    };
-    let cutout_pipeline = resources.cull.shadow_cutout_pipeline.as_ref();
-    let cutout_pipeline_two_sided = resources.cull.shadow_cutout_two_sided_pipeline.as_ref();
+    }
     let multi_draw = instancing.multi_draw_active();
     let mut drawn = 0u32;
     let mut binds = 0u32;
@@ -1511,12 +1531,16 @@ fn draw_shadow_cascades_multi_draw(
         let mut run_len: u32 = 0;
 
         for (bi, batch) in instancing.batches.iter().enumerate() {
-            if batch.is_transparent {
+            if batch.is_transparent
+                || !resources.batch_colour_ready(batch, colour_hdr, clipping_active)
+            {
                 continue;
             }
             let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                 continue;
             };
+            // See the per-item pipeline key: closed meshes cast cull-front.
+            let two_sided = batch.two_sided && !mesh.closed;
             let cutout_bg = if batch.is_cutout {
                 let key = (
                     cascade,
@@ -1528,15 +1552,29 @@ fn draw_shadow_cascades_multi_draw(
             } else {
                 None
             };
-            let use_cutout = cutout_bg.is_some()
-                && cutout_pipeline.is_some()
-                && cutout_pipeline_two_sided.is_some();
+            let use_cutout = cutout_bg.is_some();
+            // Still compiling: the batch casts next frame. Checked before the
+            // run accounting so a skipped batch breaks the run like a gap.
+            let Some(pipe) = resources.cull.shadow(two_sided, use_cutout) else {
+                if run_len > 0 {
+                    draw_cmds += crate::renderer::render::emit_indirect_run(
+                        pass,
+                        shadow_indirect_buf,
+                        run_start,
+                        run_len,
+                        multi_draw,
+                    );
+                    run_len = 0;
+                }
+                cur_pipe = None;
+                continue;
+            };
             let group1: &crate::gpu::BindGroup = if use_cutout {
                 cutout_bg.unwrap()
             } else {
                 inst_cull_bg
             };
-            let pipe_key = (batch.two_sided, use_cutout);
+            let pipe_key = (two_sided, use_cutout);
             let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
             let g1_ptr = group1 as *const crate::gpu::BindGroup;
             let g = bi as u64;
@@ -1561,12 +1599,6 @@ fn draw_shadow_cascades_multi_draw(
                 );
             }
             if cur_pipe != Some(pipe_key) {
-                let pipe = match (use_cutout, batch.two_sided) {
-                    (true, true) => cutout_pipeline_two_sided.unwrap(),
-                    (true, false) => cutout_pipeline.unwrap(),
-                    (false, true) => pipeline_two_sided,
-                    (false, false) => pipeline,
-                };
                 pass.set_pipeline(pipe);
                 cur_pipe = Some(pipe_key);
             }
@@ -1603,6 +1635,18 @@ fn draw_shadow_cascades_multi_draw(
         binds,
         draw_commands: draw_cmds,
     }
+}
+
+/// What a per-item caster loop last bound, so a run of casters that share a
+/// pipeline, object bind group, deform group and slab chunk binds them once
+/// and draws each from the bound chunk with its own base vertex and first
+/// index.
+#[derive(Default)]
+struct BoundCaster {
+    pipeline: Option<PipelineKey>,
+    group1: Option<*const crate::gpu::BindGroup>,
+    group2: Option<*const crate::gpu::BindGroup>,
+    chunks: Option<(u32, u32)>,
 }
 
 /// Shadow instanced-draw tallies for one pass: `batch_draws` is the pre-collapse

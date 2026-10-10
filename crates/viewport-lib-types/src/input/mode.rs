@@ -40,7 +40,7 @@ pub enum NavigationMode {
     ///
     /// Mouse drag acts as mouselook (yaw + pitch with the eye held fixed).
     /// WASD / Q / E translate the camera position at the `OrbitCameraController` fly speed
-    /// units per frame. The `ViewportAll` binding preset must be active for
+    /// units per frame. The `Default` binding preset must be active for
     /// the movement keys to be resolved.
     ///
     /// This flies the camera itself; it is distinct from the body-attached

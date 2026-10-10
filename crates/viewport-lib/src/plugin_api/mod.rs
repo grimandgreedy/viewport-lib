@@ -24,6 +24,49 @@
 //!
 //! All accessors live on [`crate::resources::DeviceResources`].
 //!
+//! # Who owns what
+//!
+//! **A plugin owns its GPU data.** Buffers, textures, bind group layouts and
+//! pipelines belong to the plugin, created from the `&Device` its hooks are
+//! given and held in whatever structure suits the type. The library does not
+//! supply a storage abstraction, and a plugin does not need one: a `HashMap`
+//! keyed by the item's `PickId`, a `Vec` indexed by a version stamp, or a
+//! slot map from crates.io all work, and which one is right depends on how the
+//! type is submitted.
+//!
+//! What the library does supply is the part a plugin cannot build for itself:
+//!
+//! - **Off-thread work.** [`ItemFrameContext::jobs`](crate::plugin_api::ItemFrameContext#structfield.jobs) runs CPU work on a
+//!   background worker and delivers the result to a later `prepare`, on the
+//!   same runner the built-in uploads use. Reach for it rather than building
+//!   geometry on the frame thread.
+//! - **Content shared between item types.** Meshes, textures, 3D volumes and
+//!   colourmaps are read by more than one type, so the library owns them and
+//!   publishes readers (`texture_view`, `volume_view`, `colourmap_view`,
+//!   `fallback_texture_view`, [`MeshDraw`](crate::resources::MeshDraw)).
+//!   Upload through the renderer; do not copy them into the plugin.
+//! - **Visibility to an eviction budget.** Report what a plugin holds from
+//!   [`ItemTypePlugin::resident_bytes`](crate::plugin_api::ItemTypePlugin::resident_bytes), so a host sizing a working set can
+//!   see it. Content a plugin holds is invisible to the library otherwise.
+//! - **A route back from the host.**
+//!   [`ViewportRenderer::item_type_plugin_mut`](crate::renderer::ViewportRenderer::item_type_plugin_mut)
+//!   returns a registered plugin as its concrete type, so a host can upload
+//!   into, configure, or read back from content the plugin stores itself.
+//! - **Notice that a shared resource went away.** A bind group holding a
+//!   `TextureView` keeps that texture alive after the host frees it, and does
+//!   not see a replacement swapped in behind a live id. A plugin cannot work
+//!   either event out from the ids it holds, so
+//!   [`ResourceGate`](crate::resources::ResourceGate) answers it: poll it at
+//!   the top of `prepare` and rebind the entries its
+//!   [`Revalidate`](crate::resources::Revalidate) verdict names.
+//!
+//! Two submission shapes both work, and the choice is the plugin's. Carry the
+//! geometry on the item behind a version stamp and rebuild when the stamp
+//! changes, which needs no upload call at all; or take an upload call that
+//! returns a handle and have per-frame items name the handle, which avoids
+//! resubmitting geometry every frame. The built-in types use the second
+//! because their items are submitted every frame.
+//!
 //! # Compatibility policy
 //!
 //! Pre-1.0, this surface evolves more freely than a stable crate would, but
@@ -72,7 +115,7 @@
 //!   `#[non_exhaustive]`, so new borrows are appended as fields and existing
 //!   ones keep their names and types within a minor version. Construct it
 //!   through [`PluginInstallCtx::new`]; adding a field is a minor bump noted in
-//!   the CHANGELOG. [`ViewportPlugin::install`] returns a
+//!   the CHANGELOG. [`PluginInstaller::install`] returns a
 //!   [`crate::ViewportResult`], so a feature that needs a piece the context did
 //!   not carry fails with [`crate::ViewportError`] rather than panicking.
 //!
@@ -90,22 +133,38 @@
 //! plugin follows whichever version the build chose; a plugin that names its own
 //! `wgpu` dependency is coupled to one version and must match the library's.
 
+pub mod builders;
 pub mod cull;
 pub mod install;
 pub mod item_type;
+pub mod pick_helpers;
+pub mod post_effect;
 pub mod shared_wgsl;
 pub mod target_desc;
+pub mod uploads;
+pub mod writes;
 
+pub use crate::resources::PipelineBuilder;
+pub use crate::resources::pipeline_slot::LazyFamily as LazyPipelines;
+pub use crate::resources::pipeline_slot::LazyModule;
 pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
-pub use install::{PluginInstallCtx, ViewportPlugin, install_plugin};
+pub use install::{PluginInstallCtx, PluginInstaller, install_plugin};
 pub use item_type::{
-    DepthReadContext, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
-    PickPassContext, PickRay, PluginItemCollection, ShadowCastContext,
+    AsAnyItemTypePlugin, DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections,
+    ItemFrameContext, ItemTypeHost, ItemTypePlugin, LightContext, OutlineMaskContext, PaintContext,
+    PickContext, PickPassContext, PickRay, PluginItem, PluginItemCollection, RectPickContext,
+    SURFACE_MASK_LAYERS, ShadowCastContext, SurfaceMaskContext, surface_mask_bits,
+};
+pub use post_effect::{
+    PostEffectContext, PostEffectProducer, PostEffectProducerId, PostEffectResizeContext,
+    PostEffectSlot, PostEffectStage, PostEffectStageId, build_post_effect_pipeline,
 };
 pub use target_desc::{
     DepthReadTargetDesc, ForegroundTargetDesc, MaskTargetDesc, OIT_ACCUM_BLEND, OIT_REVEAL_BLEND,
     OitTargetDesc, OpaqueTargetDesc, PickTargetDesc, ShadowTargetDesc,
 };
+pub use uploads::{Handles, Uploads};
+pub use writes::{Channel, Extent, Sourced, Span, Writes};
 
 /// Group-0 bind layout shared by every scene pipeline.
 ///

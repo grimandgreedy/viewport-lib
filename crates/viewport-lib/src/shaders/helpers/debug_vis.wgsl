@@ -6,11 +6,10 @@
 //
 // The BEGIN_DEBUG_VIS / END_DEBUG_VIS markers bracket this block so
 // builders::strip_debug_vis can remove it from the shader modules the lit
-// pipelines normally compile: the debug_frag_buf storage write below is a
-// fragment-shader side effect, which forces the driver to run the shader for
-// every rasterized fragment (no early depth rejection), and that costs the
-// scene pass an order of magnitude in dense scenes. The pipelines are
-// rebuilt from the full source while debug vis is active.
+// pipelines normally compile. The block runs under a uniform branch, but it
+// declares a 24-element array, and a lit shader carrying that allocation pays
+// for it in registers on every draw whether the branch is taken or not. The
+// pipelines are rebuilt from the full source while debug vis is active.
 
 if lights_uniform.debug_vis_mode != 0u {
     let dbg_mode = (lights_uniform.debug_vis_mode >> 15u) & 0x3u;
@@ -97,15 +96,8 @@ if lights_uniform.debug_vis_mode != 0u {
         final_rgb = dbg_rgb;
     }
 
-    // Write to per-fragment storage buffer for pixel inspector readback.
-    // Uses the window-space position from @builtin(position).
-    let dbg_px = u32(in.clip_pos.x);
-    let dbg_py = u32(in.clip_pos.y);
-    let dbg_buf_stride = u32(clip_planes.viewport_width);
-    let dbg_buf_idx = dbg_py * dbg_buf_stride + dbg_px;
-    let dbg_buf_len = arrayLength(&debug_frag_buf);
-    if dbg_buf_idx < dbg_buf_len {
-        debug_frag_buf[dbg_buf_idx] = vec4<f32>(dbg_rgb, 1.0);
-    }
+    // No storage write here. The pixel inspector reads the HDR target instead,
+    // which is what the depth test left behind: a per-fragment buffer records
+    // whichever fragment shaded last, not the one you can see.
 }
 // END_DEBUG_VIS

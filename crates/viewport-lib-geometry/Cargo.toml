@@ -2,7 +2,7 @@
 name = "viewport-lib-geometry"
 version = "0.2.0"
 edition = "2024"
-description = "CPU geometry algorithms for viewport-lib: marching cubes isosurfacing and unstructured volume-mesh boundary extraction, built on viewport-lib-types."
+description = "CPU geometry algorithms for viewport-lib: mesh primitives, triangle-mesh operations, marching cubes and unstructured volume meshes, built on viewport-lib-types."
 readme = "README.md"
 license = "GPL-3.0-only"
 repository = "https://github.com/grimandgreedy/viewport-lib"
@@ -16,4 +16,9 @@ publish = true
 [dependencies]
 viewport-lib-types = { path = "../viewport-lib-types", version = "0.2.0" }
 glam = { workspace = true }
+
+# CPU parallelism, used through `par`. Not pulled in on wasm: that target has no
+# OS threads, so rayon would only panic on first use, and `par` runs serially
+# there instead.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rayon = "1"
