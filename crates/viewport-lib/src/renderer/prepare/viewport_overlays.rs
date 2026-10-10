@@ -917,7 +917,11 @@ impl ViewportRenderer {
                         .font_ascent(font_index, label.text_style.size);
 
                     let align_offset = label.anchoring.align.x.align_shift(layout.total_width);
-                    let align_offset_y = label.anchoring.align.y.align_shift(layout.height);
+                    let align_offset_y = label
+                        .anchoring
+                        .align
+                        .y
+                        .align_shift(layout.height, Some(ascent));
 
                     let text_x = anchor_px[0] + align_offset + label.transform.translate[0];
                     let text_y = anchor_px[1] + align_offset_y + label.transform.translate[1];
@@ -1116,7 +1120,7 @@ impl ViewportRenderer {
                         + run.anchoring.align.x.align_shift(ext_w);
                     let run_y = origin[1]
                         + run.transform.translate[1]
-                        + run.anchoring.align.y.align_shift(ext_h);
+                        + run.anchoring.align.y.align_shift(ext_h, Some(min_y));
 
                     let opacity = run.style.opacity.clamp(0.0, 1.0);
                     // Each glyph carries its multiplier through layout so the
@@ -1349,7 +1353,7 @@ impl ViewportRenderer {
                             let align = match (r.anchoring, bounds) {
                                 (Some(anchoring), Some((min, max))) => [
                                     anchoring.align.x.align_shift(max[0] - min[0]) - min[0],
-                                    anchoring.align.y.align_shift(max[1] - min[1]) - min[1],
+                                    anchoring.align.y.align_shift(max[1] - min[1], None) - min[1],
                                 ],
                                 _ => [0.0, 0.0],
                             };

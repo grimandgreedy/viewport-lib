@@ -133,7 +133,7 @@ impl<T: Copy + Default> Default for AnimTrack<T> {
 ///
 /// Resolution is CPU-side in `prepare()`; the host must request continuous
 /// repaints while any track is active.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct OverlayAnimations {
     /// Time all `start_time` values are measured from, on the same clock as
@@ -152,14 +152,6 @@ pub struct OverlayAnimations {
     pub scale: Option<AnimTrack<f32>>,
     /// Drives `tint`, the per-frame colour multiplier.
     pub tint: Option<AnimTrack<[f32; 4]>>,
-    /// Arbitrary path channel driving `transform.translate`. Overrides the
-    /// linear `translate` track when set.
-    #[deprecated(
-        since = "0.23.0",
-        note = "PathTrack holds a closure, so it cannot be serialised, baked into a retained                 group, or sent across a plugin boundary. Use `translate` with an easing, or                 sample the path yourself and set the field."
-    )]
-    #[allow(deprecated)]
-    pub translate_path: Option<PathTrack<[f32; 2]>>,
 }
 
 impl OverlayAnimations {
@@ -199,14 +191,6 @@ impl OverlayAnimations {
         self
     }
 
-    /// Set the arbitrary-path translate channel.
-    #[deprecated(since = "0.23.0", note = "see `OverlayAnimations::translate_path`")]
-    #[allow(deprecated)]
-    pub fn with_translate_path(mut self, track: PathTrack<[f32; 2]>) -> Self {
-        self.translate_path = Some(track);
-        self
-    }
-
     /// Resolve every track at `time` onto the per-frame state it drives.
     ///
     /// The one place the channel list is turned into field writes, so the
@@ -214,7 +198,6 @@ impl OverlayAnimations {
     /// tracks itself all agree. A track replaces the field rather than adding
     /// to it, so an item's authored `translate` is the value the track
     /// interpolates away from only if the track says so.
-    #[allow(deprecated)]
     pub fn apply(
         &self,
         time: f64,
@@ -238,21 +221,15 @@ impl OverlayAnimations {
         if let Some(track) = self.tint {
             *tint = track.sample(t);
         }
-        // A path track overrides the linear track on the same channel.
-        if let Some(track) = self.translate_path.as_ref() {
-            transform.translate = track.sample(t);
-        }
     }
 
     /// Whether any track is set, so a caller can skip the resolve.
-    #[allow(deprecated)]
     pub fn is_empty(&self) -> bool {
         self.opacity.is_none()
             && self.translate.is_none()
             && self.rotation.is_none()
             && self.scale.is_none()
             && self.tint.is_none()
-            && self.translate_path.is_none()
     }
 }
 
@@ -460,147 +437,6 @@ fn apply_easing(phase: f32, easing: OverlayEasing) -> f32 {
             }
         }
         OverlayEasing::CubicBezier { x1, y1, x2, y2 } => cubic_bezier_ease(phase, x1, y1, x2, y2),
-    }
-}
-
-/// Arbitrary-path animation track. `path` is a closure called with the eased
-/// parameter `t in [0, 1]` and returns the value for the channel.
-///
-/// Deprecated: it is the only overlay type that cannot be serialised, compiled
-/// into a retained group, or crossed over a plugin boundary, because it holds
-/// a closure. `OverlayEasing::CubicBezier` covers the curve cases it was
-/// mostly used for; a genuine motion path is a `translate` track the consumer
-/// re-points each frame.
-///
-/// Use for any motion that's more than a straight line: Bezier arcs,
-/// polylines, lissajous, custom shapes. The `bezier` and `polyline` helpers
-/// cover the common cases without the consumer writing the curve math.
-///
-/// The closure is stored in an `Arc`, so cloning the track is cheap (one
-/// atomic bump). The `Send + Sync + 'static` bound is satisfied by closures
-/// that capture only owned/by-value data.
-#[derive(Clone)]
-#[deprecated(
-    since = "0.23.0",
-    note = "a closure cannot be serialised, baked into a retained group, or sent across a \
-            plugin boundary, which makes this the one overlay type authored content cannot \
-            carry. Use an AnimTrack with an easing, or sample the path yourself."
-)]
-pub struct PathTrack<T: Copy + LerpAnim> {
-    /// Absolute time at which the track starts.
-    pub start_time: f64,
-    /// Length of one cycle in seconds.
-    pub duration: f32,
-    /// Curve applied to the normalised parameter before the closure runs.
-    pub easing: OverlayEasing,
-    /// What happens past the end of one cycle.
-    pub repeat: RepeatMode,
-    /// Evaluator for the path. Called with `t in [0, 1]` after easing and
-    /// repeat resolution. The closure is shared via `Arc` so the track is
-    /// cheap to clone.
-    pub path: std::sync::Arc<dyn Fn(f32) -> T + Send + Sync>,
-}
-
-#[allow(deprecated)]
-impl<T: Copy + LerpAnim> std::fmt::Debug for PathTrack<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PathTrack")
-            .field("start_time", &self.start_time)
-            .field("duration", &self.duration)
-            .field("easing", &self.easing)
-            .field("repeat", &self.repeat)
-            .field("path", &"<closure>")
-            .finish()
-    }
-}
-
-#[allow(deprecated)]
-impl<T: Copy + LerpAnim> PathTrack<T> {
-    /// Construct a track that evaluates the supplied closure at each frame.
-    /// Defaults to `Linear` easing and `Once` repeat; chain `with_easing`
-    /// or `with_repeat` to override.
-    pub fn new(
-        start_time: f64,
-        duration: f32,
-        path: impl Fn(f32) -> T + Send + Sync + 'static,
-    ) -> Self {
-        Self {
-            start_time,
-            duration,
-            easing: OverlayEasing::Linear,
-            repeat: RepeatMode::Once,
-            path: std::sync::Arc::new(path),
-        }
-    }
-
-    /// Builder-style easing setter.
-    pub fn with_easing(mut self, easing: OverlayEasing) -> Self {
-        self.easing = easing;
-        self
-    }
-
-    /// Builder-style repeat-mode setter.
-    pub fn with_repeat(mut self, repeat: RepeatMode) -> Self {
-        self.repeat = repeat;
-        self
-    }
-
-    /// Resolve the track at the given absolute time.
-    pub fn sample(&self, time: f64) -> T {
-        if self.duration <= 0.0 {
-            return (self.path)(1.0);
-        }
-        let raw = ((time - self.start_time) as f32) / self.duration;
-        let phase = resolve_phase(raw, self.repeat);
-        let t = apply_easing(phase, self.easing);
-        (self.path)(t)
-    }
-}
-
-#[allow(deprecated)]
-impl PathTrack<[f32; 2]> {
-    /// Construct a 2D track that walks a single cubic Bezier from `p0` to
-    /// `p3` with control handles `p1` and `p2`. Evaluates the standard
-    /// Bernstein form at the eased parameter.
-    pub fn bezier(start_time: f64, duration: f32, control_points: [[f32; 2]; 4]) -> Self {
-        let [p0, p1, p2, p3] = control_points;
-        Self::new(start_time, duration, move |t| {
-            let one_t = 1.0 - t;
-            let w0 = one_t * one_t * one_t;
-            let w1 = 3.0 * one_t * one_t * t;
-            let w2 = 3.0 * one_t * t * t;
-            let w3 = t * t * t;
-            [
-                w0 * p0[0] + w1 * p1[0] + w2 * p2[0] + w3 * p3[0],
-                w0 * p0[1] + w1 * p1[1] + w2 * p2[1] + w3 * p3[1],
-            ]
-        })
-    }
-
-    /// Construct a 2D track that walks a polyline at uniform per-segment
-    /// parameter. With `N` points the path spans `N - 1` equal-length
-    /// parameter segments; consumers wanting arc-length-uniform motion
-    /// should subdivide their polyline ahead of time.
-    pub fn polyline(start_time: f64, duration: f32, points: Vec<[f32; 2]>) -> Self {
-        Self::new(start_time, duration, move |t| {
-            let n = points.len();
-            if n == 0 {
-                return [0.0, 0.0];
-            }
-            if n == 1 {
-                return points[0];
-            }
-            let seg_count = n - 1;
-            let scaled = t.clamp(0.0, 1.0) * seg_count as f32;
-            let seg = (scaled as usize).min(seg_count - 1);
-            let local = scaled - seg as f32;
-            let a = points[seg];
-            let b = points[seg + 1];
-            [
-                a[0] * (1.0 - local) + b[0] * local,
-                a[1] * (1.0 - local) + b[1] * local,
-            ]
-        })
     }
 }
 

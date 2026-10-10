@@ -51,7 +51,7 @@ impl PositionedGlyph {
 /// glyph.
 ///
 /// [`LabelItem`]: crate::overlay::LabelItem
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct GlyphRunItem {
     /// Which font the glyph ids index into, and the size the bitmaps are
@@ -364,7 +364,7 @@ impl GlyphRunItem {
                 + min[0],
             origin[1]
                 + self.transform.translate[1]
-                + self.anchoring.align.y.align_shift(size[1])
+                + self.anchoring.align.y.align_shift(size[1], Some(min[1]))
                 + min[1],
         ])
     }

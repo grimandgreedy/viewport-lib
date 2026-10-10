@@ -8,6 +8,7 @@
 pub use viewport_lib_types::overlay::anchor::*;
 pub use viewport_lib_types::overlay::animation::*;
 pub use viewport_lib_types::overlay::clip::*;
+pub use viewport_lib_types::overlay::content_hash::*;
 pub use viewport_lib_types::overlay::fill::*;
 pub use viewport_lib_types::overlay::frame::*;
 pub use viewport_lib_types::overlay::geometry::*;

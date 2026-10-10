@@ -308,9 +308,6 @@ pub use renderer::stats::{
     FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset, RuntimeMode,
 };
 pub use renderer::tuning::{RenderDiagnostics, RenderTuning};
-pub use resources::PipelineCompilation;
-// PathTrack is deprecated but still re-exported for compatibility.
-#[allow(deprecated)]
 pub use renderer::{
     Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
     BloomSettings, CameraFrame, Candela, CellSelectionInfo, ClipObject, ClipShape,
@@ -321,10 +318,10 @@ pub use renderer::{
     InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
     LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux, MeshInstanceItem, NineSlice,
     OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring,
-    OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId,
-    OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke,
-    OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform, OwnedPath, PassPath,
-    PassView, PathSegment, PathTrack, PickBackend, PickHit, PickId, PickMask, PickPoll,
+    OverlayAnimations, OverlayClip, OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame,
+    OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
+    OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform,
+    OwnedPath, PassPath, PassView, PathSegment, PickBackend, PickHit, PickId, PickMask, PickPoll,
     PickRectResult, PipelineMode, PolylineCap, PolylineItem, PolylineRefItem,
     PolylineSelectionInfo, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
     RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem,
@@ -335,6 +332,7 @@ pub use renderer::{
     aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
+pub use resources::PipelineCompilation;
 
 pub use runners::{ExtraId, OffscreenViewportTarget, ViewportInstance};
 
@@ -367,7 +365,7 @@ pub use resources::{
     ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc, DeviceResources,
     EnvironmentMapId, EnvironmentZone, FontError, FontHandle, FrameBudget, JobId, MatcapId,
     MeshData, ProgressHandle, ResidentBytes, SubmeshRange, TextMetrics, TextureId,
-    TextureMemoryStats, UploadStatus, VolumeId, VramBudget, lerp_attributes,
+    TextureMemoryStats, UnknownColourmap, UploadStatus, VolumeId, VramBudget, lerp_attributes,
     supports_texture_format, vram_budget,
 };
 pub use resources::{

@@ -400,6 +400,7 @@ fn build_labels(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let backed_tl = backed
         .resolve_top_left(
             [backed_size.width, backed_size.height],
+            backed_size.ascent,
             [0.0, 0.0],
             &glam::Mat4::IDENTITY,
             &glam::Mat4::IDENTITY,

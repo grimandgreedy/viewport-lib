@@ -276,9 +276,8 @@ pub(crate) fn build_nine_slice_texture() -> (u32, u32, Vec<u8>) {
 /// Evaluate the row-5 demo's closed-Bezier "infinity" path at parameter
 /// `t in [0, 1]`, centred on `(cx, cy)`. Four cubic Bezier segments stitched
 /// into a stylised figure-eight: the curve sweeps out, crosses through the
-/// centre, sweeps to the other side, and comes back. Used by both the
-/// `PathTrack` closure driving the moving dot and by the polyline trace
-/// overlay so the two stay in sync.
+/// centre, sweeps to the other side, and comes back. Sampled each frame for
+/// the moving dot and once for the polyline trace, so the two stay in sync.
 fn infinity_bezier_point(t: f32, cx: f32, cy: f32) -> [f32; 2] {
     // Four cubic segments. The curve passes through (cx, cy) at the start
     // of segments 2 and 4, producing the crossing of the figure-eight.

@@ -9,7 +9,12 @@
 //! export, or thumbnail matches exactly what the renderer draws.
 
 /// Built-in colourmap presets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Each has a lowercase name ([`name`](Self::name)) that [`FromStr`] parses
+/// back, so a preset can be named in a file, a config or a UI.
+///
+/// [`FromStr`]: std::str::FromStr
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinColourmap {
     /// Viridis : perceptually uniform, colourblind-friendly (purple -> teal -> yellow).
     Viridis = 0,
@@ -29,7 +34,8 @@ pub enum BuiltinColourmap {
     Turbo = 7,
     /// Jet : classic blue-cyan-green-yellow-red. Widely used in engineering.
     Jet = 8,
-    /// RdBu : diverging blue->white->red (blue at t=0, red at t=1).
+    /// RdBu : diverging blue->white->red (blue at t=0, red at t=1). This is
+    /// matplotlib's `RdBu_r`, and its name is `"rdbu_r"`.
     RdBu = 9,
 }
 
@@ -1710,6 +1716,41 @@ fn attr_f32(tag: &str, name: &str) -> Option<f32> {
 pub struct ColourmapId(pub usize);
 
 impl BuiltinColourmap {
+    /// Every preset, in declaration order.
+    pub const ALL: &[BuiltinColourmap] = &[
+        BuiltinColourmap::Viridis,
+        BuiltinColourmap::Plasma,
+        BuiltinColourmap::Greyscale,
+        BuiltinColourmap::Coolwarm,
+        BuiltinColourmap::Rainbow,
+        BuiltinColourmap::Magma,
+        BuiltinColourmap::Inferno,
+        BuiltinColourmap::Turbo,
+        BuiltinColourmap::Jet,
+        BuiltinColourmap::RdBu,
+    ];
+
+    /// The preset's lowercase name, as [`FromStr`] parses it. Names follow
+    /// matplotlib where it has the same map, which is why `RdBu` is
+    /// `"rdbu_r"`: its blue end is at `t = 0`.
+    ///
+    /// [`FromStr`]: std::str::FromStr
+    pub fn name(self) -> &'static str {
+        use crate::colourmap::BuiltinColourmap::*;
+        match self {
+            Viridis => "viridis",
+            Plasma => "plasma",
+            Greyscale => "greyscale",
+            Coolwarm => "coolwarm",
+            Rainbow => "rainbow",
+            Magma => "magma",
+            Inferno => "inferno",
+            Turbo => "turbo",
+            Jet => "jet",
+            RdBu => "rdbu_r",
+        }
+    }
+
     /// Return this preset's 256-sample CPU LUT as linear RGBA8.
     ///
     /// This is the same table the GPU texture is baked from, so a CPU-side
@@ -1759,9 +1800,64 @@ impl BuiltinColourmap {
     }
 }
 
+/// A colourmap name that matches no [`BuiltinColourmap`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("unknown colourmap name: {0:?}")]
+pub struct UnknownColourmap(pub String);
+
+impl std::str::FromStr for BuiltinColourmap {
+    type Err = UnknownColourmap;
+
+    /// Parse a preset by its [`name`](BuiltinColourmap::name), ignoring case.
+    /// `Greyscale` also answers to `grey`, `gray` and `grayscale`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let lower = s.to_ascii_lowercase();
+        if matches!(lower.as_str(), "grey" | "gray" | "grayscale") {
+            return Ok(BuiltinColourmap::Greyscale);
+        }
+        BuiltinColourmap::ALL
+            .iter()
+            .copied()
+            .find(|c| c.name() == lower)
+            .ok_or_else(|| UnknownColourmap(s.to_string()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::colourmap::BuiltinColourmap;
+
+    #[test]
+    fn all_lists_every_preset_in_order() {
+        assert_eq!(
+            BuiltinColourmap::ALL.len(),
+            BuiltinColourmap::RdBu as usize + 1
+        );
+        for (i, c) in BuiltinColourmap::ALL.iter().enumerate() {
+            assert_eq!(*c as usize, i);
+        }
+    }
+
+    #[test]
+    fn names_round_trip() {
+        for &c in BuiltinColourmap::ALL {
+            assert_eq!(c.name().parse::<BuiltinColourmap>(), Ok(c));
+            assert_eq!(c.name().to_uppercase().parse::<BuiltinColourmap>(), Ok(c));
+        }
+    }
+
+    #[test]
+    fn grey_spellings_and_unknown_names() {
+        for s in ["grey", "Gray", "GRAYSCALE"] {
+            assert_eq!(
+                s.parse::<BuiltinColourmap>(),
+                Ok(BuiltinColourmap::Greyscale)
+            );
+        }
+        // matplotlib's RdBu runs the other way, so it is not this preset.
+        assert!("rdbu".parse::<BuiltinColourmap>().is_err());
+        assert!("greys".parse::<BuiltinColourmap>().is_err());
+    }
 
     #[test]
     fn sample_matches_lut_endpoints() {

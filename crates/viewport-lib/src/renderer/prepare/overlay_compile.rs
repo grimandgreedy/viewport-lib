@@ -204,7 +204,7 @@ fn emit_glyph_run(
     };
     let item_start = verts.len();
     let run_x = run.transform.translate[0] + run.anchoring.align.x.align_shift(ext_w);
-    let run_y = run.transform.translate[1] + run.anchoring.align.y.align_shift(ext_h);
+    let run_y = run.transform.translate[1] + run.anchoring.align.y.align_shift(ext_h, Some(min_y));
     let opacity = run.style.opacity.clamp(0.0, 1.0);
     let rot_start = verts.len();
     let rot = overlay_geometry::OverlayRotation::new(
@@ -367,7 +367,11 @@ fn emit_label(
     // Alignment places the laid-out box on the origin, which is [0, 0] here;
     // position nudges last.
     let align_offset = label.anchoring.align.x.align_shift(layout.total_width);
-    let align_offset_y = label.anchoring.align.y.align_shift(layout.height);
+    let align_offset_y = label
+        .anchoring
+        .align
+        .y
+        .align_shift(layout.height, Some(ascent));
     let text_x = align_offset + label.transform.translate[0];
     let text_y = align_offset_y + label.transform.translate[1];
 

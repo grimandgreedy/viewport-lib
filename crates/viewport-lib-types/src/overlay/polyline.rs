@@ -150,7 +150,7 @@ impl OverlayStroke {
 ///
 /// Use `OverlayPolylineItem::from_path` to construct from a closure that
 /// samples a curve at N points (Bezier traces, lissajous, custom paths).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct OverlayPolylineItem {
     /// Waypoints in logical pixels, relative to the resolved `anchor` origin.
@@ -291,7 +291,7 @@ impl OverlayPolylineItem {
                 + self.anchoring.align.x.align_shift(max_x - min_x),
             origin[1]
                 + self.transform.translate[1]
-                + self.anchoring.align.y.align_shift(max_y - min_y),
+                + self.anchoring.align.y.align_shift(max_y - min_y, None),
         ])
     }
 
