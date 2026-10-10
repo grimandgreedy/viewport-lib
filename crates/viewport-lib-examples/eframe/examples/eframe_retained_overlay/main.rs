@@ -28,6 +28,7 @@
 
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::from_egui;
 use vpl::{
@@ -56,7 +57,7 @@ fn panel_background() -> Vec<OverlayShapeItem> {
             [PANEL_X, PANEL_TOP],
             [PANEL_W, PANEL_H],
         )
-        .with_fill(OverlayFill::Solid([0.11, 0.12, 0.16, 0.96].into())),
+        .with_fill(OverlayFill::Solid(Colour::linear(0.11, 0.12, 0.16, 0.96))),
     ]
 }
 
@@ -72,7 +73,7 @@ fn panel_content() -> Vec<OverlayPolylineItem> {
             [PANEL_X + 20.0, y + ROW_STEP - 8.0],
             [PANEL_X + PANEL_W - 20.0, y + ROW_STEP - 8.0],
         ];
-        sep.stroke = Some(OverlayStroke::new(1.5, [0.4, 0.45, 0.6, 0.7]));
+        sep.stroke = Some(OverlayStroke::new(1.5, Colour::linear(0.4, 0.45, 0.6, 0.7)));
         lines.push(sep);
         // A small filled swatch, hue cycling down the list.
         let t = i as f32 / ROW_COUNT as f32;
@@ -84,8 +85,12 @@ fn panel_content() -> Vec<OverlayPolylineItem> {
             [PANEL_X + 20.0, y + 24.0],
         ];
         swatch.closed = true;
-        swatch.style.fill =
-            OverlayFill::Solid([0.9 - t * 0.6, 0.4 + t * 0.4, 0.3 + t * 0.5, 1.0].into());
+        swatch.style.fill = OverlayFill::Solid(Colour::linear(
+            0.9 - t * 0.6,
+            0.4 + t * 0.4,
+            0.3 + t * 0.5,
+            1.0,
+        ));
         lines.push(swatch);
     }
     lines
@@ -108,7 +113,7 @@ fn panel_content_shapes() -> Vec<OverlayShapeItem> {
                 [PANEL_X + 12.0, y],
                 [PANEL_W - 24.0, ROW_STEP - 6.0],
             )
-            .with_fill(OverlayFill::Solid([0.18, 0.2, 0.28, 0.55].into())),
+            .with_fill(OverlayFill::Solid(Colour::linear(0.18, 0.2, 0.28, 0.55))),
         );
     }
     shapes
@@ -135,7 +140,7 @@ fn main() -> eframe::Result {
             session.scene_mut().add(
                 Some(cube),
                 glam::Mat4::IDENTITY,
-                Material::from_colour([0.2, 0.4, 0.7]),
+                Material::from_colour(Colour::linear_rgb(0.2, 0.4, 0.7)),
             );
             session.camera_mut().distance = 6.0;
 
@@ -251,7 +256,7 @@ impl App {
                         .with_screen_anchor([PANEL_X, PANEL_TOP - 8.0])
                         .with_align_y(AnchorY::Bottom)
                         .with_font_size(16.0)
-                        .with_colour([0.95, 0.97, 1.0, 1.0]);
+                        .with_colour(Colour::linear(0.95, 0.97, 1.0, 1.0));
                     // The title's own panel is a shape in the same compiled
                     // group: measure the text, pad it, and place it behind the
                     // label. Shapes draw under text at the same `z_order`.
@@ -274,7 +279,7 @@ impl App {
                                 title_size.height + title_pad * 2.0,
                             ],
                         )
-                        .with_fill(OverlayFill::Solid([0.2, 0.24, 0.34, 1.0].into())),
+                        .with_fill(OverlayFill::Solid(Colour::linear(0.2, 0.24, 0.34, 1.0))),
                     );
                     let bg = self.session.renderer_mut().compile_overlay_geometry(
                         &rs.device,
@@ -299,7 +304,11 @@ impl App {
                     // their contour are never re-laid-out.
                     let tag = LabelItem::new("cube")
                         .with_world_anchor([0.0, 0.0, 0.7])
-                        .with_outline([0.0, 0.0, 0.0, 0.85], 2.0, vpl::OutlineMode::Outer)
+                        .with_outline(
+                            Colour::linear(0.0, 0.0, 0.0, 0.85),
+                            2.0,
+                            vpl::OutlineMode::Outer,
+                        )
                         .with_align_y(AnchorY::Bottom)
                         .with_font_size(15.0);
                     let label = self
@@ -328,7 +337,7 @@ impl App {
                     [PANEL_X, PANEL_TOP],
                     [PANEL_W, PANEL_H],
                 )
-                .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into()))
+                .with_fill(OverlayFill::Solid(Colour::linear(0.0, 0.0, 0.0, 0.0)))
                 .with_clip(CLIP_MASK_ID);
                 self.session.frame_data_mut().overlays.shapes = vec![mask];
 

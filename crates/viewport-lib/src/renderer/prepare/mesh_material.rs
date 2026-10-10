@@ -199,6 +199,7 @@ pub(super) fn common_material(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Colour;
     use crate::scene::material::{AlphaMode, BackfacePolicy};
 
     /// `Identical` is a two-sided policy but not a styled one, so it is not
@@ -446,7 +447,7 @@ mod tests {
 
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
-        item.material.emissive = [2.0, 2.0, 2.0].into();
+        item.material.emissive = Colour::linear_rgb(2.0, 2.0, 2.0);
         item.material.emissive_texture_id = Some(crate::resources::TextureId::from_raw(1));
         assert!(
             is_instanceable(&item, &resources),

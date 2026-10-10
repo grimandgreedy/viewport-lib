@@ -6,6 +6,7 @@
 //! pixel of the other close by.
 
 use glam::{Mat4, Vec3};
+use viewport_lib::Colour;
 use viewport_lib::{
     AttributeData, CameraFrame, FrameData, Material, PolylineItem, SceneFrame, SceneRenderItem,
     extract_isolines, isoline_strips, primitives,
@@ -31,7 +32,7 @@ fn frame(surface: SceneRenderItem) -> FrameData {
     fd.viewport.show_axes_indicator = false;
     fd.viewport.show_grid = false;
     // Light, so only a line reads as dark.
-    fd.viewport.background_colour = Some([0.7, 0.7, 0.7, 1.0].into());
+    fd.viewport.background_colour = Some(Colour::linear(0.7, 0.7, 0.7, 1.0));
     fd
 }
 
@@ -88,7 +89,7 @@ fn contour_lines_coincide_with_extracted_isolines() {
     let mut surface = SceneRenderItem::default();
     surface.mesh_id = mesh_id;
     surface.model = model.to_cols_array_2d();
-    surface.material = Material::from_colour([1.0, 1.0, 1.0]);
+    surface.material = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
     surface.settings.unlit = true;
 
     let mut extracted = frame(surface.clone());
@@ -99,7 +100,7 @@ fn contour_lines_coincide_with_extracted_isolines() {
     let mut polyline = PolylineItem::default();
     polyline.positions = positions;
     polyline.strip_lengths = strip_lengths;
-    polyline.default_colour = [0.0, 0.0, 0.0, 1.0].into();
+    polyline.default_colour = Colour::linear(0.0, 0.0, 0.0, 1.0);
     polyline.line_width = 1.5;
     polyline.model = model.to_cols_array_2d();
     *extracted.scene.items_mut::<PolylineItem>() = vec![polyline];

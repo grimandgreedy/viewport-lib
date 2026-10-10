@@ -628,6 +628,7 @@ impl ViewportInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Colour;
     use crate::interaction::input::{ButtonState, MouseButton};
     use crate::{Material, OrbitCameraController, PolylineItem, primitives};
 
@@ -676,7 +677,7 @@ mod tests {
                 &device,
                 &primitives::cube(1.0),
                 glam::Mat4::IDENTITY,
-                Material::from_colour([0.6, 0.6, 0.9]),
+                Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.9)),
             )
             .unwrap();
         assert_eq!(
@@ -715,7 +716,7 @@ mod tests {
         session.scene_mut().add(
             Some(cube),
             glam::Mat4::IDENTITY,
-            Material::from_colour([0.6, 0.6, 0.9]),
+            Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.9)),
         );
         session.camera_mut().distance = 6.0;
 

@@ -11,6 +11,7 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{FillRule, OutlineMode, OverlayFill, OverlayShapeItem, PathSegment, SubPath};
 
 use crate::App;
@@ -140,13 +141,17 @@ fn place_art(
         let mut item = OverlayShapeItem::vector(subpaths, map_rule(shape.fill_rule), origin, size)
             .with_z_order(10);
         item = match shape.fill {
-            Some(rgba) => item.with_fill(OverlayFill::Solid(rgba.into())),
+            Some(rgba) => item.with_fill(OverlayFill::Solid(Colour::from_linear_array(rgba))),
             // Stroke-only paths (fill "none", or gradients we do not resolve)
             // carry no fill; the outline below makes them visible.
-            None => item.with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into())),
+            None => item.with_fill(OverlayFill::Solid(Colour::linear(0.0, 0.0, 0.0, 0.0))),
         };
         if outline || shape.fill.is_none() {
-            item = item.with_outline([0.08, 0.08, 0.08, 0.9], 1.0, OutlineMode::Inset);
+            item = item.with_outline(
+                Colour::linear(0.08, 0.08, 0.08, 0.9),
+                1.0,
+                OutlineMode::Inset,
+            );
         }
         out.push(item);
     }

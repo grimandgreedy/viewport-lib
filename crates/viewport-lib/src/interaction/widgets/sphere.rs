@@ -1,5 +1,6 @@
 //! Sphere widget: draggable center handle and radius handle.
 
+use crate::Colour;
 use crate::geometry::maths::intersect::ray_plane_intersection;
 use crate::renderer::{ClipObject, ClipShape, PolylineItem};
 use parry3d::math::{Pose, Vector};
@@ -56,8 +57,8 @@ impl SphereWidget {
         Self {
             center,
             radius: radius.max(0.01),
-            colour: [0.3, 0.6, 1.0, 0.25].into(),
-            handle_colour: [0.0; 4].into(),
+            colour: Colour::linear(0.3, 0.6, 1.0, 0.25),
+            handle_colour: Colour::TRANSPARENT,
             hovered_handle: None,
             active_handle: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -181,7 +182,7 @@ impl SphereWidget {
         PolylineItem {
             positions,
             strip_lengths,
-            default_colour: line_colour.into(),
+            default_colour: Colour::from_linear_array(line_colour),
             line_width: 1.5,
 
             settings: {

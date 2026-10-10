@@ -9,6 +9,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::curves::{RibbonItem, StreamtubeItem, TubeItem};
 use vpl::{
     BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, SceneRenderItem,
@@ -154,7 +155,7 @@ impl App {
             item.scalars = scalars;
             item.colourmap_id = Some(ColourmapId(s.colourmap as usize));
         } else {
-            item.default_colour = s.flat_colour.into();
+            item.default_colour = Colour::from_linear_array(s.flat_colour);
         }
         item
     }
@@ -172,7 +173,7 @@ impl App {
             item.scalars = scalars;
             item.colourmap_id = Some(ColourmapId(s.colourmap as usize));
         } else {
-            item.colour = s.flat_colour.into();
+            item.colour = Colour::from_linear_array(s.flat_colour);
         }
         item
     }
@@ -185,7 +186,7 @@ impl App {
         item.positions = positions;
         item.strip_lengths = strip_lengths;
         item.radius = s.tube_radius;
-        item.colour = s.flat_colour.into();
+        item.colour = Colour::from_linear_array(s.flat_colour);
         item
     }
 
@@ -219,12 +220,12 @@ impl App {
                     colours.push([rgb[0], rgb[1], rgb[2], t]);
                 }
             }
-            item.colour_attribute = colours.into_iter().map(Into::into).collect();
+            item.colour_attribute = colours.into_iter().map(Colour::from_linear_array).collect();
         } else if s.colour_by_speed {
             item.scalars = scalars;
             item.colourmap_id = Some(ColourmapId(s.colourmap as usize));
         } else {
-            item.colour = s.flat_colour.into();
+            item.colour = Colour::from_linear_array(s.flat_colour);
         }
         item
     }
@@ -547,8 +548,8 @@ pub(crate) fn stream_collect_scene_items(
     let lighting = {
         let mut _t = LightingSettings::default();
         _t.hemisphere_intensity = 0.5;
-        _t.sky_colour = [1.0, 1.0, 1.0].into();
-        _t.ground_colour = [1.0, 1.0, 1.0].into();
+        _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+        _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         _t
     };
     (vec![], lighting, 0, 0)

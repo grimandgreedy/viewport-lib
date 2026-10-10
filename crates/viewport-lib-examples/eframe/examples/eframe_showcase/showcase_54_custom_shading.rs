@@ -28,6 +28,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     LightKind, LightSource, LightingSettings, Material, MaterialPluginId,
     MaterialPluginParamsHandle, MeshId, SceneRenderItem, ViewportRenderer,
@@ -370,7 +371,7 @@ pub(crate) fn custom_shading_items(app: &App) -> Vec<SceneRenderItem> {
             item.mesh_id = *mesh;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(*x, 0.0, 1.0)).to_cols_array_2d();
-            item.material = Material::pbr(*colour, 0.1, 0.55);
+            item.material = Material::pbr(Colour::from_linear_rgb_array(*colour), 0.1, 0.55);
             item.material.shading_plugin = *plugin;
             // The dissolve sphere runs on a Mask material so the hook's
             // alpha output discards fragments below the cutoff.
@@ -387,7 +388,7 @@ pub(crate) fn custom_shading_lighting() -> LightingSettings {
     sun.kind = LightKind::Directional {
         direction: [0.5, 0.35, 1.0],
     };
-    sun.colour = [1.0, 0.97, 0.9].into();
+    sun.colour = Colour::linear_rgb(1.0, 0.97, 0.9);
     sun.intensity = 1.2;
 
     let mut t = LightingSettings::default();

@@ -1,5 +1,6 @@
 //! Disk widget: a bounded circular plane with center, normal, and radius handles.
 
+use crate::Colour;
 use crate::geometry::maths::intersect::ray_plane_intersection;
 use crate::renderer::PolylineItem;
 use parry3d::math::{Pose, Vector};
@@ -69,8 +70,8 @@ impl DiskWidget {
             center,
             normal,
             radius: radius.max(0.01),
-            colour: [0.9, 0.6, 0.1, 1.0].into(),
-            handle_colour: [0.0; 4].into(),
+            colour: Colour::linear(0.9, 0.6, 0.1, 1.0),
+            handle_colour: Colour::TRANSPARENT,
             normal_display_length: 2.0,
             hovered_handle: None,
             active_handle: None,

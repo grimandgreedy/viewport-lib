@@ -19,6 +19,7 @@
 //! `mesh_sidecar::shade::tests::material_plugin_pipelines_resolve_every_key_once_built`
 //! is the completeness check that covers it instead.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -76,7 +77,7 @@ fn base_frame(target: PipelineMode, size: u32, generation: u64) -> FrameData {
     frame.scene.generation = generation;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
     frame.effects.display.mode = target;
     frame.camera.render_camera = {
         let mut rc = RenderCamera::from_camera(&top_down_camera(6.0));
@@ -95,7 +96,7 @@ fn route_filler(mesh_id: MeshId) -> SceneRenderItem {
     item.mesh_id = mesh_id;
     item.model =
         glam::Mat4::from_translation(glam::Vec3::new(-500.0, -500.0, -500.0)).to_cols_array_2d();
-    item.material = Material::from_colour([0.1, 0.9, 0.1]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.1, 0.9, 0.1));
     item
 }
 
@@ -125,7 +126,7 @@ fn opaque_two_sided_matrix() {
                 let mut frame = base_frame(target, 128, gen_ctr.get());
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = mesh_id;
-                item.material.base_colour = [1.0, 0.0, 0.0].into();
+                item.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
                 item.settings.unlit = true;
                 if two_sided {
                     item.material.backface_policy = BackfacePolicy::Identical;
@@ -199,7 +200,7 @@ fn opaque_alpha_mask_matrix() {
                     let mut frame = base_frame(target, 128, gen_ctr.get());
                     let mut item = SceneRenderItem::default();
                     item.mesh_id = mesh_id;
-                    item.material.base_colour = [1.0, 0.0, 0.0].into();
+                    item.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
                     item.material.texture_id = Some(tex);
                     item.material.alpha_mode = AlphaMode::Mask(0.5);
                     item.settings.unlit = true;
@@ -254,7 +255,7 @@ fn oit_two_sided_matrix() {
             let mut frame = base_frame(PipelineMode::Hdr, 128, gen_ctr.get());
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.material.base_colour = [1.0, 0.0, 0.0].into();
+            item.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
             item.settings.unlit = true;
             item.settings.opacity = 0.75;
             if two_sided {
@@ -330,7 +331,7 @@ fn oit_premultiplied_blend_matrix() {
         let mut frame = base_frame(PipelineMode::Hdr, 128, gen_ctr.get());
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
-        item.material.base_colour = [1.0, 1.0, 1.0].into();
+        item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material.texture_id = Some(tex);
         item.material.alpha_mode = mode;
         item.settings.unlit = true;
@@ -402,7 +403,7 @@ fn shadow_two_sided_matrix() {
             frame.effects.lighting.shadows.extent_override = Some(3.0);
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.material.base_colour = [0.7, 0.7, 0.7].into();
+            item.material.base_colour = Colour::linear_rgb(0.7, 0.7, 0.7);
             if two_sided {
                 item.material.backface_policy = BackfacePolicy::Identical;
             }
@@ -505,14 +506,14 @@ fn shadow_alpha_mask_matrix() {
             frame.effects.lighting.shadows.extent_override = Some(3.0);
             let mut floor = SceneRenderItem::default();
             floor.mesh_id = floor_id;
-            floor.material.base_colour = [0.7, 0.7, 0.7].into();
+            floor.material.base_colour = Colour::linear_rgb(0.7, 0.7, 0.7);
             let mut items = vec![floor];
             if let Some(tex) = caster_tex {
                 let mut caster = SceneRenderItem::default();
                 caster.mesh_id = caster_id;
                 caster.model =
                     glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.6)).to_cols_array_2d();
-                caster.material.base_colour = [1.0, 0.0, 0.0].into();
+                caster.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
                 caster.material.texture_id = Some(tex);
                 caster.material.alpha_mode = AlphaMode::Mask(0.5);
                 if !route_instanced {

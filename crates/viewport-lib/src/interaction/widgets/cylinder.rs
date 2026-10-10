@@ -1,5 +1,6 @@
 //! Cylinder widget: two endpoint handles controlling the axis, plus a radius handle.
 
+use crate::Colour;
 use crate::geometry::maths::intersect::ray_plane_intersection;
 use crate::renderer::PolylineItem;
 use parry3d::math::{Pose, Vector};
@@ -61,8 +62,8 @@ impl CylinderWidget {
             start,
             end,
             radius: radius.max(0.01),
-            colour: [0.4, 0.9, 0.5, 1.0].into(),
-            handle_colour: [0.0; 4].into(),
+            colour: Colour::linear(0.4, 0.9, 0.5, 1.0),
+            handle_colour: Colour::TRANSPARENT,
             hovered_handle: None,
             active_handle: None,
             drag_plane_normal: glam::Vec3::Z,

@@ -9,6 +9,7 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::decal::{
     CylindricalFacing, DecalAnimation, DecalBlendMode, DecalHandle, DecalItem, DecalProjection,
     LiveDecals,
@@ -724,14 +725,14 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
 
     let scene = &mut app.decal46_state.scene;
 
-    let wall_mat = Material::from_colour([0.92, 0.92, 0.92]);
+    let wall_mat = Material::from_colour(Colour::linear_rgb(0.92, 0.92, 0.92));
     scene.add(
         Some(wall_id),
         glam::Mat4::from_translation(glam::Vec3::new(0.0, -0.1, 2.0)),
         wall_mat,
     );
 
-    let ground_mat = Material::from_colour([0.78, 0.76, 0.72]);
+    let ground_mat = Material::from_colour(Colour::linear_rgb(0.78, 0.76, 0.72));
     scene.add(
         Some(ground_id),
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 3.0, -0.1)),
@@ -740,7 +741,7 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
 
     // column standing on the ground, right side. Wax matcap with black base colour.
     let column_mat = {
-        let mut m = Material::from_colour([0.0, 0.0, 0.0]);
+        let mut m = Material::from_colour(Colour::linear_rgb(0.0, 0.0, 0.0));
         m.shading_model = vpl::ShadingModel::Matcap(res.builtin_matcap_id(BuiltinMatcap::Wax));
         m
     };
@@ -756,7 +757,7 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
     let wall_obstacle_node = scene.add(
         Some(wall_obstacle_id),
         glam::Mat4::from_translation(glam::Vec3::new(-1.5, 0.125, 2.0)),
-        Material::from_colour([0.75, 0.28, 0.05]),
+        Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05)),
     );
     // Off the layers the surface mask holds, so no decal lands on it. It
     // stays on the higher layers, which keeps it drawn and lit.
@@ -1414,8 +1415,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [0.6, 0.6, 0.6].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(0.6, 0.6, 0.6);
             _t
         };
         let sg = app.decal46_state.scene.version();

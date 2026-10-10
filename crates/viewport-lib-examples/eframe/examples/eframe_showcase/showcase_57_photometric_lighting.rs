@@ -18,6 +18,7 @@ use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     AutoExposure, ExposureMode, ExposureSettings, LightKind, LightSource, LightingSettings, Lumen,
     Lux, Material, ViewportRenderer, scene::Scene,
@@ -157,7 +158,7 @@ impl PresetsState {
     pub(crate) fn lighting(&self) -> LightingSettings {
         let sun = {
             let mut s = LightSource::directional_lux(self.sky.direction(), self.sky.illuminance());
-            s.colour = self.sky.colour().into();
+            s.colour = Colour::from_linear_rgb_array(self.sky.colour());
             s.cast_shadows = true;
             s
         };
@@ -166,7 +167,7 @@ impl PresetsState {
         if self.bulb_on {
             let mut bulb =
                 LightSource::point_lumens(self.bulb_position(), self.bulb.flux(), 25.0, 0.15);
-            bulb.colour = self.bulb.colour().into();
+            bulb.colour = Colour::from_linear_rgb_array(self.bulb.colour());
             bulb.cast_shadows = true;
             lights.push(bulb);
         }
@@ -178,8 +179,8 @@ impl PresetsState {
         // readable. Ambient is added without the diffuse 1/pi, so the fraction is
         // smaller than it looks. (Provisional ambient until IBL carries nits.)
         l.hemisphere_intensity = self.sky.illuminance().0 * 0.05;
-        l.sky_colour = self.sky.colour().into();
-        l.ground_colour = [0.28, 0.26, 0.24].into();
+        l.sky_colour = Colour::from_linear_rgb_array(self.sky.colour());
+        l.ground_colour = Colour::linear_rgb(0.28, 0.26, 0.24);
         l
     }
 
@@ -272,8 +273,8 @@ impl FalloffState {
         l.lights = vec![self.light()];
         l.shadows.enabled = false;
         l.hemisphere_intensity = self.hemi_intensity;
-        l.sky_colour = [0.7, 0.8, 1.0].into();
-        l.ground_colour = [0.3, 0.3, 0.35].into();
+        l.sky_colour = Colour::linear_rgb(0.7, 0.8, 1.0);
+        l.ground_colour = Colour::linear_rgb(0.3, 0.3, 0.35);
         l
     }
 }
@@ -348,8 +349,8 @@ impl ExposureSubState {
         l.lights = vec![s];
         l.shadows.enabled = true;
         l.hemisphere_intensity = 0.05;
-        l.sky_colour = [0.6, 0.7, 0.9].into();
-        l.ground_colour = [0.25, 0.22, 0.2].into();
+        l.sky_colour = Colour::linear_rgb(0.6, 0.7, 0.9);
+        l.ground_colour = Colour::linear_rgb(0.25, 0.22, 0.2);
         l
     }
 
@@ -517,7 +518,7 @@ impl App {
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(span * 0.5, 0.0, -0.05)),
             {
-                let mut m = Material::from_colour([0.5, 0.5, 0.52]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.5, 0.5, 0.52));
                 m.roughness = 0.9;
                 m
             },
@@ -532,7 +533,7 @@ impl App {
         for c in 0..PRESET_COLUMNS {
             let x = c as f32 * PRESET_COL_SPACING;
             // A neutral 60%-grey card so brightness reads from the light.
-            let mut m = Material::from_colour([0.6, 0.6, 0.6]);
+            let mut m = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6));
             m.roughness = 0.55;
             m.metallic = 0.0;
             self.lighting_state.presets.scene.add_named(
@@ -561,7 +562,7 @@ impl App {
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(row_len * 0.5, 0.0, -0.05)),
             {
-                let mut m = Material::from_colour([0.5, 0.5, 0.52]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.5, 0.5, 0.52));
                 m.roughness = 0.9;
                 m
             },
@@ -579,7 +580,7 @@ impl App {
                 Some(sphere_id),
                 glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.6)),
                 {
-                    let mut m = Material::from_colour([0.9, 0.9, 0.9]);
+                    let mut m = Material::from_colour(Colour::linear_rgb(0.9, 0.9, 0.9));
                     m.roughness = 0.4;
                     m
                 },
@@ -603,7 +604,7 @@ impl App {
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(span * 0.5, 0.0, -0.05)),
             {
-                let mut m = Material::from_colour([0.45, 0.45, 0.48]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.45, 0.45, 0.48));
                 m.roughness = 0.95;
                 m
             },
@@ -619,7 +620,7 @@ impl App {
             let x = c as f32 * EXPOSURE_COL_SPACING;
             // Albedo dark on the left, bright on the right.
             let a = 0.05 + (c as f32 / (EXPOSURE_COLUMNS - 1) as f32) * 0.85;
-            let mut m = Material::from_colour([a, a, a]);
+            let mut m = Material::from_colour(Colour::linear_rgb(a, a, a));
             m.roughness = 0.6;
             m.metallic = 0.0;
             self.lighting_state.exposure.scene.add_named(

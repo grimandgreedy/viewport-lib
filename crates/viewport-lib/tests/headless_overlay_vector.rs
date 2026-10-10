@@ -8,6 +8,7 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -28,7 +29,7 @@ fn overlay_frame(size: u32) -> FrameData {
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.3, 0.3, 0.3, 1.0));
     frame
 }
 
@@ -39,7 +40,7 @@ fn square_with_hole(fill_rule: FillRule) -> OverlayShapeItem {
     let outer = SubPath::polygon(&[[16.0, 16.0], [48.0, 16.0], [48.0, 48.0], [16.0, 48.0]]);
     let hole = SubPath::polygon(&[[26.0, 26.0], [38.0, 26.0], [38.0, 38.0], [26.0, 38.0]]);
     OverlayShapeItem::vector(vec![outer, hole], fill_rule, [0.0, 0.0], [64.0, 64.0])
-        .with_fill(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into()))
+        .with_fill(OverlayFill::Solid(Colour::linear(1.0, 0.0, 0.0, 1.0)))
 }
 
 /// Read a pixel as (r, g, b).
@@ -113,8 +114,8 @@ fn gradient_varies_across_shape() {
     frame.overlays.shapes = vec![
         OverlayShapeItem::vector(vec![square], FillRule::NonZero, [0.0, 0.0], [64.0, 64.0])
             .with_fill(OverlayFill::LinearGradient {
-                start_colour: [1.0, 0.0, 0.0, 1.0].into(),
-                end_colour: [0.0, 0.0, 1.0, 1.0].into(),
+                start_colour: Colour::linear(1.0, 0.0, 0.0, 1.0),
+                end_colour: Colour::linear(0.0, 0.0, 1.0, 1.0),
                 angle: 0.0,
             }),
     ];
@@ -143,8 +144,8 @@ fn border_outline_draws() {
     let square = SubPath::polygon(&[[16.0, 16.0], [48.0, 16.0], [48.0, 48.0], [16.0, 48.0]]);
     frame.overlays.shapes = vec![
         OverlayShapeItem::vector(vec![square], FillRule::NonZero, [0.0, 0.0], [64.0, 64.0])
-            .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into()))
-            .with_outline([0.0, 1.0, 0.0, 1.0], 4.0, OutlineMode::Inset),
+            .with_fill(OverlayFill::Solid(Colour::linear(0.0, 0.0, 0.0, 0.0)))
+            .with_outline(Colour::linear(0.0, 1.0, 0.0, 1.0), 4.0, OutlineMode::Inset),
     ];
 
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);

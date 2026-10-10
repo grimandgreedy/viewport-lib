@@ -14,6 +14,7 @@
 //! Run: `cargo run --release -p viewport-lib-post-effects --example ab_bench`
 
 use std::time::Instant;
+use viewport_lib::Colour;
 
 use viewport_lib::wgpu;
 use viewport_lib::{
@@ -163,7 +164,7 @@ fn run_variant(
         (glam::Mat4::from_scale(glam::Vec3::new(grid as f32 * 1.6, grid as f32 * 1.6, 0.1))
             * glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.5)))
         .to_cols_array_2d();
-    ground.material = Material::from_colour([0.6, 0.6, 0.6]);
+    ground.material = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6));
     items.push(ground);
     for x in 0..grid {
         for y in 0..grid {
@@ -178,9 +179,9 @@ fn run_variant(
                 * glam::Mat4::from_scale(glam::Vec3::splat(0.8)))
             .to_cols_array_2d();
             let i = (x * grid + y) as usize;
-            item.material = Material::from_colour([0.3, 0.4, 0.6]);
+            item.material = Material::from_colour(Colour::linear_rgb(0.3, 0.4, 0.6));
             if i % 8 == 0 {
-                item.material.emissive = [4.0, 2.8, 1.2].into();
+                item.material.emissive = Colour::linear_rgb(4.0, 2.8, 1.2);
             }
             items.push(item);
         }
@@ -199,7 +200,7 @@ fn run_variant(
     frame.camera.viewport_size = [width as f32, height as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.12, 0.13, 0.15, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.12, 0.13, 0.15, 1.0));
     let mut light = LightSource::default();
     light.kind = LightKind::Directional {
         direction: LIGHT_DIRECTION,

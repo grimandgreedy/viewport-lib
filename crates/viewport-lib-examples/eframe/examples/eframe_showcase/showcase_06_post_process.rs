@@ -8,6 +8,7 @@ use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_uv_sphere;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{Material, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
@@ -60,7 +61,7 @@ impl App {
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(0.0, 0.0, -0.575),
             ),
-            Material::pbr([1.0, 1.0, 1.0], 0.0, 0.9),
+            Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.9),
         );
 
         let m = self.upload_box(renderer);
@@ -68,7 +69,7 @@ impl App {
             "Gold (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-1.2, -1.2, 0.0)),
-            Material::pbr([1.0, 0.72, 0.06], 0.95, 0.05),
+            Material::pbr(Colour::linear_rgb(1.0, 0.72, 0.06), 0.95, 0.05),
         );
 
         let m = self.upload_box(renderer);
@@ -76,7 +77,7 @@ impl App {
             "Brushed Steel (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(1.2, -1.2, 0.0)),
-            Material::pbr([0.82, 0.82, 0.86], 0.75, 0.35),
+            Material::pbr(Colour::linear_rgb(0.82, 0.82, 0.86), 0.75, 0.35),
         );
 
         let m = self.upload_box(renderer);
@@ -84,7 +85,7 @@ impl App {
             "Chrome (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-1.2, 1.2, 0.0)),
-            Material::pbr([0.9, 0.9, 0.95], 1.0, 0.02),
+            Material::pbr(Colour::linear_rgb(0.9, 0.9, 0.95), 1.0, 0.02),
         );
 
         let m = self.upload_box(renderer);
@@ -92,7 +93,7 @@ impl App {
             "Ceramic (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(1.2, 1.2, 0.0)),
-            Material::pbr([0.82, 0.58, 0.42], 0.0, 0.9),
+            Material::pbr(Colour::linear_rgb(0.82, 0.58, 0.42), 0.0, 0.9),
         );
 
         let sphere = make_uv_sphere(32, 16, 0.6);
@@ -104,7 +105,7 @@ impl App {
             "Sphere Test",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, 0.1)),
-            Material::pbr([0.75, 0.28, 0.05], 0.0, 0.55),
+            Material::pbr(Colour::linear_rgb(0.75, 0.28, 0.05), 0.0, 0.55),
         );
 
         let m = self.upload_box(renderer);
@@ -116,7 +117,7 @@ impl App {
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(0.0, 0.0, 1.0),
             ),
-            Material::pbr([0.4, 0.4, 0.45], 0.1, 0.7),
+            Material::pbr(Colour::linear_rgb(0.4, 0.4, 0.45), 0.1, 0.7),
         );
 
         self.pp_state.built = true;
@@ -206,7 +207,7 @@ pub(crate) fn scene(
                     range: 15.0,
                     radius: 0.1,
                 };
-                _t.colour = [1.0, 0.9, 0.7].into();
+                _t.colour = Colour::linear_rgb(1.0, 0.9, 0.7);
                 _t.intensity = 20.0;
                 // Warm fill only. With two hard casters the shadows
                 // overlap as a two-tone shape with a seam; one key
@@ -226,8 +227,8 @@ pub(crate) fn scene(
                 vpl::ShadowFilter::Pcf
             };
             _t.hemisphere_intensity = 0.4;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         let sg = app.pp_state.scene.version();

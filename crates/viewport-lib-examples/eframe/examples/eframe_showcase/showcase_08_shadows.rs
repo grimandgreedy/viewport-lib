@@ -4,6 +4,7 @@ use crate::App;
 use crate::eframe::egui;
 use crate::geometry::{make_box_with_uvs, make_uv_sphere};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{Material, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
@@ -47,7 +48,7 @@ impl App {
             "Ground",
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.1)),
-            Material::pbr([1.0, 1.0, 1.0], 0.0, 0.9),
+            Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.9),
         );
 
         let sphere_mesh = make_uv_sphere(24, 12, 0.5);
@@ -102,7 +103,7 @@ impl App {
                 name,
                 Some(mesh_id),
                 glam::Mat4::from_translation(*pos),
-                Material::pbr(*colour, 0.0, 0.5),
+                Material::pbr(Colour::from_linear_rgb_array(*colour), 0.0, 0.5),
             );
         }
 
@@ -115,7 +116,7 @@ impl App {
             "Tall Pillar",
             Some(pillar_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, -6.0, 1.5)),
-            Material::pbr([0.35, 0.35, 0.40], 0.0, 0.6),
+            Material::pbr(Colour::linear_rgb(0.35, 0.35, 0.40), 0.0, 0.6),
         );
 
         self.shd_state.built = true;
@@ -215,8 +216,8 @@ pub(crate) fn scene(
                 vpl::ShadowFilter::Pcf
             };
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         let sg = app.shd_state.scene.version();

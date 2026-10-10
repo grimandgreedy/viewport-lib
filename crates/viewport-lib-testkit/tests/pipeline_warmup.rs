@@ -4,6 +4,7 @@
 //! is the observable: it counts lazy pipeline builds since the previous
 //! prepare, so a frame that hits a cold pipeline reads non-zero.
 
+use viewport_lib::Colour;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
 use viewport_lib_plugins::item_types::decal::DecalItem;
@@ -49,7 +50,7 @@ fn first_decal_frame_builds_no_pipelines() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
 
     // Settle: the first frames build the frame-one lazy set (HDR shared,
     // instanced pipelines), which is load-time work, not the decal's.
@@ -90,7 +91,7 @@ fn point_cloud_pipelines_are_owned_by_the_plugin() {
         .expect("mesh upload");
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     let base = mesh_frame(item.clone(), [200.0, 150.0]);
     let _ = h.render_two_frames(&base, 200, 150);
 
@@ -139,7 +140,7 @@ fn volume_pipelines_are_owned_by_the_plugin() {
         .expect("mesh upload");
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     let base = mesh_frame(item.clone(), [200.0, 150.0]);
     let _ = h.render_two_frames(&base, 200, 150);
 
@@ -196,7 +197,7 @@ fn prebuilt_sidecars_render() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     item.settings.wireframe = true;
     item.show_normals = true;
     let fd = mesh_frame(item, [200.0, 150.0]);
@@ -222,7 +223,7 @@ fn curve_pipelines_are_owned_by_the_plugins() {
         .expect("mesh upload");
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     let base = mesh_frame(item.clone(), [200.0, 150.0]);
     let _ = h.render_two_frames(&base, 200, 150);
 

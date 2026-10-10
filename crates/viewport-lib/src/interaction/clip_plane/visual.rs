@@ -9,6 +9,7 @@
 //! renderer draws them through the normal polyline / mesh paths, not a bespoke
 //! clip pipeline.
 
+use crate::Colour;
 use crate::MeshData;
 use crate::PolylineItem;
 use crate::renderer::ClipShape;
@@ -21,7 +22,7 @@ const OUTLINE_WIDTH: f32 = 2.0;
 /// Tag an outline polyline as a clip indicator: give it its colour and width, and
 /// exempt it from the clip volumes so it stays visible through active clips.
 fn finish_outline(mut item: PolylineItem, colour: [f32; 4]) -> PolylineItem {
-    item.default_colour = colour.into();
+    item.default_colour = Colour::from_linear_array(colour);
     item.line_width = OUTLINE_WIDTH;
     item.settings.ignore_clip = true;
     item

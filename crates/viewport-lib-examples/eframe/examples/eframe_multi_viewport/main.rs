@@ -29,6 +29,7 @@
 use crate::eframe::{egui, wgpu};
 use std::collections::HashMap;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     Action, BackfacePolicy, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo,
@@ -650,7 +651,8 @@ impl App {
                         let mut item = SceneRenderItem::default();
                         item.mesh_id = obj.mesh_id;
                         item.model = obj.model.to_cols_array_2d();
-                        item.material = Material::from_colour(obj.colour);
+                        item.material =
+                            Material::from_colour(Colour::from_linear_rgb_array(obj.colour));
                         item.material.backface_policy = BackfacePolicy::Identical;
                         item.settings.selected = self.selection.contains(i as u64);
                         item

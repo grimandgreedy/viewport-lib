@@ -1031,6 +1031,7 @@ fn resolve_faces_to_equirect(
 
 #[cfg(test)]
 mod tests {
+    use crate::Colour;
     use crate::camera::Camera;
     use crate::renderer::types::FrameData;
     use crate::renderer::{
@@ -1418,7 +1419,7 @@ mod tests {
             frame.camera.cull_mask = cull_mask;
             frame.viewport.show_grid = false;
             frame.viewport.show_axes_indicator = false;
-            frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+            frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
             frame.effects.display.mode = mode;
 
             // A bright unlit box, submitted only as a foreground item (not a
@@ -1427,7 +1428,7 @@ mod tests {
                 mesh_id: mesh,
                 ..Default::default()
             };
-            item.material.base_colour = [1.0, 1.0, 1.0].into();
+            item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             item.settings.unlit = true;
             item.settings.visibility_mask = 0b01;
             frame.scene.foreground_items = vec![item];

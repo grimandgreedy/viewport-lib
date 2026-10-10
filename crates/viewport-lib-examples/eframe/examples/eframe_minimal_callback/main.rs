@@ -9,6 +9,7 @@
 //!   Right drag                : pan
 //!   Scroll                    : zoom
 
+use viewport_lib::Colour;
 mod viewport_callback;
 
 use crate::eframe::egui;
@@ -78,7 +79,7 @@ impl App {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-            item.material = Material::from_colour(colour);
+            item.material = Material::from_colour(Colour::from_linear_rgb_array(colour));
             item.material.backface_policy = vpl::BackfacePolicy::Identical;
             item
         };

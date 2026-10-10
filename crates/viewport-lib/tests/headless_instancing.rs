@@ -3,6 +3,7 @@
 //! Part of the headless integration suite (split from the former single
 //! headless.rs). Shared device and mesh helpers live in tests/common/mod.rs.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -78,13 +79,13 @@ fn position_override_takes_effect_through_render_path() {
     let mut red_item = SceneRenderItem::default();
     red_item.mesh_id = red_id;
     red_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    red_item.material = Material::from_colour([1.0, 0.0, 0.0]);
+    red_item.material = Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0));
 
     let mut blue_item = SceneRenderItem::default();
     blue_item.mesh_id = blue_id;
     blue_item.model =
         glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)).to_cols_array_2d();
-    blue_item.material = Material::from_colour([0.0, 0.0, 1.0]);
+    blue_item.material = Material::from_colour(Colour::linear_rgb(0.0, 0.0, 1.0));
 
     frame.scene.surfaces =
         SurfaceSubmission::Flat(vec![red_item.clone(), blue_item.clone()].into());
@@ -185,7 +186,7 @@ fn outline_mask_follows_position_override() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    item.material = Material::from_colour([1.0, 0.0, 0.0]);
+    item.material = Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0));
     item.settings.selected = true;
     let frame = make_frame(vec![item]);
 
@@ -301,7 +302,7 @@ fn position_override_slice_reads_correct_pool_window() {
     let mut red_item = SceneRenderItem::default();
     red_item.mesh_id = red_id;
     red_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    red_item.material = Material::from_colour([1.0, 0.0, 0.0]);
+    red_item.material = Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0));
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![red_item].into());
 
     // Pool: body A (elements 0..5) far behind the camera, body B (elements
@@ -599,7 +600,8 @@ fn lod_culled_per_object_item_is_not_drawn() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = full;
     item.lod_group = Some(group);
-    item.material.backface_policy = BackfacePolicy::DifferentColour([1.0, 0.2, 0.2].into());
+    item.material.backface_policy =
+        BackfacePolicy::DifferentColour(Colour::linear_rgb(1.0, 0.2, 0.2));
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
 
     // Empty scene baseline.
@@ -679,7 +681,7 @@ fn multi_draw_collapse_is_pixel_identical() {
             let y = inst as f32 * 1.1;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
-            item.material = Material::from_colour(colours[i]);
+            item.material = Material::from_colour(Colour::from_linear_rgb_array(colours[i]));
             if i == 2 {
                 item.settings.opacity = 0.5;
             }

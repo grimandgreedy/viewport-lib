@@ -6,6 +6,7 @@
 //! accumulates absorption (Beer-Lambert) plus a lit / emissive scattered
 //! colour, and composites the result over the opaque scene.
 
+use viewport_lib::Colour;
 use viewport_lib::aabb::Aabb;
 
 /// A ray-marched participating-media region.
@@ -73,7 +74,7 @@ impl Default for ScatterVolume {
                 max: glam::Vec3::splat(0.5),
             }),
             density: 0.0,
-            colour: ColourSource::Flat([0.8, 0.85, 0.9].into()),
+            colour: ColourSource::Flat(Colour::linear_rgb(0.8, 0.85, 0.9)),
             anisotropy: 0.0,
             emission: Emission::None,
             density_remap: DensityRemap::Identity,
@@ -585,7 +586,7 @@ mod tests {
                 max: glam::Vec3::new(4.0, 5.0, 6.0),
             },
             0.2,
-            [0.1, 0.2, 0.3],
+            Colour::linear_rgb(0.1, 0.2, 0.3),
         );
         let g = GpuScatterVolume::pack(&v, 1.0, 0).unwrap();
         assert_eq!(g.shape_kind, 0);
@@ -596,7 +597,12 @@ mod tests {
 
     #[test]
     fn pack_sphere_round_trips() {
-        let v = ScatterVolume::sphere_uniform([1.0, 2.0, 3.0], 4.0, 0.5, [0.4, 0.5, 0.6]);
+        let v = ScatterVolume::sphere_uniform(
+            [1.0, 2.0, 3.0],
+            4.0,
+            0.5,
+            Colour::linear_rgb(0.4, 0.5, 0.6),
+        );
         let g = GpuScatterVolume::pack(&v, 1.0, 0).unwrap();
         assert_eq!(g.shape_kind, 1);
         assert_eq!(g.p0, [1.0, 2.0, 3.0, 4.0]);
@@ -611,7 +617,7 @@ mod tests {
                 max: glam::Vec3::ONE,
             },
             0.4,
-            [1.0; 3],
+            Colour::WHITE,
         );
         let g = GpuScatterVolume::pack(&v, 0.5, 0).unwrap();
         assert!((g.colour_density[3] - 0.2).abs() < 1e-6);
@@ -675,7 +681,7 @@ mod tests {
 
     #[test]
     fn world_aabb_sphere_matches_bounds() {
-        let v = ScatterVolume::sphere_uniform([0.0, 0.0, 0.0], 2.0, 0.1, [1.0; 3]);
+        let v = ScatterVolume::sphere_uniform([0.0, 0.0, 0.0], 2.0, 0.1, Colour::WHITE);
         let b = v.world_aabb();
         assert_eq!(b.min, glam::Vec3::splat(-2.0));
         assert_eq!(b.max, glam::Vec3::splat(2.0));

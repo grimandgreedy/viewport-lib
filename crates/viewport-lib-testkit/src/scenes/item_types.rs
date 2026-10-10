@@ -8,6 +8,7 @@
 //! settings that make a still frame repeatable (see the scatter scene).
 
 use glam::{Mat4, Vec3};
+use viewport_lib::Colour;
 use viewport_lib::plugin_api::{SURFACE_MASK_LAYERS, Uploads};
 use viewport_lib::{
     Aabb, ColourmapId, Material, MeshInstanceItem, PickId, ScatterQuality, ScatterSettings,
@@ -394,7 +395,7 @@ fn build_tubes(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
     sel.positions = vec![[1.8, 0.0, -1.2], [1.8, 0.0, 1.2]];
     sel.strip_lengths = vec![2];
     sel.radius = 0.12;
-    sel.colour = [0.85, 0.35, 0.2, 1.0].into();
+    sel.colour = Colour::linear(0.85, 0.35, 0.2, 1.0);
     sel.settings.selected = true;
 
     BuiltScene {
@@ -418,7 +419,7 @@ fn build_streamtubes(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
             .collect();
         st.strip_lengths = vec![n as u32];
         st.radius = 0.08;
-        st.colour = colour.into();
+        st.colour = Colour::from_linear_array(colour);
         st.settings.selected = selected;
         st
     };
@@ -448,14 +449,14 @@ fn build_ribbons(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
             })
             .collect(),
     );
-    rb.colour = [0.65, 0.3, 0.1, 1.0].into();
+    rb.colour = Colour::linear(0.65, 0.3, 0.1, 1.0);
     rb.settings.pick_id = PickId(1604);
 
     let mut sel = RibbonItem::default();
     sel.positions = vec![[-0.4, 0.0, -1.5], [0.4, 0.0, -1.5]];
     sel.strip_lengths = vec![2];
     sel.width = 0.25;
-    sel.colour = [0.2, 0.5, 0.75, 1.0].into();
+    sel.colour = Colour::linear(0.2, 0.5, 0.75, 1.0);
     sel.settings.selected = true;
 
     BuiltScene {
@@ -477,14 +478,14 @@ fn build_sprites(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         })
         .collect();
     ring.sizes = (0..8).map(|i| 0.4 + 0.05 * i as f32).collect();
-    ring.default_colour = [1.0, 1.0, 1.0, 1.0].into();
+    ring.default_colour = Colour::linear(1.0, 1.0, 1.0, 1.0);
     ring.size_mode = SpriteSizeMode::WorldSpace;
     ring.depth_write = true;
     ring.settings.pick_id = PickId(1605);
 
     let mut sel = SpriteItem::default();
     sel.positions = vec![[0.0, 0.0, 1.0]];
-    sel.default_colour = [0.9, 0.25, 0.2, 1.0].into();
+    sel.default_colour = Colour::linear(0.9, 0.25, 0.2, 1.0);
     sel.default_size = 0.5;
     sel.size_mode = SpriteSizeMode::WorldSpace;
     sel.depth_write = true;
@@ -514,7 +515,7 @@ fn build_sprites_soft(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ground = viewport_lib::SceneRenderItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-    ground.material = Material::pbr([0.62, 0.6, 0.58], 0.0, 0.8);
+    ground.material = Material::pbr(Colour::linear_rgb(0.62, 0.6, 0.58), 0.0, 0.8);
 
     let box_mesh = ctx
         .renderer
@@ -524,7 +525,7 @@ fn build_sprites_soft(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut cube = viewport_lib::SceneRenderItem::default();
     cube.mesh_id = box_mesh;
     cube.model = Mat4::from_translation(Vec3::new(-1.3, 0.9, 0.8)).to_cols_array_2d();
-    cube.material = Material::pbr([0.45, 0.5, 0.65], 0.2, 0.5);
+    cube.material = Material::pbr(Colour::linear_rgb(0.45, 0.5, 0.65), 0.2, 0.5);
 
     let tex = checker_texture(ctx, [255, 200, 80], [60, 40, 160]);
 
@@ -539,7 +540,7 @@ fn build_sprites_soft(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         })
         .collect();
     sheet.default_size = 1.1;
-    sheet.default_colour = [1.0, 0.95, 0.8, 0.75].into();
+    sheet.default_colour = Colour::linear(1.0, 0.95, 0.8, 0.75);
     sheet.size_mode = SpriteSizeMode::WorldSpace;
     sheet.depth_write = false;
     sheet.soft_particle_distance = Some(0.6);
@@ -551,7 +552,7 @@ fn build_sprites_soft(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut lit = SpriteItem::default();
     lit.positions = vec![[0.0, 0.0, 0.45], [1.1, -0.6, 0.45]];
     lit.default_size = 0.9;
-    lit.default_colour = [0.4, 0.8, 1.0, 0.7].into();
+    lit.default_colour = Colour::linear(0.4, 0.8, 1.0, 0.7);
     lit.size_mode = SpriteSizeMode::WorldSpace;
     lit.depth_write = false;
     lit.soft_particle_distance = Some(0.5);
@@ -581,7 +582,7 @@ fn build_sprites_oit(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .expect("cube upload");
     let mut cube = viewport_lib::SceneRenderItem::default();
     cube.mesh_id = box_mesh;
-    cube.material = Material::pbr([0.5, 0.45, 0.4], 0.1, 0.6);
+    cube.material = Material::pbr(Colour::linear_rgb(0.5, 0.45, 0.4), 0.1, 0.6);
 
     let tex = checker_texture(ctx, [255, 120, 90], [40, 70, 180]);
 
@@ -596,7 +597,7 @@ fn build_sprites_oit(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         })
         .collect();
     blended.default_size = 1.3;
-    blended.default_colour = [1.0, 1.0, 1.0, 0.55].into();
+    blended.default_colour = Colour::linear(1.0, 1.0, 1.0, 0.55);
     blended.size_mode = SpriteSizeMode::WorldSpace;
     blended.depth_write = false;
     blended.blend = SpriteBlend::AlphaBlend;
@@ -605,7 +606,7 @@ fn build_sprites_oit(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut premultiplied = SpriteItem::default();
     premultiplied.positions = vec![[-0.9, 0.5, 0.3], [0.9, -0.5, -0.3]];
     premultiplied.default_size = 1.0;
-    premultiplied.default_colour = [0.3, 0.55, 0.25, 0.55].into();
+    premultiplied.default_colour = Colour::linear(0.3, 0.55, 0.25, 0.55);
     premultiplied.size_mode = SpriteSizeMode::WorldSpace;
     premultiplied.depth_write = false;
     premultiplied.blend = SpriteBlend::Premultiplied;
@@ -700,7 +701,7 @@ fn build_gpu_particles(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     item.emitter.rate = 400.0;
     item.emitter.lifetime = (4.0, 6.0);
     item.emitter.size = 0.3;
-    item.emitter.colour = [1.0, 1.0, 1.0, 0.9].into();
+    item.emitter.colour = Colour::linear(1.0, 1.0, 1.0, 0.9);
     item.emitter.spawn_shape =
         viewport_lib_plugins::item_types::gpu_particles::SpawnShape::Sphere {
             center: [0.0, 0.0, -1.8],
@@ -732,7 +733,7 @@ fn build_sprites_refraction(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ground = viewport_lib::SceneRenderItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -1.2)).to_cols_array_2d();
-    ground.material = Material::pbr([1.0, 1.0, 1.0], 0.0, 0.85);
+    ground.material = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.85);
     ground.material.texture_id = Some(backdrop_tex);
 
     // The sprite's own texture is the displacement map: red and green become a
@@ -750,7 +751,7 @@ fn build_sprites_refraction(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         })
         .collect();
     bubbles.default_size = 1.2;
-    bubbles.default_colour = [1.0, 1.0, 1.0, 1.0].into();
+    bubbles.default_colour = Colour::linear(1.0, 1.0, 1.0, 1.0);
     bubbles.size_mode = SpriteSizeMode::WorldSpace;
     bubbles.depth_write = false;
     // In pixels of screen-space displacement, not a 0-to-1 fraction.
@@ -901,7 +902,7 @@ fn build_gpu_implicit(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
         p.blend = 0.35;
         p.params[..3].copy_from_slice(&c);
         p.params[3] = r;
-        p.colour = colour.into();
+        p.colour = Colour::from_linear_array(colour);
         p
     };
     let mut capsule = ImplicitPrimitive::zeroed();
@@ -910,7 +911,7 @@ fn build_gpu_implicit(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
     capsule.params[..3].copy_from_slice(&[-1.0, 0.0, -0.6]);
     capsule.params[3] = 0.3;
     capsule.params[4..7].copy_from_slice(&[1.0, 0.0, -0.6]);
-    capsule.colour = [0.7, 0.55, 0.15, 1.0].into();
+    capsule.colour = Colour::linear(0.7, 0.55, 0.15, 1.0);
 
     let mut item = GpuImplicitItem::default();
     item.primitives = vec![
@@ -954,7 +955,7 @@ fn build_gpu_marching_cubes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .renderer
         .upload_volume_for_mc(ctx.device, ctx.queue, &vol)
         .expect("mc volume upload");
-    let mut material = Material::from_colour([0.45, 0.48, 0.52]);
+    let mut material = Material::from_colour(Colour::linear_rgb(0.45, 0.48, 0.52));
     material.roughness = 0.4;
     let mut settings = viewport_lib::ItemSettings::default();
     settings.pick_id = PickId(1612);
@@ -984,7 +985,7 @@ fn build_scatter_volume(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ground = viewport_lib::SceneRenderItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.2)).to_cols_array_2d();
-    ground.material = Material::pbr([0.5, 0.52, 0.5], 0.0, 0.85);
+    ground.material = Material::pbr(Colour::linear_rgb(0.5, 0.52, 0.5), 0.0, 0.85);
 
     let sphere = ctx
         .renderer
@@ -994,7 +995,7 @@ fn build_scatter_volume(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ball = viewport_lib::SceneRenderItem::default();
     ball.mesh_id = sphere;
     ball.model = Mat4::from_translation(Vec3::new(0.0, 0.0, 1.0)).to_cols_array_2d();
-    ball.material = Material::pbr([0.75, 0.35, 0.25], 0.1, 0.4);
+    ball.material = Material::pbr(Colour::linear_rgb(0.75, 0.35, 0.25), 0.1, 0.4);
 
     let fog = ScatterVolume::box_uniform(
         Aabb {
@@ -1002,7 +1003,7 @@ fn build_scatter_volume(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             max: Vec3::new(5.0, 5.0, 2.2),
         },
         0.28,
-        [0.75, 0.8, 0.9],
+        Colour::linear_rgb(0.75, 0.8, 0.9),
     );
     let mut fog_item = ScatterVolumeItem::new(fog);
     fog_item.settings.pick_id = PickId(1613);
@@ -1038,7 +1039,7 @@ fn build_scatter_layered(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ground = viewport_lib::SceneRenderItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.2)).to_cols_array_2d();
-    ground.material = Material::pbr([0.42, 0.44, 0.46], 0.0, 0.85);
+    ground.material = Material::pbr(Colour::linear_rgb(0.42, 0.44, 0.46), 0.0, 0.85);
 
     let post = ctx
         .renderer
@@ -1048,7 +1049,7 @@ fn build_scatter_layered(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut pillar = viewport_lib::SceneRenderItem::default();
     pillar.mesh_id = post;
     pillar.model = Mat4::from_translation(Vec3::new(2.4, -1.4, 1.6)).to_cols_array_2d();
-    pillar.material = Material::pbr([0.8, 0.45, 0.2], 0.1, 0.5);
+    pillar.material = Material::pbr(Colour::linear_rgb(0.8, 0.45, 0.2), 0.1, 0.5);
 
     let fog = ScatterVolume::box_uniform(
         Aabb {
@@ -1056,12 +1057,17 @@ fn build_scatter_layered(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             max: Vec3::new(6.0, 6.0, 3.0),
         },
         0.16,
-        [0.72, 0.78, 0.9],
+        Colour::linear_rgb(0.72, 0.78, 0.9),
     );
 
     // Forward-scattering core inside the fog, bright enough that compositing
     // it in the wrong order is obvious rather than subtle.
-    let mut core = ScatterVolume::sphere_uniform([-0.8, 0.6, 1.3], 1.5, 0.9, [1.0, 0.72, 0.4]);
+    let mut core = ScatterVolume::sphere_uniform(
+        [-0.8, 0.6, 1.3],
+        1.5,
+        0.9,
+        Colour::linear_rgb(1.0, 0.72, 0.4),
+    );
     core.anisotropy = 0.6;
     core.density_remap =
         viewport_lib_plugins::item_types::scatter_volume::DensityRemap::Smoothstep {
@@ -1112,7 +1118,7 @@ fn build_scatter_textured(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut wall = viewport_lib::SceneRenderItem::default();
     wall.mesh_id = backdrop;
     wall.model = Mat4::from_translation(Vec3::new(0.0, 2.6, 0.0)).to_cols_array_2d();
-    wall.material = Material::pbr([0.55, 0.55, 0.6], 0.0, 0.9);
+    wall.material = Material::pbr(Colour::linear_rgb(0.55, 0.55, 0.6), 0.0, 0.9);
 
     let mut textured = ScatterVolume::box_uniform(
         Aabb {
@@ -1120,7 +1126,7 @@ fn build_scatter_textured(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             max: Vec3::new(-0.2, 1.2, 1.2),
         },
         1.1,
-        [1.0, 1.0, 1.0],
+        Colour::linear_rgb(1.0, 1.0, 1.0),
     );
     textured.density_texture = Some(vid);
     textured.colour =
@@ -1139,7 +1145,7 @@ fn build_scatter_textured(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             max: Vec3::new(2.6, 1.2, 1.2),
         },
         0.85,
-        [0.55, 0.85, 1.0],
+        Colour::linear_rgb(0.55, 0.85, 1.0),
     );
     let mut noise = viewport_lib_plugins::item_types::scatter_volume::NoiseDriver::default();
     noise.scale = 1.4;
@@ -1185,7 +1191,7 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut wall = viewport_lib::SceneRenderItem::default();
     wall.mesh_id = backdrop;
     wall.model = Mat4::from_translation(Vec3::new(0.0, 2.8, 0.0)).to_cols_array_2d();
-    wall.material = Material::pbr([0.75, 0.3, 0.25], 0.0, 0.85);
+    wall.material = Material::pbr(Colour::linear_rgb(0.75, 0.3, 0.25), 0.0, 0.85);
 
     // Struts in front of the wall, so the refraction has hard edges to bend.
     let strut = ctx
@@ -1199,7 +1205,11 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         post.mesh_id = strut;
         post.model = Mat4::from_translation(Vec3::new(*x, 1.9, 0.0)).to_cols_array_2d();
         let t = i as f32 / 3.0;
-        post.material = Material::pbr([0.3 + 0.5 * t, 0.55, 0.85 - 0.4 * t], 0.1, 0.5);
+        post.material = Material::pbr(
+            Colour::linear_rgb(0.3 + 0.5 * t, 0.55, 0.85 - 0.4 * t),
+            0.1,
+            0.5,
+        );
         posts.push(post);
     }
 
@@ -1211,7 +1221,7 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             max: Vec3::new(0.2, 1.0, 1.8),
         },
         0.9,
-        [0.72, 0.76, 0.85],
+        Colour::linear_rgb(0.72, 0.76, 0.85),
     );
     let mut noise = viewport_lib_plugins::item_types::scatter_volume::NoiseDriver::default();
     noise.scale = 1.1;
@@ -1228,7 +1238,7 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             max: Vec3::new(3.2, 1.0, 1.8),
         },
         0.35,
-        [1.0, 0.85, 0.7],
+        Colour::linear_rgb(1.0, 0.85, 0.7),
     );
     let mut refraction =
         viewport_lib_plugins::item_types::scatter_volume::RefractionParams::default();
@@ -1324,7 +1334,7 @@ fn build_item_wireframes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         })
         .collect();
     sprites.sizes = (0..6).map(|i| 0.3 + 0.07 * i as f32).collect();
-    sprites.default_colour = [0.85, 0.85, 0.9, 1.0].into();
+    sprites.default_colour = Colour::linear(0.85, 0.85, 0.9, 1.0);
     sprites.size_mode = SpriteSizeMode::WorldSpace;
     sprites.depth_write = true;
     sprites.settings.wireframe = true;
@@ -1350,7 +1360,7 @@ fn build_decals(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ground = viewport_lib::SceneRenderItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-    ground.material = Material::pbr([0.62, 0.6, 0.58], 0.0, 0.8);
+    ground.material = Material::pbr(Colour::linear_rgb(0.62, 0.6, 0.58), 0.0, 0.8);
 
     let box_mesh = ctx
         .renderer
@@ -1360,7 +1370,7 @@ fn build_decals(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut cube = viewport_lib::SceneRenderItem::default();
     cube.mesh_id = box_mesh;
     cube.model = Mat4::from_translation(Vec3::new(-1.6, 1.2, 0.6)).to_cols_array_2d();
-    cube.material = Material::pbr([0.45, 0.5, 0.65], 0.2, 0.5);
+    cube.material = Material::pbr(Colour::linear_rgb(0.45, 0.5, 0.65), 0.2, 0.5);
 
     let checker = checker_texture(ctx, [220, 70, 40], [240, 220, 200]);
     let dark = checker_texture(ctx, [70, 70, 80], [110, 110, 120]);
@@ -1422,7 +1432,7 @@ fn build_refraction_over_soft_sprite(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ground = viewport_lib::SceneRenderItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -1.2)).to_cols_array_2d();
-    ground.material = Material::pbr([1.0, 1.0, 1.0], 0.0, 0.85);
+    ground.material = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.85);
     ground.material.texture_id = Some(backdrop_tex);
 
     // Soft particles hugging the slab, so they fade where they intersect it.
@@ -1436,7 +1446,7 @@ fn build_refraction_over_soft_sprite(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         })
         .collect();
     haze.default_size = 2.2;
-    haze.default_colour = [1.0, 1.0, 1.0, 0.85].into();
+    haze.default_colour = Colour::linear(1.0, 1.0, 1.0, 0.85);
     haze.size_mode = SpriteSizeMode::WorldSpace;
     haze.depth_write = false;
     haze.soft_particle_distance = Some(0.8);
@@ -1452,7 +1462,7 @@ fn build_refraction_over_soft_sprite(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         })
         .collect();
     bubbles.default_size = 1.2;
-    bubbles.default_colour = [1.0, 1.0, 1.0, 1.0].into();
+    bubbles.default_colour = Colour::linear(1.0, 1.0, 1.0, 1.0);
     bubbles.size_mode = SpriteSizeMode::WorldSpace;
     bubbles.depth_write = false;
     bubbles.refraction_strength = Some(30.0);
@@ -1483,13 +1493,13 @@ fn build_decal_on_curves(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     tube.positions = line(-1.4);
     tube.strip_lengths = vec![24];
     tube.radius = 0.28;
-    tube.colour = [0.75, 0.75, 0.78, 1.0].into();
+    tube.colour = Colour::linear(0.75, 0.75, 0.78, 1.0);
 
     let mut st = StreamtubeItem::default();
     st.positions = line(0.0);
     st.strip_lengths = vec![24];
     st.radius = 0.28;
-    st.colour = [0.75, 0.75, 0.78, 1.0].into();
+    st.colour = Colour::linear(0.75, 0.75, 0.78, 1.0);
 
     let mut rb = RibbonItem::default();
     rb.positions = line(1.4);
@@ -1499,7 +1509,7 @@ fn build_decal_on_curves(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // the tangent along X, a width along Y lays the face flat so it points at
     // the decal rather than standing edge-on to it.
     rb.twist_attribute = Some(vec![[0.0, 1.0, 0.0]; 24]);
-    rb.colour = [0.75, 0.75, 0.78, 1.0].into();
+    rb.colour = Colour::linear(0.75, 0.75, 0.78, 1.0);
 
     let checker = checker_texture(ctx, [220, 70, 40], [240, 220, 200]);
     let mut decal = DecalItem::default();
@@ -1532,7 +1542,7 @@ fn build_decal_on_non_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut mesh = viewport_lib::SceneRenderItem::default();
     mesh.mesh_id = ball;
     mesh.model = Mat4::from_translation(Vec3::new(-1.6, 0.0, 0.0)).to_cols_array_2d();
-    mesh.material = Material::pbr([0.55, 0.55, 0.58], 0.1, 0.6);
+    mesh.material = Material::pbr(Colour::linear_rgb(0.55, 0.55, 0.58), 0.1, 0.6);
     // The mesh declines the decal by leaving the layers the surface mask
     // holds. The implicit surface beside it stays on them and takes it.
     mesh.settings.visibility_mask &= !SURFACE_MASK_LAYERS;
@@ -1542,7 +1552,7 @@ fn build_decal_on_non_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     sphere.blend = 0.3;
     sphere.params[..3].copy_from_slice(&[1.6, 0.0, 0.0]);
     sphere.params[3] = 1.0;
-    sphere.colour = [0.55, 0.55, 0.58, 1.0].into();
+    sphere.colour = Colour::linear(0.55, 0.55, 0.58, 1.0);
     let mut implicit = GpuImplicitItem::default();
     implicit.primitives = vec![sphere];
     implicit.blend_mode = ImplicitBlendMode::SmoothUnion;
@@ -1579,7 +1589,7 @@ fn build_decal_layers(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         let mut item = viewport_lib::SceneRenderItem::default();
         item.mesh_id = ball;
         item.model = Mat4::from_translation(Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
-        item.material = Material::pbr([0.55, 0.55, 0.58], 0.1, 0.6);
+        item.material = Material::pbr(Colour::linear_rgb(0.55, 0.55, 0.58), 0.1, 0.6);
         item
     };
     let mut left = sphere(-2.4);
@@ -1635,7 +1645,7 @@ fn lic_surface(
     let mut item = viewport_lib::SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = model.to_cols_array_2d();
-    item.material = Material::pbr([0.55, 0.6, 0.7], 0.0, 0.7);
+    item.material = Material::pbr(Colour::linear_rgb(0.55, 0.6, 0.7), 0.0, 0.7);
     let lic = SurfaceLicItem::new(mesh, model.to_cols_array_2d(), "flow");
     (item, lic)
 }
@@ -1686,7 +1696,7 @@ fn build_surface_lic_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut blocker = viewport_lib::SceneRenderItem::default();
     blocker.mesh_id = cube;
     blocker.model = Mat4::from_translation(sphere_at + toward_eye * 2.2).to_cols_array_2d();
-    blocker.material = Material::pbr([0.8, 0.45, 0.2], 0.0, 0.6);
+    blocker.material = Material::pbr(Colour::linear_rgb(0.8, 0.45, 0.2), 0.0, 0.6);
 
     let (sphere, sphere_lic) = lic_surface(ball, Mat4::from_translation(sphere_at));
     let (torus, torus_lic) = lic_surface(
@@ -1938,7 +1948,7 @@ fn build_surface_contours_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut floor = viewport_lib::SceneRenderItem::default();
     floor.mesh_id = plane;
     floor.model = plane_model.to_cols_array_2d();
-    floor.material = Material::pbr([0.75, 0.75, 0.72], 0.0, 0.8);
+    floor.material = Material::pbr(Colour::linear_rgb(0.75, 0.75, 0.72), 0.0, 0.8);
     floor.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
     let mut rings = SurfaceContourItem::new(
         plane,
@@ -1949,7 +1959,7 @@ fn build_surface_contours_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             interval: 0.25,
         },
     );
-    rings.colour = [0.05, 0.1, 0.45, 1.0].into();
+    rings.colour = Colour::linear(0.05, 0.1, 0.45, 1.0);
     rings.width = 2.0;
 
     // Between the camera and the outer rings on the plane's right, clear of
@@ -1957,7 +1967,7 @@ fn build_surface_contours_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut blocker = viewport_lib::SceneRenderItem::default();
     blocker.mesh_id = cube;
     blocker.model = Mat4::from_translation(plane_at + Vec3::new(1.3, 0.6, 0.4)).to_cols_array_2d();
-    blocker.material = Material::pbr([0.8, 0.45, 0.2], 0.0, 0.6);
+    blocker.material = Material::pbr(Colour::linear_rgb(0.8, 0.45, 0.2), 0.0, 0.6);
 
     let mut cells = Vec::new();
     for k in 0..3u32 {
@@ -2007,7 +2017,7 @@ fn build_surface_contours_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             interval: 0.2,
         },
     );
-    shells.colour = [1.0, 1.0, 1.0, 1.0].into();
+    shells.colour = Colour::linear(1.0, 1.0, 1.0, 1.0);
     shells.width = 1.0;
 
     BuiltScene {
@@ -2031,7 +2041,7 @@ fn build_decal_under_soft_sprite(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ground = viewport_lib::SceneRenderItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-    ground.material = Material::pbr([0.62, 0.6, 0.58], 0.0, 0.8);
+    ground.material = Material::pbr(Colour::linear_rgb(0.62, 0.6, 0.58), 0.0, 0.8);
 
     let checker = checker_texture(ctx, [220, 70, 40], [240, 220, 200]);
     let mut decal = DecalItem::default();
@@ -2052,7 +2062,7 @@ fn build_decal_under_soft_sprite(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         })
         .collect();
     sheet.default_size = 1.3;
-    sheet.default_colour = [1.0, 0.95, 0.8, 0.75].into();
+    sheet.default_colour = Colour::linear(1.0, 0.95, 0.8, 0.75);
     sheet.size_mode = SpriteSizeMode::WorldSpace;
     sheet.depth_write = false;
     sheet.soft_particle_distance = Some(0.6);
@@ -2089,7 +2099,7 @@ fn build_mesh_instances(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     item.colours = (0..n)
         .map(|i| {
             let t = i as f32 / (n - 1) as f32;
-            viewport_lib::Colour::from([0.9 - 0.6 * t, 0.3 + 0.5 * t, 0.25, 1.0])
+            viewport_lib::Colour::linear(0.9 - 0.6 * t, 0.3 + 0.5 * t, 0.25, 1.0)
         })
         .collect();
     BuiltScene {

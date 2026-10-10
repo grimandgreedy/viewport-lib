@@ -5,6 +5,7 @@
 //! while thrashing every pool slot. Now the nearest pool-size lights get
 //! slots and the rest render unshadowed.
 
+use viewport_lib::Colour;
 use viewport_lib::{
     CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
     SceneRenderItem,
@@ -29,11 +30,11 @@ fn point_shadow_casters_are_capped_at_pool_size() {
         .expect("ball");
     let mut ground = SceneRenderItem::default();
     ground.mesh_id = ground_id;
-    ground.material = Material::from_colour([0.7, 0.7, 0.7]);
+    ground.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     let mut ball = SceneRenderItem::default();
     ball.mesh_id = ball_id;
     ball.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 15.0)).to_cols_array_2d();
-    ball.material = Material::from_colour([0.8, 0.3, 0.3]);
+    ball.material = Material::from_colour(Colour::linear_rgb(0.8, 0.3, 0.3));
 
     // 200 point lights with all defaults (cast_shadows = true), the shape a
     // consumer's level full of lamps produces.

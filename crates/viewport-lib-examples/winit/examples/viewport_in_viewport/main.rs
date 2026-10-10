@@ -99,7 +99,7 @@ impl Child {
         session.scene_mut().add(
             Some(id),
             glam::Mat4::IDENTITY,
-            Material::from_colour(colour),
+            Material::from_colour(Colour::from_linear_rgb_array(colour)),
         );
         session.camera_mut().distance = 3.4;
         Self {
@@ -203,8 +203,11 @@ fn main() {
                         0.0,
                     )) * glam::Mat4::from_rotation_z(a)
                         * glam::Mat4::from_scale(glam::Vec3::new(0.5, 0.5, 2.2));
-                    vp.scene_mut()
-                        .add(Some(bar), m, Material::from_colour([0.30, 0.32, 0.38]));
+                    vp.scene_mut().add(
+                        Some(bar),
+                        m,
+                        Material::from_colour(Colour::linear_rgb(0.30, 0.32, 0.38)),
+                    );
                 }
                 vp.camera_mut().distance = 11.0;
                 vp.viewport_frame_mut().background_colour =

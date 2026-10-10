@@ -7,6 +7,7 @@
 //! GPU atomic race that changed frame to frame (visible lighting flicker and
 //! 2x cost swings at 200+ scene lights).
 
+use viewport_lib::Colour;
 use viewport_lib::{
     CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
     SceneRenderItem,
@@ -23,7 +24,7 @@ fn overflow_frame(h: &mut Harness, lights: usize) -> FrameData {
         .expect("ground");
     let mut ground = SceneRenderItem::default();
     ground.mesh_id = ground_id;
-    ground.material = Material::from_colour([0.7, 0.7, 0.7]);
+    ground.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
 
     // Non-casting point lights stacked over one small area with generous
     // ranges: every cluster covering the ground sees most of them.

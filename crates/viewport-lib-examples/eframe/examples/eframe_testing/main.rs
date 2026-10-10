@@ -13,6 +13,7 @@
 
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource,
@@ -133,7 +134,7 @@ impl App {
             _t.kind = LightKind::Directional {
                 direction: [0.4, 0.3, 1.5],
             };
-            _t.colour = [1.0, 1.0, 1.0].into();
+            _t.colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t.intensity = 1.0;
             _t
         }];
@@ -165,9 +166,9 @@ impl App {
     }
 
     fn build_scene(&self) -> Vec<SceneRenderItem> {
-        let ground_mat = Material::pbr([0.7, 0.7, 0.7], 0.0, 0.8);
-        let box_mat = Material::pbr([0.8, 0.5, 0.3], 0.0, 0.6);
-        let sphere_mat = Material::pbr([0.4, 0.6, 0.9], 0.0, 0.3);
+        let ground_mat = Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.7), 0.0, 0.8);
+        let box_mat = Material::pbr(Colour::linear_rgb(0.8, 0.5, 0.3), 0.0, 0.6);
+        let sphere_mat = Material::pbr(Colour::linear_rgb(0.4, 0.6, 0.9), 0.0, 0.3);
 
         let ground = {
             let mut item = SceneRenderItem::default();
@@ -224,7 +225,7 @@ impl App {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = self.unlit_sphere_id;
                 item.settings.unlit = true;
-                item.material.base_colour = COLOUR_MAGENTA.into();
+                item.material.base_colour = Colour::from_linear_rgb_array(COLOUR_MAGENTA);
                 item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0))
                     .to_cols_array_2d();
                 items.push(item);
@@ -235,7 +236,7 @@ impl App {
                 item.mesh_id = self.unlit_box_id;
 
                 item.settings.unlit = true;
-                item.material.base_colour = COLOUR_CYAN.into();
+                item.material.base_colour = Colour::from_linear_rgb_array(COLOUR_CYAN);
                 item.model = glam::Mat4::from_translation(glam::Vec3::new(8.0, 5.0, -2.5))
                     .to_cols_array_2d();
                 items.push(item);

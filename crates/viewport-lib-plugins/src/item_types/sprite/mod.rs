@@ -17,6 +17,7 @@
 //!   `paint_depth_read`, which is the only one of the four that can sample
 //!   scene depth for the soft fade.
 
+use viewport_lib::Colour;
 pub mod channels;
 mod pipeline;
 mod store;
@@ -1116,7 +1117,7 @@ fn sprite_bounds_polyline(
         [mn.x, mx.y, mx.z],
         [mx.x, mx.y, mx.z],
     ];
-    viewport_lib::renderer::obb_wireframe_polyline(&corners, [0.75, 0.75, 0.75, 1.0])
+    viewport_lib::renderer::obb_wireframe_polyline(&corners, Colour::linear(0.75, 0.75, 0.75, 1.0))
 }
 
 /// Generate 4-edge quad outlines for each sprite in a batch.
@@ -1217,7 +1218,7 @@ fn sprite_quad_outlines_polyline(
     let mut out = viewport_lib::renderer::PolylineItem::default();
     out.positions = all_positions;
     out.strip_lengths = strip_lengths;
-    out.default_colour = [0.75, 0.75, 0.75, 1.0].into();
+    out.default_colour = Colour::linear(0.75, 0.75, 0.75, 1.0);
     out.line_width = 1.0;
     out
 }

@@ -3,6 +3,7 @@
 //! Part of the headless integration suite (split from the former single
 //! headless.rs). Shared device and mesh helpers live in tests/common/mod.rs.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -64,7 +65,7 @@ fn lightmap_replace_mode_recolors_object() {
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
     item.material.shading_model = ShadingModel::Pbr;
-    item.material.base_colour = [1.0, 1.0, 1.0].into();
+    item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let (w, h) = (64u32, 64u32);
@@ -119,7 +120,7 @@ fn lightmap_ao_mode_darkens_object() {
         item.mesh_id = mesh_id;
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
         item.material.shading_model = ShadingModel::Pbr;
-        item.material.base_colour = [1.0, 1.0, 1.0].into();
+        item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         frame
     };

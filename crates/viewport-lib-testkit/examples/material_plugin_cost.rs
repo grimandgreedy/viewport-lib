@@ -18,6 +18,7 @@
 //! finished.
 
 use std::time::Instant;
+use viewport_lib::Colour;
 
 use viewport_lib::resources::build_log;
 use viewport_lib::{
@@ -166,7 +167,7 @@ fn main() {
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 3.0 - 7.5, 0.0, 1.0))
                     .to_cols_array_2d();
-            item.material = Material::pbr([0.75, 0.3, 0.3], 0.1, 0.55);
+            item.material = Material::pbr(Colour::linear_rgb(0.75, 0.3, 0.3), 0.1, 0.55);
             item.material.shading_plugin = plugin;
             item
         })

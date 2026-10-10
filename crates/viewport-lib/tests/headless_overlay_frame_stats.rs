@@ -12,6 +12,7 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -47,7 +48,7 @@ fn overlay_load(frame: &mut FrameData, count: usize) {
                 [x, y],
                 [6.0, 6.0],
             )
-            .with_fill(OverlayFill::Solid([0.8, 0.2, 0.2, 1.0].into()))
+            .with_fill(OverlayFill::Solid(Colour::linear(0.8, 0.2, 0.2, 1.0)))
         })
         .collect();
     frame.overlays.labels = (0..count)

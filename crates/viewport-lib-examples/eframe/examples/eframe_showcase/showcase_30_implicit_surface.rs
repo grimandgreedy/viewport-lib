@@ -18,6 +18,7 @@ use crate::eframe::egui;
 use crate::{App, MeshId};
 use glam::Vec3;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::gpu_implicit::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
 };
@@ -236,7 +237,7 @@ impl App {
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 4.5)).to_cols_array_2d();
             item.material = {
-                let mut m = Material::from_colour([0.10, 0.26, 0.68]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.10, 0.26, 0.68));
                 m.roughness = 0.35;
                 m
             };
@@ -250,7 +251,7 @@ impl App {
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.5)).to_cols_array_2d();
             item.material = {
-                let mut m = Material::from_colour([0.75, 0.28, 0.05]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05));
                 m.roughness = 0.35;
                 m
             };
@@ -264,7 +265,7 @@ impl App {
                 item.mesh_id = mc_id;
                 item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
                 item.material = {
-                    let mut m = Material::from_colour([0.55, 0.50, 0.45]);
+                    let mut m = Material::from_colour(Colour::linear_rgb(0.55, 0.50, 0.45));
                     m.roughness = 0.5;
                     m
                 };
@@ -303,7 +304,7 @@ impl App {
             prim.params[1] = CENTERS[i][1];
             prim.params[2] = CENTERS[i][2];
             prim.params[3] = 1.3;
-            prim.colour = COLOURS[i].into();
+            prim.colour = Colour::from_linear_array(COLOURS[i]);
             primitives.push(prim);
         }
 
@@ -330,7 +331,7 @@ impl App {
             return;
         };
 
-        let mut mat = Material::from_colour([0.45, 0.48, 0.52]);
+        let mut mat = Material::from_colour(Colour::linear_rgb(0.45, 0.48, 0.52));
         mat.roughness = 0.4;
 
         fd.scene
@@ -354,7 +355,7 @@ impl App {
                     _t.kind = LightKind::Directional {
                         direction: [0.4, 0.7, 0.9],
                     };
-                    _t.colour = [1.0, 0.97, 0.93].into();
+                    _t.colour = Colour::linear_rgb(1.0, 0.97, 0.93);
                     _t.intensity = 1.4;
                     _t
                 },
@@ -363,14 +364,14 @@ impl App {
                     _t.kind = LightKind::Directional {
                         direction: [-0.3, 0.2, -0.5],
                     };
-                    _t.colour = [0.5, 0.6, 0.9].into();
+                    _t.colour = Colour::linear_rgb(0.5, 0.6, 0.9);
                     _t.intensity = 0.3;
                     _t
                 },
             ];
             _t.hemisphere_intensity = 0.45;
-            _t.sky_colour = [0.50, 0.60, 0.80].into();
-            _t.ground_colour = [0.25, 0.25, 0.35].into();
+            _t.sky_colour = Colour::linear_rgb(0.50, 0.60, 0.80);
+            _t.ground_colour = Colour::linear_rgb(0.25, 0.25, 0.35);
             _t.shadows.bias = 0.003;
             _t
         }

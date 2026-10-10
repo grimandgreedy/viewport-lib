@@ -17,6 +17,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     AttributeData, BackfacePolicy, LightKind, LightSource, LightingSettings, MeshId,
     SceneRenderItem, ViewportRenderer, primitives,
@@ -159,7 +160,7 @@ pub(crate) fn warp_scene_items(app: &App) -> Vec<SceneRenderItem> {
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(tx, 0.0, 0.0)).to_cols_array_2d();
             item.material.backface_policy = BackfacePolicy::Identical;
-            item.material.base_colour = colour.into();
+            item.material.base_colour = Colour::from_linear_rgb_array(colour);
             item.material.specular = 0.15;
             item.warp_attribute = Some("warp".to_string());
             item.warp_scale = app.warp_state.scale;
@@ -179,7 +180,7 @@ pub(crate) fn warp_lighting() -> LightingSettings {
                 _t.kind = LightKind::Directional {
                     direction: [0.3, 0.8, 0.5],
                 };
-                _t.colour = [1.0, 1.0, 1.0].into();
+                _t.colour = Colour::linear_rgb(1.0, 1.0, 1.0);
                 _t.intensity = 0.7;
                 _t
             },
@@ -188,15 +189,15 @@ pub(crate) fn warp_lighting() -> LightingSettings {
                 _t.kind = LightKind::Directional {
                     direction: [-0.3, -0.5, -0.5],
                 };
-                _t.colour = [0.8, 0.85, 1.0].into();
+                _t.colour = Colour::linear_rgb(0.8, 0.85, 1.0);
                 _t.intensity = 0.3;
                 _t
             },
         ];
         _t.shadows.enabled = false;
         _t.hemisphere_intensity = 0.35;
-        _t.sky_colour = [0.9, 0.92, 1.0].into();
-        _t.ground_colour = [0.5, 0.5, 0.55].into();
+        _t.sky_colour = Colour::linear_rgb(0.9, 0.92, 1.0);
+        _t.ground_colour = Colour::linear_rgb(0.5, 0.5, 0.55);
         _t
     }
 }

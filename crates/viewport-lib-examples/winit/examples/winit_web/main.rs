@@ -36,6 +36,7 @@
 
 use std::sync::Arc;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 
 use vpl::{
     BindingPreset, ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, Material, MeshId,
@@ -351,9 +352,10 @@ async fn build_state(window: Arc<Window>) -> State {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-        item.material = Material::from_colour(colour);
+        item.material = Material::from_colour(Colour::from_linear_rgb_array(colour));
         // A little emissive above 1.0 gives bloom some HDR energy to extract.
-        item.material.emissive = [colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2].into();
+        item.material.emissive =
+            Colour::linear_rgb(colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2);
         item
     };
     let scene_items = vec![

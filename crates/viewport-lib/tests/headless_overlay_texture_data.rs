@@ -8,6 +8,7 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -32,7 +33,7 @@ fn overlay_frame() -> FrameData {
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
     frame
 }
 
@@ -50,7 +51,7 @@ fn centre_red(
             [16.0, 16.0],
             [32.0, 32.0],
         )
-        .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
+        .with_fill(OverlayFill::Solid(Colour::linear(1.0, 1.0, 1.0, 1.0)))
         .with_texture(tex),
     ];
     let px = renderer.render_offscreen(device, queue, &frame, SIZE, SIZE);

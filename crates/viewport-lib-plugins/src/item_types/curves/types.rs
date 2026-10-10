@@ -3,6 +3,7 @@
 //! They share a shape (a control polyline plus per-point width) and a pipeline
 //! family, so they share a module the way the plugins that draw them do.
 
+use viewport_lib::Colour;
 viewport_lib::resources::handle::slot_handle! {
     /// Handle to a streamtube uploaded once through
     /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload).
@@ -60,7 +61,7 @@ impl Default for StreamtubeItem {
             positions: Vec::new(),
             strip_lengths: Vec::new(),
             radius: 0.05,
-            colour: [1.0, 1.0, 1.0, 1.0].into(),
+            colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
             model: IDENTITY_MAT4,
             settings: ItemSettings::default(),
         }
@@ -115,7 +116,7 @@ impl Default for TubeItem {
             scalars: Vec::new(),
             scalar_range: None,
             colourmap_id: None,
-            colour: [1.0, 1.0, 1.0, 1.0].into(),
+            colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
             model: IDENTITY_MAT4,
             settings: ItemSettings::default(),
         }
@@ -202,7 +203,7 @@ impl Default for RibbonItem {
             scalars: Vec::new(),
             scalar_range: None,
             colourmap_id: None,
-            colour: [1.0, 1.0, 1.0, 1.0].into(),
+            colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
             colour_attribute: Vec::new(),
             blend: SpriteBlend::AlphaBlend,
             depth_write: true,

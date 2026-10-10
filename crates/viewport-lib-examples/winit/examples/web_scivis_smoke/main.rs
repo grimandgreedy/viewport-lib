@@ -26,6 +26,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use viewport_lib::Colour;
 
 use web_time::Instant;
 
@@ -397,7 +398,7 @@ async fn build_state(window: Arc<Window>) -> State {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material = Material::from_colour([0.35, 0.72, 0.95]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.35, 0.72, 0.95));
     let scene_items = vec![item];
 
     // Step 3: the pick accelerator builds a BVH over the scene, which is the

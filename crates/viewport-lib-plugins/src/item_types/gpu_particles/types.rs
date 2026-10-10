@@ -6,6 +6,7 @@
 //! and submit a [`GpuParticleSystemItem`] per frame to simulate and draw it.
 
 use crate::item_types::sprite::{SpriteLitParams, SpriteSizeMode};
+use viewport_lib::Colour;
 use viewport_lib::ItemSettings;
 use viewport_lib::renderer::SpriteBlend;
 
@@ -222,7 +223,7 @@ impl Default for EmitterConfig {
             lifetime: (1.0, 2.0),
             initial_velocity: VelocityDist::default(),
             spawn_shape: SpawnShape::default(),
-            colour: [1.0, 1.0, 1.0, 1.0].into(),
+            colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
             size: 16.0,
         }
     }

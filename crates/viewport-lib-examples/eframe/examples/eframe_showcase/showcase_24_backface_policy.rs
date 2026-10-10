@@ -21,6 +21,7 @@ use crate::App;
 use crate::eframe::egui;
 use glam::Mat4;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     BackfacePattern, BackfacePolicy, ClipObject, LightSource, LightingSettings, Material,
     PatternConfig, SceneRenderItem, ViewportRenderer, scene::Scene,
@@ -56,14 +57,14 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
         (BackfacePolicy::Cull, "Cull"),
         (BackfacePolicy::Identical, "Identical"),
         (
-            BackfacePolicy::DifferentColour([0.65, 0.09, 0.07].into()),
+            BackfacePolicy::DifferentColour(Colour::linear_rgb(0.65, 0.09, 0.07)),
             "DifferentColour",
         ),
         (BackfacePolicy::Tint(0.4), "Tint"),
         (
             BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Checker,
-                colour: [0.75, 0.28, 0.05].into(),
+                colour: Colour::linear_rgb(0.75, 0.28, 0.05),
                 ..Default::default()
             }),
             "Checker",
@@ -71,7 +72,7 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
         (
             BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Hatching,
-                colour: [0.10, 0.26, 0.68].into(),
+                colour: Colour::linear_rgb(0.10, 0.26, 0.68),
                 ..Default::default()
             }),
             "Hatching",
@@ -79,7 +80,7 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
         (
             BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Crosshatch,
-                colour: [0.10, 0.52, 0.18].into(),
+                colour: Colour::linear_rgb(0.10, 0.52, 0.18),
                 ..Default::default()
             }),
             "Crosshatch",
@@ -87,7 +88,7 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
         (
             BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Stripes,
-                colour: [0.72, 0.42, 0.04].into(),
+                colour: Colour::linear_rgb(0.72, 0.42, 0.04),
                 ..Default::default()
             }),
             "Stripes",
@@ -96,7 +97,7 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
 }
 
 fn make_material(policy: BackfacePolicy) -> Material {
-    let mut mat = Material::from_colour([0.85, 0.85, 0.85]);
+    let mut mat = Material::from_colour(Colour::linear_rgb(0.85, 0.85, 0.85));
     mat.backface_policy = policy;
     mat
 }
@@ -331,8 +332,8 @@ impl App {
                 _t
             }];
             _t.hemisphere_intensity = 0.4;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         }
     }

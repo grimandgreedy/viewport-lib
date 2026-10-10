@@ -7,6 +7,7 @@
 
 #![cfg(feature = "item-types")]
 
+use viewport_lib::Colour;
 mod common;
 use common::*;
 use viewport_lib::plugin_api::Handles;
@@ -139,7 +140,7 @@ fn a_selected_batch_outlines_every_billboard() {
         frame.camera.viewport_size = [512.0, 128.0];
         frame.camera.pixels_per_point = 1.0;
         frame.interaction.outline_selected = true;
-        frame.interaction.outline_colour = [1.0, 0.0, 0.0, 1.0].into();
+        frame.interaction.outline_colour = Colour::linear(1.0, 0.0, 0.0, 1.0);
         frame.interaction.outline_width_px = 3.0;
 
         let mut item = SpriteItem::default();
@@ -147,7 +148,7 @@ fn a_selected_batch_outlines_every_billboard() {
             .map(|i| [(i as f32 - 3.5) * 1.5, 0.0, 0.0])
             .collect();
         item.default_size = 16.0;
-        item.default_colour = [0.0, 0.0, 1.0, 1.0].into();
+        item.default_colour = Colour::linear(0.0, 0.0, 1.0, 1.0);
         item.depth_write = true;
         item.settings.pick_id = PickId(1);
         item.settings.selected = true;

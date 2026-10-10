@@ -23,6 +23,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 
 use vpl::{
     AppConfig, BindingPreset, LabelAnchor, LabelItem, Material, OrbitCameraController, OverlayFill,
@@ -64,12 +65,12 @@ fn main() {
         scene.add(
             Some(cube),
             glam::Mat4::from_translation(glam::Vec3::new(-1.5, 0.0, 0.0)),
-            Material::from_colour([0.4, 0.6, 0.9]),
+            Material::from_colour(Colour::linear_rgb(0.4, 0.6, 0.9)),
         );
         scene.add(
             Some(sphere),
             glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)),
-            Material::from_colour([0.9, 0.5, 0.2]),
+            Material::from_colour(Colour::linear_rgb(0.9, 0.5, 0.2)),
         );
 
         session.camera_mut().distance = 8.0;
@@ -134,7 +135,7 @@ fn main() {
                 QUIT_POS,
                 QUIT_SIZE,
             )
-            .with_fill(OverlayFill::Solid([0.7, 0.2, 0.2, 0.9].into())),
+            .with_fill(OverlayFill::Solid(Colour::linear(0.7, 0.2, 0.2, 0.9))),
         );
         // Center the label in the quit box: anchor at the box center, then
         // Center alignment centers horizontally and the anchor is already the

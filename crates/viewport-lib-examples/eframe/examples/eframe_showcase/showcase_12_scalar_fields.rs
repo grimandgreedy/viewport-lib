@@ -8,6 +8,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     AttributeData, BuiltinColourmap, Material, MeshData, MeshId, NodeId, Selection,
     ViewportRenderer, scene::Scene,
@@ -108,7 +109,7 @@ impl App {
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(-6.0, 0.0, 0.0)),
             {
-                let mut m = Material::from_colour([0.8, 0.8, 0.8]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
                 m.roughness = 0.5;
                 m
             },
@@ -128,7 +129,7 @@ impl App {
             self.scalar_state
                 .scene
                 .add_named("Wave Grid", Some(wave_id), glam::Mat4::IDENTITY, {
-                    let mut m = Material::from_colour([0.8, 0.8, 0.8]);
+                    let mut m = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
                     m.roughness = 0.5;
                     m
                 });
@@ -148,7 +149,7 @@ impl App {
             Some(box_id),
             glam::Mat4::from_translation(glam::Vec3::new(6.0, 0.0, 0.0)),
             {
-                let mut m = Material::from_colour([0.8, 0.8, 0.8]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
                 m.roughness = 0.5;
                 m
             },
@@ -365,7 +366,7 @@ pub(crate) fn scene(
                 Some(app.scalar_state.range)
             };
             item.nan_colour = if app.scalar_state.nan_on {
-                Some([0.85, 0.1, 0.85, 1.0].into())
+                Some(Colour::linear(0.85, 0.1, 0.85, 1.0))
             } else {
                 None
             };
@@ -380,8 +381,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         (

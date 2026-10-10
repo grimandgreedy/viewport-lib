@@ -14,6 +14,7 @@ use crate::App;
 use crate::eframe::egui;
 use std::f32::consts::TAU;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::vector_field::VectorFieldItem;
 use vpl::{
     BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, SceneRenderItem,
@@ -143,7 +144,7 @@ pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
                         4 => (f, 0.0, 1.0),
                         _ => (1.0, 0.0, 1.0 - f),
                     };
-                    [r, g, b, 1.0].into()
+                    Colour::linear(r, g, b, 1.0)
                 })
                 .collect();
         }
@@ -153,9 +154,9 @@ pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
             item.edge_colours = (0..num_segs)
                 .map(|i| {
                     if i % 2 == 0 {
-                        [0.2, 0.6, 1.0, 1.0].into()
+                        Colour::linear(0.2, 0.6, 1.0, 1.0)
                     } else {
-                        [1.0, 0.4, 0.1, 1.0].into()
+                        Colour::linear(1.0, 0.4, 0.1, 1.0)
                     }
                 })
                 .collect();

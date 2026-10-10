@@ -18,6 +18,7 @@
 //! compare what the path that runs no post chain still allocates.
 
 use std::time::Instant;
+use viewport_lib::Colour;
 
 use viewport_lib as vpl;
 use vpl::wgpu;
@@ -164,7 +165,7 @@ fn main() {
         frame.camera.viewport_size = [w as f32, h as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
-        frame.viewport.background_colour = Some([0.1, 0.1, 0.12, 1.0].into());
+        frame.viewport.background_colour = Some(Colour::linear(0.1, 0.1, 0.12, 1.0));
         if direct {
             frame.effects.display.mode = vpl::PipelineMode::Direct;
         }

@@ -39,6 +39,7 @@
 //! believable about a flat quad.
 
 use std::any::Any;
+use viewport_lib::Colour;
 
 use viewport_lib::plugin_api::shared_wgsl::{
     SHARED_BINDINGS_WGSL, SHARED_MASK_WGSL, SHARED_PICK_WGSL, SHARED_SHADOW_BINDINGS_WGSL,
@@ -649,7 +650,10 @@ impl ItemTypePlugin for ConformanceItemTypePlugin {
                 continue;
             };
             let centre = centre_of(entry);
-            let mut line = viewport_lib::aabb_wireframe_polyline(&bounds_at(centre), colour);
+            let mut line = viewport_lib::aabb_wireframe_polyline(
+                &bounds_at(centre),
+                Colour::from_linear_array(colour),
+            );
             line.settings.wireframe = true;
             out.push(line);
         }

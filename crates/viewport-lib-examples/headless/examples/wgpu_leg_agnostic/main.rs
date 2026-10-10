@@ -13,6 +13,7 @@
 //! that differs between versions. This is the pattern a consumer follows to stay
 //! source-compatible across wgpu version-window slides.
 
+use viewport_lib::Colour;
 // The library's re-export of the wgpu it was built against. Every wgpu type
 // below comes from here, not from a directly-depended `wgpu` crate.
 use viewport_lib as vpl;
@@ -61,7 +62,7 @@ fn main() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = cube;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    item.material = Material::from_colour([0.8, 0.85, 0.9]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.8, 0.85, 0.9));
 
     let frame = FrameData::new(
         CameraFrame::from_camera(&camera, [W as f32, H as f32]),

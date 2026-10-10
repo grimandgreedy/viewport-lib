@@ -5,6 +5,7 @@
 //! pixels carry real colour (not the monochrome coverage the tint path produces).
 //! Skips when no GPU adapter or emoji font is available.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -28,7 +29,7 @@ fn overlay_frame(size: u32) -> FrameData {
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.3, 0.3, 0.3, 1.0));
     frame
 }
 
@@ -79,7 +80,7 @@ fn color_emoji_draws_in_colour() {
             .with_font_size(64.0)
             // White tint: for a colour glyph the tint RGB is ignored, so a coloured
             // result proves the atlas RGBA is drawn, not a tinted coverage mask.
-            .with_colour([1.0, 1.0, 1.0, 1.0]),
+            .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0)),
     ];
 
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);

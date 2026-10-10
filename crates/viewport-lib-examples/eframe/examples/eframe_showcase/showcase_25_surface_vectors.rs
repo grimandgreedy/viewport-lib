@@ -15,6 +15,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::vector_field::{
     VectorFieldItem, edge_one_form_vectors, face_intrinsic_vectors, vertex_intrinsic_vectors,
 };
@@ -261,8 +262,8 @@ impl App {
         {
             let mut _t = LightingSettings::default();
             _t.hemisphere_intensity = 0.95;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         }
     }

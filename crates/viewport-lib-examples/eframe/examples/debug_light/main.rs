@@ -18,6 +18,7 @@
 //!   Right drag                : pan
 //!   Scroll                    : zoom
 
+use viewport_lib::Colour;
 mod viewport_callback;
 
 use crate::eframe::egui;
@@ -182,7 +183,7 @@ fn main() -> eframe::Result {
                     * glam::Mat4::from_scale(scale))
                 .to_cols_array_2d();
                 item.material = {
-                    let mut m = Material::from_colour(TVM_COLOUR);
+                    let mut m = Material::from_colour(Colour::from_linear_rgb_array(TVM_COLOUR));
                     // Show both sides of every tet face, like the face soup.
                     m.backface_policy = BackfacePolicy::Identical;
                     m
@@ -229,7 +230,7 @@ impl App {
         floor.mesh_id = self.floor_mesh;
         floor.model = glam::Mat4::IDENTITY.to_cols_array_2d();
         floor.material = {
-            let mut m = Material::from_colour(FLOOR_COLOUR);
+            let mut m = Material::from_colour(Colour::from_linear_rgb_array(FLOOR_COLOUR));
             m.backface_policy = BackfacePolicy::Identical;
             m
         };
@@ -238,7 +239,7 @@ impl App {
         slab.mesh_id = self.slab_mesh;
         slab.model =
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, SLAB_HEIGHT)).to_cols_array_2d();
-        slab.material = Material::from_colour(SLAB_COLOUR);
+        slab.material = Material::from_colour(Colour::from_linear_rgb_array(SLAB_COLOUR));
 
         let mut items = vec![slab, floor];
         items.extend(self.tvm_items.iter().cloned());

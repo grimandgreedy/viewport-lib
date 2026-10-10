@@ -26,6 +26,7 @@
 use crate::eframe::egui;
 use glam::{Mat3, Mat4, Vec2, Vec3};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::bake::{TexelGeometry, rasterize_texel_gbuffer};
 use vpl::raytrace::{RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, bake_lightmap};
 use vpl::resources::{
@@ -332,7 +333,7 @@ fn add_world_mesh(scene: &mut RtScene, geo: &Geo, xf: Mat4, albedo: [f32; 3]) {
         &geo.idx,
         Some(&normals),
         RtMaterial {
-            base_colour: albedo.into(),
+            base_colour: Colour::from_linear_rgb_array(albedo),
             roughness: 0.9,
             ..RtMaterial::default()
         },
@@ -371,14 +372,14 @@ fn irradiance_to_texture(img: &vpl::raytrace::RtImage, albedo: [f32; 3]) -> Vec<
 fn marker_material(colour: [f32; 3], on: bool) -> Material {
     let base = if on { 0.18 } else { 0.03 };
     let mut m = Material::pbr(
-        [colour[0] * base, colour[1] * base, colour[2] * base],
+        Colour::linear_rgb(colour[0] * base, colour[1] * base, colour[2] * base),
         0.0,
         0.85,
     );
     m.emissive = if on {
-        colour.into()
+        Colour::from_linear_rgb_array(colour)
     } else {
-        [colour[0] * 0.1, colour[1] * 0.1, colour[2] * 0.1].into()
+        Colour::linear_rgb(colour[0] * 0.1, colour[1] * 0.1, colour[2] * 0.1)
     };
     m
 }
@@ -511,7 +512,7 @@ impl IndirectLightingShowcase {
         }
         scene.add_light(RtLight::Directional {
             direction: Vec3::new(0.35, -0.2, 1.0).normalize().to_array(),
-            colour: [3.2, 3.1, 2.9].into(),
+            colour: Colour::linear_rgb(3.2, 3.1, 2.9),
         });
 
         let img = bake_lightmap(
@@ -566,14 +567,14 @@ impl IndirectLightingShowcase {
             key.kind = LightKind::Directional {
                 direction: [0.3, 0.2, 1.0],
             };
-            key.colour = [1.0, 1.0, 1.0].into();
+            key.colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             key.intensity = 0.32;
             key.cast_shadows = false;
             let l = &mut session.effects_mut().lighting;
             l.lights = vec![key];
             l.hemisphere_intensity = 0.3;
-            l.sky_colour = [0.7, 0.78, 0.9].into();
-            l.ground_colour = [0.3, 0.3, 0.3].into();
+            l.sky_colour = Colour::linear_rgb(0.7, 0.78, 0.9);
+            l.ground_colour = Colour::linear_rgb(0.3, 0.3, 0.3);
         }
 
         if self.mode == 0 {
@@ -599,7 +600,7 @@ impl IndirectLightingShowcase {
                 let id = session.scene_mut().add(
                     Some(sphere),
                     Mat4::from_translation(Vec3::new(x, 0.0, PROBE_ROW_Z)),
-                    Material::pbr([1.0, 1.0, 1.0], 0.0, 0.85),
+                    Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.85),
                 );
                 self.probe_spheres.push(id);
                 self.nodes.push(id);
@@ -618,7 +619,7 @@ impl IndirectLightingShowcase {
                 let id = session.scene_mut().add(
                     Some(sphere),
                     Mat4::from_translation(Vec3::new(x, 0.0, ZONE_ROW_Z)),
-                    Material::pbr([1.0, 1.0, 1.0], 1.0, 0.12),
+                    Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 1.0, 0.12),
                 );
                 self.nodes.push(id);
             }
@@ -642,7 +643,7 @@ impl IndirectLightingShowcase {
                 .set_light_probes(LightProbeSet::new(vec![]));
 
             let panel = self.lightmap_panel.unwrap();
-            let mut mat = Material::pbr([1.0, 1.0, 1.0], 0.0, 0.9);
+            let mut mat = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.9);
             // The panel is single-sided geometry; show it whichever way it faces.
             mat.backface_policy = BackfacePolicy::Identical;
             // Stand the XY panel upright, its face toward -Y (the camera).
@@ -664,8 +665,8 @@ impl IndirectLightingShowcase {
                 let l = &mut session.effects_mut().lighting;
                 l.lights = Vec::new();
                 l.hemisphere_intensity = 0.32;
-                l.sky_colour = [0.5, 0.54, 0.62].into();
-                l.ground_colour = [0.16, 0.16, 0.18].into();
+                l.sky_colour = Colour::linear_rgb(0.5, 0.54, 0.62);
+                l.ground_colour = Colour::linear_rgb(0.16, 0.16, 0.18);
             }
 
             for piece in gi_layout() {
@@ -681,7 +682,7 @@ impl IndirectLightingShowcase {
                 } else {
                     piece.albedo
                 };
-                let mut mat = Material::pbr(base, 0.0, 0.9);
+                let mut mat = Material::pbr(Colour::from_linear_rgb_array(base), 0.0, 0.9);
                 mat.backface_policy = BackfacePolicy::Identical;
                 let id = session.scene_mut().add(Some(mesh), piece.xf, mat);
                 self.nodes.push(id);
@@ -846,14 +847,14 @@ impl Showcase for IndirectLightingShowcase {
         key.kind = LightKind::Directional {
             direction: [0.3, 0.2, 1.0],
         };
-        key.colour = [1.0, 1.0, 1.0].into();
+        key.colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         key.intensity = 0.32;
         key.cast_shadows = false;
         let l = &mut ctx.session.effects_mut().lighting;
         l.lights = vec![key];
         l.hemisphere_intensity = 0.3;
-        l.sky_colour = [0.7, 0.78, 0.9].into();
-        l.ground_colour = [0.3, 0.3, 0.3].into();
+        l.sky_colour = Colour::linear_rgb(0.7, 0.78, 0.9);
+        l.ground_colour = Colour::linear_rgb(0.3, 0.3, 0.3);
 
         ctx.session.viewport_frame_mut().show_grid = true;
         ctx.session.camera_mut().distance = 22.0;

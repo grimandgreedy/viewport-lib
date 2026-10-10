@@ -9,6 +9,7 @@
 //! _cascade.ppm, and _atlas.ppm to the current directory.
 
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::wgpu;
 use vpl::{
     AtlasViewerCorner, BackfacePolicy, Camera, CameraFrame, DebugOutputMode, DebugQuantity,
@@ -83,7 +84,7 @@ fn main() {
         ground.mesh_id = m_ground;
         ground.model =
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-        ground.material = Material::from_colour([0.88, 0.84, 0.76]);
+        ground.material = Material::from_colour(Colour::linear_rgb(0.88, 0.84, 0.76));
         ground.material.roughness = 0.85;
         ground.material.backface_policy = BackfacePolicy::Cull;
         items.push(ground);
@@ -92,21 +93,21 @@ fn main() {
         sphere.mesh_id = m_sphere;
         sphere.model =
             glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).to_cols_array_2d();
-        sphere.material = Material::from_colour([0.78, 0.90, 0.80]);
+        sphere.material = Material::from_colour(Colour::linear_rgb(0.78, 0.90, 0.80));
         items.push(sphere);
 
         let mut cube = SceneRenderItem::default();
         cube.mesh_id = m_cube;
         cube.model =
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).to_cols_array_2d();
-        cube.material = Material::from_colour([0.78, 0.83, 0.95]);
+        cube.material = Material::from_colour(Colour::linear_rgb(0.78, 0.83, 0.95));
         items.push(cube);
 
         let mut torus = SceneRenderItem::default();
         torus.mesh_id = m_torus;
         torus.model =
             glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).to_cols_array_2d();
-        torus.material = Material::from_colour([0.95, 0.82, 0.74]);
+        torus.material = Material::from_colour(Colour::linear_rgb(0.95, 0.82, 0.74));
         items.push(torus);
         items
     };
@@ -128,7 +129,7 @@ fn main() {
         l.lights = vec![{
             let mut src = LightSource::default();
             src.kind = LightKind::Directional { direction: dir };
-            src.colour = [1.0, 0.97, 0.90].into();
+            src.colour = Colour::linear_rgb(1.0, 0.97, 0.90);
             src.intensity = 0.8;
             src
         }];
@@ -138,8 +139,8 @@ fn main() {
         l.shadows.filter = ShadowFilter::Pcf;
         l.shadows.atlas_resolution = args.get(11).and_then(|s| s.parse().ok()).unwrap_or(4096);
         l.hemisphere_intensity = hemi;
-        l.sky_colour = [0.8, 0.9, 1.0].into();
-        l.ground_colour = [0.5, 0.55, 0.6].into();
+        l.sky_colour = Colour::linear_rgb(0.8, 0.9, 1.0);
+        l.ground_colour = Colour::linear_rgb(0.5, 0.55, 0.6);
         l
     };
 

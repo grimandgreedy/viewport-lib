@@ -7,6 +7,7 @@
 //! tests build their harness on a recommended-limits device and skip when no
 //! adapter offers one.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use viewport_lib::{Material, SceneRenderItem, SurfaceSubmission};
 use viewport_lib_testkit::fixtures::{
@@ -72,7 +73,7 @@ fn deformer_fixture_moves_the_mesh() {
     let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material = Material::from_colour([0.9, 0.9, 0.9]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.9, 0.9, 0.9));
     item.settings.unlit = true;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
@@ -139,7 +140,7 @@ fn material_plugin_fixture_changes_shading() {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(1.5)).to_cols_array_2d();
-        item.material = Material::from_colour([0.8, 0.1, 0.1]);
+        item.material = Material::from_colour(Colour::linear_rgb(0.8, 0.1, 0.1));
         item.material.shading_plugin = shading;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         harness.render(&frame, SIZE, SIZE)

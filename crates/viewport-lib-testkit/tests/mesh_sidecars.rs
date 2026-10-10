@@ -3,6 +3,7 @@
 //! device loss, and the normals view still renders now that its line
 //! buffer is built on first use rather than at upload time.
 
+use viewport_lib::Colour;
 use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem, ViewportError};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
@@ -34,7 +35,7 @@ fn big_mesh_uploads_within_device_limit() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = id;
-    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     let fd = frame_for_item(item, 150.0, [200.0, 150.0]);
     let stats = h.render_two_frames(&fd, 200, 150);
     assert_eq!(stats.triangles_submitted, expected_tris);
@@ -72,7 +73,7 @@ fn oversized_mesh_is_refused_cleanly() {
         .expect("small upload after refusal");
     let mut item = SceneRenderItem::default();
     item.mesh_id = id;
-    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     let fd = frame_for_item(item, 4.0, [200.0, 150.0]);
     let stats = h.render_two_frames(&fd, 200, 150);
     assert_eq!(stats.triangles_submitted, (small.indices.len() / 3) as u64);
@@ -96,18 +97,11 @@ fn normals_view_renders_lazily() {
 
     let mut plain = SceneRenderItem::default();
     plain.mesh_id = id;
-    plain.material = Material::from_colour([0.7, 0.7, 0.7]);
+    plain.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     let mut with_normals = plain.clone();
     with_normals.show_normals = true;
 
     let base = h.render(&frame_for_item(plain, 4.0, [200.0, 150.0]), 200, 150);
-    let lines = h.render(
-        &frame_for_item(with_normals, 4.0, [200.0, 150.0]),
-        200,
-        150,
-    );
-    assert_ne!(
-        base, lines,
-        "show_normals produced no visible normal lines"
-    );
+    let lines = h.render(&frame_for_item(with_normals, 4.0, [200.0, 150.0]), 200, 150);
+    assert_ne!(base, lines, "show_normals produced no visible normal lines");
 }

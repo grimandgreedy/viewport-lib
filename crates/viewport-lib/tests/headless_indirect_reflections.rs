@@ -5,6 +5,7 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -55,7 +56,7 @@ fn centre(
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
     frame.viewport.environment_background = EnvironmentBackground::colour();
     frame.effects.environment = Some(EnvironmentLighting::new(sky));
     frame.effects.lighting.lights = vec![];
@@ -69,11 +70,11 @@ fn centre(
 }
 
 fn metal() -> Material {
-    Material::pbr([1.0, 1.0, 1.0], 1.0, 0.1)
+    Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 1.0, 0.1)
 }
 
 fn matte() -> Material {
-    Material::pbr([1.0, 1.0, 1.0], 0.0, 1.0)
+    Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 1.0)
 }
 
 /// Check a metal sphere reflects the blue sky with no red diffuse, and a matte

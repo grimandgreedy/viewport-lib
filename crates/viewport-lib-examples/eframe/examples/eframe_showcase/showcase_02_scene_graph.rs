@@ -4,6 +4,7 @@ use crate::App;
 use crate::eframe;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{Material, ViewportRenderer, scene::Scene, selection::Selection};
 
 // ---------------------------------------------------------------------------
@@ -62,7 +63,7 @@ impl App {
         for (i, (pos, colour)) in positions.iter().zip(&colours).enumerate() {
             let mesh = self.upload_box(renderer);
             let transform = glam::Mat4::from_translation(glam::Vec3::from(*pos));
-            let mat = Material::from_colour(*colour);
+            let mat = Material::from_colour(Colour::from_linear_rgb_array(*colour));
             let name = format!("Box {}", i + 1);
             let id = self
                 .sg_state
@@ -148,7 +149,7 @@ pub(crate) fn controls_scene_graph(app: &mut App, ui: &mut egui::Ui, frame: &efr
                 "Child",
                 Some(mesh),
                 local,
-                Material::from_colour([0.75, 0.28, 0.05]),
+                Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05)),
             );
             app.sg_state.scene.set_parent(child_id, Some(parent_id));
             app.sg_state.selection.select_one(child_id);
@@ -206,14 +207,14 @@ pub(crate) fn material_preset(index: usize) -> (Material, vpl::ItemSettings) {
     match index % 4 {
         0 => (Material::default(), default_app),
         1 => {
-            let mut m = Material::from_colour([0.8, 0.2, 0.2]);
+            let mut m = Material::from_colour(Colour::linear_rgb(0.8, 0.2, 0.2));
             m.specular = 0.8;
             m.shininess = 64.0;
             m.ambient = 0.1;
             (m, default_app)
         }
         2 => {
-            let mut m = Material::from_colour([0.2, 0.4, 0.9]);
+            let mut m = Material::from_colour(Colour::linear_rgb(0.2, 0.4, 0.9));
             m.specular = 0.9;
             m.shininess = 128.0;
             let mut a = default_app;
@@ -221,7 +222,7 @@ pub(crate) fn material_preset(index: usize) -> (Material, vpl::ItemSettings) {
             (m, a)
         }
         3 => {
-            let mut m = Material::from_colour([0.3, 0.7, 0.3]);
+            let mut m = Material::from_colour(Colour::linear_rgb(0.3, 0.7, 0.3));
             m.specular = 0.1;
             m.shininess = 8.0;
             m.diffuse = 0.9;
@@ -278,8 +279,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         out.scene_graph_outline = !app.sg_state.selection.is_empty();

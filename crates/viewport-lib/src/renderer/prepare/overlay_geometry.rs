@@ -1,6 +1,7 @@
 //! CPU tessellation and fill helpers for overlay rects, shapes, and polylines.
 
 use super::*;
+use crate::Colour;
 
 pub(super) fn gradient_lerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     let t = t.clamp(0.0, 1.0);
@@ -628,9 +629,9 @@ pub(super) fn emit_disc(
 pub(super) fn resolved_stroke(
     poly: &crate::renderer::types::OverlayPolylineItem,
 ) -> crate::renderer::types::OverlayStroke {
-    poly.stroke
-        .clone()
-        .unwrap_or_else(|| crate::renderer::types::OverlayStroke::new(0.0, [1.0, 1.0, 1.0, 1.0]))
+    poly.stroke.clone().unwrap_or_else(|| {
+        crate::renderer::types::OverlayStroke::new(0.0, Colour::linear(1.0, 1.0, 1.0, 1.0))
+    })
 }
 
 /// Emit the stroke geometry for a polyline item, honouring its cap style and
@@ -739,7 +740,7 @@ pub(super) fn pack_stops(
     });
     if buf.is_empty() {
         // Empty stops list: degrade to transparent black.
-        let s = crate::renderer::types::GradientStop::new(0.0, [0.0; 4]);
+        let s = crate::renderer::types::GradientStop::new(0.0, Colour::TRANSPARENT);
         buf = vec![s, s];
     } else if buf.len() == 1 {
         buf.push(buf[0]);
@@ -886,7 +887,7 @@ mod stroke_tests {
         let mut item = OverlayPolylineItem::default();
         item.points = vec![[0.0, 0.0], [100.0, 0.0]];
         item.stroke = Some(
-            OverlayStroke::new(4.0, [1.0, 1.0, 1.0, 1.0])
+            OverlayStroke::new(4.0, Colour::linear(1.0, 1.0, 1.0, 1.0))
                 .with_pattern(pattern)
                 .with_cap(cap),
         );

@@ -23,6 +23,7 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
 use viewport_lib_plugins::item_types::volume::VolumeItem;
@@ -160,7 +161,7 @@ impl App {
         // --- Cell (0, 0): surface mesh ---
         {
             let p = cell(0, 0);
-            let mat = Material::from_colour([0.75, 0.28, 0.05]);
+            let mat = Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05));
             self.lc_state.scene.add_named(
                 "Surface mesh",
                 Some(box_mesh),
@@ -395,14 +396,14 @@ fn lc_lighting(state: &LcState) -> LightingSettings {
         let mut l = LightSource::default();
         l.kind = vpl::LightKind::Directional { direction: dir2 };
         l.intensity = state.second_light_intensity;
-        l.colour = [1.0, 0.9, 0.7].into();
+        l.colour = Colour::linear_rgb(1.0, 0.9, 0.7);
         lights.push(l);
     }
     let mut light = LightingSettings::default();
     light.lights = lights;
     light.hemisphere_intensity = state.hemisphere_intensity;
-    light.sky_colour = state.sky_colour.into();
-    light.ground_colour = state.ground_colour.into();
+    light.sky_colour = Colour::from_linear_rgb_array(state.sky_colour);
+    light.ground_colour = Colour::from_linear_rgb_array(state.ground_colour);
     light
 }
 
@@ -458,7 +459,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             ]);
         }
         pc.size = vpl::SizeSource::Uniform(8.0);
-        pc.colour = vpl::ColourSource::Solid([0.10, 0.26, 0.68, 1.0].into());
+        pc.colour = vpl::ColourSource::Solid(Colour::linear(0.10, 0.26, 0.68, 1.0));
         broadcast(s, &mut pc.settings);
         fd.scene.items_mut::<PointCloudItem>().push(pc);
     }
@@ -477,7 +478,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
                 .push([p.x + r * theta.cos(), p.y, p.z + r * theta.sin()]);
             g.vectors.push([-theta.sin() * 0.6, 0.0, theta.cos() * 0.6]);
         }
-        g.colour = vpl::ColourSource::Solid([0.72, 0.42, 0.04, 1.0].into());
+        g.colour = vpl::ColourSource::Solid(Colour::linear(0.72, 0.42, 0.04, 1.0));
         g.scale = 0.9;
         broadcast(s, &mut g.settings);
         fd.scene.items_mut::<VectorFieldItem>().push(g);
@@ -516,7 +517,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             ]);
         }
         pl.strip_lengths = vec![n as u32];
-        pl.default_colour = [0.62, 0.55, 0.06, 1.0].into();
+        pl.default_colour = Colour::linear(0.62, 0.55, 0.06, 1.0);
         pl.line_width = 2.5;
         broadcast(s, &mut pl.settings);
         fd.scene.items_mut::<viewport_lib::PolylineItem>().push(pl);
@@ -537,7 +538,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             ]);
         }
         st.strip_lengths = vec![n as u32];
-        st.colour = [0.05, 0.55, 0.45, 1.0].into();
+        st.colour = Colour::linear(0.05, 0.55, 0.45, 1.0);
         st.radius = 0.08;
         broadcast(s, &mut st.settings);
         fd.scene
@@ -564,7 +565,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         tb.strip_lengths = vec![n as u32];
         tb.radius = 0.06;
         tb.radius_attribute = Some(radii);
-        tb.colour = [0.62, 0.08, 0.35, 1.0].into();
+        tb.colour = Colour::linear(0.62, 0.08, 0.35, 1.0);
         broadcast(s, &mut tb.settings);
         fd.scene
             .items_mut::<viewport_lib_plugins::item_types::curves::TubeItem>()
@@ -591,7 +592,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         rb.strip_lengths = vec![n as u32];
         rb.width = 0.18;
         rb.twist_attribute = Some(twists);
-        rb.colour = [0.60, 0.35, 0.08, 1.0].into();
+        rb.colour = Colour::linear(0.60, 0.35, 0.08, 1.0);
         broadcast(s, &mut rb.settings);
         fd.scene
             .items_mut::<viewport_lib_plugins::item_types::curves::RibbonItem>()
@@ -609,7 +610,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         prim.params[1] = p.y;
         prim.params[2] = p.z;
         prim.params[3] = 0.9; // radius
-        prim.colour = [0.38, 0.12, 0.62, 1.0].into();
+        prim.colour = Colour::linear(0.38, 0.12, 0.62, 1.0);
         item.primitives.push(prim);
         item.blend_mode = ImplicitBlendMode::Union;
         item.march_options = GpuImplicitOptions {

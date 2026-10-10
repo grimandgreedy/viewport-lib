@@ -1,5 +1,6 @@
 //! Plane widget: a draggable infinite plane defined by a center point and normal.
 
+use crate::Colour;
 use crate::geometry::maths::intersect::ray_plane_intersection;
 use crate::renderer::PolylineItem;
 use parry3d::math::{Pose, Vector};
@@ -70,8 +71,8 @@ impl PlaneWidget {
         Self {
             center,
             normal,
-            colour: [0.3, 0.7, 1.0, 1.0].into(),
-            handle_colour: [0.0; 4].into(),
+            colour: Colour::linear(0.3, 0.7, 1.0, 1.0),
+            handle_colour: Colour::TRANSPARENT,
             display_half_size: 1.5,
             normal_display_length: 2.0,
             hovered_handle: None,

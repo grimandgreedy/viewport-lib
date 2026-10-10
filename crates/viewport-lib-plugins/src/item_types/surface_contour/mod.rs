@@ -91,7 +91,7 @@ impl SurfaceContourItem {
             model,
             scalar_attribute: scalar_attribute.into(),
             levels,
-            colour: [0.0, 0.0, 0.0, 1.0].into(),
+            colour: Colour::linear(0.0, 0.0, 0.0, 1.0),
             width: 1.5,
             settings: ItemSettings::default(),
         }

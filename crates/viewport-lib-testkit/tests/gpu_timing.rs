@@ -6,6 +6,7 @@
 //! `gpu_sample_generation` distinguishes fresh measurements from
 //! carried-over ones.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
@@ -36,7 +37,7 @@ fn gpu_samples_stay_fresh_on_short_frames() {
         .expect("upload");
     let mut item = SceneRenderItem::default();
     item.mesh_id = id;
-    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     let camera = orbit_camera(glam::Vec3::ZERO, 20.0, 0.6, 1.0);
     let fd = FrameData::new(
         CameraFrame::from_camera(&camera, [200.0, 150.0]),

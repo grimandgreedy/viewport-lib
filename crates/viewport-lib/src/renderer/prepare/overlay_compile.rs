@@ -22,7 +22,7 @@ fn bake_clip_rect(
     let Some(r) = clip.rect else {
         return;
     };
-    let cr = [r[0] * ppp, r[1] * ppp, r[2] * ppp, r[3] * ppp];
+    let cr = super::viewport_overlays::clip_rect_to_framebuffer(r, ppp);
     for v in &mut verts[start..] {
         v.clip_rect = cr;
     }
@@ -38,7 +38,7 @@ fn bake_shape_clip_rect(
     let Some(r) = clip.rect else {
         return;
     };
-    let cr = [r[0] * ppp, r[1] * ppp, r[2] * ppp, r[3] * ppp];
+    let cr = super::viewport_overlays::clip_rect_to_framebuffer(r, ppp);
     for v in &mut verts[start..] {
         v.clip_rect = cr;
     }

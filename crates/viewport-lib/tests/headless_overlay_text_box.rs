@@ -9,6 +9,7 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -34,7 +35,7 @@ fn overlay_frame() -> FrameData {
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
     frame
 }
 
@@ -144,7 +145,7 @@ fn a_labels_colour_is_its_fill() {
         LabelItem::new("Colour")
             .with_position([10.0, 40.0])
             .with_font_size(24.0)
-            .with_colour(orange),
+            .with_colour(Colour::from_linear_array(orange)),
     ];
     let sugar_px = renderer.render_offscreen(&device, &queue, &via_sugar, SIZE, SIZE);
 
@@ -152,7 +153,7 @@ fn a_labels_colour_is_its_fill() {
     let mut label = LabelItem::new("Colour")
         .with_position([10.0, 40.0])
         .with_font_size(24.0);
-    label.style.fill = OverlayFill::Solid(orange.into());
+    label.style.fill = OverlayFill::Solid(Colour::from_linear_array(orange));
     via_fill.overlays.labels = vec![label];
     let fill_px = renderer.render_offscreen(&device, &queue, &via_fill, SIZE, SIZE);
 

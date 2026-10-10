@@ -11,6 +11,7 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -31,7 +32,7 @@ fn overlay_frame(size: u32) -> FrameData {
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.3, 0.3, 0.3, 1.0));
     frame
 }
 
@@ -42,12 +43,12 @@ fn overlapping_items(shape_z: i32, poly_z: i32) -> (OverlayShapeItem, OverlayPol
     let pos = [16.0, 16.0];
     let sz = [32.0, 32.0];
     let shape = OverlayShapeItem::new(OverlayShape::Rect { corner_radius: 0.0 }, pos, sz)
-        .with_fill(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into()))
+        .with_fill(OverlayFill::Solid(Colour::linear(1.0, 0.0, 0.0, 1.0)))
         .with_z_order(shape_z);
     let poly = OverlayPolylineItem::new(vec![[16.0, 32.0], [48.0, 32.0]])
         .with_thickness(32.0)
         .with_cap(PolylineCap::Square)
-        .with_colour([0.0, 0.0, 1.0, 1.0])
+        .with_colour(Colour::linear(0.0, 0.0, 1.0, 1.0))
         .with_z_order(poly_z);
     (shape, poly)
 }

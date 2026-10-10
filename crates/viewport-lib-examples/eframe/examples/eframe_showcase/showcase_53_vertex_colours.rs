@@ -23,6 +23,7 @@ use crate::App;
 use crate::eframe;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     BackfacePolicy, LightKind, LightSource, LightingSettings, MeshId, SceneRenderItem,
     ViewportRenderer, primitives,
@@ -360,7 +361,7 @@ pub(crate) fn vcol_scene_items(app: &App) -> Vec<SceneRenderItem> {
         item.model = glam::Mat4::from_translation(origin).to_cols_array_2d();
         // White base colour so the per-vertex colour shows unmodified; PBR
         // shading still applies on top.
-        item.material.base_colour = [1.0, 1.0, 1.0].into();
+        item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material.specular = 0.2;
         item.material.backface_policy = BackfacePolicy::Identical;
         item
@@ -381,7 +382,7 @@ pub(crate) fn vcol_lighting() -> LightingSettings {
             l.kind = LightKind::Directional {
                 direction: [0.4, 0.5, -0.75],
             };
-            l.colour = [1.0, 1.0, 1.0].into();
+            l.colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             l.intensity = 0.8;
             l
         },
@@ -390,15 +391,15 @@ pub(crate) fn vcol_lighting() -> LightingSettings {
             l.kind = LightKind::Directional {
                 direction: [-0.5, -0.3, -0.4],
             };
-            l.colour = [0.85, 0.9, 1.0].into();
+            l.colour = Colour::linear_rgb(0.85, 0.9, 1.0);
             l.intensity = 0.3;
             l
         },
     ];
     t.shadows.enabled = false;
     t.hemisphere_intensity = 0.4;
-    t.sky_colour = [0.95, 0.96, 1.0].into();
-    t.ground_colour = [0.5, 0.5, 0.55].into();
+    t.sky_colour = Colour::linear_rgb(0.95, 0.96, 1.0);
+    t.ground_colour = Colour::linear_rgb(0.5, 0.5, 0.55);
     t
 }
 

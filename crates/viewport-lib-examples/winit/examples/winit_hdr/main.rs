@@ -14,6 +14,7 @@
 
 use std::sync::Arc;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 
 use vpl::wgpu;
 use vpl::{
@@ -131,11 +132,12 @@ impl ApplicationHandler for App {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-            item.material = Material::from_colour(colour);
+            item.material = Material::from_colour(Colour::from_linear_rgb_array(colour));
             // Mild emissive just above 1.0 puts a small amount of HDR energy into
             // the scene. Bloom extracts this and makes the glow visible without
             // washing out the object colour.
-            item.material.emissive = [colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2].into();
+            item.material.emissive =
+                Colour::linear_rgb(colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2);
             item
         };
 
@@ -337,8 +339,12 @@ impl ApplicationHandler for App {
                         [w * 0.5 - 100.0, h * 0.5 - 100.0],
                         [200.0, 200.0],
                     )
-                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.1].into()))
-                    .with_outline([1.0, 1.0, 1.0, 0.4], 1.5, vpl::OutlineMode::Inset)
+                    .with_fill(OverlayFill::Solid(Colour::linear(1.0, 1.0, 1.0, 0.1)))
+                    .with_outline(
+                        Colour::linear(1.0, 1.0, 1.0, 0.4),
+                        1.5,
+                        vpl::OutlineMode::Inset,
+                    )
                     .with_backdrop_blur(20.0),
                 );
 

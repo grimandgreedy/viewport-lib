@@ -1005,6 +1005,7 @@ impl Material {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::colour::Colour;
 
     #[test]
     fn item_settings_defaults() {
@@ -1029,7 +1030,7 @@ mod tests {
 
     #[test]
     fn flat_constructor_and_helpers() {
-        let m = Material::flat([0.4, 0.5, 0.6]);
+        let m = Material::flat(Colour::linear_rgb(0.4, 0.5, 0.6));
         assert!(m.is_flat());
         assert!(!m.is_pbr());
         assert!(m.matcap_id().is_none());
@@ -1059,7 +1060,7 @@ mod tests {
 
     #[test]
     fn from_colour_sets_base_colour() {
-        let m = Material::from_colour([1.0, 0.0, 0.5]);
+        let m = Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.5));
         assert!((m.base_colour.to_linear_rgb()[0] - 1.0).abs() < 1e-6);
         assert!((m.base_colour.to_linear_rgb()[1]).abs() < 1e-6);
         assert!((m.base_colour.to_linear_rgb()[2] - 0.5).abs() < 1e-6);
@@ -1069,7 +1070,7 @@ mod tests {
 
     #[test]
     fn pbr_constructor() {
-        let m = Material::pbr([0.8, 0.2, 0.1], 0.9, 0.3);
+        let m = Material::pbr(Colour::linear_rgb(0.8, 0.2, 0.1), 0.9, 0.3);
         assert!(m.is_pbr());
         assert!((m.metallic - 0.9).abs() < 1e-6);
         assert!((m.roughness - 0.3).abs() < 1e-6);
@@ -1164,8 +1165,8 @@ mod tests {
     #[test]
     fn solid_delegates_to_from_colour() {
         let colour = [1.0_f32, 0.0, 0.5];
-        let a = Material::solid(colour);
-        let b = Material::from_colour(colour);
+        let a = Material::solid(Colour::from_linear_rgb_array(colour));
+        let b = Material::from_colour(Colour::from_linear_rgb_array(colour));
         assert!((a.base_colour.to_linear_rgb()[0] - b.base_colour.to_linear_rgb()[0]).abs() < 1e-6);
         assert!((a.base_colour.to_linear_rgb()[1] - b.base_colour.to_linear_rgb()[1]).abs() < 1e-6);
         assert!((a.base_colour.to_linear_rgb()[2] - b.base_colour.to_linear_rgb()[2]).abs() < 1e-6);
@@ -1189,7 +1190,7 @@ mod tests {
     #[test]
     fn pbr_with_ao_sets_fields() {
         let m = Material::pbr_with_ao(
-            [0.8, 0.2, 0.1],
+            Colour::linear_rgb(0.8, 0.2, 0.1),
             0.9,
             0.3,
             Some(crate::ids::TextureId::from_raw(7)),
@@ -1203,7 +1204,7 @@ mod tests {
 
     #[test]
     fn pbr_with_ao_accepts_none() {
-        let m = Material::pbr_with_ao([0.5; 3], 0.0, 1.0, None);
+        let m = Material::pbr_with_ao(Colour::linear_rgb(0.5, 0.5, 0.5), 0.0, 1.0, None);
         assert_eq!(m.ao_map_id, None);
     }
 

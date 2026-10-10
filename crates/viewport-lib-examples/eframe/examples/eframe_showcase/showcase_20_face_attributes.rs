@@ -18,6 +18,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     AttributeData, BuiltinColourmap, Material, MeshId, NodeId, ViewportRenderer, scene::Scene,
 };
@@ -115,7 +116,7 @@ impl App {
             .collect();
 
         let grey_mat = {
-            let mut m = Material::from_colour([0.8, 0.8, 0.8]);
+            let mut m = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
             m.roughness = 0.5;
             m
         };
@@ -167,7 +168,7 @@ impl App {
             Some(idx2),
             glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)),
             {
-                let mut m = Material::from_colour([1.0, 1.0, 1.0]);
+                let mut m = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
                 m.roughness = 0.5;
                 m
             },
@@ -331,8 +332,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.4;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         (items, None, lighting, sg, 0)

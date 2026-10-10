@@ -1,3 +1,4 @@
+use viewport_lib::Colour;
 use viewport_lib::ItemSettings;
 use viewport_lib::renderer::SpriteBlend;
 
@@ -214,7 +215,7 @@ impl Default for SpriteItem {
             sizes: Vec::new(),
             rotations: Vec::new(),
             uv_rects: Vec::new(),
-            default_colour: [1.0, 1.0, 1.0, 1.0].into(),
+            default_colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
             default_size: 32.0,
             size_mode: SpriteSizeMode::ScreenSpace,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),

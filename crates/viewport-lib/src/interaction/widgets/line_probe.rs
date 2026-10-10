@@ -1,5 +1,6 @@
 //! Line probe widget: two draggable endpoint handles connected by a line segment.
 
+use crate::Colour;
 use crate::geometry::maths::intersect::ray_plane_intersection;
 use crate::renderer::PolylineItem;
 
@@ -59,9 +60,9 @@ impl LineProbeWidget {
         Self {
             start,
             end,
-            colour: [1.0, 0.6, 0.1, 1.0].into(),
+            colour: Colour::linear(1.0, 0.6, 0.1, 1.0),
             line_width: 2.0,
-            handle_colour: [0.0; 4].into(),
+            handle_colour: Colour::TRANSPARENT,
             hovered_endpoint: None,
             active_endpoint: None,
             drag_plane_normal: glam::Vec3::Z,

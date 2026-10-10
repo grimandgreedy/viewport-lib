@@ -403,6 +403,7 @@ impl GlyphRunItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::colour::Colour;
 
     #[test]
     fn defaults_and_builders() {
@@ -423,9 +424,9 @@ mod tests {
         let run = GlyphRunItem::new(glyphs.clone())
             .with_font_size(20.0)
             .with_position([10.0, 12.0])
-            .with_fill(crate::overlay::OverlayFill::Solid(
-                [1.0, 0.0, 0.0, 1.0].into(),
-            ))
+            .with_fill(crate::overlay::OverlayFill::Solid(Colour::linear(
+                1.0, 0.0, 0.0, 1.0,
+            )))
             .with_glyph_tints(vec![[0.0, 1.0, 0.0, 1.0]])
             .with_opacity(0.5)
             .with_z_order(3)
@@ -436,7 +437,7 @@ mod tests {
         assert_eq!(run.transform.translate, [10.0, 12.0]);
         assert_eq!(
             run.style.fill,
-            crate::overlay::OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into())
+            crate::overlay::OverlayFill::Solid(Colour::linear(1.0, 0.0, 0.0, 1.0))
         );
         assert_eq!(run.glyph_tints, vec![[0.0, 1.0, 0.0, 1.0]]);
         assert_eq!(run.style.opacity, 0.5);

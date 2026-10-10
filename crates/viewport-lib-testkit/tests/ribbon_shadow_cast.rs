@@ -6,6 +6,7 @@
 //! against the wrong one draws nothing (or fails validation), and the only
 //! visible symptom is a missing shadow.
 
+use viewport_lib::Colour;
 use viewport_lib::{
     CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
     SceneRenderItem,
@@ -23,7 +24,7 @@ fn ground(h: &mut Harness) -> SceneRenderItem {
         .expect("upload ground");
     let mut ground = SceneRenderItem::default();
     ground.mesh_id = ground_id;
-    ground.material = Material::from_colour([0.7, 0.7, 0.7]);
+    ground.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     ground
 }
 

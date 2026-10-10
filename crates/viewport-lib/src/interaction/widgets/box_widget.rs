@@ -1,5 +1,6 @@
 //! Box widget: draggable center, face, and rotation-arc handles for an oriented box.
 
+use crate::Colour;
 use crate::geometry::maths::intersect::ray_plane_intersection;
 use crate::renderer::PolylineItem;
 use crate::scene::aabb::Aabb;
@@ -68,8 +69,8 @@ impl BoxWidget {
             center,
             half_extents: half_extents.max(glam::Vec3::splat(0.01)),
             rotation: glam::Quat::IDENTITY,
-            colour: [0.3, 0.8, 0.4, 1.0].into(),
-            handle_colour: [0.0; 4].into(),
+            colour: Colour::linear(0.3, 0.8, 0.4, 1.0),
+            handle_colour: Colour::TRANSPARENT,
             hovered_handle: None,
             active_handle: None,
             drag_plane_normal: glam::Vec3::Z,

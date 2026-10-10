@@ -4,6 +4,7 @@
 //! fixtures are part of the testkit core, and a seam test wants the smallest
 //! frame that reaches the dispatch site, not a representative scene.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use viewport_lib::{Camera, FrameData, MeshData, RenderCamera};
 
@@ -40,7 +41,7 @@ pub fn probe_frame(size: u32, background: [f32; 4]) -> FrameData {
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some(background.into());
+    frame.viewport.background_colour = Some(Colour::from_linear_array(background));
     frame
 }
 

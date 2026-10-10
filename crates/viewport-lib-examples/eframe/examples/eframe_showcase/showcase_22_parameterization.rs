@@ -17,6 +17,7 @@ use crate::App;
 use crate::eframe::egui;
 use crate::geometry::{make_box_with_uvs, make_uv_sphere};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     Material, MeshData, MeshId, NodeId, ParamVis, ParamVisMode, ViewportRenderer,
     scene::{Scene, material::BackfacePolicy},
@@ -106,7 +107,7 @@ impl App {
             for (col, (mode, label)) in MODES.iter().enumerate() {
                 let mesh_id = upload_mesh(renderer, mesh_data);
                 let mat = {
-                    let mut m = Material::pbr(colour, 0.0, 0.4);
+                    let mut m = Material::pbr(Colour::from_linear_rgb_array(colour), 0.0, 0.4);
                     m.param_vis = Some(ParamVis { mode: *mode, scale });
                     m.backface_policy = if two_sided {
                         BackfacePolicy::Identical
@@ -227,7 +228,7 @@ fn update_param_vis_materials(app: &mut App) {
     for (base_idx, colour, two_sided) in rows {
         for (col, (mode, _)) in MODES.iter().enumerate() {
             let mat = {
-                let mut m = Material::pbr(colour, 0.0, 0.4);
+                let mut m = Material::pbr(Colour::from_linear_rgb_array(colour), 0.0, 0.4);
                 m.param_vis = if s.on {
                     Some(ParamVis {
                         mode: *mode,
@@ -289,8 +290,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         (items, None, lighting, sg, 0)

@@ -8,6 +8,7 @@
 //! from the plain frame, so a feature that drew nothing on either renderer
 //! cannot pass by agreeing with itself.
 
+use crate::Colour;
 use crate::renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission};
 use crate::{Camera, Material, ViewportRenderer};
 
@@ -87,7 +88,7 @@ fn cube_item(meshes: &Meshes, x: f32, colour: [f32; 3]) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = meshes.cube;
     item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
-    item.material = Material::from_colour(colour);
+    item.material = Material::from_colour(Colour::from_linear_rgb_array(colour));
     item
 }
 
@@ -102,7 +103,7 @@ fn base_frame(meshes: &Meshes) -> FrameData {
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.1, 0.1, 0.12, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.1, 0.1, 0.12, 1.0));
     frame.scene.surfaces =
         SurfaceSubmission::Flat(vec![cube_item(meshes, 0.0, [0.8, 0.5, 0.3])].into());
     frame

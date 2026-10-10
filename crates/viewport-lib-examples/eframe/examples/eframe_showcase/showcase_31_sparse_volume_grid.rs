@@ -36,6 +36,7 @@ use crate::App;
 use crate::eframe::egui;
 use std::f32::consts::PI;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     AttributeKind, AttributeRef, BuiltinColourmap, ColourmapId, GridCells, LightingSettings,
     MeshId, SceneRenderItem, ViewportRenderer, VolumeMeshData,
@@ -533,8 +534,8 @@ impl App {
         {
             let mut _t = LightingSettings::default();
             _t.hemisphere_intensity = 0.9;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [0.85, 0.85, 0.9].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(0.85, 0.85, 0.9);
             _t.lights = vec![];
             _t.shadows.enabled = false;
             _t

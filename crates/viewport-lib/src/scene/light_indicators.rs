@@ -8,6 +8,7 @@
 //! arrow or sphere per light. Everything carries `settings.pick_id = node_id`
 //! so the standard pick and selection-outline machinery applies.
 
+use crate::Colour;
 use std::collections::HashMap;
 
 use crate::interaction::select::selection::Selection;
@@ -187,7 +188,7 @@ pub fn build_light_indicators(scene: &Scene, selection: &Selection) -> LightIndi
             position: translation,
             direction,
             size: GLYPH_SIZE,
-            colour: colour_rgba.into(),
+            colour: Colour::from_linear_array(colour_rgba),
             pick_id: settings.pick_id,
             selected: settings.selected,
         });
@@ -199,7 +200,12 @@ pub fn build_light_indicators(scene: &Scene, selection: &Selection) -> LightIndi
                 LightKind::Point {
                     position, range, ..
                 } => {
-                    let mut pl = sphere_wireframe_polyline(position, range, 48, outline_colour);
+                    let mut pl = sphere_wireframe_polyline(
+                        position,
+                        range,
+                        48,
+                        Colour::from_linear_array(outline_colour),
+                    );
                     pl.line_width = 1.5;
                     pl.settings.pick_id = PickId(id);
                     pl.settings.selected = true;
@@ -339,7 +345,7 @@ fn spot_cone_polyline(
     PolylineItem {
         positions,
         strip_lengths: strips,
-        default_colour: colour.into(),
+        default_colour: Colour::from_linear_array(colour),
         line_width: 1.5,
         ..Default::default()
     }

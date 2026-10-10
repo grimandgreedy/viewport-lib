@@ -19,6 +19,7 @@ use crate::eframe;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib_plugins::item_types::gaussian_splat::{GaussianSplatData, GaussianSplatId};
 use viewport_lib_plugins::item_types::point_cloud::{
@@ -1086,7 +1087,7 @@ impl App {
             let mut item = SceneRenderItem::default();
             item.mesh_id = id;
             item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-            item.material = Material::flat([0.7, 0.7, 0.7]);
+            item.material = Material::flat(Colour::linear_rgb(0.7, 0.7, 0.7));
             items.push(item);
         }
 
@@ -1095,12 +1096,12 @@ impl App {
             item.mesh_id = id;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).to_cols_array_2d();
-            item.material = Material::flat([0.4, 0.8, 0.4]);
+            item.material = Material::flat(Colour::linear_rgb(0.4, 0.8, 0.4));
             items.push(item);
         }
 
         if let (Some(mesh_id), Some(tex_id)) = (state.base_mesh_id, state.loaded_texture_id) {
-            let mut material = Material::flat([1.0, 1.0, 1.0]);
+            let mut material = Material::flat(Colour::linear_rgb(1.0, 1.0, 1.0));
             material.texture_id = Some(tex_id);
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
@@ -1120,7 +1121,7 @@ impl App {
             } else {
                 [0.4, 0.4, 0.4]
             };
-            item.material = Material::flat(colour);
+            item.material = Material::flat(Colour::from_linear_rgb_array(colour));
             items.push(item);
         }
 
@@ -1135,8 +1136,8 @@ impl App {
         };
         lighting.lights = vec![sun];
         lighting.hemisphere_intensity = 0.35;
-        lighting.sky_colour = [0.85, 0.9, 1.0].into();
-        lighting.ground_colour = [0.3, 0.3, 0.32].into();
+        lighting.sky_colour = Colour::linear_rgb(0.85, 0.9, 1.0);
+        lighting.ground_colour = Colour::linear_rgb(0.3, 0.3, 0.32);
         // When the env-map has landed, drop hemisphere a bit so the IBL
         // contribution is visible.
         if matches!(
@@ -1232,7 +1233,7 @@ fn demo_polyline(size: PayloadSize) -> PolylineItem {
     item.positions = positions;
     item.strip_lengths = strip_lengths;
     item.line_width = 3.0;
-    item.default_colour = [0.95, 0.55, 0.35, 1.0].into();
+    item.default_colour = Colour::linear(0.95, 0.55, 0.35, 1.0);
     item
 }
 
@@ -1242,7 +1243,7 @@ fn demo_streamtube(size: PayloadSize) -> StreamtubeItem {
     item.positions = positions;
     item.strip_lengths = strip_lengths;
     item.radius = 0.07;
-    item.colour = [0.45, 0.85, 0.95, 1.0].into();
+    item.colour = Colour::linear(0.45, 0.85, 0.95, 1.0);
     item
 }
 
@@ -1253,7 +1254,7 @@ fn demo_tube(size: PayloadSize) -> TubeItem {
     item.strip_lengths = strip_lengths;
     item.radius = 0.08;
     item.sides = 16;
-    item.colour = [0.95, 0.85, 0.45, 1.0].into();
+    item.colour = Colour::linear(0.95, 0.85, 0.45, 1.0);
     item
 }
 
@@ -1263,7 +1264,7 @@ fn demo_ribbon(size: PayloadSize) -> RibbonItem {
     item.positions = positions;
     item.strip_lengths = strip_lengths;
     item.width = 0.18;
-    item.colour = [0.65, 0.55, 0.95, 1.0].into();
+    item.colour = Colour::linear(0.65, 0.55, 0.95, 1.0);
     item
 }
 
@@ -1286,7 +1287,7 @@ fn demo_point_cloud(size: PayloadSize) -> PointCloudItem {
     }
     item.positions = positions;
     item.size = vpl::SizeSource::Uniform(6.0);
-    item.colour = vpl::ColourSource::Solid([0.35, 0.85, 0.55, 1.0].into());
+    item.colour = vpl::ColourSource::Solid(Colour::linear(0.35, 0.85, 0.55, 1.0));
     item
 }
 
@@ -1309,7 +1310,7 @@ fn demo_vector_field(shape: MeshId) -> VectorFieldItem {
     item.vectors = vectors;
     item.scale = 0.3;
     item.size = vpl::SizeSource::Uniform(1.0);
-    item.colour = vpl::ColourSource::Solid([0.9, 0.7, 0.3, 1.0].into());
+    item.colour = vpl::ColourSource::Solid(Colour::linear(0.9, 0.7, 0.3, 1.0));
     item
 }
 
@@ -1370,7 +1371,7 @@ fn demo_sprite_set() -> SpriteItem {
     }
     item.positions = positions;
     item.default_size = 16.0;
-    item.default_colour = [0.95, 0.7, 0.4, 1.0].into();
+    item.default_colour = Colour::linear(0.95, 0.7, 0.4, 1.0);
     item
 }
 
@@ -1384,7 +1385,7 @@ fn demo_sprite_instance_set() -> SpriteItem {
     }
     item.positions = positions;
     item.default_size = 12.0;
-    item.default_colour = [0.5, 0.85, 0.95, 1.0].into();
+    item.default_colour = Colour::linear(0.5, 0.85, 0.95, 1.0);
     item
 }
 

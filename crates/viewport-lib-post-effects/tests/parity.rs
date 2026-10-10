@@ -7,6 +7,7 @@
 //! guards that the effect actually changed the image (a trivially blank
 //! effect would pass parity vacuously).
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use viewport_lib::{
     Camera, LightKind, LightSource, Material,
@@ -77,7 +78,7 @@ fn base_frame(background: [f32; 4]) -> FrameData {
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some(background.into());
+    frame.viewport.background_colour = Some(Colour::from_linear_array(background));
     frame
 }
 
@@ -108,13 +109,13 @@ fn contact_shadow_items(
     let mut ground_item = SceneRenderItem::default();
     ground_item.mesh_id = ground;
     ground_item.model = glam::Mat4::from_scale(glam::Vec3::splat(8.0)).to_cols_array_2d();
-    ground_item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    ground_item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     let mut cube_item = SceneRenderItem::default();
     cube_item.mesh_id = cube;
     cube_item.model = (glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.25))
         * glam::Mat4::from_scale(glam::Vec3::splat(0.4)))
     .to_cols_array_2d();
-    cube_item.material = Material::from_colour([0.6, 0.3, 0.2]);
+    cube_item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.3, 0.2));
     vec![ground_item, cube_item]
 }
 
@@ -210,7 +211,7 @@ fn vfx_stack_chains() {
         let mut frame = base_frame([0.25, 0.3, 0.35, 1.0]);
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
-        item.material = Material::from_colour([0.6, 0.6, 0.6]);
+        item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6));
         item.settings.unlit = true;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE)

@@ -1,5 +1,6 @@
 //! Vector shape overlay items (rectangles, ellipses, and paths).
 
+use crate::colour::Colour;
 use crate::overlay::*;
 
 /// Shape type for an `OverlayShapeItem`.
@@ -161,7 +162,7 @@ pub struct ShadowLayer {
 impl Default for ShadowLayer {
     fn default() -> Self {
         Self {
-            colour: [0.0, 0.0, 0.0, 0.0].into(),
+            colour: Colour::linear(0.0, 0.0, 0.0, 0.0),
             blur: 0.0,
             offset: [0.0, 0.0],
             spread: 0.0,
@@ -306,6 +307,7 @@ impl Default for OverlayShape {
 /// # Examples
 ///
 /// ```rust
+/// # use viewport_lib_types::colour::Colour;
 /// # use viewport_lib_types::overlay::{OutlineMode, OverlayShapeItem, OverlayShape, OverlayFill};
 /// // Rounded-rect panel background.
 /// let panel = OverlayShapeItem::new(
@@ -313,14 +315,14 @@ impl Default for OverlayShape {
 ///     [20.0, 20.0],
 ///     [300.0, 200.0],
 /// )
-/// .with_fill(OverlayFill::Solid([0.1, 0.1, 0.1, 0.85].into()))
-/// .with_outline([0.4, 0.4, 0.4, 1.0], 1.0, OutlineMode::Inset);
+/// .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.1, 0.1, 0.85)))
+/// .with_outline(Colour::srgb(0.4, 0.4, 0.4, 1.0), 1.0, OutlineMode::Inset);
 ///
 /// // Circle with a left-to-right gradient.
 /// let grad_dot = OverlayShapeItem::new(OverlayShape::Circle, [100.0, 100.0], [60.0, 60.0])
 ///     .with_fill(OverlayFill::LinearGradient {
-///         start_colour: [0.0, 0.4, 1.0, 1.0].into(),
-///         end_colour: [0.0, 1.0, 0.5, 1.0].into(),
+///         start_colour: Colour::srgb(0.0, 0.4, 1.0, 1.0),
+///         end_colour: Colour::srgb(0.0, 1.0, 0.5, 1.0),
 ///         angle: 0.0,
 ///     });
 /// ```
@@ -398,7 +400,7 @@ impl Default for OverlayShapeItem {
             anchoring: crate::overlay::OverlayAnchoring::default(),
             transform: OverlayTransform::IDENTITY,
             style: OverlayStyle {
-                fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()),
+                fill: OverlayFill::Solid(Colour::linear(1.0, 1.0, 1.0, 1.0)),
                 ..Default::default()
             },
             clip: OverlayClip::default(),

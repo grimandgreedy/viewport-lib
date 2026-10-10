@@ -9,6 +9,7 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -31,7 +32,7 @@ fn overlay_frame() -> FrameData {
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.3, 0.3, 0.3, 1.0));
     frame
 }
 
@@ -42,7 +43,7 @@ fn filled_square(stroke: Option<OverlayStroke>) -> OverlayPolylineItem {
         OverlayPolylineItem::new(vec![[16.0, 16.0], [48.0, 16.0], [48.0, 48.0], [16.0, 48.0]]);
     p.closed = true;
     p.stroke = stroke;
-    p.style.fill = OverlayFill::Solid([0.0, 1.0, 0.0, 1.0].into());
+    p.style.fill = OverlayFill::Solid(Colour::linear(0.0, 1.0, 0.0, 1.0));
     p
 }
 
@@ -82,7 +83,7 @@ fn an_absent_stroke_draws_the_fill_and_no_outline() {
     let mut zero_frame = overlay_frame();
     zero_frame.overlays.polylines = vec![filled_square(Some(OverlayStroke::new(
         0.0,
-        [1.0, 0.0, 0.0, 1.0],
+        Colour::linear(1.0, 0.0, 0.0, 1.0),
     )))];
     let zero_px = renderer.render_offscreen(&device, &queue, &zero_frame, SIZE, SIZE);
     assert_eq!(
@@ -95,7 +96,7 @@ fn an_absent_stroke_draws_the_fill_and_no_outline() {
     let mut stroked_frame = overlay_frame();
     stroked_frame.overlays.polylines = vec![filled_square(Some(OverlayStroke::new(
         6.0,
-        [1.0, 0.0, 0.0, 1.0],
+        Colour::linear(1.0, 0.0, 0.0, 1.0),
     )))];
     let stroked_px = renderer.render_offscreen(&device, &queue, &stroked_frame, SIZE, SIZE);
     let (sr, sg, _) = rgb(&stroked_px, 32, 16);

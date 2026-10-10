@@ -27,6 +27,7 @@ use crate::App;
 use crate::eframe::egui;
 use std::collections::HashMap;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::surface_lic::{SurfaceLicConfig, SurfaceLicItem};
 use vpl::{
     AttributeData, BackfacePolicy, FrameData, Material, MeshData, MeshId, ViewportRenderer,
@@ -285,7 +286,7 @@ const ROW_COLOURS: [[f32; 3]; 3] = [
 ];
 
 fn make_material(row: usize) -> Material {
-    let mut m = Material::from_colour(ROW_COLOURS[row]);
+    let mut m = Material::from_colour(Colour::from_linear_rgb_array(ROW_COLOURS[row]));
     m.backface_policy = BackfacePolicy::Identical;
     m
 }
@@ -504,8 +505,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [0.7, 0.7, 0.7].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(0.7, 0.7, 0.7);
             _t
         };
         let sg = app.lic_state.scene.version();

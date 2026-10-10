@@ -1,4 +1,5 @@
 use super::*;
+use crate::Colour;
 use crate::interaction::manipulation::gizmo::{GizmoAxis, GizmoMode};
 use crate::interaction::query::snap::ConstraintOverlay;
 use crate::renderer::SubSelectionRef;
@@ -589,13 +590,13 @@ impl Default for InteractionFrame {
             gizmo_space_orientation: glam::Quat::IDENTITY,
             constraint_overlays: Vec::new(),
             outline_selected: false,
-            outline_colour: [1.0, 1.0, 1.0, 1.0].into(),
+            outline_colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
             outline_width_px: 2.0,
             xray_selected: false,
-            xray_colour: [0.3, 0.7, 1.0, 0.25].into(),
+            xray_colour: Colour::linear(0.3, 0.7, 1.0, 0.25),
             sub_selection: None,
-            sub_highlight_face_fill_colour: [1.0, 0.85, 0.0, 0.25].into(),
-            sub_highlight_edge_colour: [1.0, 0.85, 0.0, 1.0].into(),
+            sub_highlight_face_fill_colour: Colour::linear(1.0, 0.85, 0.0, 0.25),
+            sub_highlight_edge_colour: Colour::linear(1.0, 0.85, 0.0, 1.0),
             sub_highlight_edge_width_px: 2.0,
             sub_highlight_vertex_size_px: 10.0,
         }

@@ -12,6 +12,7 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use viewport_lib::Colour;
 
 use viewport_lib as vpl;
 use vpl::wgpu;
@@ -297,7 +298,7 @@ fn main() {
     frame.camera.viewport_size = [W as f32, H as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.1, 0.1, 0.12, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.1, 0.1, 0.12, 1.0));
 
     // Modes: pass a name on the command line to turn one cost off and see the
     // delta. `baseline` is what an overlay-only consumer gets by default today.
@@ -502,7 +503,7 @@ fn main() {
         let mut item = vpl::SceneRenderItem::default();
         item.mesh_id = cube;
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-        item.material = vpl::Material::from_colour([0.8, 0.85, 0.9]);
+        item.material = vpl::Material::from_colour(Colour::linear_rgb(0.8, 0.85, 0.9));
         let mut shadow_frame = FrameData::default();
         shadow_frame.camera.render_camera = frame.camera.render_camera.clone();
         shadow_frame.camera.viewport_size = frame.camera.viewport_size;
@@ -534,7 +535,7 @@ fn main() {
         let mut item = vpl::SceneRenderItem::default();
         item.mesh_id = cube;
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-        item.material = vpl::Material::from_colour([0.8, 0.85, 0.9]);
+        item.material = vpl::Material::from_colour(Colour::linear_rgb(0.8, 0.85, 0.9));
         let mut mesh_frame = FrameData::default();
         mesh_frame.camera.render_camera = frame.camera.render_camera.clone();
         mesh_frame.camera.viewport_size = frame.camera.viewport_size;

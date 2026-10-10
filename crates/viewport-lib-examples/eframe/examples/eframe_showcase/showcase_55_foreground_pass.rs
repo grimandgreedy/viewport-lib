@@ -26,6 +26,7 @@ use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     CameraTarget, CameraTrack, ForegroundPass, ForegroundProjection, LightKind, LightSource,
     LightingSettings, Material, PostProcessSettings, RenderCamera, SceneRenderItem, Selection,
@@ -131,7 +132,7 @@ impl App {
             Some(ground),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.2)),
             {
-                let mut m = Material::from_colour([0.82, 0.82, 0.86]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.82, 0.82, 0.86));
                 m.roughness = 0.9;
                 m
             },
@@ -162,7 +163,7 @@ impl App {
         ];
         for (i, (x, y, hz, is_sphere, colour)) in props.iter().enumerate() {
             let mat = {
-                let mut m = Material::pbr(*colour, 0.05, 0.45);
+                let mut m = Material::pbr(Colour::from_linear_rgb_array(*colour), 0.05, 0.45);
                 m.roughness = 0.4;
                 m
             };
@@ -212,13 +213,13 @@ impl App {
             s.kind = LightKind::Directional {
                 direction: [0.35, -0.5, 0.78],
             };
-            s.colour = [1.0, 0.97, 0.92].into();
+            s.colour = Colour::linear_rgb(1.0, 0.97, 0.92);
             s.intensity = 2.0;
             s
         }];
         l.hemisphere_intensity = 0.5;
-        l.sky_colour = [0.55, 0.62, 0.78].into();
-        l.ground_colour = [0.28, 0.26, 0.24].into();
+        l.sky_colour = Colour::linear_rgb(0.55, 0.62, 0.78);
+        l.ground_colour = Colour::linear_rgb(0.28, 0.26, 0.24);
         l
     }
 }
@@ -300,7 +301,7 @@ pub(crate) fn configure_frame(app: &App, fd: &mut vpl::FrameData) {
         let mut item = SceneRenderItem::default();
         item.mesh_id = app.fg_state.cube_mesh;
         item.model = model.to_cols_array_2d();
-        item.material = Material::pbr(CUBE_COLOURS[i], 0.1, 0.35);
+        item.material = Material::pbr(Colour::from_linear_rgb_array(CUBE_COLOURS[i]), 0.1, 0.35);
         item.settings.unlit = app.fg_state.unlit;
         cubes.push(item);
     }
