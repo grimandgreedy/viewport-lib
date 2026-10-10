@@ -13,7 +13,7 @@ use viewport_lib::gpu::util::DeviceExt as _;
 use viewport_lib::plugin_api::shared_wgsl;
 use viewport_lib::renderer::PickId;
 use viewport_lib::resources::DeviceResources;
-use viewport_lib_geometry::marching_cubes::TRI_TABLE;
+use viewport_lib_geometry::volume::marching_cubes::TRI_TABLE;
 
 /// The generated geometry of one volume slab, as the draw hooks see it.
 pub(super) struct McSlabDraw {

@@ -2,8 +2,9 @@
 //! sample's tensor, plus the handle and reference form for a field uploaded
 //! once.
 
+use super::eigen::{SymmetricEigen, symmetric_eigen_3x3};
 use viewport_lib::ItemSettings;
-use viewport_lib::{ColourSource, MeshId, SizeSource, SymmetricEigen, symmetric_eigen_3x3};
+use viewport_lib::{ColourSource, MeshId, SizeSource};
 
 viewport_lib::resources::handle::slot_handle! {
     /// Handle to a tensor field uploaded once through

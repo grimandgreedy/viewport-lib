@@ -508,7 +508,7 @@ impl ViewportRenderer {
                         else {
                             continue;
                         };
-                        if let Some(cap) = crate::geometry::cap_geometry::generate_cap_mesh(
+                        if let Some(cap) = crate::geometry::mesh::cap::generate_cap_mesh(
                             pos, idx, &model, plane_n, distance,
                         ) {
                             let bc = item.material.base_colour.to_linear_rgb();

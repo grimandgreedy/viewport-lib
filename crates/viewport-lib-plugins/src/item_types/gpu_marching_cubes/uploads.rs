@@ -22,7 +22,7 @@ pub trait McVolumes {
         &mut self,
         device: &gpu::Device,
         queue: &gpu::Queue,
-        vol: &viewport_lib_geometry::marching_cubes::VolumeData,
+        vol: &viewport_lib_geometry::volume::grid::VolumeData,
     ) -> viewport_lib::error::ViewportResult<McVolumeId>;
 
     /// Start an off-thread upload of a scalar field. Ownership of `vol`
@@ -32,7 +32,7 @@ pub trait McVolumes {
         &mut self,
         device: &gpu::Device,
         queue: &gpu::Queue,
-        vol: viewport_lib_geometry::marching_cubes::VolumeData,
+        vol: viewport_lib_geometry::volume::grid::VolumeData,
     ) -> viewport_lib::resources::JobId;
 
     /// Feed a volume from a caller-supplied buffer, refreshed before every
@@ -62,7 +62,7 @@ impl McVolumes for ViewportRenderer {
         &mut self,
         device: &gpu::Device,
         queue: &gpu::Queue,
-        vol: &viewport_lib_geometry::marching_cubes::VolumeData,
+        vol: &viewport_lib_geometry::volume::grid::VolumeData,
     ) -> viewport_lib::error::ViewportResult<McVolumeId> {
         plugin_mut::<GpuMarchingCubesPlugin>(self, TYPE_NAME).upload(device, queue, vol)
     }
@@ -71,7 +71,7 @@ impl McVolumes for ViewportRenderer {
         &mut self,
         device: &gpu::Device,
         queue: &gpu::Queue,
-        vol: viewport_lib_geometry::marching_cubes::VolumeData,
+        vol: viewport_lib_geometry::volume::grid::VolumeData,
     ) -> viewport_lib::resources::JobId {
         let host = host::<GpuMarchingCubesPlugin>(self, TYPE_NAME);
         host.plugin.begin_upload(&host.jobs, device, queue, vol)

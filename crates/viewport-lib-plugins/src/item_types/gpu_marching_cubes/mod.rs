@@ -19,7 +19,7 @@ use viewport_lib::plugin_api::{
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask};
 use viewport_lib::resources::HDR_COLOR_FORMAT;
-use viewport_lib_geometry::marching_cubes::VolumeData;
+use viewport_lib_geometry::volume::grid::VolumeData;
 
 use store::{McExternalScalarSource, McVolumeGpuData, McVolumeStore, build_mc_volume_gpu_data};
 
@@ -70,7 +70,7 @@ impl PluginItem for GpuMarchingCubesItem {
 struct McPickItem {
     id: u64,
     isovalue: f32,
-    volume_data: std::sync::Arc<viewport_lib_geometry::marching_cubes::VolumeData>,
+    volume_data: std::sync::Arc<viewport_lib_geometry::volume::grid::VolumeData>,
 }
 
 /// The registered item type. `install` builds one; a consumer taking only
@@ -613,19 +613,19 @@ fn ray_aabb_slab(
 fn bisect_mc_crossing(
     ray_orig: glam::Vec3,
     ray_dir: glam::Vec3,
-    vol: &viewport_lib_geometry::marching_cubes::VolumeData,
+    vol: &viewport_lib_geometry::volume::grid::VolumeData,
     isovalue: f32,
     mut t_lo: f32,
     mut t_hi: f32,
 ) -> f32 {
-    let s0 = viewport_lib_geometry::marching_cubes::trilinear_sample(
+    let s0 = viewport_lib_geometry::volume::grid::trilinear_sample(
         vol,
         (ray_orig + ray_dir * t_lo).to_array(),
     ) - isovalue;
     let mut lo_sign = s0 < 0.0;
     for _ in 0..8 {
         let mid = (t_lo + t_hi) * 0.5;
-        let s = viewport_lib_geometry::marching_cubes::trilinear_sample(
+        let s = viewport_lib_geometry::volume::grid::trilinear_sample(
             vol,
             (ray_orig + ray_dir * mid).to_array(),
         ) - isovalue;
@@ -648,7 +648,7 @@ fn march(
     ray_dir: glam::Vec3,
     item: &McPickItem,
 ) -> Option<(f32, glam::Vec3)> {
-    use viewport_lib_geometry::marching_cubes::trilinear_sample;
+    use viewport_lib_geometry::volume::grid::trilinear_sample;
 
     let vol = &item.volume_data;
     let isovalue = item.isovalue;

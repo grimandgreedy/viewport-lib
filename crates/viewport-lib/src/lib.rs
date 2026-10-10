@@ -136,7 +136,7 @@ pub use ::winit;
 pub use viewport_lib_types as vplt;
 
 /// The CPU geometry crate (`viewport-lib-geometry`), re-exported under the short
-/// `vplg` alias: `viewport_lib::vplg::marching_cubes::extract_isosurface`.
+/// `vplg` alias: `viewport_lib::vplg::volume::marching_cubes::extract_isosurface`.
 pub use viewport_lib_geometry as vplg;
 
 /// The input crate (`viewport-lib-input`: pipeline + camera controllers),
@@ -248,8 +248,9 @@ pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, sr
 pub use vplt::data::texture::{TextureData, TexturePayload, TextureRole};
 
 pub use geometry::bvh::PickAccelerator;
-pub use geometry::isoline::{Isoline, extract_isolines, isoline_strips};
-pub use geometry::marching_cubes::{VolumeData, extract_isosurface};
+pub use geometry::mesh::isoline::{Isoline, extract_isolines, isoline_strips};
+pub use geometry::volume::grid::VolumeData;
+pub use geometry::volume::marching_cubes::extract_isosurface;
 
 #[allow(deprecated)]
 pub use interaction::input::{
@@ -344,14 +345,6 @@ pub use runners::viewport_app::{AppConfig, FrameCtx, RedrawMode, ViewportApp};
 pub use runners::viewport_app_v2::{
     AppConfigV2, FrameCtxV2, InputCtxV2, PaintCtxV2, ViewportAppV2, WindowConfig, WindowId,
 };
-
-pub use geometry::eigen::{SymmetricEigen, symmetric_eigen_3x3, symmetric_eigenvalues_3x3};
-pub use geometry::intrinsic_vectors::{face_intrinsic_vectors, vertex_intrinsic_vectors};
-pub use geometry::one_forms::edge_one_form_vectors;
-pub use geometry::tangent_frames::{
-    compute_face_tangent_frames, compute_vertex_tangent_frames, tangents_from_explicit,
-};
-pub use geometry::vector_samples::VectorSamples;
 
 pub use resources::PolylineId;
 #[allow(deprecated)]

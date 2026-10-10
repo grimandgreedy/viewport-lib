@@ -1,6 +1,6 @@
 //! Sphere widget: draggable center handle and radius handle.
 
-use crate::geometry::intersect::ray_plane_intersection;
+use crate::geometry::maths::intersect::ray_plane_intersection;
 use crate::renderer::{ClipObject, ClipShape, PolylineItem};
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
@@ -172,7 +172,7 @@ impl SphereWidget {
             (glam::Vec3::Y, glam::Vec3::Z),
         ];
         for (u, v) in bases {
-            crate::geometry::polyline::push_circle_loop(&mut positions, c, u, v, r, STEPS);
+            crate::geometry::primitives::wire::push_circle_loop(&mut positions, c, u, v, r, STEPS);
             strip_lengths.push((STEPS + 1) as u32);
         }
 

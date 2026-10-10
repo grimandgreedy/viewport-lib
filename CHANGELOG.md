@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`VectorFieldItem::with_samples`** - fills a vector field's positions and vectors from a `VectorSamples`, as the intrinsic-vector and one-form helpers return.
 - **Embedded WGSL is stripped of comments and indentation on wasm, and anywhere with `minify-shaders`** - viewport-lib, viewport-lib-plugins and viewport-lib-post-effects remove line comments, blank lines and leading whitespace from every embedded `.wgsl` source, keeping the marker comments the renderer rewrites at runtime. A wasm32 build does it by default, saving about 190 KB gzip of shader text; set `VPL_READABLE_SHADERS` when building to keep the shaders readable in the browser. The `minify-shaders` feature (on each of the three crates; the latter two turn it on in viewport-lib too) does it for other targets. Shader error line numbers point into the stripped text. The `plugin_api::shared_wgsl` helpers are stripped too; they now live in `.wgsl` files rather than Rust string literals, with unchanged contents.
 - **Frame and memory stats serialise** - `FrameStats`, `PrepareBreakdown`, `GpuBreakdown`, `PluginFrameCounters`, `ResidentBytes`, `TextureMemoryStats`, `ShadowDebugStats`, `MaterialPluginStats` and `ClusterStats` derive `serde::Serialize` under the `serde` feature, so a benchmark or a telemetry log can record them whole.
 
@@ -98,6 +99,8 @@
 
 - **Every example drives the camera through a host-owned `ViewportInput`** - the examples used the deprecated `OrbitCameraController::push_event` / `apply_to_camera` pair, so the code a new consumer reads first taught the path that lets a session and a controller disagree about the control scheme. Each example now owns a `ViewportInput` (one per viewport where there are several), constructs the controller with `new_stateless()`, and applies the resolved frame with `apply(&mut camera, &frame)`. Nothing in the library changed: this is the examples, the testkit's catalogue viewer, and the doc examples on `ViewportApp::with_input` and `ManipulationController::is_active` catching up to the surface that replaced them.
 - **`viewport_lib_types::par` is removed** - the types crate no longer depends on rayon. The shim was internal plumbing for `viewport-lib` and `viewport-lib-geometry`, which now each keep a private copy. Code that imported `viewport_lib_types::par::*` should depend on rayon directly.
+- **`viewport-lib-geometry` is grouped into modules** - `primitives`, `mesh`, `volume` and `maths` replace the flat module list: `volume::grid` (`VolumeData`, `trilinear_sample`), `volume::marching_cubes`, `volume::mesh` (was `volume_mesh`), `mesh::isoline`, `mesh::cap` (was `cap_geometry`), `mesh` (was `mesh_ops`), `maths::intersect` and `primitives::wire` (was `polyline`). Update `vplg::` and `viewport_lib_geometry::` paths; the `viewport_lib` root re-exports keep their names.
+- **Tensor eigendecomposition and vector-field sampling moved to `viewport-lib-plugins`** - `SymmetricEigen`, `symmetric_eigen_3x3` and `symmetric_eigenvalues_3x3` are now under `item_types::tensor_field`, and `VectorSamples`, `vertex_intrinsic_vectors`, `face_intrinsic_vectors`, `edge_one_form_vectors` and the tangent-frame helpers under `item_types::vector_field`. They are no longer re-exported from `viewport_lib` or `viewport_lib_geometry`.
 
 ### Fixed
 

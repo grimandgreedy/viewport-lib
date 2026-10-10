@@ -1,4 +1,4 @@
-//! Polyline construction helpers shared by interaction widget wireframes.
+//! Wireframe construction helpers: point loops drawn as polyline strips.
 
 /// Append a closed circle to `out` as `steps + 1` points.
 ///

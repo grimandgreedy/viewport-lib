@@ -1,4 +1,18 @@
 //! A sampled vector field: one world-space vector at each of a set of positions.
+//!
+//! The helpers here turn on-surface data into samples: intrinsic `(u, v)`
+//! vectors in a tangent frame, and Whitney reconstruction of an edge one-form.
+//! Hand the result to [`VectorFieldItem::with_samples`](super::VectorFieldItem::with_samples).
+
+pub mod intrinsic;
+pub mod one_forms;
+pub mod tangent_frames;
+
+pub use intrinsic::{face_intrinsic_vectors, vertex_intrinsic_vectors};
+pub use one_forms::edge_one_form_vectors;
+pub use tangent_frames::{
+    compute_face_tangent_frames, compute_vertex_tangent_frames, tangents_from_explicit,
+};
 
 /// Positions paired with the world-space vector at each position.
 ///

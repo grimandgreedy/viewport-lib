@@ -49,7 +49,7 @@ fn gpu_pick_hits_marching_cubes() {
             }
         }
     }
-    let vol = viewport_lib_geometry::marching_cubes::VolumeData {
+    let vol = viewport_lib_geometry::volume::grid::VolumeData {
         data,
         dims,
         origin,
@@ -168,7 +168,7 @@ fn rect_pick_hits_marching_cubes() {
 
 /// A radial scalar field centred at the origin: the isosurface at 1.5 is a
 /// sphere of radius 1.5, spanning roughly [-2.3, 2.3]^3.
-fn radial_field() -> viewport_lib_geometry::marching_cubes::VolumeData {
+fn radial_field() -> viewport_lib_geometry::volume::grid::VolumeData {
     let dims = [24u32, 24, 24];
     let spacing = [0.2f32; 3];
     let origin = [-(23.0 * 0.2) / 2.0; 3];
@@ -184,7 +184,7 @@ fn radial_field() -> viewport_lib_geometry::marching_cubes::VolumeData {
             }
         }
     }
-    viewport_lib_geometry::marching_cubes::VolumeData {
+    viewport_lib_geometry::volume::grid::VolumeData {
         data,
         dims,
         origin,
@@ -197,12 +197,12 @@ fn radial_field() -> viewport_lib_geometry::marching_cubes::VolumeData {
 // ---------------------------------------------------------------------------
 
 /// A small field with an isosurface somewhere in the middle of it.
-fn sample_volume() -> viewport_lib_geometry::marching_cubes::VolumeData {
+fn sample_volume() -> viewport_lib_geometry::volume::grid::VolumeData {
     let dims = [8u32, 8, 8];
     let data = (0..(dims[0] * dims[1] * dims[2]))
         .map(|i| (i % 2) as f32)
         .collect();
-    viewport_lib_geometry::marching_cubes::VolumeData {
+    viewport_lib_geometry::volume::grid::VolumeData {
         data,
         dims,
         origin: [0.0, 0.0, 0.0],
@@ -389,7 +389,7 @@ fn mc_external_scalar_drives_isosurface() {
     let node_count = (dims[0] * dims[1] * dims[2]) as usize;
 
     // Uploaded field: uniformly far above the isovalue, no surface anywhere.
-    let vol = viewport_lib_geometry::marching_cubes::VolumeData {
+    let vol = viewport_lib_geometry::volume::grid::VolumeData {
         data: vec![10.0; node_count],
         dims,
         origin,

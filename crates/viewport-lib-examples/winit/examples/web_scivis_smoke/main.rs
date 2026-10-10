@@ -30,7 +30,8 @@ use std::sync::Arc;
 use web_time::Instant;
 
 use viewport_lib::picking::screen_to_ray;
-use viewport_lib::vplg::marching_cubes::{VolumeData, extract_isosurface};
+use viewport_lib::vplg::volume::grid::VolumeData;
+use viewport_lib::vplg::volume::marching_cubes::extract_isosurface;
 use viewport_lib::{
     Aabb, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Material, MouseButton,
     OrbitCameraController, PickAccelerator, Scene, SceneFrame, SceneRenderItem, ScrollUnits,

@@ -11,7 +11,7 @@
 
 use super::types::McVolumeId;
 use viewport_lib::gpu::util::DeviceExt as _;
-use viewport_lib_geometry::marching_cubes::VolumeData;
+use viewport_lib_geometry::volume::grid::VolumeData;
 
 /// GPU buffers for one Z-axis slab of an uploaded volume.
 ///

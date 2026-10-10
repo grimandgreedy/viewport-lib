@@ -1,5 +1,8 @@
 use crate::resources::*;
-use viewport_lib_geometry::mesh_ops;
+use viewport_lib_geometry::mesh::{
+    compute_tangents, expand_cell_to_vertex, expand_edge_to_vertex, expand_face_colours_to_3n,
+    expand_face_scalars_to_3n, validate_mesh_data,
+};
 
 /// Slice size for the chunked async mesh buffer fills, in bytes. The copies
 /// are plain memcpys into mapped buffers, so the size only has to fit a
@@ -161,7 +164,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         data: &MeshData,
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
-        mesh_ops::validate_mesh_data(data)?;
+        validate_mesh_data(data)?;
         Self::validate_mesh_size(device, data)?;
         let prep = Self::prep_mesh_data(data, self.retain_mesh_cpu_geometry);
         Ok(self.assemble_mesh_data(device, data, prep))
@@ -194,9 +197,9 @@ impl DeviceResources {
     /// upload.
     pub(crate) fn prep_mesh_data(data: &MeshData, retain_cpu: bool) -> MeshPrep {
         let computed_tangents: Option<Vec<[f32; 4]>> = if data.tangents.is_none() {
-            data.uvs.as_ref().map(|uvs| {
-                mesh_ops::compute_tangents(&data.positions, &data.normals, uvs, &data.indices)
-            })
+            data.uvs
+                .as_ref()
+                .map(|uvs| compute_tangents(&data.positions, &data.normals, uvs, &data.indices))
         } else {
             None
         };
@@ -362,7 +365,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         data: MeshData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        mesh_ops::validate_mesh_data(&data)?;
+        validate_mesh_data(&data)?;
         Self::validate_mesh_size(device, &data)?;
 
         let slot =
@@ -1336,14 +1339,14 @@ impl DeviceResources {
                 count: self.mesh_store.len(),
             });
         }
-        mesh_ops::validate_mesh_data(data)?;
+        validate_mesh_data(data)?;
         Self::validate_mesh_size(device, data)?;
         let retain_cpu = self.retain_mesh_cpu_geometry;
 
         let computed_tangents: Option<Vec<[f32; 4]>> = if data.tangents.is_none() {
-            data.uvs.as_ref().map(|uvs| {
-                mesh_ops::compute_tangents(&data.positions, &data.normals, uvs, &data.indices)
-            })
+            data.uvs
+                .as_ref()
+                .map(|uvs| compute_tangents(&data.positions, &data.normals, uvs, &data.indices))
         } else {
             None
         };
@@ -1883,7 +1886,7 @@ impl DeviceResources {
                 let (mesh_data, face_to_cell) =
                     crate::resources::volume::volume_mesh::extract_boundary_faces(&data);
                 progress.set(0.5);
-                mesh_ops::validate_mesh_data(&mesh_data)?;
+                validate_mesh_data(&mesh_data)?;
                 let prep = DeviceResources::prep_mesh_data(&mesh_data, retain_cpu);
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
@@ -1960,7 +1963,7 @@ impl DeviceResources {
                         &clip_planes,
                     );
                 progress.set(0.5);
-                mesh_ops::validate_mesh_data(&mesh_data)?;
+                validate_mesh_data(&mesh_data)?;
                 let prep = DeviceResources::prep_mesh_data(&mesh_data, retain_cpu);
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
@@ -2087,7 +2090,7 @@ impl DeviceResources {
                     ranges.insert(name.clone(), (min, max));
                 }
                 AttributeData::Cell(c) => {
-                    let scalars = mesh_ops::expand_cell_to_vertex(c, positions, indices);
+                    let scalars = expand_cell_to_vertex(c, positions, indices);
                     if scalars.is_empty() {
                         continue;
                     }
@@ -2105,7 +2108,7 @@ impl DeviceResources {
                             device, positions, normals, indices, uvs, tangents,
                         ));
                     }
-                    let expanded = mesh_ops::expand_face_scalars_to_3n(f, n_tris);
+                    let expanded = expand_face_scalars_to_3n(f, n_tris);
                     if expanded.is_empty() {
                         continue;
                     }
@@ -2126,7 +2129,7 @@ impl DeviceResources {
                             device, positions, normals, indices, uvs, tangents,
                         ));
                     }
-                    let expanded = mesh_ops::expand_face_colours_to_3n(colours, n_tris);
+                    let expanded = expand_face_colours_to_3n(colours, n_tris);
                     if expanded.is_empty() {
                         continue;
                     }
@@ -2148,7 +2151,7 @@ impl DeviceResources {
                 AttributeData::Edge(e) => {
                     // Average edge values to vertex values (each edge's scalar is
                     // distributed to its two endpoint vertices).
-                    let scalars = mesh_ops::expand_edge_to_vertex(e, positions, indices);
+                    let scalars = expand_edge_to_vertex(e, positions, indices);
                     if scalars.is_empty() {
                         continue;
                     }

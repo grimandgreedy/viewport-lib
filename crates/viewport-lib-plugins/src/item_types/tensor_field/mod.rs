@@ -7,6 +7,7 @@
 //! arrive at this plugin under the one type name.
 
 pub mod channels;
+pub mod eigen;
 mod pipeline;
 mod store;
 mod types;
@@ -25,6 +26,7 @@ use viewport_lib::resources::HDR_COLOR_FORMAT;
 
 pub(crate) use store::encode_samples;
 
+pub use eigen::{SymmetricEigen, symmetric_eigen_3x3, symmetric_eigenvalues_3x3};
 pub use types::{TensorFieldId, TensorFieldItem, TensorFieldRefItem, TensorSource};
 
 /// This type's shaders as the pipelines compile them, shared sections already

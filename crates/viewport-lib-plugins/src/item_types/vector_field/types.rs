@@ -2,6 +2,7 @@
 //! the sample's vector, plus the handle and reference form for a field
 //! uploaded once.
 
+use super::VectorSamples;
 use viewport_lib::ItemSettings;
 use viewport_lib::{ColourSource, MeshId, SizeSource};
 
@@ -112,6 +113,13 @@ impl VectorFieldItem {
             shape,
             ..Self::default()
         }
+    }
+
+    /// Take positions and vectors from `samples`, replacing any already set.
+    pub fn with_samples(mut self, samples: VectorSamples) -> Self {
+        self.positions = samples.positions;
+        self.vectors = samples.vectors;
+        self
     }
 
     /// Number of samples that will be drawn.

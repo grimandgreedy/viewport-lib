@@ -4,7 +4,7 @@ use super::{
     HandleMarkers, WidgetContext, WidgetResult, ctx_ray, handle_colour, handle_world_radius,
     ray_point_dist,
 };
-use crate::geometry::intersect::ray_plane_intersection;
+use crate::geometry::maths::intersect::ray_plane_intersection;
 use crate::renderer::PolylineItem;
 
 /// An interactive spline widget with N draggable Catmull-Rom control points.
