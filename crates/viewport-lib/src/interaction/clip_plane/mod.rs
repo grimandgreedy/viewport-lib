@@ -279,7 +279,11 @@ pub struct ClipPlaneContext {
     pub cursor_viewport: Option<glam::Vec2>,
     /// Mouse movement in pixels since last frame.
     pub pointer_delta: glam::Vec2,
-    /// `true` on the frame a primary drag begins.
+    /// `true` on the frame to try grabbing what is under the cursor: the
+    /// primary press ([`PointerFrame::pressed`], which the runners pass), or a
+    /// toolkit's own drag start if the host prefers one.
+    ///
+    /// [`PointerFrame::pressed`]: crate::PointerFrame::pressed
     pub drag_started: bool,
     /// `true` while a primary drag is ongoing.
     pub dragging: bool,

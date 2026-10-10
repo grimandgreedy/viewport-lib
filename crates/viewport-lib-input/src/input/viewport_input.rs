@@ -28,9 +28,11 @@ use super::viewport_binding::{ViewportBinding, ViewportGesture};
 /// both platforms, not because they agree on anything.
 const PIXELS_PER_LINE: f32 = 28.0;
 
-/// Maximum pointer displacement (in viewport pixels) between primary press and
-/// release for the gesture to count as a click rather than a drag.
-const CLICK_THRESHOLD_PX: f32 = 5.0;
+/// How far, in viewport pixels, the pointer must get from where the primary
+/// button went down before the press counts as a drag rather than a click.
+/// [`PointerFrame::drag_began`] fires when it is reached, and a press that
+/// reaches it never reports [`PointerFrame::clicked`].
+pub const CLICK_THRESHOLD_PX: f32 = 5.0;
 
 /// Pinch-to-zoom conversion: wheel-equivalent pixels per unit of pinch delta.
 ///
@@ -112,7 +114,13 @@ pub struct ViewportInput {
     // `pointer_delta` accumulates every pointer move, not only while a button is held.
     pointer_delta: glam::Vec2,
     /// True on the frame the primary (left) button was pressed.
-    left_drag_started: bool,
+    left_pressed: bool,
+    /// True on the frame the held primary press first reached the drag threshold.
+    left_drag_began: bool,
+    /// Whether the current primary press has reached the drag threshold. Persists
+    /// for the whole press, so `left_drag_began` fires once and the release is
+    /// not a click.
+    left_drag_reached: bool,
     /// True on the frame the primary button was released within the click threshold.
     left_clicked: bool,
 
@@ -184,7 +192,9 @@ impl ViewportInput {
             pinch_gesture: 0.0,
             pan_gesture: glam::Vec2::ZERO,
             pointer_delta: glam::Vec2::ZERO,
-            left_drag_started: false,
+            left_pressed: false,
+            left_drag_began: false,
+            left_drag_reached: false,
             left_clicked: false,
             keys_pressed: HashSet::new(),
             typed_chars: Vec::new(),
@@ -274,7 +284,9 @@ impl ViewportInput {
         }
         self.drag_delta = glam::Vec2::ZERO;
         self.pointer_delta = glam::Vec2::ZERO;
-        self.left_drag_started = false;
+        self.left_pressed = false;
+        self.left_drag_reached = false;
+        self.left_drag_began = false;
         self.left_clicked = false;
         // Contacts go with the buttons: a cancelled gesture is cancelled whichever
         // pointer was making it. The last tap is kept, so cancelling one gesture does
@@ -302,7 +314,8 @@ impl ViewportInput {
         self.pinch_gesture = 0.0;
         self.pan_gesture = glam::Vec2::ZERO;
         self.pointer_delta = glam::Vec2::ZERO;
-        self.left_drag_started = false;
+        self.left_pressed = false;
+        self.left_drag_began = false;
         self.left_clicked = false;
         self.keys_pressed.clear();
         self.typed_chars.clear();
@@ -470,6 +483,16 @@ impl ViewportInput {
                     self.pointer_delta += position - prev;
                 }
                 self.pointer_pos = Some(position);
+                let left_origin = button_index(MouseButton::Left)
+                    .filter(|&i| self.button_held[i])
+                    .and_then(|i| self.button_press_pos[i]);
+                if let Some(origin) = left_origin {
+                    if !self.left_drag_reached && (position - origin).length() >= CLICK_THRESHOLD_PX
+                    {
+                        self.left_drag_reached = true;
+                        self.left_drag_began = true;
+                    }
+                }
             }
             ViewportEvent::MouseButton { button, state } => {
                 // Untracked buttons (Back/Forward/Other) have no drag/hold slot; they
@@ -480,18 +503,22 @@ impl ViewportInput {
                             self.button_held[idx] = true;
                             self.button_press_pos[idx] = self.pointer_pos;
                             if button == MouseButton::Left {
-                                self.left_drag_started = true;
+                                self.left_pressed = true;
+                                self.left_drag_reached = false;
                             }
                         }
                         ButtonState::Released => {
                             if button == MouseButton::Left {
-                                // Click if the pointer barely moved since the press.
-                                let is_click = self.button_press_pos[idx]
-                                    .zip(self.pointer_pos)
-                                    .map(|(origin, cur)| {
-                                        (cur - origin).length() < CLICK_THRESHOLD_PX
-                                    })
-                                    .unwrap_or(false);
+                                // Click if the pointer never got the threshold away
+                                // from the press, including on the way back.
+                                let is_click = !self.left_drag_reached
+                                    && self.button_press_pos[idx]
+                                        .zip(self.pointer_pos)
+                                        .map(|(origin, cur)| {
+                                            (cur - origin).length() < CLICK_THRESHOLD_PX
+                                        })
+                                        .unwrap_or(false);
+                                self.left_drag_reached = false;
                                 if is_click {
                                     self.left_clicked = true;
                                 }
@@ -760,7 +787,12 @@ impl ViewportInput {
         pointer.cursor = self.pointer_pos;
         pointer.delta = self.pointer_delta;
         pointer.clicked = self.left_clicked;
-        pointer.drag_started = self.left_drag_started;
+        pointer.pressed = self.left_pressed;
+        pointer.drag_began = self.left_drag_began;
+        #[allow(deprecated)]
+        {
+            pointer.drag_started = self.left_pressed;
+        }
         pointer.dragging = button_index(MouseButton::Left).is_some_and(|i| self.button_held[i]);
         pointer.tapped = self.tapped;
         pointer.double_tapped = self.double_tapped;
@@ -817,6 +849,97 @@ mod tests {
         });
         input.push_event(ViewportEvent::PointerMoved { position: to });
         input.resolve()
+    }
+
+    fn press(input: &mut ViewportInput) {
+        input.push_event(ViewportEvent::MouseButton {
+            button: MouseButton::Left,
+            state: ButtonState::Pressed,
+        });
+    }
+
+    fn release(input: &mut ViewportInput) {
+        input.push_event(ViewportEvent::MouseButton {
+            button: MouseButton::Left,
+            state: ButtonState::Released,
+        });
+    }
+
+    fn move_to(input: &mut ViewportInput, x: f32, y: f32) {
+        input.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(x, y),
+        });
+    }
+
+    #[test]
+    fn pressed_fires_once_on_the_press_frame() {
+        let mut input = ViewportInput::new(viewer_bindings());
+        input.begin_frame(focused_ctx());
+        move_to(&mut input, 10.0, 10.0);
+        press(&mut input);
+        let frame = input.resolve();
+        assert!(frame.pointer.pressed);
+        assert!(!frame.pointer.drag_began, "no movement yet");
+        #[allow(deprecated)]
+        let started = frame.pointer.drag_started;
+        assert!(started, "the deprecated field keeps its value");
+
+        input.begin_frame(focused_ctx());
+        assert!(!input.resolve().pointer.pressed, "only on the press frame");
+    }
+
+    #[test]
+    fn drag_began_fires_once_when_the_threshold_is_reached() {
+        let mut input = ViewportInput::new(viewer_bindings());
+        input.begin_frame(focused_ctx());
+        move_to(&mut input, 10.0, 10.0);
+        press(&mut input);
+        input.resolve();
+
+        input.begin_frame(focused_ctx());
+        move_to(&mut input, 10.0 + CLICK_THRESHOLD_PX - 1.0, 10.0);
+        assert!(!input.resolve().pointer.drag_began, "under the threshold");
+
+        input.begin_frame(focused_ctx());
+        move_to(&mut input, 10.0 + CLICK_THRESHOLD_PX, 10.0);
+        assert!(input.resolve().pointer.drag_began, "at the threshold");
+
+        input.begin_frame(focused_ctx());
+        move_to(&mut input, 40.0, 10.0);
+        assert!(!input.resolve().pointer.drag_began, "once per press");
+    }
+
+    #[test]
+    fn a_press_released_under_the_threshold_clicks_without_a_drag() {
+        let mut input = ViewportInput::new(viewer_bindings());
+        input.begin_frame(focused_ctx());
+        move_to(&mut input, 10.0, 10.0);
+        press(&mut input);
+        move_to(&mut input, 12.0, 10.0);
+        release(&mut input);
+        let frame = input.resolve();
+        assert!(frame.pointer.clicked);
+        assert!(!frame.pointer.drag_began);
+    }
+
+    #[test]
+    fn a_drag_that_returns_to_its_press_point_is_not_a_click() {
+        let mut input = ViewportInput::new(viewer_bindings());
+        input.begin_frame(focused_ctx());
+        move_to(&mut input, 10.0, 10.0);
+        press(&mut input);
+        move_to(&mut input, 40.0, 10.0);
+        move_to(&mut input, 10.0, 10.0);
+        release(&mut input);
+        let frame = input.resolve();
+        assert!(frame.pointer.drag_began);
+        assert!(!frame.pointer.clicked);
+
+        // The next press starts fresh.
+        input.begin_frame(focused_ctx());
+        press(&mut input);
+        release(&mut input);
+        assert!(input.resolve().pointer.clicked);
     }
 
     #[test]

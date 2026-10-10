@@ -22,7 +22,9 @@ pub enum ResolvedActionState {
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct NavigationActions {
-    /// Orbit delta in radians (x = yaw, y = pitch). Zero if no orbit input.
+    /// Orbit drag delta in viewport pixels (x = yaw, y = pitch). Zero if no
+    /// orbit input. A camera controller turns it into an angle with its own
+    /// sensitivity.
     pub orbit: glam::Vec2,
     /// Pan delta in viewport-local pixels (x = right, y = down). Zero if no pan input.
     pub pan: glam::Vec2,
@@ -46,10 +48,20 @@ pub struct PointerFrame {
     pub cursor: Option<glam::Vec2>,
     /// Pointer movement in viewport pixels accumulated this frame.
     pub delta: glam::Vec2,
-    /// True on the frame the primary button was released as a click (press and
-    /// release without crossing the drag threshold).
+    /// True on the frame the primary button was released as a click: the
+    /// pointer never got the drag threshold away from where it was pressed.
     pub clicked: bool,
-    /// True on the frame the primary button was pressed (a drag may begin).
+    /// True on the frame the primary button was pressed.
+    pub pressed: bool,
+    /// True on the first frame a held primary press has moved the drag
+    /// threshold or more from where it went down. Fires at most once per
+    /// press, and a press that fires it never ends as a click.
+    pub drag_began: bool,
+    /// True on the frame the primary button was pressed. Same value as
+    /// [`pressed`](Self::pressed); despite the name, the pointer need not have
+    /// moved. See [`drag_began`](Self::drag_began) for the frame a press
+    /// becomes a drag.
+    #[deprecated(note = "use `pressed`, or `drag_began` for the frame the press becomes a drag")]
     pub drag_started: bool,
     /// True while the primary button is held.
     pub dragging: bool,

@@ -775,9 +775,10 @@ mod tests {
             action.pointer.clicked,
             "release without drag should be a click"
         );
+        assert!(action.pointer.pressed, "press should mark pressed");
         assert!(
-            action.pointer.drag_started,
-            "press should mark drag_started"
+            !action.pointer.drag_began,
+            "a press that never moved is not a drag"
         );
         assert_eq!(action.pointer.cursor, Some(glam::Vec2::new(40.0, 40.0)));
     }

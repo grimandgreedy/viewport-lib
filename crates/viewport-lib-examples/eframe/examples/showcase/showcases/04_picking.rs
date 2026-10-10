@@ -730,7 +730,7 @@ impl Showcase for PickingShowcase {
 
         // Click vs rect: a big enough drag is a rect pick, anything else a click.
         let pointer = session.action_frame().pointer;
-        if pointer.drag_started {
+        if pointer.pressed {
             self.drag_start = pointer.cursor;
         }
         if pointer.dragging {

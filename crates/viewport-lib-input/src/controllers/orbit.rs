@@ -206,6 +206,29 @@ impl OrbitCameraController {
         frame
     }
 
+    /// Orbit `camera` by a pointer delta in pixels, as a drag in the viewport
+    /// would: scaled by [`orbit_sensitivity`](Self::orbit_sensitivity) and
+    /// applied in [`navigation_mode`](Self::navigation_mode). Planar mode
+    /// ignores it.
+    ///
+    /// Use this for a drag the viewport did not see itself, such as a drag on
+    /// an orientation widget, so it moves the camera the same way a drag in the
+    /// scene does.
+    pub fn orbit_by(&self, camera: &mut Camera, delta: glam::Vec2) {
+        if delta == glam::Vec2::ZERO {
+            return;
+        }
+        let yaw = delta.x * self.orbit_sensitivity;
+        let pitch = delta.y * self.orbit_sensitivity;
+        match self.navigation_mode {
+            NavigationMode::Arcball => camera.orbit(yaw, pitch),
+            NavigationMode::Turntable => apply_turntable(camera, yaw, pitch),
+            NavigationMode::Fly => apply_fly_look(camera, yaw, pitch),
+            // Planar ignores orbit; NavigationMode is non_exhaustive.
+            _ => {}
+        }
+    }
+
     /// Apply an already-resolved [`ActionFrame`] to the camera without draining
     /// the event queue.
     ///
@@ -224,12 +247,7 @@ impl OrbitCameraController {
 
         match self.navigation_mode {
             NavigationMode::Arcball => {
-                if nav.orbit != glam::Vec2::ZERO {
-                    camera.orbit(
-                        nav.orbit.x * self.orbit_sensitivity,
-                        nav.orbit.y * self.orbit_sensitivity,
-                    );
-                }
+                self.orbit_by(camera, nav.orbit);
                 if nav.twist != 0.0 && self.gesture_sensitivity != 0.0 {
                     camera.orbit(nav.twist * self.gesture_sensitivity, 0.0);
                 }
@@ -242,11 +260,7 @@ impl OrbitCameraController {
             }
 
             NavigationMode::Turntable => {
-                if nav.orbit != glam::Vec2::ZERO {
-                    let yaw = nav.orbit.x * self.orbit_sensitivity;
-                    let pitch = nav.orbit.y * self.orbit_sensitivity;
-                    apply_turntable(camera, yaw, pitch);
-                }
+                self.orbit_by(camera, nav.orbit);
                 if nav.twist != 0.0 && self.gesture_sensitivity != 0.0 {
                     // Gesture twist is yaw-only in turntable mode.
                     apply_turntable(camera, nav.twist * self.gesture_sensitivity, 0.0);
@@ -271,11 +285,7 @@ impl OrbitCameraController {
 
             NavigationMode::Fly => {
                 // Mouselook: drag rotates the view while the eye stays fixed.
-                if nav.orbit != glam::Vec2::ZERO {
-                    let yaw = nav.orbit.x * self.orbit_sensitivity;
-                    let pitch = nav.orbit.y * self.orbit_sensitivity;
-                    apply_fly_look(camera, yaw, pitch);
-                }
+                self.orbit_by(camera, nav.orbit);
                 if nav.twist != 0.0 && self.gesture_sensitivity != 0.0 {
                     apply_fly_look(camera, nav.twist * self.gesture_sensitivity, 0.0);
                 }
@@ -410,6 +420,46 @@ mod tests {
             (cam.distance - d0).abs() > 1e-4,
             "zoom should change camera distance"
         );
+    }
+
+    #[test]
+    fn orbit_by_matches_a_drag_in_every_mode() {
+        let delta = glam::Vec2::new(37.0, -21.0);
+        let mut frame = ActionFrame::default();
+        frame.navigation.orbit = delta;
+        let start = || {
+            let mut cam = Camera::default();
+            cam.orientation = glam::Quat::from_rotation_z(0.7) * glam::Quat::from_rotation_x(0.9);
+            cam
+        };
+        for mode in [
+            NavigationMode::Arcball,
+            NavigationMode::Turntable,
+            NavigationMode::Fly,
+            NavigationMode::Planar,
+        ] {
+            let mut ctrl = OrbitCameraController::viewer();
+            ctrl.navigation_mode = mode;
+            let mut by_drag = start();
+            ctrl.apply(&mut by_drag, &frame);
+            let mut by_call = start();
+            ctrl.orbit_by(&mut by_call, delta);
+            assert!(
+                by_drag.orientation.angle_between(by_call.orientation) < 1e-5,
+                "{mode:?}: orientation differs"
+            );
+            assert!(
+                (by_drag.center - by_call.center).length() < 1e-4,
+                "{mode:?}: centre differs"
+            );
+            match mode {
+                NavigationMode::Planar => assert_eq!(by_call.orientation, start().orientation),
+                // Mouselook keeps the eye still, so the centre moves: proof the
+                // mode's own rotation ran rather than the arcball one.
+                NavigationMode::Fly => assert!((by_call.center - start().center).length() > 1e-3),
+                _ => assert!(by_call.orientation.angle_between(start().orientation) > 1e-3),
+            }
+        }
     }
 
     #[test]
