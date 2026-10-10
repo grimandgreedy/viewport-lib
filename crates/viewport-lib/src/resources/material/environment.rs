@@ -18,7 +18,8 @@ use std::f32::consts::PI;
 use crate::resources::upload_jobs::{ApplyFn, JobId, JobProduct, ProgressHandle, UploadStatus};
 
 use super::ibl_compute::{
-    IBL_ENV_CAPACITY, IBL_IRR_H, IBL_IRR_W, IBL_PREFILTER_H, IBL_PREFILTER_MIPS, IBL_PREFILTER_W,
+    IBL_ENV_CAPACITY, IBL_FILTER_H, IBL_FILTER_LEVELS, IBL_FILTER_W, IBL_IRR_H,
+    IBL_IRR_SOURCE_LEVEL, IBL_IRR_W, IBL_PREFILTER_H, IBL_PREFILTER_MIPS, IBL_PREFILTER_W,
 };
 
 /// Image-based-lighting and environment-map GPU resources.
@@ -902,9 +903,9 @@ fn submit_bake(
     source: EnvSource,
     env: EnvironmentMapId,
 ) -> JobId {
-    // A compressed source is only accepted where the compute bake can run.
-    let compute = super::ibl_compute::compute_supported(device)
-        || matches!(source, EnvSource::Compressed { .. });
+    // The GPU bake wherever the device can run it; a compressed source is only
+    // accepted there.
+    let compute = super::ibl_compute::compute_bake_possible(device);
     let needs_brdf = resources.ibl.brdf_lut_texture.is_none();
     let (irr_array, pref_array) = ensure_ibl_arrays(resources, device);
     let layer = env.index();
@@ -1093,8 +1094,14 @@ fn run_cpu_path(
 
     progress.set(0.15);
 
-    // 2. Irradiance map, written into the target array layer.
-    let irradiance_data = convolve_irradiance(pixels, width, height, IBL_IRR_W, IBL_IRR_H);
+    // 2. The filter pyramid, then the irradiance map from its 128x64 level,
+    // written into the target array layer.
+    let pyramid = filter_pyramid(pixels, width, height);
+    let irradiance_data = convolve_irradiance(
+        &pyramid[IBL_IRR_SOURCE_LEVEL as usize],
+        IBL_IRR_W,
+        IBL_IRR_H,
+    );
     write_layer_rgba16f(
         queue,
         irradiance_array,
@@ -1110,9 +1117,7 @@ fn run_cpu_path(
     // 3. Prefiltered specular mips, written into the same array layer.
     prefilter_specular(
         queue,
-        pixels,
-        width,
-        height,
+        &pyramid,
         IBL_PREFILTER_W,
         IBL_PREFILTER_H,
         IBL_PREFILTER_MIPS,
@@ -1248,143 +1253,206 @@ pub(crate) fn upload_rgba16f(
     tex
 }
 
-/// Sample an equirectangular HDR image at a Z-up world-space direction.
-///
-/// viewport-lib is Z-up: longitude is measured around the +Z axis in the XY
-/// plane, latitude has +Z polar.
-fn sample_equirect(pixels: &[f32], width: u32, height: u32, dir: [f32; 3]) -> [f32; 3] {
-    let [x, y, z] = dir;
-    let phi = y.atan2(x); // -PI..PI (longitude around Z)
-    let theta = z.clamp(-1.0, 1.0).asin(); // -PI/2..PI/2 (latitude: Z polar)
-    let u = 0.5 + phi / (2.0 * PI);
-    let v = 0.5 - theta / PI;
-    let px = (u * width as f32).rem_euclid(width as f32);
-    let py = (v * height as f32).clamp(0.0, height as f32 - 1.0);
-    let ix = px as u32 % width;
-    let iy = py as u32;
-    let idx = (iy * width + ix) as usize * 4;
-    if idx + 2 < pixels.len() {
-        [pixels[idx], pixels[idx + 1], pixels[idx + 2]]
-    } else {
-        [0.0; 3]
-    }
+/// One level of the bake's filter pyramid: linear RGBA f32.
+struct FilterLevel {
+    width: u32,
+    height: u32,
+    pixels: Vec<f32>,
 }
 
-// -------------------------------------------------------------------------
-// Irradiance convolution (hemisphere cosine-weighted sampling)
-// -------------------------------------------------------------------------
-
-fn convolve_irradiance(src: &[f32], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<f32> {
-    let sample_delta = 0.05f32; // ~126 phi steps x ~31 theta steps, about 4,000 samples
-    let mut out = vec![0.0f32; (dst_w * dst_h * 4) as usize];
-
-    // Per-row parallelism. Each row writes a disjoint slice of `out`, so
-    // chunk by row stride and dispatch in parallel via rayon.
-    let row_stride = (dst_w as usize) * 4;
-    out.par_chunks_mut(row_stride)
+/// Box-downsample an equirect image to `dw`x`dh` (or repeat the nearest texel
+/// where the destination is larger), weighting source rows by their solid
+/// angle. Mirrors `ibl_downsample.wgsl`.
+fn resample_equirect(src: &[f32], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<f32> {
+    let mut out = vec![0.0f32; (dw * dh * 4) as usize];
+    out.par_chunks_mut((dw * 4) as usize)
         .enumerate()
         .for_each(|(y, row)| {
-            let v = y as f32 / dst_h as f32;
-            let theta_n = PI * (0.5 - v); // latitude
-            for x in 0..dst_w {
-                let u = x as f32 / dst_w as f32;
-                let phi_n = 2.0 * PI * (u - 0.5); // longitude
-
-                // Normal direction for this texel (Z-up: latitude theta drives Z,
-                // longitude phi spins around Z in the XY plane).
-                let (st, ct) = theta_n.sin_cos();
-                let (sp, cp) = phi_n.sin_cos();
-                let normal = [ct * cp, ct * sp, st];
-
-                // Build tangent frame.
-                let up = if normal[2].abs() < 0.999 {
-                    [0.0, 0.0, 1.0]
-                } else {
-                    [1.0, 0.0, 0.0]
-                };
-                let tangent = cross(up, normal);
-                let tangent = normalize(tangent);
-                let bitangent = cross(normal, tangent);
-
-                let mut irr = [0.0f32; 3];
-                let mut sample_count = 0.0f32;
-
-                let mut s_phi = 0.0f32;
-                while s_phi < 2.0 * PI {
-                    let mut s_theta = 0.0f32;
-                    while s_theta < 0.5 * PI {
-                        let (sst, sct) = s_theta.sin_cos();
-                        let (ssp, scp) = s_phi.sin_cos();
-                        let ts = [sst * scp, sst * ssp, sct];
-                        let dir = [
-                            ts[0] * tangent[0] + ts[1] * bitangent[0] + ts[2] * normal[0],
-                            ts[0] * tangent[1] + ts[1] * bitangent[1] + ts[2] * normal[1],
-                            ts[0] * tangent[2] + ts[1] * bitangent[2] + ts[2] * normal[2],
-                        ];
-                        let c = sample_equirect(src, src_w, src_h, dir);
-                        let w = sct * sst; // cos(theta) * sin(theta) for solid angle
-                        irr[0] += c[0] * w;
-                        irr[1] += c[1] * w;
-                        irr[2] += c[2] * w;
-                        sample_count += 1.0;
-                        s_theta += sample_delta;
+            let y = y as u32;
+            let y0 = y * sh / dh;
+            let y1 = ((y + 1) * sh / dh).max(y0 + 1);
+            for x in 0..dw {
+                let x0 = x * sw / dw;
+                let x1 = ((x + 1) * sw / dw).max(x0 + 1);
+                let mut sum = [0.0f32; 3];
+                let mut weight = 0.0f32;
+                for sy in y0..y1 {
+                    let w = (PI * (0.5 - (sy as f32 + 0.5) / sh as f32)).cos();
+                    for sx in x0..x1 {
+                        let i = ((sy * sw + sx) * 4) as usize;
+                        for c in 0..3 {
+                            sum[c] += src[i + c] * w;
+                        }
                     }
-                    s_phi += sample_delta;
+                    weight += w * (x1 - x0) as f32;
                 }
-
-                let scale = PI / sample_count;
-                let idx = (x as usize) * 4;
-                row[idx] = irr[0] * scale;
-                row[idx + 1] = irr[1] * scale;
-                row[idx + 2] = irr[2] * scale;
-                row[idx + 3] = 1.0;
+                let o = (x * 4) as usize;
+                for c in 0..3 {
+                    row[o + c] = sum[c] / weight.max(1e-8);
+                }
+                row[o + 3] = 1.0;
             }
         });
     out
 }
 
-// -------------------------------------------------------------------------
-// Prefiltered specular (importance-sampled GGX)
-// -------------------------------------------------------------------------
+/// The filter pyramid: the source box-downsampled to the base size, then
+/// halved level by level. Mirrors the GPU bake's pyramid.
+fn filter_pyramid(src: &[f32], width: u32, height: u32) -> Vec<FilterLevel> {
+    let mut levels: Vec<FilterLevel> = Vec::with_capacity(IBL_FILTER_LEVELS as usize);
+    for level in 0..IBL_FILTER_LEVELS {
+        let (w, h) = (IBL_FILTER_W >> level, IBL_FILTER_H >> level);
+        let pixels = match levels.last() {
+            None => resample_equirect(src, width, height, w, h),
+            Some(prev) => resample_equirect(&prev.pixels, prev.width, prev.height, w, h),
+        };
+        levels.push(FilterLevel {
+            width: w,
+            height: h,
+            pixels,
+        });
+    }
+    levels
+}
+
+/// The irradiance map, stored divided by pi: an exact sum over every texel of
+/// `src` (the 128x64 pyramid level), each weighted by its radiance, solid angle
+/// and cosine to the texel's normal. Mirrors `ibl_irradiance.wgsl`.
+fn convolve_irradiance(src: &FilterLevel, dst_w: u32, dst_h: u32) -> Vec<f32> {
+    // Per source row: sin and cos of the latitude and one texel's solid angle.
+    let d_lon = 2.0 * PI / src.width as f32;
+    let rows: Vec<(f32, f32, f32)> = (0..src.height)
+        .map(|y| {
+            let top = PI * (0.5 - y as f32 / src.height as f32);
+            let bottom = PI * (0.5 - (y + 1) as f32 / src.height as f32);
+            let lat = 0.5 * (top + bottom);
+            (lat.sin(), lat.cos(), (top.sin() - bottom.sin()) * d_lon)
+        })
+        .collect();
+    let cols: Vec<(f32, f32)> = (0..src.width)
+        .map(|x| {
+            let lon = 2.0 * PI * ((x as f32 + 0.5) / src.width as f32 - 0.5);
+            (lon.cos(), lon.sin())
+        })
+        .collect();
+
+    let mut out = vec![0.0f32; (dst_w * dst_h * 4) as usize];
+    out.par_chunks_mut((dst_w * 4) as usize)
+        .enumerate()
+        .for_each(|(y, row)| {
+            // Z-up: latitude drives Z, longitude spins around Z. Texel centres.
+            let lat_n = PI * (0.5 - (y as f32 + 0.5) / dst_h as f32);
+            for x in 0..dst_w {
+                let lon_n = 2.0 * PI * ((x as f32 + 0.5) / dst_w as f32 - 0.5);
+                let n = [
+                    lat_n.cos() * lon_n.cos(),
+                    lat_n.cos() * lon_n.sin(),
+                    lat_n.sin(),
+                ];
+                let mut irr = [0.0f32; 3];
+                for (sy, &(sin_lat, cos_lat, omega)) in rows.iter().enumerate() {
+                    for (sx, &(cos_lon, sin_lon)) in cols.iter().enumerate() {
+                        let c =
+                            n[0] * cos_lat * cos_lon + n[1] * cos_lat * sin_lon + n[2] * sin_lat;
+                        if c > 0.0 {
+                            let i = (sy * src.width as usize + sx) * 4;
+                            let w = omega * c;
+                            irr[0] += src.pixels[i] * w;
+                            irr[1] += src.pixels[i + 1] * w;
+                            irr[2] += src.pixels[i + 2] * w;
+                        }
+                    }
+                }
+                let o = (x * 4) as usize;
+                row[o] = irr[0] / PI;
+                row[o + 1] = irr[1] / PI;
+                row[o + 2] = irr[2] / PI;
+                row[o + 3] = 1.0;
+            }
+        });
+    out
+}
+
+/// Bilinear sample of one pyramid level at equirect `uv`, wrapping in u and
+/// clamping in v, as the GPU sampler does.
+fn sample_level(level: &FilterLevel, uv: [f32; 2]) -> [f32; 3] {
+    let (w, h) = (level.width as i32, level.height as i32);
+    let x = uv[0] * w as f32 - 0.5;
+    let y = uv[1] * h as f32 - 0.5;
+    let (x0, y0) = (x.floor(), y.floor());
+    let (fx, fy) = (x - x0, y - y0);
+    let texel = |tx: i32, ty: i32| {
+        let i = ((ty.clamp(0, h - 1) * w + tx.rem_euclid(w)) * 4) as usize;
+        [level.pixels[i], level.pixels[i + 1], level.pixels[i + 2]]
+    };
+    let (x0, y0) = (x0 as i32, y0 as i32);
+    let (a, b) = (texel(x0, y0), texel(x0 + 1, y0));
+    let (c, d) = (texel(x0, y0 + 1), texel(x0 + 1, y0 + 1));
+    std::array::from_fn(|k| {
+        let top = a[k] + (b[k] - a[k]) * fx;
+        let bottom = c[k] + (d[k] - c[k]) * fx;
+        top + (bottom - top) * fy
+    })
+}
+
+/// Trilinear sample of the pyramid in direction `dir` at `lod`.
+fn sample_pyramid(levels: &[FilterLevel], dir: [f32; 3], lod: f32) -> [f32; 3] {
+    let [x, y, z] = dir;
+    let uv = [
+        0.5 + y.atan2(x) / (2.0 * PI),
+        0.5 - z.clamp(-1.0, 1.0).asin() / PI,
+    ];
+    let lod = lod.clamp(0.0, (levels.len() - 1) as f32);
+    let l0 = lod.floor() as usize;
+    let l1 = (l0 + 1).min(levels.len() - 1);
+    let t = lod - l0 as f32;
+    let a = sample_level(&levels[l0], uv);
+    if t == 0.0 || l1 == l0 {
+        return a;
+    }
+    let b = sample_level(&levels[l1], uv);
+    std::array::from_fn(|k| a[k] + (b[k] - a[k]) * t)
+}
 
 #[allow(clippy::too_many_arguments)]
 fn prefilter_specular(
     queue: &crate::gpu::Queue,
-    src: &[f32],
-    src_w: u32,
-    src_h: u32,
+    pyramid: &[FilterLevel],
     base_w: u32,
     base_h: u32,
     mip_levels: u32,
     dst: &crate::gpu::Texture,
     layer: u32,
 ) {
-    let num_samples = 256u32;
+    // Fewer than the GPU bake's 2048: this path runs where there is no compute,
+    // including single-threaded web builds, so it trades a few percent of
+    // accuracy on a sharp sun for a quarter of the time.
+    let num_samples = 1024u32;
 
     for mip in 0..mip_levels {
         let mip_w = (base_w >> mip).max(1);
         let mip_h = (base_h >> mip).max(1);
         let roughness = mip as f32 / (mip_levels - 1).max(1) as f32;
+        // Destination mip `m` is the size of pyramid level m + 1.
+        // Roughness 0 reads the pyramid level the size of this mip.
+        let min_lod = if mip == 0 { 1.0 } else { 0.0 };
         let mut data = vec![0.0f32; (mip_w * mip_h * 4) as usize];
 
         let row_stride = (mip_w as usize) * 4;
         data.par_chunks_mut(row_stride)
             .enumerate()
             .for_each(|(y, row)| {
-                let v = y as f32 / mip_h as f32;
+                // Texel centres.
+                let v = (y as f32 + 0.5) / mip_h as f32;
                 let theta_n = PI * (0.5 - v);
                 for x in 0..mip_w {
-                    let u = x as f32 / mip_w as f32;
+                    let u = (x as f32 + 0.5) / mip_w as f32;
                     let phi_n = 2.0 * PI * (u - 0.5);
                     // Z-up: latitude theta drives Z, longitude phi spins around Z in the XY plane.
                     let (st, ct) = theta_n.sin_cos();
                     let (sp, cp) = phi_n.sin_cos();
                     let n = [ct * cp, ct * sp, st];
-                    let r = n; // reflect = normal for prefilter
-                    let v_dir = r;
-
-                    let colour =
-                        prefilter_sample(src, src_w, src_h, n, r, v_dir, roughness, num_samples);
+                    let colour = prefilter_sample(pyramid, n, roughness, min_lod, num_samples);
                     let idx = (x as usize) * 4;
                     row[idx] = colour[0];
                     row[idx + 1] = colour[1];
@@ -1398,28 +1466,44 @@ fn prefilter_specular(
     }
 }
 
+/// GGX importance sampling with each sample read from the pyramid level that
+/// matches the solid angle it stands for. Mirrors `ibl_prefilter.wgsl`.
 fn prefilter_sample(
-    src: &[f32],
-    src_w: u32,
-    src_h: u32,
+    pyramid: &[FilterLevel],
     n: [f32; 3],
-    _r: [f32; 3],
-    v: [f32; 3],
     roughness: f32,
+    min_lod: f32,
     num_samples: u32,
 ) -> [f32; 3] {
     let mut colour = [0.0f32; 3];
     let mut total_weight = 0.0f32;
     let a = roughness * roughness;
+    let a2 = a * a;
+    let texel_omega = (2.0 * PI / pyramid[0].width as f32) * (PI / pyramid[0].height as f32);
+    // A mirror lobe is the one direction: read it at the output's size.
+    if a == 0.0 {
+        return sample_pyramid(pyramid, n, min_lod);
+    }
 
     for i in 0..num_samples {
         let xi = hammersley(i, num_samples);
         let h = importance_sample_ggx(xi, n, a);
-        let l = reflect(v, h);
+        // The view is along the normal.
+        let l = reflect(n, h);
         let n_dot_l = dot(n, l).max(0.0);
 
         if n_dot_l > 0.0 {
-            let c = sample_equirect(src, src_w, src_h, l);
+            // With the view along the normal, the sample's pdf is D / 4. The
+            // level whose texels cover the solid angle the sample stands for,
+            // one level blurrier as the published method biases it.
+            let n_dot_h = dot(n, h).max(0.0);
+            let denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+            let pdf = a2 / (PI * denom * denom) * 0.25;
+            let sample_omega = 1.0 / (num_samples as f32 * pdf + 1e-6);
+            // Texels shrink towards the poles.
+            let cos_lat = (1.0 - l[2] * l[2]).max(0.0).sqrt().max(1e-3);
+            let lod = min_lod.max(0.5 * (sample_omega / (texel_omega * cos_lat)).log2() + 1.0);
+            let c = sample_pyramid(pyramid, l, lod);
             colour[0] += c[0] * n_dot_l;
             colour[1] += c[1] * n_dot_l;
             colour[2] += c[2] * n_dot_l;
@@ -1695,6 +1779,403 @@ mod tests {
         sum.map(|v| v / n)
     }
 
+    /// Read an environment stored as width and height (u32, little-endian)
+    /// followed by RGBA f32 pixels.
+    fn read_raw_environment(path: &str) -> (u32, u32, Vec<f32>) {
+        let bytes = std::fs::read(path).expect("read the raw environment");
+        let word = |i: usize| u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap());
+        let (w, h) = (word(0), word(4));
+        let pixels = bytes[8..]
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .collect();
+        (w, h, pixels)
+    }
+
+    /// One layer and mip of an `Rgba16Float` array, as RGBA f32.
+    fn read_layer(
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        texture: &crate::gpu::Texture,
+        layer: u32,
+        mip: u32,
+        width: u32,
+        height: u32,
+    ) -> Vec<f32> {
+        let row = width * 8;
+        let padded = row.div_ceil(256) * 256;
+        let staging = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: None,
+            size: (padded * height) as u64,
+            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder =
+            device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor { label: None });
+        encoder.copy_texture_to_buffer(
+            crate::gpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: mip,
+                origin: crate::gpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: layer,
+                },
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            crate::gpu::TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: crate::gpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: Some(height),
+                },
+            },
+            crate::gpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit(std::iter::once(encoder.finish()));
+        staging
+            .slice(..)
+            .map_async(crate::gpu::MapMode::Read, |_| {});
+        device
+            .poll(crate::gpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(30)),
+            })
+            .unwrap();
+        let mut out = Vec::with_capacity((width * height * 4) as usize);
+        {
+            let mapped = crate::gpu::mapped_range(staging.slice(..));
+            for y in 0..height as usize {
+                let start = y * padded as usize;
+                let halves: &[u16] = bytemuck::cast_slice(&mapped[start..start + row as usize]);
+                out.extend(halves.iter().map(|&h| half::f16::from_bits(h).to_f32()));
+            }
+        }
+        staging.unmap();
+        out
+    }
+
+    /// Mean absolute luminance difference over mean luminance, and the largest
+    /// per-texel relative difference among texels above a tenth of the mean.
+    fn luminance_error(a: &[f32], b: &[f32]) -> (f32, f32) {
+        let lum = |t: &[f32]| 0.2126 * t[0] + 0.7152 * t[1] + 0.0722 * t[2];
+        let pairs: Vec<(f32, f32)> = a
+            .chunks_exact(4)
+            .zip(b.chunks_exact(4))
+            .map(|(x, y)| (lum(x), lum(y)))
+            .collect();
+        let mean = pairs.iter().map(|p| p.1).sum::<f32>() / pairs.len() as f32;
+        let mae = pairs.iter().map(|p| (p.0 - p.1).abs()).sum::<f32>() / pairs.len() as f32;
+        let worst = pairs
+            .iter()
+            .filter(|p| p.1 > 0.1 * mean)
+            .map(|p| (p.0 - p.1).abs() / p.1)
+            .fold(0.0f32, f32::max);
+        (mae / mean, worst)
+    }
+
+    /// The exact irradiance map (E / pi per texel, as the bakes store it) of an
+    /// equirect source: a solid-angle-weighted sum over a box downsample, which
+    /// keeps the energy of a small bright sun.
+    fn exact_irradiance(px: &[f32], w: u32, h: u32) -> Vec<f32> {
+        let (dw, dh) = (256usize, 128usize);
+        let (fx, fy) = (w as usize / dw, h as usize / dh);
+        // Mean radiance of each block, each source row weighted by its solid
+        // angle (cos latitude), with the block's total solid angle.
+        let mut blocks = Vec::with_capacity(dw * dh);
+        for by in 0..dh {
+            for bx in 0..dw {
+                let (mut sum, mut omega) = ([0.0f64; 3], 0.0f64);
+                for sy in by * fy..(by + 1) * fy {
+                    let lat = (0.5 - (sy as f64 + 0.5) / h as f64) * std::f64::consts::PI;
+                    let d = lat.cos()
+                        * (2.0 * std::f64::consts::PI / w as f64)
+                        * (std::f64::consts::PI / h as f64);
+                    for sx in bx * fx..(bx + 1) * fx {
+                        let i = (sy * w as usize + sx) * 4;
+                        for c in 0..3 {
+                            sum[c] += px[i + c] as f64 * d;
+                        }
+                        omega += d;
+                    }
+                }
+                let lat = (0.5 - (by as f32 + 0.5) / dh as f32) * PI;
+                let lon = 2.0 * PI * ((bx as f32 + 0.5) / dw as f32 - 0.5);
+                let dir = [lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin()];
+                // Radiance times solid angle: the block's contribution per unit cosine.
+                blocks.push((dir, sum.map(|v| v as f32), omega as f32));
+            }
+        }
+        let mut out = vec![0.0f32; (IBL_IRR_W * IBL_IRR_H * 4) as usize];
+        out.par_chunks_mut(4).enumerate().for_each(|(i, texel)| {
+            let (x, y) = (i as u32 % IBL_IRR_W, i as u32 / IBL_IRR_W);
+            let lat = PI * (0.5 - (y as f32 + 0.5) / IBL_IRR_H as f32);
+            let lon = 2.0 * PI * ((x as f32 + 0.5) / IBL_IRR_W as f32 - 0.5);
+            let n = [lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin()];
+            let mut e = [0.0f32; 3];
+            for (d, l_omega, _) in &blocks {
+                let c = dot(n, *d);
+                if c > 0.0 {
+                    for k in 0..3 {
+                        e[k] += l_omega[k] * c;
+                    }
+                }
+            }
+            texel[..3].copy_from_slice(&e.map(|v| v / PI));
+            texel[3] = 1.0;
+        });
+        out
+    }
+
+    /// The exact GGX prefilter at `roughness` (view along the normal): every
+    /// texel of `src` weighted by D(h) (n . l) and its solid angle, the limit the
+    /// importance-sampled bake converges to.
+    fn exact_prefilter(src: &FilterLevel, roughness: f32, dst_w: u32, dst_h: u32) -> Vec<f32> {
+        let a2 = roughness.powi(4);
+        let (sw, sh) = (src.width as usize, src.height as usize);
+        let texels: Vec<([f32; 3], f32)> = (0..sh)
+            .flat_map(|y| {
+                let top = PI * (0.5 - y as f32 / sh as f32);
+                let bottom = PI * (0.5 - (y + 1) as f32 / sh as f32);
+                let lat = 0.5 * (top + bottom);
+                let omega = (top.sin() - bottom.sin()) * 2.0 * PI / sw as f32;
+                (0..sw).map(move |x| {
+                    let lon = 2.0 * PI * ((x as f32 + 0.5) / sw as f32 - 0.5);
+                    (
+                        [lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin()],
+                        omega,
+                    )
+                })
+            })
+            .collect();
+        let mut out = vec![0.0f32; (dst_w * dst_h * 4) as usize];
+        out.par_chunks_mut(4).enumerate().for_each(|(i, texel)| {
+            let (x, y) = (i as u32 % dst_w, i as u32 / dst_w);
+            let lat = PI * (0.5 - (y as f32 + 0.5) / dst_h as f32);
+            let lon = 2.0 * PI * ((x as f32 + 0.5) / dst_w as f32 - 0.5);
+            let n = [lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin()];
+            let (mut sum, mut weight) = ([0.0f64; 3], 0.0f64);
+            for (j, (l, omega)) in texels.iter().enumerate() {
+                let n_dot_l = dot(n, *l);
+                if n_dot_l <= 0.0 {
+                    continue;
+                }
+                let h = normalize([n[0] + l[0], n[1] + l[1], n[2] + l[2]]);
+                let n_dot_h = dot(n, h).max(0.0);
+                let denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+                let w = (a2 / (PI * denom * denom) * n_dot_l * omega) as f64;
+                for c in 0..3 {
+                    sum[c] += src.pixels[j * 4 + c] as f64 * w;
+                }
+                weight += w;
+            }
+            for c in 0..3 {
+                texel[c] = (sum[c] / weight.max(1e-30)) as f32;
+            }
+            texel[3] = 1.0;
+        });
+        out
+    }
+
+    /// Time the CPU and GPU bakes on a real HDRI and compare what they write.
+    /// Point `VPL_TEST_HDRI` at a raw environment (see `read_raw_environment`).
+    #[test]
+    #[ignore = "needs VPL_TEST_HDRI; run with --ignored --nocapture"]
+    fn cpu_and_gpu_bakes_agree_on_a_real_hdri() {
+        let Ok(path) = std::env::var("VPL_TEST_HDRI") else {
+            eprintln!("skipping: VPL_TEST_HDRI is not set");
+            return;
+        };
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        assert!(super::super::ibl_compute::compute_bake_possible(&device));
+        let (w, h, raw) = read_raw_environment(&path);
+        let over = raw.iter().filter(|v| **v > F16_MAX).count();
+        let (w, h, px) = environment_pixels(crate::TextureData::hdr(w, h, raw)).unwrap();
+        eprintln!("{path}: {w}x{h}, {over} channel values clamped to {F16_MAX}");
+
+        check_bakes_against_exact(&device, &queue, &px, w, h, 3);
+    }
+
+    /// A sky with a small sun far brighter than the rest, the case point
+    /// sampling got badly wrong: both bakes stay close to the exact answer.
+    #[test]
+    fn bakes_follow_a_small_bright_sun() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        if !super::super::ibl_compute::compute_bake_possible(&device) {
+            eprintln!("skipping: the device cannot run the compute bake");
+            return;
+        }
+        let (w, h) = (512u32, 256u32);
+        let mut px = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            let sky = if y < h / 2 {
+                [0.4, 0.55, 0.9]
+            } else {
+                [0.15, 0.12, 0.1]
+            };
+            for _ in 0..w {
+                px.extend_from_slice(&[sky[0], sky[1], sky[2], 1.0]);
+            }
+        }
+        // A 3x3 texel sun 30 degrees up, about 60% of the sky's illuminance.
+        for y in 84..87 {
+            for x in 300..303 {
+                let i = ((y * w + x) * 4) as usize;
+                px[i..i + 3].copy_from_slice(&[30000.0, 28000.0, 25000.0]);
+            }
+        }
+        check_bakes_against_exact(&device, &queue, &px, w, h, 1);
+    }
+
+    /// Bake `px` on the GPU and the CPU, print the timings and how far each is
+    /// from the exact irradiance and prefilter, and check both are close.
+    fn check_bakes_against_exact(
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        px: &[f32],
+        w: u32,
+        h: u32,
+        runs: usize,
+    ) {
+        let (irr, pref) = super::super::ibl_compute::create_ibl_arrays(&device, true);
+        let wait = |submission| {
+            device
+                .poll(crate::gpu::PollType::Wait {
+                    submission_index: Some(submission),
+                    timeout: Some(std::time::Duration::from_secs(120)),
+                })
+                .unwrap();
+        };
+
+        // The first GPU run includes building the bake pipelines.
+        let mut gpu_ms = Vec::new();
+        for run in 0..runs {
+            let t = std::time::Instant::now();
+            let source = super::super::ibl_compute::upload_source(&device, &queue, &px, w, h);
+            let view = source.create_view(&crate::gpu::TextureViewDescriptor::default());
+            let result = super::super::ibl_compute::bake_environment_layer(
+                &device,
+                &queue,
+                (source, view),
+                &irr,
+                &pref,
+                1,
+                run == 0,
+            );
+            wait(result.submission);
+            gpu_ms.push(t.elapsed().as_secs_f32() * 1000.0);
+        }
+
+        let mut cpu_ms = Vec::new();
+        for _ in 0..runs {
+            let t = std::time::Instant::now();
+            let product = run_cpu_path(
+                &device,
+                &queue,
+                &px,
+                w,
+                h,
+                false,
+                EnvironmentMapId::from_parts(2, 0),
+                &irr,
+                &pref,
+                &ProgressHandle::new(),
+            )
+            .unwrap();
+            wait(product.gpu.clone().unwrap());
+            cpu_ms.push(t.elapsed().as_secs_f32() * 1000.0);
+        }
+        eprintln!(
+            "GPU bake: {gpu_ms:.1?} ms (first run builds pipelines); CPU bake: {cpu_ms:.1?} ms"
+        );
+
+        let gpu_irr = read_layer(&device, &queue, &irr, 1, 0, IBL_IRR_W, IBL_IRR_H);
+        let cpu_irr = read_layer(&device, &queue, &irr, 2, 0, IBL_IRR_W, IBL_IRR_H);
+        assert!(gpu_irr.iter().chain(&cpu_irr).all(|v| v.is_finite()));
+        let exact = exact_irradiance(&px, w, h);
+        let lum = |t: &[f32]| 0.2126 * t[0] + 0.7152 * t[1] + 0.0722 * t[2];
+        eprintln!(
+            "straight up (luminance): exact {:.1}, lux / pi {:.1}, GPU {:.1}, CPU {:.1}",
+            lum(&exact[..4]),
+            upper_hemisphere_lux(&px, w, h) / PI,
+            lum(&gpu_irr[..4]),
+            lum(&cpu_irr[..4])
+        );
+        let mean = |v: &[f32]| v.chunks_exact(4).map(lum).sum::<f32>() / (v.len() / 4) as f32;
+        eprintln!(
+            "map mean luminance: exact {:.1}, GPU {:.1}, CPU {:.1}",
+            mean(&exact),
+            mean(&gpu_irr),
+            mean(&cpu_irr)
+        );
+        for (label, a, b, limit) in [
+            ("GPU vs CPU", &gpu_irr, &cpu_irr, 0.005),
+            ("GPU vs exact", &gpu_irr, &exact, 0.02),
+            ("CPU vs exact", &cpu_irr, &exact, 0.02),
+        ] {
+            let (mae, worst) = luminance_error(a, b);
+            eprintln!(
+                "irradiance {label}: mean error {:.2}%, worst texel {:.2}%",
+                mae * 100.0,
+                worst * 100.0
+            );
+            assert!(mae < limit, "irradiance {label} off by {:.2}%", mae * 100.0);
+        }
+        let pyramid = filter_pyramid(&px, w, h);
+        for mip in 0..IBL_PREFILTER_MIPS {
+            let (mw, mh) = (
+                (IBL_PREFILTER_W >> mip).max(1),
+                (IBL_PREFILTER_H >> mip).max(1),
+            );
+            let gpu = read_layer(&device, &queue, &pref, 1, mip, mw, mh);
+            let cpu = read_layer(&device, &queue, &pref, 2, mip, mw, mh);
+            assert!(
+                gpu.iter().chain(&cpu).all(|v| v.is_finite()),
+                "mip {mip} finite"
+            );
+            let roughness = mip as f32 / (IBL_PREFILTER_MIPS - 1) as f32;
+            // Roughness 0 is the box average at the mip's size, a pyramid level.
+            let exact = if mip == 0 {
+                pyramid[1].pixels.clone()
+            } else {
+                exact_prefilter(&pyramid[1], roughness, mw, mh)
+            };
+            // The GPU bake takes twice the CPU's samples.
+            let (gpu_limit, cpu_limit) = if mip == 0 {
+                (0.005, 0.005)
+            } else {
+                (0.08, 0.10)
+            };
+            for (label, a, b, limit) in [
+                ("GPU vs exact", &gpu, &exact, gpu_limit),
+                ("CPU vs exact", &cpu, &exact, cpu_limit),
+            ] {
+                let (mae, worst) = luminance_error(a, b);
+                eprintln!(
+                    "prefiltered mip {mip} {label}: mean error {:.2}%, worst texel {:.2}%",
+                    mae * 100.0,
+                    worst * 100.0
+                );
+                assert!(
+                    mae < limit,
+                    "prefiltered mip {mip} {label} off by {:.2}%",
+                    mae * 100.0
+                );
+            }
+        }
+    }
+
     #[test]
     fn ibl_fallbacks_wired_before_any_upload() {
         let Some((device, _queue)) = try_make_device() else {
@@ -1860,7 +2341,12 @@ mod tests {
         assert_eq!(px[0], F16_MAX);
         assert_eq!(px[5], F16_MAX);
         assert_eq!(px[10], 0.0);
-        let irradiance = convolve_irradiance(&px, w, h, IBL_IRR_W, IBL_IRR_H);
+        let pyramid = filter_pyramid(&px, w, h);
+        let irradiance = convolve_irradiance(
+            &pyramid[IBL_IRR_SOURCE_LEVEL as usize],
+            IBL_IRR_W,
+            IBL_IRR_H,
+        );
         assert!(
             irradiance
                 .iter()
