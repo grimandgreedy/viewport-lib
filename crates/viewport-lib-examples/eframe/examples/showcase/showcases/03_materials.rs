@@ -275,7 +275,12 @@ fn build_matcaps(ctx: &mut SetupCtx) -> Vec<(MatcapId, &'static str)> {
     }
     let (rgba, _) = matcap_texture();
     let custom = res
-        .upload_matcap(ctx.device, ctx.queue, &rgba, false)
+        .upload_matcap(
+            ctx.device,
+            ctx.queue,
+            vpl::TextureData::linear(256, 256, rgba),
+            false,
+        )
         .unwrap();
     out.push((custom, "Custom"));
     out

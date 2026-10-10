@@ -4,6 +4,7 @@ use crate::scene::material::TextureSlot as MaterialSlot;
 pub use viewport_lib_types::data::texture::{
     AstcBlock, CompressedFormat, TextureData, TexturePayload, TextureRole,
 };
+use viewport_lib_types::data::texture::{TextureRejection, UploadSlot};
 
 impl DeviceResources {
     /// Upload a texture and return its ID.
@@ -2047,27 +2048,58 @@ impl DeviceResources {
     // Matcap texture API
     // -----------------------------------------------------------------------
 
-    /// Upload a 256x256 RGBA matcap texture and return its `MatcapId`.
+    /// Upload a matcap and return its `MatcapId`.
     ///
-    /// `rgba_data` must be exactly `256 * 256 * 4 = 262_144` bytes.
+    /// `data` is a 256x256, 8-bit, linear image:
+    /// `TextureData::linear(256, 256, rgba)`. A matcap is a pre-lit lighting
+    /// lookup read straight into the renderer's linear working space, so its
+    /// bytes are taken as they are. Matcap files are usually tagged sRGB; if
+    /// a loader labelled one so, relabel it with
+    /// [`TextureData::with_colour_space`] rather than converting it, which would
+    /// change how it looks.
+    ///
     /// Set `blendable = true` for matcaps whose alpha channel tints the base
     /// geometry colour; `false` for static matcaps that fully replace the colour.
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
-    /// if `rgba_data` has the wrong length.
+    /// The errors [`TextureData::validate`] returns, and
+    /// [`ViewportError::UnsupportedTextureData`](crate::error::ViewportError::UnsupportedTextureData)
+    /// for an sRGB label, a size other than 256x256, a float or compressed
+    /// payload, or a normal map.
     pub fn upload_matcap(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        rgba_data: &[u8],
+        data: TextureData,
         blendable: bool,
     ) -> crate::error::ViewportResult<crate::resources::MatcapId> {
+        data.validate()?;
+        let reject = |reason| {
+            Err(crate::error::ViewportError::UnsupportedTextureData {
+                slot: UploadSlot::Matcap,
+                reason,
+            })
+        };
+        if data.role() == TextureRole::NormalMap {
+            return reject(TextureRejection::NormalMap);
+        }
+        if !matches!(data.payload(), TexturePayload::Rgba8(_)) {
+            return reject(TextureRejection::UnsupportedPayload);
+        }
+        if data.colour_space() != crate::ColourSpace::Linear {
+            return reject(TextureRejection::WrongColourSpace);
+        }
+        if (data.width(), data.height()) != (256, 256) {
+            return reject(TextureRejection::WrongSize);
+        }
+        let TexturePayload::Rgba8(rgba) = data.into_payload() else {
+            unreachable!("checked above")
+        };
         // The built-ins hold the first eight indices, so `builtin_matcap_id`
         // can name them before they are uploaded.
         self.ensure_matcaps_initialized(device, queue);
-        self.upload_matcap_texture(device, queue, rgba_data, blendable)
+        self.upload_matcap_texture(device, queue, &rgba, blendable)
     }
 
     fn upload_matcap_texture(
@@ -2756,6 +2788,56 @@ mod async_texture_tests {
             Some(crate::ColourSpace::Srgb)
         );
         assert_eq!(resources.texture_memory_stats().used_bytes - before, 16);
+    }
+
+    /// A matcap takes a 256x256 linear 8-bit image and nothing else.
+    #[test]
+    fn matcap_upload_takes_only_a_linear_256_image() {
+        use crate::error::ViewportError;
+        use viewport_lib_types::data::texture::{TextureRejection, UploadSlot};
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let px = || vec![128u8; 256 * 256 * 4];
+        assert!(
+            resources
+                .upload_matcap(&device, &queue, TextureData::linear(256, 256, px()), false)
+                .is_ok()
+        );
+        let cases = [
+            (
+                TextureData::srgb(256, 256, px()),
+                TextureRejection::WrongColourSpace,
+            ),
+            (
+                TextureData::linear(128, 128, vec![0u8; 128 * 128 * 4]),
+                TextureRejection::WrongSize,
+            ),
+            (
+                TextureData::hdr(256, 256, vec![0.5; 256 * 256 * 4]),
+                TextureRejection::UnsupportedPayload,
+            ),
+            (
+                TextureData::normal_map(256, 256, px()),
+                TextureRejection::NormalMap,
+            ),
+        ];
+        for (data, reason) in cases {
+            let err = resources
+                .upload_matcap(&device, &queue, data, false)
+                .unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ViewportError::UnsupportedTextureData { slot: UploadSlot::Matcap, reason: r }
+                        if r == reason
+                ),
+                "expected {reason:?}, got {err:?}"
+            );
+        }
     }
 
     /// A data-only block format labelled sRGB is a description error, caught

@@ -114,7 +114,12 @@ impl App {
         let custom_rgba = generate_custom_matcap(256, self.matcap_state.custom_hue);
         let custom_id = renderer
             .resources_mut()
-            .upload_matcap(&self.device, &self.queue, &custom_rgba, false)
+            .upload_matcap(
+                &self.device,
+                &self.queue,
+                vpl::TextureData::linear(256, 256, custom_rgba),
+                false,
+            )
             .expect("custom matcap upload");
         self.matcap_state.custom_id = Some(custom_id);
 
@@ -139,7 +144,12 @@ impl App {
         let rgba = generate_custom_matcap(256, self.matcap_state.custom_hue);
         let id = renderer
             .resources_mut()
-            .upload_matcap(&self.device, &self.queue, &rgba, false)
+            .upload_matcap(
+                &self.device,
+                &self.queue,
+                vpl::TextureData::linear(256, 256, rgba),
+                false,
+            )
             .expect("custom matcap re-upload");
         self.matcap_state.custom_id = Some(id);
         if let Some(node_id) = self.matcap_state.custom_node {
