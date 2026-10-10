@@ -72,6 +72,15 @@ pub fn headless_device_with_indirect() -> Option<(wgpu::Device, wgpu::Queue)> {
     )
 }
 
+/// Headless device with `TEXTURE_COMPRESSION_BC` enabled, or `None` when no
+/// adapter is available or it cannot sample BC formats.
+#[allow(dead_code)]
+pub fn headless_device_with_bc() -> Option<(wgpu::Device, wgpu::Queue)> {
+    headless_device_with(
+        &DeviceProfile::low_power("test-bc").require(wgpu::Features::TEXTURE_COMPRESSION_BC),
+    )
+}
+
 /// Headless device with `SHADER_PRIMITIVE_INDEX` enabled, or `None` when no
 /// adapter is available or the adapter does not support the feature. Used by the
 /// GPU sub-object tests that read the pick pass's triangle-index channel.

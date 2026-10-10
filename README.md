@@ -22,7 +22,7 @@
 - **Objects**:
     - Lib Items: tri-meshes, point volumes, scatter volumes, volume meshes (tet-, pyramid-, hex-meshes), point clouds, Gaussian splats, glyphs and tensor glyphs, polylines, tubes, ribbons, streamtubes, sprites, decals, implicit and marching-cubes surfaces.
     - Screen-space 2D Overlays: rectangles, circles, stars, arcs, text labels; support for colours, glow, textures, animations and much more.
-- **Lighting**: directional, point, and spot lights; cascaded, point-light, and contact shadows; image-based lighting from environment maps; baked lightmaps.
+- **Lighting**: directional, point, and spot lights; cascaded, point-light, and contact shadows; image-based lighting from float, 8-bit or block-compressed environment maps, set by multiplier, EV or lux, with a background chosen per viewport; baked lightmaps.
 - **Materials & effects**: Blinn-Phong, and matcap shading; normal and AO maps, emissive, and transparency; bloom, SSAO, depth of field, and tone mapping; runtime WGSL shading hooks and GPU deformers
 - **Camera & input**: built-in orbit, first-person, third-person, and turntable input controllers (or bring your own) with configurable bindings for mouse, keyboard, trackpad gestures, and touch (one finger orbits, two pan, pinch zooms); view presets and smooth animation; CPU and GPU picking down to faces, vertices, edges, and cells; rectangle selection and transform gizmos with snapping
 - **Sciviz**: scalar colouring with colourmaps, isolines, on-surface vector-field flow (LIC), clip planes, and volume slices

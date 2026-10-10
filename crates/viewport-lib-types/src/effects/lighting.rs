@@ -410,6 +410,12 @@ pub struct LightingSettings {
     pub hemisphere_intensity: f32,
     /// Shadow-map configuration (cascades, atlas, filtering, bias, ...).
     pub shadows: ShadowSettings,
+    /// Brightness of the environment that lights the scene
+    /// (`EffectsFrame::environment`), and of the background unless the viewport
+    /// sets its own. Default: a multiplier of 1.0; [`daylight`](Self::daylight)
+    /// sets a lux target to match its sun.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub environment_intensity: crate::effects::environment::EnvironmentIntensity,
 }
 
 impl Default for LightingSettings {
@@ -420,6 +426,7 @@ impl Default for LightingSettings {
             ground_colour: crate::colour::Colour::linear_rgb(0.6, 0.6, 0.6),
             hemisphere_intensity: 0.4,
             shadows: ShadowSettings::default(),
+            environment_intensity: Default::default(),
         }
     }
 }
@@ -490,6 +497,11 @@ impl LightingSettings {
             // Clear-sky fill proportional to the daylight key (~8% of the sun),
             // so shadowed surfaces stay readable once exposure maps the scene down.
             hemisphere_intensity: 8_000.0,
+            // The illuminance that fill gives an upward-facing surface, so an
+            // HDRI environment sits beside the sun at a real sky's brightness.
+            environment_intensity: crate::effects::environment::EnvironmentIntensity::Lux(
+                8_000.0 * PI,
+            ),
             ..Self::default()
         }
     }

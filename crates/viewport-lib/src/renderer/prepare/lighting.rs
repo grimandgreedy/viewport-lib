@@ -636,20 +636,31 @@ impl ViewportRenderer {
 
         // Upload lights uniform.
         // IBL fields from environment map settings.
-        let (ibl_enabled, ibl_intensity, ibl_rotation, show_skybox) =
-            if let Some(env) = scene_fx.environment {
-                if resources.ibl.irradiance_view.is_some() {
-                    (
-                        1u32,
-                        env.intensity,
-                        env.rotation,
-                        if env.show_skybox { 1u32 } else { 0 },
-                    )
-                } else {
-                    (0, 0.0, 0.0, 0)
-                }
-            } else {
-                (0, 0.0, 0.0, 0)
+        if resources.ibl.zones_dirty {
+            crate::resources::material::environment::write_environment_zones(resources, queue);
+        }
+        let lit = scene_fx.environment.as_ref().filter(|env| {
+            crate::resources::material::environment::select_lighting_environment(
+                resources,
+                device,
+                queue,
+                env.environment,
+            )
+        });
+        let (ibl_enabled, ibl_intensity, ibl_rotation, ibl_diffuse_scale, ibl_specular_scale) =
+            match lit {
+                Some(env) => (
+                    1u32,
+                    crate::resources::material::environment::environment_multiplier(
+                        &resources.ibl,
+                        env.environment,
+                        lighting.environment_intensity,
+                    ),
+                    env.rotation,
+                    env.diffuse_scale,
+                    env.specular_scale,
+                ),
+                None => (0, 0.0, 0.0, 0.0, 0.0),
             };
 
         let debug_vis_mode = frame.effects.debug.debug_vis.pack_mode();
@@ -676,14 +687,15 @@ impl ViewportRenderer {
             ibl_enabled,
             ibl_intensity,
             ibl_rotation,
-            show_skybox,
+            ibl_diffuse_scale,
             debug_vis_split_x: if frame.effects.debug.debug_vis.active {
                 frame.effects.debug.debug_vis.split_x.clamp(0.0, 1.0)
             } else {
                 0.5
             },
             env_zone_count: resources.ibl.env_zone_count,
-            _pad_dbg: [0u32; 2],
+            ibl_specular_scale,
+            _pad_dbg: 0,
         };
         if LightingWrites::changed(&mut shadow.written.lights, lights_uniform) {
             queue.write_buffer(

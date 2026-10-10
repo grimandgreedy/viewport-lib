@@ -245,7 +245,10 @@ pub use scene::traits::{RenderMode, ViewportObject};
 pub use viewport_lib_types::encoding;
 pub use viewport_lib_types::encoding::{ColourSource, SizeSource};
 pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, srgb_to_linear};
-pub use vplt::data::texture::{TextureData, TexturePayload, TextureRole};
+pub use vplt::data::texture::{
+    AstcBlock, CompressedFormat, TextureData, TexturePayload, TextureRejection, TextureRole,
+    UploadSlot,
+};
 
 pub use geometry::bvh::PickAccelerator;
 pub use geometry::mesh::isoline::{Isoline, extract_isolines, isoline_strips};
@@ -310,25 +313,26 @@ pub use renderer::stats::{
 pub use renderer::tuning::{RenderDiagnostics, RenderTuning};
 pub use renderer::{
     Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
-    BloomSettings, CameraFrame, Candela, CellSelectionInfo, ClipObject, ClipShape,
-    ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings, DofSettings,
-    EdlSettings, EffectsFrame, EnvironmentSettings, ExposureMode, ExposureReadback,
-    ExposureSettings, FillRule, ForegroundPass, ForegroundProjection, FrameData, GlyphRunItem,
-    GpuContext, GpuPickHit, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
-    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
-    LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux, MeshInstanceItem, NineSlice,
-    OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring,
-    OverlayAnimations, OverlayClip, OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame,
-    OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
-    OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform,
-    OwnedPath, PassPath, PassView, PathSegment, PickBackend, PickHit, PickId, PickMask, PickPoll,
-    PickRectResult, PipelineMode, PolylineCap, PolylineItem, PolylineRefItem,
-    PolylineSelectionInfo, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
-    RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem,
-    ShadowFilter, ShadowLayer, ShadowSettings, SnapHit, SnapPoll, SpriteBlend, StrokePattern,
-    SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceSubmission, TextureTransform,
-    TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, ViewportId,
-    ViewportRenderer, VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
+    BackgroundSource, BloomSettings, CameraFrame, Candela, CellSelectionInfo, ClipObject,
+    ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings,
+    DofSettings, EdlSettings, EffectsFrame, EnvironmentBackground, EnvironmentIntensity,
+    EnvironmentLighting, ExposureMode, ExposureReadback, ExposureSettings, FillRule,
+    ForegroundPass, ForegroundProjection, FrameData, GlyphRunItem, GpuContext, GpuPickHit,
+    GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource, InteractionFrame, LabelAnchor,
+    LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource, LightingPosture, LightingSettings,
+    LineCap, LineJoin, Lumen, Lux, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
+    OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
+    OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
+    OverlayStyleSupport, OverlayTextureId, OverlayTransform, OwnedPath, PassPath, PassView,
+    PathSegment, PickBackend, PickHit, PickId, PickMask, PickPoll, PickRectResult, PipelineMode,
+    PolylineCap, PolylineItem, PolylineRefItem, PolylineSelectionInfo, PositionedGlyph,
+    PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality,
+    ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer,
+    ShadowSettings, SnapHit, SnapPoll, SpriteBlend, StrokePattern, SubObjectRef, SubPath,
+    SubSelection, SubSelectionRef, SurfaceSubmission, TextureTransform, TileMode, ToneMapping,
+    TriangleDirection, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer,
+    VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
     aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
@@ -363,8 +367,8 @@ pub use resources::volume::volume_mesh::{
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
     ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc, DeviceResources,
-    EnvironmentMapId, EnvironmentZone, FontError, FontHandle, FrameBudget, JobId, MatcapId,
-    MeshData, ProgressHandle, ResidentBytes, SubmeshRange, TextMetrics, TextureId,
+    EnvironmentMapId, EnvironmentOptions, EnvironmentZone, FontError, FontHandle, FrameBudget,
+    JobId, MatcapId, MeshData, ProgressHandle, ResidentBytes, SubmeshRange, TextMetrics, TextureId,
     TextureMemoryStats, UnknownColourmap, UploadStatus, VolumeId, VramBudget, lerp_attributes,
     supports_texture_format, vram_budget,
 };

@@ -12,7 +12,10 @@ use viewport_lib::wgpu;
 mod common;
 use common::*;
 
-use viewport_lib::{AutoExposure, EnvironmentSettings, ExposureMode, ExposureSettings};
+use viewport_lib::{
+    AutoExposure, EnvironmentIntensity, EnvironmentLighting, EnvironmentMapId, ExposureMode,
+    ExposureSettings,
+};
 
 /// A camera-facing quad (normal +Z) scaled to fill the frame, so metering sees
 /// the lit surface rather than the background.
@@ -206,7 +209,7 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
 
 /// A frame with nothing in view but a uniform skybox drawn at `nits`, auto
 /// exposure at full adaptation.
-fn sky_frame(size: u32, nits: f32) -> FrameData {
+fn sky_frame(size: u32, env: EnvironmentMapId, nits: f32) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
     frame.camera.render_camera = {
@@ -218,9 +221,8 @@ fn sky_frame(size: u32, nits: f32) -> FrameData {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
-    let mut env = EnvironmentSettings::default();
-    env.intensity = nits;
-    frame.effects.environment = Some(env);
+    frame.effects.environment = Some(EnvironmentLighting::new(env));
+    frame.effects.lighting.environment_intensity = EnvironmentIntensity::Multiplier(nits);
     let a = AutoExposure {
         adaptation: 1.0,
         ..AutoExposure::default()
@@ -242,17 +244,22 @@ fn auto_exposure_meters_the_skybox() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let (w, h) = (16u32, 8u32);
     let pixels: Vec<f32> = (0..w * h).flat_map(|_| [1.0, 1.0, 1.0, 1.0]).collect();
-    renderer
-        .upload_environment_map(&device, &queue, &pixels, w, h)
+    let env = renderer
+        .upload_environment(
+            &device,
+            &queue,
+            viewport_lib::TextureData::hdr(w, h, pixels),
+            viewport_lib::EnvironmentOptions::default(),
+        )
         .unwrap();
 
     let size = 64u32;
     let dim = centre_luma(
-        &renderer.render_offscreen(&device, &queue, &sky_frame(size, 5.0), size, size),
+        &renderer.render_offscreen(&device, &queue, &sky_frame(size, env, 5.0), size, size),
         size,
     );
     let bright = centre_luma(
-        &renderer.render_offscreen(&device, &queue, &sky_frame(size, 5000.0), size, size),
+        &renderer.render_offscreen(&device, &queue, &sky_frame(size, env, 5000.0), size, size),
         size,
     );
     for (label, l) in [("dim", dim), ("bright", bright)] {

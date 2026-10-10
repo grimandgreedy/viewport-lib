@@ -2,16 +2,17 @@
 //!
 //! **Emissive & IBL** - the two sources that carry **luminance** rather than
 //! illuminance: emissive surfaces at a fixed nits ladder, and an image-based
-//! environment whose [`EnvironmentSettings::intensity`] is an absolute nits
-//! scale. Auto-exposure re-balances as either changes.
+//! environment whose `LightingSettings::environment_intensity` is an absolute
+//! nits scale. Auto-exposure re-balances as either changes.
 
 use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
 use viewport_lib as vpl;
 use vpl::{
-    AutoExposure, EnvironmentSettings, ExposureMode, ExposureSettings, LightSource,
-    LightingSettings, Lux, Material, ViewportRenderer, scene::Scene,
+    AutoExposure, EnvironmentBackground, EnvironmentIntensity, EnvironmentLighting,
+    EnvironmentMapId, ExposureMode, ExposureSettings, LightSource, LightingSettings, Lux, Material,
+    ViewportRenderer, scene::Scene,
 };
 
 // ===========================================================================
@@ -28,7 +29,8 @@ const EMITTERS: [([f32; 3], f32); 4] = [
 const EMISSIVE_COL_SPACING: f32 = 2.4;
 
 /// Equirectangular sky/ground gradient (RGBA f32), sky at the top row. The stored
-/// values are relative; [`EnvironmentSettings::intensity`] scales them to nits.
+/// values are relative; `LightingSettings::environment_intensity` scales them to
+/// nits.
 fn equirect_gradient(sky: [f32; 3], ground: [f32; 3], w: u32, h: u32) -> Vec<f32> {
     let mut px = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {
@@ -50,6 +52,8 @@ pub(crate) struct PhysicallyBasedSurfacesState {
     /// Absolute environment luminance in nits (drives IBL + skybox).
     pub env_intensity: f32,
     pub show_skybox: bool,
+    /// The uploaded gradient environment.
+    pub env_id: Option<EnvironmentMapId>,
     /// Frame time captured from egui, fed to auto-exposure smoothing.
     pub frame_dt: f32,
 }
@@ -61,6 +65,7 @@ impl Default for PhysicallyBasedSurfacesState {
             scene: Scene::new(),
             env_intensity: 4_000.0,
             show_skybox: true,
+            env_id: None,
             frame_dt: 0.0,
         }
     }
@@ -92,12 +97,8 @@ impl PhysicallyBasedSurfacesState {
         l
     }
 
-    pub(crate) fn environment(&self) -> Option<EnvironmentSettings> {
-        Some(EnvironmentSettings {
-            intensity: self.env_intensity,
-            rotation: 0.0,
-            show_skybox: self.show_skybox,
-        })
+    pub(crate) fn environment(&self) -> Option<EnvironmentLighting> {
+        self.env_id.map(EnvironmentLighting::new)
     }
 
     pub(crate) fn exposure_override(&self) -> Option<ExposureSettings> {
@@ -133,9 +134,18 @@ impl App {
         // Gradient environment: cool sky -> warm ground. Uploaded once; it bakes
         // the irradiance and prefiltered reflection maps the IBL samples.
         let px = equirect_gradient([0.35, 0.5, 0.85], [0.35, 0.28, 0.22], 64, 32);
-        renderer
-            .upload_environment_map(&self.device, &self.queue, &px, 64, 32)
+        if let Some(old) = self.surfaces_state.env_id.take() {
+            renderer.free_environment(old);
+        }
+        let env = renderer
+            .upload_environment(
+                &self.device,
+                &self.queue,
+                vpl::TextureData::hdr(64, 32, px),
+                vpl::EnvironmentOptions::default(),
+            )
             .expect("environment upload");
+        self.surfaces_state.env_id = Some(env);
 
         self.surfaces_state.scene = Scene::new();
 
@@ -286,6 +296,11 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     }
     if let Some(env) = app.surfaces_state.environment() {
         fd.effects.environment = Some(env);
+        fd.effects.lighting.environment_intensity =
+            EnvironmentIntensity::Multiplier(app.surfaces_state.env_intensity);
+        if !app.surfaces_state.show_skybox {
+            fd.viewport.environment_background = EnvironmentBackground::colour();
+        }
         let mut rc = vpl::RenderCamera::from_camera(&app.camera);
         rc.far = (app.camera.distance * 3.0).max(60.0);
         rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);

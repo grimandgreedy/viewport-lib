@@ -1148,16 +1148,20 @@ fn environment_zones_select_the_second_zone() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    // Default (layer 0) black, plus red (layer 1) and green (layer 2).
-    renderer
-        .upload_environment_map(&device, &queue, &solid_env([0.0, 0.0, 0.0], 8, 4), 8, 4)
-        .unwrap();
-    let red = renderer
-        .upload_environment(&device, &queue, &solid_env([1.0, 0.0, 0.0], 8, 4), 8, 4)
-        .unwrap();
-    let green = renderer
-        .upload_environment(&device, &queue, &solid_env([0.0, 1.0, 0.0], 8, 4), 8, 4)
-        .unwrap();
+    // Black lights the scene; red and green are zone environments.
+    let mut upload = |rgb| {
+        renderer
+            .upload_environment(
+                &device,
+                &queue,
+                viewport_lib::TextureData::hdr(8, 4, solid_env(rgb, 8, 4)),
+                viewport_lib::EnvironmentOptions::default(),
+            )
+            .unwrap()
+    };
+    let black = upload([0.0, 0.0, 0.0]);
+    let red = upload([1.0, 0.0, 0.0]);
+    let green = upload([0.0, 1.0, 0.0]);
 
     // Red zone far away (no coverage); green zone around the origin. Green is the
     // second entry, so a stride mismatch reads it wrong and the sphere loses it.
@@ -1205,11 +1209,8 @@ fn environment_zones_select_the_second_zone() {
     frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
     // IBL on, no direct or hemisphere light, so the matte sphere shows only the
     // selected environment's irradiance.
-    frame.effects.environment = Some(viewport_lib::EnvironmentSettings {
-        intensity: 1.0,
-        rotation: 0.0,
-        show_skybox: false,
-    });
+    frame.effects.environment = Some(viewport_lib::EnvironmentLighting::new(black));
+    frame.viewport.environment_background = viewport_lib::EnvironmentBackground::colour();
     frame.effects.lighting.lights = vec![];
     frame.effects.lighting.hemisphere_intensity = 0.0;
 
@@ -1230,6 +1231,133 @@ fn environment_zones_select_the_second_zone() {
         "sphere in the second (green) zone must read green (g {g}), not the \
          garbage a stride mismatch produces (r {r})"
     );
+}
+
+/// Render a matte white sphere lit only by the environment and return the
+/// summed RGB of the frame (the background is black).
+fn environment_lit_sphere(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    environment: Option<viewport_lib::EnvironmentMapId>,
+) -> [u64; 3] {
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(device, &viewport_lib::primitives::sphere(1.0, 24, 12))
+        .unwrap();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&Camera::default());
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+    frame.effects.environment = environment.map(viewport_lib::EnvironmentLighting::new);
+    frame.viewport.environment_background = viewport_lib::EnvironmentBackground::colour();
+    frame.effects.lighting.lights = vec![];
+    frame.effects.lighting.hemisphere_intensity = 0.0;
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh;
+    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.material = Material::pbr([1.0, 1.0, 1.0], 0.0, 1.0);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let pixels = renderer.render_offscreen(device, queue, &frame, 64, 64);
+    let mut sum = [0u64; 3];
+    for px in pixels.chunks_exact(4) {
+        for c in 0..3 {
+            sum[c] += px[c] as u64;
+        }
+    }
+    sum
+}
+
+/// An 8-bit sRGB sky is decoded to linear on upload, so it lights the scene
+/// like the float sky holding the decoded values.
+#[test]
+fn eight_bit_sky_lights_like_its_float_equivalent() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let bytes = [200u8, 120, 60];
+    let srgb = renderer
+        .upload_environment(
+            &device,
+            &queue,
+            viewport_lib::TextureData::srgb(8, 4, [bytes[0], bytes[1], bytes[2], 255].repeat(32)),
+            viewport_lib::EnvironmentOptions::default(),
+        )
+        .unwrap();
+    let decoded = bytes.map(|b| viewport_lib::srgb_to_linear(f32::from(b) / 255.0));
+    let float = renderer
+        .upload_environment(
+            &device,
+            &queue,
+            viewport_lib::TextureData::hdr(8, 4, solid_env(decoded, 8, 4)),
+            viewport_lib::EnvironmentOptions::default(),
+        )
+        .unwrap();
+
+    let a = environment_lit_sphere(&mut renderer, &device, &queue, Some(srgb));
+    let b = environment_lit_sphere(&mut renderer, &device, &queue, Some(float));
+    assert!(a[0] > 0, "the sphere is lit");
+    for c in 0..3 {
+        let (a, b) = (a[c] as f64, b[c] as f64);
+        assert!(
+            (a - b).abs() <= 0.02 * b.max(1.0),
+            "channel {c}: 8-bit {a} vs float {b}"
+        );
+    }
+}
+
+/// An asynchronous upload lights the scene once it lands, with no call to
+/// rebuild the camera bind groups.
+#[test]
+fn async_environment_lights_without_a_manual_rebuild() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // With no environment the sphere takes only the flat fallback ambient.
+    let unlit = environment_lit_sphere(&mut renderer, &device, &queue, None);
+
+    let job = renderer
+        .begin_upload_environment(
+            &device,
+            &queue,
+            viewport_lib::TextureData::hdr(8, 4, solid_env([1.0, 1.0, 1.0], 8, 4)),
+            viewport_lib::EnvironmentOptions::default(),
+        )
+        .unwrap();
+    let mut frames = 0;
+    let env = loop {
+        // Each frame's prepare drives the upload runner.
+        environment_lit_sphere(&mut renderer, &device, &queue, None);
+        match renderer.upload_result_environment(job) {
+            Ok(env) => break env,
+            Err(viewport_lib::ViewportError::JobNotReady) => {}
+            Err(e) => panic!("upload failed: {e:?}"),
+        }
+        frames += 1;
+        assert!(frames < 500, "upload did not land");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    let lit = environment_lit_sphere(&mut renderer, &device, &queue, Some(env));
+    assert!(
+        lit[0] > unlit[0] * 3 / 2,
+        "the landed environment lights the sphere: {lit:?} vs {unlit:?}"
+    );
+
+    // Freed, it lights nothing again.
+    assert!(renderer.free_environment(env));
+    let freed = environment_lit_sphere(&mut renderer, &device, &queue, Some(env));
+    assert_eq!(freed, unlit);
 }
 
 /// Render a lit white box and return its brightest captured channel. Shared by

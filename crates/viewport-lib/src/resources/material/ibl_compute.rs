@@ -1,25 +1,27 @@
 //! GPU compute path for IBL precomputation.
 //!
-//! Three compute shaders replace the CPU reference port for the heavy parts of
-//! `upload_environment_map`:
+//! Compute shaders for the bake `upload_environment` runs:
 //!
-//! - `ibl_irradiance.wgsl`: cosine-weighted hemisphere convolution
-//! - `ibl_prefilter.wgsl` : GGX importance-sampled roughness convolution (per mip)
-//! - `ibl_brdf_lut.wgsl`  : Hsplit-sum BRDF integration
+//! - `ibl_downsample.wgsl`: the filter pyramid, the source box-downsampled to
+//!   512x256 and halved to 4x2
+//! - `ibl_irradiance.wgsl`: exact cosine-weighted sum over the 128x64 level
+//! - `ibl_prefilter.wgsl` : GGX importance-sampled roughness convolution (per
+//!   mip), each sample reading the pyramid level its solid angle matches
+//! - `ibl_brdf_lut.wgsl`  : split-sum BRDF integration
 //!
-//! Selected at runtime via [`compute_supported`]. When unavailable, callers must
-//! fall back to the CPU path in `environment.rs`.
+//! Selected at runtime via [`compute_bake_possible`]. When unavailable, callers
+//! fall back to the CPU path in `environment.rs`, which mirrors these.
 
 use crate::gpu::util::DeviceExt;
 
 const PREFILTER_PARAMS_SIZE: u64 = 16; // 4 floats (1 used, 3 pad) = 16 bytes
 
 /// Number of environment layers the irradiance / prefiltered arrays hold. Layer
-/// 0 is the scene default; extra environments (uploaded via `upload_environment`)
-/// and reflection probes take layers 1.. up to this cap, beyond which they fall
-/// back to the default. Array textures cannot grow a layer in place, so this is
-/// fixed at allocation. Sized for a probe-lit scene (default + zones + probes
-/// share this one pool).
+/// 0 holds a copy of the environment that lights the scene, which is what the
+/// shaders sample outside every zone; uploaded environments and reflection
+/// probes take layers 1.. up to this cap. Array textures cannot grow a layer in
+/// place, so this is fixed at allocation. Sized for a probe-lit scene (lighting,
+/// zones and probes share this one pool).
 pub(crate) const IBL_ENV_CAPACITY: u32 = 32;
 
 pub(crate) const IBL_IRR_W: u32 = 64;
@@ -31,23 +33,34 @@ pub(crate) const IBL_PREFILTER_H: u32 = 128;
 pub(crate) const IBL_PREFILTER_MIPS: u32 = 5;
 pub(crate) const IBL_BRDF_SIZE: u32 = 128;
 
+/// Base size of the filter pyramid the bake reads: the environment
+/// box-downsampled to 512x256, then halved level by level to 4x2.
+pub(crate) const IBL_FILTER_W: u32 = 512;
+pub(crate) const IBL_FILTER_H: u32 = 256;
+pub(crate) const IBL_FILTER_LEVELS: u32 = 8;
+/// The pyramid level the irradiance sums over exactly (128x64).
+pub(crate) const IBL_IRR_SOURCE_LEVEL: u32 = 2;
+
 /// Create the two persistent equirect array textures the environment set uses:
-/// irradiance (64x32) and prefiltered specular (128x64, 5 mips), each with
+/// irradiance (64x32) and prefiltered specular (256x128, 5 mips), each with
 /// [`IBL_ENV_CAPACITY`] layers. The BRDF LUT and skybox stay single 2D textures
 /// and are not created here.
 ///
 /// The GPU IBL path writes each layer with a storage output view, so the arrays
-/// take `STORAGE_BINDING` when compute is supported; the CPU path writes with
-/// `write_texture`, so it takes `COPY_DST` instead. `compute` is
-/// [`compute_supported`] for the device (constant for a device's lifetime).
+/// take `STORAGE_BINDING` whenever the device can run that path at all
+/// ([`compute_bake_possible`]); the CPU path writes with `write_texture`. Both
+/// take `COPY_SRC | COPY_DST` for the copy of the lighting environment into
+/// layer 0. `compute` is [`compute_bake_possible`] for the device (constant for
+/// a device's lifetime).
 pub(crate) fn create_ibl_arrays(
     device: &crate::gpu::Device,
     compute: bool,
 ) -> (crate::gpu::Texture, crate::gpu::Texture) {
+    let copy = crate::gpu::TextureUsages::COPY_SRC | crate::gpu::TextureUsages::COPY_DST;
     let write_usage = if compute {
-        crate::gpu::TextureUsages::STORAGE_BINDING
+        crate::gpu::TextureUsages::STORAGE_BINDING | copy
     } else {
-        crate::gpu::TextureUsages::COPY_DST
+        copy
     };
     let irradiance = device.create_texture(&crate::gpu::TextureDescriptor {
         label: Some("ibl_irradiance_array"),
@@ -110,22 +123,19 @@ fn layer_storage_view(
     })
 }
 
-/// Return whether the device supports the storage-texture features the compute
-/// path requires.
-///
-/// Currently gated on [`wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`],
-/// which is the WebGPU mechanism that exposes Rgba16Float storage-write access
-/// on adapters that allow it. Consumers that want the fast IBL path should
-/// include this feature in their `request_device` call.
-pub(crate) fn compute_supported(device: &crate::gpu::Device) -> bool {
-    device
-        .features()
-        .contains(crate::gpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
+/// Whether the device can run the compute bake: compute shaders with storage
+/// textures, which only a WebGL2-level device lacks. Rgba16Float storage writes
+/// are core WebGPU and need no feature. Where this is false, float environments
+/// bake on the CPU instead and compressed ones are refused.
+pub(crate) fn compute_bake_possible(device: &crate::gpu::Device) -> bool {
+    let limits = device.limits();
+    limits.max_storage_textures_per_shader_stage >= 1
+        && limits.max_compute_invocations_per_workgroup >= 64
 }
 
 /// Upload the source HDR equirect as a sampleable Rgba16Float texture
 /// (the input to the irradiance and prefilter compute dispatches).
-fn upload_source(
+pub(crate) fn upload_source(
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
     pixels: &[f32],
@@ -184,6 +194,7 @@ struct ConvolutionBgls {
     irradiance_bgl: crate::gpu::BindGroupLayout,
     prefilter_bgl: crate::gpu::BindGroupLayout,
     brdf_bgl: crate::gpu::BindGroupLayout,
+    downsample_bgl: crate::gpu::BindGroupLayout,
 }
 
 fn make_bgls(device: &crate::gpu::Device) -> ConvolutionBgls {
@@ -275,10 +286,37 @@ fn make_bgls(device: &crate::gpu::Device) -> ConvolutionBgls {
         }],
     });
 
+    let downsample_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+        label: Some("ibl_downsample_bgl"),
+        entries: &[
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::COMPUTE,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: crate::gpu::ShaderStages::COMPUTE,
+                ty: crate::gpu::BindingType::StorageTexture {
+                    access: crate::gpu::StorageTextureAccess::WriteOnly,
+                    format: crate::gpu::TextureFormat::Rgba16Float,
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                },
+                count: None,
+            },
+        ],
+    });
+
     ConvolutionBgls {
         irradiance_bgl,
         prefilter_bgl,
         brdf_bgl,
+        downsample_bgl,
     }
 }
 
@@ -297,6 +335,26 @@ fn build_irradiance_pipeline(
     crate::resources::builders::compute_pipeline(
         device,
         "ibl_irradiance_pipeline",
+        &layout,
+        &shader,
+        "cs_main",
+    )
+}
+
+fn build_downsample_pipeline(
+    device: &crate::gpu::Device,
+    bgl: &crate::gpu::BindGroupLayout,
+) -> crate::gpu::ComputePipeline {
+    let shader = crate::resources::builders::wgsl_module(
+        device,
+        "ibl_downsample_shader",
+        crate::resources::builders::wgsl_source!("ibl_downsample"),
+    );
+    let layout =
+        crate::resources::builders::pipeline_layout(device, "ibl_downsample_layout", &[bgl]);
+    crate::resources::builders::compute_pipeline(
+        device,
+        "ibl_downsample_pipeline",
         &layout,
         &shader,
         "cs_main",
@@ -359,7 +417,8 @@ pub(crate) struct LayerBakeResult {
 }
 
 /// Bake one environment into `layer` of the shared irradiance / prefiltered
-/// arrays on the GPU.
+/// arrays on the GPU, sampling `source` (a float upload from [`upload_source`],
+/// or a block-compressed texture the device can sample).
 ///
 /// The convolution kernels are unchanged; only the storage output targets a
 /// single array layer instead of a standalone texture. If `compute_brdf` is
@@ -367,9 +426,7 @@ pub(crate) struct LayerBakeResult {
 pub(crate) fn bake_environment_layer(
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
-    pixels: &[f32],
-    width: u32,
-    height: u32,
+    source: (crate::gpu::Texture, crate::gpu::TextureView),
     irradiance_array: &crate::gpu::Texture,
     prefilter_array: &crate::gpu::Texture,
     layer: u32,
@@ -378,8 +435,7 @@ pub(crate) fn bake_environment_layer(
     let prefilter_mips = IBL_PREFILTER_MIPS;
 
     // ----- Source skybox -----
-    let skybox_texture = upload_source(device, queue, pixels, width, height);
-    let skybox_view = skybox_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+    let (skybox_texture, skybox_view) = source;
 
     // ----- Destination storage views into the target array layer -----
     let irradiance_view = layer_storage_view(irradiance_array, layer, 0);
@@ -388,10 +444,71 @@ pub(crate) fn bake_environment_layer(
     let bgls = make_bgls(device);
     let irradiance_pipeline = build_irradiance_pipeline(device, &bgls.irradiance_bgl);
     let prefilter_pipeline = build_prefilter_pipeline(device, &bgls.prefilter_bgl);
+    let downsample_pipeline = build_downsample_pipeline(device, &bgls.downsample_bgl);
 
     let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
         label: Some("ibl_compute_encoder"),
     });
+
+    // ----- Filter pyramid: the source box-downsampled, then halved -----
+    let pyramid = device.create_texture(&crate::gpu::TextureDescriptor {
+        label: Some("ibl_filter_pyramid"),
+        size: crate::gpu::Extent3d {
+            width: IBL_FILTER_W,
+            height: IBL_FILTER_H,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: IBL_FILTER_LEVELS,
+        sample_count: 1,
+        dimension: crate::gpu::TextureDimension::D2,
+        format: crate::gpu::TextureFormat::Rgba16Float,
+        usage: crate::gpu::TextureUsages::TEXTURE_BINDING
+            | crate::gpu::TextureUsages::STORAGE_BINDING,
+        view_formats: &[],
+    });
+    let level_view = |level: u32| {
+        pyramid.create_view(&crate::gpu::TextureViewDescriptor {
+            label: Some("ibl_filter_level"),
+            base_mip_level: level,
+            mip_level_count: Some(1),
+            ..Default::default()
+        })
+    };
+    for level in 0..IBL_FILTER_LEVELS {
+        let src = if level == 0 {
+            skybox_view.clone()
+        } else {
+            level_view(level - 1)
+        };
+        let dst = level_view(level);
+        let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("ibl_downsample_bg"),
+            layout: &bgls.downsample_bgl,
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: crate::gpu::BindingResource::TextureView(&src),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 1,
+                    resource: crate::gpu::BindingResource::TextureView(&dst),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
+            label: Some("ibl_downsample_pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&downsample_pipeline);
+        pass.set_bind_group(0, &bg, &[]);
+        pass.dispatch_workgroups(
+            (IBL_FILTER_W >> level).div_ceil(8),
+            (IBL_FILTER_H >> level).div_ceil(8),
+            1,
+        );
+    }
+    let irradiance_source = level_view(IBL_IRR_SOURCE_LEVEL);
+    let pyramid_view = pyramid.create_view(&crate::gpu::TextureViewDescriptor::default());
 
     // ----- Irradiance dispatch -----
     {
@@ -401,7 +518,7 @@ pub(crate) fn bake_environment_layer(
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(&skybox_view),
+                    resource: crate::gpu::BindingResource::TextureView(&irradiance_source),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 1,
@@ -428,7 +545,8 @@ pub(crate) fn bake_environment_layer(
         let mip_h = (IBL_PREFILTER_H >> mip).max(1);
         let roughness = mip as f32 / (prefilter_mips - 1).max(1) as f32;
 
-        let params = [roughness, 0.0f32, 0.0, 0.0];
+        // Roughness 0 (mip 0) reads pyramid level 1, the size of this mip.
+        let params = [roughness, 1.0f32, 0.0, 0.0];
         let params_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("ibl_prefilter_params"),
             contents: bytemuck::cast_slice(&params),
@@ -444,7 +562,7 @@ pub(crate) fn bake_environment_layer(
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(&skybox_view),
+                    resource: crate::gpu::BindingResource::TextureView(&pyramid_view),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 1,
@@ -517,7 +635,7 @@ pub(crate) fn bake_environment_layer(
     let submission = queue.submit(std::iter::once(encoder.finish()));
 
     // Callers gate on the returned submission index instead of blocking
-    // here. The synchronous `upload_environment_map` wrapper drains the
+    // here. The synchronous `upload_environment` wrapper drains the
     // upload-job runner until the matching job reports Ready.
 
     LayerBakeResult {

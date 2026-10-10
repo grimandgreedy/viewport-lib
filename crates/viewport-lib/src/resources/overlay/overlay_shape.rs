@@ -292,7 +292,7 @@ impl crate::resources::DeviceResources {
         self.overlay_shape.tex_pipeline = Some(pipeline);
     }
 
-    /// Upload RGBA8 pixel data as a texture for overlay shape fills.
+    /// Upload an image as a texture for overlay shape fills.
     ///
     /// Returns an `OverlayTextureId` that can be stored in
     /// `OverlayShapeItem::texture`. The texture stays resident until you release
@@ -302,28 +302,29 @@ impl crate::resources::DeviceResources {
     /// plus [`update_overlay_texture`](Self::update_overlay_texture), which reuse
     /// one GPU texture instead of allocating a new one per frame.
     ///
-    /// `rgba_data` must contain exactly `width * height * 4` bytes in
-    /// row-major, top-to-bottom order. The data is treated as sRGB-encoded
-    /// (standard 8-bit image data).
+    /// The format follows `data`: an sRGB image is sampled with the hardware
+    /// decode, a linear one (a lookup table, a data image) as stored, and float
+    /// pixels at half-float precision, so values above 1 survive.
+    ///
+    /// # Errors
+    ///
+    /// The errors [`TextureData::validate`](crate::TextureData::validate)
+    /// returns, and
+    /// [`ViewportError::UnsupportedTextureData`](crate::error::ViewportError::UnsupportedTextureData)
+    /// for a normal map or a compressed payload, which an overlay cannot use.
     pub fn upload_overlay_texture(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba_data: &[u8],
-    ) -> OverlayTextureId {
-        assert_eq!(
-            rgba_data.len(),
-            (width * height * 4) as usize,
-            "upload_overlay_texture: rgba_data length does not match width * height * 4"
-        );
-
+        data: crate::TextureData,
+    ) -> crate::error::ViewportResult<OverlayTextureId> {
+        let (width, height, format, pixels) = overlay_texture_pixels(data)?;
         let entry =
-            build_overlay_texture_entry(device, Some(queue), width, height, Some(rgba_data));
-        self.content
+            build_overlay_texture_entry(device, Some(queue), width, height, format, Some(&pixels));
+        Ok(self
+            .content
             .overlay_textures
-            .insert(entry, overlay_texture_bytes(width, height))
+            .insert(entry, overlay_texture_bytes(width, height, format)))
     }
 
     /// Allocate a reusable overlay texture and return a stable
@@ -336,17 +337,27 @@ impl crate::resources::DeviceResources {
     /// Unlike [`upload_overlay_texture`](Self::upload_overlay_texture), updating
     /// this handle reuses the same GPU texture rather than stranding one per
     /// frame, so it is the right choice for a live source (decoded video, a
-    /// capture feed, a per-frame heatmap). The format is `Rgba8UnormSrgb`.
+    /// capture feed, a per-frame heatmap).
+    ///
+    /// `colour_space` is the space of the RGBA8 bytes it will be fed: `Srgb`
+    /// for video and captured or authored colour, `Linear` for data such as a
+    /// heatmap's values. It is fixed for the texture's life, so each update
+    /// stays a plain byte copy.
     pub fn create_streaming_overlay_texture(
         &mut self,
         device: &crate::gpu::Device,
         width: u32,
         height: u32,
+        colour_space: crate::ColourSpace,
     ) -> OverlayTextureId {
-        let entry = build_overlay_texture_entry(device, None, width, height, None);
+        let format = match colour_space {
+            crate::ColourSpace::Srgb => crate::gpu::TextureFormat::Rgba8UnormSrgb,
+            crate::ColourSpace::Linear => crate::gpu::TextureFormat::Rgba8Unorm,
+        };
+        let entry = build_overlay_texture_entry(device, None, width, height, format, None);
         self.content
             .overlay_textures
-            .insert(entry, overlay_texture_bytes(width, height))
+            .insert(entry, overlay_texture_bytes(width, height, format))
     }
 
     /// Replace the contents of an overlay texture in place.
@@ -359,7 +370,9 @@ impl crate::resources::DeviceResources {
     /// or [`upload_overlay_texture`](Self::upload_overlay_texture).
     ///
     /// Returns `false` (and does nothing) if `id` does not resolve to a live
-    /// texture, for example because it was already freed.
+    /// texture, for example because it was already freed, or if the texture holds
+    /// float pixels, which RGBA8 bytes cannot fill. The texture keeps the colour
+    /// space it was created with, including across a resize.
     ///
     /// # Panics
     ///
@@ -389,13 +402,26 @@ impl crate::resources::DeviceResources {
             return false;
         };
 
+        let format = texture.format();
+        if !matches!(
+            format,
+            crate::gpu::TextureFormat::Rgba8UnormSrgb | crate::gpu::TextureFormat::Rgba8Unorm
+        ) {
+            return false;
+        }
         let size = texture.size();
         if size.width != width || size.height != height {
-            *entry =
-                build_overlay_texture_entry(device, Some(queue), width, height, Some(rgba_data));
+            *entry = build_overlay_texture_entry(
+                device,
+                Some(queue),
+                width,
+                height,
+                format,
+                Some(rgba_data),
+            );
             self.content
                 .overlay_textures
-                .set_bytes(id, overlay_texture_bytes(width, height));
+                .set_bytes(id, overlay_texture_bytes(width, height, format));
             return true;
         }
 
@@ -424,8 +450,9 @@ impl crate::resources::DeviceResources {
     /// The intended source is an
     /// [`OffscreenViewportTarget`](crate::OffscreenViewportTarget) that a viewport
     /// rendered into: pass its `render_view()` (the sRGB view), not `sample_view()`.
-    /// The overlay path samples with an sRGB decode, so the sRGB view round-trips
-    /// the colour faithfully; the non-sRGB view would read too dark.
+    /// A sample is decoded according to the view's format, so the sRGB view
+    /// turns the stored colour back into linear values; the non-sRGB view would
+    /// hand the shader the encoded values and the image would draw wrong.
     ///
     /// The registry does not own the texture: it never writes to or resizes it, and
     /// [`update_overlay_texture`](Self::update_overlay_texture) rejects the returned
@@ -491,33 +518,25 @@ impl crate::resources::DeviceResources {
     /// [`OverlayTextureId`] via
     /// [`upload_result_overlay_texture`](Self::upload_result_overlay_texture).
     ///
-    /// Ownership of `rgba_data` transfers into the worker.
+    /// The format follows `data` exactly as for
+    /// [`upload_overlay_texture`](Self::upload_overlay_texture), and `data`
+    /// transfers into the worker.
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
-    /// before submission when `rgba_data.len() != width * height * 4`.
+    /// The same as [`upload_overlay_texture`](Self::upload_overlay_texture),
+    /// reported before any job is submitted.
     pub fn begin_upload_overlay_texture(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba_data: Vec<u8>,
+        data: crate::TextureData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        let expected = (width * height * 4) as usize;
-        if rgba_data.len() != expected {
-            return Err(crate::error::ViewportError::InvalidTextureData {
-                expected,
-                actual: rgba_data.len(),
-            });
-        }
-
+        let (width, height, format, pixels) = overlay_texture_pixels(data)?;
         let slot = crate::resources::ResultSlot::<OverlayTextureId>::new();
         let slot_for_apply = slot.clone();
         let device_for_worker = device.clone();
         let queue_for_worker = queue.clone();
-
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
@@ -527,7 +546,8 @@ impl crate::resources::DeviceResources {
                     Some(&queue_for_worker),
                     width,
                     height,
-                    Some(&rgba_data),
+                    format,
+                    Some(&pixels),
                 );
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
@@ -535,13 +555,12 @@ impl crate::resources::DeviceResources {
                         let id = resources
                             .content
                             .overlay_textures
-                            .insert(entry, overlay_texture_bytes(width, height));
+                            .insert(entry, overlay_texture_bytes(width, height, format));
                         slot_for_apply.set(id);
                     }),
                 ))
             })
         };
-
         self.job_results
             .overlay_texture
             .lock()
@@ -1025,13 +1044,46 @@ pub(crate) struct OverlayShapeTextureEntry {
     pub size: [u32; 2],
 }
 
-/// Resident-byte charge for an `RGBA8` overlay texture of the given size.
-fn overlay_texture_bytes(width: u32, height: u32) -> u64 {
-    (width as u64) * (height as u64) * 4
+/// Bytes per texel of an overlay texture format: 4 for the 8-bit formats, 8
+/// for half float.
+fn overlay_texel_bytes(format: crate::gpu::TextureFormat) -> u32 {
+    format.block_copy_size(None).unwrap_or(4)
 }
 
-/// Write `rgba_data` (row-major, top-to-bottom, `width * height * 4` bytes) into
-/// the whole of `texture`.
+/// Resident-byte charge for an overlay texture of the given size and format.
+fn overlay_texture_bytes(width: u32, height: u32, format: crate::gpu::TextureFormat) -> u64 {
+    (width as u64) * (height as u64) * overlay_texel_bytes(format) as u64
+}
+
+/// Check that an overlay can take `data` and turn it into a format and the
+/// bytes to write. An overlay has no normal slot and samples no compressed
+/// format, so both are rejected rather than drawn wrongly.
+fn overlay_texture_pixels(
+    data: crate::TextureData,
+) -> crate::error::ViewportResult<(u32, u32, crate::gpu::TextureFormat, Vec<u8>)> {
+    use crate::{TexturePayload, TextureRejection, TextureRole, UploadSlot};
+    data.validate()?;
+    let reject = |reason| {
+        Err(crate::error::ViewportError::UnsupportedTextureData {
+            slot: UploadSlot::Overlay,
+            reason,
+        })
+    };
+    if data.role() == TextureRole::NormalMap {
+        return reject(TextureRejection::NormalMap);
+    }
+    if matches!(data.payload(), TexturePayload::Compressed { .. }) {
+        return reject(TextureRejection::UnsupportedPayload);
+    }
+    let (width, height) = (data.width(), data.height());
+    let (format, mut levels) =
+        crate::resources::material::textures::texture_format_and_levels(data);
+    let pixels = levels.pop().expect("an uncompressed payload is one level");
+    Ok((width, height, format, pixels))
+}
+
+/// Write `bytes` (row-major, top-to-bottom, one full image in `texture`'s
+/// format) into the whole of `texture`.
 fn write_overlay_texture(
     queue: &crate::gpu::Queue,
     texture: &crate::gpu::Texture,
@@ -1049,7 +1101,7 @@ fn write_overlay_texture(
         rgba_data,
         crate::gpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(width * 4),
+            bytes_per_row: Some(width * overlay_texel_bytes(texture.format())),
             rows_per_image: Some(height),
         },
         crate::gpu::Extent3d {
@@ -1060,8 +1112,8 @@ fn write_overlay_texture(
     );
 }
 
-/// Create an `Rgba8UnormSrgb` overlay texture and its default view, optionally
-/// writing initial pixels. Pass `queue` and `rgba_data` together to upload
+/// Create an overlay texture in `format` and its default view, optionally
+/// writing initial pixels. Pass `queue` and `pixels` together to upload
 /// contents; pass both `None` to leave the texture undefined (a streaming
 /// texture filled later by `update_overlay_texture`).
 fn build_overlay_texture_entry(
@@ -1069,7 +1121,8 @@ fn build_overlay_texture_entry(
     queue: Option<&crate::gpu::Queue>,
     width: u32,
     height: u32,
-    rgba_data: Option<&[u8]>,
+    format: crate::gpu::TextureFormat,
+    pixels: Option<&[u8]>,
 ) -> OverlayShapeTextureEntry {
     let texture = device.create_texture(&crate::gpu::TextureDescriptor {
         label: Some("overlay_shape_tex"),
@@ -1081,13 +1134,13 @@ fn build_overlay_texture_entry(
         mip_level_count: 1,
         sample_count: 1,
         dimension: crate::gpu::TextureDimension::D2,
-        format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
+        format,
         usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
 
-    if let (Some(queue), Some(rgba_data)) = (queue, rgba_data) {
-        write_overlay_texture(queue, &texture, width, height, rgba_data);
+    if let (Some(queue), Some(pixels)) = (queue, pixels) {
+        write_overlay_texture(queue, &texture, width, height, pixels);
     }
 
     let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());

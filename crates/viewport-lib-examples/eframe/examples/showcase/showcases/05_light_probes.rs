@@ -32,8 +32,9 @@ use vpl::resources::{
     LightProbe, LightProbeSet, LightmapData, LightmapMode, SHCoefficients, TextureId,
 };
 use vpl::{
-    Aabb, BackfacePolicy, EnvironmentMapId, EnvironmentSettings, EnvironmentZone,
-    IndirectLightSource, LightKind, LightSource, Material, MeshId, NodeId, primitives,
+    Aabb, BackfacePolicy, EnvironmentLighting, EnvironmentMapId, EnvironmentOptions,
+    EnvironmentZone, IndirectLightSource, LightKind, LightSource, Material, MeshId, NodeId,
+    TextureData, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -401,6 +402,8 @@ pub struct IndirectLightingShowcase {
 
     // Zone mode.
     env_ids: Vec<EnvironmentMapId>,
+    /// The environment that lights the scene in zone mode.
+    default_env: Option<EnvironmentMapId>,
     zone_markers: Vec<NodeId>,
     zone_enabled: Vec<bool>,
     use_zones: bool,
@@ -443,6 +446,7 @@ impl IndirectLightingShowcase {
             use_probes: true,
             applied_probes: None,
             env_ids: Vec::new(),
+            default_env: None,
             zone_markers: Vec::new(),
             zone_enabled: vec![true; ENVS.len()],
             use_zones: true,
@@ -603,11 +607,7 @@ impl IndirectLightingShowcase {
         } else if self.mode == 1 {
             // Zone mode: enable the default environment (+ skybox), clear probes,
             // and reflect the zoned environments off polished metal spheres.
-            session.effects_mut().environment = Some(EnvironmentSettings {
-                intensity: 1.0,
-                rotation: 0.0,
-                show_skybox: true,
-            });
+            session.effects_mut().environment = self.default_env.map(EnvironmentLighting::new);
             session
                 .renderer_mut()
                 .set_light_probes(LightProbeSet::new(vec![]));
@@ -824,23 +824,21 @@ impl Showcase for IndirectLightingShowcase {
                 .unwrap(),
         );
 
-        // Environments for zone mode: default (layer 0) + one per zone. Uploaded
+        // Environments for zone mode: the scene default + one per zone. Uploaded
         // once here; they persist on the resources across mode switches.
-        let default_px = equirect_gradient(DEFAULT_SKY, DEFAULT_GROUND, 64, 32);
-        ctx.session
-            .renderer_mut()
-            .upload_environment_map(ctx.device, ctx.queue, &default_px, 64, 32)
-            .unwrap();
-        self.env_ids.clear();
-        for e in ENVS.iter() {
-            let px = equirect_gradient(e.sky, e.ground, 64, 32);
-            let id = ctx
-                .session
+        let mut upload = |sky, ground| {
+            ctx.session
                 .renderer_mut()
-                .upload_environment(ctx.device, ctx.queue, &px, 64, 32)
-                .unwrap();
-            self.env_ids.push(id);
-        }
+                .upload_environment(
+                    ctx.device,
+                    ctx.queue,
+                    TextureData::hdr(64, 32, equirect_gradient(sky, ground, 64, 32)),
+                    EnvironmentOptions::default(),
+                )
+                .unwrap()
+        };
+        self.default_env = Some(upload(DEFAULT_SKY, DEFAULT_GROUND));
+        self.env_ids = ENVS.iter().map(|e| upload(e.sky, e.ground)).collect();
 
         // A dim key light gives the spheres shape; the indirect term (probe SH or
         // reflected environment) carries the colour, so keep direct light low.

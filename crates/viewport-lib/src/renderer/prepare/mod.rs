@@ -158,9 +158,6 @@ impl ViewportRenderer {
             .swap(0, std::sync::atomic::Ordering::Relaxed);
 
         self.ensure_frame_pipelines(device, frame);
-        if scene_fx.environment.as_ref().is_some_and(|e| e.show_skybox) {
-            self.resources.ensure_skybox_pipeline(device);
-        }
 
         // Reset the per-material transform interner for this frame. The per-object
         // and instanced passes below intern each item's material into it; the
@@ -836,14 +833,6 @@ impl ViewportRenderer {
         if frame.effects.debug.show_shadow_atlas {
             self.resources.ensure_shadow_atlas_viewer_pipeline(device);
         }
-        if frame
-            .effects
-            .environment
-            .as_ref()
-            .is_some_and(|e| e.show_skybox)
-        {
-            self.resources.ensure_skybox_pipeline(device);
-        }
     }
 
     /// Per-viewport prepare stage: camera, clip planes, clip volume, grid, overlays, cap geometry, axes.
@@ -877,6 +866,21 @@ impl ViewportRenderer {
             frame,
             hdr_family,
             sink,
+        );
+
+        let background = crate::resources::material::environment::resolve_background(
+            &self.resources.ibl,
+            &frame.viewport.environment_background,
+            frame.effects.environment.as_ref(),
+            frame.effects.lighting.environment_intensity,
+        );
+        let slot = &mut self.viewport_slots[vp_idx];
+        slot.draw_skybox = crate::resources::material::environment::prepare_background(
+            &mut self.resources,
+            device,
+            queue,
+            &mut slot.skybox,
+            background,
         );
 
         self.prepare_clip_uniforms(queue, frame, viewport_fx);

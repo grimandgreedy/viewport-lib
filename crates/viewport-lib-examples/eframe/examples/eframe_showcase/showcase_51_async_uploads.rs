@@ -149,6 +149,8 @@ pub(crate) struct AsyncUploadsState {
     pub skin_target_vertex_count: usize,
 
     pub env_state: AssetState,
+    /// The environment the last env-map run uploaded, freed before the next.
+    pub env_id: Option<vpl::EnvironmentMapId>,
     pub mesh_state: AssetState,
     pub texture_state: AssetState,
     pub skin_state: AssetState,
@@ -209,6 +211,7 @@ impl Default for AsyncUploadsState {
             skin_target_mesh_id: None,
             skin_target_vertex_count: 0,
             env_state: AssetState::Idle,
+            env_id: None,
             mesh_state: AssetState::Idle,
             texture_state: AssetState::Idle,
             skin_state: AssetState::Idle,
@@ -354,7 +357,11 @@ impl App {
             }
         }
 
-        // Env map: status only, no typed result to take.
+        // Env map: track status, then take the handle once it lands.
+        let env_job = match self.async_uploads_state.env_state {
+            AssetState::InFlight { job, .. } => Some(job),
+            _ => None,
+        };
         let env_just_loaded =
             advance_status_only(&mut self.async_uploads_state.env_state, renderer);
 
@@ -445,12 +452,10 @@ impl App {
             self.async_uploads_state.skin_installed = true;
         }
 
-        // The env map's IBL textures are stored on the renderer once the
-        // apply step runs. Rebuild the camera bind groups on the exact
-        // frame the job transitioned to Loaded so the shaders pick them
-        // up.
-        if env_just_loaded {
-            renderer.rebuild_camera_bind_groups(&self.device);
+        // The next prepare picks up the landed environment by itself; keep
+        // the handle so the next run can free it.
+        if let (true, Some(job)) = (env_just_loaded, env_job) {
+            self.async_uploads_state.env_id = renderer.upload_result_environment(job).ok();
         }
 
         // Polyline: when Ready, take the PolylineId.
@@ -1435,11 +1440,16 @@ fn demo_tensor_field(shape: MeshId) -> TensorFieldItem {
 
 impl App {
     fn launch_env_map(&mut self, renderer: &mut ViewportRenderer) {
-        let pixels = solid_env_pixels(32, 16);
+        if let Some(old) = self.async_uploads_state.env_id.take() {
+            renderer.free_environment(old);
+        }
+        let data = vpl::TextureData::hdr(32, 16, solid_env_pixels(32, 16));
+        let options = vpl::EnvironmentOptions::default();
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            match renderer.upload_environment_map(&self.device, &self.queue, &pixels, 32, 16) {
-                Ok(()) => {
+            match renderer.upload_environment(&self.device, &self.queue, data, options) {
+                Ok(id) => {
+                    self.async_uploads_state.env_id = Some(id);
                     self.async_uploads_state.env_state = AssetState::Loaded {
                         duration_ms: started.elapsed().as_millis() as u64,
                     };
@@ -1451,9 +1461,8 @@ impl App {
                     };
                 }
             }
-            renderer.rebuild_camera_bind_groups(&self.device);
         } else {
-            match renderer.begin_upload_environment_map(&self.device, &self.queue, pixels, 32, 16) {
+            match renderer.begin_upload_environment(&self.device, &self.queue, data, options) {
                 Ok(job) => {
                     self.async_uploads_state.env_state = AssetState::InFlight {
                         job,
@@ -1830,19 +1839,26 @@ impl App {
         let (data, w, h) = demo_overlay_texture();
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            let id = renderer.resources_mut().upload_overlay_texture(
-                &self.device,
-                &self.queue,
-                w,
-                h,
-                &data,
-            );
-            self.async_uploads_state.loaded_overlay_texture_id = Some(id);
-            self.async_uploads_state.overlay_texture_state = AssetState::Loaded {
-                duration_ms: started.elapsed().as_millis() as u64,
+            let data = vpl::TextureData::srgb(w, h, data);
+            let duration_ms = |started: Instant| started.elapsed().as_millis() as u64;
+            self.async_uploads_state.overlay_texture_state = match renderer
+                .resources_mut()
+                .upload_overlay_texture(&self.device, &self.queue, data)
+            {
+                Ok(id) => {
+                    self.async_uploads_state.loaded_overlay_texture_id = Some(id);
+                    AssetState::Loaded {
+                        duration_ms: duration_ms(started),
+                    }
+                }
+                Err(e) => AssetState::Failed {
+                    reason: format!("{e}"),
+                    duration_ms: duration_ms(started),
+                },
             };
         } else {
-            match renderer.begin_upload_overlay_texture(&self.device, &self.queue, w, h, data) {
+            let data = vpl::TextureData::srgb(w, h, data);
+            match renderer.begin_upload_overlay_texture(&self.device, &self.queue, data) {
                 Ok(job) => {
                     self.async_uploads_state.overlay_texture_state = AssetState::InFlight {
                         job,

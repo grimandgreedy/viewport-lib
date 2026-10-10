@@ -1,7 +1,10 @@
 use crate::resources::*;
 use crate::scene::material::TextureSlot as MaterialSlot;
 
-pub use viewport_lib_types::data::texture::{TextureData, TexturePayload, TextureRole};
+pub use viewport_lib_types::data::texture::{
+    AstcBlock, CompressedFormat, TextureData, TexturePayload, TextureRole,
+};
+use viewport_lib_types::data::texture::{TextureRejection, UploadSlot};
 
 impl DeviceResources {
     /// Upload a texture and return its ID.
@@ -126,7 +129,8 @@ impl DeviceResources {
         let width = data.width();
         let height = data.height();
         let is_normal_map = data.role() == TextureRole::NormalMap;
-        let (format, bytes) = texture_format_and_bytes(data);
+        let (format, mip_levels) = texture_format_and_levels(data);
+        check_device_format(device, format)?;
         Ok(self.spawn_texture_upload(
             device,
             queue,
@@ -135,7 +139,7 @@ impl DeviceResources {
                 height,
                 format,
                 is_normal_map,
-                mip_levels: vec![bytes],
+                mip_levels,
             },
         ))
     }
@@ -352,107 +356,45 @@ impl DeviceResources {
 
     /// Upload a pre-compressed, pre-mipped texture and return its texture ID.
     ///
-    /// Sync wrapper around [`begin_upload_compressed_texture`](Self::begin_upload_compressed_texture):
-    /// see that method for the format and layout requirements. Blocks the
-    /// calling thread until the upload completes.
+    /// Sync wrapper around [`begin_upload_compressed_texture`](Self::begin_upload_compressed_texture).
     ///
     /// # Errors
     ///
     /// See [`begin_upload_compressed_texture`](Self::begin_upload_compressed_texture).
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: upload_texture(device, queue, TextureData::compressed(w, h, format, colour_space, mip_levels))"
+    )]
+    #[allow(deprecated)]
     pub fn upload_compressed_texture(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         desc: CompressedTextureDesc<'_>,
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
-        let id = self.begin_upload_compressed_texture(device, queue, desc)?;
-        self.drain_until(device, queue, id)?;
-        self.upload_result_texture(id)
+        self.upload_texture(device, queue, desc.into_texture_data()?)
     }
 
     /// Start an asynchronous upload of pre-compressed, pre-mipped texture data.
     ///
-    /// Returns a `JobId` immediately; take the resulting texture id with
-    /// [`upload_result_texture`](Self::upload_result_texture) once the status is
-    /// `Ready`, then store it in a `Material` slot. The data is validated and
-    /// copied into the worker before the job is submitted.
-    ///
     /// # Errors
     ///
-    /// Returns
     /// [`ViewportError::UnsupportedTextureFormat`](crate::error::ViewportError::UnsupportedTextureFormat)
     /// when `desc.format` is not block-compressed or the device lacks its
-    /// required feature (check first with [`supports_texture_format`]), and
-    /// [`ViewportError::InvalidCompressedTextureData`](crate::error::ViewportError::InvalidCompressedTextureData)
-    /// when `mip_levels` is empty or a level's byte length does not match its
-    /// block-packed size.
+    /// feature, and the errors [`TextureData::validate`] returns for a
+    /// compressed payload.
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: begin_upload_texture(device, queue, TextureData::compressed(w, h, format, colour_space, mip_levels))"
+    )]
+    #[allow(deprecated)]
     pub fn begin_upload_compressed_texture(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         desc: CompressedTextureDesc<'_>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        if !desc.format.is_compressed() {
-            return Err(crate::error::ViewportError::UnsupportedTextureFormat {
-                format: format!("{:?}", desc.format),
-            });
-        }
-        // wgpu requires block-compressed textures to be created with
-        // block-aligned base dimensions. Reject early with a clear error rather
-        // than letting `create_texture` fail on the worker (which would leave an
-        // invalid texture bound into a bind group). Checked before device
-        // support so the caller gets the specific reason either way.
-        let (block_w, block_h) = desc.format.block_dimensions();
-        if desc.width % block_w != 0 || desc.height % block_h != 0 {
-            return Err(
-                crate::error::ViewportError::CompressedTextureNotBlockAligned {
-                    width: desc.width,
-                    height: desc.height,
-                    block_width: block_w,
-                    block_height: block_h,
-                },
-            );
-        }
-        if !supports_texture_format(device, desc.format) {
-            return Err(crate::error::ViewportError::UnsupportedTextureFormat {
-                format: format!("{:?}", desc.format),
-            });
-        }
-        if desc.mip_levels.is_empty() {
-            let (_, _, expected) = mip_block_layout(desc.format, desc.width, desc.height);
-            return Err(crate::error::ViewportError::InvalidCompressedTextureData {
-                level: 0,
-                expected,
-                actual: 0,
-            });
-        }
-        // Validate each level against its block-packed size and copy into owned
-        // buffers for the worker thread.
-        let mut mip_levels = Vec::with_capacity(desc.mip_levels.len());
-        for (level, data) in desc.mip_levels.iter().enumerate() {
-            let lw = (desc.width >> level).max(1);
-            let lh = (desc.height >> level).max(1);
-            let (_, _, expected) = mip_block_layout(desc.format, lw, lh);
-            if data.len() != expected {
-                return Err(crate::error::ViewportError::InvalidCompressedTextureData {
-                    level: level as u32,
-                    expected,
-                    actual: data.len(),
-                });
-            }
-            mip_levels.push(data.to_vec());
-        }
-        Ok(self.spawn_texture_upload(
-            device,
-            queue,
-            TextureUploadSpec {
-                width: desc.width,
-                height: desc.height,
-                format: desc.format,
-                is_normal_map: desc.is_normal_map,
-                mip_levels,
-            },
-        ))
+        self.begin_upload_texture(device, queue, desc.into_texture_data()?)
     }
 
     /// Shared spawn path for the RGBA8 and compressed upload entry points.
@@ -768,7 +710,8 @@ impl DeviceResources {
         data.validate()?;
         let (width, height) = (data.width(), data.height());
         let is_normal_map = data.role() == TextureRole::NormalMap;
-        let (format, pixels) = texture_format_and_bytes(data);
+        let (format, levels) = texture_format_and_levels(data);
+        check_device_format(device, format)?;
         let gpu_texture = build_gpu_texture(
             device,
             queue,
@@ -776,13 +719,13 @@ impl DeviceResources {
             height,
             format,
             is_normal_map,
-            std::slice::from_ref(&pixels),
+            &levels,
             &self.material.texture_bgl,
             &self.material.texture.view,
             &self.material.normal_map_view,
             &self.material.ao_map_view,
         );
-        let bytes = pixels.len() as u64;
+        let bytes = levels.iter().map(|l| l.len() as u64).sum();
         if self
             .content
             .textures
@@ -1054,23 +997,48 @@ fn build_gpu_texture(
     } else {
         "user_texture"
     };
+    let texture =
+        create_texture_with_levels(device, queue, tex_label, width, height, format, mip_levels);
     let mip_level_count = mip_levels.len() as u32;
+
+    finish_gpu_texture(
+        device,
+        texture,
+        mip_level_count,
+        is_normal_map,
+        bgl,
+        fallback_albedo_view,
+        fallback_normal_view,
+        fallback_ao_view,
+    )
+}
+
+/// Create a sampleable 2D texture and write `mip_levels` into it, level 0
+/// first. Row and size maths are block-based, so this serves block-compressed
+/// formats as well as uncompressed ones.
+pub(crate) fn create_texture_with_levels(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    label: &str,
+    width: u32,
+    height: u32,
+    format: crate::gpu::TextureFormat,
+    mip_levels: &[Vec<u8>],
+) -> crate::gpu::Texture {
     let texture = device.create_texture(&crate::gpu::TextureDescriptor {
-        label: Some(tex_label),
+        label: Some(label),
         size: crate::gpu::Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
         },
-        mip_level_count,
+        mip_level_count: mip_levels.len() as u32,
         sample_count: 1,
         dimension: crate::gpu::TextureDimension::D2,
         format,
         usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    // Upload each mip level. Row/size math is block-based so it is correct for
-    // both uncompressed (1x1 blocks) and block-compressed formats.
     for (level, data) in mip_levels.iter().enumerate() {
         let lw = (width >> level).max(1);
         let lh = (height >> level).max(1);
@@ -1095,17 +1063,7 @@ fn build_gpu_texture(
             },
         );
     }
-
-    finish_gpu_texture(
-        device,
-        texture,
-        mip_level_count,
-        is_normal_map,
-        bgl,
-        fallback_albedo_view,
-        fallback_normal_view,
-        fallback_ao_view,
-    )
+    texture
 }
 
 /// Build the view, sampler, and bind group around an already-written
@@ -1249,6 +1207,10 @@ pub fn supports_texture_format(
 /// Color space is carried by `format` (for example `Bc7RgbaUnormSrgb` for
 /// albedo versus `Bc5RgUnorm` for normals); `is_normal_map` only selects which
 /// internal bind-group slot the texture occupies.
+///
+/// Superseded by [`TextureData::compressed`] and
+/// [`TextureData::compressed_normal_map`] through `upload_texture`, which state
+/// the colour space the same way as every other payload.
 pub struct CompressedTextureDesc<'a> {
     /// Width of mip level 0, in texels.
     pub width: u32,
@@ -1260,6 +1222,23 @@ pub struct CompressedTextureDesc<'a> {
     pub is_normal_map: bool,
     /// Block bytes per mip level, level 0 first.
     pub mip_levels: &'a [&'a [u8]],
+}
+
+impl CompressedTextureDesc<'_> {
+    /// The same texture as a [`TextureData`]. Copies the level bytes.
+    fn into_texture_data(self) -> crate::error::ViewportResult<TextureData> {
+        let Some((format, space)) = compressed_format_from_gpu(self.format) else {
+            return Err(crate::error::ViewportError::UnsupportedTextureFormat {
+                format: format!("{:?}", self.format),
+            });
+        };
+        let levels = self.mip_levels.iter().map(|l| l.to_vec()).collect();
+        Ok(if self.is_normal_map {
+            TextureData::compressed_normal_map(self.width, self.height, format, levels)
+        } else {
+            TextureData::compressed(self.width, self.height, format, space, levels)
+        })
+    }
 }
 
 impl DeviceResources {
@@ -2084,27 +2063,58 @@ impl DeviceResources {
     // Matcap texture API
     // -----------------------------------------------------------------------
 
-    /// Upload a 256x256 RGBA matcap texture and return its `MatcapId`.
+    /// Upload a matcap and return its `MatcapId`.
     ///
-    /// `rgba_data` must be exactly `256 * 256 * 4 = 262_144` bytes.
+    /// `data` is a 256x256, 8-bit, linear image:
+    /// `TextureData::linear(256, 256, rgba)`. A matcap is a pre-lit lighting
+    /// lookup read straight into the renderer's linear working space, so its
+    /// bytes are taken as they are. Matcap files are usually tagged sRGB; if
+    /// a loader labelled one so, relabel it with
+    /// [`TextureData::with_colour_space`] rather than converting it, which would
+    /// change how it looks.
+    ///
     /// Set `blendable = true` for matcaps whose alpha channel tints the base
     /// geometry colour; `false` for static matcaps that fully replace the colour.
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
-    /// if `rgba_data` has the wrong length.
+    /// The errors [`TextureData::validate`] returns, and
+    /// [`ViewportError::UnsupportedTextureData`](crate::error::ViewportError::UnsupportedTextureData)
+    /// for an sRGB label, a size other than 256x256, a float or compressed
+    /// payload, or a normal map.
     pub fn upload_matcap(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        rgba_data: &[u8],
+        data: TextureData,
         blendable: bool,
     ) -> crate::error::ViewportResult<crate::resources::MatcapId> {
+        data.validate()?;
+        let reject = |reason| {
+            Err(crate::error::ViewportError::UnsupportedTextureData {
+                slot: UploadSlot::Matcap,
+                reason,
+            })
+        };
+        if data.role() == TextureRole::NormalMap {
+            return reject(TextureRejection::NormalMap);
+        }
+        if !matches!(data.payload(), TexturePayload::Rgba8(_)) {
+            return reject(TextureRejection::UnsupportedPayload);
+        }
+        if data.colour_space() != crate::ColourSpace::Linear {
+            return reject(TextureRejection::WrongColourSpace);
+        }
+        if (data.width(), data.height()) != (256, 256) {
+            return reject(TextureRejection::WrongSize);
+        }
+        let TexturePayload::Rgba8(rgba) = data.into_payload() else {
+            unreachable!("checked above")
+        };
         // The built-ins hold the first eight indices, so `builtin_matcap_id`
         // can name them before they are uploaded.
         self.ensure_matcaps_initialized(device, queue);
-        self.upload_matcap_texture(device, queue, rgba_data, blendable)
+        self.upload_matcap_texture(device, queue, &rgba, blendable)
     }
 
     fn upload_matcap_texture(
@@ -2242,7 +2252,7 @@ const BUILTIN_MATCAPS: [(fn() -> Vec<u8>, bool); 8] = {
 
 #[cfg(test)]
 mod async_texture_tests {
-    use super::TextureData;
+    use super::{CompressedFormat, TextureData};
     use crate::DeviceResources;
     use crate::resources::UploadStatus;
 
@@ -2620,6 +2630,7 @@ mod async_texture_tests {
     }
 
     #[test]
+    #[allow(deprecated)] // the second half exercises CompressedTextureDesc
     fn compressed_upload_rejects_unsupported_and_non_block_formats() {
         let Some((device, queue)) = try_make_device() else {
             eprintln!("skipping: no wgpu adapter available");
@@ -2631,16 +2642,16 @@ mod async_texture_tests {
         // BC7 without the feature: rejected up front, no job submitted.
         let block = vec![0u8; 16];
         let err = resources
-            .begin_upload_compressed_texture(
+            .begin_upload_texture(
                 &device,
                 &queue,
-                crate::resources::CompressedTextureDesc {
-                    width: 4,
-                    height: 4,
-                    format: crate::gpu::TextureFormat::Bc7RgbaUnormSrgb,
-                    is_normal_map: false,
-                    mip_levels: &[&block],
-                },
+                TextureData::compressed(
+                    4,
+                    4,
+                    CompressedFormat::Bc7Rgba,
+                    crate::ColourSpace::Srgb,
+                    vec![block.clone()],
+                ),
             )
             .expect_err("BC7 upload without the feature should error");
         assert!(matches!(
@@ -2648,7 +2659,8 @@ mod async_texture_tests {
             crate::error::ViewportError::UnsupportedTextureFormat { .. }
         ));
 
-        // A non-compressed format is also rejected by this path.
+        // The deprecated descriptor path also rejects a format that is not
+        // block-compressed, since it cannot say which payload that would be.
         let rgba = vec![0u8; 4 * 4 * 4];
         let err = resources
             .begin_upload_compressed_texture(
@@ -2683,16 +2695,16 @@ mod async_texture_tests {
         // fires before any job is submitted.
         let bad = vec![0u8; 15];
         let err = resources
-            .begin_upload_compressed_texture(
+            .begin_upload_texture(
                 &device,
                 &queue,
-                crate::resources::CompressedTextureDesc {
-                    width: 4,
-                    height: 4,
-                    format: crate::gpu::TextureFormat::Bc7RgbaUnormSrgb,
-                    is_normal_map: false,
-                    mip_levels: &[&bad],
-                },
+                TextureData::compressed(
+                    4,
+                    4,
+                    CompressedFormat::Bc7Rgba,
+                    crate::ColourSpace::Srgb,
+                    vec![bad.clone()],
+                ),
             )
             .expect_err("wrong block length should error");
         assert!(matches!(
@@ -2706,16 +2718,16 @@ mod async_texture_tests {
 
         // Empty mip chain is rejected too.
         let err = resources
-            .begin_upload_compressed_texture(
+            .begin_upload_texture(
                 &device,
                 &queue,
-                crate::resources::CompressedTextureDesc {
-                    width: 4,
-                    height: 4,
-                    format: crate::gpu::TextureFormat::Bc7RgbaUnormSrgb,
-                    is_normal_map: false,
-                    mip_levels: &[],
-                },
+                TextureData::compressed(
+                    4,
+                    4,
+                    CompressedFormat::Bc7Rgba,
+                    crate::ColourSpace::Srgb,
+                    vec![],
+                ),
             )
             .expect_err("empty mip chain should error");
         assert!(matches!(
@@ -2739,7 +2751,42 @@ mod async_texture_tests {
         // particular; we only exercise the upload path and byte accounting.
         let block = vec![0u8; 16];
         let id = resources
-            .begin_upload_compressed_texture(
+            .begin_upload_texture(
+                &device,
+                &queue,
+                TextureData::compressed(
+                    4,
+                    4,
+                    CompressedFormat::Bc7Rgba,
+                    crate::ColourSpace::Srgb,
+                    vec![block.clone()],
+                ),
+            )
+            .unwrap();
+        drive_until_ready(&mut resources, &device, &queue, id);
+        let tex_id = resources.upload_result_texture(id).expect("ready result");
+        assert_eq!(tex_id, crate::resources::TextureId::from_raw(0));
+
+        let stats = resources.texture_memory_stats();
+        assert_eq!(stats.used_bytes - before, 16);
+        assert_eq!(stats.texture_count, 1);
+    }
+
+    /// The deprecated descriptor path builds the same `TextureData` and lands
+    /// on the same texture and byte count.
+    #[test]
+    #[allow(deprecated)]
+    fn compressed_descriptor_wrapper_matches_the_payload_path() {
+        let Some((device, queue)) = try_make_bc_device() else {
+            eprintln!("skipping: no adapter with TEXTURE_COMPRESSION_BC");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let block = vec![0u8; 16];
+        let before = resources.texture_memory_stats().used_bytes;
+        let id = resources
+            .upload_compressed_texture(
                 &device,
                 &queue,
                 crate::resources::CompressedTextureDesc {
@@ -2751,13 +2798,91 @@ mod async_texture_tests {
                 },
             )
             .unwrap();
-        drive_until_ready(&mut resources, &device, &queue, id);
-        let tex_id = resources.upload_result_texture(id).expect("ready result");
-        assert_eq!(tex_id, crate::resources::TextureId::from_raw(0));
+        assert_eq!(
+            resources.texture_colour_space(id),
+            Some(crate::ColourSpace::Srgb)
+        );
+        assert_eq!(resources.texture_memory_stats().used_bytes - before, 16);
+    }
 
-        let stats = resources.texture_memory_stats();
-        assert_eq!(stats.used_bytes - before, 16);
-        assert_eq!(stats.texture_count, 1);
+    /// A matcap takes a 256x256 linear 8-bit image and nothing else.
+    #[test]
+    fn matcap_upload_takes_only_a_linear_256_image() {
+        use crate::error::ViewportError;
+        use viewport_lib_types::data::texture::{TextureRejection, UploadSlot};
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let px = || vec![128u8; 256 * 256 * 4];
+        assert!(
+            resources
+                .upload_matcap(&device, &queue, TextureData::linear(256, 256, px()), false)
+                .is_ok()
+        );
+        let cases = [
+            (
+                TextureData::srgb(256, 256, px()),
+                TextureRejection::WrongColourSpace,
+            ),
+            (
+                TextureData::linear(128, 128, vec![0u8; 128 * 128 * 4]),
+                TextureRejection::WrongSize,
+            ),
+            (
+                TextureData::hdr(256, 256, vec![0.5; 256 * 256 * 4]),
+                TextureRejection::UnsupportedPayload,
+            ),
+            (
+                TextureData::normal_map(256, 256, px()),
+                TextureRejection::NormalMap,
+            ),
+        ];
+        for (data, reason) in cases {
+            let err = resources
+                .upload_matcap(&device, &queue, data, false)
+                .unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ViewportError::UnsupportedTextureData { slot: UploadSlot::Matcap, reason: r }
+                        if r == reason
+                ),
+                "expected {reason:?}, got {err:?}"
+            );
+        }
+    }
+
+    /// A data-only block format labelled sRGB is a description error, caught
+    /// before any job is submitted.
+    #[test]
+    fn compressed_upload_rejects_srgb_on_a_data_format() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let err = resources
+            .begin_upload_texture(
+                &device,
+                &queue,
+                TextureData::compressed(
+                    4,
+                    4,
+                    CompressedFormat::Bc5Rg,
+                    crate::ColourSpace::Srgb,
+                    vec![vec![0u8; 16]],
+                ),
+            )
+            .expect_err("sRGB BC5 should be rejected");
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::InvalidTextureColourSpace { .. }
+        ));
+        assert_eq!(resources.uploads_pending(), 0);
     }
 
     #[test]
@@ -2778,16 +2903,16 @@ mod async_texture_tests {
             let blocks_y = h.div_ceil(4);
             let block = vec![0u8; (blocks_x * blocks_y * 16) as usize];
             let err = resources
-                .begin_upload_compressed_texture(
+                .begin_upload_texture(
                     &device,
                     &queue,
-                    crate::resources::CompressedTextureDesc {
-                        width: w,
-                        height: h,
-                        format: crate::gpu::TextureFormat::Bc7RgbaUnormSrgb,
-                        is_normal_map: false,
-                        mip_levels: &[&block],
-                    },
+                    TextureData::compressed(
+                        w,
+                        h,
+                        CompressedFormat::Bc7Rgba,
+                        crate::ColourSpace::Srgb,
+                        vec![block.clone()],
+                    ),
                 )
                 .expect_err("non-block-aligned dimensions must be rejected");
             assert!(matches!(
@@ -2826,13 +2951,17 @@ pub struct GpuTexture {
     pub colour_space: Option<crate::ColourSpace>,
 }
 
-/// Pick the texture format for a payload and hand back the bytes to write.
+/// Pick the texture format for a payload and hand back the levels to write.
 ///
-/// The format comes from the payload precision and the colour space: an 8-bit
-/// payload is sRGB or linear depending on what the caller named, and a float
-/// payload is always linear. Shared by the upload path and `replace_texture` so
-/// both land on the same format for the same data.
-pub(crate) fn texture_format_and_bytes(data: TextureData) -> (crate::gpu::TextureFormat, Vec<u8>) {
+/// The format comes from the payload kind and the colour space: an 8-bit or
+/// compressed colour payload is sRGB or linear depending on what the caller
+/// named, and a float payload is always linear. An 8-bit or float payload is one
+/// base level (the upload worker builds the 8-bit chain); a compressed payload
+/// brings its own chain. Shared by the upload path and `replace_texture` so both
+/// land on the same format for the same data.
+pub(crate) fn texture_format_and_levels(
+    data: TextureData,
+) -> (crate::gpu::TextureFormat, Vec<Vec<u8>>) {
     let space = data.colour_space();
     match data.into_payload() {
         TexturePayload::Rgba8(rgba) => {
@@ -2840,7 +2969,7 @@ pub(crate) fn texture_format_and_bytes(data: TextureData) -> (crate::gpu::Textur
                 crate::ColourSpace::Srgb => crate::gpu::TextureFormat::Rgba8UnormSrgb,
                 crate::ColourSpace::Linear => crate::gpu::TextureFormat::Rgba8Unorm,
             };
-            (format, rgba)
+            (format, vec![rgba])
         }
         TexturePayload::Rgba32F(texels) => {
             // Pack to half-float bytes (2 bytes per channel, little-endian).
@@ -2848,9 +2977,149 @@ pub(crate) fn texture_format_and_bytes(data: TextureData) -> (crate::gpu::Textur
             for &v in &texels {
                 bytes.extend_from_slice(&half::f16::from_f32(v).to_le_bytes());
             }
-            (crate::gpu::TextureFormat::Rgba16Float, bytes)
+            (crate::gpu::TextureFormat::Rgba16Float, vec![bytes])
+        }
+        TexturePayload::Compressed { format, mip_levels } => {
+            (compressed_gpu_format(format, space), mip_levels)
         }
     }
+}
+
+/// Reject a format the device cannot sample. Only a compressed format can fail
+/// here: every device samples the 8-bit and half-float ones.
+pub(crate) fn check_device_format(
+    device: &crate::gpu::Device,
+    format: crate::gpu::TextureFormat,
+) -> crate::error::ViewportResult<()> {
+    if supports_texture_format(device, format) {
+        Ok(())
+    } else {
+        Err(crate::error::ViewportError::UnsupportedTextureFormat {
+            format: format!("{format:?}"),
+        })
+    }
+}
+
+/// The wgpu format for a block encoding in a colour space. `validate` has
+/// already rejected sRGB on a data-only encoding, so those ignore `space`.
+pub(crate) fn compressed_gpu_format(
+    format: CompressedFormat,
+    space: crate::ColourSpace,
+) -> crate::gpu::TextureFormat {
+    use crate::gpu::TextureFormat as F;
+    let srgb = space == crate::ColourSpace::Srgb;
+    let pick = |linear: F, srgb_format: F| if srgb { srgb_format } else { linear };
+    match format {
+        CompressedFormat::Bc1Rgba => pick(F::Bc1RgbaUnorm, F::Bc1RgbaUnormSrgb),
+        CompressedFormat::Bc2Rgba => pick(F::Bc2RgbaUnorm, F::Bc2RgbaUnormSrgb),
+        CompressedFormat::Bc3Rgba => pick(F::Bc3RgbaUnorm, F::Bc3RgbaUnormSrgb),
+        CompressedFormat::Bc4R => F::Bc4RUnorm,
+        CompressedFormat::Bc4RSigned => F::Bc4RSnorm,
+        CompressedFormat::Bc5Rg => F::Bc5RgUnorm,
+        CompressedFormat::Bc5RgSigned => F::Bc5RgSnorm,
+        CompressedFormat::Bc6hRgb => F::Bc6hRgbUfloat,
+        CompressedFormat::Bc6hRgbSigned => F::Bc6hRgbFloat,
+        CompressedFormat::Bc7Rgba => pick(F::Bc7RgbaUnorm, F::Bc7RgbaUnormSrgb),
+        CompressedFormat::Etc2Rgb8 => pick(F::Etc2Rgb8Unorm, F::Etc2Rgb8UnormSrgb),
+        CompressedFormat::Etc2Rgb8A1 => pick(F::Etc2Rgb8A1Unorm, F::Etc2Rgb8A1UnormSrgb),
+        CompressedFormat::Etc2Rgba8 => pick(F::Etc2Rgba8Unorm, F::Etc2Rgba8UnormSrgb),
+        CompressedFormat::EacR11 => F::EacR11Unorm,
+        CompressedFormat::EacR11Signed => F::EacR11Snorm,
+        CompressedFormat::EacRg11 => F::EacRg11Unorm,
+        CompressedFormat::EacRg11Signed => F::EacRg11Snorm,
+        CompressedFormat::Astc { block, hdr } => F::Astc {
+            block: astc_gpu_block(block),
+            channel: if hdr {
+                crate::gpu::AstcChannel::Hdr
+            } else if srgb {
+                crate::gpu::AstcChannel::UnormSrgb
+            } else {
+                crate::gpu::AstcChannel::Unorm
+            },
+        },
+    }
+}
+
+fn astc_gpu_block(block: AstcBlock) -> crate::gpu::AstcBlock {
+    use crate::gpu::AstcBlock as B;
+    match block {
+        AstcBlock::B4x4 => B::B4x4,
+        AstcBlock::B5x4 => B::B5x4,
+        AstcBlock::B5x5 => B::B5x5,
+        AstcBlock::B6x5 => B::B6x5,
+        AstcBlock::B6x6 => B::B6x6,
+        AstcBlock::B8x5 => B::B8x5,
+        AstcBlock::B8x6 => B::B8x6,
+        AstcBlock::B8x8 => B::B8x8,
+        AstcBlock::B10x5 => B::B10x5,
+        AstcBlock::B10x6 => B::B10x6,
+        AstcBlock::B10x8 => B::B10x8,
+        AstcBlock::B10x10 => B::B10x10,
+        AstcBlock::B12x10 => B::B12x10,
+        AstcBlock::B12x12 => B::B12x12,
+    }
+}
+
+/// The block encoding and colour space a wgpu compressed format names, for the
+/// deprecated `CompressedTextureDesc` path. `None` for a format that is not
+/// block-compressed.
+fn compressed_format_from_gpu(
+    format: crate::gpu::TextureFormat,
+) -> Option<(CompressedFormat, crate::ColourSpace)> {
+    use crate::ColourSpace::{Linear, Srgb};
+    use crate::gpu::TextureFormat as F;
+    use CompressedFormat as C;
+    Some(match format {
+        F::Bc1RgbaUnorm => (C::Bc1Rgba, Linear),
+        F::Bc1RgbaUnormSrgb => (C::Bc1Rgba, Srgb),
+        F::Bc2RgbaUnorm => (C::Bc2Rgba, Linear),
+        F::Bc2RgbaUnormSrgb => (C::Bc2Rgba, Srgb),
+        F::Bc3RgbaUnorm => (C::Bc3Rgba, Linear),
+        F::Bc3RgbaUnormSrgb => (C::Bc3Rgba, Srgb),
+        F::Bc4RUnorm => (C::Bc4R, Linear),
+        F::Bc4RSnorm => (C::Bc4RSigned, Linear),
+        F::Bc5RgUnorm => (C::Bc5Rg, Linear),
+        F::Bc5RgSnorm => (C::Bc5RgSigned, Linear),
+        F::Bc6hRgbUfloat => (C::Bc6hRgb, Linear),
+        F::Bc6hRgbFloat => (C::Bc6hRgbSigned, Linear),
+        F::Bc7RgbaUnorm => (C::Bc7Rgba, Linear),
+        F::Bc7RgbaUnormSrgb => (C::Bc7Rgba, Srgb),
+        F::Etc2Rgb8Unorm => (C::Etc2Rgb8, Linear),
+        F::Etc2Rgb8UnormSrgb => (C::Etc2Rgb8, Srgb),
+        F::Etc2Rgb8A1Unorm => (C::Etc2Rgb8A1, Linear),
+        F::Etc2Rgb8A1UnormSrgb => (C::Etc2Rgb8A1, Srgb),
+        F::Etc2Rgba8Unorm => (C::Etc2Rgba8, Linear),
+        F::Etc2Rgba8UnormSrgb => (C::Etc2Rgba8, Srgb),
+        F::EacR11Unorm => (C::EacR11, Linear),
+        F::EacR11Snorm => (C::EacR11Signed, Linear),
+        F::EacRg11Unorm => (C::EacRg11, Linear),
+        F::EacRg11Snorm => (C::EacRg11Signed, Linear),
+        F::Astc { block, channel } => {
+            use crate::gpu::AstcBlock as B;
+            let block = match block {
+                B::B4x4 => AstcBlock::B4x4,
+                B::B5x4 => AstcBlock::B5x4,
+                B::B5x5 => AstcBlock::B5x5,
+                B::B6x5 => AstcBlock::B6x5,
+                B::B6x6 => AstcBlock::B6x6,
+                B::B8x5 => AstcBlock::B8x5,
+                B::B8x6 => AstcBlock::B8x6,
+                B::B8x8 => AstcBlock::B8x8,
+                B::B10x5 => AstcBlock::B10x5,
+                B::B10x6 => AstcBlock::B10x6,
+                B::B10x8 => AstcBlock::B10x8,
+                B::B10x10 => AstcBlock::B10x10,
+                B::B12x10 => AstcBlock::B12x10,
+                B::B12x12 => AstcBlock::B12x12,
+            };
+            match channel {
+                crate::gpu::AstcChannel::Unorm => (C::Astc { block, hdr: false }, Linear),
+                crate::gpu::AstcChannel::UnormSrgb => (C::Astc { block, hdr: false }, Srgb),
+                crate::gpu::AstcChannel::Hdr => (C::Astc { block, hdr: true }, Linear),
+            }
+        }
+        _ => return None,
+    })
 }
 
 /// The colour space a format is sampled in: an sRGB format decodes to linear in

@@ -67,7 +67,7 @@ pub use self::light_probes::{
     project_equirect_to_sh,
 };
 pub use self::lightmap::{LightmapData, LightmapMode};
-pub use self::material::environment::{EnvironmentMapId, EnvironmentZone};
+pub use self::material::environment::{EnvironmentMapId, EnvironmentOptions, EnvironmentZone};
 pub use self::material::texture_store::TextureId;
 pub use self::material::textures::{CompressedTextureDesc, supports_texture_format};
 pub use self::memory::vram_budget;
@@ -111,13 +111,12 @@ pub(crate) use self::postprocess::producer::{
 };
 pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
-    ContactShadowUniform, DofUniform, FrustumPlane, FrustumUniform,
-    GpuProjectedTetMesh, GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData,
-    MeshInstanceGpuData, ObjectUniform, OutlineObjectBuffers, OutlineUniform,
-    OverlayShadowLayerGpu, OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex,
-    OverlayShapeVertex, OverlayTextVertex, ProjectedTetUniform, SHADOW_ATLAS_SIZE,
-    ShadowAtlasUniform, ShadowCullState, SsaoUniform, SubHighlightGpuData, ToneMapUniform,
-    ViewportCullState, ViewportHdrState,
+    ContactShadowUniform, DofUniform, FrustumPlane, FrustumUniform, GpuProjectedTetMesh,
+    GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData, MeshInstanceGpuData,
+    ObjectUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
+    OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex,
+    OverlayTextVertex, ProjectedTetUniform, SHADOW_ATLAS_SIZE, ShadowAtlasUniform, ShadowCullState,
+    SsaoUniform, SubHighlightGpuData, ToneMapUniform, ViewportCullState, ViewportHdrState,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,

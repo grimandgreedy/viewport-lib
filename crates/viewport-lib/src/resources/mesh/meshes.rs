@@ -4668,13 +4668,12 @@ mod async_upload_tests {
 
         // Submit an env-map job so we have a live JobId of the wrong type.
         let pixels = vec![0.5f32; 8 * 4 * 4];
-        let other_id = crate::resources::material::environment::begin_upload_environment_map(
+        let other_id = crate::resources::material::environment::begin_upload_environment(
             &mut resources,
             &device,
             &try_make_device().unwrap().1,
-            pixels,
-            8,
-            4,
+            crate::TextureData::hdr(8, 4, pixels),
+            Default::default(),
         )
         .unwrap();
 

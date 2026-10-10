@@ -124,7 +124,7 @@ pub struct ProgressHandle {
 }
 
 impl ProgressHandle {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             inner: Arc::new(AtomicU32::new(0)),
         }

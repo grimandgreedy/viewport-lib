@@ -504,6 +504,10 @@ pub struct ViewportFrame {
     pub grid_colour: Option<crate::Colour>,
     /// Whether to draw the axes orientation indicator overlay. Default: true.
     pub show_axes_indicator: bool,
+    /// What this viewport draws behind the scene. Default: the lighting
+    /// environment, or `background_colour` when there is none. Drawn only on
+    /// the HDR pipeline.
+    pub environment_background: EnvironmentBackground,
 }
 
 impl Default for ViewportFrame {
@@ -517,6 +521,7 @@ impl Default for ViewportFrame {
             grid_z: 0.0,
             grid_colour: None,
             show_axes_indicator: true,
+            environment_background: EnvironmentBackground::default(),
         }
     }
 }
@@ -615,43 +620,11 @@ impl InteractionFrame {
 // viewport-lib-types; re-exported so `crate::renderer::types::*` paths hold.
 pub use viewport_lib_types::effects::ground::{GroundPlane, GroundPlaneMode};
 
-/// When set on `EffectsFrame::environment`, the renderer uses the environment
-/// map for PBR ambient lighting (irradiance + specular) and optionally renders
-/// it as the scene background (skybox).
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct EnvironmentSettings {
-    /// Absolute luminance scale in **nits** applied to the sampled environment -
-    /// both the IBL contribution (diffuse irradiance + specular reflections) and
-    /// the skybox background, so the lit surfaces and the visible sky stay
-    /// physically consistent. Default: `1.0`.
-    ///
-    /// The stored environment map carries relative radiance; this scales it to
-    /// the physical brightness the sky should read at, on the same nits scale as
-    /// emissive surfaces (see [`Material::emissive_strength`](crate::Material)).
-    /// A clear daytime sky is on the order of thousands of nits, so under
-    /// photometric exposure a value near `1.0` leaves the environment nearly
-    /// black; raise it to the sky's real luminance. The metering of an HDRI's
-    /// own peaks is unchanged - this is a single physical multiplier, not a
-    /// tonemap.
-    pub intensity: f32,
-    /// Y-axis rotation in radians. Default: 0.0.
-    pub rotation: f32,
-    /// Whether to render the environment as a visible skybox background.
-    /// When false, IBL still contributes lighting but the background uses
-    /// `ViewportFrame::background_colour`. Default: true.
-    pub show_skybox: bool,
-}
-
-impl Default for EnvironmentSettings {
-    fn default() -> Self {
-        Self {
-            intensity: 1.0,
-            rotation: 0.0,
-            show_skybox: true,
-        }
-    }
-}
+// Environment settings live in viewport-lib-types; re-exported so
+// `crate::renderer::types::*` paths hold.
+pub use viewport_lib_types::effects::environment::{
+    BackgroundSource, EnvironmentBackground, EnvironmentIntensity, EnvironmentLighting,
+};
 
 // Scatter-volume pass config (`ScatterQuality`, `ScatterSettings`) lives in
 // viewport-lib-types; re-exported so `crate::renderer::types::*` paths hold.
@@ -723,8 +696,9 @@ pub struct EffectsFrame {
     /// The pass itself is driven by `SceneFrame::foreground_items`; this only
     /// carries pass-wide settings.
     pub foreground: Option<ForegroundPass>,
-    /// Optional environment settings for IBL and skybox. Default: None.
-    pub environment: Option<EnvironmentSettings>,
+    /// The environment that lights the scene. Default: None. What each viewport
+    /// draws behind the scene is `ViewportFrame::environment_background`.
+    pub environment: Option<EnvironmentLighting>,
     /// Ground plane configuration. Default: mode = None (not drawn, zero overhead).
     pub ground_plane: GroundPlane,
     /// Debug overlays (shadow-atlas viewer). Default: off.
@@ -786,8 +760,8 @@ pub use viewport_lib_types::effects::debug::EffectsDebug;
 pub struct SceneEffects<'a> {
     /// Per-frame lighting configuration (drives the shadow pass and light uniform).
     pub lighting: &'a LightingSettings,
-    /// Optional environment settings for IBL and skybox.
-    pub environment: &'a Option<EnvironmentSettings>,
+    /// The environment that lights the scene.
+    pub environment: &'a Option<EnvironmentLighting>,
     /// Participating-media quality settings (scene-global).
     pub scatter: &'a ScatterSettings,
 }
@@ -839,6 +813,9 @@ pub enum LightingPosture {
     /// Physically-scaled daylight: real photometric magnitudes
     /// ([`LightingSettings::daylight`]) mapped down by an adaptive camera
     /// ([`ExposureSettings::automatic`]) so the sun does not clip to white.
+    /// The environment intensity is a lux target matched to the daylight fill,
+    /// so an HDRI sky lights the scene beside the sun whatever its stored
+    /// brightness.
     PhysicalDaylight,
 }
 
@@ -857,8 +834,11 @@ impl EffectsFrame {
     /// let effects = EffectsFrame::default().with_posture(LightingPosture::PhysicalDaylight);
     /// ```
     ///
-    /// Leaves other display fields (pipeline mode, tone-map operator) and the
-    /// per-material [`ShadingModel`](crate::ShadingModel) untouched.
+    /// The environment intensity is part of [`LightingSettings`], so it follows
+    /// the posture too: a multiplier of 1.0 for `Faithful`, a lux target for
+    /// `PhysicalDaylight`. Set the environment itself afterwards; it is not
+    /// touched. Leaves other display fields (pipeline mode, tone-map operator)
+    /// and the per-material [`ShadingModel`](crate::ShadingModel) untouched.
     pub fn with_posture(mut self, posture: LightingPosture) -> Self {
         match posture {
             LightingPosture::Faithful => {
