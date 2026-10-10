@@ -98,7 +98,7 @@ impl ViewportInstance {
             pointer_delta: pointer.delta,
             cursor_viewport: pointer.cursor,
             clicked: pointer.clicked,
-            drag_started: pointer.drag_started,
+            drag_started: pointer.pressed,
             dragging: pointer.dragging,
             shift_held: self.input.modifiers().shift,
             ..Default::default()
@@ -122,7 +122,7 @@ impl ViewportInstance {
             pointer_delta: pointer.delta,
             selection_center,
             gizmo: None,
-            drag_started: pointer.drag_started,
+            drag_started: pointer.pressed,
             dragging: pointer.dragging,
             clicked: pointer.clicked,
         };

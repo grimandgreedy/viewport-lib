@@ -53,7 +53,7 @@ pub use preset::{
 };
 pub use touch::TouchSettings;
 pub use viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};
-pub use viewport_input::ViewportInput;
+pub use viewport_input::{CLICK_THRESHOLD_PX, ViewportInput};
 
 /// Central input system that evaluates action queries against the current
 /// binding table and input mode.
