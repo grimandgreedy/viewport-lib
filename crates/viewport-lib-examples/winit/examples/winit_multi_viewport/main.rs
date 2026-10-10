@@ -18,7 +18,8 @@
 //!
 //! The scene is built once and shared across all viewports. Each viewport gets
 //! its own camera and OrbitCameraController. Mouse input is routed to
-//! whichever quadrant the cursor is currently in.
+//! whichever quadrant the cursor is currently in, and that quadrant draws a
+//! slightly blue background to show the per-viewport background setting.
 
 use std::sync::Arc;
 use viewport_lib as vpl;
@@ -161,6 +162,11 @@ impl AppState {
         };
         fd.viewport.show_grid = true;
         fd.viewport.show_axes_indicator = true;
+        // Each viewport sets its own background: the one under the cursor is
+        // tinted slightly blue against the default #3b3b40.
+        if quad == self.hovered_quad {
+            fd.viewport.background_colour = Some(vpl::Colour::srgb_u8(0x3b, 0x40, 0x4e, 0xff));
+        }
         fd
     }
 }
