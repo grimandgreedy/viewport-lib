@@ -905,8 +905,10 @@ impl OverlayShapeItem {
     /// same coordinate space as `position`). Negative values mean the point is
     /// inside the shape; positive values mean it is outside.
     ///
-    /// This evaluates the same SDF used by the GPU shader, so the boundary
-    /// matches what is rendered on screen (ignoring sub-pixel AA).
+    /// This evaluates the same SDF used by the GPU shader, under the item's
+    /// rotation, pivot and scale, so the boundary matches what is rendered on
+    /// screen (ignoring sub-pixel AA). A scale that is zero, negative or not
+    /// finite draws nothing, so every point is outside.
     ///
     /// `position` is treated as the box's absolute top-left. For a shape with a
     /// non-default `anchor` (a viewport corner or a world point), first resolve
@@ -914,22 +916,37 @@ impl OverlayShapeItem {
     /// whose `position` is that value, so the test frame matches where the shape
     /// draws.
     pub fn distance(&self, point: [f32; 2]) -> f32 {
+        let scale = self.transform.scale;
+        if !(scale.is_finite() && scale > 0.0) {
+            return f32::INFINITY;
+        }
         let hw = self.size[0] * 0.5;
         let hh = self.size[1] * 0.5;
         let cx = self.transform.translate[0] + hw;
         let cy = self.transform.translate[1] + hh;
         let dx = point[0] - cx;
         let dy = point[1] - cy;
-        // Rotate the query point by -rotation around the rotation pivot (an
-        // offset from the shape centre) so the SDF evaluates in the unrotated
-        // frame, matching the fragment shader. With a zero pivot this reduces
-        // to rotation around the centre.
+        // Undo the item transform around the pivot (an offset from the shape
+        // centre): rotate by -rotation, then divide out the scale, so the SDF
+        // evaluates in the shape's own frame, matching the renderer.
         let c = (-self.transform.rotation).cos();
         let s = (-self.transform.rotation).sin();
         let piv = self.transform.pivot;
         let rx = dx - piv[0];
         let ry = dy - piv[1];
-        let p = [c * rx - s * ry + piv[0], s * rx + c * ry + piv[1]];
+        let inv = 1.0 / scale;
+        let p = [
+            (c * rx - s * ry) * inv + piv[0],
+            (s * rx + c * ry) * inv + piv[1],
+        ];
+        // The SDF is in the shape's own pixels; scale it back to screen pixels.
+        self.local_distance(p) * scale
+    }
+
+    /// Signed distance from a point in the shape's centred, untransformed frame.
+    fn local_distance(&self, p: [f32; 2]) -> f32 {
+        let hw = self.size[0] * 0.5;
+        let hh = self.size[1] * 0.5;
         let hs = [hw, hh];
 
         match &self.shape {
@@ -1225,6 +1242,95 @@ mod tests {
             s.distance([0.0, 0.0]) > 0.0,
             "far corner should be positive"
         );
+    }
+
+    #[test]
+    fn scaled_rect_hits_its_drawn_size() {
+        // 100x100 box centred on (50, 50). Scaled about the centre, the right
+        // edge sits at 50 + 50 * scale.
+        for scale in [2.0, 0.5] {
+            let s = shape_at(
+                0.0,
+                0.0,
+                100.0,
+                100.0,
+                OverlayShape::Rect { corner_radius: 0.0 },
+            )
+            .with_scale(scale);
+            let edge = 50.0 + 50.0 * scale;
+            assert!(s.contains([edge - 1.0, 50.0]), "scale {scale}");
+            assert!(!s.contains([edge + 1.0, 50.0]), "scale {scale}");
+            // Distance stays in screen pixels.
+            let d = s.distance([edge + 10.0, 50.0]);
+            assert!((d - 10.0).abs() < 1e-3, "scale {scale}: {d}");
+        }
+    }
+
+    #[test]
+    fn scaled_vector_shape_hits_its_drawn_size() {
+        let square = SubPath::polygon(&[[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]]);
+        for scale in [2.0, 0.5] {
+            let s = OverlayShapeItem::vector(
+                vec![square.clone()],
+                FillRule::NonZero,
+                [0.0, 0.0],
+                [100.0, 100.0],
+            )
+            .with_scale(scale);
+            let edge = 50.0 + 50.0 * scale;
+            assert!(s.contains([edge - 1.0, 50.0]), "scale {scale}");
+            assert!(!s.contains([edge + 1.0, 50.0]), "scale {scale}");
+        }
+    }
+
+    #[test]
+    fn scale_rotation_and_pivot_match_the_transform() {
+        let transform = OverlayTransform {
+            translate: [40.0, 30.0],
+            rotation: 0.6,
+            pivot: [15.0, -10.0],
+            scale: 1.7,
+        };
+        let s = shape_at(
+            0.0,
+            0.0,
+            80.0,
+            60.0,
+            OverlayShape::Rect { corner_radius: 0.0 },
+        )
+        .with_transform(transform);
+        // `apply` takes points relative to the item's centre and returns them
+        // relative to the centre's untranslated position.
+        let centre = [40.0 + 40.0, 30.0 + 30.0];
+        let to_screen = |local: [f32; 2]| {
+            let t = OverlayTransform {
+                translate: [0.0, 0.0],
+                ..transform
+            }
+            .apply(local);
+            [centre[0] + t[0], centre[1] + t[1]]
+        };
+        for (corner, inward) in [
+            ([-40.0, -30.0], [1.0, 1.0]),
+            ([40.0, -30.0], [-1.0, 1.0]),
+            ([40.0, 30.0], [-1.0, -1.0]),
+            ([-40.0, 30.0], [1.0, -1.0]),
+        ] {
+            let d = s.distance(to_screen(corner));
+            assert!(d.abs() < 1e-3, "corner {corner:?} at distance {d}");
+            let inside = [corner[0] + inward[0], corner[1] + inward[1]];
+            let outside = [corner[0] - inward[0], corner[1] - inward[1]];
+            assert!(s.contains(to_screen(inside)), "inside {corner:?}");
+            assert!(!s.contains(to_screen(outside)), "outside {corner:?}");
+        }
+    }
+
+    #[test]
+    fn degenerate_scale_hits_nothing() {
+        for scale in [0.0, -1.0, f32::NAN] {
+            let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Circle).with_scale(scale);
+            assert!(!s.contains([50.0, 50.0]), "scale {scale}");
+        }
     }
 
     #[test]
