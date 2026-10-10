@@ -30,12 +30,19 @@ use crate::overlay::{
 /// [`content_hash_at`](Self::content_hash_at) hashes screen positions relative
 /// to `origin`, so content that only moved keeps its hash and a retained group
 /// can follow it with `RetainedOverlay::transform`. The screen positions are
-/// the corners of `clip.rect`, plus each value's own placement: `points` on a
-/// polyline, and `transform.translate` on everything else. A polyline's
-/// `translate` is a nudge on top of its points, so it is hashed as it is, along
-/// with a world anchor and a transform's `pivot`, which is local to the item. The
-/// relative positions are computed in `f32`, so a move by an amount that is
-/// not exactly representable can round differently and change the hash.
+/// each value's own placement: `points` on a polyline, and
+/// `transform.translate` on everything else. A polyline's `translate` is a
+/// nudge on top of its points, so it is hashed as it is, along with a world
+/// anchor and a transform's `pivot`, which is local to the item.
+///
+/// A `clip.rect` is hashed as it is too. It is a fixed screen box: a compiled
+/// group bakes it in where it was authored and does not move it with the
+/// group's translate. So content scrolling under a fixed clip keeps its hash,
+/// and a clip that moves changes it, which is what a cache of compiled groups
+/// needs.
+///
+/// The relative positions are computed in `f32`, so a move by an amount that
+/// is not exactly representable can round differently and change the hash.
 ///
 /// What the hash cannot see:
 /// - texture and font contents: `OverlayTextureId` and `FontHandle` hash by
@@ -240,14 +247,14 @@ impl OverlayContentHash for OverlayTransform {
 }
 
 impl OverlayContentHash for OverlayClip {
-    fn content_hash_at<H: Hasher>(&self, origin: [f32; 2], state: &mut H) {
+    fn content_hash_at<H: Hasher>(&self, _origin: [f32; 2], state: &mut H) {
+        // A screen box, not a placement: see the trait doc.
         let Self { rect, mask } = self;
         match rect {
             None => state.write_u8(0),
-            Some([x0, y0, x1, y1]) => {
+            Some(r) => {
                 state.write_u8(1);
-                hash_point(state, [*x0, *y0], origin);
-                hash_point(state, [*x1, *y1], origin);
+                hash_floats(state, r);
             }
         }
         hash_opt_u32(state, *mask);
@@ -948,8 +955,9 @@ mod tests {
         assert_ne!(hash(&g), base);
     }
 
-    /// Moving every screen position and the origin by the same amount keeps
-    /// the hash, which is what lets a retained group follow moved content.
+    /// Moving an item's placement and the origin by the same amount keeps the
+    /// hash, which is what lets a retained group follow moved content. Here the
+    /// clip stays put, as it does in a scroll container.
     #[test]
     fn a_pure_move_keeps_the_hash_at_a_moved_origin() {
         let d = [12.0, -7.0];
@@ -964,10 +972,24 @@ mod tests {
         let p = polyline();
         let mut p2 = p.clone();
         p2.points = p.points.iter().map(|&q| moved(q)).collect();
+        assert_eq!(hash_at(&p, [0.0, 0.0]), hash_at(&p2, d));
+    }
+
+    /// A compiled group bakes its items' clip rects where they were authored,
+    /// so a clip that moves with the content must change the key: reusing the
+    /// group would clip the moved content to the old box.
+    #[test]
+    fn a_clip_that_moves_with_the_content_changes_the_hash() {
+        let d = [12.0, -7.0];
+        let moved = |p: [f32; 2]| [p[0] + d[0], p[1] + d[1]];
+
+        let p = polyline();
+        let mut p2 = p.clone();
+        p2.points = p.points.iter().map(|&q| moved(q)).collect();
         let r = p.clip.rect.unwrap();
         let (a, b) = (moved([r[0], r[1]]), moved([r[2], r[3]]));
         p2.clip.rect = Some([a[0], a[1], b[0], b[1]]);
-        assert_eq!(hash_at(&p, [0.0, 0.0]), hash_at(&p2, d));
+        assert_ne!(hash_at(&p, [0.0, 0.0]), hash_at(&p2, d));
     }
 
     /// Records the bytes it is fed, so a test can pin the exact layout.
