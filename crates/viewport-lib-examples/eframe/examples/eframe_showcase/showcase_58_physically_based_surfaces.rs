@@ -161,11 +161,8 @@ impl App {
             "Ground",
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(span * 0.5, 0.0, -0.05)),
-            {
-                let mut m = Material::from_colour(Colour::linear_rgb(0.5, 0.5, 0.52));
-                m.roughness = 0.9;
-                m
-            },
+            // PBR so the environment lights it; Phong takes only the sun.
+            Material::pbr(Colour::linear_rgb(0.5, 0.5, 0.52), 0.0, 0.9),
         );
 
         let sphere_mesh = vpl::primitives::sphere(0.8, 48, 24);
@@ -184,7 +181,11 @@ impl App {
                     0.8,
                     0.85,
                 )),
-                Material::emissive(Colour::from_linear_rgb_array(*hue), *nits),
+                {
+                    let mut m = Material::emissive(Colour::from_linear_rgb_array(*hue), *nits);
+                    m.shading_model = vpl::ShadingModel::Pbr;
+                    m
+                },
             );
         }
 
