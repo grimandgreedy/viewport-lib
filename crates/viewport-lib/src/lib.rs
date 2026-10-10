@@ -245,7 +245,10 @@ pub use scene::traits::{RenderMode, ViewportObject};
 pub use viewport_lib_types::encoding;
 pub use viewport_lib_types::encoding::{ColourSource, SizeSource};
 pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, srgb_to_linear};
-pub use vplt::data::texture::{TextureData, TexturePayload, TextureRole};
+pub use vplt::data::texture::{
+    AstcBlock, CompressedFormat, TextureData, TexturePayload, TextureRejection, TextureRole,
+    UploadSlot,
+};
 
 pub use geometry::bvh::PickAccelerator;
 pub use geometry::mesh::isoline::{Isoline, extract_isolines, isoline_strips};

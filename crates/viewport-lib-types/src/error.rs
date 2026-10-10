@@ -289,6 +289,30 @@ pub enum ViewportError {
         texture: u64,
     },
 
+    /// A [`TextureData`](crate::data::texture::TextureData) carries a colour
+    /// space that cannot be right for its contents: an sRGB normal map, sRGB
+    /// float pixels, or a data-only compressed format labelled sRGB. Usually a
+    /// [`with_colour_space`](crate::data::texture::TextureData::with_colour_space)
+    /// relabel that went the wrong way.
+    #[error("invalid texture colour space: {reason}")]
+    InvalidTextureColourSpace {
+        /// What is wrong with the label.
+        reason: &'static str,
+    },
+
+    /// An upload was given a well-formed
+    /// [`TextureData`](crate::data::texture::TextureData) that its slot cannot
+    /// take: the wrong colour space or size, a payload kind the slot does not
+    /// sample, or a normal map where none is used. Match on `reason` to fix it,
+    /// for example by relabelling the colour space and retrying.
+    #[error("{slot} cannot take this texture: {reason}")]
+    UnsupportedTextureData {
+        /// The kind of upload that rejected it.
+        slot: crate::data::texture::UploadSlot,
+        /// Why.
+        reason: crate::data::texture::TextureRejection,
+    },
+
     /// `upload_environment` was called after the environment set filled its
     /// fixed layer capacity. The default (layer 0) and up to `max - 1` extra
     /// environments fit; beyond that, callers must reuse an existing handle.
