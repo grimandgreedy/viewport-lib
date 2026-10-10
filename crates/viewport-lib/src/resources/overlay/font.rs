@@ -304,6 +304,21 @@ impl GlyphAtlas {
         Some((data.shared(), self.font_keys[index].2))
     }
 
+    /// The first character of `text` that `font` has no glyph for, skipping
+    /// whitespace and control characters. A handle that was never uploaded
+    /// covers nothing.
+    pub fn missing_glyph(&self, text: &str, font: Option<FontHandle>) -> Option<char> {
+        let font_index = font.map_or(0, |h| h.0);
+        let mut drawn = text
+            .chars()
+            .filter(|c| !c.is_whitespace() && !c.is_control());
+        if font_index >= self.font_keys.len() {
+            return drawn.next();
+        }
+        let charmap = self.font_ref(font_index).charmap();
+        drawn.find(|&c| charmap.map(c) == 0)
+    }
+
     /// A swash font handle for `font_index`. Cheap: it borrows the stored bytes
     /// and reuses the cache key minted at upload.
     fn font_ref(&self, font_index: usize) -> FontRef<'_> {
@@ -1035,12 +1050,41 @@ impl crate::resources::DeviceResources {
     /// `Arc<[u8]>`, so uploading several faces of one collection, or a file a
     /// font database already holds, stores the bytes once. A `Vec<u8>` or a
     /// slice is copied in once; from a `&Vec<u8>`, pass `bytes.as_slice()`.
+    ///
+    /// Taking a font from a system lookup, then checking it can draw a label
+    /// before using it. `lookup` stands for whichever font database the
+    /// application uses; each answers with a file and a face index:
+    ///
+    /// ```ignore
+    /// let (path, face) = lookup.find_family("Noto Sans CJK SC")?;
+    /// let bytes: Arc<[u8]> = std::fs::read(path)?.into();
+    /// let font = resources.upload_font_face(bytes, face)?;
+    /// if let Some(c) = resources.missing_glyph(label, Some(font)) {
+    ///     // This face has no glyph for `c`: try the next candidate.
+    /// }
+    /// ```
     pub fn upload_font_face(
         &mut self,
         data: impl Into<Arc<[u8]>>,
         face: u32,
     ) -> Result<FontHandle, FontError> {
         self.content.glyph_atlas.upload_font_face(data.into(), face)
+    }
+
+    /// The first character of `text` that `font` cannot draw, or `None` when
+    /// it covers all of it. `font` is `None` for the built-in default font.
+    ///
+    /// A label in a font that lacks its characters draws empty boxes without
+    /// any error, so check a font before choosing it for text it was not
+    /// picked for: a label in another script, or text the user typed.
+    /// Whitespace and control characters are skipped. The built-in font only
+    /// covers a cut-down Latin set, so most other scripts need a font passed to
+    /// [`upload_font_face`](Self::upload_font_face).
+    ///
+    /// Reads the font's character map only, so it takes `&self` and needs no
+    /// `device`.
+    pub fn missing_glyph(&self, text: &str, font: Option<FontHandle>) -> Option<char> {
+        self.content.glyph_atlas.missing_glyph(text, font)
     }
 
     /// Measure a text run as it would be laid out for a [`LabelItem`], returning
@@ -1366,6 +1410,38 @@ mod tests {
 
         let (default, face) = atlas.font_face(0).unwrap();
         assert_eq!((&*default, face), (DEFAULT_FONT_BYTES, 0));
+    }
+
+    #[test]
+    fn missing_glyph_reports_the_first_uncovered_character() {
+        let Some((device, _queue)) = headless_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut atlas = GlyphAtlas::new(&device);
+        assert_eq!(atlas.missing_glyph("Front, Back 0-9", None), None);
+        assert_eq!(
+            atlas.missing_glyph("X\u{4e1c}\u{5317}", None),
+            Some('\u{4e1c}')
+        );
+        assert_eq!(
+            atlas.missing_glyph(" \n\t", None),
+            None,
+            "whitespace is skipped"
+        );
+        assert_eq!(atlas.missing_glyph("", None), None);
+
+        // An uploaded face answers from its own character map.
+        let ttc: Arc<[u8]> = two_face_collection().into();
+        let face1 = atlas.upload_font_face(ttc, 1).unwrap();
+        assert_eq!(atlas.missing_glyph("Top", Some(face1)), None);
+        assert_eq!(
+            atlas.missing_glyph("\u{4e0a}", Some(face1)),
+            Some('\u{4e0a}')
+        );
+
+        // A handle that was never uploaded covers nothing.
+        assert_eq!(atlas.missing_glyph(" ab", Some(FontHandle(99))), Some('a'));
     }
 
     /// A COLR base glyph renders as a colour image, and its palette colours come
