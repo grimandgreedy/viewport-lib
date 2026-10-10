@@ -9,6 +9,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{Easing, Material, Projection, ViewPreset, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
@@ -69,7 +70,7 @@ impl App {
                 name,
                 Some(mesh),
                 glam::Mat4::from_translation(*pos),
-                Material::from_colour(*colour),
+                Material::from_colour(Colour::from_linear_rgb_array(*colour)),
             );
         }
 
@@ -187,8 +188,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         (items, None, lighting, sg, 0)

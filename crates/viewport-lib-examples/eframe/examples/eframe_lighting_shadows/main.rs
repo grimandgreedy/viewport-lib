@@ -26,6 +26,7 @@
 
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::from_egui;
 use vpl::{
@@ -198,8 +199,12 @@ fn main() -> eframe::Result {
                 .builtin_matcap_id(BuiltinMatcap::Ceramic);
 
             // Dark neutral background so the scene sits on the same plate as before.
-            session.viewport_frame_mut().background_colour =
-                Some([65.0 / 255.0, 65.0 / 255.0, 65.0 / 255.0, 1.0].into());
+            session.viewport_frame_mut().background_colour = Some(Colour::linear(
+                65.0 / 255.0,
+                65.0 / 255.0,
+                65.0 / 255.0,
+                1.0,
+            ));
             session.camera_mut().distance = 18.0;
 
             Ok(Box::new(App::new(
@@ -532,7 +537,7 @@ impl App {
                 self.light_radius,
             ),
         };
-        light.colour = self.light_colour.into();
+        light.colour = Colour::from_linear_rgb_array(self.light_colour);
         light.importance = self.light_importance;
         light.cast_shadows = self.light_cast_shadows;
         light
@@ -555,8 +560,8 @@ impl App {
                 None
             };
             _t.hemisphere_intensity = self.hemisphere_intensity;
-            _t.sky_colour = self.sky_colour.into();
-            _t.ground_colour = self.ground_colour.into();
+            _t.sky_colour = Colour::from_linear_rgb_array(self.sky_colour);
+            _t.ground_colour = Colour::from_linear_rgb_array(self.ground_colour);
             _t
         }
     }
@@ -673,7 +678,7 @@ impl App {
             ground.mesh_id = self.m_ground;
             ground.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-            ground.material = Material::from_colour([0.88, 0.84, 0.76]);
+            ground.material = Material::from_colour(Colour::linear_rgb(0.88, 0.84, 0.76));
             ground.material.roughness = 0.85;
             ground.material.backface_policy = BackfacePolicy::Cull;
             items.push(ground);
@@ -684,7 +689,7 @@ impl App {
         sphere.mesh_id = self.m_sphere;
         sphere.model =
             glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).to_cols_array_2d();
-        sphere.material = Material::from_colour([0.78, 0.90, 0.80]);
+        sphere.material = Material::from_colour(Colour::linear_rgb(0.78, 0.90, 0.80));
         items.push(sphere);
 
         // Cube: light periwinkle. Flat faces isolate bias and gap artifacts.
@@ -692,7 +697,7 @@ impl App {
         cube.mesh_id = self.m_cube;
         cube.model =
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).to_cols_array_2d();
-        cube.material = Material::from_colour([0.78, 0.83, 0.95]);
+        cube.material = Material::from_colour(Colour::linear_rgb(0.78, 0.83, 0.95));
         items.push(cube);
 
         // Torus: light peach. Mixed geometry useful for bright-spot test.
@@ -701,7 +706,7 @@ impl App {
         torus.mesh_id = self.m_torus;
         torus.model =
             glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).to_cols_array_2d();
-        torus.material = Material::from_colour([0.95, 0.82, 0.74]);
+        torus.material = Material::from_colour(Colour::linear_rgb(0.95, 0.82, 0.74));
         items.push(torus);
 
         for it in &mut items {
@@ -719,7 +724,7 @@ impl App {
             ground.mesh_id = self.m_ground2;
             ground.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-            ground.material = Material::from_colour([0.85, 0.85, 0.85]);
+            ground.material = Material::from_colour(Colour::linear_rgb(0.85, 0.85, 0.85));
             ground.material.roughness = 0.85;
             items.push(ground);
         }
@@ -730,7 +735,7 @@ impl App {
         clay.mesh_id = self.m_clay;
         clay.model =
             glam::Mat4::from_translation(glam::Vec3::new(-4.5, 2.5, 0.7)).to_cols_array_2d();
-        clay.material = Material::from_colour([0.92, 0.90, 0.88]);
+        clay.material = Material::from_colour(Colour::linear_rgb(0.92, 0.90, 0.88));
         clay.material.shading_model = vpl::ShadingModel::Matcap(self.matcap_clay);
         items.push(clay);
 
@@ -740,7 +745,7 @@ impl App {
         ceramic.mesh_id = self.m_ceramic;
         ceramic.model =
             glam::Mat4::from_translation(glam::Vec3::new(-1.5, 2.5, 0.7)).to_cols_array_2d();
-        ceramic.material = Material::from_colour([1.0, 1.0, 1.0]);
+        ceramic.material = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
         ceramic.material.shading_model = vpl::ShadingModel::Matcap(self.matcap_ceramic);
         items.push(ceramic);
 
@@ -750,7 +755,7 @@ impl App {
         metal.mesh_id = self.m_metal;
         metal.model =
             glam::Mat4::from_translation(glam::Vec3::new(1.5, 2.5, 0.7)).to_cols_array_2d();
-        metal.material = Material::pbr([0.95, 0.95, 0.93], 1.0, 0.08);
+        metal.material = Material::pbr(Colour::linear_rgb(0.95, 0.95, 0.93), 1.0, 0.08);
         items.push(metal);
 
         // PBR rough sphere: near-white diffuse. High roughness maximises shadow acne visibility.
@@ -758,7 +763,7 @@ impl App {
         rough.mesh_id = self.m_rough;
         rough.model =
             glam::Mat4::from_translation(glam::Vec3::new(4.5, 2.5, 0.7)).to_cols_array_2d();
-        rough.material = Material::pbr([0.95, 0.95, 0.95], 0.0, 0.95);
+        rough.material = Material::pbr(Colour::linear_rgb(0.95, 0.95, 0.95), 0.0, 0.95);
         items.push(rough);
 
         // Plain diffuse cube: light cream. Flat surfaces at cardinal angles show cascade bands
@@ -767,7 +772,7 @@ impl App {
         cube.mesh_id = self.m_cube2;
         cube.model =
             glam::Mat4::from_translation(glam::Vec3::new(-3.5, -2.5, 0.6)).to_cols_array_2d();
-        cube.material = Material::from_colour([0.96, 0.94, 0.90]);
+        cube.material = Material::from_colour(Colour::linear_rgb(0.96, 0.94, 0.90));
         items.push(cube);
 
         // Percy photo plane: lying flat on the ground, slightly raised to avoid Z-fighting.

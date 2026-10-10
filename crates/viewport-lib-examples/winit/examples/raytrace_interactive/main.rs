@@ -14,6 +14,7 @@
 
 use std::sync::Arc;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 
 use glam::{Mat4, Vec3};
 use vpl::primitives;
@@ -136,7 +137,7 @@ fn build_scene() -> RtScene {
         &ground,
         Vec3::new(0.0, 0.0, -0.2),
         RtMaterial {
-            base_colour: [0.6, 0.6, 0.62].into(),
+            base_colour: Colour::linear_rgb(0.6, 0.6, 0.62),
             roughness: 0.9,
             ..RtMaterial::default()
         },
@@ -148,7 +149,7 @@ fn build_scene() -> RtScene {
         &sphere,
         Vec3::new(-2.6, 0.0, 1.0),
         RtMaterial {
-            base_colour: [0.75, 0.12, 0.10].into(),
+            base_colour: Colour::linear_rgb(0.75, 0.12, 0.10),
             roughness: 0.6,
             ..RtMaterial::default()
         },
@@ -158,7 +159,7 @@ fn build_scene() -> RtScene {
         &sphere,
         Vec3::new(0.0, 0.0, 1.0),
         RtMaterial {
-            base_colour: [0.95, 0.98, 1.0].into(),
+            base_colour: Colour::linear_rgb(0.95, 0.98, 1.0),
             roughness: 0.05,
             transmission: 1.0,
             ior: 1.5,
@@ -170,7 +171,7 @@ fn build_scene() -> RtScene {
         &sphere,
         Vec3::new(2.6, 0.0, 1.0),
         RtMaterial {
-            base_colour: [0.95, 0.85, 0.55].into(),
+            base_colour: Colour::linear_rgb(0.95, 0.85, 0.55),
             metallic: 1.0,
             roughness: 0.15,
             ..RtMaterial::default()
@@ -179,7 +180,7 @@ fn build_scene() -> RtScene {
 
     scene.add_light(RtLight::Directional {
         direction: [0.3, -0.4, 0.85],
-        colour: [3.0, 2.9, 2.7].into(),
+        colour: Colour::linear_rgb(3.0, 2.9, 2.7),
     });
     scene
 }

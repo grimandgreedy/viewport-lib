@@ -12,6 +12,7 @@
 //! re-upload, with the consumer not bumping `scene.generation`, blanked the
 //! frame (draw_calls dropped to 0).
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -58,7 +59,7 @@ fn render_batch(
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
     frame.scene.generation = generation;
 
@@ -68,7 +69,7 @@ fn render_batch(
         .map(|(id, x)| {
             let mut it = SceneRenderItem::default();
             it.mesh_id = *id;
-            it.material.base_colour = [1.0, 0.0, 0.0].into();
+            it.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
             it.settings.unlit = true;
             it.model =
                 glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();

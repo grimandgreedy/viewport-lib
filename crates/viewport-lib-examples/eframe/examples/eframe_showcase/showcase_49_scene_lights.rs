@@ -15,6 +15,7 @@ use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     LightKind, LightSource, LightingSettings, Material, SceneRenderItem, Selection,
     ViewportRenderer,
@@ -78,7 +79,7 @@ fn default_lights() -> [LightSource; 3] {
             range: 14.0,
             radius: 0.1,
         };
-        s.colour = [1.0, 0.6, 0.2].into();
+        s.colour = Colour::linear_rgb(1.0, 0.6, 0.2);
         // Candela-scale under inverse-square: intensity ~= E * d^2 for spheres a
         // few units from the orbiting light.
         s.intensity = 40.0;
@@ -94,7 +95,7 @@ fn default_lights() -> [LightSource; 3] {
             outer_angle: 0.4,
             radius: 0.1,
         };
-        s.colour = [0.4, 0.7, 1.0].into();
+        s.colour = Colour::linear_rgb(0.4, 0.7, 1.0);
         s.intensity = 80.0;
         s
     };
@@ -103,7 +104,7 @@ fn default_lights() -> [LightSource; 3] {
         s.kind = LightKind::Directional {
             direction: [0.3, 0.2, 1.0],
         };
-        s.colour = [1.0, 1.0, 0.9].into();
+        s.colour = Colour::linear_rgb(1.0, 1.0, 0.9);
         s.intensity = 0.4;
         s
     };
@@ -204,7 +205,7 @@ impl App {
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.05)),
             {
-                let mut m = Material::from_colour([0.28, 0.28, 0.3]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.28, 0.28, 0.3));
                 m.roughness = 0.95;
                 m
             },
@@ -224,7 +225,7 @@ impl App {
                     Some(sphere_id),
                     glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.7)),
                     {
-                        let mut m = Material::from_colour([0.88, 0.88, 0.9]);
+                        let mut m = Material::from_colour(Colour::linear_rgb(0.88, 0.88, 0.9));
                         m.roughness = 0.3;
                         m
                     },
@@ -251,7 +252,7 @@ impl App {
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.1)),
             {
-                let mut m = Material::from_colour([0.10, 0.10, 0.11]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.10, 0.10, 0.11));
                 m.roughness = 0.95;
                 m
             },
@@ -273,7 +274,7 @@ impl App {
                     Some(pillar_id),
                     glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.8)),
                     {
-                        let mut m = Material::from_colour([0.85, 0.85, 0.9]);
+                        let mut m = Material::from_colour(Colour::linear_rgb(0.85, 0.85, 0.9));
                         m.roughness = 0.6;
                         m
                     },
@@ -301,7 +302,7 @@ fn rebuild_stress_lights(state: &mut SlState) {
     dir.kind = LightKind::Directional {
         direction: [0.25, 0.3, 1.0],
     };
-    dir.colour = [0.6, 0.7, 0.9].into();
+    dir.colour = Colour::linear_rgb(0.6, 0.7, 0.9);
     dir.intensity = 0.15;
     dir.importance = 10.0; // Always survive the cap.
     let dir_id = state.scene.add_light(dir.clone());
@@ -334,7 +335,7 @@ fn rebuild_stress_lights(state: &mut SlState) {
             range: state.stress_radius,
             radius: 0.1,
         };
-        src.colour = colour.into();
+        src.colour = Colour::from_linear_rgb_array(colour);
         src.intensity = state.stress_intensity;
         src.importance = importance;
 
@@ -464,14 +465,14 @@ pub(crate) fn sl_collect(app: &mut App) -> (Vec<SceneRenderItem>, LightingSettin
     match app.sl_state.active_tab {
         SlTab::Basics => {
             l.hemisphere_intensity = app.sl_state.hemi_intensity;
-            l.sky_colour = [0.7, 0.8, 1.0].into();
-            l.ground_colour = [0.4, 0.35, 0.3].into();
+            l.sky_colour = Colour::linear_rgb(0.7, 0.8, 1.0);
+            l.ground_colour = Colour::linear_rgb(0.4, 0.35, 0.3);
         }
         SlTab::Stress => {
             // Near-black ambient so the per-light pools dominate.
             l.hemisphere_intensity = 0.03;
-            l.sky_colour = [0.1, 0.12, 0.18].into();
-            l.ground_colour = [0.02, 0.02, 0.03].into();
+            l.sky_colour = Colour::linear_rgb(0.1, 0.12, 0.18);
+            l.ground_colour = Colour::linear_rgb(0.02, 0.02, 0.03);
         }
     }
     let sg = app.sl_state.scene.version();
@@ -600,7 +601,7 @@ fn controls_basics(app: &mut App, ui: &mut egui::Ui) {
                     ui.label("Colour:");
                     let mut c = src.colour.to_linear_rgb();
                     if ui.color_edit_button_rgb(&mut c).changed() {
-                        src.colour = c.into();
+                        src.colour = Colour::from_linear_rgb_array(c);
                     }
                 });
                 ui.add(egui::Slider::new(&mut src.intensity, 0.0..=120.0).text("Intensity"));

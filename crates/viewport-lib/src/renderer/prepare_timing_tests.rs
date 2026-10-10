@@ -3,6 +3,7 @@
 //! Ignored by default; run with
 //! `cargo test --release -p viewport-lib --lib per_object_prepare_timing -- --ignored --nocapture`.
 
+use crate::Colour;
 use crate::renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission};
 use crate::{Camera, Material, ViewportRenderer};
 
@@ -27,8 +28,9 @@ fn per_object_prepare_timing() {
             let (x, y) = ((i % 100) as f32, (i / 100) as f32);
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x - 50.0, y - 50.0, 0.0))
                 .to_cols_array_2d();
-            item.material = Material::from_colour([(i % 7) as f32 / 7.0, 0.5, 0.5])
-                .with_sampler(crate::TextureSlot::Albedo, crate::SamplerKey::default());
+            item.material =
+                Material::from_colour(Colour::linear_rgb((i % 7) as f32 / 7.0, 0.5, 0.5))
+                    .with_sampler(crate::TextureSlot::Albedo, crate::SamplerKey::default());
             item
         })
         .collect();

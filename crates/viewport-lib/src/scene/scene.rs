@@ -5,6 +5,7 @@
 //! into `SceneFrame::surfaces` (usually via `SceneFrame::from_surface_items(...)`).
 //! The renderer itself remains stateless.
 
+use crate::Colour;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -364,7 +365,7 @@ impl Scene {
                 name: "Default".to_string(),
                 visible: true,
                 locked: false,
-                colour: [1.0, 1.0, 1.0, 1.0].into(),
+                colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
                 order: 0,
             }],
             next_id: 1,
@@ -766,7 +767,7 @@ impl Scene {
             name: name.to_string(),
             visible: true,
             locked: false,
-            colour: [1.0, 1.0, 1.0, 1.0].into(),
+            colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
             order,
         });
         self.version = self.version.wrapping_add(1);
@@ -1724,7 +1725,7 @@ mod tests {
     fn test_set_layer_colour() {
         let mut scene = Scene::new();
         let layer_id = scene.add_layer("Coloured");
-        scene.set_layer_colour(layer_id, [1.0, 0.0, 0.0, 1.0]);
+        scene.set_layer_colour(layer_id, Colour::linear(1.0, 0.0, 0.0, 1.0));
         let layers = scene.layers();
         let layer = layers.iter().find(|l| l.id == layer_id).unwrap();
         assert_eq!(layer.colour.to_linear_rgba(), [1.0, 0.0, 0.0, 1.0]);

@@ -9,6 +9,7 @@ use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     AutoExposure, EnvironmentBackground, EnvironmentIntensity, EnvironmentLighting,
     EnvironmentMapId, ExposureMode, ExposureSettings, LightSource, LightingSettings, Lux, Material,
@@ -161,7 +162,7 @@ impl App {
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(span * 0.5, 0.0, -0.05)),
             {
-                let mut m = Material::from_colour([0.5, 0.5, 0.52]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.5, 0.5, 0.52));
                 m.roughness = 0.9;
                 m
             },
@@ -183,7 +184,7 @@ impl App {
                     0.8,
                     0.85,
                 )),
-                Material::emissive(*hue, *nits),
+                Material::emissive(Colour::from_linear_rgb_array(*hue), *nits),
             );
         }
 
@@ -196,7 +197,7 @@ impl App {
                 0.8,
                 0.85,
             )),
-            Material::pbr([0.95, 0.95, 0.95], 1.0, 0.06),
+            Material::pbr(Colour::linear_rgb(0.95, 0.95, 0.95), 1.0, 0.06),
         );
 
         self.surfaces_state.built = true;

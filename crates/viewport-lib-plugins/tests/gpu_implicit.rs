@@ -5,6 +5,7 @@
 
 #![cfg(feature = "item-types")]
 
+use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::gpu_implicit::{
     GpuImplicitItem, GpuImplicitPlugin, ImplicitPrimitive, TYPE_NAME as GPU_IMPLICIT_TYPE_NAME,
 };
@@ -36,7 +37,7 @@ fn gpu_pick_hits_implicit_surface() {
         blend: 0.0,
         _pad: [0.0; 2],
         params: [0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 0.0, 0.0],
-        colour: [1.0, 1.0, 1.0, 1.0].into(),
+        colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
     };
     let mut item = GpuImplicitItem::default();
     item.primitives.push(prim);
@@ -67,7 +68,7 @@ fn cpu_pick_hits_implicit_surface() {
         blend: 0.0,
         _pad: [0.0; 2],
         params: [0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 0.0, 0.0],
-        colour: [1.0, 1.0, 1.0, 1.0].into(),
+        colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
     };
     let mut item = GpuImplicitItem::default();
     item.primitives.push(prim);
@@ -101,7 +102,7 @@ fn rect_pick_hits_implicit_surface() {
         blend: 0.0,
         _pad: [0.0; 2],
         params: [0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 0.0, 0.0],
-        colour: [1.0, 1.0, 1.0, 1.0].into(),
+        colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
     };
     let mut item = GpuImplicitItem::default();
     item.primitives.push(prim);

@@ -3,6 +3,7 @@
 //! instanced fast path used to leave both counters at 0 even while issuing one
 //! draw per item.
 
+use viewport_lib::Colour;
 use viewport_lib::{
     CameraFrame, FrameData, Material, SamplerKey, SceneFrame, SceneRenderItem, TextureSlot,
     WrapMode,
@@ -34,7 +35,7 @@ fn per_object_draws_are_counted() {
             // instanced and bindless paths share one sampler across a batch, so
             // a material that picks its own wrap mode draws per object rather
             // than having it silently dropped.
-            item.material = Material::from_colour([0.6, 0.6, 0.7]).with_sampler(
+            item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.7)).with_sampler(
                 TextureSlot::Albedo,
                 SamplerKey {
                     wrap_u: WrapMode::ClampToEdge,

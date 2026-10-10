@@ -18,6 +18,7 @@
 use crate::eframe;
 use std::collections::HashMap;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib_plugins::item_types::decal::DecalItem;
 use viewport_lib_plugins::item_types::gpu_marching_cubes::{
@@ -567,7 +568,7 @@ impl App {
         unlit.unlit = false;
         for (name, mesh_id, pos, colour) in configs {
             let transform = glam::Mat4::from_translation(*pos);
-            let mat = Material::flat(*colour);
+            let mat = Material::flat(Colour::from_linear_rgb_array(*colour));
             let node_id = self
                 .pl_state
                 .scene
@@ -1797,7 +1798,7 @@ pub(crate) fn pl_collect_scene_items(
         tvm_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
         tvm_item.settings.pick_id = PickId(11);
         tvm_item.settings.selected = app.pl_state.selection.contains(11);
-        tvm_item.material = Material::flat([0.72, 0.42, 0.04]);
+        tvm_item.material = Material::flat(Colour::linear_rgb(0.72, 0.42, 0.04));
         tvm_item.settings.unlit = false;
         items.push(tvm_item);
     }
@@ -1824,8 +1825,8 @@ pub(crate) fn pl_collect_scene_items(
             },
         ];
         _t.hemisphere_intensity = 0.7;
-        _t.sky_colour = [1.0, 1.0, 1.0].into();
-        _t.ground_colour = [0.8, 0.8, 0.8].into();
+        _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+        _t.ground_colour = Colour::linear_rgb(0.8, 0.8, 0.8);
         _t
     };
     (items, lighting, scene_gen, sel_gen)
@@ -1844,7 +1845,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         let mut pc = PointCloudItem::default();
         pc.positions = app.pl_state.pc_positions.clone();
         pc.size = SizeSource::Uniform(18.0);
-        pc.colour = ColourSource::Solid([0.10, 0.26, 0.68, 1.0].into());
+        pc.colour = ColourSource::Solid(Colour::linear(0.10, 0.26, 0.68, 1.0));
         pc.settings.pick_id = PickId(100);
         pc.settings.selected = app.pl_state.selection.contains(100);
         pc.settings.unlit = false;
@@ -2007,8 +2008,8 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             .with_curve_families(curve_family_lookup)
             .with_instances(instance_lookup),
         );
-        fd.interaction.sub_highlight_face_fill_colour = [1.0, 0.85, 0.0, 0.25].into();
-        fd.interaction.sub_highlight_edge_colour = [1.0, 0.85, 0.0, 1.0].into();
+        fd.interaction.sub_highlight_face_fill_colour = Colour::linear(1.0, 0.85, 0.0, 0.25);
+        fd.interaction.sub_highlight_edge_colour = Colour::linear(1.0, 0.85, 0.0, 1.0);
         fd.interaction.sub_highlight_edge_width_px = 5.0;
         fd.interaction.sub_highlight_vertex_size_px = 14.0;
     }
@@ -2018,7 +2019,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             let mut marker = PointCloudItem::default();
             marker.positions = vec![marker_pos.to_array()];
             marker.size = SizeSource::Uniform(16.0);
-            marker.colour = ColourSource::Solid([1.0, 0.35, 0.0, 1.0].into());
+            marker.colour = ColourSource::Solid(Colour::linear(1.0, 0.35, 0.0, 1.0));
             fd.scene.items_mut::<PointCloudItem>().push(marker);
         }
     }
@@ -2051,7 +2052,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         let mut pl = PolylineItem::default();
         pl.positions = app.pl_state.polyline_positions.clone();
         pl.strip_lengths = app.pl_state.polyline_strip_lengths.clone();
-        pl.default_colour = [0.2, 0.85, 0.35, 1.0].into();
+        pl.default_colour = Colour::linear(0.2, 0.85, 0.35, 1.0);
         pl.line_width = 3.0;
         pl.settings.pick_id = PickId(30);
         pl.settings.selected = app.pl_state.selection.contains(30);
@@ -2066,7 +2067,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         g.vectors = vec![[0.0, 0.0, 1.0]; n];
         g.scale = 0.8;
         g.size = SizeSource::Uniform(1.0);
-        g.colour = ColourSource::Solid([0.75, 0.1, 1.0, 1.0].into());
+        g.colour = ColourSource::Solid(Colour::linear(0.75, 0.1, 1.0, 1.0));
         g.settings.pick_id = PickId(31);
         g.settings.selected = app.pl_state.selection.contains(31);
         g.settings.unlit = false;
@@ -2102,9 +2103,9 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             .sprite_colours
             .clone()
             .into_iter()
-            .map(Into::into)
+            .map(Colour::from_linear_array)
             .collect();
-        s.default_colour = [1.0, 0.90, 0.20, 1.0].into();
+        s.default_colour = Colour::linear(1.0, 0.90, 0.20, 1.0);
         s.default_size = 28.0;
         s.depth_write = true;
         s.settings.pick_id = PickId(33);
@@ -2124,9 +2125,9 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             .xo_sprite_colours
             .clone()
             .into_iter()
-            .map(Into::into)
+            .map(Colour::from_linear_array)
             .collect();
-        s.default_colour = [0.5, 0.5, 1.0, 1.0].into();
+        s.default_colour = Colour::linear(0.5, 0.5, 1.0, 1.0);
         s.default_size = 30.0;
         s.depth_write = true;
         s.settings.pick_id = PickId(34);
@@ -2142,7 +2143,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         st.positions = app.pl_state.streamtube_positions.clone();
         st.strip_lengths = app.pl_state.streamtube_strip_lengths.clone();
         st.radius = 0.12;
-        st.colour = [0.10, 0.52, 0.18, 1.0].into();
+        st.colour = Colour::linear(0.10, 0.52, 0.18, 1.0);
         st.settings.pick_id = PickId(40);
         st.settings.selected = app.pl_state.selection.contains(40);
         st.settings.unlit = false;
@@ -2156,7 +2157,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         tb.positions = app.pl_state.tube_positions.clone();
         tb.strip_lengths = app.pl_state.tube_strip_lengths.clone();
         tb.radius = 0.15;
-        tb.colour = [0.75, 0.28, 0.05, 1.0].into();
+        tb.colour = Colour::linear(0.75, 0.28, 0.05, 1.0);
         tb.settings.pick_id = PickId(41);
         tb.settings.selected = app.pl_state.selection.contains(41);
         tb.settings.unlit = false;
@@ -2170,7 +2171,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         rb.positions = app.pl_state.ribbon_positions.clone();
         rb.strip_lengths = app.pl_state.ribbon_strip_lengths.clone();
         rb.width = 0.4;
-        rb.colour = [0.6, 0.3, 0.9, 1.0].into();
+        rb.colour = Colour::linear(0.6, 0.3, 0.9, 1.0);
         rb.settings.pick_id = PickId(42);
         rb.settings.selected = app.pl_state.selection.contains(42);
         rb.settings.unlit = false;
@@ -2209,7 +2210,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             prim.params[1] = centers[i][1];
             prim.params[2] = centers[i][2];
             prim.params[3] = 1.2; // radius
-            prim.colour = colours[i].into();
+            prim.colour = Colour::from_linear_array(colours[i]);
             item.primitives.push(prim);
         }
         item.blend_mode = ImplicitBlendMode::SmoothUnion;
@@ -2226,7 +2227,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     }
     // GPU marching cubes (pick_id=54): gyroid surface.
     if let Some(mc_vol_id) = app.pl_state.mc_volume_id {
-        let mut mat = Material::flat([0.10, 0.52, 0.18]);
+        let mut mat = Material::flat(Colour::linear_rgb(0.10, 0.52, 0.18));
         mat.roughness = 0.4;
         let mut mc_settings = ItemSettings::default();
         mc_settings.unlit = false;
@@ -2267,7 +2268,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
 /// Set wireframe mode and selection outline colour on `fd` for showcase 33.
 pub(crate) fn pl_configure_frame(app: &App, fd: &mut FrameData) {
     fd.viewport.wireframe_mode = app.pl_state.wireframe;
-    fd.interaction.outline_colour = [1.0, 0.85, 0.0, 1.0].into();
+    fd.interaction.outline_colour = Colour::linear(1.0, 0.85, 0.0, 1.0);
 }
 
 /// Build a standalone `FrameData` for the unified pick handlers.

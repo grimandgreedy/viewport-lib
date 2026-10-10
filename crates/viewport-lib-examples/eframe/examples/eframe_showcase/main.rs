@@ -2,6 +2,7 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BindingPreset, ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData,
@@ -1519,7 +1520,8 @@ impl App {
         if self.mode == ShowcaseMode::GroundPlane
             && self.gp_state.mode == showcase_03_ground_plane::GpMode::Grid
         {
-            fd.viewport.grid_colour = Some(self.gp_state.grid_colour.into());
+            fd.viewport.grid_colour =
+                Some(Colour::from_linear_rgb_array(self.gp_state.grid_colour));
             fd.viewport.grid_z = self.gp_state.height;
         }
         fd.viewport.show_axes_indicator = true;
@@ -1527,7 +1529,7 @@ impl App {
             self.mode == ShowcaseMode::SceneLights && self.sl_state.force_cluster_fallback;
         fd.effects.debug.cluster_stats_request =
             self.mode == ShowcaseMode::SceneLights && self.sl_state.show_cluster_stats;
-        fd.viewport.background_colour = bg_colour.map(Into::into);
+        fd.viewport.background_colour = bg_colour.map(Colour::from_linear_array);
 
         // Ground plane (Showcase 3).
         if self.mode == ShowcaseMode::GroundPlane {
@@ -1540,10 +1542,10 @@ impl App {
                     GpMode::SolidColour => GroundPlaneMode::SolidColour,
                 },
                 height: self.gp_state.height,
-                colour: self.gp_state.colour.into(),
-                tile_colour2: self.gp_state.tile_colour2.into(),
+                colour: Colour::from_linear_array(self.gp_state.colour),
+                tile_colour2: Colour::from_linear_array(self.gp_state.tile_colour2),
                 tile_size: self.gp_state.tile_size,
-                shadow_colour: self.gp_state.shadow_colour.into(),
+                shadow_colour: Colour::from_linear_array(self.gp_state.shadow_colour),
                 shadow_opacity: self.gp_state.shadow_opacity,
             };
         }

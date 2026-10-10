@@ -10,6 +10,7 @@
 //! Both need the renderer's recommended device limits, so they skip cleanly
 //! when no adapter offers them.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use viewport_lib::{Material, SceneRenderItem, SurfaceSubmission};
 use viewport_lib_testkit::fixtures::{
@@ -65,7 +66,7 @@ fn per_vertex_deformer_addresses_vertices_by_index() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
-    item.material = Material::from_colour([0.9, 0.9, 0.9]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.9, 0.9, 0.9));
     item.settings.unlit = true;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
@@ -172,7 +173,7 @@ fn textured_material_plugin_samples_its_texture_and_params() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
-    item.material = Material::from_colour([0.8, 0.8, 0.8]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
     item.material.shading_plugin = Some(variant);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 

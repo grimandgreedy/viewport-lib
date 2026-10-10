@@ -10,6 +10,7 @@
 use crate::eframe;
 use std::collections::VecDeque;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 
 use crate::eframe::egui;
 use vpl::{
@@ -122,7 +123,7 @@ pub(crate) fn rebuild_pb_static_scene(app: &mut App) {
     let n = app.pb_state.instance_count;
     let per_row = (n as f32).sqrt().ceil() as usize;
     let spacing = 2.5_f32;
-    let mat = Material::from_colour([0.10, 0.26, 0.68]);
+    let mat = Material::from_colour(Colour::linear_rgb(0.10, 0.26, 0.68));
     for i in 0..n {
         let col = i % per_row;
         let row = i / per_row;
@@ -145,7 +146,7 @@ pub(crate) fn pb_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
     if let Some(mid) = app.pb_state.mesh_id {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mid;
-        let mut mat = Material::from_colour([0.75, 0.28, 0.05]);
+        let mut mat = Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05));
         mat.backface_policy = BackfacePolicy::Identical;
         item.material = mat;
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
@@ -710,8 +711,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         let sg = app.pb_state.scene.version();

@@ -5,6 +5,7 @@
 use crate::eframe::egui;
 use glam::{Mat4, Vec3};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{ManipResult, Material, NodeId, PickMask, primitives};
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -58,7 +59,7 @@ impl Showcase for ObjectsShowcase {
             ctx.session.scene_mut().add(
                 Some(mesh),
                 Mat4::from_translation(pos),
-                Material::from_colour(colour),
+                Material::from_colour(Colour::from_linear_rgb_array(colour)),
             );
         }
 

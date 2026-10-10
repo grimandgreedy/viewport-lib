@@ -30,6 +30,7 @@
 
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
+use viewport_lib::Colour;
 
 use viewport_lib::wgpu;
 use viewport_lib::{
@@ -485,7 +486,7 @@ fn make_item(mesh: MeshId, model: glam::Mat4, m: &Meshes, run: &Run, idx: u32) -
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = model.to_cols_array_2d();
-    item.material = Material::flat([0.8, 0.8, 0.8]);
+    item.material = Material::flat(Colour::linear_rgb(0.8, 0.8, 0.8));
     if run.textured {
         item.material.texture_id = Some(m.textures[(idx as usize) % m.textures.len()]);
     }

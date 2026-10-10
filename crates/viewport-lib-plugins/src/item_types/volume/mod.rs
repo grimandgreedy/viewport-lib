@@ -7,6 +7,7 @@
 //! renders an oriented bounding box polyline for it instead, so this plugin
 //! only skips the item.
 
+use viewport_lib::Colour;
 mod pipeline;
 mod types;
 
@@ -399,5 +400,5 @@ fn obb_polyline(item: &VolumeItem) -> viewport_lib::renderer::PolylineItem {
     ];
     let corners: [[f32; 3]; 8] =
         std::array::from_fn(|i| model.transform_point3(local[i]).to_array());
-    viewport_lib::renderer::obb_wireframe_polyline(&corners, [0.75, 0.75, 0.75, 1.0])
+    viewport_lib::renderer::obb_wireframe_polyline(&corners, Colour::linear(0.75, 0.75, 0.75, 1.0))
 }

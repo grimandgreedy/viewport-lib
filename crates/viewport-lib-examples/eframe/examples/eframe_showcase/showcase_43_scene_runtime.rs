@@ -15,6 +15,7 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     Aabb, CameraFollow, FixedTimestep, Material, MeshId, RuntimeFrameContext, RuntimePlugin,
     RuntimeStepContext, SceneRenderItem, ViewportRuntime,
@@ -153,7 +154,7 @@ fn populate_orbit(app: &mut App) {
         app.rt_state.scene.add(
             Some(mesh_id),
             glam::Mat4::IDENTITY,
-            Material::from_colour(*colour),
+            Material::from_colour(Colour::from_linear_rgb_array(*colour)),
         );
     }
     app.rt_state.runtime = ViewportRuntime::new()
@@ -210,7 +211,7 @@ fn populate_simulation(app: &mut App) {
         let id = scene.add(
             Some(mesh_id),
             glam::Mat4::from_translation(pos),
-            Material::from_colour(*colour),
+            Material::from_colour(Colour::from_linear_rgb_array(*colour)),
         );
         node_ids.push(id);
         let (vx, vy, vz) = body_velocities[i];
@@ -226,7 +227,7 @@ fn populate_simulation(app: &mut App) {
     let anim_id = app.rt_state.scene.add(
         Some(mesh_id),
         glam::Mat4::IDENTITY,
-        Material::from_colour([0.55, 0.55, 0.55]),
+        Material::from_colour(Colour::linear_rgb(0.55, 0.55, 0.55)),
     );
     app.rt_state.anim_node_id = Some(anim_id);
 
@@ -618,8 +619,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         let sg = app.rt_state.scene.version();

@@ -16,6 +16,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
 use vpl::{
     BoxWidget, CameraFrame, CylinderWidget, DiskWidget, FrameData, LightingSettings,
@@ -70,32 +71,32 @@ impl ProbeWidgetState {
             glam::Vec3::new(2.0, 0.0, 0.0),
         );
         probe.line_width = 3.0;
-        probe.colour = [1.0, 0.9, 0.1, 1.0].into();
-        probe.handle_colour = handle_colour.into();
+        probe.colour = Colour::linear(1.0, 0.9, 0.1, 1.0);
+        probe.handle_colour = Colour::from_linear_array(handle_colour);
 
         let mut sphere = SphereWidget::new(glam::Vec3::ZERO, 2.0);
-        sphere.colour = [1.0, 0.9, 0.1, 0.15].into();
-        sphere.handle_colour = handle_colour.into();
+        sphere.colour = Colour::linear(1.0, 0.9, 0.1, 0.15);
+        sphere.handle_colour = Colour::from_linear_array(handle_colour);
 
         let mut bw = BoxWidget::new(glam::Vec3::ZERO, glam::Vec3::splat(2.0));
-        bw.colour = [1.0, 0.9, 0.1, 1.0].into();
-        bw.handle_colour = handle_colour.into();
+        bw.colour = Colour::linear(1.0, 0.9, 0.1, 1.0);
+        bw.handle_colour = Colour::from_linear_array(handle_colour);
 
         let mut plane = PlaneWidget::new(glam::Vec3::ZERO, glam::Vec3::Z);
-        plane.colour = [0.4, 0.8, 1.0, 1.0].into();
-        plane.handle_colour = handle_colour.into();
+        plane.colour = Colour::linear(0.4, 0.8, 1.0, 1.0);
+        plane.handle_colour = Colour::from_linear_array(handle_colour);
 
         let mut disk = DiskWidget::new(glam::Vec3::ZERO, glam::Vec3::Z, 2.0);
-        disk.colour = [1.0, 0.7, 0.2, 1.0].into();
-        disk.handle_colour = handle_colour.into();
+        disk.colour = Colour::linear(1.0, 0.7, 0.2, 1.0);
+        disk.handle_colour = Colour::from_linear_array(handle_colour);
 
         let mut cylinder = CylinderWidget::new(
             glam::Vec3::new(0.0, -2.0, 0.0),
             glam::Vec3::new(0.0, 2.0, 0.0),
             1.5,
         );
-        cylinder.colour = [0.5, 1.0, 0.5, 1.0].into();
-        cylinder.handle_colour = handle_colour.into();
+        cylinder.colour = Colour::linear(0.5, 1.0, 0.5, 1.0);
+        cylinder.handle_colour = Colour::from_linear_array(handle_colour);
 
         let mut polyline = PolylineWidget::new(vec![
             glam::Vec3::new(-2.0, 0.0, 0.5),
@@ -103,8 +104,8 @@ impl ProbeWidgetState {
             glam::Vec3::new(0.5, -1.5, 0.5),
             glam::Vec3::new(2.0, 0.0, 0.5),
         ]);
-        polyline.colour = [1.0, 0.5, 0.2, 1.0].into();
-        polyline.handle_colour = handle_colour.into();
+        polyline.colour = Colour::linear(1.0, 0.5, 0.2, 1.0);
+        polyline.handle_colour = Colour::from_linear_array(handle_colour);
 
         let cloud_positions = generate_cloud(CLOUD_N);
         let selected = vec![false; CLOUD_N];
@@ -374,8 +375,8 @@ pub(crate) fn pw_collect_scene_items(
     let lighting = {
         let mut _t = LightingSettings::default();
         _t.hemisphere_intensity = 0.6;
-        _t.sky_colour = [1.0, 1.0, 1.0].into();
-        _t.ground_colour = [0.8, 0.8, 0.8].into();
+        _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+        _t.ground_colour = Colour::linear_rgb(0.8, 0.8, 0.8);
         _t
     };
     let sg = app.pw_state.scene.version();
@@ -499,7 +500,7 @@ pub(crate) fn submit_pw_items(app: &App, fd: &mut FrameData, w: f32, h: f32) {
     if !unsel.is_empty() {
         let mut pc = PointCloudItem::default();
         pc.positions = unsel;
-        pc.colour = vpl::ColourSource::Solid([0.5, 0.7, 1.0, 1.0].into());
+        pc.colour = vpl::ColourSource::Solid(Colour::linear(0.5, 0.7, 1.0, 1.0));
         pc.gaussian = true;
         pc.size = vpl::SizeSource::Uniform(8.0);
         fd.scene.items_mut::<PointCloudItem>().push(pc);
@@ -507,7 +508,7 @@ pub(crate) fn submit_pw_items(app: &App, fd: &mut FrameData, w: f32, h: f32) {
     if !sel.is_empty() {
         let mut pc = PointCloudItem::default();
         pc.positions = sel;
-        pc.colour = vpl::ColourSource::Solid([1.0, 0.55, 0.1, 1.0].into());
+        pc.colour = vpl::ColourSource::Solid(Colour::linear(1.0, 0.55, 0.1, 1.0));
         pc.gaussian = true;
         pc.size = vpl::SizeSource::Uniform(14.0);
         fd.scene.items_mut::<PointCloudItem>().push(pc);

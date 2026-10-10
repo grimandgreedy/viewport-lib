@@ -8,6 +8,7 @@
 
 use std::f32::consts::TAU;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 
 use crate::eframe::egui;
 use glam::{Mat4, Vec3};
@@ -139,20 +140,20 @@ impl Showcase for MaterialsShowcase {
         key.kind = LightKind::Directional {
             direction: [0.5, 0.35, 1.2],
         };
-        key.colour = [1.0, 0.97, 0.92].into();
+        key.colour = Colour::linear_rgb(1.0, 0.97, 0.92);
         key.intensity = 1.4;
         let mut fill = LightSource::default();
         fill.kind = LightKind::Directional {
             direction: [-0.6, -0.4, 0.5],
         };
-        fill.colour = [0.55, 0.65, 0.9].into();
+        fill.colour = Colour::linear_rgb(0.55, 0.65, 0.9);
         fill.intensity = 0.4;
         fill.cast_shadows = false;
         let l = &mut ctx.session.effects_mut().lighting;
         l.lights = vec![key, fill];
         l.hemisphere_intensity = 0.25;
-        l.sky_colour = [0.9, 0.95, 1.0].into();
-        l.ground_colour = [0.24, 0.22, 0.20].into();
+        l.sky_colour = Colour::linear_rgb(0.9, 0.95, 1.0);
+        l.ground_colour = Colour::linear_rgb(0.24, 0.22, 0.20);
         l.shadows.enabled = true;
 
         // Set A (kinds): shading models, custom WGSL, textures, PBR, matcaps.
@@ -355,7 +356,7 @@ fn build_custom_materials(ctx: &mut SetupCtx) -> Vec<Material> {
     // Plugin hooks add on top of the built-in PBR direct + ambient terms, so
     // the base is a PBR material (matching the eframe_showcase reference).
     let plugin_mat = |id, colour: [f32; 3]| {
-        let mut m = Material::pbr(colour, 0.1, 0.55);
+        let mut m = Material::pbr(Colour::from_linear_rgb_array(colour), 0.1, 0.55);
         m.shading_plugin = Some(id);
         m
     };
@@ -412,21 +413,21 @@ fn shading_family(matcaps: &[(MatcapId, &'static str)]) -> Vec<Material> {
         .find(|(_, n)| *n == "Jade")
         .map(|(id, _)| *id)
         .unwrap();
-    let mut matcap = Material::from_colour([0.8, 0.8, 0.8]);
+    let mut matcap = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
     matcap.shading_model = ShadingModel::Matcap(jade);
     vec![
-        Material::from_colour([0.62, 0.14, 0.12]), // Phong (default model)
-        Material::pbr([0.25, 0.5, 0.85], 0.0, 0.35),
-        Material::pbr([0.72, 0.48, 0.06], 1.0, 0.25),
+        Material::from_colour(Colour::linear_rgb(0.62, 0.14, 0.12)), // Phong (default model)
+        Material::pbr(Colour::linear_rgb(0.25, 0.5, 0.85), 0.0, 0.35),
+        Material::pbr(Colour::linear_rgb(0.72, 0.48, 0.06), 1.0, 0.25),
         matcap,
-        Material::flat([0.10, 0.52, 0.18]),
+        Material::flat(Colour::linear_rgb(0.10, 0.52, 0.18)),
     ]
 }
 
 fn texture_family(tex: &[TextureId]) -> Vec<Material> {
     let checker = tex[0];
     let base = |t| {
-        let mut m = Material::pbr([1.0, 1.0, 1.0], 0.0, 0.55);
+        let mut m = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.55);
         m.texture_id = Some(t);
         m
     };
@@ -450,7 +451,11 @@ fn pbr_family() -> Vec<Material> {
     let mut out = Vec::new();
     for &metallic in &[0.0, 1.0] {
         for &roughness in &[0.1, 0.37, 0.63, 0.9] {
-            out.push(Material::pbr(base, metallic, roughness));
+            out.push(Material::pbr(
+                Colour::from_linear_rgb_array(base),
+                metallic,
+                roughness,
+            ));
         }
     }
     out
@@ -473,7 +478,8 @@ fn matcap_family(matcaps: &[(MatcapId, &'static str)]) -> Vec<Material> {
         .iter()
         .enumerate()
         .map(|(i, (id, _))| {
-            let mut m = Material::from_colour(tints[i % tints.len()]);
+            let mut m =
+                Material::from_colour(Colour::from_linear_rgb_array(tints[i % tints.len()]));
             m.shading_model = ShadingModel::Matcap(*id);
             m
         })
@@ -493,7 +499,7 @@ fn uv_param_family() -> Vec<Material> {
     ]
     .into_iter()
     .map(|mode| {
-        let mut m = Material::pbr([0.7, 0.7, 0.75], 0.0, 0.5);
+        let mut m = Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.75), 0.0, 0.5);
         m.param_vis = Some(ParamVis { mode, scale: 8.0 });
         m
     })
@@ -523,7 +529,7 @@ fn build_surface_maps(ctx: &mut SetupCtx) -> SurfaceMaps {
 }
 
 fn surface_maps_family(m: &SurfaceMaps) -> Vec<Material> {
-    let pbr = || Material::pbr([0.75, 0.72, 0.68], 0.0, 0.5);
+    let pbr = || Material::pbr(Colour::linear_rgb(0.75, 0.72, 0.68), 0.0, 0.5);
     let plain = pbr();
     let mut normal = pbr();
     normal.normal_map_id = Some(m.normal);
@@ -535,17 +541,17 @@ fn surface_maps_family(m: &SurfaceMaps) -> Vec<Material> {
     orm.metallic_roughness_texture_id = Some(m.orm);
     orm.metallic = 1.0;
     let mut emissive = pbr();
-    emissive.emissive = [1.2, 0.5, 0.15].into();
+    emissive.emissive = Colour::linear_rgb(1.2, 0.5, 0.15);
     vec![plain, normal, normal_ao, ao, orm, emissive]
 }
 
 fn transparency_family(mesh: MeshId, alpha_tex: TextureId) -> Vec<Spec> {
     let blend = |o: f32| {
-        let mut m = Material::pbr([0.4, 0.6, 0.9], 0.0, 0.35);
+        let mut m = Material::pbr(Colour::linear_rgb(0.4, 0.6, 0.9), 0.0, 0.35);
         m.alpha_mode = AlphaMode::Blend;
         Spec::new(mesh, m).with_opacity(o)
     };
-    let mut mask = Material::pbr([1.0, 1.0, 1.0], 0.0, 0.5);
+    let mut mask = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.5);
     mask.texture_id = Some(alpha_tex);
     mask.alpha_mode = AlphaMode::Mask(0.5);
     vec![
@@ -577,7 +583,12 @@ fn vertex_colour_family(meshes: &[MeshId]) -> Vec<Spec> {
     // White base so the baked per-vertex colour shows through PBR shading.
     meshes
         .iter()
-        .map(|&mesh| Spec::new(mesh, Material::pbr([1.0, 1.0, 1.0], 0.0, 0.5)))
+        .map(|&mesh| {
+            Spec::new(
+                mesh,
+                Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.5),
+            )
+        })
         .collect()
 }
 
@@ -605,7 +616,7 @@ fn vc_latitude(p: [f32; 3]) -> [f32; 4] {
 
 fn backface_family() -> Vec<Material> {
     let base = |policy: BackfacePolicy| {
-        let mut m = Material::pbr([0.72, 0.42, 0.30], 0.0, 0.5);
+        let mut m = Material::pbr(Colour::linear_rgb(0.72, 0.42, 0.30), 0.0, 0.5);
         m.backface_policy = policy;
         m
     };
@@ -617,7 +628,9 @@ fn backface_family() -> Vec<Material> {
     vec![
         base(BackfacePolicy::Cull),
         base(BackfacePolicy::Identical),
-        base(BackfacePolicy::DifferentColour([0.2, 0.6, 0.9].into())),
+        base(BackfacePolicy::DifferentColour(Colour::linear_rgb(
+            0.2, 0.6, 0.9,
+        ))),
         base(BackfacePolicy::Tint(0.4)),
         pat(BackfacePattern::Checker),
         pat(BackfacePattern::Hatching),

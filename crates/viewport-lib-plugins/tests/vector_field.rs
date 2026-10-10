@@ -6,6 +6,7 @@
 
 #![cfg(feature = "item-types")]
 
+use viewport_lib::Colour;
 mod common;
 use common::*;
 use viewport_lib::plugin_api::{Handles, Span, Uploads, Writes};
@@ -419,7 +420,7 @@ fn the_size_source_changes_how_much_is_drawn() {
         let mut frame = sub_object_pick_frame();
         let mut item = three_samples(shape);
         item.size = size;
-        item.colour = ColourSource::Solid([1.0, 0.0, 0.0, 1.0].into());
+        item.colour = ColourSource::Solid(Colour::linear(1.0, 0.0, 0.0, 1.0));
         item.settings.unlit = true;
         frame.scene.items_mut::<VectorFieldItem>().push(item);
         let img = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
@@ -461,7 +462,7 @@ fn a_selected_field_outlines_every_sample() {
         frame.camera.viewport_size = [512.0, 128.0];
         frame.camera.pixels_per_point = 1.0;
         frame.interaction.outline_selected = true;
-        frame.interaction.outline_colour = [1.0, 0.0, 0.0, 1.0].into();
+        frame.interaction.outline_colour = Colour::linear(1.0, 0.0, 0.0, 1.0);
         frame.interaction.outline_width_px = 3.0;
 
         let mut item = VectorFieldItem::new(shape);
@@ -471,7 +472,7 @@ fn a_selected_field_outlines_every_sample() {
         item.vectors = vec![[0.0, 0.0, 1.0]; count];
         item.scale = 1.0;
         item.size = SizeSource::Uniform(1.0);
-        item.colour = ColourSource::Solid([0.0, 0.0, 1.0, 1.0].into());
+        item.colour = ColourSource::Solid(Colour::linear(0.0, 0.0, 1.0, 1.0));
         item.settings.pick_id = PickId(1);
         item.settings.selected = true;
         frame.scene.items_mut::<VectorFieldItem>().push(item);

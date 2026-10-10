@@ -31,6 +31,7 @@ use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::time::Instant;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use viewport_lib_lightbake::denoise::{DenoiseParams, denoise, dilate};
 use viewport_lib_lightbake::encode::{Encoding, encode};
@@ -285,7 +286,7 @@ impl LightmapBakeShowcase {
                 &p.idx,
                 Some(&wn),
                 RtMaterial {
-                    base_colour: p.albedo.into(),
+                    base_colour: Colour::from_linear_rgb_array(p.albedo),
                     roughness: 0.9,
                     ..RtMaterial::default()
                 },
@@ -302,8 +303,8 @@ impl LightmapBakeShowcase {
                 &panel.indices,
                 Some(&wn),
                 RtMaterial {
-                    base_colour: [0.0, 0.0, 0.0].into(),
-                    emissive: PANEL_RADIANCE.into(),
+                    base_colour: Colour::linear_rgb(0.0, 0.0, 0.0),
+                    emissive: Colour::from_linear_rgb_array(PANEL_RADIANCE),
                     ..RtMaterial::default()
                 },
             );
@@ -312,7 +313,7 @@ impl LightmapBakeShowcase {
             // radiance feeds the renderer's tonemapper once (linear upload).
             scene.add_light(RtLight::Directional {
                 direction: LIGHT_DIR.normalize().to_array(),
-                colour: [2.1, 2.05, 1.9].into(),
+                colour: Colour::linear_rgb(2.1, 2.05, 1.9),
             });
         }
         scene
@@ -811,8 +812,8 @@ impl LightmapBakeShowcase {
             if lighting == BAKED_MODE || lighting == EMISSIVE_MODE {
                 l.lights = Vec::new();
                 l.hemisphere_intensity = 0.28;
-                l.sky_colour = [0.5, 0.54, 0.62].into();
-                l.ground_colour = [0.16, 0.16, 0.18].into();
+                l.sky_colour = Colour::linear_rgb(0.5, 0.54, 0.62);
+                l.ground_colour = Colour::linear_rgb(0.16, 0.16, 0.18);
             } else if lighting == MIXED_MODE {
                 // The lightmap (consumed subtractively) carries the static lighting;
                 // the realtime directional stays on. On lightmapped surfaces its
@@ -822,13 +823,13 @@ impl LightmapBakeShowcase {
                 key.kind = LightKind::Directional {
                     direction: LIGHT_DIR.to_array(),
                 };
-                key.colour = [1.0, 0.98, 0.95].into();
+                key.colour = Colour::linear_rgb(1.0, 0.98, 0.95);
                 key.intensity = 1.1;
                 key.cast_shadows = true;
                 l.lights = vec![key];
                 l.hemisphere_intensity = 0.15;
-                l.sky_colour = [0.5, 0.54, 0.62].into();
-                l.ground_colour = [0.16, 0.16, 0.18].into();
+                l.sky_colour = Colour::linear_rgb(0.5, 0.54, 0.62);
+                l.ground_colour = Colour::linear_rgb(0.16, 0.16, 0.18);
                 l.shadows.enabled = true;
                 l.shadows.extent_override = Some(13.0);
                 // Soft (PCSS) shadow with a wide penumbra, so the dynamic object's
@@ -841,7 +842,7 @@ impl LightmapBakeShowcase {
                 key.kind = LightKind::Directional {
                     direction: LIGHT_DIR.to_array(),
                 };
-                key.colour = [1.0, 0.98, 0.95].into();
+                key.colour = Colour::linear_rgb(1.0, 0.98, 0.95);
                 key.intensity = 1.1;
                 // The light always keeps its shadow cascades; whether a shadow
                 // actually appears is gated per-object below, so the toggle is
@@ -851,8 +852,8 @@ impl LightmapBakeShowcase {
                 // Low ambient so the realtime shadow (when the toggle is on) is
                 // not washed out by fill light.
                 l.hemisphere_intensity = 0.18;
-                l.sky_colour = [0.6, 0.64, 0.72].into();
-                l.ground_colour = [0.2, 0.2, 0.22].into();
+                l.sky_colour = Colour::linear_rgb(0.6, 0.64, 0.72);
+                l.ground_colour = Colour::linear_rgb(0.2, 0.2, 0.22);
                 // Shadow rendering persists on the shared session across
                 // showcases, so set it explicitly rather than assuming a prior
                 // showcase left it on. Fit the shadow frustum to this room (auto
@@ -866,7 +867,7 @@ impl LightmapBakeShowcase {
             // Every piece keeps its true albedo: the baked lightmap now stores
             // material-independent incident radiance (E/pi), and Replace mode
             // multiplies it by the material's base_colour (albedo).
-            let mut mat = Material::pbr(p.albedo, 0.0, 0.9);
+            let mut mat = Material::pbr(Colour::from_linear_rgb_array(p.albedo), 0.0, 0.9);
             mat.backface_policy = BackfacePolicy::Identical;
             // Normal-mapped pieces carry their map in both modes; combined with the
             // directional lightmap (baked mode) the bumps pick up the baked light.
@@ -892,7 +893,7 @@ impl LightmapBakeShowcase {
         // GI plus a moving object that shadows it in realtime.
         if self.mode == MIXED_MODE {
             if let Some(sphere) = self.dynamic_occluder {
-                let mut mat = Material::pbr([0.85, 0.85, 0.88], 0.0, 0.6);
+                let mut mat = Material::pbr(Colour::linear_rgb(0.85, 0.85, 0.88), 0.0, 0.6);
                 mat.backface_policy = BackfacePolicy::Identical;
                 let id = session
                     .scene_mut()
@@ -910,8 +911,8 @@ impl LightmapBakeShowcase {
         // caster or receiver: it is the light, not lit geometry.
         if self.mode == EMISSIVE_MODE {
             if let Some(panel) = self.emissive_panel {
-                let mut mat = Material::pbr([0.0, 0.0, 0.0], 0.0, 1.0);
-                mat.emissive = PANEL_RADIANCE.into();
+                let mut mat = Material::pbr(Colour::linear_rgb(0.0, 0.0, 0.0), 0.0, 1.0);
+                mat.emissive = Colour::from_linear_rgb_array(PANEL_RADIANCE);
                 mat.backface_policy = BackfacePolicy::Identical;
                 let id = session.scene_mut().add(Some(panel), panel_xf(), mat);
                 let mut ap = ItemSettings::default();
@@ -926,7 +927,7 @@ impl LightmapBakeShowcase {
         // reads as a preview of the torus' lightmap rather than stray geometry.
         if baked_mode && self.show_atlas {
             if let Some(atlas) = self.atlas_mesh {
-                let mut mat = Material::pbr([1.0, 1.0, 1.0], 0.0, 1.0);
+                let mut mat = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 1.0);
                 mat.backface_policy = BackfacePolicy::Identical;
                 let xf = Mat4::from_translation(Vec3::new(5.5, 6.85, 4.0))
                     * Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2);

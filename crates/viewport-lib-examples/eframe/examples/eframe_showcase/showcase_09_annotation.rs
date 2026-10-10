@@ -7,6 +7,7 @@ use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     Camera, LabelItem, Material, OverlayFill, OverlayShape, OverlayShapeItem, ViewportRenderer,
     scene::Scene,
@@ -56,7 +57,7 @@ impl App {
                     "Marker",
                     Some(id),
                     glam::Mat4::from_translation(pos),
-                    Material::from_colour(colour),
+                    Material::from_colour(Colour::from_linear_rgb_array(colour)),
                 );
             };
 
@@ -68,16 +69,16 @@ impl App {
         self.ann_state.labels = vec![
             LabelItem::new("Origin (0,0,0)")
                 .with_world_anchor([0.0, 0.0, 0.0])
-                .with_colour([1.0, 1.0, 1.0, 1.0]),
+                .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0)),
             LabelItem::new("Peak Pressure: 101.3 kPa")
                 .with_world_anchor([2.0, 3.0, 0.0])
-                .with_colour([1.0, 0.9, 0.1, 1.0]),
+                .with_colour(Colour::linear(1.0, 0.9, 0.1, 1.0)),
             LabelItem::new("Outlet")
                 .with_world_anchor([-3.0, 2.0, 0.0])
-                .with_colour([0.4, 0.8, 1.0, 1.0]),
+                .with_colour(Colour::linear(0.4, 0.8, 1.0, 1.0)),
             LabelItem::new("Behind camera (clipped)")
                 .with_world_anchor([0.0, 300.0, 0.0])
-                .with_colour([1.0, 0.0, 0.0, 1.0]),
+                .with_colour(Colour::linear(1.0, 0.0, 0.0, 1.0)),
         ];
 
         // A panel behind each label: measure the text, pad it, and give the
@@ -139,7 +140,7 @@ fn label_backing(renderer: &ViewportRenderer, label: &LabelItem, pad: f32) -> Ov
     )
     .with_anchor(label.anchoring.origin)
     .with_align(label.anchoring.align)
-    .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.55].into()))
+    .with_fill(OverlayFill::Solid(Colour::linear(0.0, 0.0, 0.0, 0.55)))
 }
 
 // ---------------------------------------------------------------------------
@@ -203,8 +204,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         (items, None, lighting, sg, 0)

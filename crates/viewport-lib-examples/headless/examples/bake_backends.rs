@@ -13,6 +13,7 @@
 use glam::Vec3;
 use std::time::Instant;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::primitives;
 use vpl::raytrace::{RtBackend, RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, Tracer};
 
@@ -32,7 +33,7 @@ fn add_primitive(scene: &mut RtScene, mesh: &vpl::MeshData, origin: Vec3, colour
         &mesh.indices,
         Some(&normals),
         RtMaterial {
-            base_colour: colour.into(),
+            base_colour: Colour::from_linear_rgb_array(colour),
             roughness: 0.8,
             ..RtMaterial::default()
         },
@@ -101,7 +102,7 @@ fn main() {
     );
     scene.add_light(RtLight::Directional {
         direction: [0.4, -0.3, 0.85],
-        colour: [3.0, 2.9, 2.7].into(),
+        colour: Colour::linear_rgb(3.0, 2.9, 2.7),
     });
     println!("triangles: {}", scene.triangle_count());
 

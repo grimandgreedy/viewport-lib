@@ -12,6 +12,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{Material, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
@@ -70,7 +71,7 @@ impl App {
         ];
 
         for (x, name, colour) in positions {
-            let mut mat = Material::from_colour(colour);
+            let mut mat = Material::from_colour(Colour::from_linear_rgb_array(colour));
             mat.roughness = 0.5;
             mat.metallic = 0.1;
             self.gp_state.scene.add_named(
@@ -212,8 +213,8 @@ pub(crate) fn scene(
             }];
             _t.shadows.enabled = true;
             _t.hemisphere_intensity = 0.3;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [0.3, 0.3, 0.3].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(0.3, 0.3, 0.3);
             _t
         };
         (items, None, lighting, sg, 0)

@@ -9,6 +9,7 @@
 //! built scene with one of its [`NamedCamera`]s through [`frame_for`] to get a
 //! `FrameData` ready to render.
 
+use viewport_lib::Colour;
 // The corpus the catalogue builds from: procedural meshes, lighting rigs,
 // textures, and (optionally) real model files. All behind the `scenes` feature
 // with this module.
@@ -257,7 +258,9 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
         fd.effects.clip.cap_fill_enabled = cap_fill;
     }
     fd.overlays = scene.overlays.clone();
-    fd.viewport.background_colour = Some(scene.background.unwrap_or(TEST_BACKGROUND).into());
+    fd.viewport.background_colour = Some(Colour::from_linear_array(
+        scene.background.unwrap_or(TEST_BACKGROUND),
+    ));
     fd.viewport.show_axes_indicator = false;
     // Scenes mark an item selected to put the selection outline in the
     // reference image; without this the flag is off and the outline pass never
@@ -307,7 +310,7 @@ fn ground(ctx: &mut BuildCtx<'_>, top: f32) -> SceneRenderItem {
     item(
         mesh,
         Vec3::new(0.0, 0.0, top - 0.2),
-        Material::pbr([0.55, 0.55, 0.58], 0.0, 0.9),
+        Material::pbr(Colour::linear_rgb(0.55, 0.55, 0.58), 0.0, 0.9),
     )
 }
 
@@ -322,17 +325,17 @@ fn build_primitives_trio(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             item(
                 s,
                 Vec3::new(-2.5, 0.0, 0.0),
-                Material::pbr([0.9, 0.5, 0.2], 0.2, 0.5),
+                Material::pbr(Colour::linear_rgb(0.9, 0.5, 0.2), 0.2, 0.5),
             ),
             item(
                 c,
                 Vec3::new(0.0, 0.0, 0.0),
-                Material::pbr([0.4, 0.6, 0.9], 0.6, 0.4),
+                Material::pbr(Colour::linear_rgb(0.4, 0.6, 0.9), 0.6, 0.4),
             ),
             item(
                 t,
                 Vec3::new(2.5, 0.0, 0.0),
-                Material::pbr([0.3, 0.8, 0.4], 0.3, 0.5),
+                Material::pbr(Colour::linear_rgb(0.3, 0.8, 0.4), 0.3, 0.5),
             ),
         ],
         lighting: rigs::from_above(),
@@ -347,7 +350,7 @@ fn build_torus_knot(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![item_model(
             k,
             Mat4::from_scale(Vec3::splat(0.9)),
-            Material::pbr([0.85, 0.45, 0.5], 0.4, 0.4),
+            Material::pbr(Colour::linear_rgb(0.85, 0.45, 0.5), 0.4, 0.4),
         )],
         lighting: rigs::grazing(),
         background: None,
@@ -361,7 +364,7 @@ fn build_gear(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![item(
             g,
             Vec3::ZERO,
-            Material::pbr([0.7, 0.7, 0.75], 0.9, 0.35),
+            Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.75), 0.9, 0.35),
         )],
         lighting: rigs::three_point(),
         background: None,
@@ -375,7 +378,7 @@ fn build_bowl(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![two_sided(item(
             b,
             Vec3::ZERO,
-            Material::pbr([0.8, 0.78, 0.7], 0.1, 0.6),
+            Material::pbr(Colour::linear_rgb(0.8, 0.78, 0.7), 0.1, 0.6),
         ))],
         lighting: rigs::from_above(),
         background: None,
@@ -392,7 +395,7 @@ fn build_castellated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             item(
                 bar,
                 Vec3::new(0.0, 0.0, 0.5),
-                Material::pbr([0.6, 0.4, 0.35], 0.0, 0.7),
+                Material::pbr(Colour::linear_rgb(0.6, 0.4, 0.35), 0.0, 0.7),
             ),
         ],
         lighting: rigs::grazing(),
@@ -407,7 +410,7 @@ fn build_heightfield(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![item(
             h,
             Vec3::ZERO,
-            Material::pbr([0.4, 0.55, 0.35], 0.0, 0.85),
+            Material::pbr(Colour::linear_rgb(0.4, 0.55, 0.35), 0.0, 0.85),
         )],
         lighting: rigs::grazing(),
         background: None,
@@ -421,7 +424,7 @@ fn build_thin_sheet(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![two_sided(item(
             sheet,
             Vec3::ZERO,
-            Material::pbr([0.85, 0.3, 0.35], 0.0, 0.5),
+            Material::pbr(Colour::linear_rgb(0.85, 0.3, 0.35), 0.0, 0.5),
         ))],
         lighting: rigs::backlit(),
         background: None,
@@ -435,7 +438,7 @@ fn build_stress_sphere(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![item(
             s,
             Vec3::ZERO,
-            Material::pbr([0.6, 0.6, 0.85], 0.3, 0.3),
+            Material::pbr(Colour::linear_rgb(0.6, 0.6, 0.85), 0.3, 0.3),
         )],
         lighting: rigs::from_above(),
         background: None,
@@ -454,12 +457,12 @@ fn build_concave_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
                 k,
                 Mat4::from_translation(Vec3::new(-1.6, 0.0, 1.4))
                     * Mat4::from_scale(Vec3::splat(0.7)),
-                Material::pbr([0.8, 0.5, 0.3], 0.4, 0.4),
+                Material::pbr(Colour::linear_rgb(0.8, 0.5, 0.3), 0.4, 0.4),
             ),
             two_sided(item(
                 b,
                 Vec3::new(1.8, 0.0, 0.6),
-                Material::pbr([0.75, 0.75, 0.8], 0.1, 0.6),
+                Material::pbr(Colour::linear_rgb(0.75, 0.75, 0.8), 0.1, 0.6),
             )),
         ],
         lighting: rigs::grazing(),
@@ -480,7 +483,7 @@ fn build_textured_checker(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         )
         .expect("texture upload");
     let s = upload(ctx, &primitives::sphere(1.2, 48, 24));
-    let mut mat = Material::pbr([1.0, 1.0, 1.0], 0.0, 0.6);
+    let mut mat = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.6);
     mat.texture_id = Some(tex_id);
     BuiltScene {
         items: vec![item(s, Vec3::ZERO, mat)],
@@ -502,7 +505,7 @@ fn build_textured_normalmap(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         )
         .expect("normal map upload");
     let s = upload(ctx, &primitives::sphere(1.3, 64, 32));
-    let mut mat = Material::pbr([0.7, 0.7, 0.75], 0.1, 0.5);
+    let mut mat = Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.75), 0.1, 0.5);
     mat.normal_map_id = Some(nm_id);
     BuiltScene {
         items: vec![item(s, Vec3::ZERO, mat)],
@@ -521,7 +524,11 @@ fn build_transparent(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .map(|(i, c)| {
             let x = (i as f32 - 1.0) * 1.1;
             with_opacity(
-                item(s, Vec3::new(x, 0.0, 0.0), Material::pbr(c, 0.0, 0.4)),
+                item(
+                    s,
+                    Vec3::new(x, 0.0, 0.0),
+                    Material::pbr(Colour::from_linear_rgb_array(c), 0.0, 0.4),
+                ),
                 0.5,
             )
         })
@@ -569,8 +576,8 @@ fn build_transparent_background(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
     // Emissive, so the opaque subject also drives the bloom that spreads past
     // its own silhouette over nothing.
-    let mut glow = Material::pbr([0.95, 0.62, 0.30], 0.0, 0.4);
-    glow.emissive = [0.95, 0.62, 0.30, 1.0].into();
+    let mut glow = Material::pbr(Colour::linear_rgb(0.95, 0.62, 0.30), 0.0, 0.4);
+    glow.emissive = Colour::linear(0.95, 0.62, 0.30, 1.0);
     glow.emissive_strength = 18.0;
 
     let items = vec![
@@ -584,7 +591,7 @@ fn build_transparent_background(ctx: &mut BuildCtx<'_>) -> BuiltScene {
                 let mut it = item(
                     slab,
                     Vec3::new(-0.3, -1.1, 0.3),
-                    Material::pbr([0.35, 0.65, 0.90], 0.0, 0.25),
+                    Material::pbr(Colour::linear_rgb(0.35, 0.65, 0.90), 0.0, 0.25),
                 );
                 it.material.alpha_mode = viewport_lib::AlphaMode::Blend;
                 it
@@ -620,7 +627,7 @@ fn build_materials_pbr(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             items.push(item(
                 s,
                 pos,
-                Material::pbr([0.85, 0.82, 0.78], metallic, roughness),
+                Material::pbr(Colour::linear_rgb(0.85, 0.82, 0.78), metallic, roughness),
             ));
         }
     }
@@ -649,7 +656,7 @@ fn build_many_objects(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             items.push(item(
                 mesh,
                 Vec3::new(x, y, 0.0),
-                Material::pbr(colour, 0.2, 0.5),
+                Material::pbr(Colour::from_linear_rgb_array(colour), 0.2, 0.5),
             ));
         }
     }
@@ -669,7 +676,7 @@ fn build_lights_eight(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items.push(item(
             s,
             Vec3::new((i as f32 - 1.0) * 2.0, 0.0, 0.0),
-            Material::pbr([0.85, 0.85, 0.85], 0.1, 0.4),
+            Material::pbr(Colour::linear_rgb(0.85, 0.85, 0.85), 0.1, 0.4),
         ));
     }
     BuiltScene {
@@ -698,7 +705,7 @@ fn build_game_mix(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             items.push(item(
                 building,
                 Vec3::new(x, y, 1.5),
-                Material::pbr([0.6, 0.6, 0.62], 0.1, 0.8),
+                Material::pbr(Colour::linear_rgb(0.6, 0.6, 0.62), 0.1, 0.8),
             ));
         }
     }
@@ -707,7 +714,7 @@ fn build_game_mix(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items.push(item(
             character,
             Vec3::new(a.cos() * 6.0, a.sin() * 6.0, 0.6),
-            Material::pbr([0.8, 0.5, 0.4], 0.0, 0.6),
+            Material::pbr(Colour::linear_rgb(0.8, 0.5, 0.4), 0.0, 0.6),
         ));
     }
     for i in 0..40 {
@@ -716,7 +723,7 @@ fn build_game_mix(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items.push(item(
             prop,
             Vec3::new(a.cos() * r, a.sin() * r, 0.2),
-            Material::pbr([0.7, 0.7, 0.3], 0.3, 0.5),
+            Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.3), 0.3, 0.5),
         ));
     }
     BuiltScene {

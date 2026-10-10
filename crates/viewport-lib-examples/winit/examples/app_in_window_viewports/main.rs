@@ -16,6 +16,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use viewport_lib::Colour;
 
 use viewport_lib as vpl;
 use vpl::{
@@ -158,7 +159,7 @@ fn main() {
                     let node = left.session.scene_mut().add(
                         Some(cube),
                         glam::Mat4::IDENTITY,
-                        Material::from_colour([0.12, 0.3, 0.7]),
+                        Material::from_colour(Colour::linear_rgb(0.12, 0.3, 0.7)),
                     );
                     left.session.camera_mut().distance = 5.0;
                     panes.cube = Some(node);
@@ -173,7 +174,7 @@ fn main() {
                     right.session.scene_mut().add(
                         Some(torus),
                         glam::Mat4::IDENTITY,
-                        Material::from_colour([0.1, 0.55, 0.2]),
+                        Material::from_colour(Colour::linear_rgb(0.1, 0.55, 0.2)),
                     );
                     right.session.camera_mut().distance = 5.0;
                     panes.right = Some(right);

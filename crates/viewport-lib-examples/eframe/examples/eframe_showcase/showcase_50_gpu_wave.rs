@@ -25,6 +25,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use viewport_lib_plugins::item_types::external_instances::{
     ExternalInstanceSetConfig, ExternalInstanceSetId, ExternalInstanceUploads,
@@ -270,7 +271,7 @@ pub(crate) fn wave_collect(app: &App) -> (Vec<SceneRenderItem>, LightingSettings
     // PBR water-like surface. Dielectric (metallic=0), fairly smooth so the
     // wave crests catch specular highlights.
     item.material = {
-        let mut m = Material::pbr([0.08, 0.28, 0.80], 0.0, 0.35);
+        let mut m = Material::pbr(Colour::linear_rgb(0.08, 0.28, 0.80), 0.0, 0.35);
         m.backface_policy = vpl::BackfacePolicy::Identical;
         m
     };
@@ -287,22 +288,22 @@ pub(crate) fn wave_collect(app: &App) -> (Vec<SceneRenderItem>, LightingSettings
     sun.kind = LightKind::Directional {
         direction: [0.4, 0.3, 1.0],
     };
-    sun.colour = [1.0, 0.96, 0.88].into();
+    sun.colour = Colour::linear_rgb(1.0, 0.96, 0.88);
     sun.intensity = 1.2;
 
     let mut fill = LightSource::default();
     fill.kind = LightKind::Directional {
         direction: [-0.5, -0.2, 0.4],
     };
-    fill.colour = [0.65, 0.78, 1.0].into();
+    fill.colour = Colour::linear_rgb(0.65, 0.78, 1.0);
     fill.intensity = 0.35;
 
     let lighting = {
         let mut t = LightingSettings::default();
         t.lights = vec![sun, fill];
         t.hemisphere_intensity = 0.35;
-        t.sky_colour = [0.85, 0.92, 1.0].into();
-        t.ground_colour = [0.40, 0.35, 0.30].into();
+        t.sky_colour = Colour::linear_rgb(0.85, 0.92, 1.0);
+        t.ground_colour = Colour::linear_rgb(0.40, 0.35, 0.30);
         t
     };
 
@@ -339,7 +340,7 @@ pub(crate) fn submit_wave_items(
                 .shown_buoys
                 .min((BUOY_GRID * BUOY_GRID) as u32),
         );
-        item.colour = [1.0, 0.40, 0.04, 1.0].into();
+        item.colour = Colour::linear(1.0, 0.40, 0.04, 1.0);
         fd.scene.items_mut::<ExternalInstancesItem>().push(item);
     }
 

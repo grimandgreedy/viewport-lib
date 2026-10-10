@@ -4,6 +4,7 @@ use super::{
     HandleMarkers, WidgetContext, WidgetResult, ctx_ray, handle_colour, handle_world_radius,
     ray_point_dist,
 };
+use crate::Colour;
 use crate::geometry::maths::intersect::ray_plane_intersection;
 use crate::renderer::PolylineItem;
 
@@ -33,9 +34,9 @@ impl SplineWidget {
     pub fn new(points: Vec<glam::Vec3>) -> Self {
         Self {
             points,
-            colour: [0.4, 0.8, 1.0, 1.0].into(),
+            colour: Colour::linear(0.4, 0.8, 1.0, 1.0),
             line_width: 2.0,
-            handle_colour: [1.0, 0.8, 0.2, 1.0].into(),
+            handle_colour: Colour::linear(1.0, 0.8, 0.2, 1.0),
             resolution: 16,
             hovered_point: None,
             active_point: None,

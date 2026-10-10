@@ -3,6 +3,7 @@
 //! the cull pass silently passing everything.
 
 use glam::Vec3;
+use viewport_lib::Colour;
 use viewport_lib::primitives::cube;
 use viewport_lib::wgpu;
 use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
@@ -37,7 +38,7 @@ fn frustum_cull_rejects_behind_camera() {
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(Vec3::new(-47.5 + 5.0 * i as f32, 0.0, 0.0))
                 .to_cols_array_2d();
-            item.material = Material::from_colour([0.7, 0.7, 0.7]);
+            item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
             item
         })
         .collect();

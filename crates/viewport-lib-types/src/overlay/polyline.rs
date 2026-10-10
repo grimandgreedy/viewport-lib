@@ -1,5 +1,6 @@
 //! Polyline overlay geometry and its join and cap styles.
 
+use crate::colour::Colour;
 use crate::overlay::*;
 
 /// How an [`OverlayPolylineItem`] handles each joint between segments.
@@ -97,7 +98,7 @@ impl Default for OverlayStroke {
     fn default() -> Self {
         Self {
             width: 2.0,
-            colour: [1.0, 1.0, 1.0, 1.0].into(),
+            colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
             pattern: StrokePattern::Solid,
             join: LineJoin::Mitre,
             mitre_limit: 4.0,
@@ -622,7 +623,7 @@ mod path_sample_tests {
 
     #[test]
     fn from_path_samples_endpoint_inclusive() {
-        let item = OverlayPolylineItem::from_path(circle, 4, 2.0, [1.0; 4]);
+        let item = OverlayPolylineItem::from_path(circle, 4, 2.0, Colour::WHITE);
         // 5 points, first and last both at the t=0 position.
         assert_eq!(item.points.len(), 5);
         assert!((item.points[0][0] - item.points[4][0]).abs() < 1e-5);
@@ -631,8 +632,9 @@ mod path_sample_tests {
 
     #[test]
     fn closed_from_path_skips_duplicate_endpoint() {
-        let fill = OverlayFill::Solid([0.2, 0.4, 0.6, 1.0].into());
-        let item = OverlayPolylineItem::closed_from_path(circle, 4, fill.clone(), [1.0; 4], 3.0);
+        let fill = OverlayFill::Solid(Colour::linear(0.2, 0.4, 0.6, 1.0));
+        let item =
+            OverlayPolylineItem::closed_from_path(circle, 4, fill.clone(), Colour::WHITE, 3.0);
         assert!(item.closed);
         assert_eq!(item.style.fill, fill);
         assert_eq!(item.stroke.as_ref().unwrap().width, 3.0);

@@ -116,7 +116,7 @@ pub enum OverlayFillKind {
 
 impl Default for OverlayFill {
     fn default() -> Self {
-        OverlayFill::Solid([0.0, 0.0, 0.0, 0.55].into())
+        OverlayFill::Solid(Colour::linear(0.0, 0.0, 0.0, 0.55))
     }
 }
 

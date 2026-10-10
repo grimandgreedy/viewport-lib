@@ -18,6 +18,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use glam::{Mat4, Vec3};
 use std::collections::HashMap;
+use viewport_lib::Colour;
 use viewport_lib::{
     Aabb, BackfacePolicy, Camera, CameraFrame, FrameData, Frustum, Material, MeshId,
     PickAccelerator, Scene, SceneFrame, SceneRenderItem, primitives,
@@ -130,7 +131,7 @@ fn cube_scene(mesh: MeshId, count: usize, instanced: bool) -> Vec<SceneRenderIte
                 it.mesh_id = mesh;
                 it.model = Mat4::from_translation(Vec3::new(x as f32, y as f32, z as f32) * 1.5)
                     .to_cols_array_2d();
-                it.material = Material::pbr([0.7, 0.6, 0.5], 0.2, 0.5);
+                it.material = Material::pbr(Colour::linear_rgb(0.7, 0.6, 0.5), 0.2, 0.5);
                 if !instanced {
                     // A styled back-face policy defeats batching, forcing the
                     // per-object path (uniform write + bind-group build each).
@@ -204,7 +205,11 @@ fn bench_pick(c: &mut Criterion) {
             for y in 0..side {
                 for z in 0..side {
                     let m = Mat4::from_translation(Vec3::new(x as f32, y as f32, z as f32) * 2.0);
-                    scene.add(Some(mesh_id), m, Material::pbr([0.6, 0.6, 0.6], 0.0, 0.5));
+                    scene.add(
+                        Some(mesh_id),
+                        m,
+                        Material::pbr(Colour::linear_rgb(0.6, 0.6, 0.6), 0.0, 0.5),
+                    );
                     n += 1;
                     if n == count {
                         break 'outer;

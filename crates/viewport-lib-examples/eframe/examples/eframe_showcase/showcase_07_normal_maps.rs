@@ -14,6 +14,7 @@ use crate::geometry::{
     make_tile_normal_map, make_uv_sphere,
 };
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{BackfacePolicy, Material, NodeId, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
@@ -150,7 +151,7 @@ impl App {
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.075)),
             {
-                let mut mat = Material::pbr([0.85, 0.85, 0.85], 0.0, 0.85);
+                let mut mat = Material::pbr(Colour::linear_rgb(0.85, 0.85, 0.85), 0.0, 0.85);
                 mat.normal_map_id = Some(tile_nm_id);
                 mat.ao_map_id = Some(tile_ao_id);
                 mat
@@ -166,7 +167,7 @@ impl App {
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.0)),
             {
-                let mut mat = Material::pbr([0.9, 0.88, 0.85], 0.0, 0.5);
+                let mut mat = Material::pbr(Colour::linear_rgb(0.9, 0.88, 0.85), 0.0, 0.5);
                 mat.normal_map_id = Some(brick_nm_id);
                 mat.ao_map_id = Some(brick_ao_id);
                 mat.backface_policy = BackfacePolicy::Identical;
@@ -183,7 +184,7 @@ impl App {
             Some(cube_id),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.0, 0.8)),
             {
-                let mut mat = Material::pbr([0.85, 0.87, 0.9], 0.1, 0.6);
+                let mut mat = Material::pbr(Colour::linear_rgb(0.85, 0.87, 0.9), 0.1, 0.6);
                 mat.normal_map_id = Some(tile_nm_id);
                 mat.ao_map_id = Some(tile_ao_id);
                 mat
@@ -199,7 +200,7 @@ impl App {
             Some(wall_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, -2.0, 3.5)),
             {
-                let mut mat = Material::pbr([0.92, 0.9, 0.87], 0.0, 0.7);
+                let mut mat = Material::pbr(Colour::linear_rgb(0.92, 0.9, 0.87), 0.0, 0.7);
                 mat.normal_map_id = Some(brick_nm_id);
                 mat.ao_map_id = Some(brick_ao_id);
                 mat
@@ -222,7 +223,7 @@ impl App {
             Some(plain_sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(-3.0, 2.5, 1.0)),
             {
-                let mut mat = Material::pbr([0.9, 0.88, 0.85], 0.0, 0.5);
+                let mut mat = Material::pbr(Colour::linear_rgb(0.9, 0.88, 0.85), 0.0, 0.5);
                 mat.backface_policy = BackfacePolicy::Identical;
                 mat
             },
@@ -399,7 +400,7 @@ pub(crate) fn scene(
                         range: 15.0,
                         radius: 0.1,
                     };
-                    _t.colour = [1.0, 0.97, 0.93].into();
+                    _t.colour = Colour::linear_rgb(1.0, 0.97, 0.93);
                     _t.intensity = 20.0;
                     // Fill light for the normal-map highlights; not a
                     // shadow caster, so the directional's shadow stays
@@ -410,8 +411,8 @@ pub(crate) fn scene(
             ];
             _t.shadows.enabled = true;
             _t.hemisphere_intensity = 0.4;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         let sg = app.nm_state.scene.version();

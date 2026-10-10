@@ -5,6 +5,7 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -53,7 +54,7 @@ fn sphere_frame(
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
     frame.effects.environment = Some(lighting);
     frame.effects.lighting.lights = vec![];
     frame.effects.lighting.hemisphere_intensity = 0.0;
@@ -79,7 +80,7 @@ fn centre(px: &[u8]) -> [u8; 3] {
 }
 
 fn matte() -> Material {
-    Material::pbr([1.0, 1.0, 1.0], 0.0, 1.0)
+    Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 1.0)
 }
 
 /// The sky shows the background environment while the sphere is lit by the
@@ -143,7 +144,7 @@ fn colour_background_keeps_the_lighting() {
         matte(),
     );
     frame.viewport.environment_background = EnvironmentBackground::colour();
-    frame.viewport.background_colour = Some([0.0, 0.0, 1.0, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 1.0, 1.0));
     let px = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
     let sky = corner(&px);
     let sphere = centre(&px);
@@ -174,7 +175,7 @@ fn diffuse_and_specular_scales_apply_separately() {
         frame.viewport.environment_background = EnvironmentBackground::colour();
         centre(&renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE))[0]
     };
-    let metal = Material::pbr([1.0, 1.0, 1.0], 1.0, 0.2);
+    let metal = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 1.0, 0.2);
 
     let matte_full = render(matte(), 1.0, 1.0);
     let matte_no_diffuse = render(matte(), 0.0, 1.0);

@@ -1156,13 +1156,13 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// frame:
     ///
     /// ```no_run
-    /// # use viewport_lib::{FrameData, Aabb, PolylineItem, aabb_wireframe_polyline};
+    /// # use viewport_lib::{Colour, FrameData, Aabb, PolylineItem, aabb_wireframe_polyline};
     /// # fn example(fd: &mut FrameData, bounds: &Aabb, selected: bool) {
     /// if selected {
     ///     // The same yellow the built-in bounds outlines use.
     ///     fd.scene
     ///         .items_mut::<PolylineItem>()
-    ///         .push(aabb_wireframe_polyline(bounds, [1.0, 0.9, 0.2, 1.0]));
+    ///         .push(aabb_wireframe_polyline(bounds, Colour::linear(1.0, 0.9, 0.2, 1.0)));
     /// }
     /// # }
     /// ```

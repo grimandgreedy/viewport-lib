@@ -4,6 +4,7 @@
 //! isolated change must still re-record immediately, and a set that
 //! stabilises again must get the bundle back.
 
+use viewport_lib::Colour;
 use viewport_lib::{
     CameraFrame, FrameData, Material, PickId, SamplerKey, SceneFrame, SceneRenderItem, TextureSlot,
     WrapMode,
@@ -18,7 +19,7 @@ fn items(mesh_id: viewport_lib::MeshId, count: u32, id_base: u64) -> Vec<SceneRe
             // A per-material sampler forces the per-object path: the instanced
             // and bindless paths share one sampler per batch, so a material
             // picking its own wrap mode draws per object.
-            item.material = Material::from_colour([0.6, 0.65, 0.7]).with_sampler(
+            item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.65, 0.7)).with_sampler(
                 TextureSlot::Albedo,
                 SamplerKey {
                     wrap_u: WrapMode::ClampToEdge,

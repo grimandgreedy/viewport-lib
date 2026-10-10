@@ -2,6 +2,7 @@
 //! configuration it registers with, and the per-frame item that draws a window
 //! of one.
 
+use viewport_lib::Colour;
 use viewport_lib::{ItemSettings, gpu};
 pub use viewport_lib_types::ids::ExternalInstanceSetId;
 
@@ -71,7 +72,7 @@ impl ExternalInstancesItem {
             first_instance: 0,
             instance_count,
             scale: 1.0,
-            colour: [1.0, 1.0, 1.0, 1.0].into(),
+            colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
             settings: ItemSettings::default(),
         }
     }

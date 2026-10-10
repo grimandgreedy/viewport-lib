@@ -98,6 +98,18 @@ impl Colour {
         Colour([r, g, b, 1.0])
     }
 
+    /// A linear RGBA array, stored verbatim: for values already held as arrays,
+    /// such as a colourmap sample or a vertex colour read from a buffer.
+    pub const fn from_linear_array(rgba: [f32; 4]) -> Self {
+        Colour(rgba)
+    }
+
+    /// A linear RGB array with alpha 1.0. See
+    /// [`from_linear_array`](Self::from_linear_array).
+    pub const fn from_linear_rgb_array(rgb: [f32; 3]) -> Self {
+        Colour([rgb[0], rgb[1], rgb[2], 1.0])
+    }
+
     /// An sRGB RGBA colour with 0..=1 channels. The RGB channels are decoded to
     /// linear; alpha is a linear coverage value and is stored as given.
     pub fn srgb(r: f32, g: f32, b: f32, a: f32) -> Self {
@@ -239,39 +251,6 @@ impl Colour {
             enc(self.0[2]),
             (self.0[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
         ]
-    }
-}
-
-/// A linear `[f32; 4]` is taken as-is. Bare arrays are treated as linear, so
-/// existing linear values keep working; reach for a constructor
-/// ([`Colour::rgb`], [`Colour::hex`], ...) when the value is sRGB.
-impl From<[f32; 4]> for Colour {
-    fn from(v: [f32; 4]) -> Self {
-        Colour(v)
-    }
-}
-
-/// A linear `[f32; 3]` is taken as-is, with alpha 1.0.
-impl From<[f32; 3]> for Colour {
-    fn from(v: [f32; 3]) -> Self {
-        Colour([v[0], v[1], v[2], 1.0])
-    }
-}
-
-/// A linear `[f64; 4]` is taken as-is (channels narrowed to `f32`). This mirrors
-/// [`From<[f32; 4]>`] so an untyped array literal, which infers as `f64`, still
-/// converts where a constructor takes `impl Into<Colour>`.
-impl From<[f64; 4]> for Colour {
-    fn from(v: [f64; 4]) -> Self {
-        Colour([v[0] as f32, v[1] as f32, v[2] as f32, v[3] as f32])
-    }
-}
-
-/// A linear `[f64; 3]` is taken as-is (channels narrowed to `f32`), alpha 1.0.
-/// See [`From<[f64; 4]>`].
-impl From<[f64; 3]> for Colour {
-    fn from(v: [f64; 3]) -> Self {
-        Colour([v[0] as f32, v[1] as f32, v[2] as f32, 1.0])
     }
 }
 

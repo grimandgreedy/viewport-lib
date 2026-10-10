@@ -11,6 +11,7 @@
 #![cfg(feature = "raytrace")]
 
 use glam::Vec3;
+use viewport_lib::Colour;
 use viewport_lib::raytrace::{
     DirectionalBake, RtImage, RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, Tracer,
     bake_lightmap, bake_lightmap_directional, bake_shadowmask,
@@ -110,7 +111,7 @@ fn direct_irradiance_follows_the_cosine_law() {
     add_floor(&mut scene, 5.0, RtMaterial::default());
     scene.add_light(RtLight::Directional {
         direction: [0.0, 0.0, 1.0], // straight up, toward the light
-        colour: [2.0, 2.0, 2.0].into(),
+        colour: Colour::linear_rgb(2.0, 2.0, 2.0),
     });
 
     let (pos, nrm) = uniform_surfaces(32, 32, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
@@ -141,7 +142,7 @@ fn occluder_casts_a_shadow() {
     // Black floor and occluder so the test isolates visibility: no surface
     // bounces light into the shadow, so a shadowed texel goes to ~0.
     let black = RtMaterial {
-        base_colour: [0.0, 0.0, 0.0].into(),
+        base_colour: Colour::linear_rgb(0.0, 0.0, 0.0),
         ..RtMaterial::default()
     };
     let mut scene = RtScene::new();
@@ -149,7 +150,7 @@ fn occluder_casts_a_shadow() {
     add_floor(&mut scene, 5.0, black);
     scene.add_light(RtLight::Directional {
         direction: [0.0, 0.0, 1.0],
-        colour: [2.0, 2.0, 2.0].into(),
+        colour: Colour::linear_rgb(2.0, 2.0, 2.0),
     });
     // A ceiling quad at z=1 over the texel, blocking the light.
     let p = [
@@ -196,7 +197,7 @@ fn indirect_light_carries_colour() {
     ];
     let n = [Vec3::Z; 4];
     let emissive = RtMaterial {
-        emissive: [5.0, 0.0, 0.0].into(),
+        emissive: Colour::linear_rgb(5.0, 0.0, 0.0),
         ..RtMaterial::default()
     };
     scene.add_mesh(&p, &[0u32, 1, 2, 0, 2, 3], Some(&n), emissive);
@@ -229,7 +230,7 @@ fn empty_texels_stay_black() {
     add_floor(&mut scene, 5.0, RtMaterial::default());
     scene.add_light(RtLight::Directional {
         direction: [0.0, 0.0, 1.0],
-        colour: [2.0, 2.0, 2.0].into(),
+        colour: Colour::linear_rgb(2.0, 2.0, 2.0),
     });
 
     // Left half covered, right half empty.
@@ -286,7 +287,7 @@ fn directional_bake_points_at_the_light() {
     add_floor(&mut scene, 5.0, RtMaterial::default());
     scene.add_light(RtLight::Directional {
         direction: [0.0, 0.0, 1.0],
-        colour: [2.0, 2.0, 2.0].into(),
+        colour: Colour::linear_rgb(2.0, 2.0, 2.0),
     });
 
     let (pos, nrm) = uniform_surfaces(32, 32, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
@@ -372,7 +373,7 @@ fn emissive_panel_lights_the_floor_with_low_noise() {
         &[0u32, 1, 2, 0, 2, 3],
         Some(&[-Vec3::Z; 4]),
         RtMaterial {
-            emissive: [40.0, 40.0, 40.0].into(),
+            emissive: Colour::linear_rgb(40.0, 40.0, 40.0),
             ..RtMaterial::default()
         },
     );
@@ -434,7 +435,7 @@ fn shadowmask_bakes_per_light_visibility() {
     );
     scene.add_light(RtLight::Directional {
         direction: [0.0, 0.0, 1.0], // straight up, toward the light
-        colour: [1.0, 1.0, 1.0].into(),
+        colour: Colour::linear_rgb(1.0, 1.0, 1.0),
     });
 
     let bake_at = |p: [f32; 3]| {
@@ -494,7 +495,7 @@ fn bake_is_bit_for_bit_reproducible() {
     add_floor(&mut scene, 5.0, RtMaterial::default());
     scene.add_light(RtLight::Directional {
         direction: [0.3, 0.2, 0.9],
-        colour: [2.0, 1.9, 1.7].into(),
+        colour: Colour::linear_rgb(2.0, 1.9, 1.7),
     });
     // A small occluder above the texels, so shadow rays actually miss/hit.
     let occ = [
@@ -539,7 +540,7 @@ fn different_seeds_vary_the_noise_but_not_the_signal() {
     add_floor(&mut scene, 5.0, RtMaterial::default());
     scene.add_light(RtLight::Directional {
         direction: [0.2, 0.1, 0.95],
-        colour: [1.5, 1.5, 1.5].into(),
+        colour: Colour::linear_rgb(1.5, 1.5, 1.5),
     });
 
     let (pos, nrm) = uniform_surfaces(32, 32, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
@@ -581,7 +582,7 @@ fn occluded_floor() -> RtScene {
     add_floor(&mut scene, 5.0, RtMaterial::default());
     scene.add_light(RtLight::Directional {
         direction: [0.3, 0.2, 0.9],
-        colour: [2.0, 1.9, 1.7].into(),
+        colour: Colour::linear_rgb(2.0, 1.9, 1.7),
     });
     let occ = [
         Vec3::new(-1.0, -1.0, 1.5),

@@ -29,6 +29,7 @@
 
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::from_egui;
 use vpl::{
@@ -105,7 +106,7 @@ fn main() -> eframe::Result {
                 Some(ground_mesh),
                 glam::Mat4::from_translation(glam::Vec3::new(span * 0.5, 0.0, -0.2)),
                 {
-                    let mut m = Material::from_colour([0.45, 0.45, 0.48]);
+                    let mut m = Material::from_colour(Colour::linear_rgb(0.45, 0.45, 0.48));
                     m.roughness = 0.95;
                     m
                 },
@@ -113,7 +114,7 @@ fn main() -> eframe::Result {
             for c in 0..COLUMNS {
                 let x = c as f32 * COL_SPACING;
                 let a = 0.05 + (c as f32 / (COLUMNS - 1) as f32) * 0.85;
-                let mut m = Material::from_colour([a, a, a]);
+                let mut m = Material::from_colour(Colour::linear_rgb(a, a, a));
                 m.roughness = 0.6;
                 m.metallic = 0.0;
                 scene.add(
@@ -124,7 +125,8 @@ fn main() -> eframe::Result {
             }
 
             // Background is a persistent viewport setting.
-            session.viewport_frame_mut().background_colour = Some([0.12, 0.12, 0.14, 1.0].into());
+            session.viewport_frame_mut().background_colour =
+                Some(Colour::linear(0.12, 0.12, 0.14, 1.0));
 
             let cam = session.camera_mut();
             cam.center = glam::Vec3::new((COLUMNS as f32 - 1.0) * COL_SPACING * 0.5, 0.4, 0.7);
@@ -342,8 +344,8 @@ impl App {
         // A softer sky fill so shadows aren't near-black: less extreme metering
         // swings when the camera points into shadow (closer to real ambient/GI).
         l.hemisphere_intensity = 0.15;
-        l.sky_colour = [0.6, 0.7, 0.9].into();
-        l.ground_colour = [0.25, 0.22, 0.2].into();
+        l.sky_colour = Colour::linear_rgb(0.6, 0.7, 0.9);
+        l.ground_colour = Colour::linear_rgb(0.25, 0.22, 0.2);
         l
     }
 
@@ -368,7 +370,7 @@ impl App {
     /// plus an optional bulb authored in lumens.
     fn photometric_lighting(&self) -> LightingSettings {
         let mut sun = LightSource::directional_lux(self.sky.direction(), self.sky.illuminance());
-        sun.colour = self.sky.colour().into();
+        sun.colour = Colour::from_linear_rgb_array(self.sky.colour());
         sun.cast_shadows = true;
 
         let mut lights = vec![sun];
@@ -376,7 +378,7 @@ impl App {
             let span = (COLUMNS - 1) as f32 * COL_SPACING;
             let mut bulb =
                 LightSource::point_lumens([span * 0.5, 0.9, 3.2], self.bulb.flux(), 25.0, 0.15);
-            bulb.colour = self.bulb.colour().into();
+            bulb.colour = Colour::from_linear_rgb_array(self.bulb.colour());
             bulb.cast_shadows = true;
             lights.push(bulb);
         }
@@ -387,8 +389,8 @@ impl App {
         // ~15% sky fill (ambient carries no 1/pi, so the factor is smaller than
         // it looks); provisional until IBL carries nits.
         l.hemisphere_intensity = self.sky.illuminance().0 * 0.05;
-        l.sky_colour = self.sky.colour().into();
-        l.ground_colour = [0.28, 0.26, 0.24].into();
+        l.sky_colour = Colour::from_linear_rgb_array(self.sky.colour());
+        l.ground_colour = Colour::linear_rgb(0.28, 0.26, 0.24);
         l
     }
 

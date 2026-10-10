@@ -34,7 +34,7 @@ fn base_frame() -> FrameData {
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.5, 0.5, 0.5, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.5, 0.5, 0.5, 1.0));
     frame
 }
 

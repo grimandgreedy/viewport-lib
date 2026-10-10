@@ -10,6 +10,7 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 
 use crate::eframe::egui;
 use vpl::{
@@ -105,12 +106,14 @@ pub(crate) fn build_perf_scene_threaded(
                 let mesh = meshes[count as usize % meshes.len()].0;
                 let mat = if texture_pool.is_empty() {
                     // Pool size 0: fall back to the flat-colour boxes.
-                    Material::flat(colours[count as usize % colours.len()])
+                    Material::flat(Colour::from_linear_rgb_array(
+                        colours[count as usize % colours.len()],
+                    ))
                 } else {
                     // Pick one pool texture at random. White base so the
                     // texture colours show through unmodulated.
                     let ti = hash_index(count, texture_pool.len());
-                    let mut m = Material::flat([1.0, 1.0, 1.0]);
+                    let mut m = Material::flat(Colour::linear_rgb(1.0, 1.0, 1.0));
                     m.texture_id = Some(texture_pool[ti]);
                     m
                 };
@@ -515,8 +518,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         (vec![], None, lighting, sg, ss)

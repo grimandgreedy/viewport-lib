@@ -15,6 +15,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{ColourSource, SizeSource};
 use viewport_lib_plugins::item_types::decal::{DecalItem, DecalProjection};
@@ -366,7 +367,7 @@ impl DecalCoverageShowcase {
                 prim.params[1] = centers[i][1];
                 prim.params[2] = centers[i][2];
                 prim.params[3] = 1.1; // radius
-                prim.colour = colours[i].into();
+                prim.colour = Colour::from_linear_array(colours[i]);
                 item.primitives.push(prim);
             }
             item.blend_mode = ImplicitBlendMode::SmoothUnion;
@@ -384,7 +385,7 @@ impl DecalCoverageShowcase {
 
         // GPU marching cubes: gyroid surface.
         if let Some(mc_id) = self.mc_id {
-            let mut mat = Material::flat([0.10, 0.52, 0.18]);
+            let mut mat = Material::flat(Colour::linear_rgb(0.10, 0.52, 0.18));
             mat.roughness = 0.4;
             let mut settings = ItemSettings::default();
             settings.unlit = false;
@@ -486,8 +487,8 @@ impl Showcase for DecalCoverageShowcase {
 
         // Marker first so it takes node id 0 (PickId(0) == NONE, skipped by GPU
         // picking) and keeps the real meshes off node id 0.
-        let mut marker_mat = Material::from_colour([1.0, 0.9, 0.15]);
-        marker_mat.emissive = [1.0, 0.85, 0.1].into();
+        let mut marker_mat = Material::from_colour(Colour::linear_rgb(1.0, 0.9, 0.15));
+        marker_mat.emissive = Colour::linear_rgb(1.0, 0.85, 0.1);
         let marker = ctx.session.scene_mut().add(
             Some(sphere),
             Mat4::from_scale(Vec3::splat(0.001)),
@@ -551,7 +552,7 @@ impl Showcase for DecalCoverageShowcase {
         self.glyphs.vectors = vec![[0.0, 0.0, 1.0]; n];
         self.glyphs.scale = 0.7;
         self.glyphs.shape = arrow_shape;
-        self.glyphs.colour = ColourSource::Solid([0.55, 0.10, 0.75, 1.0].into());
+        self.glyphs.colour = ColourSource::Solid(Colour::linear(0.55, 0.10, 0.75, 1.0));
         self.glyphs.settings.pick_id = PickId(GLYPH);
         self.instance_lookup.insert(GLYPH, gpos);
         self.model_matrices.insert(GLYPH, Mat4::IDENTITY);
@@ -561,7 +562,7 @@ impl Showcase for DecalCoverageShowcase {
         let (positions, strips) = helix_strips(Vec3::new(5.5, 5.0, 0.4), 3);
         self.polyline.positions = positions.clone();
         self.polyline.strip_lengths = strips.clone();
-        self.polyline.default_colour = [0.10, 0.52, 0.18, 1.0].into();
+        self.polyline.default_colour = Colour::linear(0.10, 0.52, 0.18, 1.0);
         self.polyline.line_width = 4.0;
         self.polyline.settings.pick_id = PickId(POLY);
         self.model_matrices.insert(POLY, Mat4::IDENTITY);
@@ -621,7 +622,7 @@ impl Showcase for DecalCoverageShowcase {
             }
             self.sprites.positions = positions.clone();
             self.sprites.sizes = sizes;
-            self.sprites.colours = colours.into_iter().map(Into::into).collect();
+            self.sprites.colours = colours.into_iter().map(Colour::from_linear_array).collect();
             self.sprites.default_size = 24.0;
             self.sprites.depth_write = true;
             self.sprites.settings.pick_id = PickId(SPRITE);
@@ -635,7 +636,7 @@ impl Showcase for DecalCoverageShowcase {
             self.streamtube.positions = pos;
             self.streamtube.strip_lengths = lens;
             self.streamtube.radius = 0.12;
-            self.streamtube.colour = [0.05, 0.50, 0.40, 1.0].into();
+            self.streamtube.colour = Colour::linear(0.05, 0.50, 0.40, 1.0);
             self.streamtube.settings.pick_id = PickId(STREAMTUBE);
             self.labels.insert(STREAMTUBE, ("Streamtube".into(), None));
         }
@@ -644,7 +645,7 @@ impl Showcase for DecalCoverageShowcase {
             self.tube.positions = pos;
             self.tube.strip_lengths = lens;
             self.tube.radius = 0.14;
-            self.tube.colour = [0.75, 0.28, 0.05, 1.0].into();
+            self.tube.colour = Colour::linear(0.75, 0.28, 0.05, 1.0);
             self.tube.settings.pick_id = PickId(TUBE);
             self.labels.insert(TUBE, ("Tube".into(), None));
         }
@@ -653,7 +654,7 @@ impl Showcase for DecalCoverageShowcase {
             self.ribbon.positions = pos;
             self.ribbon.strip_lengths = lens;
             self.ribbon.width = 0.4;
-            self.ribbon.colour = [0.38, 0.12, 0.62, 1.0].into();
+            self.ribbon.colour = Colour::linear(0.38, 0.12, 0.62, 1.0);
             self.ribbon.settings.pick_id = PickId(RIBBON);
             self.labels.insert(RIBBON, ("Ribbon".into(), None));
         }
@@ -942,8 +943,8 @@ impl Showcase for DecalCoverageShowcase {
                 .with_curve_families(curve_family_lookup)
                 .with_instances(self.instance_lookup.clone()),
             );
-            fd.interaction.sub_highlight_face_fill_colour = [1.0, 0.85, 0.0, 0.3].into();
-            fd.interaction.sub_highlight_edge_colour = [1.0, 0.85, 0.0, 1.0].into();
+            fd.interaction.sub_highlight_face_fill_colour = Colour::linear(1.0, 0.85, 0.0, 0.3);
+            fd.interaction.sub_highlight_edge_colour = Colour::linear(1.0, 0.85, 0.0, 1.0);
             fd.interaction.sub_highlight_edge_width_px = 4.0;
             fd.interaction.sub_highlight_vertex_size_px = 13.0;
         }
@@ -959,8 +960,12 @@ impl Showcase for DecalCoverageShowcase {
                     [min.x, min.y],
                     [size.x, size.y],
                 )
-                .with_fill(OverlayFill::Solid([0.3, 0.6, 1.0, 0.12].into()))
-                .with_outline([0.5, 0.8, 1.0, 0.9], 1.5, vpl::OutlineMode::Inset);
+                .with_fill(OverlayFill::Solid(Colour::linear(0.3, 0.6, 1.0, 0.12)))
+                .with_outline(
+                    Colour::linear(0.5, 0.8, 1.0, 0.9),
+                    1.5,
+                    vpl::OutlineMode::Inset,
+                );
                 session.frame_data_mut().overlays.shapes.push(rect);
             }
         }
@@ -1053,7 +1058,7 @@ fn add_mesh(ctx: &mut SetupCtx, mesh: MeshId, pos: Vec3, colour: [f32; 3]) -> No
     ctx.session.scene_mut().add(
         Some(mesh),
         Mat4::from_translation(pos),
-        Material::pbr(colour, 0.1, 0.5),
+        Material::pbr(Colour::from_linear_rgb_array(colour), 0.1, 0.5),
     )
 }
 

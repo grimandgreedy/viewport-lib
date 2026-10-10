@@ -7,6 +7,7 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -27,7 +28,7 @@ fn overlay_frame(size: u32) -> FrameData {
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.3, 0.3, 0.3, 1.0));
     frame
 }
 
@@ -84,7 +85,7 @@ fn glyph_run_draws_its_glyphs() {
     frame.overlays.glyph_runs = vec![
         GlyphRunItem::new(glyph_grid())
             .with_font_size(24.0)
-            .with_colour([1.0, 1.0, 1.0, 1.0]),
+            .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0)),
     ];
 
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
@@ -109,7 +110,7 @@ fn empty_glyph_run_draws_nothing() {
     frame.overlays.glyph_runs = vec![
         GlyphRunItem::new(Vec::new())
             .with_font_size(24.0)
-            .with_colour([1.0, 1.0, 1.0, 1.0]),
+            .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0)),
     ];
 
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
@@ -143,7 +144,7 @@ fn per_glyph_tints_apply() {
     frame.overlays.glyph_runs = vec![
         GlyphRunItem::new(glyphs)
             .with_font_size(24.0)
-            .with_colour([1.0, 1.0, 1.0, 1.0])
+            .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
             .with_glyph_tints(glyph_tints),
     ];
 
@@ -179,7 +180,7 @@ fn glyph_run_draws_ids_with_no_codepoint() {
     frame.overlays.glyph_runs = vec![
         GlyphRunItem::new(glyphs)
             .with_font_size(40.0)
-            .with_colour([1.0, 1.0, 1.0, 1.0]),
+            .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0)),
     ];
 
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);

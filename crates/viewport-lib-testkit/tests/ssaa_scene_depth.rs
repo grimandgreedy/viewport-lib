@@ -6,6 +6,7 @@
 //! carries colour only that buffer is never written all frame and those passes
 //! draw nothing. Decals are the clearest victim, and the cheapest to assert on.
 
+use viewport_lib::Colour;
 use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem, TextureData};
 use viewport_lib_plugins::item_types::decal::DecalItem;
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
@@ -24,7 +25,7 @@ fn decal_frame(
     let camera = orbit_camera(glam::Vec3::ZERO, 6.0, 0.6, 1.0);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     let mut fd = FrameData::new(
         CameraFrame::from_camera(&camera, [W as f32, H as f32]),
         SceneFrame::from_surface_items(vec![item]),

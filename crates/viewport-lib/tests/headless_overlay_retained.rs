@@ -8,6 +8,7 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -31,7 +32,7 @@ fn overlay_frame(size: u32) -> FrameData {
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.3, 0.3, 0.3, 1.0));
     frame
 }
 
@@ -41,7 +42,7 @@ fn red_square() -> OverlayPolylineItem {
     p.points = vec![[16.0, 16.0], [48.0, 16.0], [48.0, 48.0], [16.0, 48.0]];
     p.closed = true;
     p.stroke = None;
-    p.style.fill = OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into());
+    p.style.fill = OverlayFill::Solid(Colour::linear(1.0, 0.0, 0.0, 1.0));
     p.style.opacity = 1.0;
     p
 }
@@ -67,7 +68,7 @@ fn red_sdf_rect() -> OverlayShapeItem {
         [16.0, 16.0],
         [32.0, 32.0],
     )
-    .with_fill(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into()))
+    .with_fill(OverlayFill::Solid(Colour::linear(1.0, 0.0, 0.0, 1.0)))
 }
 
 fn is_white(c: (u8, u8, u8)) -> bool {
@@ -81,7 +82,7 @@ fn white_sdf_rect() -> OverlayShapeItem {
         [16.0, 16.0],
         [32.0, 32.0],
     )
-    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
+    .with_fill(OverlayFill::Solid(Colour::linear(1.0, 1.0, 1.0, 1.0)))
 }
 
 /// A white closed filled square polyline over pixels 16..48 (text stream).
@@ -90,7 +91,7 @@ fn white_square() -> OverlayPolylineItem {
     p.points = vec![[16.0, 16.0], [48.0, 16.0], [48.0, 48.0], [16.0, 48.0]];
     p.closed = true;
     p.stroke = None;
-    p.style.fill = OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into());
+    p.style.fill = OverlayFill::Solid(Colour::linear(1.0, 1.0, 1.0, 1.0));
     p.style.opacity = 1.0;
     p
 }
@@ -279,7 +280,7 @@ fn retained_shape_per_frame_clip() {
 /// only masks; it does not paint.
 fn circle_mask() -> OverlayShapeItem {
     OverlayShapeItem::new(OverlayShape::Circle, [16.0, 16.0], [32.0, 32.0])
-        .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into()))
+        .with_fill(OverlayFill::Solid(Colour::linear(0.0, 0.0, 0.0, 0.0)))
         .provides_mask(7)
 }
 
@@ -333,7 +334,7 @@ fn glyph_run() -> GlyphRunItem {
     }
     GlyphRunItem::new(glyphs)
         .with_font_size(22.0)
-        .with_colour([1.0, 1.0, 1.0, 1.0])
+        .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
 }
 
 /// Count near-white pixels (drawn glyph coverage) over the grey background.
@@ -409,7 +410,7 @@ fn retained_label_draws_and_free() {
 
     let label = LabelItem::new("ABCD")
         .with_font_size(22.0)
-        .with_colour([1.0, 1.0, 1.0, 1.0])
+        .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
         .with_align_y(AnchorY::Top)
         .with_position([8.0, 8.0]);
     let id = renderer.compile_overlay_label(&device, &queue, &label, 1.0);
@@ -444,7 +445,7 @@ fn retained_label_anchor_resolves_to_corner() {
 
     let top_left = LabelItem::new("ABCD")
         .with_font_size(22.0)
-        .with_colour([1.0, 1.0, 1.0, 1.0])
+        .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
         .with_anchor(OverlayOrigin::Viewport(Alignment::new(
             AnchorX::Left,
             AnchorY::Top,
@@ -469,7 +470,7 @@ fn retained_label_anchor_resolves_to_corner() {
 
     let bottom_right = LabelItem::new("ABCD")
         .with_font_size(22.0)
-        .with_colour([1.0, 1.0, 1.0, 1.0])
+        .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
         .with_anchor(OverlayOrigin::Viewport(Alignment::new(
             AnchorX::Right,
             AnchorY::Bottom,
@@ -509,7 +510,7 @@ fn retained_mixed_group_shape_and_label() {
     // A label laid out below the red square (glyphs land around y=40..).
     let label = LabelItem::new("ABCD")
         .with_font_size(18.0)
-        .with_colour([1.0, 1.0, 1.0, 1.0])
+        .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
         .with_align_y(AnchorY::Top)
         .with_position([2.0, 40.0]);
     let id = renderer.compile_overlay_geometry(
@@ -710,7 +711,7 @@ fn retained_scaled_shape_keeps_a_one_pixel_edge() {
         [4.0, 4.0],
         [8.0, 8.0],
     )
-    .with_fill(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into()));
+    .with_fill(OverlayFill::Solid(Colour::linear(1.0, 0.0, 0.0, 1.0)));
     let id = renderer.compile_overlay_geometry(&device, &queue, &[], &[rect], &[], &[], 1.0);
 
     let mut frame = overlay_frame(size);

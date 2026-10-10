@@ -4,6 +4,7 @@
 //! texel instead, so the clamped render has visibly more of the right-edge
 //! colour. Proves the per-object path binds the material's own sampler.
 
+use viewport_lib::Colour;
 mod common;
 use common::*;
 use viewport_lib::wgpu;
@@ -68,7 +69,7 @@ fn material_sampler_wrap_mode_changes_tiling() {
         let mut frame = FrameData::default();
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
-        frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+        frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
         let cam = Camera::default();
         frame.camera.render_camera = {
             let mut rc = RenderCamera::from_camera(&cam);
@@ -80,7 +81,7 @@ fn material_sampler_wrap_mode_changes_tiling() {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-        item.material.base_colour = [1.0, 1.0, 1.0].into();
+        item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material.texture_id = Some(tex);
         item.settings.unlit = true;
         if let Some(key) = sampler {

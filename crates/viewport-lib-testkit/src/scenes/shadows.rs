@@ -7,6 +7,7 @@
 //! a bright pixel.
 
 use glam::Vec3;
+use viewport_lib::Colour;
 use viewport_lib::{
     BackfacePolicy, ClipObject, LightKind, LightSource, LightingSettings, Material,
     SceneRenderItem, primitives,
@@ -25,7 +26,7 @@ fn sun(direction: [f32; 3], intensity: f32) -> LightSource {
 
 fn lamp(position: [f32; 3], candela: f32, range: f32) -> LightSource {
     let mut s = LightSource::point_candela(position, viewport_lib::Candela(candela), range, 0.05);
-    s.colour = [1.0, 0.92, 0.8].into();
+    s.colour = Colour::linear_rgb(1.0, 0.92, 0.8);
     s.cast_shadows = true;
     s
 }
@@ -39,7 +40,11 @@ fn interior(lights: Vec<LightSource>) -> LightingSettings {
 
 fn slab(ctx: &mut BuildCtx<'_>, size: [f32; 3], at: [f32; 3], colour: [f32; 3]) -> SceneRenderItem {
     let mesh = upload(ctx, &primitives::cuboid(size[0], size[1], size[2]));
-    item(mesh, Vec3::from(at), Material::pbr(colour, 0.0, 0.9))
+    item(
+        mesh,
+        Vec3::from(at),
+        Material::pbr(Colour::from_linear_rgb_array(colour), 0.0, 0.9),
+    )
 }
 
 fn two_sided(mut it: SceneRenderItem) -> SceneRenderItem {
@@ -107,12 +112,12 @@ fn table_set(ctx: &mut BuildCtx<'_>, at: Vec3) -> Vec<SceneRenderItem> {
     items.push(item(
         cube,
         Vec3::new(at.x - 0.4, at.y, top_z + 0.15),
-        Material::pbr([0.7, 0.8, 0.95], 0.0, 0.6),
+        Material::pbr(Colour::linear_rgb(0.7, 0.8, 0.95), 0.0, 0.6),
     ));
     items.push(item(
         sphere,
         Vec3::new(at.x + 0.4, at.y + 0.1, top_z + 0.16),
-        Material::pbr([0.95, 0.75, 0.6], 0.0, 0.5),
+        Material::pbr(Colour::linear_rgb(0.95, 0.75, 0.6), 0.0, 0.5),
     ));
     items
 }
@@ -181,7 +186,7 @@ fn build_room_cut_solids(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let cube = upload(ctx, &primitives::cube(1.0));
     let torus = upload(ctx, &primitives::torus(0.5, 0.2, 32, 16));
     let styled = |policy: BackfacePolicy| {
-        let mut m = Material::pbr([0.85, 0.85, 0.85], 0.0, 0.6);
+        let mut m = Material::pbr(Colour::linear_rgb(0.85, 0.85, 0.85), 0.0, 0.6);
         m.backface_policy = policy;
         m
     };
@@ -193,7 +198,9 @@ fn build_room_cut_solids(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     items.push(item(
         cube,
         Vec3::new(0.3, 0.0, 0.5),
-        styled(BackfacePolicy::DifferentColour([0.8, 0.3, 0.25].into())),
+        styled(BackfacePolicy::DifferentColour(Colour::linear_rgb(
+            0.8, 0.3, 0.25,
+        ))),
     ));
     items.push(item(
         torus,
@@ -286,7 +293,7 @@ fn build_long_hall(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         item(
             pillar,
             Vec3::new(x, y, H / 2.0),
-            Material::pbr([0.7, 0.7, 0.72], 0.0, 0.7),
+            Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.72), 0.0, 0.7),
         )
     };
     let mut x = 5.0;

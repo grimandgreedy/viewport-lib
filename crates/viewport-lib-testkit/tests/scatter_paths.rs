@@ -18,6 +18,7 @@
 //! rather than against a recorded image.
 
 use glam::Vec3;
+use viewport_lib::Colour;
 use viewport_lib::{Aabb, Material, ScatterQuality, ScatterSettings, primitives};
 use viewport_lib_plugins::item_types::scatter_volume::{
     RefractionParams, ScatterVolume, ScatterVolumeItem,
@@ -46,7 +47,7 @@ fn scene(harness: &mut Harness, refraction: bool) -> BuiltScene {
     let mut wall = viewport_lib::SceneRenderItem::default();
     wall.mesh_id = slab;
     wall.model = glam::Mat4::from_translation(Vec3::new(0.0, 2.5, 0.0)).to_cols_array_2d();
-    wall.material = Material::pbr([0.7, 0.35, 0.3], 0.0, 0.8);
+    wall.material = Material::pbr(Colour::linear_rgb(0.7, 0.35, 0.3), 0.0, 0.8);
 
     let mut volume = ScatterVolume::box_uniform(
         Aabb {
@@ -54,7 +55,7 @@ fn scene(harness: &mut Harness, refraction: bool) -> BuiltScene {
             max: Vec3::new(1.6, 1.2, 1.6),
         },
         0.9,
-        [0.8, 0.85, 1.0],
+        Colour::linear_rgb(0.8, 0.85, 1.0),
     );
     if refraction {
         let mut params = RefractionParams::default();

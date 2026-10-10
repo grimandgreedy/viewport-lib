@@ -23,6 +23,7 @@
 
 use std::sync::Arc;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 
 use vpl::wgpu;
 use vpl::{
@@ -137,7 +138,7 @@ impl AppState {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = self.mesh_id;
                 item.model = glam::Mat4::from_translation(glam::Vec3::from(pos)).to_cols_array_2d();
-                item.material.base_colour = [colour[0], colour[1], colour[2]].into();
+                item.material.base_colour = Colour::linear_rgb(colour[0], colour[1], colour[2]);
                 item
             })
             .collect();

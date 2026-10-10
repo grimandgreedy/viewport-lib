@@ -3,6 +3,7 @@
 use crate::eframe::egui;
 use crate::{App, MeshId};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{Projection, SceneRenderItem, ViewportRenderer};
 
 // ---------------------------------------------------------------------------
@@ -157,8 +158,8 @@ pub(crate) fn scene(
             let mut _t = vpl::LightingSettings::default();
             _t.lights = lights;
             _t.hemisphere_intensity = 0.25;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         (items, None, lighting, 0u64, 0u64)

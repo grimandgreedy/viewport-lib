@@ -9,6 +9,7 @@ use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{LightKind, LightSource, Material, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
@@ -67,7 +68,7 @@ impl App {
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.05)),
             {
-                let mut m = Material::from_colour([0.45, 0.45, 0.48]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.45, 0.45, 0.48));
                 m.roughness = 0.9;
                 m
             },
@@ -91,7 +92,7 @@ impl App {
                     Some(sphere_id),
                     glam::Mat4::from_translation(glam::Vec3::new(x, y, z)),
                     {
-                        let mut m = Material::from_colour([0.92, 0.92, 0.92]);
+                        let mut m = Material::from_colour(Colour::linear_rgb(0.92, 0.92, 0.92));
                         m.roughness = 0.35;
                         m
                     },
@@ -106,7 +107,7 @@ impl App {
             "Unlit Sphere",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(6.0, -6.0, 0.6)),
-            Material::from_colour([0.12, 0.38, 0.82]),
+            Material::from_colour(Colour::linear_rgb(0.12, 0.38, 0.82)),
         );
         {
             let mut a = vpl::ItemSettings::default();
@@ -118,7 +119,7 @@ impl App {
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(6.0, -2.0, 0.6)),
             {
-                let mut m = Material::from_colour([0.12, 0.38, 0.82]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.12, 0.38, 0.82));
                 m.roughness = 0.35;
                 m
             },
@@ -143,7 +144,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                 _t.kind = LightKind::Directional {
                     direction: [0.4, 0.3, 1.5],
                 };
-                _t.colour = [1.0, 1.0, 1.0].into();
+                _t.colour = Colour::linear_rgb(1.0, 1.0, 1.0);
                 _t.intensity = 1.0;
                 _t
             });
@@ -156,7 +157,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                     range: 15.0,
                     radius: 0.1,
                 };
-                _t.colour = [1.0, 0.9, 0.7].into();
+                _t.colour = Colour::linear_rgb(1.0, 0.9, 0.7);
                 // Candela-scale: inverse-square falloff means intensity ~= E * d^2,
                 // so lighting spheres a few units away needs tens, not single digits.
                 _t.intensity = 30.0;
@@ -174,7 +175,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                     outer_angle: 0.45,
                     radius: 0.1,
                 };
-                _t.colour = [0.8, 0.95, 1.0].into();
+                _t.colour = Colour::linear_rgb(0.8, 0.95, 1.0);
                 _t.intensity = 70.0;
                 _t
             });
@@ -209,7 +210,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                             ui.label("Colour:");
                             let mut c = src.colour.to_linear_rgb();
                             if ui.color_edit_button_rgb(&mut c).changed() {
-                                src.colour = c.into();
+                                src.colour = Colour::from_linear_rgb_array(c);
                             }
                         });
 
@@ -403,8 +404,8 @@ pub(crate) fn scene(
             } else {
                 0.0
             };
-            _t.sky_colour = app.lights_state.sky_colour.into();
-            _t.ground_colour = app.lights_state.ground_colour.into();
+            _t.sky_colour = Colour::from_linear_rgb_array(app.lights_state.sky_colour);
+            _t.ground_colour = Colour::from_linear_rgb_array(app.lights_state.ground_colour);
             _t
         };
         let sg = app.lights_state.scene.version();

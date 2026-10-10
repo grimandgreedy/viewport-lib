@@ -14,6 +14,7 @@
 //! through [`ItemTypePlugin::contribute_lights`], and a selected volume gets a
 //! bounds wireframe through the renderer's line substrate.
 
+use viewport_lib::Colour;
 mod pipeline;
 mod types;
 pub(crate) mod volume;
@@ -317,12 +318,16 @@ impl ItemTypePlugin for ScatterVolumePlugin {
                     [0.8_f32, 0.85, 0.95, 1.0]
                 };
                 let mut polyline = match item.volume.shape {
-                    ScatterShape::Box(b) => {
-                        viewport_lib::renderer::aabb_wireframe_polyline(&b, colour)
-                    }
+                    ScatterShape::Box(b) => viewport_lib::renderer::aabb_wireframe_polyline(
+                        &b,
+                        Colour::from_linear_array(colour),
+                    ),
                     ScatterShape::Sphere { center, radius } => {
                         viewport_lib::renderer::sphere_wireframe_polyline(
-                            center, radius, 48, colour,
+                            center,
+                            radius,
+                            48,
+                            Colour::from_linear_array(colour),
                         )
                     }
                 };
@@ -874,7 +879,7 @@ fn derive_virtual_lights(
             // from spiking right at the centre.
             radius: extent.max(0.1),
         };
-        light.colour = colour.into();
+        light.colour = Colour::from_linear_rgb_array(colour);
         light.intensity = intensity;
         lights.push(light);
     }

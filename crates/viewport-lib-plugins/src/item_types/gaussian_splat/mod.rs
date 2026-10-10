@@ -10,6 +10,7 @@
 //! rasterisation and the polyline overlay produced in the renderer's prepare
 //! draws instead.
 
+use viewport_lib::Colour;
 pub mod channels;
 mod pipeline;
 mod store;
@@ -893,7 +894,7 @@ fn splat_rings_polyline(
     let mut wire = viewport_lib::renderer::PolylineItem::default();
     wire.positions = all_positions;
     wire.strip_lengths = strip_lengths;
-    wire.default_colour = [0.75, 0.75, 0.75, 1.0].into();
+    wire.default_colour = Colour::linear(0.75, 0.75, 0.75, 1.0);
     wire.line_width = 1.0;
     wire
 }

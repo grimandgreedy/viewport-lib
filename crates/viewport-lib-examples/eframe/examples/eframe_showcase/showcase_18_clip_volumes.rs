@@ -16,6 +16,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::volume::VolumeItem;
 use vpl::{
     AlphaMode, BackfacePolicy, BuiltinColourmap, ClipObject, ColourmapId, FrameData, Gizmo,
@@ -152,7 +153,7 @@ impl App {
         self.clipvol_state
             .scene
             .add_named("Torus", Some(torus_id), glam::Mat4::IDENTITY, {
-                let mut m = Material::from_colour([0.72, 0.30, 0.06]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.72, 0.30, 0.06));
                 m.roughness = 0.35;
                 m.metallic = 0.15;
                 m
@@ -168,7 +169,7 @@ impl App {
         self.clipvol_state
             .scene
             .add_named("Capsule", Some(capsule_id), glam::Mat4::IDENTITY, {
-                let mut m = Material::from_colour([0.12, 0.34, 0.78]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.12, 0.34, 0.78));
                 m.roughness = 0.25;
                 m.metallic = 0.35;
                 m
@@ -569,7 +570,8 @@ impl App {
                 let center = (glam::Vec3::from(normal).normalize_or_zero() * -distance).to_array();
                 let model =
                     vpl::clip_plane::visual::plane_fill_transform(center, normal, PLANE_EXTENT);
-                let mut material = Material::from_colour(CLIP_COLOUR);
+                let mut material =
+                    Material::from_colour(Colour::from_linear_rgb_array(CLIP_COLOUR));
                 material.alpha_mode = AlphaMode::Blend;
                 material.backface_policy = BackfacePolicy::Identical;
                 let mut settings = ItemSettings::default();
@@ -624,8 +626,8 @@ pub(crate) fn clipvol_collect_scene_items(
             _t
         }];
         _t.hemisphere_intensity = 0.4;
-        _t.sky_colour = [1.0, 1.0, 1.0].into();
-        _t.ground_colour = [0.8, 0.8, 0.8].into();
+        _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+        _t.ground_colour = Colour::linear_rgb(0.8, 0.8, 0.8);
         _t
     };
     (items, lighting, sg, 0)

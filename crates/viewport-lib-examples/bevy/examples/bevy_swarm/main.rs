@@ -34,6 +34,7 @@ use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::ui::IsDefaultUiCamera;
 use bevy::window::PrimaryWindow;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 use glam::{Mat4, Vec2, Vec3};
@@ -725,9 +726,9 @@ fn render_swarm(
             let mut item = SceneRenderItem::default();
             item.mesh_id = sphere;
             item.model = inst.model;
-            item.material = Material::from_colour(inst.color);
+            item.material = Material::from_colour(Colour::from_linear_rgb_array(inst.color));
             if inst.selected {
-                item.material.emissive = [1.6, 1.1, 0.25].into();
+                item.material.emissive = Colour::linear_rgb(1.6, 1.1, 0.25);
             }
             item
         })

@@ -3,6 +3,7 @@
 //! Part of the headless integration suite (split from the former single
 //! headless.rs). Shared device and mesh helpers live in tests/common/mod.rs.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -714,7 +715,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     let sphere = || {
         let mut it = SceneRenderItem::default();
         it.mesh_id = mesh_id;
-        it.material = Material::pbr([0.75, 0.3, 0.3], 0.1, 0.55);
+        it.material = Material::pbr(Colour::linear_rgb(0.75, 0.3, 0.3), 0.1, 0.55);
         it.material.shading_plugin = Some(plugin_id);
         it
     };

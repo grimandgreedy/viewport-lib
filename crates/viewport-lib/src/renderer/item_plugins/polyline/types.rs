@@ -4,6 +4,7 @@
 //! constructors for this type, used by the item types whose geometry has no
 //! edges of its own to draw and by consumers drawing their own bounds.
 
+use crate::Colour;
 use crate::renderer::types::items::IDENTITY_MAT4;
 use crate::resources::ColourmapId;
 use crate::scene::material::ItemSettings;
@@ -92,7 +93,7 @@ impl Default for PolylineItem {
             strip_lengths: Vec::new(),
             scalar_range: None,
             colourmap_id: None,
-            default_colour: [0.9, 0.92, 0.96, 1.0].into(),
+            default_colour: Colour::linear(0.9, 0.92, 0.96, 1.0),
             line_width: 2.0,
             node_colours: Vec::new(),
             edge_scalars: Vec::new(),

@@ -18,6 +18,7 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
+use viewport_lib::Colour;
 
 use viewport_lib as vpl;
 use vpl::runners::viewport_app::RedrawMode;
@@ -50,7 +51,11 @@ fn handle_open_close(ctx: &mut FrameCtxV2) {
                 }
             }
             ViewportEvent::FileDropped(path) => {
-                println!("window {:?}: file dropped: {}", ctx.window_id(), path.display());
+                println!(
+                    "window {:?}: file dropped: {}",
+                    ctx.window_id(),
+                    path.display()
+                );
             }
             _ => {}
         }
@@ -68,7 +73,7 @@ fn handle_open_close(ctx: &mut FrameCtxV2) {
                 vp.scene_mut().add(
                     Some(sphere),
                     glam::Mat4::IDENTITY,
-                    Material::from_colour([0.8, 0.5, 0.1]),
+                    Material::from_colour(Colour::linear_rgb(0.8, 0.5, 0.1)),
                 );
                 vp.camera_mut().distance = 6.0;
             },
@@ -100,7 +105,7 @@ fn main() {
                 let node = vp.scene_mut().add(
                     Some(cube),
                     glam::Mat4::IDENTITY,
-                    Material::from_colour([0.12, 0.3, 0.7]),
+                    Material::from_colour(Colour::linear_rgb(0.12, 0.3, 0.7)),
                 );
                 left_setup_id.set(Some(node));
                 vp.camera_mut().distance = 6.0;
@@ -127,7 +132,7 @@ fn main() {
                 vp.scene_mut().add(
                     Some(torus),
                     glam::Mat4::IDENTITY,
-                    Material::from_colour([0.1, 0.55, 0.2]),
+                    Material::from_colour(Colour::linear_rgb(0.1, 0.55, 0.2)),
                 );
                 vp.camera_mut().distance = 6.0;
             },

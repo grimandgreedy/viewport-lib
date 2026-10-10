@@ -15,6 +15,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     Aabb, FrameData, FrameStats, LodGroupId, Material, MeshId, MeshInstanceItem, PickId,
     RenderCamera, SceneRenderItem, SpriteBlend, ViewportRenderer, primitives,
@@ -127,7 +128,7 @@ pub(crate) fn lod_scene_items(app: &App) -> Vec<SceneRenderItem> {
             let mut item = SceneRenderItem::default();
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
-            item.material = Material::from_colour([0.22, 0.28, 0.55]);
+            item.material = Material::from_colour(Colour::linear_rgb(0.22, 0.28, 0.55));
             item.settings.pick_id = PickId(1000 + i as u64);
             if st.lod_enabled {
                 item.lod_group = Some(group);
@@ -175,7 +176,7 @@ pub(crate) fn submit_lod_items(app: &mut App, fd: &mut FrameData) {
 
     let mut item = MeshInstanceItem::default();
     item.transforms = transforms;
-    item.colours = colours.into_iter().map(Into::into).collect();
+    item.colours = colours.into_iter().map(Colour::from_linear_array).collect();
     item.blend = SpriteBlend::AlphaBlend;
     if st.lod_enabled {
         item.lod_group = Some(group);
@@ -315,8 +316,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut t = vpl::LightingSettings::default();
             t.hemisphere_intensity = 0.4;
-            t.sky_colour = [1.0, 1.0, 1.0].into();
-            t.ground_colour = [1.0, 1.0, 1.0].into();
+            t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             t
         };
         let generation = app.lod_state.generation;

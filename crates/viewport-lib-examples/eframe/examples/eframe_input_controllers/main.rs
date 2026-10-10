@@ -20,6 +20,7 @@
 
 use std::sync::{Arc, Mutex};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 
 use crate::eframe::{egui, wgpu};
@@ -673,7 +674,9 @@ impl eframe::App for App {
                                 let mut item = SceneRenderItem::default();
                                 item.mesh_id = obj.mesh;
                                 item.model = obj.model.to_cols_array_2d();
-                                item.material = Material::from_colour(obj.colour);
+                                item.material = Material::from_colour(
+                                    Colour::from_linear_rgb_array(obj.colour),
+                                );
                                 item
                             })
                             .collect()
@@ -721,7 +724,9 @@ impl eframe::App for App {
                                 let mut item = SceneRenderItem::default();
                                 item.mesh_id = obj.mesh;
                                 item.model = obj.model.to_cols_array_2d();
-                                item.material = Material::from_colour(obj.colour);
+                                item.material = Material::from_colour(
+                                    Colour::from_linear_rgb_array(obj.colour),
+                                );
                                 item
                             })
                             .collect();
@@ -733,7 +738,8 @@ impl eframe::App for App {
                             marker.mesh_id = self.body_mesh;
                             let stand = self.body_pos + glam::Vec3::Z * (CAPSULE_HEIGHT * 0.5);
                             marker.model = glam::Mat4::from_translation(stand).to_cols_array_2d();
-                            marker.material = Material::from_colour([0.85, 0.2, 0.3]);
+                            marker.material =
+                                Material::from_colour(Colour::linear_rgb(0.85, 0.2, 0.3));
                             items.push(marker);
                         }
                         items
@@ -878,7 +884,9 @@ impl eframe::App for App {
                                 let mut item = SceneRenderItem::default();
                                 item.mesh_id = obj.mesh;
                                 item.model = obj.model.to_cols_array_2d();
-                                item.material = Material::from_colour(obj.colour);
+                                item.material = Material::from_colour(
+                                    Colour::from_linear_rgb_array(obj.colour),
+                                );
                                 item.settings.selected = self.selection.contains(i as u64);
                                 // pick_id is 1-indexed so 0 can mean "no hit".
                                 item.settings.pick_id = PickId((i as u64) + 1);

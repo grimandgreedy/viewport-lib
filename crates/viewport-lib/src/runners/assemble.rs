@@ -1,6 +1,7 @@
 //! Frame assembly and the camera-driving entry points.
 
 use super::ViewportInstance;
+use crate::Colour;
 use crate::interaction::input::ViewportContext;
 use crate::interaction::manipulation::gizmo::{GizmoAxis, GizmoMode, compute_gizmo_scale};
 use crate::interaction::manipulation::{ManipResult, ManipulationContext};
@@ -162,7 +163,7 @@ impl ViewportInstance {
         self.frame.scene = SceneFrame::from_scene(&mut self.scene, &self.selection);
         self.frame.interaction = InteractionFrame::from_selection(&self.selection);
         self.frame.interaction.outline_selected = self.outline_selected;
-        self.frame.interaction.outline_colour = self.outline_colour.into();
+        self.frame.interaction.outline_colour = Colour::from_linear_array(self.outline_colour);
         self.frame.interaction.outline_width_px = self.outline_width_px;
         self.stamp_gizmo();
         self.frame.overlays = OverlayFrame::default();

@@ -33,10 +33,11 @@ use super::transform::OverlayTransform;
 /// # Examples
 ///
 /// ```rust
+/// # use viewport_lib_types::colour::Colour;
 /// # use viewport_lib_types::overlay::LabelItem;
 /// let label = LabelItem::new("Peak Pressure: 101.3 kPa")
 ///     .with_world_anchor([2.0, 3.0, 0.0])
-///     .with_colour([1.0, 0.9, 0.4, 1.0]);
+///     .with_colour(Colour::srgb(1.0, 0.9, 0.4, 1.0));
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]

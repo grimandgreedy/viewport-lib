@@ -17,6 +17,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::scatter_volume::{
     ColourSource, DensityRemap, Emission, EmissionCurve, NoiseDriver, RefractionParams,
     ScatterVolume, ScatterVolumeItem,
@@ -299,7 +300,7 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &floor)
             .expect("svol floor upload");
-        let mut floor_mat = Material::from_colour([0.55, 0.55, 0.55]);
+        let mut floor_mat = Material::from_colour(Colour::linear_rgb(0.55, 0.55, 0.55));
         floor_mat.roughness = 0.9;
         self.svol_state.scene.add_named(
             "Floor",
@@ -314,7 +315,7 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &pillar)
             .expect("svol pillar upload");
-        let pillar_mat = Material::from_colour([0.55, 0.50, 0.42]);
+        let pillar_mat = Material::from_colour(Colour::linear_rgb(0.55, 0.50, 0.42));
         for i in 0..6 {
             let x = -6.0 + i as f32 * 2.5;
             for side in [-1.0_f32, 1.0] {
@@ -333,7 +334,7 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere)
             .expect("svol sphere upload");
-        let mut hot_mat = Material::from_colour([1.0, 0.5, 0.2]);
+        let mut hot_mat = Material::from_colour(Colour::linear_rgb(1.0, 0.5, 0.2));
         hot_mat.roughness = 0.4;
         self.svol_state.scene.add_named(
             "Reference sphere",
@@ -387,7 +388,7 @@ impl App {
                     max: glam::Vec3::from(s.global_max),
                 },
                 s.global_density,
-                s.global_colour,
+                Colour::from_linear_rgb_array(s.global_colour),
             );
             v.anisotropy = s.global_anisotropy;
             if s.global_soft_edges {
@@ -430,7 +431,12 @@ impl App {
                     let centre = [gx as f32 * 4.0, gy as f32 * 4.0 + 1.0, 1.5];
                     let colour = palette[idx % palette.len()];
                     idx += 1;
-                    let mut v = ScatterVolume::sphere_uniform(centre, 1.2, 0.5, colour);
+                    let mut v = ScatterVolume::sphere_uniform(
+                        centre,
+                        1.2,
+                        0.5,
+                        Colour::from_linear_rgb_array(colour),
+                    );
                     v.anisotropy = 0.2;
                     fd.scene
                         .items_mut::<ScatterVolumeItem>()
@@ -440,8 +446,12 @@ impl App {
         }
         if s.fire_enabled {
             let center = [-4.0_f32, 0.0, 1.2];
-            let mut v =
-                ScatterVolume::sphere_uniform(center, s.fire_radius, s.fire_density, s.fire_colour);
+            let mut v = ScatterVolume::sphere_uniform(
+                center,
+                s.fire_radius,
+                s.fire_density,
+                Colour::from_linear_rgb_array(s.fire_colour),
+            );
             if s.fire_use_ramp {
                 v.colour = ColourSource::Ramp(s.fire_ramp_id);
             }
@@ -486,7 +496,7 @@ impl App {
                 [4.0, 0.0, 1.8],
                 s.sphere_radius,
                 s.sphere_density,
-                s.sphere_colour,
+                Colour::from_linear_rgb_array(s.sphere_colour),
             );
             if s.sphere_use_texture {
                 v.density_texture = s.sphere_texture_id;
@@ -738,14 +748,14 @@ pub(crate) fn scene(
         let dir = app.svol_state.sun_dir;
         let mut sun = vpl::LightSource::default();
         sun.kind = vpl::LightKind::Directional { direction: dir };
-        sun.colour = app.svol_state.sun_colour.into();
+        sun.colour = Colour::from_linear_rgb_array(app.svol_state.sun_colour);
         sun.intensity = app.svol_state.sun_intensity;
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.lights = vec![sun];
             _t.shadows.enabled = app.svol_state.shadows_enabled;
-            _t.sky_colour = app.svol_state.sky_colour.into();
-            _t.ground_colour = app.svol_state.ground_colour.into();
+            _t.sky_colour = Colour::from_linear_rgb_array(app.svol_state.sky_colour);
+            _t.ground_colour = Colour::from_linear_rgb_array(app.svol_state.ground_colour);
             _t.hemisphere_intensity = app.svol_state.hemisphere_intensity;
             _t
         };

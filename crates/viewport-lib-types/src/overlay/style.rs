@@ -300,11 +300,12 @@ impl OverlayStyleSupport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::colour::Colour;
     use crate::overlay::{OverlayShape, ShadowLayer};
 
     #[test]
     fn vector_shapes_report_the_cells_they_cannot_draw() {
-        let style = OverlayStyle::solid([1.0, 0.0, 0.0, 1.0])
+        let style = OverlayStyle::solid(Colour::linear(1.0, 0.0, 0.0, 1.0))
             .with_inner_shadows(vec![ShadowLayer::default()])
             .with_backdrop(BackdropEffects::default().with_blur(4.0));
 

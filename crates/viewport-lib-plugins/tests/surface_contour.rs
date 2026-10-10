@@ -6,6 +6,7 @@
 
 #![cfg(feature = "item-types")]
 
+use viewport_lib::Colour;
 mod common;
 use common::*;
 use viewport_lib::{AttributeData, Material, MeshId, SceneRenderItem, SurfaceSubmission};
@@ -44,7 +45,7 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
 fn base_frame() -> FrameData {
     let mut frame = sub_object_pick_frame();
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
-    frame.viewport.background_colour = Some([0.1, 0.1, 0.1, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.1, 0.1, 0.1, 1.0));
     frame
 }
 
@@ -60,7 +61,7 @@ fn surface(mesh: MeshId) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = MODEL;
-    item.material = Material::from_colour([1.0, 1.0, 1.0]);
+    item.material = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
     item.settings.unlit = true;
     item
 }

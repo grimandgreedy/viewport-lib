@@ -16,6 +16,7 @@
 
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::from_egui;
 use vpl::{
@@ -63,17 +64,17 @@ fn main() -> eframe::Result {
             scene.add(
                 Some(sphere),
                 glam::Mat4::from_translation(glam::Vec3::new(-2.5, 0.0, 0.0)),
-                Material::from_colour([0.75, 0.28, 0.05]),
+                Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05)),
             );
             let cube_id = scene.add(
                 Some(cube),
                 glam::Mat4::IDENTITY,
-                Material::from_colour([0.12, 0.3, 0.7]),
+                Material::from_colour(Colour::linear_rgb(0.12, 0.3, 0.7)),
             );
             scene.add(
                 Some(torus),
                 glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.0, 0.0)),
-                Material::from_colour([0.1, 0.55, 0.2]),
+                Material::from_colour(Colour::linear_rgb(0.1, 0.55, 0.2)),
             );
             session.camera_mut().distance = 10.0;
 

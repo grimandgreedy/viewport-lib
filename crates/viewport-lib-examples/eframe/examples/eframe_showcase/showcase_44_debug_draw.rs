@@ -15,6 +15,7 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
 use vpl::{
     Aabb, DebugDraw, DebugLayer, DebugPrim, FixedTimestep, Material, MeshId, RuntimeFrameContext,
@@ -73,11 +74,15 @@ impl RuntimePlugin for DebugOverlayPlugin {
             };
             let center = node.world_transform().col(3).truncate();
             let half = glam::Vec3::splat(self.body_radius);
-            dd.aabb(center - half, center + half, [0.3, 0.9, 0.4, 1.0]);
+            dd.aabb(
+                center - half,
+                center + half,
+                Colour::linear(0.3, 0.9, 0.4, 1.0),
+            );
             dd.label(
                 center + glam::Vec3::Z * (self.body_radius + 0.12),
                 format!("body {}", i),
-                [1.0, 1.0, 1.0, 0.85],
+                Colour::linear(1.0, 1.0, 1.0, 0.85),
             );
         }
 
@@ -90,9 +95,9 @@ impl RuntimePlugin for DebugOverlayPlugin {
             let cp = contact.contact_point;
             let normal_tip = cp + contact.world_normal * 0.5;
             // Normal direction line.
-            dd.line(cp, normal_tip, [1.0, 0.25, 0.25, 1.0]);
+            dd.line(cp, normal_tip, Colour::linear(1.0, 0.25, 0.25, 1.0));
             // Contact point marker.
-            dd.point(cp, 6.0, [1.0, 0.2, 0.2, 1.0]);
+            dd.point(cp, 6.0, Colour::linear(1.0, 0.2, 0.2, 1.0));
         }
 
         // Persistent bounding region AABB (overlay layer, always visible).
@@ -102,7 +107,7 @@ impl RuntimePlugin for DebugOverlayPlugin {
                 DebugPrim::Aabb {
                     min: self.bounds.min,
                     max: self.bounds.max,
-                    colour: [0.9, 0.75, 0.2, 0.6].into(),
+                    colour: Colour::linear(0.9, 0.75, 0.2, 0.6),
                     layer: DebugLayer::Overlay,
                 },
             );
@@ -185,7 +190,7 @@ pub(crate) fn build_dbg_draw_scene(app: &mut App, renderer: &mut vpl::ViewportRe
     for (i, colour) in colours.iter().enumerate() {
         let (x, y, z) = body_starts[i];
         let transform = glam::Mat4::from_translation(glam::Vec3::new(x, y, z));
-        let mat = Material::from_colour(*colour);
+        let mat = Material::from_colour(Colour::from_linear_rgb_array(*colour));
         let id = scene.add(Some(mesh_id), transform, mat);
         node_ids.push(id);
 
@@ -373,8 +378,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         let sg = app.dbg_draw_state.scene.version();

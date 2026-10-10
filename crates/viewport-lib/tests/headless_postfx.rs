@@ -3,6 +3,7 @@
 //! Part of the headless integration suite (split from the former single
 //! headless.rs). Shared device and mesh helpers live in tests/common/mod.rs.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -36,7 +37,7 @@ fn tonemap_frame(size: u32, background: [f32; 4]) -> FrameData {
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some(background.into());
+    frame.viewport.background_colour = Some(Colour::from_linear_array(background));
     frame
 }
 
@@ -68,7 +69,7 @@ fn transparent_over_empty_background_not_darker() {
     item.mesh_id = mesh;
     // Cover the centre but leave the corners as background.
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
-    item.material = Material::from_colour([0.6, 0.6, 0.6]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6));
     item.settings.unlit = true;
     item.settings.opacity = 0.3;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -124,8 +125,8 @@ fn bloom_glows_into_empty_background() {
         // Small, so there is surrounding background for the halo to fall on.
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.6)).to_cols_array_2d();
         // Emissive well above the bloom threshold; opaque (sharp alpha edge).
-        item.material = Material::from_colour([0.02, 0.02, 0.02]);
-        item.material.emissive = [6.0, 6.0, 6.0].into();
+        item.material = Material::from_colour(Colour::linear_rgb(0.02, 0.02, 0.02));
+        item.material.emissive = Colour::linear_rgb(6.0, 6.0, 6.0);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
         frame.effects.post_process.bloom.enabled = bloom;
@@ -192,7 +193,7 @@ fn coloured_item(mesh_id: MeshId, colour: [f32; 3], model: glam::Mat4) -> SceneR
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.material = Material::default();
-    item.material.base_colour = colour.into();
+    item.material.base_colour = Colour::from_linear_rgb_array(colour);
     item.model = model.to_cols_array_2d();
     item
 }
@@ -668,8 +669,8 @@ fn bloom_firefly_cap_bounds_blob_size() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    let mut mat = Material::from_colour([1.0, 1.0, 1.0]);
-    mat.emissive = [400.0, 400.0, 400.0].into();
+    let mut mat = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
+    mat.emissive = Colour::linear_rgb(400.0, 400.0, 400.0);
     item.material = mat;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
@@ -1006,7 +1007,7 @@ fn post_effect_producer_fills_slot() {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
-        item.material = Material::from_colour([0.6, 0.6, 0.6]);
+        item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6));
         item.settings.unlit = true;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         renderer.render_offscreen(&device, &queue, &frame, size, size)
@@ -1196,7 +1197,7 @@ fn fs_main(in: ViewportPostVsOut) -> @location(0) vec4<f32> {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).to_cols_array_2d();
-        item.material = Material::from_colour([0.8, 0.8, 0.8]);
+        item.material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
         item.settings.unlit = true;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         renderer.render_offscreen(&device, &queue, &frame, size, size)

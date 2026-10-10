@@ -13,6 +13,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib_plugins::deformers::cut::{Cut, CutDeformer};
 use vpl::{
     AttributeKind, AttributeRef, BuiltinColourmap, ColourmapId, LightingSettings, Material, MeshId,
@@ -127,21 +128,21 @@ pub(crate) fn scene_items(app: &App) -> Vec<SceneRenderItem> {
 
     let mut floor_item = SceneRenderItem::default();
     floor_item.mesh_id = floor;
-    floor_item.material = Material::from_colour([0.75, 0.75, 0.72]);
+    floor_item.material = Material::from_colour(Colour::linear_rgb(0.75, 0.75, 0.72));
     items.push(floor_item);
 
     let mut column_item = SceneRenderItem::default();
     column_item.mesh_id = column;
     column_item.model =
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.3)).to_cols_array_2d();
-    column_item.material = Material::from_colour([0.85, 0.55, 0.2]);
+    column_item.material = Material::from_colour(Colour::linear_rgb(0.85, 0.55, 0.2));
     items.push(column_item);
 
     let mut torus_item = SceneRenderItem::default();
     torus_item.mesh_id = torus;
     torus_item.model =
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, TORUS_Z)).to_cols_array_2d();
-    torus_item.material = Material::from_colour([0.35, 0.5, 0.8]);
+    torus_item.material = Material::from_colour(Colour::linear_rgb(0.35, 0.5, 0.8));
     torus_item.material.backface_policy = vpl::BackfacePolicy::Identical;
     torus_item.deform_instance = Some(TORUS_INSTANCE);
     torus_item.settings.selected = state.outline;

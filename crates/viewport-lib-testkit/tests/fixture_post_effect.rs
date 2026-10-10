@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use viewport_lib::Colour;
 use viewport_lib::plugin_api::post_effect::stage_order;
 use viewport_lib::wgpu;
 use viewport_lib::{Material, PostEffectSlot, SceneRenderItem, SurfaceSubmission};
@@ -36,7 +37,7 @@ fn quad_frame(harness: &mut Harness) -> viewport_lib::FrameData {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).to_cols_array_2d();
-    item.material = Material::from_colour([0.8, 0.8, 0.8]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
     item.settings.unlit = true;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     frame

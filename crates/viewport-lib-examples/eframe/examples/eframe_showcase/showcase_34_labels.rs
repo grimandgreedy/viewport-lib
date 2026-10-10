@@ -5,6 +5,7 @@ use crate::App;
 use crate::eframe;
 use crate::geometry::make_box_with_uvs;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{LabelAnchor, LabelItem, Material, ViewportRenderer};
 
 // ---------------------------------------------------------------------------
@@ -173,18 +174,22 @@ impl App {
                 part.name,
                 Some(id),
                 glam::Mat4::from_translation(glam::Vec3::from(exploded_pos)),
-                Material::from_colour(part.colour),
+                Material::from_colour(Colour::from_linear_rgb_array(part.colour)),
             );
 
             self.lbl_state.labels.push(
                 LabelItem::new(format!("{}: {}", part.name, part.detail))
                     .with_world_anchor(exploded_pos)
-                    .with_colour(part.label_colour)
+                    .with_colour(Colour::from_linear_array(part.label_colour))
                     .with_font_size(12.0)
                     // A contour keeps the text legible over the model without a
                     // panel behind it; `build_label_backings` puts panels behind
                     // the screen-anchored ones.
-                    .with_outline([0.05, 0.05, 0.1, 0.9], 2.0, vpl::OutlineMode::Outer)
+                    .with_outline(
+                        Colour::linear(0.05, 0.05, 0.1, 0.9),
+                        2.0,
+                        vpl::OutlineMode::Outer,
+                    )
                     .with_z_order(0),
             );
         }
@@ -203,9 +208,13 @@ impl App {
             out.push(
                 LabelItem::new("Gearbox Assembly: Exploded View")
                     .with_screen_anchor([cx, 36.0])
-                    .with_colour([1.0, 1.0, 1.0, 1.0])
+                    .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
                     .with_font_size(48.0)
-                    .with_outline([0.0, 0.0, 0.0, 0.8], 3.0, vpl::OutlineMode::Outer)
+                    .with_outline(
+                        Colour::linear(0.0, 0.0, 0.0, 0.8),
+                        3.0,
+                        vpl::OutlineMode::Outer,
+                    )
                     .with_align_x(LabelAnchor::Middle)
                     .with_z_order(200),
             );
@@ -214,9 +223,13 @@ impl App {
             out.push(
                 LabelItem::new("Grey=Casing  Gold=Gears  Blue=Bearings  Yellow=Shafts")
                     .with_screen_anchor([cx, vp_h - 24.0])
-                    .with_colour([0.8, 0.8, 0.8, 1.0])
+                    .with_colour(Colour::linear(0.8, 0.8, 0.8, 1.0))
                     .with_font_size(11.0)
-                    .with_outline([0.0, 0.0, 0.0, 0.8], 2.0, vpl::OutlineMode::Outer)
+                    .with_outline(
+                        Colour::linear(0.0, 0.0, 0.0, 0.8),
+                        2.0,
+                        vpl::OutlineMode::Outer,
+                    )
                     .with_align_x(LabelAnchor::Middle)
                     .with_z_order(200),
             );
@@ -238,7 +251,7 @@ impl App {
         let heading = |y: f32, text: &str| -> LabelItem {
             LabelItem::new(text)
                 .with_screen_anchor([col, y])
-                .with_colour(heading_colour)
+                .with_colour(Colour::from_linear_array(heading_colour))
                 .with_font_size(11.0)
                 .with_z_order(100)
         };
@@ -258,7 +271,7 @@ impl App {
             out.push(
                 LabelItem::new(format!("{} aligned", name))
                     .with_screen_anchor([col + 90.0, y + i as f32 * 20.0])
-                    .with_colour([0.9, 0.95, 1.0, 1.0])
+                    .with_colour(Colour::linear(0.9, 0.95, 1.0, 1.0))
                     .with_font_size(12.0)
                     .with_align_x(*align)
                     .with_z_order(100),
@@ -273,7 +286,7 @@ impl App {
             out.push(
                 LabelItem::new(format!("{:.0}%", opacity * 100.0))
                     .with_screen_anchor([col + i as f32 * 65.0, y])
-                    .with_colour([1.0, 0.8, 0.3, 1.0])
+                    .with_colour(Colour::linear(1.0, 0.8, 0.3, 1.0))
                     .with_font_size(13.0)
                     .with_opacity(*opacity)
                     .with_z_order(100),
@@ -296,7 +309,7 @@ impl App {
             out.push(
                 LabelItem::new(*desc)
                     .with_screen_anchor([col + i as f32 * 65.0, y])
-                    .with_colour([0.6, 1.0, 0.7, 1.0])
+                    .with_colour(Colour::linear(0.6, 1.0, 0.7, 1.0))
                     .with_font_size(11.0)
                     .with_position(*off)
                     .with_z_order(100),
@@ -315,7 +328,7 @@ impl App {
             };
             let mut label = LabelItem::new(label_text)
                 .with_screen_anchor([col, y + i as f32 * 55.0])
-                .with_colour([1.0, 0.7, 0.9, 1.0])
+                .with_colour(Colour::linear(1.0, 0.7, 0.9, 1.0))
                 .with_font_size(11.0)
                 .with_z_order(100);
             if let Some(w) = *max_w {
@@ -332,9 +345,13 @@ impl App {
             out.push(
                 LabelItem::new(format!("{:.0}px", width))
                     .with_screen_anchor([col + i as f32 * 65.0, y])
-                    .with_colour([0.8, 0.85, 1.0, 1.0])
+                    .with_colour(Colour::linear(0.8, 0.85, 1.0, 1.0))
                     .with_font_size(12.0)
-                    .with_outline([0.0, 0.0, 0.0, 0.9], *width, vpl::OutlineMode::Outer)
+                    .with_outline(
+                        Colour::linear(0.0, 0.0, 0.0, 0.9),
+                        *width,
+                        vpl::OutlineMode::Outer,
+                    )
                     .with_z_order(100),
             );
         }
@@ -347,7 +364,7 @@ impl App {
             out.push(
                 LabelItem::new(format!("{:.1}", opacity))
                     .with_screen_anchor([col + i as f32 * 72.0, y])
-                    .with_colour([0.9, 1.0, 0.8, 1.0])
+                    .with_colour(Colour::linear(0.9, 1.0, 0.8, 1.0))
                     .with_font_size(12.0)
                     .with_opacity(*opacity)
                     .with_z_order(100),
@@ -362,7 +379,7 @@ impl App {
             out.push(
                 LabelItem::new(format!("{:.0}px", size))
                     .with_screen_anchor([col + i as f32 * 65.0, y])
-                    .with_colour([1.0, 1.0, 1.0, 1.0])
+                    .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
                     .with_font_size(*size)
                     .with_z_order(100),
             );
@@ -375,21 +392,21 @@ impl App {
         out.push(
             LabelItem::new("z=98 (back)")
                 .with_screen_anchor([col, y])
-                .with_colour([1.0, 1.0, 1.0, 1.0])
+                .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
                 .with_font_size(12.0)
                 .with_z_order(98),
         );
         out.push(
             LabelItem::new("z=99 (mid)")
                 .with_screen_anchor([col + 45.0, y + 6.0])
-                .with_colour([1.0, 1.0, 1.0, 1.0])
+                .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
                 .with_font_size(12.0)
                 .with_z_order(99),
         );
         out.push(
             LabelItem::new("z=100 (front)")
                 .with_screen_anchor([col + 90.0, y + 12.0])
-                .with_colour([1.0, 1.0, 1.0, 1.0])
+                .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
                 .with_font_size(12.0)
                 .with_z_order(100),
         );
@@ -469,8 +486,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         (items, None, lighting, sg, 0)

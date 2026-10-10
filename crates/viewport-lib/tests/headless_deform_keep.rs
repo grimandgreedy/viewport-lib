@@ -5,6 +5,7 @@
 //! a red backdrop; one selects the cut and loses half, the other stays whole.
 //! Skips when no adapter is available or the device cannot run deformers.
 
+use viewport_lib::Colour;
 mod common;
 use common::*;
 
@@ -361,7 +362,7 @@ fn the_outline_follows_the_cut() {
     let rc = top_down();
     let mut frame = bare_frame(&rc, vec![backdrop, cut]);
     frame.interaction.outline_selected = true;
-    frame.interaction.outline_colour = [0.0, 1.0, 0.0, 1.0].into();
+    frame.interaction.outline_colour = Colour::linear(0.0, 1.0, 0.0, 1.0);
     frame.interaction.outline_width_px = 3.0;
     let img = renderer.render_offscreen(&device, &queue, &frame, W, H);
 

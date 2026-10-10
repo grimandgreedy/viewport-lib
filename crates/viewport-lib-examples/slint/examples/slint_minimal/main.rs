@@ -18,6 +18,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 
 use slint::wgpu_29::{self, wgpu};
 use vpl::{
@@ -136,7 +137,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-        item.material = Material::from_colour(colour);
+        item.material = Material::from_colour(Colour::from_linear_rgb_array(colour));
         item.material.backface_policy = vpl::BackfacePolicy::Identical;
         item
     };

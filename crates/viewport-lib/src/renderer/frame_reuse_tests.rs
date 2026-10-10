@@ -3,6 +3,7 @@
 //! outline mask and x-ray bindings, and the tone-map bind group. Bind groups
 //! compare by identity, so an equal handle means nothing was rebuilt.
 
+use crate::Colour;
 use crate::renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission};
 use crate::{Camera, LabelItem, OverlayFill, OverlayShape, OverlayShapeItem, ViewportRenderer};
 
@@ -65,7 +66,7 @@ fn a_repeated_frame_rebuilds_no_bind_group() {
             [4.0, 4.0],
             [10.0, 6.0],
         )
-        .with_fill(OverlayFill::Solid([0.8, 0.2, 0.2, 1.0].into())),
+        .with_fill(OverlayFill::Solid(Colour::linear(0.8, 0.2, 0.2, 1.0))),
     ];
     frame.overlays.labels = vec![LabelItem::new("label").with_position([8.0, 20.0])];
 

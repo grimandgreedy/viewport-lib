@@ -7,6 +7,7 @@
 //! every family: an empty or transparent layer list changes nothing, and a
 //! contour actually puts shadow-coloured pixels around the item.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -27,7 +28,7 @@ fn base_frame() -> FrameData {
     frame.viewport.show_axes_indicator = false;
     // A bright background is the case the contour exists for: white text on it
     // is invisible without one.
-    frame.viewport.background_colour = Some([0.95, 0.95, 0.95, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.95, 0.95, 0.95, 1.0));
     frame
 }
 
@@ -54,7 +55,7 @@ fn absent_and_transparent_layers_are_inert() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    let invisible = ShadowLayer::outline([0.0, 0.0, 0.0, 0.0], 2.0);
+    let invisible = ShadowLayer::outline(Colour::linear(0.0, 0.0, 0.0, 0.0), 2.0);
 
     let mut plain = base_frame();
     plain.overlays.labels = vec![LabelItem::new("Wg").with_position([8.0, 8.0])];
@@ -93,14 +94,17 @@ fn label_outline_adds_contour_pixels() {
     let label = LabelItem::new("Hg")
         .with_position([10.0, 10.0])
         .with_font_size(40.0)
-        .with_colour([1.0, 1.0, 1.0, 1.0]);
+        .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0));
 
     let mut without = base_frame();
     without.overlays.labels = vec![label.clone()];
     let plain_px = renderer.render_offscreen(&device, &queue, &without, SIZE, SIZE);
 
     let mut with = base_frame();
-    with.overlays.labels = vec![label.with_shadow(ShadowLayer::outline([0.0, 0.0, 0.0, 1.0], 2.0))];
+    with.overlays.labels = vec![label.with_shadow(ShadowLayer::outline(
+        Colour::linear(0.0, 0.0, 0.0, 1.0),
+        2.0,
+    ))];
     let outlined_px = renderer.render_offscreen(&device, &queue, &with, SIZE, SIZE);
 
     let (plain_dark, outlined_dark) = (dark_pixels(&plain_px), dark_pixels(&outlined_px));
@@ -129,15 +133,17 @@ fn glyph_run_outline_adds_contour_pixels() {
         .collect();
     let run = GlyphRunItem::new(glyphs)
         .with_font_size(36.0)
-        .with_colour([1.0, 1.0, 1.0, 1.0]);
+        .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0));
 
     let mut without = base_frame();
     without.overlays.glyph_runs = vec![run.clone()];
     let plain_px = renderer.render_offscreen(&device, &queue, &without, SIZE, SIZE);
 
     let mut with = base_frame();
-    with.overlays.glyph_runs =
-        vec![run.with_shadow(ShadowLayer::outline([0.0, 0.0, 0.0, 1.0], 2.0))];
+    with.overlays.glyph_runs = vec![run.with_shadow(ShadowLayer::outline(
+        Colour::linear(0.0, 0.0, 0.0, 1.0),
+        2.0,
+    ))];
     let outlined_px = renderer.render_offscreen(&device, &queue, &with, SIZE, SIZE);
 
     let (plain_dark, outlined_dark) = (dark_pixels(&plain_px), dark_pixels(&outlined_px));
@@ -161,15 +167,17 @@ fn polyline_outline_adds_contour_pixels() {
 
     let poly = OverlayPolylineItem::new(vec![[10.0, 20.0], [50.0, 70.0], [86.0, 20.0]])
         .with_thickness(3.0)
-        .with_colour([1.0, 1.0, 1.0, 1.0]);
+        .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0));
 
     let mut without = base_frame();
     without.overlays.polylines = vec![poly.clone()];
     let plain_px = renderer.render_offscreen(&device, &queue, &without, SIZE, SIZE);
 
     let mut with = base_frame();
-    with.overlays.polylines =
-        vec![poly.with_shadow(ShadowLayer::outline([0.0, 0.0, 0.0, 1.0], 2.5))];
+    with.overlays.polylines = vec![poly.with_shadow(ShadowLayer::outline(
+        Colour::linear(0.0, 0.0, 0.0, 1.0),
+        2.5,
+    ))];
     let outlined_px = renderer.render_offscreen(&device, &queue, &with, SIZE, SIZE);
 
     let (plain_dark, outlined_dark) = (dark_pixels(&plain_px), dark_pixels(&outlined_px));
@@ -201,15 +209,17 @@ fn vector_shape_outline_adds_contour_pixels() {
         [28.0, 30.0],
         [40.0, 36.0],
     )
-    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()));
+    .with_fill(OverlayFill::Solid(Colour::linear(1.0, 1.0, 1.0, 1.0)));
 
     let mut without = base_frame();
     without.overlays.shapes = vec![shape.clone()];
     let plain_px = renderer.render_offscreen(&device, &queue, &without, SIZE, SIZE);
 
     let mut with = base_frame();
-    with.overlays.shapes =
-        vec![shape.with_shadows(vec![ShadowLayer::outline([0.0, 0.0, 0.0, 1.0], 3.0)])];
+    with.overlays.shapes = vec![shape.with_shadows(vec![ShadowLayer::outline(
+        Colour::linear(0.0, 0.0, 0.0, 1.0),
+        3.0,
+    )])];
     let outlined_px = renderer.render_offscreen(&device, &queue, &with, SIZE, SIZE);
 
     let (plain_dark, outlined_dark) = (dark_pixels(&plain_px), dark_pixels(&outlined_px));
@@ -233,18 +243,20 @@ fn spread_widens_a_shadow_beyond_the_stroke() {
 
     let poly = OverlayPolylineItem::new(vec![[10.0, 48.0], [86.0, 48.0]])
         .with_thickness(1.0)
-        .with_colour([1.0, 1.0, 1.0, 1.0]);
+        .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0));
 
     let mut narrow = base_frame();
-    narrow.overlays.polylines = vec![
-        poly.clone()
-            .with_shadow(ShadowLayer::outline([0.0, 0.0, 0.0, 1.0], 1.0)),
-    ];
+    narrow.overlays.polylines = vec![poly.clone().with_shadow(ShadowLayer::outline(
+        Colour::linear(0.0, 0.0, 0.0, 1.0),
+        1.0,
+    ))];
     let narrow_px = renderer.render_offscreen(&device, &queue, &narrow, SIZE, SIZE);
 
     let mut wide = base_frame();
-    wide.overlays.polylines =
-        vec![poly.with_shadow(ShadowLayer::outline([0.0, 0.0, 0.0, 1.0], 4.0))];
+    wide.overlays.polylines = vec![poly.with_shadow(ShadowLayer::outline(
+        Colour::linear(0.0, 0.0, 0.0, 1.0),
+        4.0,
+    ))];
     let wide_px = renderer.render_offscreen(&device, &queue, &wide, SIZE, SIZE);
 
     assert!(
@@ -270,7 +282,7 @@ fn falloff_changes_output_on_every_backend() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let layer = |falloff: f32| {
-        ShadowLayer::new([0.0, 0.0, 0.0, 0.9], 8.0, [0.0, 0.0])
+        ShadowLayer::new(Colour::linear(0.0, 0.0, 0.0, 0.9), 8.0, [0.0, 0.0])
             .with_spread(2.0)
             .with_falloff(falloff)
     };
@@ -280,7 +292,7 @@ fn falloff_changes_output_on_every_backend() {
         let mut frame = base_frame();
         frame.overlays.shapes = vec![
             OverlayShapeItem::new(OverlayShape::Circle, [32.0, 32.0], [32.0, 32.0])
-                .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
+                .with_fill(OverlayFill::Solid(Colour::linear(1.0, 1.0, 1.0, 1.0)))
                 .with_shadows(vec![layer(f)]),
         ];
         r.render_offscreen(&device, &queue, &frame, SIZE, SIZE)
@@ -297,7 +309,7 @@ fn falloff_changes_output_on_every_backend() {
         frame.overlays.polylines = vec![
             OverlayPolylineItem::new(vec![[10.0, 48.0], [86.0, 48.0]])
                 .with_thickness(2.0)
-                .with_colour([1.0, 1.0, 1.0, 1.0])
+                .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
                 .with_shadow(layer(f)),
         ];
         r.render_offscreen(&device, &queue, &frame, SIZE, SIZE)
@@ -315,7 +327,7 @@ fn falloff_changes_output_on_every_backend() {
             LabelItem::new("Hg")
                 .with_position([16.0, 16.0])
                 .with_font_size(40.0)
-                .with_colour([1.0, 1.0, 1.0, 1.0])
+                .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
                 .with_shadow(layer(f)),
         ];
         r.render_offscreen(&device, &queue, &frame, SIZE, SIZE)
@@ -347,7 +359,7 @@ fn label_rotation_turns_the_text_and_zero_is_inert() {
         LabelItem::new("Hg")
             .with_position([20.0, 30.0])
             .with_font_size(32.0)
-            .with_colour([0.0, 0.0, 0.0, 1.0])
+            .with_colour(Colour::linear(0.0, 0.0, 0.0, 1.0))
     };
     let render = |l: LabelItem, r: &mut ViewportRenderer| {
         let mut frame = base_frame();
@@ -382,7 +394,7 @@ fn label_rotation_pivot_moves_the_centre_of_rotation() {
             LabelItem::new("Hg")
                 .with_position([20.0, 30.0])
                 .with_font_size(32.0)
-                .with_colour([0.0, 0.0, 0.0, 1.0])
+                .with_colour(Colour::linear(0.0, 0.0, 0.0, 1.0))
                 .with_rotation(0.6)
                 .with_rotation_pivot(pivot),
         ];
@@ -424,14 +436,14 @@ fn a_label_and_its_backing_shape_turn_together() {
                 [pos[0] - pad, pos[1] - pad],
                 [metrics.width + pad * 2.0, metrics.height + pad * 2.0],
             )
-            .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 1.0].into()))
+            .with_fill(OverlayFill::Solid(Colour::linear(0.0, 0.0, 0.0, 1.0)))
             .with_rotation(panel_rotation),
         ];
         frame.overlays.labels = vec![
             LabelItem::new(text)
                 .with_position(pos)
                 .with_font_size(32.0)
-                .with_colour([1.0, 1.0, 1.0, 1.0])
+                .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
                 .with_rotation(text_rotation),
         ];
         r.render_offscreen(&device, &queue, &frame, SIZE, SIZE)
@@ -483,7 +495,7 @@ fn glyph_run_rotation_turns_the_run() {
         frame.overlays.glyph_runs = vec![
             GlyphRunItem::new(glyphs.clone())
                 .with_font_size(28.0)
-                .with_colour([0.0, 0.0, 0.0, 1.0])
+                .with_colour(Colour::linear(0.0, 0.0, 0.0, 1.0))
                 .with_rotation(rotation),
         ];
         r.render_offscreen(&device, &queue, &frame, SIZE, SIZE)
@@ -514,8 +526,10 @@ fn every_family_has_a_working_inner_shadow_builder() {
 
     // An inset layer needs a spread: without one the band starts at the edge
     // and the whole interior is outside it.
-    let inset = || ShadowLayer::new([0.0_f32, 0.0, 0.0, 1.0], 6.0, [0.0, 0.0]).with_spread(8.0);
-    let white = OverlayFill::Solid([1.0_f32, 1.0, 1.0, 1.0].into());
+    let inset = || {
+        ShadowLayer::new(Colour::linear(0.0_f32, 0.0, 0.0, 1.0), 6.0, [0.0, 0.0]).with_spread(8.0)
+    };
+    let white = OverlayFill::Solid(Colour::linear(1.0_f32, 1.0, 1.0, 1.0));
 
     let shape = |inner: bool| {
         let mut ovl = viewport_lib::OverlayFrame::default();
@@ -546,7 +560,7 @@ fn every_family_has_a_working_inner_shadow_builder() {
         let item = LabelItem::new("Mg")
             .with_position([20.0, 20.0])
             .with_font_size(48.0)
-            .with_colour([1.0, 1.0, 1.0, 1.0]);
+            .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0));
         ovl.labels = vec![if inner {
             item.with_inner_shadow(inset())
         } else {
@@ -562,7 +576,7 @@ fn every_family_has_a_working_inner_shadow_builder() {
         ])
         .with_font_size(48.0)
         .with_position([20.0, 60.0])
-        .with_colour([1.0, 1.0, 1.0, 1.0]);
+        .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0));
         ovl.glyph_runs = vec![if inner {
             item.with_inner_shadow(inset())
         } else {

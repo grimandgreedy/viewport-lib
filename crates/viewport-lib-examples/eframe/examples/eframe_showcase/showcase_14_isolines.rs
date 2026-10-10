@@ -19,6 +19,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::surface_contour::{ContourLevels, SurfaceContourItem};
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, ColourmapId,
@@ -197,7 +198,7 @@ impl App {
         self.iso_state
             .scene
             .add_named("Wave Grid", Some(mesh_id), glam::Mat4::IDENTITY, {
-                let mut m = Material::from_colour([0.6, 0.65, 0.7]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.6, 0.65, 0.7));
                 m.roughness = 0.6;
                 m
             });
@@ -397,8 +398,8 @@ pub(crate) fn iso_collect_scene_items(
     let lighting = {
         let mut _t = LightingSettings::default();
         _t.hemisphere_intensity = 0.5;
-        _t.sky_colour = [1.0, 1.0, 1.0].into();
-        _t.ground_colour = [1.0, 1.0, 1.0].into();
+        _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+        _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         _t
     };
     (items, lighting, sg, 0)
@@ -441,7 +442,7 @@ fn submit_block(app: &mut App, fd: &mut FrameData) {
             "node",
             ContourLevels::Values(levels),
         );
-        contours.colour = state.line_colour.into();
+        contours.colour = Colour::from_linear_array(state.line_colour);
         contours.width = state.line_width;
         fd.scene.items_mut::<SurfaceContourItem>().push(contours);
     } else {
@@ -463,7 +464,7 @@ fn submit_block(app: &mut App, fd: &mut FrameData) {
         }
         let (_, lines) = state.block_lines.as_ref().unwrap();
         let mut lines = lines.clone();
-        lines.default_colour = state.line_colour.into();
+        lines.default_colour = Colour::from_linear_array(state.line_colour);
         lines.line_width = state.line_width;
         fd.scene.items_mut::<PolylineItem>().push(lines);
     }
@@ -494,7 +495,7 @@ pub(crate) fn submit_iso_items(app: &mut App, fd: &mut FrameData) {
             "wave",
             ContourLevels::Values(isovalues),
         );
-        item.colour = app.iso_state.line_colour.into();
+        item.colour = Colour::from_linear_array(app.iso_state.line_colour);
         item.width = app.iso_state.line_width;
         fd.scene.items_mut::<SurfaceContourItem>().push(item);
         return;
@@ -518,7 +519,7 @@ pub(crate) fn submit_iso_items(app: &mut App, fd: &mut FrameData) {
     }
     let (_, lines) = state.grid_lines.as_ref().unwrap();
     let mut lines = lines.clone();
-    lines.default_colour = state.line_colour.into();
+    lines.default_colour = Colour::from_linear_array(state.line_colour);
     lines.line_width = state.line_width;
     fd.scene.items_mut::<PolylineItem>().push(lines);
 }

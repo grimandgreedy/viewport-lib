@@ -214,7 +214,7 @@ fn backdrop(ctx: &mut BuildCtx<'_>, overlays: OverlayFrame) -> BuiltScene {
         .expect("mesh upload");
     let mut item = viewport_lib::SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.material = Material::pbr([0.35, 0.38, 0.45], 0.1, 0.6);
+    item.material = Material::pbr(Colour::linear_rgb(0.35, 0.38, 0.45), 0.1, 0.6);
     BuiltScene {
         items: vec![item],
         overlays,

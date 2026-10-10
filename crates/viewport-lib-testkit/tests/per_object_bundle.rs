@@ -4,6 +4,7 @@
 //! viewport slot existed), so frame 1 exercises the immediate path and later
 //! frames the bundle replay; their images must match.
 
+use viewport_lib::Colour;
 use viewport_lib::{
     CameraFrame, FrameData, Material, SamplerKey, SceneFrame, SceneRenderItem, TextureSlot,
     WrapMode,
@@ -34,11 +35,11 @@ fn bundle_replay_matches_immediate_draws() {
             let (x, y) = ((i % 10) as f32 * 7.0 - 31.5, (i / 10) as f32 * 7.0 - 31.5);
             it.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, (i % 3) as f32 * 3.0))
                 .to_cols_array_2d();
-            it.material = Material::from_colour([
+            it.material = Material::from_colour(Colour::linear_rgb(
                 0.3 + (i % 7) as f32 * 0.1,
                 0.4,
                 0.8 - (i % 5) as f32 * 0.1,
-            ])
+            ))
             .with_sampler(
                 TextureSlot::Albedo,
                 SamplerKey {

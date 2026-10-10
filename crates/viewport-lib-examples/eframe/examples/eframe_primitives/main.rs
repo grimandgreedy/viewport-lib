@@ -7,6 +7,7 @@
 
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource, LightingSettings,
@@ -84,7 +85,7 @@ fn main() -> eframe::Result {
                 s.mesh_id = mesh_id;
                 s.model =
                     glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).to_cols_array_2d();
-                s.material = Material::from_colour(colour);
+                s.material = Material::from_colour(Colour::from_linear_rgb_array(colour));
                 s.material.backface_policy = vpl::BackfacePolicy::Identical;
                 s
             };
@@ -268,7 +269,7 @@ impl App {
                             _t.kind = LightKind::Directional {
                                 direction: [0.4, -0.5, 1.2],
                             };
-                            _t.colour = [1.0, 0.97, 0.92].into();
+                            _t.colour = Colour::linear_rgb(1.0, 0.97, 0.92);
                             _t.intensity = 1.0;
                             _t
                         },
@@ -277,14 +278,14 @@ impl App {
                             _t.kind = LightKind::Directional {
                                 direction: [-0.8, 0.6, 0.3],
                             };
-                            _t.colour = [0.70, 0.82, 1.0].into();
+                            _t.colour = Colour::linear_rgb(0.70, 0.82, 1.0);
                             _t.intensity = 0.35;
                             _t
                         },
                     ];
                     _t.hemisphere_intensity = 0.35;
-                    _t.sky_colour = [0.80, 0.90, 1.0].into();
-                    _t.ground_colour = [0.35, 0.28, 0.22].into();
+                    _t.sky_colour = Colour::linear_rgb(0.80, 0.90, 1.0);
+                    _t.ground_colour = Colour::linear_rgb(0.35, 0.28, 0.22);
                     _t
                 };
                 frame_data.viewport.show_grid = false;

@@ -16,6 +16,7 @@
 //!   VPL_BUILD_LOG=1 cargo run --release --example viewport-registration-cost   # from crates/viewport-lib-testkit
 
 use std::time::Instant;
+use viewport_lib::Colour;
 
 use viewport_lib as vpl;
 use vpl::wgpu;
@@ -79,7 +80,7 @@ fn frame_for(vp: usize) -> FrameData {
     frame.camera.viewport_index = vp;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.1, 0.1, 0.12, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.1, 0.1, 0.12, 1.0));
     // `direct` selects PipelineMode::Direct, the LDR passthrough that skips the
     // whole post chain, to see whether its targets are still allocated.
     if std::env::args().nth(1).as_deref() == Some("direct") {

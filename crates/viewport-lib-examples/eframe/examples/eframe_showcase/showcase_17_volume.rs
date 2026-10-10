@@ -19,6 +19,7 @@ use crate::App;
 use crate::eframe;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::volume::VolumeItem;
 use viewport_lib_plugins::item_types::{
     image_slice::{ImageSliceItem, SliceAxis},
@@ -195,7 +196,7 @@ impl App {
         item.step_scale = s.step_scale;
         item.enable_shading = s.shading;
         item.nan_colour = if s.nan_on {
-            Some([0.9, 0.1, 0.9, 0.8].into())
+            Some(Colour::linear(0.9, 0.1, 0.9, 0.8))
         } else {
             None
         };
@@ -384,7 +385,7 @@ pub(crate) fn controls_volume(app: &mut App, ui: &mut egui::Ui, frame: &eframe::
         ui.label("Isosurface colour:");
         let mut iso_rgb = s.iso_material.base_colour.to_linear_rgb();
         if ui.color_edit_button_rgb(&mut iso_rgb).changed() {
-            s.iso_material.base_colour = iso_rgb.into();
+            s.iso_material.base_colour = Colour::from_linear_rgb_array(iso_rgb);
         }
         ui.label("Roughness:");
         ui.add(egui::Slider::new(&mut s.iso_material.roughness, 0.0..=1.0).step_by(0.05));
@@ -522,8 +523,8 @@ pub(crate) fn vol_collect_scene_items(
     let lighting = {
         let mut _t = LightingSettings::default();
         _t.hemisphere_intensity = 0.6;
-        _t.sky_colour = [1.0, 1.0, 1.0].into();
-        _t.ground_colour = [0.8, 0.8, 0.8].into();
+        _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+        _t.ground_colour = Colour::linear_rgb(0.8, 0.8, 0.8);
         _t
     };
     (surface_items, lighting, 0, 0)

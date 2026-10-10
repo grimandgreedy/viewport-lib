@@ -5,6 +5,7 @@
 
 #![cfg(feature = "item-types")]
 
+use viewport_lib::Colour;
 mod common;
 use common::*;
 use viewport_lib::{AttributeData, Material, MeshId, SceneRenderItem, SurfaceSubmission};
@@ -43,7 +44,7 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
 fn base_frame() -> FrameData {
     let mut frame = sub_object_pick_frame();
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
-    frame.viewport.background_colour = Some([0.1, 0.1, 0.1, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.1, 0.1, 0.1, 1.0));
     frame
 }
 
@@ -59,7 +60,7 @@ fn surface(mesh: MeshId, x: f32) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = quad_model(x);
-    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
     item.settings.unlit = true;
     item
 }
@@ -184,7 +185,7 @@ fn streaks_are_clipped_with_the_surface() {
     backdrop.model = (glam::Mat4::from_translation(glam::Vec3::new(0.5, 0.0, -0.5))
         * glam::Mat4::from_scale(glam::Vec3::splat(2.0)))
     .to_cols_array_2d();
-    backdrop.material = Material::from_colour([0.4, 0.5, 0.6]);
+    backdrop.material = Material::from_colour(Colour::linear_rgb(0.4, 0.5, 0.6));
     backdrop.settings.ignore_clip = true;
 
     // Keep x <= 0.5: the flow quad at 0.5 loses its right half.

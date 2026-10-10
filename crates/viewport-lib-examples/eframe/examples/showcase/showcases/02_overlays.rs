@@ -99,7 +99,7 @@ impl Showcase for OverlaysShowcase {
             ctx.session.scene_mut().add(
                 Some(cube),
                 Mat4::from_translation(Vec3::from(pos)),
-                Material::from_colour(colour),
+                Material::from_colour(Colour::from_linear_rgb_array(colour)),
             );
         }
 

@@ -18,6 +18,7 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use vpl::{
     BuiltinMatcap, MatcapId, Material, MeshData, MeshId, PickAccelerator, RuntimeFrameContext,
@@ -529,7 +530,7 @@ fn populate_scene_for_demo(state: &mut Skin47State) {
     // Add the arm if needed and not already present.
     if arm_demos && state.arm_node.is_none() {
         if let Some(mesh_id) = state.mesh_id {
-            let mut mat = Material::from_colour([0.10, 0.26, 0.68]);
+            let mut mat = Material::from_colour(Colour::linear_rgb(0.10, 0.26, 0.68));
             mat.backface_policy = BackfacePolicy::Tint(0.4);
             state.arm_node = Some(state.scene.add(Some(mesh_id), glam::Mat4::IDENTITY, mat));
         }
@@ -539,7 +540,7 @@ fn populate_scene_for_demo(state: &mut Skin47State) {
     if gltf_demo && state.gltf_nodes.is_empty() {
         if let Some(asset) = state.gltf_asset.as_ref() {
             for (id, part) in state.gltf_mesh_ids.iter().zip(asset.parts.iter()) {
-                let mut gmat = Material::from_colour(part.colour);
+                let mut gmat = Material::from_colour(Colour::from_linear_rgb_array(part.colour));
                 gmat.backface_policy = BackfacePolicy::Tint(0.4);
                 let node = state.scene.add(Some(*id), part.scene_transform, gmat);
                 state.gltf_nodes.push(node);
@@ -560,7 +561,8 @@ fn populate_scene_for_demo(state: &mut Skin47State) {
                     .iter()
                     .zip(asset.parts.iter())
                 {
-                    let mut gmat = Material::from_colour(part.colour);
+                    let mut gmat =
+                        Material::from_colour(Colour::from_linear_rgb_array(part.colour));
                     gmat.backface_policy = BackfacePolicy::Tint(0.4);
                     let node =
                         state
@@ -1916,8 +1918,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.85;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         let sg = app.skin_state.scene.version();

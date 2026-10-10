@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 use std::time::Instant;
+use viewport_lib::Colour;
 
 use viewport_lib::interaction::input::adapters::from_winit;
 use viewport_lib::{
@@ -134,7 +135,7 @@ impl ApplicationHandler for App {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-            item.material = Material::from_colour(colour);
+            item.material = Material::from_colour(Colour::from_linear_rgb_array(colour));
             item
         };
 

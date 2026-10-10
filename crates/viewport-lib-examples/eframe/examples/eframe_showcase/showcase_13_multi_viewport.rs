@@ -21,6 +21,7 @@ use crate::App;
 use crate::eframe;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     Action, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis,
     GizmoInfo, GizmoMode, GizmoSpace, LightingSettings, ManipResult, ManipulationContext,
@@ -153,7 +154,7 @@ impl App {
         for (i, ((pos, colour), name)) in positions.iter().zip(&colours).zip(&names).enumerate() {
             let mesh = self.upload_box(renderer);
             let transform = glam::Mat4::from_translation(glam::Vec3::from(*pos));
-            let mat = Material::from_colour(*colour);
+            let mat = Material::from_colour(Colour::from_linear_rgb_array(*colour));
             let id = self
                 .mv_state
                 .scene
@@ -480,8 +481,8 @@ impl App {
         let lighting = {
             let mut _t = LightingSettings::default();
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         let ppp = ui.ctx().pixels_per_point();

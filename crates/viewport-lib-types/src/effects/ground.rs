@@ -1,5 +1,6 @@
 //! Ground-plane configuration.
 
+use crate::colour::Colour;
 /// Ground plane rendering mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -43,10 +44,10 @@ impl Default for GroundPlane {
         Self {
             mode: GroundPlaneMode::None,
             height: 0.0,
-            colour: [1.0, 1.0, 1.0, 1.0].into(),
-            tile_colour2: [0.0, 0.0, 0.0, 1.0].into(),
+            colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
+            tile_colour2: Colour::linear(0.0, 0.0, 0.0, 1.0),
             tile_size: 1.0,
-            shadow_colour: [0.0, 0.0, 0.0, 1.0].into(),
+            shadow_colour: Colour::linear(0.0, 0.0, 0.0, 1.0),
             shadow_opacity: 0.5,
         }
     }

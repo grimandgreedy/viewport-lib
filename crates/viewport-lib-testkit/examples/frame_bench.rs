@@ -15,6 +15,7 @@
 
 use glam::Vec3;
 use std::f32::consts::TAU;
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use viewport_lib::{
     BackfacePolicy, Camera, FrameData, Material, MeshId, SceneRenderItem, ViewportRenderer,
@@ -53,7 +54,7 @@ fn cube_grid(mesh: MeshId, count: u32, instanced: bool) -> Vec<SceneRenderItem> 
                 it.model =
                     glam::Mat4::from_translation(Vec3::new(x as f32, y as f32, z as f32) * 1.5)
                         .to_cols_array_2d();
-                it.material = Material::pbr([0.7, 0.6, 0.5], 0.2, 0.5);
+                it.material = Material::pbr(Colour::linear_rgb(0.7, 0.6, 0.5), 0.2, 0.5);
                 if !instanced {
                     it.material.backface_policy = BackfacePolicy::Tint(0.4);
                 }
@@ -116,7 +117,7 @@ fn mesh_cell(id: &'static str, sub: u32, tris: u64) -> Cell {
                 .expect("icosphere");
             let mut it = SceneRenderItem::default();
             it.mesh_id = m;
-            it.material = Material::pbr([0.7, 0.6, 0.85], 0.3, 0.4);
+            it.material = Material::pbr(Colour::linear_rgb(0.7, 0.6, 0.85), 0.3, 0.4);
             BuiltScene {
                 items: vec![it],
                 lighting: rigs::from_above(),

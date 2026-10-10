@@ -13,7 +13,7 @@ use viewport_lib::ItemSettings;
 /// prim.kind   = 1;  // sphere
 /// prim.blend  = 0.9;
 /// prim.params = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];  // center=origin, radius=1
-/// prim.colour  = [1.0, 0.5, 0.2, 1.0].into();
+/// prim.colour  = viewport_lib::Colour::linear(1.0, 0.5, 0.2, 1.0);
 ///
 /// let mut item = GpuImplicitItem::default();
 /// item.primitives    = vec![prim];

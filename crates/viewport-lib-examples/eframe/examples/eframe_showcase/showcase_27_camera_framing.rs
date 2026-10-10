@@ -18,6 +18,7 @@ use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{
     CameraTarget, CameraTrack, LightKind, LightSource, LightingSettings, Material, PolylineItem,
     TurntableController, ViewportRenderer, interpolate_camera,
@@ -94,7 +95,7 @@ pub(crate) fn frustum_to_polyline(f: &FrustumData) -> PolylineItem {
     let mut item = PolylineItem::default();
     item.positions = positions;
     item.strip_lengths = strip_lengths;
-    item.default_colour = f.colour.into();
+    item.default_colour = Colour::from_linear_array(f.colour);
     item.line_width = f.line_width;
     item
 }
@@ -187,7 +188,7 @@ impl App {
             Some(platform_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.125)),
             {
-                let mut m = Material::from_colour([1.0, 1.0, 1.0]);
+                let mut m = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
                 m.roughness = 0.9;
                 m
             },
@@ -203,7 +204,7 @@ impl App {
             Some(wall_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.2)),
             {
-                let mut m = Material::from_colour([1.0, 1.0, 1.0]);
+                let mut m = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
                 m.roughness = 0.8;
                 m
             },
@@ -225,7 +226,7 @@ impl App {
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, -3.0, 0.6)),
             {
-                let mut m = Material::from_colour([0.85, 0.22, 0.18]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.85, 0.22, 0.18));
                 m.roughness = 0.3;
                 m
             },
@@ -235,7 +236,7 @@ impl App {
             Some(box_id),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, -2.5, 0.6)),
             {
-                let mut m = Material::from_colour([0.95, 0.55, 0.10]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.95, 0.55, 0.10));
                 m.roughness = 0.5;
                 m
             },
@@ -247,7 +248,7 @@ impl App {
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, 3.0, 0.6)),
             {
-                let mut m = Material::from_colour([0.15, 0.65, 0.80]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.15, 0.65, 0.80));
                 m.roughness = 0.3;
                 m
             },
@@ -257,7 +258,7 @@ impl App {
             Some(box_id),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, 3.0, 0.6)),
             {
-                let mut m = Material::from_colour([0.55, 0.20, 0.80]);
+                let mut m = Material::from_colour(Colour::linear_rgb(0.55, 0.20, 0.80));
                 m.roughness = 0.5;
                 m
             },
@@ -315,15 +316,15 @@ impl App {
                 _t.kind = LightKind::Directional {
                     direction: [0.3, -0.5, 0.8],
                 };
-                _t.colour = [1.0, 0.97, 0.92].into();
+                _t.colour = Colour::linear_rgb(1.0, 0.97, 0.92);
                 _t.intensity = 1.0;
                 _t
             }];
             _t.shadows.enabled = true;
             _t.shadows.cascade_count = 4;
             _t.hemisphere_intensity = 0.45;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         }
     }

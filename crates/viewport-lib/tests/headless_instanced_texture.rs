@@ -7,6 +7,7 @@
 //! colour, renders again, and checks the framebuffer changed. A byte-identical
 //! pair of renders means the update was dropped somewhere in the path.
 
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -219,7 +220,7 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
         let mut g = viewport_lib::SceneRenderItem::default();
         g.mesh_id = ground;
         g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-        g.material = Material::from_colour([0.85, 0.85, 0.85]);
+        g.material = Material::from_colour(Colour::linear_rgb(0.85, 0.85, 0.85));
         items.push(g);
         if with_casters {
             // Two casters sharing one mesh and one texture -> a single instanced
@@ -1094,9 +1095,9 @@ fn freeing_a_texture_used_only_by_a_submesh_material_reaches_the_screen() {
     let item = |with_submesh_texture: bool| {
         let mut it = viewport_lib::SceneRenderItem::default();
         it.mesh_id = mesh;
-        it.material = Material::from_colour([0.1, 0.1, 0.1]);
+        it.material = Material::from_colour(Colour::linear_rgb(0.1, 0.1, 0.1));
         it.settings = unlit_settings();
-        let mut sub = Material::from_colour([0.1, 0.1, 0.1]);
+        let mut sub = Material::from_colour(Colour::linear_rgb(0.1, 0.1, 0.1));
         if with_submesh_texture {
             sub.texture_id = Some(tex);
         }
@@ -1352,7 +1353,7 @@ fn instanced_cutout_shadow_reflects_free_texture() {
         let mut g = viewport_lib::SceneRenderItem::default();
         g.mesh_id = ground;
         g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-        g.material = Material::from_colour([0.85, 0.85, 0.85]);
+        g.material = Material::from_colour(Colour::linear_rgb(0.85, 0.85, 0.85));
         items.push(g);
         for x in [-1.0f32, 1.0] {
             let mut c = viewport_lib::SceneRenderItem::default();

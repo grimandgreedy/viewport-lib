@@ -10,6 +10,7 @@
 //!   Right drag         : pan
 //!   Scroll             : zoom
 
+use viewport_lib::Colour;
 mod viewport_callback;
 
 use eframe::egui;
@@ -188,7 +189,7 @@ impl eframe::App for App {
                 );
                 fd.effects.lighting = built.lighting.clone();
                 if let Some(bg) = built.background {
-                    fd.viewport.background_colour = Some(bg.into());
+                    fd.viewport.background_colour = Some(Colour::from_linear_array(bg));
                 }
 
                 ui.painter()

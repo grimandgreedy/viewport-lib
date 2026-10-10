@@ -3,6 +3,7 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 use vpl::{Material, Selection, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
@@ -46,7 +47,7 @@ impl App {
             "Gold (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, -1.5, 0.0)),
-            Material::pbr_with_ao([1.0, 0.78, 0.2], 0.95, 0.05, None),
+            Material::pbr_with_ao(Colour::linear_rgb(1.0, 0.78, 0.2), 0.95, 0.05, None),
         );
         self.materials_visibility_state.selection.select_one(id);
 
@@ -55,7 +56,7 @@ impl App {
             "Brushed Steel (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, 1.5, 0.0)),
-            Material::pbr([0.82, 0.82, 0.86], 0.75, 0.35),
+            Material::pbr(Colour::linear_rgb(0.82, 0.82, 0.86), 0.75, 0.35),
         );
 
         let m = self.upload_box(renderer);
@@ -64,7 +65,7 @@ impl App {
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, -1.5, 0.0)),
             {
-                let mut mat = Material::from_colour([0.2, 0.4, 0.9]);
+                let mut mat = Material::from_colour(Colour::linear_rgb(0.2, 0.4, 0.9));
                 mat.specular = 0.9;
                 mat.shininess = 128.0;
                 mat
@@ -77,7 +78,7 @@ impl App {
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, 1.5, 0.0)),
             {
-                let mut mat = Material::from_colour([0.2, 0.7, 0.3]);
+                let mut mat = Material::from_colour(Colour::linear_rgb(0.2, 0.7, 0.3));
                 mat.specular = 0.05;
                 mat.diffuse = 0.95;
                 mat.shininess = 4.0;
@@ -94,7 +95,7 @@ impl App {
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(0.0, 3.5, 0.25),
             ),
-            Material::from_colour([0.35, 0.35, 0.35]),
+            Material::from_colour(Colour::linear_rgb(0.35, 0.35, 0.35)),
         );
 
         let m = self.upload_box(renderer);
@@ -102,7 +103,7 @@ impl App {
             "Hidden Magenta (x-ray target)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 5.5, 0.0)),
-            Material::from_colour([0.65, 0.06, 0.45]),
+            Material::from_colour(Colour::linear_rgb(0.65, 0.06, 0.45)),
         );
 
         self.materials_visibility_state.built = true;
@@ -205,8 +206,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0].into();
-            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t
         };
         (items, None, lighting, sg, ss)

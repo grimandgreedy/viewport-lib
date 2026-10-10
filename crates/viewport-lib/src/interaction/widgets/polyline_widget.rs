@@ -1,5 +1,6 @@
 //! Polyline widget: N draggable waypoints connected by straight line segments.
 
+use crate::Colour;
 use crate::geometry::maths::intersect::ray_plane_intersection;
 use crate::renderer::PolylineItem;
 
@@ -59,9 +60,9 @@ impl PolylineWidget {
         }
         Self {
             points,
-            colour: [0.9, 0.5, 0.1, 1.0].into(),
+            colour: Colour::linear(0.9, 0.5, 0.1, 1.0),
             line_width: 2.0,
-            handle_colour: [0.0; 4].into(),
+            handle_colour: Colour::TRANSPARENT,
             hovered_point: None,
             active_point: None,
             drag_plane_normal: glam::Vec3::Y,

@@ -3,6 +3,7 @@
 
 #![cfg(feature = "item-types")]
 
+use viewport_lib::Colour;
 use viewport_lib::gpu;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib_plugins::item_types::{
@@ -147,7 +148,7 @@ fn external_instances_render_with_instance_range_slice() {
         let mut item = ExternalInstancesItem::new(set_id, count);
         item.first_instance = first;
         item.scale = 0.4;
-        item.colour = [1.0, 0.2, 0.2, 1.0].into();
+        item.colour = Colour::linear(1.0, 0.2, 0.2, 1.0);
         *frame.scene.items_mut::<ExternalInstancesItem>() = vec![item];
         frame
     };

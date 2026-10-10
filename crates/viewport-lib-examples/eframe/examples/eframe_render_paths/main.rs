@@ -23,6 +23,7 @@
 
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use viewport_lib_plugins::deformers::cut::{Cut, CutDeformer};
 use vpl::{
@@ -472,7 +473,7 @@ impl App {
                 direction: self.dir_direction,
             },
         };
-        light.colour = self.light_colour.into();
+        light.colour = Colour::from_linear_rgb_array(self.light_colour);
         // Normalised 0..1 slider scaled into the selected kind's unit: directional
         // is illuminance (direct); point/spot are candela with 1/d^2 falloff, so
         // they need a much larger number to read at the light's throw distance.
@@ -498,7 +499,7 @@ impl App {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh;
             item.model = glam::Mat4::from_translation(grid_pos(pick_id)).to_cols_array_2d();
-            item.material = Material::from_colour([0.80, 0.82, 0.88]);
+            item.material = Material::from_colour(Colour::linear_rgb(0.80, 0.82, 0.88));
             item.settings.pick_id = PickId(pick_id);
             item.settings.selected = self.selection.contains(&pick_id);
             configure(&mut item);
@@ -510,45 +511,45 @@ impl App {
 
         // 1: instanced opaque, one-sided.
         place(self.meshes.cube, 1, &|it| {
-            it.material.base_colour = [0.85, 0.10, 0.10].into(); // red
+            it.material.base_colour = Colour::linear_rgb(0.85, 0.10, 0.10); // red
             it.material.backface_policy = BackfacePolicy::Cull;
         });
         // 2: instanced opaque, two-sided (the path the two-sided shadow fix covers).
         place(self.meshes.hemisphere, 2, &|it| {
-            it.material.base_colour = [0.95, 0.45, 0.05].into(); // orange
+            it.material.base_colour = Colour::linear_rgb(0.95, 0.45, 0.05); // orange
             it.material.backface_policy = BackfacePolicy::Identical;
         });
         // 3: instanced transparent, one-sided.
         place(self.meshes.sphere_t, 3, &|it| {
-            it.material.base_colour = [0.93, 0.83, 0.10].into(); // yellow
+            it.material.base_colour = Colour::linear_rgb(0.93, 0.83, 0.10); // yellow
             it.material.backface_policy = BackfacePolicy::Cull;
             it.material.alpha_mode = AlphaMode::Blend;
             it.settings.opacity = 0.5;
         });
         // 4: per-object transparent, two-sided (OIT is back-culled, so this stays per-object).
         place(self.meshes.torus, 4, &|it| {
-            it.material.base_colour = [0.15, 0.80, 0.25].into(); // green
+            it.material.base_colour = Colour::linear_rgb(0.15, 0.80, 0.25); // green
             it.material.backface_policy = BackfacePolicy::Identical;
             it.material.alpha_mode = AlphaMode::Blend;
             it.settings.opacity = 0.5;
         });
         // 5: per-object two-sided, DifferentColour backface.
         place(self.meshes.cone, 5, &|it| {
-            it.material.base_colour = [0.05, 0.70, 0.65].into(); // teal (front)
+            it.material.base_colour = Colour::linear_rgb(0.05, 0.70, 0.65); // teal (front)
             it.material.backface_policy =
-                BackfacePolicy::DifferentColour([0.95, 0.35, 0.10].into());
+                BackfacePolicy::DifferentColour(Colour::linear_rgb(0.95, 0.35, 0.10));
         });
         // 6: per-object two-sided, Tint backface.
         place(self.meshes.cylinder, 6, &|it| {
-            it.material.base_colour = [0.15, 0.35, 0.95].into(); // blue
+            it.material.base_colour = Colour::linear_rgb(0.15, 0.35, 0.95); // blue
             it.material.backface_policy = BackfacePolicy::Tint(0.4);
         });
         // 7: per-object two-sided, Pattern backface.
         place(self.meshes.ring, 7, &|it| {
-            it.material.base_colour = [0.60, 0.20, 0.90].into(); // violet (front)
+            it.material.base_colour = Colour::linear_rgb(0.60, 0.20, 0.90); // violet (front)
             it.material.backface_policy = BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Hatching,
-                colour: [0.1, 0.4, 0.8].into(),
+                colour: Colour::linear_rgb(0.1, 0.4, 0.8),
                 ..Default::default()
             });
         });
@@ -566,7 +567,7 @@ impl App {
         });
         // 10: per-object UV param-vis.
         place(self.meshes.ellipsoid, 10, &|it| {
-            it.material.base_colour = [0.95, 0.15, 0.65].into(); // magenta
+            it.material.base_colour = Colour::linear_rgb(0.95, 0.15, 0.65); // magenta
             it.material.param_vis = Some(ParamVis {
                 mode: ParamVisMode::Checker,
                 scale: 8.0,
@@ -574,14 +575,14 @@ impl App {
         });
         // 11: per-object cut deformer (its deform instance forces per-object).
         place(self.meshes.filter, 11, &|it| {
-            it.material.base_colour = [0.10, 0.75, 0.90].into(); // cyan
+            it.material.base_colour = Colour::linear_rgb(0.10, 0.75, 0.90); // cyan
             it.material.backface_policy = BackfacePolicy::Identical; // show the cut interior
             it.deform_instance = Some(CUT_INSTANCE);
         });
         // 12: per-object GPU skinning. deform_instance binds the per-instance palette.
         place(self.meshes.skinned, 12, &|it| {
             it.deform_instance = Some(0);
-            it.material = Material::from_colour([0.90, 0.55, 0.05]); // amber
+            it.material = Material::from_colour(Colour::linear_rgb(0.90, 0.55, 0.05)); // amber
             it.settings.pick_id = PickId(12);
             it.settings.selected = self.selection.contains(&12);
         });
@@ -598,7 +599,7 @@ impl App {
         });
         // 14: per-object via a bound position-override buffer.
         place(self.meshes.override_pos, 14, &|it| {
-            it.material.base_colour = [0.55, 0.85, 0.20].into(); // lime
+            it.material.base_colour = Colour::linear_rgb(0.55, 0.85, 0.20); // lime
             it.material.backface_policy = BackfacePolicy::Cull;
         });
 
@@ -607,7 +608,7 @@ impl App {
         ground.mesh_id = self.meshes.ground;
         ground.model =
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-        ground.material = Material::from_colour([0.86, 0.85, 0.82]);
+        ground.material = Material::from_colour(Colour::linear_rgb(0.86, 0.85, 0.82));
         ground.material.roughness = 0.9;
         ground.material.backface_policy = BackfacePolicy::Cull;
         items.push(ground);
@@ -801,7 +802,7 @@ impl eframe::App for App {
             fd.viewport.wireframe_mode = self.wireframe;
             fd.viewport.show_axes_indicator = true;
             fd.interaction.outline_selected = !self.selection.is_empty();
-            fd.interaction.outline_colour = [1.0, 0.85, 0.0, 1.0].into();
+            fd.interaction.outline_colour = Colour::linear(1.0, 0.85, 0.0, 1.0);
             fd.interaction.outline_width_px = 3.0;
 
             // Render into the offscreen target (sRGB dual-view keeps the encode

@@ -6,6 +6,7 @@
 
 #![cfg(feature = "item-types")]
 
+use viewport_lib::Colour;
 mod common;
 use common::*;
 use viewport_lib::{Aabb, SurfaceSubmission};
@@ -51,7 +52,11 @@ fn gpu_pick_hits_box_scatter_volume() {
         min: glam::Vec3::splat(-0.5),
         max: glam::Vec3::splat(0.5),
     };
-    let mut item = ScatterVolumeItem::new(ScatterVolume::box_uniform(aabb, 1.0, [1.0, 1.0, 1.0]));
+    let mut item = ScatterVolumeItem::new(ScatterVolume::box_uniform(
+        aabb,
+        1.0,
+        Colour::linear_rgb(1.0, 1.0, 1.0),
+    ));
     item.settings.pick_id = PickId(41);
     *frame.scene.items_mut::<ScatterVolumeItem>() = vec![item];
 
@@ -78,7 +83,7 @@ fn gpu_pick_hits_sphere_scatter_volume() {
         [0.0, 0.0, 0.0],
         0.5,
         1.0,
-        [1.0, 1.0, 1.0],
+        Colour::linear_rgb(1.0, 1.0, 1.0),
     ));
     item.settings.pick_id = PickId(42);
     *frame.scene.items_mut::<ScatterVolumeItem>() = vec![item];
@@ -120,7 +125,7 @@ fn a_warmed_scatter_type_builds_nothing_on_its_first_frame() {
             min: glam::Vec3::splat(-0.5),
             max: glam::Vec3::splat(0.5),
         };
-        let mut volume = ScatterVolume::box_uniform(aabb, 1.0, [1.0, 1.0, 1.0]);
+        let mut volume = ScatterVolume::box_uniform(aabb, 1.0, Colour::linear_rgb(1.0, 1.0, 1.0));
         volume.refraction = Some(RefractionParams::default());
         let mut item = ScatterVolumeItem::new(volume);
         item.settings.pick_id = PickId(41);
