@@ -118,6 +118,17 @@ mod imp {
     }
 
     impl<I: Iterator> FlatMapIterExt for I {}
+
+    /// rayon's `into_par_iter`, for anything that is not a slice: a range of
+    /// rows, an owned `Vec`. Returns the ordinary iterator, like the slice
+    /// methods above, so the adapters after it are `Iterator`'s.
+    pub trait IntoParallelIterator: IntoIterator + Sized {
+        fn into_par_iter(self) -> Self::IntoIter {
+            self.into_iter()
+        }
+    }
+
+    impl<I: IntoIterator> IntoParallelIterator for I {}
 }
 
 pub use imp::*;
