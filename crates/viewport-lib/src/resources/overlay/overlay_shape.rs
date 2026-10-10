@@ -450,8 +450,9 @@ impl crate::resources::DeviceResources {
     /// The intended source is an
     /// [`OffscreenViewportTarget`](crate::OffscreenViewportTarget) that a viewport
     /// rendered into: pass its `render_view()` (the sRGB view), not `sample_view()`.
-    /// The overlay path samples with an sRGB decode, so the sRGB view round-trips
-    /// the colour faithfully; the non-sRGB view would read too dark.
+    /// A sample is decoded according to the view's format, so the sRGB view
+    /// turns the stored colour back into linear values; the non-sRGB view would
+    /// hand the shader the encoded values and the image would draw wrong.
     ///
     /// The registry does not own the texture: it never writes to or resizes it, and
     /// [`update_overlay_texture`](Self::update_overlay_texture) rejects the returned
