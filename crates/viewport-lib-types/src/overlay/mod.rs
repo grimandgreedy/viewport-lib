@@ -10,6 +10,7 @@
 pub mod anchor;
 pub mod animation;
 pub mod clip;
+pub mod content_hash;
 pub mod fill;
 pub mod font;
 pub mod frame;
@@ -26,6 +27,7 @@ pub mod vector;
 pub use self::anchor::*;
 pub use self::animation::*;
 pub use self::clip::*;
+pub use self::content_hash::*;
 pub use self::fill::*;
 pub use self::font::*;
 pub use self::frame::*;

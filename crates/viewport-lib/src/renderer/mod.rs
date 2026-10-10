@@ -92,7 +92,7 @@ pub use self::types::{
     LightKind, LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux,
     MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
     OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
-    OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
+    OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
     OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
     OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment,
     PipelineMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph,
