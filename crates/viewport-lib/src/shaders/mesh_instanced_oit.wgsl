@@ -653,6 +653,12 @@ fn compute_lit(
         dbg_metallic   = metallic;
         // <viewport-shade-slot:ambient>
         var ambient: vec3<f32>;
+        // The environment's specular, kept apart so a light probe or lightmap
+        // that replaces the baked diffuse below leaves the reflection in place,
+        // and the weight the environment's own diffuse gets.
+        var ibl_specular = vec3<f32>(0.0);
+        let ambient_kd = (vec3<f32>(1.0) - F_Schlick_roughness(max(dot(N, V), 0.001), F0, roughness))
+            * (1.0 - metallic);
         if lights_uniform.ibl_enabled != 0u {
             var ibl: IblContrib;
             if lights_uniform.env_zone_count != 0u {
@@ -667,6 +673,7 @@ fn compute_lit(
             }
             ibl.diffuse *= lights_uniform.ibl_diffuse_scale;
             ibl.specular *= lights_uniform.ibl_specular_scale;
+            ibl_specular = ibl.specular;
             ambient = ibl.diffuse + ibl.specular;
             dbg_ibl_diff_lum = dot(ibl.diffuse, lum_weights);
             dbg_ibl_spec_lum = dot(ibl.specular, lum_weights);
@@ -680,10 +687,15 @@ fn compute_lit(
         }
         // Light-probe instances take their indirect diffuse from the SH field
         // sampled at the object position, replacing the global-IBL / hemisphere
-        // diffuse above. SH probes carry diffuse only, so IBL specular is not
-        // added here.
+        // diffuse above. SH probes carry diffuse only: with an environment, the
+        // probe takes the diffuse weight and the environment's reflection stays.
         if inst.has_light_probe != 0u {
-            ambient = evaluate_object_indirect(inst.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
+            let probe = evaluate_object_indirect(inst.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
+            if lights_uniform.ibl_enabled != 0u {
+                ambient = probe * ambient_kd + ibl_specular;
+            } else {
+                ambient = probe;
+            }
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
         // </viewport-shade-slot:ambient>
