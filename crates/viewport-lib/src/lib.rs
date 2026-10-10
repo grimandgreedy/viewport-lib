@@ -148,6 +148,8 @@ pub use viewport_lib_input as vpli;
 /// Error types for the viewport library.
 pub mod error;
 
+mod util;
+
 /// Arcball camera, frustum, view presets, and animator.
 pub mod camera;
 /// BVH picking, marching cubes, isolines, and cap geometry.

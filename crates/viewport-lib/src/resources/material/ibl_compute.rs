@@ -132,7 +132,7 @@ fn upload_source(
     width: u32,
     height: u32,
 ) -> crate::gpu::Texture {
-    use viewport_lib_types::par::*;
+    use crate::util::par::*;
     let half: Vec<u16> = pixels
         .par_iter()
         .map(|&f| half::f16::from_f32(f).to_bits())

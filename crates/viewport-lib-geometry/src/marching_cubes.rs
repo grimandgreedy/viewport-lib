@@ -16,7 +16,7 @@
 //! // mesh.positions, mesh.normals, mesh.indices ready for upload.
 //! ```
 
-use viewport_lib_types::par::*;
+use crate::util::par::*;
 use std::collections::HashMap;
 use viewport_lib_types::data::mesh::MeshData;
 

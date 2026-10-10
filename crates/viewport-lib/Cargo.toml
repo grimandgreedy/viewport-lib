@@ -37,7 +37,6 @@ bytemuck = { version = "1.25", features = ["derive"] }
 spatial-query = "0.1"
 parry3d = "0.26"
 bitflags = "2"
-rayon = "1"
 half = "2"
 # Curve flattening + fill-rule tessellation for `OverlayShape::Vector`. Small,
 # pure-Rust; the tessellation and path crates only (not the `lyon` umbrella,
@@ -73,6 +72,12 @@ metal = "0.32"
 # on wasm, which has no native device handle (see `resources::memory`).
 [target.'cfg(all(not(target_arch = "wasm32"), not(any(target_os = "macos", target_os = "ios"))))'.dependencies]
 ash = "0.38"
+
+# CPU parallelism, used through `par`. Not pulled in on wasm: that target has no
+# OS threads, so rayon would only panic on first use, and `par` runs serially
+# there instead.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = "1"
 
 # On wasm the only usable wgpu backend is WebGPU. This unions the `webgpu`
 # feature into the same optional `wgpu` dep the `wgpu27` feature activates; the

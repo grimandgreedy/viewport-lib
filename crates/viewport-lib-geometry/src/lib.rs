@@ -36,6 +36,8 @@ pub mod cap_geometry;
 /// Polyline construction helpers (circle loops and similar wireframe primitives).
 pub mod polyline;
 
+mod util;
+
 pub mod prelude {
     //! The geometry entry points, in one glob import:
     //! `use viewport_lib_geometry::prelude::*;`.

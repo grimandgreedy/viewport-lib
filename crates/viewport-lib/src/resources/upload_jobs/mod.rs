@@ -24,7 +24,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 use web_time::Instant;
 
-use viewport_lib_types::par;
+use crate::util::par;
 
 use crate::error::ViewportError;
 
