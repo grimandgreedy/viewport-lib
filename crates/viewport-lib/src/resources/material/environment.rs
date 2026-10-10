@@ -203,20 +203,24 @@ pub fn environment_upper_hemisphere_lux(
 
 /// Integrate the luminance of an equirect panorama over the upper hemisphere,
 /// weighted by the cosine to +Z: the illuminance an upward-facing surface gets.
+///
+/// Each row is integrated over its whole latitude band rather than at its
+/// centre, which is exact for a row of constant radiance, so a small panorama
+/// measures as accurately as a large one.
 fn upper_hemisphere_lux(pixels: &[f32], width: u32, height: u32) -> f32 {
-    let (w, h) = (width as usize, height as usize);
-    let d_phi = 2.0 * PI / width as f32;
-    let d_theta = PI / height as f32;
-    // Rows from the top: latitude runs from +90 degrees down to -90.
-    let total: f64 = (0..h / 2 + 1)
+    let w = width as usize;
+    let d_phi = 2.0 * std::f64::consts::PI / width as f64;
+    let total: f64 = (0..height as usize)
         .into_par_iter()
         .map(|y| {
-            let lat = (0.5 - (y as f32 + 0.5) / height as f32) * PI;
-            if lat <= 0.0 {
+            // Latitudes of the row's edges, clipped to the upper hemisphere.
+            let lat = |v: f64| ((0.5 - v / height as f64) * std::f64::consts::PI).max(0.0);
+            let (top, bottom) = (lat(y as f64), lat(y as f64 + 1.0));
+            if top <= 0.0 {
                 return 0.0;
             }
-            // cos to +Z (sin of latitude) times the texel's solid angle.
-            let weight = (lat.sin() * lat.cos() * d_phi * d_theta) as f64;
+            // Integral of sin(lat) cos(lat) over the band, times its longitude.
+            let weight = (top.sin().powi(2) - bottom.sin().powi(2)) / 2.0 * d_phi;
             let row = &pixels[y * w * 4..(y + 1) * w * 4];
             let luminance: f64 = row
                 .chunks_exact(4)
@@ -461,6 +465,12 @@ const F16_MAX: f32 = 65504.0;
 /// the bright sky lose their weight and the lighting comes out flat. Values are
 /// clamped to 65504, the largest a half float holds.
 ///
+/// A block-compressed panorama (`TextureData::compressed`) is kept compressed,
+/// about a quarter of the memory of the half-float source: BC6H or ASTC HDR for
+/// an HDR sky, or a colour format such as BC7. The bake reads it on the GPU, so
+/// it needs a device with compute shaders and storage textures and one that
+/// samples the format ([`supports_texture_format`](crate::resources::supports_texture_format)).
+///
 /// The environment takes one slot of a fixed set and keeps its full-resolution
 /// source, so it can be drawn as the skybox as well as light the scene. Release
 /// it with [`free_environment`].
@@ -468,8 +478,11 @@ const F16_MAX: f32 = 65504.0;
 /// # Errors
 ///
 /// `InvalidTextureData` or `InvalidTextureColourSpace` when `data` fails
-/// validation, `UnsupportedTextureData` for a normal map or a compressed
-/// payload, and `TooManyEnvironments` when every slot is in use.
+/// validation; `UnsupportedTextureData` for a normal map, a two-channel or
+/// other data-only compressed format, or a compressed payload on a device that
+/// cannot run the GPU bake; `UnsupportedTextureFormat` for a compressed format
+/// the device cannot sample; and `TooManyEnvironments` when every slot is in
+/// use.
 pub fn upload_environment(
     resources: &mut crate::resources::DeviceResources,
     device: &crate::gpu::Device,
@@ -527,14 +540,14 @@ pub fn begin_upload_environment(
     data: crate::TextureData,
     _options: EnvironmentOptions,
 ) -> crate::error::ViewportResult<JobId> {
-    let (width, height, pixels) = environment_pixels(data)?;
+    let source = environment_source(data, device)?;
     let layer =
         alloc_env_layer(resources).ok_or(crate::error::ViewportError::TooManyEnvironments {
             max: IBL_ENV_CAPACITY - 1,
         })?;
     let env =
         EnvironmentMapId::from_parts(layer, resources.ibl.env_slots[layer as usize].generation);
-    let job = submit_bake(resources, device, queue, pixels, width, height, env);
+    let job = submit_bake(resources, device, queue, source, env);
     resources.ibl.env_jobs.insert(job, env);
     Ok(job)
 }
@@ -659,8 +672,180 @@ pub(crate) fn select_lighting_environment(
     true
 }
 
-/// Validate `data` for an environment and decode it to linear RGBA f32,
-/// clamped to the half-float range.
+/// An environment ready for the bake worker.
+enum EnvSource {
+    /// Linear RGBA f32, clamped to the half-float range.
+    Float {
+        width: u32,
+        height: u32,
+        pixels: Vec<f32>,
+    },
+    /// A block-compressed panorama the device samples directly.
+    Compressed {
+        width: u32,
+        height: u32,
+        format: crate::gpu::TextureFormat,
+        levels: Vec<Vec<u8>>,
+    },
+}
+
+/// Validate `data` for an environment on `device`.
+///
+/// A compressed payload must hold colour or HDR data, the device must sample
+/// its format, and the bake must run on the GPU: the CPU bake reads float
+/// pixels, which a compressed image does not carry.
+fn environment_source(
+    data: crate::TextureData,
+    device: &crate::gpu::Device,
+) -> crate::error::ViewportResult<EnvSource> {
+    use crate::{CompressedFormat, TexturePayload, TextureRejection, TextureRole, UploadSlot};
+    let TexturePayload::Compressed { format, .. } = *data.payload() else {
+        let (width, height, pixels) = environment_pixels(data)?;
+        return Ok(EnvSource::Float {
+            width,
+            height,
+            pixels,
+        });
+    };
+    data.validate()?;
+    let reject = |reason| {
+        Err(crate::error::ViewportError::UnsupportedTextureData {
+            slot: UploadSlot::Environment,
+            reason,
+        })
+    };
+    if data.role() == TextureRole::NormalMap {
+        return reject(TextureRejection::NormalMap);
+    }
+    let hdr = matches!(
+        format,
+        CompressedFormat::Bc6hRgb
+            | CompressedFormat::Bc6hRgbSigned
+            | CompressedFormat::Astc { hdr: true, .. }
+    );
+    if !(hdr || format.holds_colour()) || !super::ibl_compute::compute_bake_possible(device) {
+        return reject(TextureRejection::UnsupportedPayload);
+    }
+    let (width, height) = (data.width(), data.height());
+    let (format, levels) = super::textures::texture_format_and_levels(data);
+    super::textures::check_device_format(device, format)?;
+    Ok(EnvSource::Compressed {
+        width,
+        height,
+        format,
+        levels,
+    })
+}
+
+/// The upper-hemisphere illuminance of an environment, as it is known when the
+/// bake is submitted.
+enum MeasuredLux {
+    /// Measured on the CPU from the float source.
+    Known(f32),
+    /// Read back from the baked irradiance once the bake completes.
+    Readback(IrradianceReadback),
+}
+
+impl MeasuredLux {
+    /// The value, read on the main thread after the bake's submission has
+    /// completed.
+    fn resolve(self) -> f32 {
+        match self {
+            Self::Known(lux) => lux,
+            Self::Readback(readback) => readback.finish(),
+        }
+    }
+}
+
+/// A copy of the top row of a baked irradiance layer, which faces +Z. The
+/// irradiance map holds the cosine-weighted mean radiance, so pi times its
+/// luminance there is the upper-hemisphere illuminance.
+struct IrradianceReadback {
+    buffer: crate::gpu::Buffer,
+    mapped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl IrradianceReadback {
+    const ROW_BYTES: u32 = IBL_IRR_W * 8;
+
+    /// Copy the row and request the mapping. The returned submission covers the
+    /// bake, so the job runner waits for both; the mapping is ready by the time
+    /// the job's apply step runs.
+    fn start(
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        irradiance: &crate::gpu::Texture,
+        layer: u32,
+    ) -> (crate::gpu::SubmissionIndex, Self) {
+        let buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("ibl_lux_readback"),
+            size: Self::ROW_BYTES as u64,
+            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("ibl_lux_readback"),
+        });
+        encoder.copy_texture_to_buffer(
+            crate::gpu::TexelCopyTextureInfo {
+                texture: irradiance,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: layer,
+                },
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            crate::gpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: crate::gpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(Self::ROW_BYTES),
+                    rows_per_image: Some(1),
+                },
+            },
+            crate::gpu::Extent3d {
+                width: IBL_IRR_W,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let submission = queue.submit(std::iter::once(encoder.finish()));
+        let mapped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = mapped.clone();
+        buffer
+            .slice(..)
+            .map_async(crate::gpu::MapMode::Read, move |result| {
+                flag.store(result.is_ok(), std::sync::atomic::Ordering::Release);
+            });
+        (submission, Self { buffer, mapped })
+    }
+
+    fn finish(self) -> f32 {
+        if !self.mapped.load(std::sync::atomic::Ordering::Acquire) {
+            tracing::warn!("environment illuminance readback was not ready; lux intensity reads 0");
+            return 0.0;
+        }
+        let lux = {
+            let mapped = crate::gpu::mapped_range(self.buffer.slice(..));
+            let halves: &[u16] = bytemuck::cast_slice(&mapped);
+            let sum: f32 = halves
+                .chunks_exact(4)
+                .map(|t| {
+                    let c = |i: usize| half::f16::from_bits(t[i]).to_f32();
+                    0.2126 * c(0) + 0.7152 * c(1) + 0.0722 * c(2)
+                })
+                .sum();
+            PI * sum / IBL_IRR_W as f32
+        };
+        self.buffer.unmap();
+        lux
+    }
+}
+
+/// Validate an uncompressed `data` for an environment and decode it to linear
+/// RGBA f32, clamped to the half-float range.
 fn environment_pixels(
     data: crate::TextureData,
 ) -> crate::error::ViewportResult<(u32, u32, Vec<f32>)> {
@@ -713,27 +898,52 @@ fn submit_bake(
     resources: &mut crate::resources::DeviceResources,
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
-    pixels: Vec<f32>,
-    width: u32,
-    height: u32,
+    source: EnvSource,
     env: EnvironmentMapId,
 ) -> JobId {
-    let compute_supported = super::ibl_compute::compute_supported(device);
+    // A compressed source is only accepted where the compute bake can run.
+    let compute = super::ibl_compute::compute_supported(device)
+        || matches!(source, EnvSource::Compressed { .. });
     let needs_brdf = resources.ibl.brdf_lut_texture.is_none();
-    let (irr_array, pref_array) = ensure_ibl_arrays(resources, device, compute_supported);
+    let (irr_array, pref_array) = ensure_ibl_arrays(resources, device);
     let layer = env.index();
 
     let mut runner = resources.jobs.lock().expect("upload job runner poisoned");
-    if compute_supported {
+    if compute {
         runner.submit_with_gpu(device, queue, move |dev, q, progress| {
             progress.set(0.1);
-            let lux = upper_hemisphere_lux(&pixels, width, height);
+            let (texture, lux) = match source {
+                EnvSource::Float {
+                    width,
+                    height,
+                    pixels,
+                } => (
+                    super::ibl_compute::upload_source(dev, q, &pixels, width, height),
+                    Some(upper_hemisphere_lux(&pixels, width, height)),
+                ),
+                EnvSource::Compressed {
+                    width,
+                    height,
+                    format,
+                    levels,
+                } => (
+                    super::textures::create_texture_with_levels(
+                        dev,
+                        q,
+                        "ibl_skybox",
+                        width,
+                        height,
+                        format,
+                        &levels,
+                    ),
+                    None,
+                ),
+            };
+            let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
             let result = super::ibl_compute::bake_environment_layer(
                 dev,
                 q,
-                &pixels,
-                width,
-                height,
+                (texture, view),
                 &irr_array,
                 &pref_array,
                 layer,
@@ -742,12 +952,30 @@ fn submit_bake(
             progress.set(1.0);
             let source = (result.skybox_texture, result.skybox_view);
             let brdf = result.brdf_texture.zip(result.brdf_view);
+            // A compressed source has no float pixels to measure on the CPU, so
+            // read back what the bake made of it.
+            let (submission, lux) = match lux {
+                Some(lux) => (result.submission, MeasuredLux::Known(lux)),
+                None => {
+                    let (submission, readback) =
+                        IrradianceReadback::start(dev, q, &irr_array, layer);
+                    (submission, MeasuredLux::Readback(readback))
+                }
+            };
             Ok(JobProduct::with_gpu_and_apply(
-                result.submission,
+                submission,
                 install_bake(env, lux, source, brdf),
             ))
         })
     } else {
+        let EnvSource::Float {
+            width,
+            height,
+            pixels,
+        } = source
+        else {
+            unreachable!("a compressed source is rejected without the compute bake");
+        };
         runner.submit_with_gpu(device, queue, move |dev, q, progress| {
             run_cpu_path(
                 dev,
@@ -770,9 +998,9 @@ fn submit_bake(
 fn ensure_ibl_arrays(
     resources: &mut crate::resources::DeviceResources,
     device: &crate::gpu::Device,
-    compute: bool,
 ) -> (crate::gpu::Texture, crate::gpu::Texture) {
     if resources.ibl.irradiance_texture.is_none() {
+        let compute = super::ibl_compute::compute_bake_possible(device);
         let (irr, pref) = super::ibl_compute::create_ibl_arrays(device, compute);
         resources.ibl.irradiance_texture = Some(irr);
         resources.ibl.prefiltered_texture = Some(pref);
@@ -802,7 +1030,7 @@ fn alloc_env_layer(resources: &mut crate::resources::DeviceResources) -> Option<
 /// if it was baked, and creates the array sampling views on the first bake.
 fn install_bake(
     env: EnvironmentMapId,
-    lux: f32,
+    lux: MeasuredLux,
     source: (crate::gpu::Texture, crate::gpu::TextureView),
     brdf: Option<(crate::gpu::Texture, crate::gpu::TextureView)>,
 ) -> ApplyFn {
@@ -828,7 +1056,7 @@ fn install_bake(
         let slot = &mut ibl.env_slots[env.index() as usize];
         if slot.live && slot.generation == env.generation() {
             slot.source = Some(source);
-            slot.lux = lux;
+            slot.lux = lux.resolve();
             ibl.zones_dirty = true;
         }
         if rebind {
@@ -923,7 +1151,7 @@ fn run_cpu_path(
         submission,
         install_bake(
             env,
-            upper_hemisphere_lux(pixels, width, height),
+            MeasuredLux::Known(upper_hemisphere_lux(pixels, width, height)),
             (skybox, skybox_view),
             brdf,
         ),
@@ -1517,17 +1745,31 @@ mod tests {
     }
 
     #[test]
-    fn environment_rejects_normal_maps_and_compressed_payloads() {
+    fn environment_rejects_normal_maps_and_data_only_compression() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
         let cases = [
             (
                 crate::TextureData::normal_map(2, 2, vec![128; 16]),
                 crate::TextureRejection::NormalMap,
             ),
             (
+                crate::TextureData::compressed_normal_map(
+                    4,
+                    4,
+                    crate::CompressedFormat::Bc5Rg,
+                    vec![vec![0u8; 16]],
+                ),
+                crate::TextureRejection::NormalMap,
+            ),
+            // Two-channel data is not a sky, compressed or not.
+            (
                 crate::TextureData::compressed(
                     4,
                     4,
-                    crate::CompressedFormat::Bc6hRgb,
+                    crate::CompressedFormat::Bc5Rg,
                     crate::ColourSpace::Linear,
                     vec![vec![0u8; 16]],
                 ),
@@ -1535,7 +1777,9 @@ mod tests {
             ),
         ];
         for (data, expected) in cases {
-            let err = environment_pixels(data).unwrap_err();
+            let Err(err) = environment_source(data, &device) else {
+                panic!("expected {expected:?}, got a source");
+            };
             assert!(
                 matches!(
                     err,
@@ -1583,20 +1827,25 @@ mod tests {
     /// whatever lies below the horizon.
     #[test]
     fn upper_hemisphere_lux_integrates_the_sky_only() {
-        let (w, h) = (64u32, 32u32);
-        let uniform = make_solid_env(w, h, [1.0, 1.0, 1.0]);
-        let mut sky_only = uniform.clone();
-        let half = (w * h / 2 * 4) as usize;
-        sky_only[half..].fill(0.0);
-        let mut ground_only = uniform.clone();
-        ground_only[..half].fill(0.0);
-        for (label, px, expected) in [
-            ("uniform", &uniform, PI),
-            ("sky only", &sky_only, PI),
-            ("ground only", &ground_only, 0.0),
-        ] {
-            let lux = upper_hemisphere_lux(px, w, h);
-            assert!((lux - expected).abs() < 0.01, "{label}: {lux} vs {expected}");
+        // Exact at any size, down to one row each side of the horizon.
+        for (w, h) in [(64u32, 32u32), (8, 4), (6, 2)] {
+            let uniform = make_solid_env(w, h, [1.0, 1.0, 1.0]);
+            let mut sky_only = uniform.clone();
+            let half = (w * h / 2 * 4) as usize;
+            sky_only[half..].fill(0.0);
+            let mut ground_only = uniform.clone();
+            ground_only[..half].fill(0.0);
+            for (label, px, expected) in [
+                ("uniform", &uniform, PI),
+                ("sky only", &sky_only, PI),
+                ("ground only", &ground_only, 0.0),
+            ] {
+                let lux = upper_hemisphere_lux(px, w, h);
+                assert!(
+                    (lux - expected).abs() < 1e-4,
+                    "{w}x{h} {label}: {lux} vs {expected}"
+                );
+            }
         }
     }
 

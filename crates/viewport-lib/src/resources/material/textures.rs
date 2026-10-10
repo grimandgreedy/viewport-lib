@@ -997,23 +997,48 @@ fn build_gpu_texture(
     } else {
         "user_texture"
     };
+    let texture =
+        create_texture_with_levels(device, queue, tex_label, width, height, format, mip_levels);
     let mip_level_count = mip_levels.len() as u32;
+
+    finish_gpu_texture(
+        device,
+        texture,
+        mip_level_count,
+        is_normal_map,
+        bgl,
+        fallback_albedo_view,
+        fallback_normal_view,
+        fallback_ao_view,
+    )
+}
+
+/// Create a sampleable 2D texture and write `mip_levels` into it, level 0
+/// first. Row and size maths are block-based, so this serves block-compressed
+/// formats as well as uncompressed ones.
+pub(crate) fn create_texture_with_levels(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    label: &str,
+    width: u32,
+    height: u32,
+    format: crate::gpu::TextureFormat,
+    mip_levels: &[Vec<u8>],
+) -> crate::gpu::Texture {
     let texture = device.create_texture(&crate::gpu::TextureDescriptor {
-        label: Some(tex_label),
+        label: Some(label),
         size: crate::gpu::Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
         },
-        mip_level_count,
+        mip_level_count: mip_levels.len() as u32,
         sample_count: 1,
         dimension: crate::gpu::TextureDimension::D2,
         format,
         usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    // Upload each mip level. Row/size math is block-based so it is correct for
-    // both uncompressed (1x1 blocks) and block-compressed formats.
     for (level, data) in mip_levels.iter().enumerate() {
         let lw = (width >> level).max(1);
         let lh = (height >> level).max(1);
@@ -1038,17 +1063,7 @@ fn build_gpu_texture(
             },
         );
     }
-
-    finish_gpu_texture(
-        device,
-        texture,
-        mip_level_count,
-        is_normal_map,
-        bgl,
-        fallback_albedo_view,
-        fallback_normal_view,
-        fallback_ao_view,
-    )
+    texture
 }
 
 /// Build the view, sampler, and bind group around an already-written
@@ -2972,7 +2987,7 @@ pub(crate) fn texture_format_and_levels(
 
 /// Reject a format the device cannot sample. Only a compressed format can fail
 /// here: every device samples the 8-bit and half-float ones.
-fn check_device_format(
+pub(crate) fn check_device_format(
     device: &crate::gpu::Device,
     format: crate::gpu::TextureFormat,
 ) -> crate::error::ViewportResult<()> {

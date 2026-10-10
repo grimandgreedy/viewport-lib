@@ -2785,7 +2785,8 @@ impl ViewportRenderer {
     /// in an [`EnvironmentBackground`] to draw it behind a viewport, or in an
     /// [`EnvironmentZone`](crate::resources::EnvironmentZone). `data` is a whole
     /// Z-up panorama; a float image (`TextureData::hdr`) gives realistic light,
-    /// while an 8-bit image is decoded by its colour space but lights flat. See
+    /// an 8-bit image is decoded by its colour space but lights flat, and a
+    /// BC6H or ASTC HDR image stays compressed on the GPU. See
     /// [`upload_environment`](crate::resources::material::environment::upload_environment)
     /// for the details and errors.
     ///

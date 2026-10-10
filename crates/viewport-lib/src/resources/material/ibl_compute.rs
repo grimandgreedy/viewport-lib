@@ -32,15 +32,16 @@ pub(crate) const IBL_PREFILTER_MIPS: u32 = 5;
 pub(crate) const IBL_BRDF_SIZE: u32 = 128;
 
 /// Create the two persistent equirect array textures the environment set uses:
-/// irradiance (64x32) and prefiltered specular (128x64, 5 mips), each with
+/// irradiance (64x32) and prefiltered specular (256x128, 5 mips), each with
 /// [`IBL_ENV_CAPACITY`] layers. The BRDF LUT and skybox stay single 2D textures
 /// and are not created here.
 ///
 /// The GPU IBL path writes each layer with a storage output view, so the arrays
-/// take `STORAGE_BINDING` when compute is supported; the CPU path writes with
-/// `write_texture`. Both take `COPY_SRC | COPY_DST` for the copy of the lighting
-/// environment into layer 0. `compute` is [`compute_supported`] for the device
-/// (constant for a device's lifetime).
+/// take `STORAGE_BINDING` whenever the device can run that path at all
+/// ([`compute_bake_possible`]); the CPU path writes with `write_texture`. Both
+/// take `COPY_SRC | COPY_DST` for the copy of the lighting environment into
+/// layer 0. `compute` is [`compute_bake_possible`] for the device (constant for
+/// a device's lifetime).
 pub(crate) fn create_ibl_arrays(
     device: &crate::gpu::Device,
     compute: bool,
@@ -125,9 +126,20 @@ pub(crate) fn compute_supported(device: &crate::gpu::Device) -> bool {
         .contains(crate::gpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
 }
 
+/// Whether the device can run the compute bake at all: compute shaders with
+/// storage textures, which a WebGL2-level device lacks. Rgba16Float storage
+/// writes are core WebGPU and need no feature. Float environments still bake on
+/// the CPU unless [`compute_supported`]; a compressed one, which has no float
+/// pixels for the CPU bake, needs only this.
+pub(crate) fn compute_bake_possible(device: &crate::gpu::Device) -> bool {
+    let limits = device.limits();
+    limits.max_storage_textures_per_shader_stage >= 1
+        && limits.max_compute_invocations_per_workgroup >= 64
+}
+
 /// Upload the source HDR equirect as a sampleable Rgba16Float texture
 /// (the input to the irradiance and prefilter compute dispatches).
-fn upload_source(
+pub(crate) fn upload_source(
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
     pixels: &[f32],
@@ -361,7 +373,8 @@ pub(crate) struct LayerBakeResult {
 }
 
 /// Bake one environment into `layer` of the shared irradiance / prefiltered
-/// arrays on the GPU.
+/// arrays on the GPU, sampling `source` (a float upload from [`upload_source`],
+/// or a block-compressed texture the device can sample).
 ///
 /// The convolution kernels are unchanged; only the storage output targets a
 /// single array layer instead of a standalone texture. If `compute_brdf` is
@@ -369,9 +382,7 @@ pub(crate) struct LayerBakeResult {
 pub(crate) fn bake_environment_layer(
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
-    pixels: &[f32],
-    width: u32,
-    height: u32,
+    source: (crate::gpu::Texture, crate::gpu::TextureView),
     irradiance_array: &crate::gpu::Texture,
     prefilter_array: &crate::gpu::Texture,
     layer: u32,
@@ -380,8 +391,7 @@ pub(crate) fn bake_environment_layer(
     let prefilter_mips = IBL_PREFILTER_MIPS;
 
     // ----- Source skybox -----
-    let skybox_texture = upload_source(device, queue, pixels, width, height);
-    let skybox_view = skybox_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+    let (skybox_texture, skybox_view) = source;
 
     // ----- Destination storage views into the target array layer -----
     let irradiance_view = layer_storage_view(irradiance_array, layer, 0);

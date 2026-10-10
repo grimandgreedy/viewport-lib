@@ -340,3 +340,135 @@ fn daylight_posture_lights_with_the_environment() {
         "the environment lights the shadow side: {posture_shade} vs {old_shade} over {count} pixels"
     );
 }
+
+/// Decode IEEE half-float bits (finite values only).
+fn half_to_f32(h: u16) -> f32 {
+    let exp = ((h >> 10) & 0x1f) as i32;
+    let mant = (h & 0x3ff) as f32 / 1024.0;
+    if exp == 0 {
+        mant * 2f32.powi(-14)
+    } else {
+        (1.0 + mant) * 2f32.powi(exp - 15)
+    }
+}
+
+/// One BC6H block of a constant colour: mode 11 (one region, 10-bit unsigned
+/// endpoints), both endpoints `rgb`, every index 0. Returns the block and the
+/// colour it decodes to.
+fn bc6h_constant_block(rgb: [u32; 3]) -> ([u8; 16], [f32; 3]) {
+    let mut bits: u128 = 0b00011;
+    for (i, &c) in rgb.iter().enumerate() {
+        bits |= (c as u128) << (5 + 10 * i);
+        bits |= (c as u128) << (35 + 10 * i);
+    }
+    // BC6H unsigned unquantise, then the final scale to half-float bits.
+    let decoded = rgb.map(|e| {
+        let unq = ((e << 16) + 0x8000) >> 10;
+        half_to_f32(((unq * 31) >> 6) as u16)
+    });
+    (bits.to_le_bytes(), decoded)
+}
+
+/// A BC6H sky draws as the background and bakes the same lighting as the float
+/// sky it decodes to, with its illuminance read back from the bake.
+#[test]
+fn bc6h_sky_draws_and_lights_like_its_float_source() {
+    let Some((device, queue)) = headless_device_with_bc() else {
+        eprintln!("skipping: no adapter with TEXTURE_COMPRESSION_BC");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let (block, decoded) = bc6h_constant_block([462, 300, 120]);
+    // 8x4 texels is two blocks.
+    let compressed = renderer
+        .upload_environment(
+            &device,
+            &queue,
+            TextureData::compressed(
+                8,
+                4,
+                viewport_lib::CompressedFormat::Bc6hRgb,
+                viewport_lib::ColourSpace::Linear,
+                vec![block.repeat(2)],
+            ),
+            EnvironmentOptions::default(),
+        )
+        .unwrap();
+    let float = solid(&mut renderer, &device, &queue, decoded);
+
+    let lux_c = renderer
+        .environment_upper_hemisphere_lux(compressed)
+        .unwrap();
+    let lux_f = renderer.environment_upper_hemisphere_lux(float).unwrap();
+    assert!(
+        (lux_c - lux_f).abs() <= 0.03 * lux_f,
+        "read-back lux {lux_c} vs measured {lux_f}"
+    );
+
+    let mut render = |env| {
+        let frame = sphere_frame(
+            &mut renderer,
+            &device,
+            EnvironmentLighting::new(env),
+            matte(),
+        );
+        let px = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+        (corner(&px), centre(&px))
+    };
+    let (sky_c, sphere_c) = render(compressed);
+    let (sky_f, sphere_f) = render(float);
+    for c in 0..3 {
+        assert!(
+            sky_c[c].abs_diff(sky_f[c]) <= 2,
+            "sky channel {c}: {sky_c:?} vs {sky_f:?}"
+        );
+        assert!(
+            sphere_c[c].abs_diff(sphere_f[c]) <= 2,
+            "sphere channel {c}: {sphere_c:?} vs {sphere_f:?}"
+        );
+    }
+    assert!(
+        sky_c[0] > sky_c[1] && sky_c[1] > sky_c[2],
+        "warm sky: {sky_c:?}"
+    );
+}
+
+/// A compressed sky the device cannot sample is refused before any job.
+#[test]
+fn compressed_sky_needs_device_support() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    if device
+        .features()
+        .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+    {
+        eprintln!("skipping: the default test device samples BC");
+        return;
+    }
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let (block, _) = bc6h_constant_block([462, 300, 120]);
+    let err = renderer
+        .upload_environment(
+            &device,
+            &queue,
+            TextureData::compressed(
+                4,
+                4,
+                viewport_lib::CompressedFormat::Bc6hRgb,
+                viewport_lib::ColourSpace::Linear,
+                vec![block.to_vec()],
+            ),
+            EnvironmentOptions::default(),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            viewport_lib::ViewportError::UnsupportedTextureFormat { .. }
+        ),
+        "{err:?}"
+    );
+    assert_eq!(renderer.resources().uploads_pending(), 0);
+}
