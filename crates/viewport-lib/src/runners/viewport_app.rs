@@ -85,7 +85,7 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            title: "viewport-lib".to_string(),
+            title: "Viewport".to_string(),
             width: 1280,
             height: 720,
             present_mode: crate::gpu::PresentMode::AutoVsync,

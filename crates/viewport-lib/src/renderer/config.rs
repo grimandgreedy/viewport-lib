@@ -42,7 +42,8 @@ pub struct RendererConfig {
     pub pipeline_compilation: Option<PipelineCompilation>,
     /// Size of the first vertex and index chunk of the geometry store, in
     /// bytes. Later chunks double from it. `None` uses 16 MiB, or
-    /// `VIEWPORT_SLAB_CHUNK_BYTES` from the environment if set. A smaller first
+    /// `VIEWPORT_SLAB_CHUNK_BYTES` from the environment if set and the
+    /// `dev-knobs` feature is on. A smaller first
     /// chunk suits an application with little geometry. Default `None`.
     pub geometry_chunk_bytes: Option<u64>,
 }

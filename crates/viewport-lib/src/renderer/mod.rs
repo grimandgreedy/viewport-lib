@@ -65,13 +65,13 @@ mod deform_stats_tests;
 #[cfg(test)]
 mod frame_reuse_tests;
 #[cfg(test)]
-mod prepare_timing_tests;
-#[cfg(test)]
 mod hidden_tests;
 #[cfg(test)]
 mod lazy_pipeline_tests;
 #[cfg(test)]
 mod lod_instance_tests;
+#[cfg(test)]
+mod prepare_timing_tests;
 
 /// Item-type names beginning with this prefix belong to the types viewport-lib
 /// ships with.
@@ -894,7 +894,7 @@ impl ViewportRenderer {
         let available = device.limits().max_storage_buffers_per_shader_stage;
         assert!(
             available >= Self::MIN_STORAGE_BUFFERS_PER_STAGE,
-            "viewport-lib needs max_storage_buffers_per_shader_stage >= {}, but the device was \
+            "the renderer needs max_storage_buffers_per_shader_stage >= {}, but the device was \
              created with {}. Pass ViewportRenderer::recommended_device_limits(&adapter) as \
              required_limits in the DeviceDescriptor (or request a higher limit).",
             Self::MIN_STORAGE_BUFFERS_PER_STAGE,

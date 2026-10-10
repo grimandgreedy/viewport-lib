@@ -82,7 +82,8 @@ pub(crate) fn strip_debug_vis<'a>(
     std::borrow::Cow::Owned(out)
 }
 
-/// Diagnostic knob: with `VIEWPORT_MESH_NO_DISCARD` set in the environment,
+/// Diagnostic knob (`dev-knobs` feature): with `VIEWPORT_MESH_NO_DISCARD` set
+/// in the environment,
 /// strip every `discard;` statement from the given mesh-shader source before
 /// module creation. A fragment shader that contains `discard` forces the GPU
 /// to defer depth writes, which weakens or disables early depth rejection, so
@@ -96,20 +97,21 @@ pub(crate) fn strip_mesh_discards<'a>(
     source: impl Into<std::borrow::Cow<'a, str>>,
 ) -> std::borrow::Cow<'a, str> {
     let source = source.into();
-    if std::env::var_os("VIEWPORT_MESH_NO_DISCARD").is_none() {
+    if dev_knob!("VIEWPORT_MESH_NO_DISCARD").is_none() {
         return source;
     }
     static NOTICE: std::sync::Once = std::sync::Once::new();
     NOTICE.call_once(|| {
         eprintln!(
-            "viewport-lib: VIEWPORT_MESH_NO_DISCARD active: mesh shaders compiled without \
+            "VIEWPORT_MESH_NO_DISCARD active: mesh shaders compiled without \
              discard (clip planes, clip volumes, and alpha mask are no-ops)"
         );
     });
     std::borrow::Cow::Owned(strip_discards(&source))
 }
 
-/// Diagnostic knob: with `VIEWPORT_MESH_PBR_ONLY` set in the environment, remove
+/// Diagnostic knob (`dev-knobs` feature): with `VIEWPORT_MESH_PBR_ONLY` set in
+/// the environment, remove
 /// the alternate-shading-model regions bracketed by `// BEGIN_PBR_STRIP` /
 /// `// END_PBR_STRIP` (Blinn-Phong, matcap, uv-vis, per-face colour) from the mesh
 /// shader source before module creation, leaving a PBR-only fragment shader.
@@ -125,7 +127,7 @@ pub(crate) fn strip_mesh_non_pbr<'a>(
     source: impl Into<std::borrow::Cow<'a, str>>,
 ) -> std::borrow::Cow<'a, str> {
     let source = source.into();
-    if std::env::var_os("VIEWPORT_MESH_PBR_ONLY").is_none() {
+    if dev_knob!("VIEWPORT_MESH_PBR_ONLY").is_none() {
         return source;
     }
     const BEGIN: &str = "// BEGIN_PBR_STRIP";
@@ -135,14 +137,15 @@ pub(crate) fn strip_mesh_non_pbr<'a>(
     static NOTICE: std::sync::Once = std::sync::Once::new();
     NOTICE.call_once(|| {
         eprintln!(
-            "viewport-lib: VIEWPORT_MESH_PBR_ONLY active: mesh shaders compiled PBR-only \
+            "VIEWPORT_MESH_PBR_ONLY active: mesh shaders compiled PBR-only \
              (Blinn-Phong, matcap, uv-vis, and per-face colour paths removed)"
         );
     });
     std::borrow::Cow::Owned(strip_pbr_regions(&source))
 }
 
-/// Diagnostic knob: with `VIEWPORT_MESH_BUILTIN_HOOK` set in the environment,
+/// Diagnostic knob (`dev-knobs` feature): with `VIEWPORT_MESH_BUILTIN_HOOK`
+/// set in the environment,
 /// compose every lit mesh shader with the internal `builtin_pbr` shading hook
 /// before module creation, so the built-in Cook-Torrance lighting runs
 /// through the fragment-shading seam instead of inline.
@@ -160,7 +163,7 @@ pub(crate) fn builtin_hook_env<'a>(
     source: impl Into<std::borrow::Cow<'a, str>>,
 ) -> std::borrow::Cow<'a, str> {
     let source = source.into();
-    if std::env::var_os("VIEWPORT_MESH_BUILTIN_HOOK").is_none() {
+    if dev_knob!("VIEWPORT_MESH_BUILTIN_HOOK").is_none() {
         return source;
     }
     let Some(composed) = crate::resources::mesh_sidecar::shade::compose_builtin_pbr_hook(&source)
@@ -170,7 +173,7 @@ pub(crate) fn builtin_hook_env<'a>(
     static NOTICE: std::sync::Once = std::sync::Once::new();
     NOTICE.call_once(|| {
         eprintln!(
-            "viewport-lib: VIEWPORT_MESH_BUILTIN_HOOK active: built-in PBR lighting runs \
+            "VIEWPORT_MESH_BUILTIN_HOOK active: built-in PBR lighting runs \
              through the shading-hook seam (render PBR materials only)"
         );
     });

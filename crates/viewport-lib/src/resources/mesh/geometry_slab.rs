@@ -294,7 +294,8 @@ pub(crate) struct GeometrySlab {
 
 impl GeometrySlab {
     /// `base_chunk` sizes the first chunk; `None` takes
-    /// `VIEWPORT_SLAB_CHUNK_BYTES` from the environment, else the default.
+    /// `VIEWPORT_SLAB_CHUNK_BYTES` from the environment (with the `dev-knobs`
+    /// feature), else the default.
     pub(crate) fn new(device: &gpu::Device, base_chunk: Option<u64>) -> Self {
         let limits = device.limits();
         let align = (limits.min_storage_buffer_offset_alignment as u64).max(DEFAULT_ALIGN);
@@ -302,11 +303,7 @@ impl GeometrySlab {
         // The environment variable lets a test force multi-chunk allocation
         // with small meshes without each test configuring the renderer.
         let base_chunk = base_chunk
-            .or_else(|| {
-                std::env::var("VIEWPORT_SLAB_CHUNK_BYTES")
-                    .ok()
-                    .and_then(|s| s.parse::<u64>().ok())
-            })
+            .or_else(|| dev_knob!("VIEWPORT_SLAB_CHUNK_BYTES").and_then(|s| s.parse::<u64>().ok()))
             .map(|b| align_up(b.max(align), align))
             .unwrap_or(INITIAL_CHUNK_BYTES)
             .min(max_buffer);

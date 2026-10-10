@@ -89,6 +89,18 @@
 //! resolve arbitrarily. The renderer's own ordering is fixed and does not vary
 //! between frames.
 
+// Reads a benchmarking switch from the environment. Without the `dev-knobs`
+// feature it is always `None` and the switch's name is compiled out.
+macro_rules! dev_knob {
+    ($name:literal) => {{
+        #[cfg(feature = "dev-knobs")]
+        let value = std::env::var($name).ok();
+        #[cfg(not(feature = "dev-knobs"))]
+        let value: Option<String> = None;
+        value
+    }};
+}
+
 // Internal alias for the selected wgpu version (see the module). Consumers name
 // wgpu through the `wgpu` re-export below, not this module directly.
 #[doc(hidden)]

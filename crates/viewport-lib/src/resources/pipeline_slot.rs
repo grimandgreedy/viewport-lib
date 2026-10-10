@@ -473,7 +473,7 @@ fn pool() -> &'static Pool {
         for i in 0..threads {
             let rx = Arc::clone(&rx);
             std::thread::Builder::new()
-                .name(format!("vpl-pipeline-compile-{i}"))
+                .name(format!("pipeline-compile-{i}"))
                 .spawn(move || {
                     loop {
                         let job = rx.lock().unwrap().recv();

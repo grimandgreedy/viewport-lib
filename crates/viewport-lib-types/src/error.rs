@@ -163,7 +163,7 @@ pub enum ViewportError {
     /// binding cannot appear later without reallocating and rebuilding the bind
     /// group, which is exactly the cost a ranged write exists to avoid. Upload
     /// the channel populated, even with placeholder values, and then write it.
-    #[error("{type_name} has no {channel} channel to write into")]
+    #[error("the object has no {channel} channel to write into")]
     ChannelNotPresent {
         /// Item type name the write was addressed to.
         type_name: &'static str,
@@ -179,9 +179,7 @@ pub enum ViewportError {
     /// cost being avoided. Supply the domain (`ColourSource::Scalar { range:
     /// Some(..) }`, `SizeSource::Scalar { domain: Some(..) }`) and the write is
     /// well defined; leave it derived and replace the object whole.
-    #[error(
-        "{type_name} channel {channel} has a derived domain, so a ranged write cannot maintain it"
-    )]
+    #[error("channel {channel} has a derived domain, so a ranged write cannot maintain it")]
     ChannelDomainNotFixed {
         /// Item type name the write was addressed to.
         type_name: &'static str,

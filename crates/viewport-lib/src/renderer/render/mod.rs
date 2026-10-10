@@ -945,7 +945,7 @@ impl ViewportRenderer {
         let target = self.resources.target_format;
         if texture != target && texture.add_srgb_suffix() != target {
             panic!(
-                "viewport-lib: the output view's texture is {texture:?}, but this renderer was \
+                "the output view's texture is {texture:?}, but this renderer was \
                  created for {target:?} and every pipeline is compiled for that format. Create \
                  the renderer with the format of the target it draws into, or draw into a \
                  texture of the renderer's format."
