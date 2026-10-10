@@ -10,11 +10,13 @@
 //! here: a caller that needs them runs its own shaper and submits the positioned
 //! glyphs through [`GlyphRunItem`](crate::GlyphRunItem).
 //!
-//! Public surface: [`FontHandle`] (opaque font identifier) and
-//! [`super::DeviceResources::upload_font`].  Everything else is `pub(crate)`.
+//! Public surface: [`FontHandle`] (opaque font identifier),
+//! [`super::DeviceResources::upload_font`] and
+//! [`super::DeviceResources::upload_font_face`].  Everything else is `pub(crate)`.
 
 use crate::resources::builders::LoggedAlloc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use swash::scale::image::Content;
 use swash::scale::{Render, ScaleContext, Source, StrikeWith};
@@ -32,12 +34,46 @@ const DEFAULT_FONT_BYTES: &[u8] = include_bytes!("../../fonts/Roboto-Regular.ttf
 /// designer drew, and the call belongs with a side-by-side rather than a default.
 const HINT_GLYPHS: bool = false;
 
-/// The table-directory offset and a cache key for `font_bytes`, or `None` if swash
-/// cannot read it. The key is minted once per font and reused for every scaler
-/// built from it, which is what lets `ScaleContext` cache per font.
-fn swash_key(font_bytes: &[u8]) -> Option<(u32, CacheKey)> {
-    let font = FontRef::from_index(font_bytes, 0)?;
-    Some((font.offset, font.key))
+/// The table-directory offset and a cache key for face `face` of `font_bytes`.
+/// The key is minted once per font and reused for every scaler built from it,
+/// which is what lets `ScaleContext` cache per font.
+fn swash_key(font_bytes: &[u8], face: u32) -> Result<(u32, CacheKey), FontError> {
+    let data = swash::FontDataRef::new(font_bytes)
+        .ok_or_else(|| FontError::ParseFailed("not a readable font".into()))?;
+    let count = data.len() as u32;
+    if face >= count {
+        return Err(FontError::FaceOutOfRange { face, count });
+    }
+    let font = data
+        .get(face as usize)
+        .ok_or_else(|| FontError::ParseFailed(format!("face {face} is not readable")))?;
+    Ok((font.offset, font.key))
+}
+
+/// The bytes of a font file. The built-in font stays borrowed from the binary,
+/// so building the atlas copies nothing; uploaded fonts are shared, so two faces
+/// of one collection, or a font a caller already holds, are not copied again.
+enum FontData {
+    Static(&'static [u8]),
+    Shared(Arc<[u8]>),
+}
+
+impl FontData {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            FontData::Static(b) => b,
+            FontData::Shared(b) => b,
+        }
+    }
+
+    /// The bytes as a shared buffer. Copies the built-in font, which is only
+    /// asked for when a caller reads it back.
+    fn shared(&self) -> Arc<[u8]> {
+        match self {
+            FontData::Static(b) => Arc::from(*b),
+            FontData::Shared(b) => b.clone(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -153,15 +189,15 @@ struct ShapedGlyph {
 ///
 /// Owned by [`DeviceResources`]; never exposed in the public API.
 pub(crate) struct GlyphAtlas {
-    /// Raw font bytes, parallel to `fonts`, kept so a swash `FontRef` can be
+    /// Font file bytes, one per `FontHandle`, kept so a swash `FontRef` can be
     /// rebuilt on demand: it borrows the bytes rather than owning them.
-    /// The built-in font is borrowed from the binary rather than copied.
-    font_bytes: Vec<std::borrow::Cow<'static, [u8]>>,
+    font_bytes: Vec<FontData>,
 
-    /// Table-directory offset and cache key per font, parallel to `fonts`. The key
-    /// is minted once at upload and reused, because `ScaleContext` caches per font
+    /// Table-directory offset, cache key and face index per font, parallel to
+    /// `font_bytes`. The offset picks the face within a collection. The key is
+    /// minted once at upload and reused, because `ScaleContext` caches per font
     /// by it: minting a fresh one per glyph would defeat that cache.
-    font_keys: Vec<(u32, CacheKey)>,
+    font_keys: Vec<(u32, CacheKey, u32)>,
 
     /// swash scaler caches and scratch buffers. Holds the hinting and outline
     /// caches, so it is kept for the atlas's lifetime rather than per glyph.
@@ -220,11 +256,12 @@ impl GlyphAtlas {
 
         let (texture, view) = Self::create_texture(device, 1);
 
-        let default_key = swash_key(DEFAULT_FONT_BYTES).expect("built-in default font must parse");
+        let (offset, key) =
+            swash_key(DEFAULT_FONT_BYTES, 0).expect("built-in default font must parse");
 
         Self {
-            font_bytes: vec![std::borrow::Cow::Borrowed(DEFAULT_FONT_BYTES)],
-            font_keys: vec![default_key],
+            font_bytes: vec![FontData::Static(DEFAULT_FONT_BYTES)],
+            font_keys: vec![(offset, key, 0)],
             scale: ScaleContext::new(),
             shape: std::sync::Mutex::new(ShapeContext::new()),
             entries: HashMap::new(),
@@ -246,30 +283,33 @@ impl GlyphAtlas {
         self.atlas_version
     }
 
-    /// Register a user-supplied TTF font.  Returns a [`FontHandle`] that can be
+    /// Register face `face` of a font file. Returns a [`FontHandle`] that can be
     /// passed to overlay items.
-    pub fn upload_font(&mut self, ttf_bytes: &[u8]) -> Result<FontHandle, FontError> {
-        let key = swash_key(ttf_bytes)
-            .ok_or_else(|| FontError::ParseFailed("not a readable font".into()))?;
+    pub fn upload_font_face(
+        &mut self,
+        data: Arc<[u8]>,
+        face: u32,
+    ) -> Result<FontHandle, FontError> {
+        let (offset, key) = swash_key(&data, face)?;
         let index = self.font_bytes.len();
-        self.font_keys.push(key);
-        self.font_bytes
-            .push(std::borrow::Cow::Owned(ttf_bytes.to_vec()));
+        self.font_keys.push((offset, key, face));
+        self.font_bytes.push(FontData::Shared(data));
         Ok(FontHandle(index))
     }
 
-    /// The raw bytes of the font at `index` (a [`FontHandle`]'s value), if it has
-    /// been uploaded. Index 0 is the built-in default font.
-    pub(crate) fn font_bytes(&self, index: usize) -> Option<&[u8]> {
-        self.font_bytes.get(index).map(|b| &**b)
+    /// The font file and face index at `index` (a [`FontHandle`]'s value), if it
+    /// has been uploaded. Index 0 is the built-in default font.
+    pub(crate) fn font_face(&self, index: usize) -> Option<(Arc<[u8]>, u32)> {
+        let data = self.font_bytes.get(index)?;
+        Some((data.shared(), self.font_keys[index].2))
     }
 
     /// A swash font handle for `font_index`. Cheap: it borrows the stored bytes
     /// and reuses the cache key minted at upload.
     fn font_ref(&self, font_index: usize) -> FontRef<'_> {
-        let (offset, key) = self.font_keys[font_index];
+        let (offset, key, _) = self.font_keys[font_index];
         FontRef {
-            data: &self.font_bytes[font_index],
+            data: self.font_bytes[font_index].bytes(),
             offset,
             key,
         }
@@ -744,9 +784,9 @@ impl GlyphAtlas {
                 font_keys,
                 ..
             } = self;
-            let (offset, key) = font_keys[font_index];
+            let (offset, key, _) = font_keys[font_index];
             let font = FontRef {
-                data: &font_bytes[font_index],
+                data: font_bytes[font_index].bytes(),
                 offset,
                 key,
             };
@@ -944,12 +984,23 @@ impl GlyphAtlas {
 // FontError
 // ---------------------------------------------------------------------------
 
-/// Error returned by [`super::DeviceResources::upload_font`].
+/// Error returned by [`super::DeviceResources::upload_font`] and
+/// [`super::DeviceResources::upload_font_face`].
 #[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
 pub enum FontError {
-    /// The TTF data could not be parsed.
+    /// The font data could not be parsed.
     #[error("font parsing failed: {0}")]
     ParseFailed(String),
+    /// The requested face is past the end of the file: `count` is how many
+    /// faces it holds (1 for a single font, more for a collection).
+    #[error("font face {face} requested, but the file has {count}")]
+    FaceOutOfRange {
+        /// The face index asked for.
+        face: u32,
+        /// How many faces the file holds.
+        count: u32,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -957,16 +1008,39 @@ pub enum FontError {
 // ---------------------------------------------------------------------------
 
 impl crate::resources::DeviceResources {
-    /// Upload a user-supplied TTF font for use with overlay items.
+    /// Upload a user-supplied font for use with overlay items.
     ///
     /// Returns an opaque [`FontHandle`] that can be passed to
     /// [`LabelItem`](crate::LabelItem) or [`GlyphRunItem`](crate::GlyphRunItem)
     /// via their `font` field.  Pass `None` on those items to use the built-in
     /// default font instead.
     ///
-    /// The font bytes must be a valid TrueType (`.ttf`) file.
+    /// `ttf_bytes` is a TrueType or OpenType file, copied in. For a collection
+    /// (`.ttc` / `.otc`) this takes the first face; use
+    /// [`upload_font_face`](Self::upload_font_face) to pick another.
     pub fn upload_font(&mut self, ttf_bytes: &[u8]) -> Result<FontHandle, FontError> {
-        self.content.glyph_atlas.upload_font(ttf_bytes)
+        self.content
+            .glyph_atlas
+            .upload_font_face(Arc::from(ttf_bytes), 0)
+    }
+
+    /// Upload face `face` of a font file for use with overlay items.
+    ///
+    /// A font collection (`.ttc` / `.otc`) holds several faces in one file, and
+    /// a system font lookup answers with a file and a face index; pass both
+    /// here. A single font has one face, index 0. An index past the last face
+    /// returns [`FontError::FaceOutOfRange`].
+    ///
+    /// `data` is kept shared rather than copied when it is already an
+    /// `Arc<[u8]>`, so uploading several faces of one collection, or a file a
+    /// font database already holds, stores the bytes once. A `Vec<u8>` or a
+    /// slice is copied in once; from a `&Vec<u8>`, pass `bytes.as_slice()`.
+    pub fn upload_font_face(
+        &mut self,
+        data: impl Into<Arc<[u8]>>,
+        face: u32,
+    ) -> Result<FontHandle, FontError> {
+        self.content.glyph_atlas.upload_font_face(data.into(), face)
     }
 
     /// Measure a text run as it would be laid out for a [`LabelItem`], returning
@@ -1017,11 +1091,15 @@ impl crate::resources::DeviceResources {
             .measure_text_wrapped(text, font_size, font, max_width)
     }
 
-    /// The raw bytes of the font `font` refers to (`None` = the built-in default),
-    /// if uploaded. A downstream text shaper can register these exact bytes so its
-    /// glyph ids match what the overlay atlas rasterizes them to.
-    pub fn font_bytes(&self, font: Option<FontHandle>) -> Option<&[u8]> {
-        self.content.glyph_atlas.font_bytes(font.map_or(0, |h| h.0))
+    /// The font file and face index `font` refers to (`None` = the built-in
+    /// default), if uploaded. A downstream text shaper can register these exact
+    /// bytes at this face so its glyph ids match what the overlay atlas
+    /// rasterizes; the bytes alone name the wrong face for a collection.
+    ///
+    /// The bytes are the shared buffer the atlas holds, so this does not copy an
+    /// uploaded font. The built-in font is copied out of the binary on each call.
+    pub fn font_face(&self, font: Option<FontHandle>) -> Option<(Arc<[u8]>, u32)> {
+        self.content.glyph_atlas.font_face(font.map_or(0, |h| h.0))
     }
 }
 
@@ -1168,6 +1246,128 @@ mod tests {
         out
     }
 
+    /// Pack single fonts into one collection (`ttcf`), each face keeping its own
+    /// table directory, so face selection can be tested without shipping a
+    /// `.ttc`.
+    fn collection(fonts: &[&[u8]]) -> Vec<u8> {
+        let mut faces = Vec::new();
+        for src in fonts {
+            let num = u16::from_be_bytes([src[4], src[5]]) as usize;
+            let mut tables = Vec::with_capacity(num);
+            for i in 0..num {
+                let rec = 12 + i * 16;
+                let tag: [u8; 4] = src[rec..rec + 4].try_into().unwrap();
+                let off = u32::from_be_bytes(src[rec + 8..rec + 12].try_into().unwrap()) as usize;
+                let len = u32::from_be_bytes(src[rec + 12..rec + 16].try_into().unwrap()) as usize;
+                tables.push((tag, &src[off..off + len]));
+            }
+            faces.push((&src[0..4], tables));
+        }
+
+        let header_len = 12 + 4 * faces.len();
+        let dirs_len: usize = faces.iter().map(|(_, t)| 12 + 16 * t.len()).sum();
+        let mut out = Vec::new();
+        out.extend(b"ttcf");
+        out.extend(1u16.to_be_bytes());
+        out.extend(0u16.to_be_bytes());
+        out.extend((faces.len() as u32).to_be_bytes());
+        let mut dir_offset = header_len;
+        for (_, tables) in &faces {
+            out.extend((dir_offset as u32).to_be_bytes());
+            dir_offset += 12 + 16 * tables.len();
+        }
+
+        let mut body_offset = header_len + dirs_len;
+        let mut body = Vec::new();
+        for (version, tables) in &faces {
+            out.extend(*version);
+            out.extend((tables.len() as u16).to_be_bytes());
+            out.extend([0u8; 6]);
+            for (tag, data) in tables {
+                out.extend(tag);
+                out.extend(0u32.to_be_bytes());
+                out.extend((body_offset as u32).to_be_bytes());
+                out.extend((data.len() as u32).to_be_bytes());
+                body.extend(*data);
+                let pad = (4 - data.len() % 4) % 4;
+                body.extend(std::iter::repeat_n(0u8, pad));
+                body_offset += data.len() + pad;
+            }
+        }
+        out.extend(body);
+        out
+    }
+
+    /// A two-face collection: the bundled font as face 0, and the bundled font
+    /// with a COLR table as face 1, so the faces can be told apart.
+    fn two_face_collection() -> Vec<u8> {
+        let plain = FontRef::from_index(DEFAULT_FONT_BYTES, 0).unwrap();
+        let colr = synth_colr_font(plain.charmap().map('A'), plain.charmap().map('O'));
+        collection(&[DEFAULT_FONT_BYTES, &colr])
+    }
+
+    fn has_colr(bytes: &[u8], offset: u32, key: CacheKey) -> bool {
+        let font = FontRef {
+            data: bytes,
+            offset,
+            key,
+        };
+        font.table(swash::tag_from_bytes(b"COLR")).is_some()
+    }
+
+    /// Each face of a collection keys to its own table directory, and an index
+    /// past the last face is an error rather than a panic.
+    #[test]
+    fn swash_key_picks_the_face_of_a_collection() {
+        let ttc = two_face_collection();
+        let (off0, key0) = swash_key(&ttc, 0).unwrap();
+        let (off1, key1) = swash_key(&ttc, 1).unwrap();
+        assert_ne!(off0, off1);
+        assert!(!has_colr(&ttc, off0, key0));
+        assert!(has_colr(&ttc, off1, key1));
+
+        assert!(matches!(
+            swash_key(&ttc, 2),
+            Err(FontError::FaceOutOfRange { face: 2, count: 2 })
+        ));
+        assert!(matches!(
+            swash_key(DEFAULT_FONT_BYTES, 1),
+            Err(FontError::FaceOutOfRange { face: 1, count: 1 })
+        ));
+        assert!(matches!(
+            swash_key(b"not a font", 0),
+            Err(FontError::ParseFailed(_))
+        ));
+    }
+
+    /// Uploading two faces of one collection shares one buffer, and reading a
+    /// handle back gives the face it was uploaded as, so a downstream shaper
+    /// reads the same face the atlas draws.
+    #[test]
+    fn uploaded_faces_share_bytes_and_read_back_their_index() {
+        let Some((device, _queue)) = headless_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut atlas = GlyphAtlas::new(&device);
+        let ttc: Arc<[u8]> = two_face_collection().into();
+
+        let a = atlas.upload_font_face(ttc.clone(), 0).unwrap();
+        let b = atlas.upload_font_face(ttc.clone(), 1).unwrap();
+        assert!(atlas.upload_font_face(ttc.clone(), 2).is_err());
+
+        let (bytes_a, face_a) = atlas.font_face(a.0).unwrap();
+        let (bytes_b, face_b) = atlas.font_face(b.0).unwrap();
+        assert_eq!((face_a, face_b), (0, 1));
+        assert!(Arc::ptr_eq(&bytes_a, &ttc) && Arc::ptr_eq(&bytes_b, &ttc));
+
+        let (offset, key, _) = atlas.font_keys[b.0];
+        assert!(has_colr(&bytes_b, offset, key));
+
+        let (default, face) = atlas.font_face(0).unwrap();
+        assert_eq!((&*default, face), (DEFAULT_FONT_BYTES, 0));
+    }
+
     /// A COLR base glyph renders as a colour image, and its palette colours come
     /// through. The base glyph is also an ordinary outline, so this doubles as a
     /// check that `Source::ColorOutline` is reached before `Source::Outline`.
@@ -1226,7 +1426,7 @@ mod tests {
     /// this kind.
     #[test]
     fn rasterises_a_glyph_with_no_codepoint() {
-        let (offset, key) = swash_key(DEFAULT_FONT_BYTES).unwrap();
+        let (offset, key) = swash_key(DEFAULT_FONT_BYTES, 0).unwrap();
         let font = FontRef {
             data: DEFAULT_FONT_BYTES,
             offset,
