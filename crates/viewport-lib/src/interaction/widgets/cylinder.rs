@@ -1,6 +1,6 @@
 //! Cylinder widget: two endpoint handles controlling the axis, plus a radius handle.
 
-use crate::geometry::intersect::ray_plane_intersection;
+use crate::geometry::maths::intersect::ray_plane_intersection;
 use crate::renderer::PolylineItem;
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
@@ -169,11 +169,25 @@ impl CylinderWidget {
         let mut strip_lengths: Vec<u32> = Vec::new();
 
         // Bottom cap circle
-        crate::geometry::polyline::push_circle_loop(&mut positions, self.start, u, v, r, STEPS);
+        crate::geometry::primitives::wire::push_circle_loop(
+            &mut positions,
+            self.start,
+            u,
+            v,
+            r,
+            STEPS,
+        );
         strip_lengths.push((STEPS + 1) as u32);
 
         // Top cap circle
-        crate::geometry::polyline::push_circle_loop(&mut positions, self.end, u, v, r, STEPS);
+        crate::geometry::primitives::wire::push_circle_loop(
+            &mut positions,
+            self.end,
+            u,
+            v,
+            r,
+            STEPS,
+        );
         strip_lengths.push((STEPS + 1) as u32);
 
         // Four longitudinal lines at 0, 90, 180, 270 degrees

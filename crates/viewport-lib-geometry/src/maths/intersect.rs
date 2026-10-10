@@ -1,4 +1,4 @@
-//! Ray/primitive intersection helpers shared across interaction widgets.
+//! Ray/primitive intersection helpers.
 
 /// Compute the intersection point of a ray with a plane.
 ///

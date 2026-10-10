@@ -52,7 +52,7 @@ fn upload_surfaces(
     renderer: &mut viewport_lib::renderer::ViewportRenderer,
     device: &viewport_lib::gpu::Device,
     queue: &viewport_lib::gpu::Queue,
-    vol: viewport_lib_geometry::marching_cubes::VolumeData,
+    vol: viewport_lib_geometry::volume::grid::VolumeData,
     cloud: &PointCloudItem,
 ) -> viewport_lib::error::ViewportResult<()> {
     use viewport_lib::plugin_api::{Handles, Uploads};

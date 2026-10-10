@@ -126,7 +126,7 @@ pub fn plane_from_axis_preset(axis: ClipAxis, distance: f32) -> ClipObject {
     }
 }
 
-pub use crate::geometry::intersect::ray_plane_intersection;
+pub use crate::geometry::maths::intersect::ray_plane_intersection;
 
 // ---------------------------------------------------------------------------
 // Hit testing

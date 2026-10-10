@@ -27,7 +27,7 @@
 //! AABBs, or per-frame refresh against deformed positions). GPU picking
 //! (`crate::renderer::picking`) reads the rasterised object-ID buffer and therefore
 //! picks the deformed silhouette automatically.
-use crate::geometry::marching_cubes::VolumeData;
+use crate::geometry::volume::grid::VolumeData;
 use crate::renderer::{PickHit, SubObjectRef};
 use crate::resources::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
 use crate::resources::{AttributeData, AttributeKind, AttributeRef};
@@ -1712,9 +1712,9 @@ mod tests {
         }
     }
 
-    fn make_volume_data(dims: [u32; 3], fill: f32) -> crate::geometry::marching_cubes::VolumeData {
+    fn make_volume_data(dims: [u32; 3], fill: f32) -> crate::geometry::volume::grid::VolumeData {
         let n = (dims[0] * dims[1] * dims[2]) as usize;
-        crate::geometry::marching_cubes::VolumeData {
+        crate::geometry::volume::grid::VolumeData {
             data: vec![fill; n],
             dims,
             origin: [0.0; 3],

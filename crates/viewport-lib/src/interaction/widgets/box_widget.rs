@@ -1,6 +1,6 @@
 //! Box widget: draggable center, face, and rotation-arc handles for an oriented box.
 
-use crate::geometry::intersect::ray_plane_intersection;
+use crate::geometry::maths::intersect::ray_plane_intersection;
 use crate::renderer::PolylineItem;
 use crate::scene::aabb::Aabb;
 use parry3d::math::{Pose, Vector};

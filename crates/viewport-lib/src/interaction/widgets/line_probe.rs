@@ -1,6 +1,6 @@
 //! Line probe widget: two draggable endpoint handles connected by a line segment.
 
-use crate::geometry::intersect::ray_plane_intersection;
+use crate::geometry::maths::intersect::ray_plane_intersection;
 use crate::renderer::PolylineItem;
 
 use super::{

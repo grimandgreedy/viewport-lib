@@ -15,11 +15,12 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
-use viewport_lib_plugins::item_types::vector_field::VectorFieldItem;
+use viewport_lib_plugins::item_types::vector_field::{
+    VectorFieldItem, edge_one_form_vectors, face_intrinsic_vectors, vertex_intrinsic_vectors,
+};
 use vpl::{
     BackfacePolicy, BuiltinColourmap, ColourSource, ColourmapId, FrameData, LightingSettings,
-    MeshData, MeshId, SceneRenderItem, edge_one_form_vectors, face_intrinsic_vectors,
-    vertex_intrinsic_vectors,
+    MeshData, MeshId, SceneRenderItem,
 };
 
 // ---------------------------------------------------------------------------
@@ -245,9 +246,7 @@ impl App {
                 &self.sv_state.edge_vals,
             ),
         };
-        let mut item = VectorFieldItem::new(self.sv_state.arrow_shape_id);
-        item.positions = samples.positions;
-        item.vectors = samples.vectors;
+        let mut item = VectorFieldItem::new(self.sv_state.arrow_shape_id).with_samples(samples);
         item.scale = self.sv_state.scale;
         item.colour = ColourSource::Natural {
             range: None,
@@ -330,7 +329,7 @@ pub(crate) fn controls_surface_vectors(app: &mut App, ui: &mut egui::Ui) {
 /// internally (when `tangents` is `None`), so the encoded `(u, v)` round-trips
 /// correctly through `vertex_intrinsic_vectors`.
 fn make_sphere_vortex_intrinsic(_positions: &[[f32; 3]], normals: &[[f32; 3]]) -> Vec<[f32; 2]> {
-    use vpl::geometry::tangent_frames::gram_schmidt_tangent;
+    use viewport_lib_plugins::item_types::vector_field::sampling::tangent_frames::gram_schmidt_tangent;
 
     let up = glam::Vec3::Z;
     normals
@@ -410,7 +409,7 @@ fn make_torus(major_r: f32, minor_r: f32, major_segs: usize, minor_segs: usize) 
 /// (tube-circle) direction at each triangle's centroid.
 fn make_torus_face_vectors(torus: &MeshData, major_r: f32) -> Vec<[f32; 2]> {
     use glam::Vec3;
-    use vpl::compute_face_tangent_frames;
+    use viewport_lib_plugins::item_types::vector_field::compute_face_tangent_frames;
 
     let num_tris = torus.indices.len() / 3;
     let frames = compute_face_tangent_frames(&torus.positions, &torus.indices);

@@ -58,7 +58,7 @@ pub enum SubObjectRef {
     ///
     /// The flat index encodes `(ix, iy, iz)` as `ix + iy * nx + iz * nx * ny`.
     /// Recover the 3-D indices using the grid dimensions from
-    /// [`VolumeData`](crate::geometry::marching_cubes::VolumeData).
+    /// [`VolumeData`](crate::geometry::volume::grid::VolumeData).
     Voxel(u32),
     /// A cell within an unstructured volume mesh, by its index in
     /// [`VolumeMeshData::cells`](crate::resources::volume::volume_mesh::VolumeMeshData::cells).

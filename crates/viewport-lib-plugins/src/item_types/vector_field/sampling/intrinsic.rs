@@ -10,8 +10,8 @@
 //! The tangent frame is derived from the mesh normals (and optional explicit
 //! tangents) so that the coefficients are meaningful in surface-local coordinates.
 
-use crate::tangent_frames;
-use crate::vector_samples::VectorSamples;
+use super::VectorSamples;
+use super::tangent_frames;
 
 /// Convert vertex-indexed 2D intrinsic vectors to world-space samples.
 ///

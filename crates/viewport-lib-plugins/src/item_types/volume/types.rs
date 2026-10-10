@@ -23,7 +23,7 @@ pub struct VolumeItem {
     ///
     /// Must match the data passed to `upload_volume` for `volume_id`.
     /// `None` disables voxel-level picking regardless of `settings.pick_id`.
-    pub volume_data: Option<std::sync::Arc<viewport_lib_geometry::marching_cubes::VolumeData>>,
+    pub volume_data: Option<std::sync::Arc<viewport_lib_geometry::volume::grid::VolumeData>>,
     /// Colour transfer function LUT. `None` = use default builtin (viridis).
     pub colour_lut: Option<ColourmapId>,
     /// Opacity transfer function LUT. `None` = linear ramp (0 at min, 1 at max).

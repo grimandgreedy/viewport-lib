@@ -8,6 +8,7 @@
 
 pub mod channels;
 mod pipeline;
+pub mod sampling;
 mod store;
 mod types;
 mod uploads;
@@ -23,6 +24,11 @@ use viewport_lib::plugin_api::{
 use viewport_lib::renderer::{PickHit, PickId, PickMask, PickRectResult, SubObjectRef};
 use viewport_lib::resources::HDR_COLOR_FORMAT;
 
+pub use sampling::{
+    VectorSamples, compute_face_tangent_frames, compute_vertex_tangent_frames,
+    edge_one_form_vectors, face_intrinsic_vectors, tangents_from_explicit,
+    vertex_intrinsic_vectors,
+};
 pub use types::{VectorFieldId, VectorFieldItem, VectorFieldRefItem};
 
 /// This type's shaders as the pipelines compile them, shared sections already
