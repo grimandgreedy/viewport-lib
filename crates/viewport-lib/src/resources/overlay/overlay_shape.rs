@@ -337,14 +337,23 @@ impl crate::resources::DeviceResources {
     /// Unlike [`upload_overlay_texture`](Self::upload_overlay_texture), updating
     /// this handle reuses the same GPU texture rather than stranding one per
     /// frame, so it is the right choice for a live source (decoded video, a
-    /// capture feed, a per-frame heatmap). The format is `Rgba8UnormSrgb`.
+    /// capture feed, a per-frame heatmap).
+    ///
+    /// `colour_space` is the space of the RGBA8 bytes it will be fed: `Srgb`
+    /// for video and captured or authored colour, `Linear` for data such as a
+    /// heatmap's values. It is fixed for the texture's life, so each update
+    /// stays a plain byte copy.
     pub fn create_streaming_overlay_texture(
         &mut self,
         device: &crate::gpu::Device,
         width: u32,
         height: u32,
+        colour_space: crate::ColourSpace,
     ) -> OverlayTextureId {
-        let format = crate::gpu::TextureFormat::Rgba8UnormSrgb;
+        let format = match colour_space {
+            crate::ColourSpace::Srgb => crate::gpu::TextureFormat::Rgba8UnormSrgb,
+            crate::ColourSpace::Linear => crate::gpu::TextureFormat::Rgba8Unorm,
+        };
         let entry = build_overlay_texture_entry(device, None, width, height, format, None);
         self.content
             .overlay_textures
