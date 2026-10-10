@@ -126,7 +126,7 @@ fn label_backing(renderer: &ViewportRenderer, label: &LabelItem, pad: f32) -> Ov
     let shift_y = |a: vpl::AnchorY| match a {
         vpl::AnchorY::Top => -pad,
         vpl::AnchorY::Middle => 0.0,
-        vpl::AnchorY::Bottom => pad,
+        vpl::AnchorY::Bottom | vpl::AnchorY::Baseline => pad,
     };
     let t = label.transform.translate;
     OverlayShapeItem::new(

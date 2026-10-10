@@ -365,7 +365,7 @@ pub use resources::{
     ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc, DeviceResources,
     EnvironmentMapId, EnvironmentZone, FontError, FontHandle, FrameBudget, JobId, MatcapId,
     MeshData, ProgressHandle, ResidentBytes, SubmeshRange, TextMetrics, TextureId,
-    TextureMemoryStats, UploadStatus, VolumeId, VramBudget, lerp_attributes,
+    TextureMemoryStats, UnknownColourmap, UploadStatus, VolumeId, VramBudget, lerp_attributes,
     supports_texture_format, vram_budget,
 };
 pub use resources::{

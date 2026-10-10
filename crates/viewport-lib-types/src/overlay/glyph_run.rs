@@ -364,7 +364,7 @@ impl GlyphRunItem {
                 + min[0],
             origin[1]
                 + self.transform.translate[1]
-                + self.anchoring.align.y.align_shift(size[1])
+                + self.anchoring.align.y.align_shift(size[1], Some(min[1]))
                 + min[1],
         ])
     }

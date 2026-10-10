@@ -20,8 +20,8 @@ pub enum AnchorX {
 /// Vertical alignment of an item's box relative to its anchor point.
 ///
 /// Also names a vertical position on the viewport rect when used as part of a
-/// viewport origin: `Top` is the top edge, `Middle` the centre, `Bottom` the
-/// bottom edge.
+/// viewport origin: `Top` is the top edge, `Middle` the centre, `Bottom` and
+/// `Baseline` the bottom edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum AnchorY {
@@ -32,6 +32,11 @@ pub enum AnchorY {
     Middle,
     /// Bottom edge sits at the anchor.
     Bottom,
+    /// The first line's baseline sits at the anchor. Only a label or a glyph
+    /// run has one; anything else (a shape, a polyline, a retained group, a
+    /// point on the viewport) uses its bottom edge, as CSS does for a box with
+    /// no baseline.
+    Baseline,
 }
 
 /// Former name of [`AnchorX`]. Kept so existing code and serialised data using
@@ -52,7 +57,7 @@ pub type LabelAnchorY = AnchorY;
 pub struct Alignment {
     /// Horizontal: `Left`, `Middle`, or `Right`.
     pub x: AnchorX,
-    /// Vertical: `Top`, `Middle`, or `Bottom`.
+    /// Vertical: `Top`, `Middle`, `Bottom`, or `Baseline`.
     pub y: AnchorY,
 }
 
@@ -62,11 +67,25 @@ impl Alignment {
         x: AnchorX::Left,
         y: AnchorY::Top,
     };
+    /// The middle of the top edge.
+    pub const TOP_CENTRE: Self = Self::new(AnchorX::Middle, AnchorY::Top);
+    /// The top-right corner.
+    pub const TOP_RIGHT: Self = Self::new(AnchorX::Right, AnchorY::Top);
+    /// The middle of the left edge.
+    pub const CENTRE_LEFT: Self = Self::new(AnchorX::Left, AnchorY::Middle);
     /// The centre.
     pub const CENTRE: Self = Self {
         x: AnchorX::Middle,
         y: AnchorY::Middle,
     };
+    /// The middle of the right edge.
+    pub const CENTRE_RIGHT: Self = Self::new(AnchorX::Right, AnchorY::Middle);
+    /// The bottom-left corner.
+    pub const BOTTOM_LEFT: Self = Self::new(AnchorX::Left, AnchorY::Bottom);
+    /// The middle of the bottom edge.
+    pub const BOTTOM_CENTRE: Self = Self::new(AnchorX::Middle, AnchorY::Bottom);
+    /// The bottom-right corner.
+    pub const BOTTOM_RIGHT: Self = Self::new(AnchorX::Right, AnchorY::Bottom);
 
     /// An alignment from its two halves.
     pub const fn new(x: AnchorX, y: AnchorY) -> Self {
@@ -178,7 +197,9 @@ pub fn resolve_anchor_origin(
 impl AnchorX {
     /// Horizontal coordinate of this alignment on a rect of the given `width`:
     /// `Left` = 0, `Middle` = `width / 2`, `Right` = `width`.
-    #[doc(hidden)]
+    ///
+    /// This is how [`resolve_anchor_origin`] places a viewport origin, and
+    /// [`align_shift`](Self::align_shift) then places an item's box on it.
     pub fn coord(self, width: f32) -> f32 {
         match self {
             AnchorX::Left => 0.0,
@@ -188,8 +209,8 @@ impl AnchorX {
     }
 
     /// Shift applied to a box of `extent` so that this edge sits at the anchor
-    /// point: `Left` = 0, `Middle` = `-extent / 2`, `Right` = `-extent`.
-    #[doc(hidden)]
+    /// point: `Left` = 0, `Middle` = `-extent / 2`, `Right` = `-extent`. Add it
+    /// to the resolved origin to get the box's left edge.
     pub fn align_shift(self, extent: f32) -> f32 {
         match self {
             AnchorX::Left => 0.0,
@@ -201,24 +222,31 @@ impl AnchorX {
 
 impl AnchorY {
     /// Vertical coordinate of this alignment on a rect of the given `height`:
-    /// `Top` = 0, `Middle` = `height / 2`, `Bottom` = `height`.
-    #[doc(hidden)]
+    /// `Top` = 0, `Middle` = `height / 2`, `Bottom` and `Baseline` = `height`.
+    ///
+    /// This is how [`resolve_anchor_origin`] places a viewport origin, and
+    /// [`align_shift`](Self::align_shift) then places an item's box on it.
     pub fn coord(self, height: f32) -> f32 {
         match self {
             AnchorY::Top => 0.0,
             AnchorY::Middle => height * 0.5,
-            AnchorY::Bottom => height,
+            AnchorY::Bottom | AnchorY::Baseline => height,
         }
     }
 
-    /// Shift applied to a box of `extent` so that this edge sits at the anchor
-    /// point: `Top` = 0, `Middle` = `-extent / 2`, `Bottom` = `-extent`.
-    #[doc(hidden)]
-    pub fn align_shift(self, extent: f32) -> f32 {
+    /// Shift applied to a box of `extent` so that this line sits at the anchor
+    /// point: `Top` = 0, `Middle` = `-extent / 2`, `Bottom` = `-extent`. Add it
+    /// to the resolved origin to get the box's top edge.
+    ///
+    /// `baseline` is the distance from the top of the box to its first
+    /// baseline, and only `Baseline` reads it: `-baseline` when given, the
+    /// bottom edge (`-extent`) when not. A label passes its font's ascent.
+    pub fn align_shift(self, extent: f32, baseline: Option<f32>) -> f32 {
         match self {
             AnchorY::Top => 0.0,
             AnchorY::Middle => -extent * 0.5,
             AnchorY::Bottom => -extent,
+            AnchorY::Baseline => -baseline.unwrap_or(extent),
         }
     }
 }
@@ -236,7 +264,7 @@ pub fn viewport_anchored_top_left(
 ) -> [f32; 2] {
     [
         x.coord(viewport[0]) + x.align_shift(size[0]),
-        y.coord(viewport[1]) + y.align_shift(size[1]),
+        y.coord(viewport[1]) + y.align_shift(size[1], None),
     ]
 }
 
@@ -287,9 +315,39 @@ mod tests {
         let size = [120.0, 40.0];
         let placed = [
             origin[0] + anchoring.align.x.align_shift(size[0]),
-            origin[1] + anchoring.align.y.align_shift(size[1]),
+            origin[1] + anchoring.align.y.align_shift(size[1], None),
         ];
         assert_eq!(placed, [800.0 - 120.0, 600.0 - 40.0]);
+    }
+
+    /// The nine presets name the nine points their halves spell.
+    #[test]
+    fn the_presets_name_their_halves() {
+        use AnchorX::{Left, Middle as XMid, Right};
+        use AnchorY::{Bottom, Middle as YMid, Top};
+        let presets = [
+            (Alignment::TOP_LEFT, Left, Top),
+            (Alignment::TOP_CENTRE, XMid, Top),
+            (Alignment::TOP_RIGHT, Right, Top),
+            (Alignment::CENTRE_LEFT, Left, YMid),
+            (Alignment::CENTRE, XMid, YMid),
+            (Alignment::CENTRE_RIGHT, Right, YMid),
+            (Alignment::BOTTOM_LEFT, Left, Bottom),
+            (Alignment::BOTTOM_CENTRE, XMid, Bottom),
+            (Alignment::BOTTOM_RIGHT, Right, Bottom),
+        ];
+        for (preset, x, y) in presets {
+            assert_eq!(preset, Alignment::new(x, y));
+        }
+    }
+
+    /// A baseline needs a distance to place; without one it is the bottom edge,
+    /// which is where a box with no baseline puts it.
+    #[test]
+    fn baseline_without_a_distance_is_the_bottom_edge() {
+        assert_eq!(AnchorY::Baseline.align_shift(40.0, Some(11.0)), -11.0);
+        assert_eq!(AnchorY::Baseline.align_shift(40.0, None), -40.0);
+        assert_eq!(AnchorY::Baseline.coord(600.0), AnchorY::Bottom.coord(600.0));
     }
 
     /// The default is the top-left of the viewport with the box's own top-left

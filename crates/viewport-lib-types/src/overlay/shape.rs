@@ -895,7 +895,7 @@ impl OverlayShapeItem {
                 + self.anchoring.align.x.align_shift(self.size[0]),
             origin[1]
                 + self.transform.translate[1]
-                + self.anchoring.align.y.align_shift(self.size[1]),
+                + self.anchoring.align.y.align_shift(self.size[1], None),
         ])
     }
 

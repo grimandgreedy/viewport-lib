@@ -94,6 +94,7 @@ fn a_measured_wrapped_label_lands_in_its_resolved_box() {
         let tl = label
             .resolve_top_left(
                 [metrics.width, metrics.height],
+                metrics.ascent,
                 [SIZE as f32, SIZE as f32],
                 &Camera::default().view_matrix(),
                 &Camera::default().proj_matrix(),

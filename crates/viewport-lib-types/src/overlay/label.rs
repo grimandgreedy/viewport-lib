@@ -218,7 +218,8 @@ impl LabelItem {
     ///
     /// `size` is the measured text, in logical pixels: `[width, height]` from
     /// `DeviceResources::measure_overlay_text`, or from the wrapped measure
-    /// when `max_width` is set. The renderer lays the text out and then places
+    /// when `max_width` is set. `ascent` is the same measure's `ascent`, which
+    /// places an `AnchorY::Baseline` label. The renderer lays the text out and then places
     /// it the same way, so a backing shape built on this lands where the text
     /// does.
     ///
@@ -228,6 +229,7 @@ impl LabelItem {
     pub fn resolve_top_left(
         &self,
         size: [f32; 2],
+        ascent: f32,
         viewport_size: [f32; 2],
         view: &glam::Mat4,
         proj: &glam::Mat4,
@@ -235,7 +237,9 @@ impl LabelItem {
         let origin = resolve_anchor_origin(&self.anchoring.origin, viewport_size, view, proj)?;
         Some([
             origin[0] + self.transform.translate[0] + self.anchoring.align.x.align_shift(size[0]),
-            origin[1] + self.transform.translate[1] + self.anchoring.align.y.align_shift(size[1]),
+            origin[1]
+                + self.transform.translate[1]
+                + self.anchoring.align.y.align_shift(size[1], Some(ascent)),
         ])
     }
 
@@ -376,6 +380,7 @@ mod tests {
         let tl = label
             .resolve_top_left(
                 [60.0, 14.0],
+                11.0,
                 [800.0, 600.0],
                 &glam::Mat4::IDENTITY,
                 &glam::Mat4::IDENTITY,
@@ -400,6 +405,7 @@ mod tests {
             .with_align_y(AnchorY::Bottom)
             .resolve_top_left(
                 size,
+                11.0,
                 [800.0, 600.0],
                 &glam::Mat4::IDENTITY,
                 &glam::Mat4::IDENTITY,
@@ -412,6 +418,7 @@ mod tests {
             .with_align_y(AnchorY::Middle)
             .resolve_top_left(
                 size,
+                11.0,
                 [800.0, 600.0],
                 &glam::Mat4::IDENTITY,
                 &glam::Mat4::IDENTITY,
@@ -419,6 +426,25 @@ mod tests {
             .unwrap();
         // Middle alignment centres the box on the origin.
         assert_eq!(centred, [800.0 - 30.0, 600.0 - 7.0]);
+    }
+
+    /// A baseline label puts its first baseline on the origin: the box top
+    /// sits one ascent above it, whatever the box height.
+    #[test]
+    fn resolve_top_left_puts_the_baseline_on_the_origin() {
+        let label = LabelItem::new("two\nlines")
+            .with_screen_anchor([100.0, 200.0])
+            .with_align_y(AnchorY::Baseline);
+        let tl = label
+            .resolve_top_left(
+                [60.0, 30.0],
+                11.0,
+                [800.0, 600.0],
+                &glam::Mat4::IDENTITY,
+                &glam::Mat4::IDENTITY,
+            )
+            .unwrap();
+        assert_eq!(tl[1], 200.0 - 11.0);
     }
 
     /// A world anchor behind the camera resolves to nothing, which is the frame
@@ -435,7 +461,13 @@ mod tests {
         ]);
         assert!(
             label
-                .resolve_top_left([60.0, 14.0], [800.0, 600.0], &glam::Mat4::IDENTITY, &behind)
+                .resolve_top_left(
+                    [60.0, 14.0],
+                    11.0,
+                    [800.0, 600.0],
+                    &glam::Mat4::IDENTITY,
+                    &behind
+                )
                 .is_none()
         );
     }

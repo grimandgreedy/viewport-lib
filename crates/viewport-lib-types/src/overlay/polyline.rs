@@ -291,7 +291,7 @@ impl OverlayPolylineItem {
                 + self.anchoring.align.x.align_shift(max_x - min_x),
             origin[1]
                 + self.transform.translate[1]
-                + self.anchoring.align.y.align_shift(max_y - min_y),
+                + self.anchoring.align.y.align_shift(max_y - min_y, None),
         ])
     }
 

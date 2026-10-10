@@ -66,7 +66,7 @@ pub use viewport_lib_types::ids::{ProjectedTetId, VolumeId};
 
 pub use viewport_lib_types::data::attribute::{AttributeData, AttributeKind, AttributeRef};
 
-pub use viewport_lib_types::colourmap::BuiltinColourmap;
+pub use viewport_lib_types::colourmap::{BuiltinColourmap, UnknownColourmap};
 
 // ---------------------------------------------------------------------------
 // Vertex and uniform structs (bytemuck::Pod for GPU buffer casting)
