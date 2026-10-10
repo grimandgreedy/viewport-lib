@@ -944,8 +944,8 @@ impl DeviceResources {
             });
 
         // BRDF integration LUT placeholder: a 1x1 black fallback that's swapped for the real
-        // 128x128 LUT on the first call to `upload_environment_map`. The LUT is scene-independent
-        // (function of roughness x N.V only); idempotent caching inside `upload_environment_map`
+        // 128x128 LUT on the first call to `upload_environment`. The LUT is scene-independent
+        // (function of roughness x N.V only); idempotent caching inside `upload_environment`
         // means subsequent uploads skip its ~16.7M Hammersley samples.
         let ibl_fallback_brdf_texture = device.logged_texture(&crate::gpu::TextureDescriptor {
             label: Some("ibl_fallback_brdf"),
@@ -1955,10 +1955,13 @@ impl DeviceResources {
                 fallback_brdf_view: ibl_fallback_brdf_view,
                 irradiance_texture: None,
                 prefiltered_texture: None,
-                env_next_layer: 1,
+                env_slots: crate::resources::material::environment::IblResources::empty_env_slots(),
+                lighting: None,
+                env_jobs: std::collections::HashMap::new(),
+                zones: Vec::new(),
+                zones_dirty: false,
                 env_zone_count: 0,
                 brdf_lut_texture: None,
-                skybox_texture: None,
                 skybox_pipeline: None,
             },
             pick: crate::resources::types::PickResources::default(),

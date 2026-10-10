@@ -688,7 +688,7 @@ impl ViewportRenderer {
     /// centre. Returns one parallax-enabled
     /// [`EnvironmentZone`](crate::resources::EnvironmentZone) per entry, in order,
     /// ready to hand to [`set_environment_zones`](Self::set_environment_zones).
-    /// Probes are captured under the current scene lighting (the default
+    /// Probes are captured under the current scene lighting (the lighting
     /// environment), not each other, so this is a single-bounce bake.
     pub fn capture_reflection_probes(
         &mut self,
@@ -712,9 +712,8 @@ impl ViewportRenderer {
                 &mut self.resources,
                 device,
                 queue,
-                &panorama.rgba,
-                panorama.width,
-                panorama.height,
+                crate::TextureData::hdr(panorama.width, panorama.height, panorama.rgba),
+                crate::resources::EnvironmentOptions::default(),
             )?;
             zones.push(crate::resources::EnvironmentZone {
                 bounds,

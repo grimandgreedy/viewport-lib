@@ -636,9 +636,17 @@ impl ViewportRenderer {
 
         // Upload lights uniform.
         // IBL fields from environment map settings.
+        if resources.ibl.zones_dirty {
+            crate::resources::material::environment::write_environment_zones(resources, queue);
+        }
         let (ibl_enabled, ibl_intensity, ibl_rotation, show_skybox) =
             if let Some(env) = scene_fx.environment {
-                if resources.ibl.irradiance_view.is_some() {
+                if crate::resources::material::environment::select_lighting_environment(
+                    resources,
+                    device,
+                    queue,
+                    env.environment,
+                ) {
                     (
                         1u32,
                         env.intensity,

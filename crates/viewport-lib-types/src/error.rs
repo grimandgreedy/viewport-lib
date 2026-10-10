@@ -313,12 +313,11 @@ pub enum ViewportError {
         reason: crate::data::texture::TextureRejection,
     },
 
-    /// `upload_environment` was called after the environment set filled its
-    /// fixed layer capacity. The default (layer 0) and up to `max - 1` extra
-    /// environments fit; beyond that, callers must reuse an existing handle.
-    #[error("too many environments: the set holds at most {max} layers")]
+    /// `upload_environment` was called while every environment slot was in
+    /// use. Free one with `free_environment` before uploading another.
+    #[error("too many environments: the set holds at most {max}")]
     TooManyEnvironments {
-        /// The fixed environment-array capacity.
+        /// How many environments the set holds.
         max: u32,
     },
 

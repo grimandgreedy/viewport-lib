@@ -81,7 +81,12 @@ fn a_viewport_can_ask_for_an_effect_the_scene_frame_did_not() {
     // A skybox only draws once an environment map is resident.
     let texels = vec![0.5f32; 8 * 4 * 4];
     renderer
-        .upload_environment_map(&device, &queue, &texels, 8, 4)
+        .upload_environment(
+            &device,
+            &queue,
+            viewport_lib::TextureData::hdr(8, 4, texels),
+            viewport_lib::EnvironmentOptions::default(),
+        )
         .unwrap();
 
     let vp0 = renderer.create_viewport(&device);

@@ -243,7 +243,12 @@ fn auto_exposure_meters_the_skybox() {
     let (w, h) = (16u32, 8u32);
     let pixels: Vec<f32> = (0..w * h).flat_map(|_| [1.0, 1.0, 1.0, 1.0]).collect();
     renderer
-        .upload_environment_map(&device, &queue, &pixels, w, h)
+        .upload_environment(
+            &device,
+            &queue,
+            viewport_lib::TextureData::hdr(w, h, pixels),
+            viewport_lib::EnvironmentOptions::default(),
+        )
         .unwrap();
 
     let size = 64u32;

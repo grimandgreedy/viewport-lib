@@ -1,7 +1,7 @@
 //! GPU compute path for IBL precomputation.
 //!
 //! Three compute shaders replace the CPU reference port for the heavy parts of
-//! `upload_environment_map`:
+//! `upload_environment`:
 //!
 //! - `ibl_irradiance.wgsl`: cosine-weighted hemisphere convolution
 //! - `ibl_prefilter.wgsl` : GGX importance-sampled roughness convolution (per mip)
@@ -15,11 +15,11 @@ use crate::gpu::util::DeviceExt;
 const PREFILTER_PARAMS_SIZE: u64 = 16; // 4 floats (1 used, 3 pad) = 16 bytes
 
 /// Number of environment layers the irradiance / prefiltered arrays hold. Layer
-/// 0 is the scene default; extra environments (uploaded via `upload_environment`)
-/// and reflection probes take layers 1.. up to this cap, beyond which they fall
-/// back to the default. Array textures cannot grow a layer in place, so this is
-/// fixed at allocation. Sized for a probe-lit scene (default + zones + probes
-/// share this one pool).
+/// 0 holds a copy of the environment that lights the scene, which is what the
+/// shaders sample outside every zone; uploaded environments and reflection
+/// probes take layers 1.. up to this cap. Array textures cannot grow a layer in
+/// place, so this is fixed at allocation. Sized for a probe-lit scene (lighting,
+/// zones and probes share this one pool).
 pub(crate) const IBL_ENV_CAPACITY: u32 = 32;
 
 pub(crate) const IBL_IRR_W: u32 = 64;
@@ -38,16 +38,18 @@ pub(crate) const IBL_BRDF_SIZE: u32 = 128;
 ///
 /// The GPU IBL path writes each layer with a storage output view, so the arrays
 /// take `STORAGE_BINDING` when compute is supported; the CPU path writes with
-/// `write_texture`, so it takes `COPY_DST` instead. `compute` is
-/// [`compute_supported`] for the device (constant for a device's lifetime).
+/// `write_texture`. Both take `COPY_SRC | COPY_DST` for the copy of the lighting
+/// environment into layer 0. `compute` is [`compute_supported`] for the device
+/// (constant for a device's lifetime).
 pub(crate) fn create_ibl_arrays(
     device: &crate::gpu::Device,
     compute: bool,
 ) -> (crate::gpu::Texture, crate::gpu::Texture) {
+    let copy = crate::gpu::TextureUsages::COPY_SRC | crate::gpu::TextureUsages::COPY_DST;
     let write_usage = if compute {
-        crate::gpu::TextureUsages::STORAGE_BINDING
+        crate::gpu::TextureUsages::STORAGE_BINDING | copy
     } else {
-        crate::gpu::TextureUsages::COPY_DST
+        copy
     };
     let irradiance = device.create_texture(&crate::gpu::TextureDescriptor {
         label: Some("ibl_irradiance_array"),
@@ -517,7 +519,7 @@ pub(crate) fn bake_environment_layer(
     let submission = queue.submit(std::iter::once(encoder.finish()));
 
     // Callers gate on the returned submission index instead of blocking
-    // here. The synchronous `upload_environment_map` wrapper drains the
+    // here. The synchronous `upload_environment` wrapper drains the
     // upload-job runner until the matching job reports Ready.
 
     LayerBakeResult {

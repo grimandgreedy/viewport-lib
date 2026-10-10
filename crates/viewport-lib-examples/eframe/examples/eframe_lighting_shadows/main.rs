@@ -179,7 +179,12 @@ fn main() -> eframe::Result {
             let env = equirect_gradient([0.55, 0.70, 1.0], [0.30, 0.32, 0.34], ENV_W, ENV_H);
             session
                 .renderer_mut()
-                .upload_environment_map(device, queue, &env, ENV_W, ENV_H)
+                .upload_environment(
+                    device,
+                    queue,
+                    vpl::TextureData::hdr(ENV_W, ENV_H, env),
+                    vpl::EnvironmentOptions::default(),
+                )
                 .expect("environment map");
 
             let matcap_clay = session
@@ -604,6 +609,7 @@ impl App {
     /// Environment settings, or `None` when the IBL environment is disabled.
     fn build_environment(&self) -> Option<EnvironmentSettings> {
         self.env_enabled.then(|| EnvironmentSettings {
+            environment: None,
             intensity: self.env_intensity,
             rotation: self.env_rotation,
             show_skybox: self.env_show_skybox,

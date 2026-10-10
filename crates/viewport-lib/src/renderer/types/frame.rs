@@ -635,6 +635,11 @@ pub struct EnvironmentSettings {
     /// own peaks is unchanged - this is a single physical multiplier, not a
     /// tonemap.
     pub intensity: f32,
+    /// The environment that lights the scene and is drawn as the skybox, from
+    /// `upload_environment`. `None` takes the lowest-numbered environment still
+    /// uploaded. A handle that was freed lights nothing. Default: `None`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub environment: Option<crate::resources::EnvironmentMapId>,
     /// Y-axis rotation in radians. Default: 0.0.
     pub rotation: f32,
     /// Whether to render the environment as a visible skybox background.
@@ -646,6 +651,7 @@ pub struct EnvironmentSettings {
 impl Default for EnvironmentSettings {
     fn default() -> Self {
         Self {
+            environment: None,
             intensity: 1.0,
             rotation: 0.0,
             show_skybox: true,

@@ -94,6 +94,7 @@ impl PhysicallyBasedSurfacesState {
 
     pub(crate) fn environment(&self) -> Option<EnvironmentSettings> {
         Some(EnvironmentSettings {
+            environment: None,
             intensity: self.env_intensity,
             rotation: 0.0,
             show_skybox: self.show_skybox,
@@ -134,7 +135,12 @@ impl App {
         // the irradiance and prefiltered reflection maps the IBL samples.
         let px = equirect_gradient([0.35, 0.5, 0.85], [0.35, 0.28, 0.22], 64, 32);
         renderer
-            .upload_environment_map(&self.device, &self.queue, &px, 64, 32)
+            .upload_environment(
+                &self.device,
+                &self.queue,
+                vpl::TextureData::hdr(64, 32, px),
+                vpl::EnvironmentOptions::default(),
+            )
             .expect("environment upload");
 
         self.surfaces_state.scene = Scene::new();

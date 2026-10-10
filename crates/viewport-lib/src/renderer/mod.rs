@@ -2773,84 +2773,56 @@ impl ViewportRenderer {
         }))
     }
 
-    /// Upload an equirectangular HDR environment map and precompute IBL textures.
+    /// Upload an equirectangular environment, bake its lighting, and return its
+    /// handle. Blocks until the bake finishes.
     ///
-    /// `pixels` is row-major RGBA f32 data (4 floats per texel), `width`x`height`.
-    /// This rebuilds camera bind groups so shaders immediately see the new textures.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
-    /// if `pixels.len()` does not equal `width * height * 4`.
+    /// Name the handle in [`EnvironmentSettings::environment`] to light the scene
+    /// with it and draw it as the skybox, or in an
+    /// [`EnvironmentZone`](crate::resources::EnvironmentZone). `data` is a whole
+    /// Z-up panorama; a float image (`TextureData::hdr`) gives realistic light,
+    /// while an 8-bit image is decoded by its colour space but lights flat. See
+    /// [`upload_environment`](crate::resources::material::environment::upload_environment)
+    /// for the details and errors.
     ///
     /// # Examples
     ///
     /// ```no_run
     /// # use viewport_lib::error::ViewportError;
     /// # use viewport_lib::renderer::ViewportRenderer;
+    /// # use viewport_lib::{EnvironmentOptions, TextureData};
     /// # fn demo(renderer: &mut ViewportRenderer, device: &viewport_lib::wgpu::Device, queue: &viewport_lib::wgpu::Queue) {
-    /// // 2x2 RGBA image requires exactly 16 floats.
-    /// let result = renderer.upload_environment_map(device, queue, &[0.0f32; 12], 2, 2);
+    /// // A 2x2 RGBA image needs exactly 16 floats.
+    /// let data = TextureData::hdr(2, 2, vec![0.0f32; 12]);
+    /// let result = renderer.upload_environment(device, queue, data, EnvironmentOptions::default());
     /// assert!(matches!(result, Err(ViewportError::InvalidTextureData { expected: 16, actual: 12 })));
     /// # }
     /// ```
-    pub fn upload_environment_map(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        pixels: &[f32],
-        width: u32,
-        height: u32,
-    ) -> crate::error::ViewportResult<()> {
-        crate::resources::material::environment::upload_environment_map(
-            &mut self.resources,
-            device,
-            queue,
-            pixels,
-            width,
-            height,
-        )?;
-        self.rebuild_camera_bind_groups(device);
-        Ok(())
-    }
-
-    /// Upload an extra environment into the indexed set and return its handle.
-    ///
-    /// Unlike [`upload_environment_map`](Self::upload_environment_map), this does
-    /// not replace the scene default or the skybox: the environment takes its own
-    /// array layer, to be selected per fragment once zone selection lands. Blocks
-    /// until the bake finishes, then rebuilds the camera bind groups.
-    ///
-    /// # Errors
-    ///
-    /// [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
-    /// if `pixels.len()` does not equal `width * height * 4`, or
-    /// [`ViewportError::TooManyEnvironments`](crate::error::ViewportError::TooManyEnvironments)
-    /// once the environment set is full.
     pub fn upload_environment(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        pixels: &[f32],
-        width: u32,
-        height: u32,
+        data: crate::TextureData,
+        options: crate::resources::EnvironmentOptions,
     ) -> crate::error::ViewportResult<crate::resources::EnvironmentMapId> {
-        let env = crate::resources::material::environment::upload_environment(
+        crate::resources::material::environment::upload_environment(
             &mut self.resources,
             device,
             queue,
-            pixels,
-            width,
-            height,
-        )?;
-        self.rebuild_camera_bind_groups(device);
-        Ok(env)
+            data,
+            options,
+        )
+    }
+
+    /// Release an environment's slot and its source. Returns `false` when `id`
+    /// was already freed. A handle kept past this resolves to nothing.
+    pub fn free_environment(&mut self, id: crate::resources::EnvironmentMapId) -> bool {
+        crate::resources::material::environment::free_environment(&mut self.resources, id)
     }
 
     /// Set the environment-selection zones. Fragments inside a zone are lit by
     /// that zone's environment (from [`upload_environment`](Self::upload_environment)),
     /// blended by influence weight in overlaps; fragments outside every zone use
-    /// the default environment. Replaces any previous set; an empty slice clears
+    /// the lighting environment. Replaces any previous set; an empty slice clears
     /// them. Zones past [`MAX_ENV_ZONES`](crate::resources::material::environment::MAX_ENV_ZONES)
     /// are dropped.
     pub fn set_environment_zones(
@@ -2866,7 +2838,7 @@ impl ViewportRenderer {
     }
 
     /// Clear all environment-selection zones; every fragment reverts to the
-    /// default environment.
+    /// lighting environment.
     pub fn clear_environment_zones(&mut self) {
         crate::resources::material::environment::clear_environment_zones(&mut self.resources);
     }
@@ -3158,45 +3130,48 @@ impl ViewportRenderer {
         self.resources.upload_result_mesh(id)
     }
 
-    /// Start an asynchronous environment-map upload.
+    /// Start an asynchronous environment upload.
     ///
-    /// Returns immediately with a `JobId`. The caller drives the upload-job
-    /// runner from the renderer's prepare path each frame; once the job
-    /// reports `Ready`, the IBL textures are live on the renderer and a
-    /// subsequent call to `rebuild_camera_bind_groups` makes them visible
-    /// to shaders.
-    ///
-    /// Ownership of `pixels` transfers into the background worker.
+    /// Returns a `JobId` immediately; the bake runs on a worker. Once the job
+    /// reports `Ready`, take the handle with
+    /// [`upload_result_environment`](Self::upload_result_environment). The next
+    /// `prepare` picks up the new textures with no further call.
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
-    /// if `pixels.len() != width * height * 4`.
-    pub fn begin_upload_environment_map(
+    /// The same validation and capacity errors as
+    /// [`upload_environment`](Self::upload_environment), before anything is
+    /// submitted.
+    pub fn begin_upload_environment(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        pixels: Vec<f32>,
-        width: u32,
-        height: u32,
+        data: crate::TextureData,
+        options: crate::resources::EnvironmentOptions,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        crate::resources::material::environment::begin_upload_environment_map(
+        crate::resources::material::environment::begin_upload_environment(
             &mut self.resources,
             device,
             queue,
-            pixels,
-            width,
-            height,
+            data,
+            options,
         )
+    }
+
+    /// Take the handle produced by a completed
+    /// [`begin_upload_environment`](Self::begin_upload_environment) job.
+    /// Returns `JobNotReady` while the bake is running.
+    pub fn upload_result_environment(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::EnvironmentMapId> {
+        crate::resources::material::environment::upload_result_environment(&mut self.resources, id)
     }
 
     /// Rebuild the primary and per-viewport camera bind groups.
     ///
-    /// Call after IBL textures are uploaded so the shaders see the new
-    /// environment. The synchronous `upload_environment_map` does this
-    /// internally; consumers driving the async path through
-    /// `begin_upload_environment_map` should call this themselves once the
-    /// matching job reports `Ready`.
+    /// `prepare` does this whenever a resource the groups bind was replaced, so
+    /// it is only needed to see a change before the next `prepare`.
     pub fn rebuild_camera_bind_groups(&mut self, device: &crate::gpu::Device) {
         self.resources.binds.camera_bg = self.resources.create_camera_bind_group(
             device,
