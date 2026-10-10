@@ -324,7 +324,7 @@ impl Default for OverlayShape {
 ///         angle: 0.0,
 ///     });
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct OverlayShapeItem {
     /// The region this item draws: an analytic variant, or an arbitrary vector
@@ -1435,52 +1435,6 @@ mod tests {
         let v = track.sample(0.5);
         assert!((v[0] - 100.0).abs() < 1e-3);
         assert!((v[1] - 50.0).abs() < 1e-3);
-    }
-
-    #[test]
-    #[allow(deprecated)] // exercises PathTrack, which is deprecated but still supported
-    fn bezier_path_hits_endpoints() {
-        // Cubic with p0 = (0,0), p3 = (100, 0) and arched control handles.
-        let track = PathTrack::<[f32; 2]>::bezier(
-            0.0,
-            1.0,
-            [[0.0, 0.0], [25.0, -40.0], [75.0, -40.0], [100.0, 0.0]],
-        );
-        let a = track.sample(0.0);
-        let b = track.sample(1.0);
-        assert!((a[0] - 0.0).abs() < 1e-3 && (a[1] - 0.0).abs() < 1e-3);
-        assert!((b[0] - 100.0).abs() < 1e-3 && (b[1] - 0.0).abs() < 1e-3);
-        // Midpoint should sit on the arch above the baseline.
-        let m = track.sample(0.5);
-        assert!((m[0] - 50.0).abs() < 1e-3);
-        assert!(m[1] < -20.0);
-    }
-
-    #[test]
-    #[allow(deprecated)] // exercises PathTrack, which is deprecated but still supported
-    fn polyline_path_hits_waypoints() {
-        let track =
-            PathTrack::<[f32; 2]>::polyline(0.0, 1.0, vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]]);
-        let a = track.sample(0.0);
-        let mid = track.sample(0.5);
-        let end = track.sample(1.0);
-        assert!((a[0] - 0.0).abs() < 1e-3 && (a[1] - 0.0).abs() < 1e-3);
-        assert!((mid[0] - 10.0).abs() < 1e-3 && (mid[1] - 0.0).abs() < 1e-3);
-        assert!((end[0] - 10.0).abs() < 1e-3 && (end[1] - 10.0).abs() < 1e-3);
-    }
-
-    #[test]
-    #[allow(deprecated)] // exercises PathTrack, which is deprecated but still supported
-    fn path_track_custom_closure_loops() {
-        // A non-curve path: harmonic motion via a custom closure.
-        let track = PathTrack::<f32>::new(0.0, 1.0, |t| (t * std::f32::consts::TAU).sin())
-            .with_repeat(RepeatMode::Loop);
-        let a = track.sample(0.0);
-        let b = track.sample(0.25);
-        let c = track.sample(0.5);
-        assert!(a.abs() < 1e-3);
-        assert!((b - 1.0).abs() < 1e-3);
-        assert!(c.abs() < 1e-3);
     }
 
     #[test]

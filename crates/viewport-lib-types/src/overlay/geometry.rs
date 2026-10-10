@@ -27,7 +27,7 @@ crate::slot_handle! {
 /// (so a scroll container just updates the offset), an `opacity` multiplier, a
 /// `z_order` for cross-family draw order, and an optional outer clip. The
 /// group's own geometry is fixed in the handle.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct RetainedOverlay {
     /// The compiled group to draw.

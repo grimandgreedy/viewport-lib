@@ -38,7 +38,7 @@ use super::transform::OverlayTransform;
 ///     .with_world_anchor([2.0, 3.0, 0.0])
 ///     .with_colour([1.0, 0.9, 0.4, 1.0]);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct LabelItem {
     /// Where the item hangs from and which point of its own box lands there.

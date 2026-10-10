@@ -308,9 +308,6 @@ pub use renderer::stats::{
     FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset, RuntimeMode,
 };
 pub use renderer::tuning::{RenderDiagnostics, RenderTuning};
-pub use resources::PipelineCompilation;
-// PathTrack is deprecated but still re-exported for compatibility.
-#[allow(deprecated)]
 pub use renderer::{
     Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
     BloomSettings, CameraFrame, Candela, CellSelectionInfo, ClipObject, ClipShape,
@@ -324,17 +321,18 @@ pub use renderer::{
     OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId,
     OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke,
     OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform, OwnedPath, PassPath,
-    PassView, PathSegment, PathTrack, PickBackend, PickHit, PickId, PickMask, PickPoll,
-    PickRectResult, PipelineMode, PolylineCap, PolylineItem, PolylineRefItem,
-    PolylineSelectionInfo, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
-    RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem,
-    ShadowFilter, ShadowLayer, ShadowSettings, SnapHit, SnapPoll, SpriteBlend, StrokePattern,
-    SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceSubmission, TextureTransform,
-    TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, ViewportId,
-    ViewportRenderer, VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
+    PassView, PathSegment, PickBackend, PickHit, PickId, PickMask, PickPoll, PickRectResult,
+    PipelineMode, PolylineCap, PolylineItem, PolylineRefItem, PolylineSelectionInfo,
+    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
+    ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
+    ShadowLayer, ShadowSettings, SnapHit, SnapPoll, SpriteBlend, StrokePattern, SubObjectRef,
+    SubPath, SubSelection, SubSelectionRef, SurfaceSubmission, TextureTransform, TileMode,
+    ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer,
+    VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
     aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
+pub use resources::PipelineCompilation;
 
 pub use runners::{ExtraId, OffscreenViewportTarget, ViewportInstance};
 

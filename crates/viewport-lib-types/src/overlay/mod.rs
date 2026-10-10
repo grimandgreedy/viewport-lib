@@ -38,3 +38,23 @@ pub use self::style::*;
 pub use self::texture::*;
 pub use self::transform::*;
 pub use self::vector::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A consumer that stores overlay items in its own `PartialEq` types, or
+    /// diffs a frame's items against the last frame's, needs every item and
+    /// the frame that carries them to be comparable.
+    #[test]
+    fn overlay_items_are_comparable() {
+        fn assert_partial_eq<T: PartialEq>() {}
+        assert_partial_eq::<OverlayAnimations>();
+        assert_partial_eq::<OverlayShapeItem>();
+        assert_partial_eq::<OverlayPolylineItem>();
+        assert_partial_eq::<LabelItem>();
+        assert_partial_eq::<GlyphRunItem>();
+        assert_partial_eq::<RetainedOverlay>();
+        assert_partial_eq::<OverlayFrame>();
+    }
+}
