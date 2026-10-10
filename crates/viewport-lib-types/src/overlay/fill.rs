@@ -1,5 +1,6 @@
 //! Fill styles for overlay items: solid colour, gradients, and textures.
 
+use crate::colour::Colour;
 use crate::overlay::{NineSlice, OverlayTextureId, TextureTransform};
 
 /// What an overlay item is filled with.
@@ -229,6 +230,81 @@ impl OverlayFill {
         self
     }
 
+    /// This fill with `f` applied to every colour it holds: the solid colour,
+    /// both ends of a two-colour gradient, every stop of a multi-stop gradient,
+    /// and a texture fill's tint. Positions, angles and the texture are kept.
+    ///
+    /// For deriving one style from another, such as a darker hover state from
+    /// a gradient, without matching on every variant.
+    pub fn map_colours(&self, f: impl Fn(Colour) -> Colour) -> OverlayFill {
+        let stops = |stops: &[GradientStop]| -> Vec<GradientStop> {
+            stops
+                .iter()
+                .map(|s| GradientStop {
+                    position: s.position,
+                    colour: f(s.colour),
+                })
+                .collect()
+        };
+        // No wildcard arm: a new variant must decide here which of its fields
+        // are colours.
+        match self {
+            OverlayFill::Solid(c) => OverlayFill::Solid(f(*c)),
+            OverlayFill::LinearGradient {
+                start_colour,
+                end_colour,
+                angle,
+            } => OverlayFill::LinearGradient {
+                start_colour: f(*start_colour),
+                end_colour: f(*end_colour),
+                angle: *angle,
+            },
+            OverlayFill::RadialGradient {
+                centre_colour,
+                edge_colour,
+            } => OverlayFill::RadialGradient {
+                centre_colour: f(*centre_colour),
+                edge_colour: f(*edge_colour),
+            },
+            OverlayFill::ConicalGradient {
+                start_colour,
+                end_colour,
+                offset_angle,
+            } => OverlayFill::ConicalGradient {
+                start_colour: f(*start_colour),
+                end_colour: f(*end_colour),
+                offset_angle: *offset_angle,
+            },
+            OverlayFill::LinearGradientMulti { stops: s, angle } => {
+                OverlayFill::LinearGradientMulti {
+                    stops: stops(s),
+                    angle: *angle,
+                }
+            }
+            OverlayFill::RadialGradientMulti { stops: s } => {
+                OverlayFill::RadialGradientMulti { stops: stops(s) }
+            }
+            OverlayFill::ConicalGradientMulti {
+                stops: s,
+                offset_angle,
+            } => OverlayFill::ConicalGradientMulti {
+                stops: stops(s),
+                offset_angle: *offset_angle,
+            },
+            OverlayFill::Texture {
+                id,
+                transform,
+                nine_slice,
+                tint,
+            } => OverlayFill::Texture {
+                id: *id,
+                transform: *transform,
+                nine_slice: *nine_slice,
+                tint: f(*tint),
+            },
+        }
+    }
+
     /// Sample the fill at `p`, given in logical pixels relative to the centre
     /// of a box of half-extents `half_size`. Returns linear RGBA.
     ///
@@ -330,6 +406,70 @@ impl OverlayFill {
                 stops,
                 offset_angle,
             } => sample_stops(stops, conical_t(p, *offset_angle)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_colours_reaches_every_colour() {
+        let a = Colour::linear(0.2, 0.4, 0.6, 1.0);
+        let b = Colour::linear(0.8, 0.6, 0.4, 0.5);
+        let double = |c: Colour| {
+            let [r, g, b, a] = c.to_linear_rgba();
+            Colour::linear(r * 2.0, g * 2.0, b * 2.0, a)
+        };
+        let stops = vec![GradientStop::new(0.0, a), GradientStop::new(0.7, b)];
+        let fills = [
+            OverlayFill::Solid(a),
+            OverlayFill::LinearGradient {
+                start_colour: a,
+                end_colour: b,
+                angle: 0.3,
+            },
+            OverlayFill::RadialGradient {
+                centre_colour: a,
+                edge_colour: b,
+            },
+            OverlayFill::ConicalGradient {
+                start_colour: a,
+                end_colour: b,
+                offset_angle: 0.3,
+            },
+            OverlayFill::LinearGradientMulti {
+                stops: stops.clone(),
+                angle: 0.3,
+            },
+            OverlayFill::RadialGradientMulti {
+                stops: stops.clone(),
+            },
+            OverlayFill::ConicalGradientMulti {
+                stops: stops.clone(),
+                offset_angle: 0.3,
+            },
+            OverlayFill::texture(OverlayTextureId(3)).with_tint(a),
+        ];
+        let p = [3.0, -2.0];
+        let half = [10.0, 10.0];
+        for fill in fills {
+            let mapped = fill.map_colours(double);
+            assert_eq!(mapped.kind(), fill.kind());
+            assert_eq!(mapped.texture_id(), fill.texture_id());
+            if let OverlayFill::Texture { tint, .. } = &mapped {
+                assert_eq!(*tint, double(a));
+                continue;
+            }
+            // Doubling every colour doubles the sampled RGB wherever the
+            // fill is sampled, so no colour was missed and nothing moved.
+            let before = fill.sample_in_box(p, half);
+            let after = mapped.sample_in_box(p, half);
+            for i in 0..3 {
+                assert!((after[i] - before[i] * 2.0).abs() < 1e-5, "{fill:?}");
+            }
+            assert!((after[3] - before[3]).abs() < 1e-5, "{fill:?}");
         }
     }
 }
