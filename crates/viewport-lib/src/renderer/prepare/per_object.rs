@@ -1014,10 +1014,10 @@ impl ViewportRenderer {
         /// caching against.
         const MIN_BUNDLE_ITEMS: usize = 64;
         self.last_stats.per_object_bundle_cached = false;
-        // Measurement kill-switch so the bundle can be A/B'd in one binary.
+        // Measurement kill-switch (`dev-knobs` feature) so the bundle can be
+        // A/B'd in one binary.
         static DISABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *DISABLE.get_or_init(|| std::env::var_os("VIEWPORT_DISABLE_PER_OBJECT_BUNDLE").is_some())
-        {
+        if *DISABLE.get_or_init(|| dev_knob!("VIEWPORT_DISABLE_PER_OBJECT_BUNDLE").is_some()) {
             self.per_object_bundle = None;
             return;
         }
@@ -1171,14 +1171,15 @@ impl ViewportRenderer {
                 self.per_object_bundle_gate.suppressed = false;
             }
         }
-        // Diagnostic kill-switch for the churn gate: with it set, sustained
+        // Diagnostic kill-switch for the churn gate (`dev-knobs` feature): with
+        // it set, sustained
         // churn re-records the bundle every frame instead of backing off.
         // Exists for leak retests on wgpu versions that ship the
         // render-bundle drop fix (gfx-rs/wgpu#8661); leave it unset
         // otherwise, since per-frame re-record costs more than it saves.
         static GATE_DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let gate_disabled = *GATE_DISABLED
-            .get_or_init(|| std::env::var_os("VIEWPORT_DISABLE_BUNDLE_CHURN_GATE").is_some());
+            .get_or_init(|| dev_knob!("VIEWPORT_DISABLE_BUNDLE_CHURN_GATE").is_some());
         if self.per_object_bundle_gate.suppressed && !gate_disabled {
             self.per_object_bundle = None;
             return;
