@@ -30,11 +30,12 @@ pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::from_egui;
 use vpl::{
     AtlasViewerCorner, AutoExposure, BackfacePolicy, BuiltinMatcap, Candela, DebugOutputMode,
-    DebugQuantity, DebugVis, DisplaySettings, EnvironmentSettings, ExposureMode, ExposureReadback,
-    ExposureSettings, LightKind, LightSource, LightingSettings, Lumen, Lux, MatcapId, Material,
-    MeshId, Modifiers, OrbitCameraController, PipelineMode, SceneFrame, SceneRenderItem,
-    ShadowDebugStats, ShadowFilter, ToneMapping, ViewportContext, ViewportEvent, ViewportId,
-    ViewportInstance, primitives,
+    DebugQuantity, DebugVis, DisplaySettings, EnvironmentBackground, EnvironmentIntensity,
+    EnvironmentLighting, EnvironmentMapId, ExposureMode, ExposureReadback, ExposureSettings,
+    LightKind, LightSource, LightingSettings, Lumen, Lux, MatcapId, Material, MeshId, Modifiers,
+    OrbitCameraController, PipelineMode, SceneFrame, SceneRenderItem, ShadowDebugStats,
+    ShadowFilter, ToneMapping, ViewportContext, ViewportEvent, ViewportId, ViewportInstance,
+    primitives,
 };
 
 // Percy photo: pre-converted raw RGBA (2203 x 2009).
@@ -173,11 +174,11 @@ fn main() -> eframe::Result {
             }
 
             // Procedural sky/ground gradient for the IBL environment. Stored as
-            // relative radiance; EnvironmentSettings::intensity scales it to nits
+            // relative radiance; LightingSettings::environment_intensity scales it to nits
             // at render time, so the same map reads from near-black up to a bright
             // daytime sky depending on the exposure regime under test.
             let env = equirect_gradient([0.55, 0.70, 1.0], [0.30, 0.32, 0.34], ENV_W, ENV_H);
-            session
+            let env_id = session
                 .renderer_mut()
                 .upload_environment(
                     device,
@@ -218,6 +219,7 @@ fn main() -> eframe::Result {
                 tex_percy,
                 matcap_clay,
                 matcap_ceramic,
+                env_id,
             )))
         }),
     )
@@ -307,6 +309,7 @@ struct App {
     last_exposure: Option<ExposureReadback>,
 
     // Image-based environment (IBL + skybox).
+    env_id: EnvironmentMapId,
     env_enabled: bool,
     env_intensity: f32, // absolute nits scale applied to the stored gradient
     env_rotation: f32,
@@ -388,6 +391,7 @@ impl App {
         tex_percy: vpl::TextureId,
         matcap_clay: MatcapId,
         matcap_ceramic: MatcapId,
+        env_id: EnvironmentMapId,
     ) -> Self {
         Self {
             session,
@@ -447,6 +451,7 @@ impl App {
             env_intensity: 4_000.0,
             env_rotation: 0.0,
             env_show_skybox: true,
+            env_id,
             shadows_enabled: true,
             shadow_bias: 0.0,
             shadow_cascade_count: 4,
@@ -537,6 +542,7 @@ impl App {
         {
             let mut _t = LightingSettings::default();
             _t.lights = vec![self.build_light_source()];
+            _t.environment_intensity = EnvironmentIntensity::Multiplier(self.env_intensity);
             _t.shadows.enabled = self.shadows_enabled;
             _t.shadows.bias = self.shadow_bias;
             _t.shadows.cascade_count = self.shadow_cascade_count;
@@ -606,14 +612,19 @@ impl App {
         d
     }
 
-    /// Environment settings, or `None` when the IBL environment is disabled.
-    fn build_environment(&self) -> Option<EnvironmentSettings> {
-        self.env_enabled.then(|| EnvironmentSettings {
-            environment: None,
-            intensity: self.env_intensity,
-            rotation: self.env_rotation,
-            show_skybox: self.env_show_skybox,
-        })
+    /// Environment lighting, or `None` when the IBL environment is disabled.
+    fn build_environment(&self) -> Option<EnvironmentLighting> {
+        self.env_enabled
+            .then(|| EnvironmentLighting::new(self.env_id).with_rotation(self.env_rotation))
+    }
+
+    /// What the viewport draws behind the scene.
+    fn build_background(&self) -> EnvironmentBackground {
+        if self.env_show_skybox {
+            EnvironmentBackground::default()
+        } else {
+            EnvironmentBackground::colour()
+        }
     }
 
     /// The EV the panel controls imply, for the readout. `Manual`/`Physical` are
@@ -883,6 +894,7 @@ impl eframe::App for App {
             let lighting = self.build_lighting();
             let display = self.build_display(dt);
             let environment = self.build_environment();
+            let background = self.build_background();
             let debug_vis = self.build_debug_vis();
             {
                 let eff = self.session.effects_mut();
@@ -906,6 +918,7 @@ impl eframe::App for App {
             self.session.update_orbit_with(&mut self.orbit, |fd| {
                 fd.scene = SceneFrame::from_surface_items(items);
                 fd.camera.viewport_index = vp_index;
+                fd.viewport.environment_background = background;
             });
 
             // Pixel inspector: queue the clicked pixel (physical pixels) before the
@@ -1741,7 +1754,8 @@ fn ui_vec3(ui: &mut egui::Ui, v: &mut [f32; 3], speed: f64) {
 }
 
 /// Equirectangular sky/ground gradient (RGBA f32), sky at the top row. Values are
-/// relative radiance; `EnvironmentSettings::intensity` scales them to nits.
+/// relative radiance; `LightingSettings::environment_intensity` scales them to
+/// nits.
 fn equirect_gradient(sky: [f32; 3], ground: [f32; 3], w: u32, h: u32) -> Vec<f32> {
     let mut px = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {

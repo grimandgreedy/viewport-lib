@@ -300,8 +300,8 @@ fn viewport_ibl_ambient(
         max(roughness * 4.0, footprint_mip),
     ).rgb;
     let brdf = textureSampleLevel(ibl_brdf_lut, ibl_sampler, vec2<f32>(n_dot_v, roughness), 0.0).rg;
-    let diffuse = kd * irradiance * albedo * ao;
-    let specular = prefiltered * (f * brdf.x + brdf.y) * ao;
+    let diffuse = kd * irradiance * albedo * ao * lights.ibl_diffuse_scale;
+    let specular = prefiltered * (f * brdf.x + brdf.y) * ao * lights.ibl_specular_scale;
     return (diffuse + specular) * lights.ibl_intensity;
 }
 

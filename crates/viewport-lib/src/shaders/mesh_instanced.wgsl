@@ -744,6 +744,8 @@ fn compute_lit(
                                        ao_factor, lights_uniform.ibl_intensity,
                                        lights_uniform.ibl_rotation, refl_dr);
             }
+            ibl.diffuse *= lights_uniform.ibl_diffuse_scale;
+            ibl.specular *= lights_uniform.ibl_specular_scale;
             ambient = ibl.diffuse + ibl.specular;
             dbg_ibl_diff_lum = dot(ibl.diffuse, lum_weights);
             dbg_ibl_spec_lum = dot(ibl.specular, lum_weights);

@@ -84,15 +84,16 @@ pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 
 pub use self::types::{
     Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
-    BloomSettings, CameraFrame, Candela, ClipObject, ClipShape, ContactShadowSettings,
-    DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings, DofSettings, EdlSettings,
-    EffectsFrame, EnvironmentSettings, ExposureMode, ExposureSettings, FillRule, ForegroundPass,
-    ForegroundProjection, FrameData, GlyphRunItem, GradientStop, GroundPlane, GroundPlaneMode,
-    IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
-    LightKind, LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux,
-    MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
-    OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
-    OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
+    BackgroundSource, BloomSettings, CameraFrame, Candela, ClipObject, ClipShape,
+    ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings, DofSettings,
+    EdlSettings, EffectsFrame, EnvironmentBackground, EnvironmentIntensity, EnvironmentLighting,
+    ExposureMode, ExposureSettings, FillRule, ForegroundPass, ForegroundProjection, FrameData,
+    GlyphRunItem, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
+    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
+    LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS,
+    MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS,
+    OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip, OverlayContentHash,
+    OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
     OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
     OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment,
     PipelineMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph,
@@ -229,6 +230,10 @@ pub(crate) struct ViewportSlot {
     /// Version of the last sub-selection snapshot that was uploaded.
     /// `u64::MAX` forces a rebuild on the first frame.
     pub sub_highlight_generation: u64,
+    /// The skybox bind group for this viewport's background environment.
+    pub skybox: Option<crate::resources::material::environment::SkyboxBinding>,
+    /// Whether this viewport draws a skybox this frame.
+    pub draw_skybox: bool,
 }
 
 /// Renderer wrapping all GPU resources and providing `prepare()` and `paint()` methods.
@@ -2776,8 +2781,8 @@ impl ViewportRenderer {
     /// Upload an equirectangular environment, bake its lighting, and return its
     /// handle. Blocks until the bake finishes.
     ///
-    /// Name the handle in [`EnvironmentSettings::environment`] to light the scene
-    /// with it and draw it as the skybox, or in an
+    /// Name the handle in an [`EnvironmentLighting`] to light the scene with it,
+    /// in an [`EnvironmentBackground`] to draw it behind a viewport, or in an
     /// [`EnvironmentZone`](crate::resources::EnvironmentZone). `data` is a whole
     /// Z-up panorama; a float image (`TextureData::hdr`) gives realistic light,
     /// while an 8-bit image is decoded by its colour space but lights flat. See
@@ -3325,6 +3330,8 @@ impl ViewportRenderer {
                 cap_pool: Vec::new(),
                 sub_highlight: None,
                 sub_highlight_generation: u64::MAX,
+                skybox: None,
+                draw_skybox: false,
                 dyn_res: None,
                 hdr_callback: None,
             });

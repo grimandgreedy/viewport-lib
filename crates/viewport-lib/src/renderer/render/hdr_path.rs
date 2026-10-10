@@ -763,12 +763,11 @@ impl ViewportRenderer {
             render_pass.set_bind_group(0, camera_bg, &[]);
 
             // Check skybox eligibility early; drawn after all opaques below.
-            let show_skybox = frame
-                .effects
-                .environment
+            let skybox_bg = self.viewport_slots[vp_idx]
+                .skybox
                 .as_ref()
-                .is_some_and(|e| e.show_skybox)
-                && resources.ibl.skybox_view.is_some();
+                .filter(|_| self.viewport_slots[vp_idx].draw_skybox)
+                .map(|b| &b.bind_group);
 
             let use_instancing = self.instancing.use_instancing;
             let batches = &self.instancing.batches;
@@ -1585,8 +1584,9 @@ impl ViewportRenderer {
             // pass depth == 1.0. Drawn before plugin paint so blended plugin
             // content (additive/alpha particles that do not write depth)
             // composites over the sky instead of being painted over by it.
-            if show_skybox {
+            if let Some(skybox_bg) = skybox_bg {
                 render_pass.set_bind_group(0, camera_bg, &[]);
+                render_pass.set_bind_group(1, skybox_bg, &[]);
                 render_pass.set_pipeline(resources.ibl.skybox_pipeline());
                 render_pass.draw(0..3, 0..1);
             }

@@ -1371,10 +1371,35 @@ impl DeviceResources {
             "skybox_shader",
             crate::resources::builders::wgsl_source!("skybox"),
         );
+        let skybox_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("skybox_background_bgl"),
+            entries: &[
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
+        });
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "skybox_pipeline_layout",
-            &[&self.binds.camera_bgl],
+            &[&self.binds.camera_bgl, &skybox_bgl],
         );
         let pipeline = crate::resources::builders::render_pipeline(
             device,
@@ -1409,6 +1434,7 @@ impl DeviceResources {
             },
         );
         self.ibl.skybox_pipeline = Some(pipeline);
+        self.ibl.skybox_bgl = Some(skybox_bgl);
     }
 
     /// The layout the outline mask and x-ray pipelines share: camera, the

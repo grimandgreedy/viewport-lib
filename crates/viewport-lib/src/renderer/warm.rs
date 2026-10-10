@@ -54,7 +54,7 @@ impl PipelineSet {
             ssaa: pp.ssaa_factor > 1,
             auto_exposure: effects.display.exposure.manual_multiplier().is_none(),
             ground_plane: !matches!(effects.ground_plane.mode, GroundPlaneMode::None),
-            skybox: effects.environment.as_ref().is_some_and(|e| e.show_skybox),
+            skybox: effects.environment.is_some(),
             ..Self::default()
         }
     }

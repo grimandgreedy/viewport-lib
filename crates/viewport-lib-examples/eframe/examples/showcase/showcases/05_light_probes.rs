@@ -32,7 +32,7 @@ use vpl::resources::{
     LightProbe, LightProbeSet, LightmapData, LightmapMode, SHCoefficients, TextureId,
 };
 use vpl::{
-    Aabb, BackfacePolicy, EnvironmentMapId, EnvironmentOptions, EnvironmentSettings,
+    Aabb, BackfacePolicy, EnvironmentLighting, EnvironmentMapId, EnvironmentOptions,
     EnvironmentZone, IndirectLightSource, LightKind, LightSource, Material, MeshId, NodeId,
     TextureData, primitives,
 };
@@ -607,12 +607,7 @@ impl IndirectLightingShowcase {
         } else if self.mode == 1 {
             // Zone mode: enable the default environment (+ skybox), clear probes,
             // and reflect the zoned environments off polished metal spheres.
-            session.effects_mut().environment = Some(EnvironmentSettings {
-                environment: self.default_env,
-                intensity: 1.0,
-                rotation: 0.0,
-                show_skybox: true,
-            });
+            session.effects_mut().environment = self.default_env.map(EnvironmentLighting::new);
             session
                 .renderer_mut()
                 .set_light_probes(LightProbeSet::new(vec![]));

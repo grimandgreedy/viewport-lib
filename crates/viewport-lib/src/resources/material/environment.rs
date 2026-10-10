@@ -43,8 +43,9 @@ pub(crate) struct IblResources {
     pub(crate) brdf_lut_view: Option<crate::gpu::TextureView>,
     /// Linear-clamp sampler (binding 10).
     pub(crate) sampler: crate::gpu::Sampler,
-    /// Full-resolution source of the lighting environment, drawn as the skybox
-    /// (binding 11). None while no environment lights the scene.
+    /// Full-resolution source of the lighting environment (binding 11). None
+    /// while no environment lights the scene. The skybox draws from each
+    /// viewport's own bind group instead ([`SkyboxBinding`]).
     pub(crate) skybox_view: Option<crate::gpu::TextureView>,
     /// Fallback 1x1 black Rgba16Float texture for the skybox slot (binding 11)
     /// when no environment is loaded.
@@ -91,6 +92,9 @@ pub(crate) struct IblResources {
     /// background). `None` until a frame draws a skybox; see
     /// [`DeviceResources::ensure_skybox_pipeline`](crate::resources::DeviceResources::ensure_skybox_pipeline).
     pub(crate) skybox_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Layout of each viewport's skybox bind group (group 1): the background
+    /// uniform and the environment's source. Built with the pipeline.
+    pub(crate) skybox_bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
 /// One layer of the environment set.
@@ -139,24 +143,133 @@ impl IblResources {
     pub(crate) fn is_baked(&self, id: EnvironmentMapId) -> bool {
         self.live_slot(id).is_some_and(|s| s.source.is_some())
     }
-
-    /// The environment that lights the scene: `requested` if it is baked, or
-    /// with no request the lowest baked environment.
-    fn resolve_lighting(&self, requested: Option<EnvironmentMapId>) -> Option<EnvironmentMapId> {
-        match requested {
-            Some(id) => self.is_baked(id).then_some(id),
-            None => self
-                .env_slots
-                .iter()
-                .enumerate()
-                .skip(1)
-                .find(|(_, s)| s.live && s.source.is_some())
-                .map(|(i, s)| EnvironmentMapId::from_parts(i as u32, s.generation)),
-        }
-    }
 }
 
 pub use viewport_lib_types::ids::EnvironmentMapId;
+
+use viewport_lib_types::effects::environment::{
+    BackgroundSource, EnvironmentBackground, EnvironmentIntensity, EnvironmentLighting,
+};
+
+/// GPU layout of a viewport's background (skybox group 1, binding 0), matching
+/// the WGSL `Background`.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct BackgroundUniform {
+    intensity: f32,
+    rotation: f32,
+    /// Prefiltered mip to sample, or negative for the sharp source.
+    blur_lod: f32,
+    layer: u32,
+}
+
+/// A viewport's skybox bind group, built for one environment.
+pub(crate) struct SkyboxBinding {
+    env: EnvironmentMapId,
+    buf: crate::gpu::Buffer,
+    pub(crate) bind_group: crate::gpu::BindGroup,
+}
+
+/// The factor `intensity` scales `env`'s stored radiance by.
+pub(crate) fn environment_multiplier(
+    _ibl: &IblResources,
+    _env: EnvironmentMapId,
+    intensity: EnvironmentIntensity,
+) -> f32 {
+    match intensity {
+        EnvironmentIntensity::Multiplier(m) => m,
+        _ => 1.0,
+    }
+}
+
+/// The environment a viewport draws behind the scene and how, or `None` for
+/// the flat background colour.
+pub(crate) fn resolve_background(
+    ibl: &IblResources,
+    background: &EnvironmentBackground,
+    lighting: Option<&EnvironmentLighting>,
+    lighting_intensity: EnvironmentIntensity,
+) -> Option<(EnvironmentMapId, BackgroundUniform)> {
+    let env = match background.source {
+        BackgroundSource::LightingEnvironment => lighting?.environment,
+        BackgroundSource::Environment(env) => env,
+        _ => return None,
+    };
+    if !ibl.is_baked(env) {
+        return None;
+    }
+    let intensity = background.intensity.unwrap_or(lighting_intensity);
+    let blur_lod = if background.blur > 0.0 {
+        background.blur.min(1.0) * (IBL_PREFILTER_MIPS - 1) as f32
+    } else {
+        -1.0
+    };
+    Some((
+        env,
+        BackgroundUniform {
+            intensity: environment_multiplier(ibl, env, intensity),
+            rotation: background
+                .rotation
+                .unwrap_or(lighting.map_or(0.0, |l| l.rotation)),
+            blur_lod,
+            layer: env.index(),
+        },
+    ))
+}
+
+/// Make `binding` draw `background`, building the skybox pipeline and the bind
+/// group as needed. Returns whether the viewport draws a skybox.
+pub(crate) fn prepare_background(
+    resources: &mut crate::resources::DeviceResources,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    binding: &mut Option<SkyboxBinding>,
+    background: Option<(EnvironmentMapId, BackgroundUniform)>,
+) -> bool {
+    let Some((env, uniform)) = background else {
+        *binding = None;
+        return false;
+    };
+    resources.ensure_skybox_pipeline(device);
+    if binding.as_ref().is_none_or(|b| b.env != env) {
+        let ibl = &resources.ibl;
+        let (_, source) = ibl.env_slots[env.index() as usize]
+            .source
+            .as_ref()
+            .expect("a resolved background is baked");
+        let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("skybox_background_buf"),
+            size: std::mem::size_of::<BackgroundUniform>() as u64,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("skybox_background_bg"),
+            layout: ibl
+                .skybox_bgl
+                .as_ref()
+                .expect("built with the skybox pipeline"),
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 1,
+                    resource: crate::gpu::BindingResource::TextureView(source),
+                },
+            ],
+        });
+        *binding = Some(SkyboxBinding {
+            env,
+            buf,
+            bind_group,
+        });
+    }
+    let b = binding.as_ref().expect("set above");
+    queue.write_buffer(&b.buf, 0, bytemuck::bytes_of(&uniform));
+    true
+}
 
 /// Options for an environment upload. Nothing to set yet; pass
 /// `EnvironmentOptions::default()`.
@@ -433,18 +546,18 @@ pub fn free_environment(
     true
 }
 
-/// Make array layer 0 hold the environment that lights the scene and point the
-/// skybox at its source. `requested` names it; `None` takes the lowest baked
-/// environment. Returns whether an environment lights the scene.
+/// Make array layer 0 hold `requested`, the environment that lights the scene,
+/// and point binding 11 at its source. Returns whether it is baked and lights
+/// the scene.
 ///
 /// Runs in `prepare`. Copies only when the selection changes.
 pub(crate) fn select_lighting_environment(
     resources: &mut crate::resources::DeviceResources,
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
-    requested: Option<EnvironmentMapId>,
+    requested: EnvironmentMapId,
 ) -> bool {
-    let selected = resources.ibl.resolve_lighting(requested);
+    let selected = resources.ibl.is_baked(requested).then_some(requested);
     if selected == resources.ibl.lighting {
         return selected.is_some();
     }
@@ -1478,7 +1591,7 @@ mod tests {
             &mut resources,
             &device,
             &queue,
-            None
+            env
         ));
         assert_eq!(resources.ibl.lighting, Some(env));
         assert!(resources.ibl.skybox_view.is_some());
@@ -1521,19 +1634,16 @@ mod tests {
             &mut resources,
             &device,
             &queue,
-            None
+            red
         ));
         let lit = irradiance_mean(&resources, &device, &queue, 0);
-        assert!(
-            lit[0] > 0.5 && lit[1] < 0.05,
-            "lowest environment lights: {lit:?}"
-        );
+        assert!(lit[0] > 0.5 && lit[1] < 0.05, "red lights: {lit:?}");
 
         assert!(select_lighting_environment(
             &mut resources,
             &device,
             &queue,
-            Some(green)
+            green
         ));
         let lit = irradiance_mean(&resources, &device, &queue, 0);
         assert!(lit[1] > 0.5 && lit[0] < 0.05, "selection switched: {lit:?}");
@@ -1542,7 +1652,7 @@ mod tests {
             &mut resources,
             &device,
             &queue,
-            Some(red)
+            red
         ));
         let lit = irradiance_mean(&resources, &device, &queue, 0);
         assert!(lit[0] > 0.5 && lit[1] < 0.05, "and back: {lit:?}");
@@ -1560,7 +1670,7 @@ mod tests {
             &mut resources,
             &device,
             &queue,
-            Some(env)
+            env
         ));
 
         assert!(free_environment(&mut resources, env));
@@ -1570,13 +1680,7 @@ mod tests {
             &mut resources,
             &device,
             &queue,
-            Some(env)
-        ));
-        assert!(!select_lighting_environment(
-            &mut resources,
-            &device,
-            &queue,
-            None
+            env
         ));
 
         let again = upload(&mut resources, &device, &queue, [0.2, 0.2, 0.2]).unwrap();
@@ -1586,13 +1690,13 @@ mod tests {
             &mut resources,
             &device,
             &queue,
-            Some(env)
+            env
         ));
         assert!(select_lighting_environment(
             &mut resources,
             &device,
             &queue,
-            Some(again)
+            again
         ));
     }
 

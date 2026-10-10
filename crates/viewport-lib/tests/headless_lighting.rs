@@ -1209,12 +1209,8 @@ fn environment_zones_select_the_second_zone() {
     frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
     // IBL on, no direct or hemisphere light, so the matte sphere shows only the
     // selected environment's irradiance.
-    frame.effects.environment = Some(viewport_lib::EnvironmentSettings {
-        environment: Some(black),
-        intensity: 1.0,
-        rotation: 0.0,
-        show_skybox: false,
-    });
+    frame.effects.environment = Some(viewport_lib::EnvironmentLighting::new(black));
+    frame.viewport.environment_background = viewport_lib::EnvironmentBackground::colour();
     frame.effects.lighting.lights = vec![];
     frame.effects.lighting.hemisphere_intensity = 0.0;
 
@@ -1259,11 +1255,8 @@ fn environment_lit_sphere(
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
-    frame.effects.environment = Some(viewport_lib::EnvironmentSettings {
-        environment,
-        show_skybox: false,
-        ..Default::default()
-    });
+    frame.effects.environment = environment.map(viewport_lib::EnvironmentLighting::new);
+    frame.viewport.environment_background = viewport_lib::EnvironmentBackground::colour();
     frame.effects.lighting.lights = vec![];
     frame.effects.lighting.hemisphere_intensity = 0.0;
     let mut item = SceneRenderItem::default();

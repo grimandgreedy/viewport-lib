@@ -297,17 +297,19 @@ pub struct LightsUniform {
     pub ibl_enabled: u32, // 4 bytes
     /// IBL intensity multiplier.
     pub ibl_intensity: f32, // 4 bytes
-    /// IBL Y-axis rotation in radians.
+    /// IBL rotation about +Z in radians.
     pub ibl_rotation: f32, // 4 bytes
-    /// 1 = show skybox background, 0 = use background colour.
-    pub show_skybox: u32, // 4 bytes
+    /// Scale on the IBL diffuse term.
+    pub ibl_diffuse_scale: f32, // 4 bytes
     /// Normalized split X position (0..1) for SplitScreen debug mode.
     pub debug_vis_split_x: f32, // 4 bytes
     /// Number of active environment-selection zones (binding 19). 0 = the single
     /// default environment (layer 0); the shaders skip the per-fragment zone loop.
     pub env_zone_count: u32, // 4 bytes
-    /// Reserved for future debug uniform fields.
-    pub _pad_dbg: [u32; 2], // 8 bytes
+    /// Scale on the IBL specular term.
+    pub ibl_specular_scale: f32, // 4 bytes
+    /// Reserved.
+    pub _pad_dbg: u32, // 4 bytes
 }
 
 /// Maximum number of lights packed into `light_storage_buf` per frame.

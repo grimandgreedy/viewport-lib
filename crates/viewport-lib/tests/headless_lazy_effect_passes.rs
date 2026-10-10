@@ -80,7 +80,7 @@ fn a_viewport_can_ask_for_an_effect_the_scene_frame_did_not() {
         .unwrap();
     // A skybox only draws once an environment map is resident.
     let texels = vec![0.5f32; 8 * 4 * 4];
-    renderer
+    let env = renderer
         .upload_environment(
             &device,
             &queue,
@@ -111,7 +111,7 @@ fn a_viewport_can_ask_for_an_effect_the_scene_frame_did_not() {
         // The second viewport turns all three on.
         let mut busy = base(vp1);
         busy.effects.ground_plane.mode = GroundPlaneMode::SolidColour;
-        busy.effects.environment = Some(Default::default());
+        busy.effects.environment = Some(viewport_lib::EnvironmentLighting::new(env));
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         busy.scene.foreground_items = vec![item];

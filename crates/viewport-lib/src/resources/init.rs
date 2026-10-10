@@ -1963,6 +1963,7 @@ impl DeviceResources {
                 env_zone_count: 0,
                 brdf_lut_texture: None,
                 skybox_pipeline: None,
+                skybox_bgl: None,
             },
             pick: crate::resources::types::PickResources::default(),
 
