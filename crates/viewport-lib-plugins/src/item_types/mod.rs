@@ -163,9 +163,7 @@ pub mod image_slice;
 pub mod point_cloud;
 pub mod scatter_volume;
 pub mod sprite;
-#[cfg(feature = "gpu")]
 pub mod surface_contour;
-#[cfg(feature = "gpu")]
 pub mod surface_lic;
 pub mod tensor_field;
 pub mod vector_field;
