@@ -53,9 +53,9 @@ fn to_u8(x: f32) -> u8 {
     (clamp01(x) * 255.0 + 0.5) as u8
 }
 
-/// Sample a 256-entry RGBA8 LUT at `t` in `[0, 1]`, linearly interpolating
-/// between neighbouring entries. `t` is clamped to `[0, 1]`. Returns linear
-/// RGBA in `[0, 1]`, matching the GPU LUT sampler's filtering.
+/// Sample a 256-entry sRGB RGBA8 LUT at `t` in `[0, 1]`, interpolating
+/// between neighbouring entries as stored. `t` is clamped to `[0, 1]`. Returns
+/// sRGB RGBA in `[0, 1]`.
 fn sample_lut_rgba(lut: &[[u8; 4]; 256], t: f32) -> [f32; 4] {
     let x = clamp01(t) * 255.0;
     let lo = x.floor() as usize;
@@ -1751,7 +1751,9 @@ impl BuiltinColourmap {
         }
     }
 
-    /// Return this preset's 256-sample CPU LUT as linear RGBA8.
+    /// Return this preset's 256-sample CPU LUT as sRGB RGBA8: the display
+    /// values the colourmap is authored in. Upload it as sRGB (for example
+    /// `TextureData::srgb`), not linear, or every colour comes out too light.
     ///
     /// This is the same table the GPU texture is baked from, so a CPU-side
     /// legend, export, or thumbnail samples exactly what the renderer draws.
@@ -1772,15 +1774,16 @@ impl BuiltinColourmap {
         }
     }
 
-    /// Sample this preset at `t` in `[0, 1]`, returning linear RGBA in `[0, 1]`.
+    /// Sample this preset at `t` in `[0, 1]`, returning sRGB RGBA in `[0, 1]`.
     ///
     /// `t` is clamped to `[0, 1]` and values between the 256 stored samples are
-    /// linearly interpolated.
+    /// interpolated as stored. Pass the result to `Colour::from_srgb_array` for
+    /// a colour.
     pub fn sample(self, t: f32) -> [f32; 4] {
         sample_lut_rgba(&self.lut_rgba(), t)
     }
 
-    /// Resample this preset to an `n`-entry LUT of linear RGBA in `[0, 1]`.
+    /// Resample this preset to an `n`-entry LUT of sRGB RGBA in `[0, 1]`.
     ///
     /// Entry `i` samples at `t = i / (n - 1)`, so the first entry is `t = 0`
     /// and the last is `t = 1`. A single-entry request samples `t = 0`; `n == 0`
