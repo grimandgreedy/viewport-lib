@@ -152,7 +152,6 @@ macro_rules! field_sample_writes {
     };
 }
 
-#[cfg(feature = "gpu")]
 pub mod curves;
 pub mod decal;
 #[cfg(feature = "gpu")]
@@ -160,12 +159,10 @@ pub mod external_instances;
 pub mod gaussian_splat;
 pub mod gpu_implicit;
 pub mod gpu_marching_cubes;
-#[cfg(feature = "gpu")]
 pub mod gpu_particles;
 pub mod image_slice;
 pub mod point_cloud;
 pub mod scatter_volume;
-#[cfg(feature = "gpu")]
 pub mod sprite;
 #[cfg(feature = "gpu")]
 pub mod surface_contour;

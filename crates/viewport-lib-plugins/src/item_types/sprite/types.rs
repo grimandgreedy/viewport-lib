@@ -1,15 +1,15 @@
-use viewport_lib::Colour;
-use viewport_lib::ItemSettings;
-use viewport_lib::renderer::SpriteBlend;
+use viewport_lib_types::colour::Colour;
+use viewport_lib_types::material::ItemSettings;
+use viewport_lib_types::render_item::SpriteBlend;
 
-viewport_lib::resources::handle::slot_handle! {
+viewport_lib_types::slot_handle! {
     /// Handle to a sprite batch uploaded once through
     /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload).
     /// Backs static billboards such as foliage, signage and light flares.
     pub struct SpriteSetId;
 }
 
-viewport_lib::resources::handle::slot_handle! {
+viewport_lib_types::slot_handle! {
     /// Handle to a sprite instance set uploaded once through
     /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload).
     /// Backs entity sprites such as NPCs, item drops and damage numbers.
@@ -50,13 +50,13 @@ pub struct SpriteItem {
     /// `None` renders solid-colour quads using `colours` / `default_colour` only.
     ///
     /// Colour, so upload it sRGB
-    /// ([`TextureData::srgb`](viewport_lib::resources::TextureData::srgb)).
-    pub texture_id: Option<viewport_lib::resources::TextureId>,
+    /// ([`TextureData::srgb`](viewport_lib_types::data::texture::TextureData::srgb)).
+    pub texture_id: Option<viewport_lib_types::ids::TextureId>,
     /// World-space positions, one per sprite instance.
     pub positions: Vec<[f32; 3]>,
     /// Per-instance RGBA colour tints. Empty = use `default_colour` for all.
     /// Multiplied with the texture sample (or used directly when `texture_id` is `None`).
-    pub colours: Vec<viewport_lib::Colour>,
+    pub colours: Vec<viewport_lib_types::colour::Colour>,
     /// Per-instance sizes. Empty = use `default_size` for all.
     /// Interpretation depends on `size_mode`.
     pub sizes: Vec<f32>,
@@ -67,7 +67,7 @@ pub struct SpriteItem {
     /// Empty = full texture `[0.0, 0.0, 1.0, 1.0]` for all.
     pub uv_rects: Vec<[f32; 4]>,
     /// Fallback RGBA colour tint used when `colours` is empty. Default: opaque white.
-    pub default_colour: viewport_lib::Colour,
+    pub default_colour: viewport_lib_types::colour::Colour,
     /// Default size when `sizes` is empty. Pixels (ScreenSpace) or world units (WorldSpace).
     pub default_size: f32,
     /// Whether sizes are in screen-space pixels or world-space units.
@@ -133,8 +133,8 @@ pub struct SpriteItem {
     /// normal even when the mode requests a map.
     ///
     /// Directions, not colour, so upload it linear
-    /// ([`TextureData::normal_map`](viewport_lib::resources::TextureData::normal_map)).
-    pub normal_texture_id: Option<viewport_lib::resources::TextureId>,
+    /// ([`TextureData::normal_map`](viewport_lib_types::data::texture::TextureData::normal_map)).
+    pub normal_texture_id: Option<viewport_lib_types::ids::TextureId>,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
 }
@@ -264,7 +264,7 @@ mod lit_sprite_tests {
                 receive_shadows: true,
                 ambient_scale: 0.2,
             },
-            normal_texture_id: Some(viewport_lib::resources::TextureId::from_raw(7)),
+            normal_texture_id: Some(viewport_lib_types::ids::TextureId::from_raw(7)),
             orientation: SpriteOrientation::VelocityStretched,
             velocities: vec![[1.0, 0.0, 0.0]],
             positions: vec![[0.0, 0.0, 0.0]],
@@ -277,7 +277,7 @@ mod lit_sprite_tests {
         assert!(item.lit_params.receive_shadows);
         assert_eq!(
             item.normal_texture_id,
-            Some(viewport_lib::resources::TextureId::from_raw(7))
+            Some(viewport_lib_types::ids::TextureId::from_raw(7))
         );
         assert_eq!(item.orientation, SpriteOrientation::VelocityStretched);
     }

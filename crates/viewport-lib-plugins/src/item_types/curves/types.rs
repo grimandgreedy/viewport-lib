@@ -3,27 +3,27 @@
 //! They share a shape (a control polyline plus per-point width) and a pipeline
 //! family, so they share a module the way the plugins that draw them do.
 
-use viewport_lib::Colour;
-viewport_lib::resources::handle::slot_handle! {
+use viewport_lib_types::colour::Colour;
+viewport_lib_types::slot_handle! {
     /// Handle to a streamtube uploaded once through
     /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload).
     pub struct StreamtubeId;
 }
 
-viewport_lib::resources::handle::slot_handle! {
+viewport_lib_types::slot_handle! {
     /// Handle to a tube uploaded once through
     /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload).
     pub struct TubeId;
 }
 
-viewport_lib::resources::handle::slot_handle! {
+viewport_lib_types::slot_handle! {
     /// Handle to a ribbon uploaded once through
     /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload).
     pub struct RibbonId;
 }
 
-use viewport_lib::ItemSettings;
-use viewport_lib::renderer::SpriteBlend;
+use viewport_lib_types::material::ItemSettings;
+use viewport_lib_types::render_item::SpriteBlend;
 
 const IDENTITY_MAT4: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
 
@@ -45,7 +45,7 @@ pub struct StreamtubeItem {
     /// Tube radius in world-space units.  Default: `0.05`.
     pub radius: f32,
     /// RGBA colour for all tube segments in this item.  Default: opaque white.
-    pub colour: viewport_lib::Colour,
+    pub colour: viewport_lib_types::colour::Colour,
     /// Per-frame model matrix applied to `positions` in the vertex shader.
     /// Identity (the default) renders the tube at the world-space coordinates
     /// passed in `positions`. Set this to move a pre-uploaded streamtube without
@@ -93,9 +93,9 @@ pub struct TubeItem {
     /// Scalar range for LUT mapping. `None` = auto from data min/max.
     pub scalar_range: Option<(f32, f32)>,
     /// Colourmap for scalar colouring. `None` = default builtin (viridis).
-    pub colourmap_id: Option<viewport_lib::resources::ColourmapId>,
+    pub colourmap_id: Option<viewport_lib_types::colourmap::ColourmapId>,
     /// Flat RGBA colour used when `scalars` is empty.  Default: opaque white.
-    pub colour: viewport_lib::Colour,
+    pub colour: viewport_lib_types::colour::Colour,
     /// Per-frame model matrix applied to `positions` in the vertex shader.
     /// Identity (the default) renders the tube at the world-space coordinates
     /// passed in `positions`. Set this to move a pre-uploaded tube without
@@ -148,14 +148,14 @@ pub struct RibbonItem {
     /// Scalar range for LUT mapping. `None` = auto from data min/max.
     pub scalar_range: Option<(f32, f32)>,
     /// Colourmap for scalar colouring. `None` = default builtin (viridis).
-    pub colourmap_id: Option<viewport_lib::resources::ColourmapId>,
+    pub colourmap_id: Option<viewport_lib_types::colourmap::ColourmapId>,
     /// Flat RGBA colour used when `scalars` and `colour_attribute` are empty.
     /// Default: opaque white.
-    pub colour: viewport_lib::Colour,
+    pub colour: viewport_lib_types::colour::Colour,
     /// Optional per-point RGBA colour. When non-empty this overrides `colour`
     /// and the `scalars`/`colourmap_id` path, and is the natural way to express
     /// a trail that fades along its length (set each entry's alpha directly).
-    pub colour_attribute: Vec<viewport_lib::Colour>,
+    pub colour_attribute: Vec<viewport_lib_types::colour::Colour>,
     /// GPU blend state for this ribbon. Default: [`SpriteBlend::AlphaBlend`].
     /// Use [`SpriteBlend::Additive`] for energy or spark trails.
     pub blend: SpriteBlend,
@@ -176,8 +176,8 @@ pub struct RibbonItem {
     /// for lightning, slash arcs, dragon breath, laser beams.
     ///
     /// Colour, so upload it sRGB
-    /// ([`TextureData::srgb`](viewport_lib::resources::TextureData::srgb)).
-    pub texture_id: Option<viewport_lib::resources::TextureId>,
+    /// ([`TextureData::srgb`](viewport_lib_types::data::texture::TextureData::srgb)).
+    pub texture_id: Option<viewport_lib_types::ids::TextureId>,
     /// Optional per-vertex `u` coordinate along the strip. When empty, `u` is
     /// derived from cumulative arc length: 0.0 at the first vertex of each
     /// strip, 1.0 at the last. The cross-strip `v` is fixed at 0.0 on one
