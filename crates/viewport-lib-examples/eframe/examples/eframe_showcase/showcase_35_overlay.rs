@@ -449,7 +449,7 @@ pub(crate) fn build_overlay_frame(
             labels.push(
                 LabelItem::new(text)
                     .with_world_anchor(pos)
-                    .with_colour(Colour::srgb(colour[0], colour[1], colour[2], colour[3]))
+                    .with_colour(Colour::from_srgb_array(colour))
                     // A label draws text only: a contour keeps it readable over the
                     // scene. For a real panel behind it, submit an OverlayShapeItem
                     // with the same anchoring and the measured text plus padding.

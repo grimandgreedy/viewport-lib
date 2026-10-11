@@ -122,6 +122,19 @@ impl Colour {
         Self::srgb(r, g, b, 1.0)
     }
 
+    /// An sRGB RGBA array with 0..=1 channels: for values already held as
+    /// arrays, such as a theme table or a colour read from a saved document.
+    /// See [`srgb`](Self::srgb).
+    pub fn from_srgb_array([r, g, b, a]: [f32; 4]) -> Self {
+        Self::srgb(r, g, b, a)
+    }
+
+    /// An sRGB RGB array with alpha 1.0. See
+    /// [`from_srgb_array`](Self::from_srgb_array).
+    pub fn from_srgb_rgb_array([r, g, b]: [f32; 3]) -> Self {
+        Self::srgb(r, g, b, 1.0)
+    }
+
     /// An sRGB RGBA colour from 8-bit channels (the form a hex code or colour
     /// picker gives). RGB is decoded to linear; alpha is scaled to 0..=1.
     pub fn srgb_u8(r: u8, g: u8, b: u8, a: u8) -> Self {
@@ -196,6 +209,25 @@ impl Colour {
     /// without an alpha channel (base colour, emissive, light colour).
     pub const fn to_linear_rgb(self) -> [f32; 3] {
         [self.0[0], self.0[1], self.0[2]]
+    }
+
+    /// The sRGB RGBA array, the inverse of [`srgb`](Self::srgb): RGB is
+    /// encoded, alpha is returned as stored. For comparing against the colour a
+    /// theme or document asked for, or showing it in a colour picker.
+    pub fn to_srgb_rgba(self) -> [f32; 4] {
+        [
+            linear_to_srgb(self.0[0]),
+            linear_to_srgb(self.0[1]),
+            linear_to_srgb(self.0[2]),
+            self.0[3],
+        ]
+    }
+
+    /// The sRGB RGB array, dropping alpha. See
+    /// [`to_srgb_rgba`](Self::to_srgb_rgba).
+    pub fn to_srgb_rgb(self) -> [f32; 3] {
+        let [r, g, b, _] = self.to_srgb_rgba();
+        [r, g, b]
     }
 
     /// The alpha channel (linear coverage, 0..=1).
@@ -384,6 +416,25 @@ mod tests {
             let c = Colour::rgb(r, g, b);
             assert_eq!(c.to_srgb_u8(), [r, g, b, 255]);
         }
+    }
+
+    #[test]
+    fn srgb_arrays_match_the_channel_constructors_and_round_trip() {
+        let rgba = [0.2, 0.45, 0.9, 0.5];
+        let c = Colour::from_srgb_array(rgba);
+        assert_eq!(c, Colour::srgb(0.2, 0.45, 0.9, 0.5));
+        assert_eq!(
+            Colour::from_srgb_rgb_array([0.2, 0.45, 0.9]),
+            Colour::srgb_rgb(0.2, 0.45, 0.9)
+        );
+        for (got, want) in c.to_srgb_rgba().iter().zip(rgba) {
+            assert!((got - want).abs() < 1e-5, "{got} vs {want}");
+        }
+        assert_eq!(c.to_srgb_rgba()[3], 0.5);
+        assert_eq!(c.to_srgb_rgb(), {
+            let [r, g, b, _] = c.to_srgb_rgba();
+            [r, g, b]
+        });
     }
 
     #[test]

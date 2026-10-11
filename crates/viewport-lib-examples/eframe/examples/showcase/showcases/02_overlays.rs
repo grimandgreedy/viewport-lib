@@ -205,7 +205,7 @@ impl OverlaysShowcase {
             out.push(
                 LabelItem::new(text)
                     .with_world_anchor(pos)
-                    .with_colour(Colour::srgb(colour[0], colour[1], colour[2], colour[3]))
+                    .with_colour(Colour::from_srgb_array(colour))
                     // A label draws text only: a contour keeps it readable over the
                     // scene. For a real panel behind it, submit an OverlayShapeItem
                     // with the same anchoring and the measured text plus padding.
@@ -398,11 +398,7 @@ impl OverlaysShowcase {
                     .with_fill(OverlayFill::Solid(Colour::srgb(
                         fill[0], fill[1], fill[2], fill[3],
                     )))
-                    .with_outline(
-                        Colour::srgb(border[0], border[1], border[2], border[3]),
-                        bw,
-                        OutlineMode::Inset,
-                    ),
+                    .with_outline(Colour::from_srgb_array(border), bw, OutlineMode::Inset),
             );
             x += w + gap;
         }
@@ -566,11 +562,7 @@ impl OverlaysShowcase {
                     [90.0, 70.0],
                 )
                 .with_fill(OverlayFill::Solid(Colour::srgb(0.15, 0.15, 0.2, 0.9)))
-                .with_outline(
-                    Colour::srgb(colour[0], colour[1], colour[2], colour[3]),
-                    3.0,
-                    mode,
-                ),
+                .with_outline(Colour::from_srgb_array(colour), 3.0, mode),
             );
             x += 106.0;
         }

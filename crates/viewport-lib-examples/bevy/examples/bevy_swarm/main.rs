@@ -739,8 +739,7 @@ fn render_swarm(
         CameraFrame::from_camera(&data.camera, [w, h]),
         SceneFrame::from_surface_items(items).with_generation(data.generation),
     );
-    frame.viewport.background_colour =
-        Some(vpl::Colour::srgb(BG_SRGB[0], BG_SRGB[1], BG_SRGB[2], 1.0));
+    frame.viewport.background_colour = Some(vpl::Colour::from_srgb_rgb_array(BG_SRGB));
     frame.effects.lighting = LightingSettings::default();
     let mut post = PostProcessSettings::default();
     post.bloom.enabled = true;
