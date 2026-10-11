@@ -163,7 +163,6 @@ pub mod gpu_marching_cubes;
 #[cfg(feature = "gpu")]
 pub mod gpu_particles;
 pub mod image_slice;
-#[cfg(feature = "gpu")]
 pub mod point_cloud;
 pub mod scatter_volume;
 #[cfg(feature = "gpu")]
@@ -174,7 +173,6 @@ pub mod surface_contour;
 pub mod surface_lic;
 pub mod tensor_field;
 pub mod vector_field;
-#[cfg(feature = "gpu")]
 pub mod volume;
 pub mod volume_surface_slice;
 

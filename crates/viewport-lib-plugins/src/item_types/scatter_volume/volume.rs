@@ -88,11 +88,7 @@ impl Default for ScatterVolume {
 
 impl ScatterVolume {
     /// Convenience: a uniform-density box volume with flat colour.
-    pub fn box_uniform(
-        aabb: Aabb,
-        density: f32,
-        colour: impl Into<Colour>,
-    ) -> Self {
+    pub fn box_uniform(aabb: Aabb, density: f32, colour: impl Into<Colour>) -> Self {
         Self {
             shape: ScatterShape::Box(aabb),
             density,

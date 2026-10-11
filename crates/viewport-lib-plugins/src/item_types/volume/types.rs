@@ -1,10 +1,10 @@
-use viewport_lib::ItemSettings;
-use viewport_lib::resources::ColourmapId;
+use viewport_lib_types::colourmap::ColourmapId;
+use viewport_lib_types::material::ItemSettings;
 
 /// A volume item to render via GPU ray-marching.
 ///
 /// The caller uploads a 3D scalar field via [`DeviceResources::upload_volume`](viewport_lib::resources::DeviceResources::upload_volume) and
-/// receives a [`VolumeId`](viewport_lib::resources::VolumeId). Each frame, submit a `VolumeItem` referencing that id plus
+/// receives a [`VolumeId`](viewport_lib_types::ids::VolumeId). Each frame, submit a `VolumeItem` referencing that id plus
 /// transfer function and display parameters.
 ///
 /// # Picking
@@ -18,7 +18,7 @@ use viewport_lib::resources::ColourmapId;
 #[non_exhaustive]
 pub struct VolumeItem {
     /// Reference to a previously uploaded 3D texture.
-    pub volume_id: viewport_lib::resources::VolumeId,
+    pub volume_id: viewport_lib_types::ids::VolumeId,
     /// CPU scalar data for voxel picking.
     ///
     /// Must match the data passed to `upload_volume` for `volume_id`.
@@ -51,32 +51,15 @@ pub struct VolumeItem {
     /// Colour and opacity to use for NaN scalar samples. `None` = skip NaN samples entirely
     /// (same as current behaviour: discard). `Some([r, g, b, a])` = render NaN voxels with
     /// this fixed RGBA colour instead of sampling the transfer function.
-    pub nan_colour: Option<viewport_lib::Colour>,
+    pub nan_colour: Option<viewport_lib_types::colour::Colour>,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
-}
-
-impl VolumeItem {
-    /// The placement and scalar window this item picks against.
-    ///
-    /// The CPU volume picks in
-    /// [`viewport_lib::picking`](viewport_lib::picking) take that rather than
-    /// the whole item, so this is the conversion.
-    pub fn region(&self) -> viewport_lib::picking::VolumeRegion {
-        viewport_lib::picking::VolumeRegion {
-            model: self.model,
-            bbox_min: self.bbox_min,
-            bbox_max: self.bbox_max,
-            threshold_min: self.threshold_min,
-            threshold_max: self.threshold_max,
-        }
-    }
 }
 
 impl Default for VolumeItem {
     fn default() -> Self {
         Self {
-            volume_id: viewport_lib::resources::VolumeId::INVALID,
+            volume_id: viewport_lib_types::ids::VolumeId::INVALID,
             volume_data: None,
             colour_lut: None,
             opacity_lut: None,
