@@ -16,7 +16,10 @@ pub struct SubmeshRange {
 }
 
 /// Raw mesh data for upload to the GPU.
-#[derive(Clone)]
+///
+/// `PartialEq` compares every channel in full. Positions and attributes compare
+/// as floats, so a mesh holding a NaN is not equal to itself.
+#[derive(Clone, PartialEq)]
 #[non_exhaustive]
 pub struct MeshData {
     /// Vertex positions in local space.
@@ -71,6 +74,34 @@ pub struct MeshData {
     /// `SceneRenderItem::submesh_materials`. See [`SubmeshRange`] for the
     /// index-sorting contract.
     pub submeshes: Vec<SubmeshRange>,
+}
+
+impl std::fmt::Debug for MeshData {
+    /// Prints counts and which optional channels are present rather than the
+    /// vertices: a mesh is large enough that dumping it buries whatever else is
+    /// being logged.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut attributes: Vec<&str> = self.attributes.keys().map(String::as_str).collect();
+        attributes.sort_unstable();
+        f.debug_struct("MeshData")
+            .field("positions", &self.positions.len())
+            .field("normals", &self.normals.len())
+            .field("indices", &self.indices.len())
+            .field("uvs", &self.uvs.as_ref().map(Vec::len))
+            .field("uvs1", &self.uvs1.as_ref().map(Vec::len))
+            .field("tangents", &self.tangents.as_ref().map(Vec::len))
+            .field(
+                "vertex_colours",
+                &self.vertex_colours.as_ref().map(Vec::len),
+            )
+            .field("attributes", &attributes)
+            .field(
+                "extension_attributes",
+                &self.extension_attributes.as_ref().map(Vec::len),
+            )
+            .field("submeshes", &self.submeshes.len())
+            .finish()
+    }
 }
 
 impl Default for MeshData {
@@ -216,4 +247,34 @@ pub fn lerp_attributes(a: &[f32], b: &[f32], t: f32) -> Vec<f32> {
         .zip(b.iter())
         .map(|(&av, &bv)| av * one_minus_t + bv * t)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_prints_counts_not_vertices() {
+        let mut mesh = MeshData::new(
+            vec![[1.25, 0.0, 0.0]; 3],
+            vec![[0.0, 0.0, 1.0]; 3],
+            vec![0, 1, 2],
+        );
+        mesh.attributes
+            .insert("pressure".into(), AttributeData::Vertex(vec![0.0; 3]));
+        let text = format!("{mesh:?}");
+        assert!(text.contains("positions: 3"), "{text}");
+        assert!(text.contains("\"pressure\""), "{text}");
+        assert!(!text.contains("1.25"), "{text}");
+    }
+
+    #[test]
+    fn equality_covers_attributes() {
+        let a = MeshData::new(vec![[0.0; 3]; 3], vec![[0.0; 3]; 3], vec![0, 1, 2]);
+        let mut b = a.clone();
+        assert_eq!(a, b);
+        b.attributes
+            .insert("t".into(), AttributeData::Cell(vec![1.0]));
+        assert_ne!(a, b);
+    }
 }

@@ -29,7 +29,7 @@ pub enum AttributeKind {
 }
 
 /// Reference to a named scalar attribute on a mesh.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttributeRef {
     /// Name of the attribute as stored in `MeshData::attributes`.
     pub name: String,
@@ -38,7 +38,7 @@ pub struct AttributeRef {
 }
 
 /// Scalar data for a mesh attribute.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AttributeData {
     /// One `f32` per vertex.
     Vertex(Vec<f32>),
