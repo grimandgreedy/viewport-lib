@@ -1,5 +1,5 @@
-use super::blend::SpriteBlend;
 use crate::scene::material::ItemSettings;
+use viewport_lib_types::render_item::SpriteBlend;
 
 /// A host-built instanced draw of a single mesh at many per-instance transforms.
 ///
