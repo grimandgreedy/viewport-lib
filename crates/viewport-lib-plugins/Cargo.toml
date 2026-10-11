@@ -20,7 +20,7 @@ viewport-lib-types = { path = "../viewport-lib-types", version = "0.2", optional
 # the volume family reaches for, from the crate that owns them.
 viewport-lib-geometry = { path = "../viewport-lib-geometry", version = "0.2", optional = true }
 glam = { workspace = true }
-bytemuck = { version = "1.25", features = ["derive"], optional = true }
+bytemuck = { version = "1.25", features = ["derive"] }
 serde = { version = "1", features = ["derive"], optional = true }
 # Ray/trimesh cast for the volume-surface-slice CPU pick, the same version
 # viewport-lib uses so the two agree on hit geometry.
@@ -34,7 +34,7 @@ default = ["gpu", "wgpu27", "item-types", "deformers"]
 # The plugins themselves: stores, pipelines, shaders and upload calls. Off, the
 # crate holds only the data types a consumer builds (with `item-types`), and
 # depends on neither viewport-lib nor wgpu. Each wgpu leg turns this on.
-gpu = ["dep:viewport-lib", "dep:viewport-lib-geometry", "dep:parry3d", "dep:bytemuck"]
+gpu = ["dep:viewport-lib", "dep:viewport-lib-geometry", "dep:parry3d"]
 # One feature per module. A dependent on a non-default wgpu leg turns default
 # features off, so it names the modules it wants alongside the leg.
 item-types = ["dep:viewport-lib-types"]

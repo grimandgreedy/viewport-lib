@@ -159,7 +159,6 @@ pub mod decal;
 #[cfg(feature = "gpu")]
 pub mod external_instances;
 pub mod gaussian_splat;
-#[cfg(feature = "gpu")]
 pub mod gpu_implicit;
 #[cfg(feature = "gpu")]
 pub mod gpu_marching_cubes;
@@ -182,7 +181,6 @@ pub mod tensor_field;
 pub mod vector_field;
 #[cfg(feature = "gpu")]
 pub mod volume;
-#[cfg(feature = "gpu")]
 pub mod volume_surface_slice;
 
 #[cfg(feature = "gpu")]
