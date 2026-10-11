@@ -20,9 +20,8 @@
 //! the history slot (when temporal is on) or `raw_current` (when off) and
 //! composites onto the HDR target with premultiplied alpha-over.
 
-use super::volume::{
-    ColourSource, GpuRefractionVolume, GpuScatterVolume, MAX_SCATTER_VOLUMES, ScatterVolume,
-};
+use super::packing::{GpuRefractionVolume, GpuScatterVolume};
+use super::volume::{ColourSource, MAX_SCATTER_VOLUMES, ScatterVolume};
 use crate::item_types::shader::{lit_shader, scene_shader, wgsl_source};
 
 /// Unit proxy geometry for the pick pass: positions, indices, and the index

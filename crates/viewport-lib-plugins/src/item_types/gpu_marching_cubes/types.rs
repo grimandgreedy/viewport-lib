@@ -1,6 +1,7 @@
-use viewport_lib::{ItemSettings, Material};
+use viewport_lib_types::material::ItemSettings;
+use viewport_lib_types::material::Material;
 
-viewport_lib::resources::handle::slot_handle! {
+viewport_lib_types::slot_handle! {
     /// Handle to a volume scalar field uploaded for GPU marching cubes.
     ///
     /// Returned by [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload). Pass to

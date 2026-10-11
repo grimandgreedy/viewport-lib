@@ -34,10 +34,10 @@ default = ["gpu", "wgpu27", "item-types", "deformers"]
 # The plugins themselves: stores, pipelines, shaders and upload calls. Off, the
 # crate holds only the data types a consumer builds (with `item-types`), and
 # depends on neither viewport-lib nor wgpu. Each wgpu leg turns this on.
-gpu = ["dep:viewport-lib", "dep:viewport-lib-geometry", "dep:parry3d"]
+gpu = ["dep:viewport-lib", "dep:parry3d"]
 # One feature per module. A dependent on a non-default wgpu leg turns default
 # features off, so it names the modules it wants alongside the leg.
-item-types = ["dep:viewport-lib-types"]
+item-types = ["dep:viewport-lib-types", "dep:viewport-lib-geometry"]
 deformers = ["gpu"]
 # One leg, matching the viewport-lib the crate is built against. The renderer
 # re-exports its wgpu as `viewport_lib::gpu`, and everything here names types

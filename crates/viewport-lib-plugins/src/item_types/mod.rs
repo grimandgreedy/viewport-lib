@@ -154,20 +154,17 @@ macro_rules! field_sample_writes {
 
 #[cfg(feature = "gpu")]
 pub mod curves;
-#[cfg(feature = "gpu")]
 pub mod decal;
 #[cfg(feature = "gpu")]
 pub mod external_instances;
 pub mod gaussian_splat;
 pub mod gpu_implicit;
-#[cfg(feature = "gpu")]
 pub mod gpu_marching_cubes;
 #[cfg(feature = "gpu")]
 pub mod gpu_particles;
 pub mod image_slice;
 #[cfg(feature = "gpu")]
 pub mod point_cloud;
-#[cfg(feature = "gpu")]
 pub mod scatter_volume;
 #[cfg(feature = "gpu")]
 pub mod sprite;
@@ -175,9 +172,7 @@ pub mod sprite;
 pub mod surface_contour;
 #[cfg(feature = "gpu")]
 pub mod surface_lic;
-#[cfg(feature = "gpu")]
 pub mod tensor_field;
-#[cfg(feature = "gpu")]
 pub mod vector_field;
 #[cfg(feature = "gpu")]
 pub mod volume;
