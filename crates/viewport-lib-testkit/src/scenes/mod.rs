@@ -616,6 +616,42 @@ fn build_transparent_background(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
 }
 
+/// Per-item wireframe on surface meshes: a wireframe sphere and a
+/// half-transparent wireframe torus either side of a solid cube. Both
+/// wireframes draw edge lines only, and the transparent one draws them opaque.
+fn build_surface_wireframe(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let s = upload(ctx, &primitives::sphere(0.8, 24, 12));
+    let c = upload(ctx, &primitives::cube(1.2));
+    let t = upload(ctx, &primitives::torus(0.6, 0.22, 24, 12));
+    let mut sphere = item(
+        s,
+        Vec3::new(-2.5, 0.0, 0.0),
+        Material::pbr(Colour::linear_rgb(0.9, 0.5, 0.2), 0.2, 0.5),
+    );
+    sphere.settings.wireframe = true;
+    let mut torus = item(
+        t,
+        Vec3::new(2.5, 0.0, 0.0),
+        Material::pbr(Colour::linear_rgb(0.3, 0.8, 0.4), 0.3, 0.5),
+    );
+    torus.settings.wireframe = true;
+    torus.settings.opacity = 0.5;
+    BuiltScene {
+        items: vec![
+            sphere,
+            item(
+                c,
+                Vec3::ZERO,
+                Material::pbr(Colour::linear_rgb(0.4, 0.6, 0.9), 0.6, 0.4),
+            ),
+            torus,
+        ],
+        lighting: rigs::from_above(),
+        background: None,
+        ..Default::default()
+    }
+}
+
 fn build_materials_pbr(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let s = upload(ctx, &primitives::sphere(0.7, 48, 24));
     let mut items = Vec::new();
@@ -874,6 +910,11 @@ pub fn catalogue() -> Vec<NamedScene> {
             name: "transparent_background",
             cameras: standard_cameras(Vec3::ZERO, 7.0),
             build: build_transparent_background,
+        },
+        NamedScene {
+            name: "surface_wireframe",
+            cameras: standard_cameras(Vec3::ZERO, 9.0),
+            build: build_surface_wireframe,
         },
         NamedScene {
             name: "materials_pbr",

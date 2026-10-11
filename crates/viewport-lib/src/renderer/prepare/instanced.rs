@@ -488,17 +488,12 @@ impl ViewportRenderer {
                                 model: cm.model,
                                 colour: cm.colour,
                                 selected: cm.selected,
-                                // The instanced shader shades wireframe the same way the
-                                // per-object shader does: a per-instance flag that swaps
-                                // the fragment colour for flat grey, not a separate
-                                // pipeline or topology (see `mesh_instanced.wgsl`'s
-                                // `inst.wireframe` check, mirroring `mesh.wgsl`'s
-                                // `object.wireframe`). Previously hardcoded to 0 here, so
-                                // a batched item's own `settings.wireframe` was silently
-                                // dropped -- it rendered solid instead.
-                                wireframe: (frame.viewport.wireframe_mode
-                                    || item.settings.wireframe)
-                                    as u32,
+                                // Mirrors `mesh.wgsl`'s `object.wireframe`: the flat
+                                // colour edge lines are drawn in. A batched item never
+                                // sets `settings.wireframe` (`is_instanceable` sends it
+                                // per-object, where its edges are drawn), so only the
+                                // global toggle reaches here.
+                                wireframe: frame.viewport.wireframe_mode as u32,
                                 has_texture: cm.has_texture,
                                 has_normal_map: cm.has_normal_map,
                                 has_ao_map: cm.has_ao_map,
