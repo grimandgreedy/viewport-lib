@@ -388,7 +388,9 @@ impl OverlayPolylineItem {
         self
     }
 
-    /// Set the interior fill. Only used when the polyline is closed.
+    /// Set the interior fill. Only used when the polyline is closed. The
+    /// interior is taken under the non-zero rule, so an outline that touches or
+    /// crosses itself fills like the same path in SVG.
     pub fn with_fill(mut self, fill: OverlayFill) -> Self {
         self.style.fill = fill;
         self

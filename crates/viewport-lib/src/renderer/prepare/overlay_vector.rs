@@ -84,6 +84,87 @@ pub(crate) fn tessellate(subpaths: &[SubPath], fill_rule: FillRule, tolerance: f
     }
 }
 
+/// A filled closed polyline: positions, a triangle index list, and for each
+/// position the outline point it came from, as `(from, to, t)` indices into the
+/// input: `points[from]` moved toward `points[to]` by `t`. A position that is an
+/// input point has `from == to`.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PolygonMesh {
+    pub positions: Vec<[f32; 2]>,
+    pub indices: Vec<u32>,
+    pub sources: Vec<(usize, usize, f32)>,
+}
+
+/// Tessellate the closed outline through `points` under the non-zero fill rule.
+///
+/// Takes any outline: one that touches itself, doubles back along a spur or
+/// crosses itself fills like the same path in SVG. Positions do not map one to
+/// one to `points` (coincident points merge and crossings add vertices), so
+/// anything carried per input point is looked up through `sources`. Empty when
+/// there are fewer than three points, a point is not finite, or tessellation
+/// fails.
+pub(crate) fn tessellate_polygon(points: &[[f32; 2]]) -> PolygonMesh {
+    if points.len() < 3 || points.iter().flatten().any(|v| !v.is_finite()) {
+        return PolygonMesh::default();
+    }
+    let mut builder = Path::builder();
+    // Endpoint ids are assigned by the builder, so keep the map back to the
+    // input index rather than assuming they count from zero.
+    let mut input_of = Vec::with_capacity(points.len());
+    let mut push = |id: lyon_path::EndpointId, i: usize| {
+        let slot = id.to_usize();
+        if input_of.len() <= slot {
+            input_of.resize(slot + 1, 0);
+        }
+        input_of[slot] = i;
+    };
+    push(builder.begin(point(points[0][0], points[0][1])), 0);
+    for (i, p) in points.iter().enumerate().skip(1) {
+        push(builder.line_to(point(p[0], p[1])), i);
+    }
+    builder.end(true);
+    let path = builder.build();
+
+    let mut buffers: VertexBuffers<([f32; 2], (usize, usize, f32)), u32> = VertexBuffers::new();
+    // `tessellate_with_ids` rather than `tessellate_path`: only it reports which
+    // endpoints each output vertex came from.
+    let input = |id: lyon_path::EndpointId| input_of.get(id.to_usize()).copied().unwrap_or(0);
+    let result = FillTessellator::new().tessellate_with_ids(
+        path.id_iter(),
+        &path,
+        None,
+        &FillOptions::default().with_fill_rule(LyonFillRule::NonZero),
+        &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| {
+            let p = v.position();
+            let source = match v.sources().next() {
+                Some(lyon_tessellation::VertexSource::Endpoint { id }) => {
+                    let i = input(id);
+                    (i, i, 0.0)
+                }
+                Some(lyon_tessellation::VertexSource::Edge { from, to, t }) => {
+                    (input(from), input(to), t)
+                }
+                None => (0, 0, 0.0),
+            };
+            ([p.x, p.y], source)
+        }),
+    );
+    if let Err(e) = result {
+        tracing::debug!(
+            ?e,
+            points = points.len(),
+            "polygon fill tessellation failed"
+        );
+        return PolygonMesh::default();
+    }
+    let (positions, sources) = buffers.vertices.into_iter().unzip();
+    PolygonMesh {
+        positions,
+        indices: buffers.indices,
+        sources,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +239,103 @@ mod tests {
         let fine = tessellate(&[circle], FillRule::NonZero, 0.05);
         assert!(fine.positions.len() >= coarse.positions.len());
         assert!(fine.positions.len() > coarse.positions.len());
+    }
+
+    fn signed_area(p: &[[f32; 2]]) -> f32 {
+        (0..p.len())
+            .map(|i| {
+                let (a, b) = (p[i], p[(i + 1) % p.len()]);
+                a[0] * b[1] - b[0] * a[1]
+            })
+            .sum::<f32>()
+            * 0.5
+    }
+
+    /// Fraction of the outline's area the mesh's triangles cover.
+    fn coverage(mesh: &PolygonMesh, outline: &[[f32; 2]]) -> f32 {
+        let filled: f32 = mesh
+            .indices
+            .chunks_exact(3)
+            .map(|t| {
+                signed_area(&[
+                    mesh.positions[t[0] as usize],
+                    mesh.positions[t[1] as usize],
+                    mesh.positions[t[2] as usize],
+                ])
+                .abs()
+            })
+            .sum();
+        filled / signed_area(outline).abs()
+    }
+
+    #[test]
+    fn outline_through_a_point_twice_fills_completely() {
+        // A spur down to (0, 10) and back along the base to (0, 10) again.
+        let spur = [
+            [0.0, 6.0],
+            [0.0, 10.0],
+            [2.0, 2.0],
+            [4.0, 9.9],
+            [6.0, 3.0],
+            [6.0, 10.0],
+            [0.0, 10.0],
+        ];
+        // Two squares meeting at one corner, visited twice.
+        let touch = [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [2.0, 1.0],
+            [2.0, 2.0],
+            [1.0, 2.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+        ];
+        for outline in [&spur[..], &touch[..]] {
+            let c = coverage(&tessellate_polygon(outline), outline);
+            assert!((c - 1.0).abs() < 1e-3, "covered {c} of {outline:?}");
+        }
+    }
+
+    #[test]
+    fn sources_point_back_at_the_outline() {
+        let outline = [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]];
+        let mesh = tessellate_polygon(&outline);
+        assert_eq!(mesh.sources.len(), mesh.positions.len());
+        for (p, &(from, to, t)) in mesh.positions.iter().zip(&mesh.sources) {
+            let (a, b) = (outline[from], outline[to]);
+            let q = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+            assert!((p[0] - q[0]).abs() < 1e-4 && (p[1] - q[1]).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn large_outline_fills_completely() {
+        // An area-chart-like outline: a dense wavy top over a flat base.
+        let n = 4000;
+        let mut outline: Vec<[f32; 2]> = (0..n)
+            .map(|i| {
+                let x = i as f32;
+                [x, 50.0 + 40.0 * (x * 0.05).sin()]
+            })
+            .collect();
+        outline.push([(n - 1) as f32, 100.0]);
+        outline.push([0.0, 100.0]);
+        let c = coverage(&tessellate_polygon(&outline), &outline);
+        assert!((c - 1.0).abs() < 1e-3, "covered {c}");
+    }
+
+    #[test]
+    fn degenerate_outlines_are_empty() {
+        assert!(
+            tessellate_polygon(&[[0.0, 0.0], [1.0, 1.0]])
+                .indices
+                .is_empty()
+        );
+        assert!(
+            tessellate_polygon(&[[0.0, 0.0], [f32::NAN, 1.0], [1.0, 0.0]])
+                .indices
+                .is_empty()
+        );
     }
 }
