@@ -1,7 +1,7 @@
 //! Showcase 31: Sparse Volume Grids
 //!
 //! Occupied cells of a regular grid, drawn as a volume mesh. Each grid is
-//! built with `VolumeMeshData::from_grid_cells`, which makes one hex per
+//! built with `GridCells::from_cells`, which makes one hex per
 //! occupied cell, and uploaded with `upload_volume_mesh`, which keeps only the
 //! faces not shared between two cells. Three grids with different occupancy
 //! are shown side by side.
@@ -39,7 +39,7 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
     AttributeKind, AttributeRef, BuiltinColourmap, ColourmapId, GridCells, LightingSettings,
-    MeshId, SceneRenderItem, ViewportRenderer, VolumeMeshData,
+    MeshId, SceneRenderItem, ViewportRenderer,
 };
 
 // ---------------------------------------------------------------------------
@@ -165,8 +165,7 @@ fn build_sphere_grid() -> GridCells {
         }
     }
 
-    let mut grid =
-        VolumeMeshData::from_grid_cells([-(GRID_N as f32) / 2.0; 3], [1.0; 3], &active_cells);
+    let mut grid = GridCells::from_cells([-(GRID_N as f32) / 2.0; 3], [1.0; 3], &active_cells);
     let node_dist = grid.node_values(&node_dist, [nd, nd, nd]);
     grid.data
         .cell_scalars
@@ -227,8 +226,7 @@ fn build_hollow_shell() -> GridCells {
         }
     }
 
-    let mut grid =
-        VolumeMeshData::from_grid_cells([-(GRID_N as f32) / 2.0; 3], [1.0; 3], &active_cells);
+    let mut grid = GridCells::from_cells([-(GRID_N as f32) / 2.0; 3], [1.0; 3], &active_cells);
     let node_dist = grid.node_values(&node_dist, [nd, nd, nd]);
     grid.data
         .cell_scalars
@@ -295,7 +293,7 @@ fn build_terrain() -> GridCells {
         -(TERRAIN_H as f32) / 2.0,
         -(TERRAIN_D as f32) / 2.0,
     ];
-    let mut grid = VolumeMeshData::from_grid_cells(origin, [1.0; 3], &active_cells);
+    let mut grid = GridCells::from_cells(origin, [1.0; 3], &active_cells);
     let node_elev = grid.node_values(&node_elev, [nw, nh, nd]);
     grid.data
         .cell_scalars
@@ -326,7 +324,7 @@ fn build_paint_grid() -> GridCells {
         }
     }
     // Centre the grid at the world origin (before PAINT_OFFSET is applied).
-    let mut grid = VolumeMeshData::from_grid_cells(PAINT_ORIGIN, [1.0; 3], &active_cells);
+    let mut grid = GridCells::from_cells(PAINT_ORIGIN, [1.0; 3], &active_cells);
     grid.data.cell_colours.insert("paint".to_string(), colours);
     grid
 }

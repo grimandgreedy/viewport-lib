@@ -4,4 +4,4 @@
 pub mod attribute;
 pub mod mesh;
 pub mod texture;
-pub mod volume;
+pub mod volume_mesh;

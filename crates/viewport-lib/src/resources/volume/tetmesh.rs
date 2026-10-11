@@ -1,6 +1,6 @@
 //! Tetrahedral mesh data type.
 
-pub use viewport_lib_types::data::volume::{TetMesh, TetMeshAttributes};
+pub use viewport_lib_types::data::volume_mesh::{TetMesh, TetMeshAttributes};
 
 /// Uniform buffer layout for the projected tetrahedra pass.
 #[repr(C)]

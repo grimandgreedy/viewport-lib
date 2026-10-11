@@ -6,8 +6,7 @@
 //! each is checked here by moving the item and seeing the pixels move.
 
 use viewport_lib::{
-    CameraFrame, ColourmapId, FrameData, SceneFrame, VolumeMeshData, VolumeMeshItem,
-    VolumeTransparency,
+    CameraFrame, ColourmapId, FrameData, GridCells, SceneFrame, VolumeMeshItem, VolumeTransparency,
 };
 use viewport_lib_testkit::{Harness, orbit_camera};
 
@@ -53,7 +52,7 @@ fn check(wireframe: bool) {
             }
         }
     }
-    let mut grid = VolumeMeshData::from_grid_cells([-1.0; 3], [1.0; 3], &cells);
+    let mut grid = GridCells::from_cells([-1.0; 3], [1.0; 3], &cells);
     grid.data
         .cell_scalars
         .insert("value".into(), (0..8).map(|i| i as f32).collect());
@@ -115,7 +114,7 @@ fn wireframe_items_each_keep_their_own_model() {
         eprintln!("skipping: no GPU adapter");
         return;
     };
-    let mut grid = VolumeMeshData::from_grid_cells([-0.5; 3], [1.0; 3], &[[0, 0, 0]]);
+    let mut grid = GridCells::from_cells([-0.5; 3], [1.0; 3], &[[0, 0, 0]]);
     grid.data.cell_scalars.insert("value".into(), vec![1.0]);
     let uploaded = h
         .renderer

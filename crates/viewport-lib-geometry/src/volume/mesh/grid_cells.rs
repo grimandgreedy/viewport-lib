@@ -6,7 +6,7 @@ use std::collections::HashMap;
 /// A volume mesh built from occupied cells of a regular grid, with the grid
 /// node each vertex sits on.
 ///
-/// Returned by [`VolumeMeshData::from_grid_cells`].
+/// Built by [`GridCells::from_cells`].
 #[derive(Default, Clone)]
 pub struct GridCells {
     /// One hex per occupied cell, in the order the cells were given, so
@@ -42,9 +42,7 @@ impl GridCells {
             })
             .collect()
     }
-}
 
-impl VolumeMeshData {
     /// Build a hex mesh from the occupied cells of a regular grid.
     ///
     /// Cell `[i, j, k]` spans `origin + [i, j, k] * cell_size` to
@@ -54,11 +52,7 @@ impl VolumeMeshData {
     ///
     /// A cell listed twice makes two coincident cells, whose faces then all
     /// read as interior; the caller keeps the list free of duplicates.
-    pub fn from_grid_cells(
-        origin: [f32; 3],
-        cell_size: [f32; 3],
-        active_cells: &[[u32; 3]],
-    ) -> GridCells {
+    pub fn from_cells(origin: [f32; 3], cell_size: [f32; 3], active_cells: &[[u32; 3]]) -> Self {
         // Corner offsets in the module's hex vertex order.
         const CORNERS: [[u32; 3]; 8] = [
             [0, 0, 0],
@@ -122,13 +116,9 @@ impl VolumeMeshData {
             cells.push(cell);
         }
 
-        GridCells {
-            data: VolumeMeshData {
-                positions,
-                cells,
-                ..Default::default()
-            },
-            vertex_nodes,
-        }
+        let mut data = VolumeMeshData::default();
+        data.positions = positions;
+        data.cells = cells;
+        Self { data, vertex_nodes }
     }
 }
