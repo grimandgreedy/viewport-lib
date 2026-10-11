@@ -581,13 +581,10 @@ pub(super) fn build_tube(
                 let s = *item.scalars.get(idx).unwrap_or(&0.0);
                 let t = ((s - scalar_min) / scalar_range).clamp(0.0, 1.0);
                 let lut_idx = ((t * 255.0).round() as usize).min(255);
-                let c = lut[lut_idx];
-                [
-                    c[0] as f32 / 255.0,
-                    c[1] as f32 / 255.0,
-                    c[2] as f32 / 255.0,
-                    c[3] as f32 / 255.0,
-                ]
+                // Colourmap bytes are sRGB, the way the GPU LUT texture reads
+                // them; the vertex colour is linear.
+                let [r, g, b, a] = lut[lut_idx];
+                viewport_lib::Colour::srgb_u8(r, g, b, a).to_linear_rgba()
             } else {
                 item.colour.to_linear_rgba()
             }
@@ -923,13 +920,10 @@ pub(super) fn build_ribbon(
                 let s = *item.scalars.get(idx).unwrap_or(&0.0);
                 let t = ((s - scalar_min) / scalar_range).clamp(0.0, 1.0);
                 let lut_idx = ((t * 255.0).round() as usize).min(255);
-                let c = lut[lut_idx];
-                [
-                    c[0] as f32 / 255.0,
-                    c[1] as f32 / 255.0,
-                    c[2] as f32 / 255.0,
-                    c[3] as f32 / 255.0,
-                ]
+                // Colourmap bytes are sRGB, the way the GPU LUT texture reads
+                // them; the vertex colour is linear.
+                let [r, g, b, a] = lut[lut_idx];
+                viewport_lib::Colour::srgb_u8(r, g, b, a).to_linear_rgba()
             } else {
                 item.colour.to_linear_rgba()
             }

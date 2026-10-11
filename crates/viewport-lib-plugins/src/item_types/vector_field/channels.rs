@@ -42,20 +42,20 @@ pub struct Sample {
     pub vector: [f32; 3],
     /// Value the colourmap maps, when the field draws through one.
     pub scalar: f32,
-    /// Final linear RGBA, used when the field does not draw through a colourmap.
-    pub colour: [f32; 4],
+    /// Colour used when the field does not draw through a colourmap.
+    pub colour: Colour,
 }
 
 impl Sample {
-    /// A sample with a colour given as a [`Colour`], which converts to the
-    /// linear RGBA the record holds.
+    /// A sample with the given position, vector, size and colour, and a zero
+    /// scalar.
     pub fn new(position: [f32; 3], vector: [f32; 3], size: f32, colour: Colour) -> Self {
         Self {
             position,
             size,
             vector,
             scalar: 0.0,
-            colour: colour.to_linear_rgba(),
+            colour,
         }
     }
 }

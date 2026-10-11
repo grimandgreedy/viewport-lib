@@ -12,6 +12,7 @@
 //! upload can arrive long before the first frame that draws one.
 
 use crate::item_types::sources::{colour_plan, requested_colourmap};
+use viewport_lib::Colour;
 use viewport_lib::error::ViewportResult;
 use viewport_lib::plugin_api::Extent;
 use viewport_lib::resources::ContentBuffer;
@@ -159,7 +160,7 @@ pub(super) fn build_vector_field(
             size: sizes[i],
             vector: item.vectors.get(i).copied().unwrap_or([0.0, 0.0, 0.0]),
             scalar: colours.scalars[i],
-            colour: colours.colours[i],
+            colour: Colour::from_linear_array(colours.colours[i]),
         })
         .collect();
 
@@ -264,7 +265,7 @@ pub(super) fn try_replace_in_place(
             size: sizes[i],
             vector: item.vectors.get(i).copied().unwrap_or([0.0, 0.0, 0.0]),
             scalar: colours.scalars[i],
-            colour: colours.colours[i],
+            colour: Colour::from_linear_array(colours.colours[i]),
         })
         .collect();
     if gpu.samples.set_len(count as u32).is_err()
