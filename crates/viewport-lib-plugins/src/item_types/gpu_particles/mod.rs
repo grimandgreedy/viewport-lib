@@ -123,18 +123,29 @@ impl GpuParticlesPlugin {
             .layouts
             .get_or_insert_with(|| ParticleLayouts::new(device));
         {
-            use viewport_lib::resources::TextureSlot;
+            use viewport_lib::resources::TextureRequirement;
             match &config.render {
                 ParticleRender::Sprite {
                     texture_id,
                     normal_texture_id,
                     ..
                 } => {
-                    resources.check_texture_slot(*texture_id, TextureSlot::SpriteAlbedo);
-                    resources.check_texture_slot(*normal_texture_id, TextureSlot::SpriteNormalMap);
+                    resources.check_texture_slot(
+                        *texture_id,
+                        TextureRequirement::colour("ParticleRender::Sprite { texture_id }"),
+                    );
+                    resources.check_texture_slot(
+                        *normal_texture_id,
+                        TextureRequirement::normal_map(
+                            "ParticleRender::Sprite { normal_texture_id }",
+                        ),
+                    );
                 }
                 ParticleRender::Mesh { texture_id, .. } => {
-                    resources.check_texture_slot(*texture_id, TextureSlot::MeshInstanceAlbedo);
+                    resources.check_texture_slot(
+                        *texture_id,
+                        TextureRequirement::colour("ParticleRender::Mesh { texture_id }"),
+                    );
                 }
             }
         }

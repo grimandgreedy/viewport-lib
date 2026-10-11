@@ -194,26 +194,26 @@ impl ItemTypePlugin for DecalPlugin {
                         reused += 1;
                     }
                     std::collections::hash_map::Entry::Vacant(e) => {
-                        use viewport_lib::resources::TextureSlot;
+                        use viewport_lib::resources::TextureRequirement;
                         res.check_texture_slot(
                             Some(effective.texture_id),
-                            TextureSlot::DecalAlbedo,
+                            TextureRequirement::colour("DecalItem::texture_id"),
                         );
                         res.check_texture_slot(
                             effective.normal_texture_id,
-                            TextureSlot::DecalNormalMap,
+                            TextureRequirement::normal_map("DecalItem::normal_texture_id"),
                         );
                         res.check_texture_slot(
                             effective.roughness_texture_id,
-                            TextureSlot::DecalRoughness,
+                            TextureRequirement::linear("DecalItem::roughness_texture_id"),
                         );
                         res.check_texture_slot(
                             effective.metallic_texture_id,
-                            TextureSlot::DecalMetallic,
+                            TextureRequirement::linear("DecalItem::metallic_texture_id"),
                         );
                         res.check_texture_slot(
                             effective.emissive_texture_id,
-                            TextureSlot::DecalEmissive,
+                            TextureRequirement::colour("DecalItem::emissive_texture_id"),
                         );
                         let gpu = decal_gpu.upload_item(device, res, &effective);
                         let bound = [

@@ -1,5 +1,8 @@
 //! Per-item material and rendering settings.
 
+use crate::colour::ColourSpace;
+use crate::data::texture::{TextureRequirement, TextureRole};
+
 /// Per-item render settings: visibility, appearance overrides, pick identity, and selection state.
 ///
 /// Always use `Default::default()` as the base, then set individual fields:
@@ -330,8 +333,8 @@ impl Default for AlphaMode {
 /// [`TextureSlot`] lists: albedo, normal, AO, metallic-roughness, emissive.
 pub const MATERIAL_TEXTURE_SLOTS: usize = 5;
 
-/// The texture maps a [`Material`] can carry, used to index per-texture UV
-/// transforms in [`Material::texture_transforms`].
+/// The texture maps a [`Material`] can carry, used to index the per-slot
+/// arrays on it, and saying what each map needs from its texture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TextureSlot {
@@ -345,6 +348,49 @@ pub enum TextureSlot {
     MetallicRoughness = 3,
     /// Emissive map.
     Emissive = 4,
+}
+
+impl TextureSlot {
+    /// Every slot, in discriminant order.
+    pub const ALL: [TextureSlot; MATERIAL_TEXTURE_SLOTS] = [
+        TextureSlot::Albedo,
+        TextureSlot::Normal,
+        TextureSlot::Ao,
+        TextureSlot::MetallicRoughness,
+        TextureSlot::Emissive,
+    ];
+
+    /// The slot's position in the per-slot arrays on [`Material`], such as
+    /// [`Material::texture_transforms`].
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// What the slot needs from its texture, with the [`Material`] field it is
+    /// set through. The renderer checks bound textures against this.
+    pub const fn requirement(self) -> TextureRequirement {
+        match self {
+            TextureSlot::Albedo => TextureRequirement::colour("Material::texture_id"),
+            TextureSlot::Normal => TextureRequirement::normal_map("Material::normal_map_id"),
+            TextureSlot::Ao => TextureRequirement::linear("Material::ao_map_id"),
+            TextureSlot::MetallicRoughness => {
+                TextureRequirement::linear("Material::metallic_roughness_texture_id")
+            }
+            TextureSlot::Emissive => TextureRequirement::colour("Material::emissive_texture_id"),
+        }
+    }
+
+    /// The colour space the slot samples in: sRGB for [`Albedo`](Self::Albedo)
+    /// and [`Emissive`](Self::Emissive), linear for the rest.
+    pub const fn colour_space(self) -> ColourSpace {
+        self.requirement().colour_space()
+    }
+
+    /// The role the slot binds its texture as: a normal map for
+    /// [`Normal`](Self::Normal), an image for the rest.
+    pub const fn role(self) -> TextureRole {
+        self.requirement().role()
+    }
 }
 
 /// A per-texture UV transform: offset, scale, rotation, and UV-set selection.
@@ -1006,6 +1052,34 @@ impl Material {
 mod tests {
     use super::*;
     use crate::colour::Colour;
+
+    #[test]
+    fn texture_slots_list_in_index_order() {
+        for (i, slot) in TextureSlot::ALL.into_iter().enumerate() {
+            assert_eq!(slot.index(), i);
+        }
+    }
+
+    #[test]
+    fn texture_slots_build_what_they_require() {
+        use crate::data::texture::TextureData;
+        for slot in TextureSlot::ALL {
+            let req = slot.requirement();
+            let built = TextureData::for_slot(1, 1, vec![0u8; 4], slot);
+            assert_eq!(built.colour_space(), slot.colour_space(), "{slot:?}");
+            assert_eq!(built.role(), slot.role(), "{slot:?}");
+            let named = match req.constructor() {
+                "TextureData::srgb" => TextureData::srgb(1, 1, vec![0u8; 4]),
+                "TextureData::linear" => TextureData::linear(1, 1, vec![0u8; 4]),
+                "TextureData::normal_map" => TextureData::normal_map(1, 1, vec![0u8; 4]),
+                other => panic!("{slot:?} names an unknown constructor {other}"),
+            };
+            assert_eq!(named, built, "{slot:?}");
+        }
+        assert_eq!(TextureSlot::Albedo.colour_space(), ColourSpace::Srgb);
+        assert_eq!(TextureSlot::Normal.role(), TextureRole::NormalMap);
+        assert_eq!(TextureSlot::Ao.colour_space(), ColourSpace::Linear);
+    }
 
     #[test]
     fn item_settings_defaults() {

@@ -50,7 +50,7 @@ impl ViewportRenderer {
             }
             resources.check_texture_slot(
                 item.texture_id,
-                crate::resources::TextureSlot::MeshInstanceAlbedo,
+                crate::resources::TextureRequirement::colour("MeshInstanceItem::texture_id"),
             );
 
             // The full-detail AABB sizes every instance; fetching it also tells

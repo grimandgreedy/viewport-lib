@@ -338,7 +338,7 @@ pub struct ContentResources {
     /// Behind a lock so a binding built from a shared borrow can record one:
     /// item types prepare against `&DeviceResources`.
     pub(crate) texture_slot_mismatches:
-        std::sync::Mutex<Vec<(u64, crate::resources::material::textures::TextureSlot)>>,
+        std::sync::Mutex<Vec<(u64, crate::resources::TextureRequirement)>>,
     /// User-uploaded textures, keyed by the `texture_id` in Material. Slotted
     /// with generational ids so a freed slot cannot alias a later upload.
     pub(crate) textures: crate::resources::material::texture_store::TextureStore,

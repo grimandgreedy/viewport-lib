@@ -1086,9 +1086,15 @@ impl DeviceResources {
         // Lightmaps are radiance, direction, and visibility: all linear. This one
         // is caught at set time rather than at bind, because the call already
         // returns a result.
-        use crate::resources::TextureSlot;
-        self.check_texture_slot(Some(data.texture_id()), TextureSlot::LightmapPrimary);
-        self.check_texture_slot(data.direction_texture_id(), TextureSlot::LightmapSecondary);
+        use crate::resources::TextureRequirement;
+        self.check_texture_slot(
+            Some(data.texture_id()),
+            TextureRequirement::linear("LightmapData radiance / occlusion"),
+        );
+        self.check_texture_slot(
+            data.direction_texture_id(),
+            TextureRequirement::linear("LightmapData direction / shadowmask"),
+        );
         self.texture_slot_mismatch()?;
 
         let store_len = self.mesh_store.len();

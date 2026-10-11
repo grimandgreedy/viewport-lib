@@ -43,7 +43,7 @@ pub fn linear_to_srgb(c: f32) -> f32 {
 /// 8-bit texture is sRGB when it holds a base-colour image and linear when it
 /// holds data (roughness, metallic, a normal map). Direct [`Colour`] values do
 /// not need this, since the constructor already fixes the space.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ColourSpace {
     /// sRGB-encoded: decode to linear before use.

@@ -12,7 +12,7 @@ use crate::error::{ViewportError, ViewportResult};
 /// Which bind-group slot an uploaded texture occupies, and so what the renderer
 /// treats it as. Distinct from the colour space: a normal map and a roughness
 /// map are both linear, but only one of them binds as a normal map.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum TextureRole {
@@ -20,6 +20,88 @@ pub enum TextureRole {
     Image,
     /// A tangent-space normal map, bound in the normal-map slot.
     NormalMap,
+}
+
+/// What a texture field needs from the texture bound into it: the colour space
+/// it samples in and the role it binds as, with the field's name for
+/// diagnostics.
+///
+/// The code that binds a field states its requirement, beside the field:
+/// `TextureRequirement::linear("DecalItem::roughness_texture_id")`. The
+/// renderer compares each bound texture against it and reports a texture
+/// uploaded in the other space. A material's own slots come from
+/// [`TextureSlot::requirement`](crate::material::TextureSlot::requirement).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct TextureRequirement {
+    field: &'static str,
+    colour_space: ColourSpace,
+    role: TextureRole,
+}
+
+impl TextureRequirement {
+    /// A field that samples colour (base colour, emissive, sprite art): an
+    /// sRGB image.
+    pub const fn colour(field: &'static str) -> Self {
+        Self {
+            field,
+            colour_space: ColourSpace::Srgb,
+            role: TextureRole::Image,
+        }
+    }
+
+    /// A field that samples numbers (roughness, metallic, occlusion, lightmap
+    /// data): a linear image.
+    pub const fn linear(field: &'static str) -> Self {
+        Self {
+            field,
+            colour_space: ColourSpace::Linear,
+            role: TextureRole::Image,
+        }
+    }
+
+    /// A field that samples a tangent-space normal map.
+    pub const fn normal_map(field: &'static str) -> Self {
+        Self {
+            field,
+            colour_space: ColourSpace::Linear,
+            role: TextureRole::NormalMap,
+        }
+    }
+
+    /// The field's name as a consumer writes it, such as `"Material::texture_id"`.
+    pub const fn field_name(self) -> &'static str {
+        self.field
+    }
+
+    /// The colour space the field needs its texture uploaded in.
+    pub const fn colour_space(self) -> ColourSpace {
+        self.colour_space
+    }
+
+    /// The role the field binds its texture as.
+    pub const fn role(self) -> TextureRole {
+        self.role
+    }
+
+    /// The [`TextureData`] constructor that builds what the field needs from
+    /// 8-bit RGBA, for error messages.
+    pub const fn constructor(self) -> &'static str {
+        match (self.role, self.colour_space) {
+            (TextureRole::NormalMap, _) => "TextureData::normal_map",
+            (_, ColourSpace::Srgb) => "TextureData::srgb",
+            (_, ColourSpace::Linear) => "TextureData::linear",
+        }
+    }
+
+    /// Build 8-bit RGBA pixels as the field needs them: the constructor
+    /// [`constructor`](Self::constructor) names.
+    pub fn texture(self, width: u32, height: u32, rgba: Vec<u8>) -> TextureData {
+        match (self.role, self.colour_space) {
+            (TextureRole::NormalMap, _) => TextureData::normal_map(width, height, rgba),
+            (_, ColourSpace::Srgb) => TextureData::srgb(width, height, rgba),
+            (_, ColourSpace::Linear) => TextureData::linear(width, height, rgba),
+        }
+    }
 }
 
 /// The pixel payload of a [`TextureData`], in the precision it was authored at.
@@ -388,6 +470,22 @@ impl TextureData {
             role: TextureRole::NormalMap,
             payload: TexturePayload::Rgba8(rgba),
         }
+    }
+
+    /// An 8-bit RGBA image built for a material texture slot: sRGB for
+    /// [`Albedo`](crate::material::TextureSlot::Albedo) and
+    /// [`Emissive`](crate::material::TextureSlot::Emissive), a normal map for
+    /// [`Normal`](crate::material::TextureSlot::Normal), linear for the rest.
+    ///
+    /// For a loader that knows which slot an image is for and should not have
+    /// to repeat the mapping.
+    pub fn for_slot(
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+        slot: crate::material::TextureSlot,
+    ) -> Self {
+        slot.requirement().texture(width, height, rgba)
     }
 
     /// A block-compressed image with its mip chain already built, holding colour

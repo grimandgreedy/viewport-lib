@@ -125,7 +125,7 @@ pub(super) fn resolve_ribbon_bindings(
 ) -> RibbonBindings {
     resources.check_texture_slot(
         item.texture_id,
-        viewport_lib::resources::TextureSlot::RibbonAlbedo,
+        viewport_lib::resources::TextureRequirement::colour("RibbonItem::texture_id"),
     );
     RibbonBindings {
         lut: resolve_lut(resources, item.colourmap_id),

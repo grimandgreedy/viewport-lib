@@ -246,8 +246,8 @@ pub use viewport_lib_types::encoding;
 pub use viewport_lib_types::encoding::{ColourSource, SizeSource};
 pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, srgb_to_linear};
 pub use vplt::data::texture::{
-    AstcBlock, CompressedFormat, TextureData, TexturePayload, TextureRejection, TextureRole,
-    UploadSlot,
+    AstcBlock, CompressedFormat, TextureData, TexturePayload, TextureRejection, TextureRequirement,
+    TextureRole, UploadSlot,
 };
 
 pub use geometry::bvh::PickAccelerator;
