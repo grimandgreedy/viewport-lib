@@ -6,8 +6,8 @@ use crate::colour::Colour;
 use crate::overlay::Alignment;
 use crate::overlay::{
     AnchorX, AnchorY, AnimTrack, BackdropEffects, FillRule, FontHandle, GlyphRunItem, GradientStop,
-    LabelItem, LineCap, LineJoin, NineSlice, OverlayAnchoring, OverlayAnimations, OverlayClip,
-    OverlayEasing, OverlayFill, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem,
+    LabelItem, LineCap, LineJoin, NineSlice, OutlineMode, OverlayAnchoring, OverlayAnimations,
+    OverlayClip, OverlayEasing, OverlayFill, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem,
     OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayTextureId,
     OverlayTransform, PathSegment, PolylineCap, PositionedGlyph, RepeatMode, RetainedOverlay,
     ShadowLayer, StrokePattern, SubPath, TextStyle, TextureTransform, TileMode, TriangleDirection,
@@ -706,6 +706,16 @@ impl OverlayContentHash for PolylineCap {
     }
 }
 
+impl OverlayContentHash for OutlineMode {
+    fn content_hash_at<H: Hasher>(&self, _origin: [f32; 2], state: &mut H) {
+        state.write_u8(match self {
+            OutlineMode::Inset => 0,
+            OutlineMode::Outer => 1,
+            OutlineMode::Centre => 2,
+        });
+    }
+}
+
 impl OverlayContentHash for OverlayStroke {
     fn content_hash_at<H: Hasher>(&self, origin: [f32; 2], state: &mut H) {
         let Self {
@@ -905,6 +915,17 @@ mod tests {
         assert_eq!(hash(&polyline()), hash(&polyline().clone()));
         assert_eq!(hash(&label()), hash(&label().clone()));
         assert_eq!(hash(&glyph_run()), hash(&glyph_run().clone()));
+    }
+
+    #[test]
+    fn outline_modes_hash_apart() {
+        let modes = [OutlineMode::Inset, OutlineMode::Outer, OutlineMode::Centre];
+        for (i, a) in modes.iter().enumerate() {
+            assert_eq!(hash(a), hash(&a.clone()));
+            for b in &modes[i + 1..] {
+                assert_ne!(hash(a), hash(b), "{a:?} and {b:?}");
+            }
+        }
     }
 
     #[test]
