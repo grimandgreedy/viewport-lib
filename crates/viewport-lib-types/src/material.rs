@@ -855,6 +855,37 @@ impl Material {
         self
     }
 
+    /// The texture bound to `slot`: [`texture_id`](Self::texture_id) for
+    /// albedo, [`normal_map_id`](Self::normal_map_id) for normal, and so on.
+    pub fn texture(&self, slot: TextureSlot) -> Option<crate::ids::TextureId> {
+        match slot {
+            TextureSlot::Albedo => self.texture_id,
+            TextureSlot::Normal => self.normal_map_id,
+            TextureSlot::Ao => self.ao_map_id,
+            TextureSlot::MetallicRoughness => self.metallic_roughness_texture_id,
+            TextureSlot::Emissive => self.emissive_texture_id,
+        }
+    }
+
+    /// Bind `id` to `slot`, or clear the slot with `None`. Sets the same field
+    /// [`texture`](Self::texture) reads.
+    pub fn set_texture(&mut self, slot: TextureSlot, id: Option<crate::ids::TextureId>) {
+        let field = match slot {
+            TextureSlot::Albedo => &mut self.texture_id,
+            TextureSlot::Normal => &mut self.normal_map_id,
+            TextureSlot::Ao => &mut self.ao_map_id,
+            TextureSlot::MetallicRoughness => &mut self.metallic_roughness_texture_id,
+            TextureSlot::Emissive => &mut self.emissive_texture_id,
+        };
+        *field = id;
+    }
+
+    /// Bind `id` to `slot`. See [`set_texture`](Self::set_texture).
+    pub fn with_texture(mut self, slot: TextureSlot, id: crate::ids::TextureId) -> Self {
+        self.set_texture(slot, Some(id));
+        self
+    }
+
     /// The sampler this material binds for its textures, or `None` for the
     /// renderer default (repeat + linear). The current renderer binds a single
     /// sampler per lit draw at group-1 binding 2, so this returns the first slot
@@ -1079,6 +1110,33 @@ mod tests {
         assert_eq!(TextureSlot::Albedo.colour_space(), ColourSpace::Srgb);
         assert_eq!(TextureSlot::Normal.role(), TextureRole::NormalMap);
         assert_eq!(TextureSlot::Ao.colour_space(), ColourSpace::Linear);
+    }
+
+    #[test]
+    fn texture_by_slot_sets_and_reads_one_field() {
+        use crate::ids::TextureId;
+        for (i, slot) in TextureSlot::ALL.into_iter().enumerate() {
+            let id = TextureId::from_raw(i as u64 + 1);
+            let m = Material::default().with_texture(slot, id);
+            for other in TextureSlot::ALL {
+                let expected = (other == slot).then_some(id);
+                assert_eq!(m.texture(other), expected, "{slot:?} set, {other:?} read");
+            }
+            // The slot's field is the one its requirement names.
+            let field = slot.requirement().field_name();
+            let direct = match field {
+                "Material::texture_id" => m.texture_id,
+                "Material::normal_map_id" => m.normal_map_id,
+                "Material::ao_map_id" => m.ao_map_id,
+                "Material::metallic_roughness_texture_id" => m.metallic_roughness_texture_id,
+                "Material::emissive_texture_id" => m.emissive_texture_id,
+                other => panic!("{slot:?} names an unknown field {other}"),
+            };
+            assert_eq!(direct, Some(id), "{slot:?}");
+            let mut cleared = m;
+            cleared.set_texture(slot, None);
+            assert_eq!(cleared.texture(slot), None);
+        }
     }
 
     #[test]

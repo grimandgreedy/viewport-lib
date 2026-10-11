@@ -6,5 +6,6 @@ pub mod debug;
 pub mod environment;
 pub mod ground;
 pub mod lighting;
+pub mod lightmap;
 pub mod postprocess;
 pub mod scatter;
