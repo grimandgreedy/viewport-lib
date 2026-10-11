@@ -13,6 +13,10 @@
 //! the markers for its writable channels (`channels`). [`install`] registers
 //! them all.
 //!
+//! Each module splits on the crate's `gpu` feature: the item structs, the
+//! data they upload and their handles always build, and the plugin, its store,
+//! its upload calls and its shaders need `gpu`.
+//!
 //! ```no_run
 //! # use viewport_lib_plugins::item_types::{self, point_cloud::PointCloudItem};
 //! # let mut renderer: viewport_lib::renderer::ViewportRenderer = unimplemented!();

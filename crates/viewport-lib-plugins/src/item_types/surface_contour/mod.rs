@@ -13,6 +13,7 @@
 //! upload calls need it.
 //!
 //! [`ItemTypePlugin`]: viewport_lib::plugin_api::ItemTypePlugin
+//! [`ItemTypePlugin::paint`]: viewport_lib::plugin_api::ItemTypePlugin::paint
 
 mod types;
 

@@ -2,11 +2,11 @@
 //! the `gpu` feature.
 
 use super::*;
+use viewport_lib::ItemSettings;
 use viewport_lib::plugin_api::{
     ItemCollections, ItemFrameContext, ItemTypePlugin, PaintContext, PluginItem, builders,
 };
 use viewport_lib::resources::mesh::mesh_store::MeshId;
-use viewport_lib::ItemSettings;
 
 use crate::item_types::shader::{scene_shader, wgsl_source};
 

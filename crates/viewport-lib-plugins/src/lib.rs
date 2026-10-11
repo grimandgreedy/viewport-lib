@@ -22,8 +22,10 @@
 //! viewport-lib-plugins = { version = "0.1", default-features = false, features = ["item-types"] }
 //! ```
 //!
-//! An item type whose data builds that way says so in its module docs; the
-//! rest need `gpu`.
+//! Every item type's data builds that way. What stays behind `gpu` is anything
+//! that holds a GPU resource or reads the renderer's own state:
+//! `ExternalInstanceSetConfig` (a consumer buffer), `PointCloudItem::from_debug_draw`
+//! and `VolumeItem::region`. The deformers need `gpu` throughout.
 //!
 //! ```no_run
 //! use viewport_lib_plugins::item_types::{self, point_cloud::PointCloudItem};

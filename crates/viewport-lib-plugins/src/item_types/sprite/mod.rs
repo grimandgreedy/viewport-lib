@@ -21,6 +21,7 @@
 //! upload calls need it.
 //!
 //! [`ItemTypePlugin`]: viewport_lib::plugin_api::ItemTypePlugin
+//! [`EncoderScope::AfterOpaque`]: viewport_lib::plugin_api::EncoderScope::AfterOpaque
 
 mod types;
 

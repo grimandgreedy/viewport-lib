@@ -12,6 +12,8 @@
 //! upload calls need it.
 //!
 //! [`ItemTypePlugin`]: viewport_lib::plugin_api::ItemTypePlugin
+//! [`ItemTypePlugin::encode`]: viewport_lib::plugin_api::ItemTypePlugin::encode
+//! [`EncoderScope::OnOpaqueSurfaces`]: viewport_lib::plugin_api::EncoderScope::OnOpaqueSurfaces
 
 mod types;
 

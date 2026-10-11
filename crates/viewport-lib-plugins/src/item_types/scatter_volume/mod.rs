@@ -18,6 +18,9 @@
 //! upload calls need it.
 //!
 //! [`ItemTypePlugin`]: viewport_lib::plugin_api::ItemTypePlugin
+//! [`EncoderScope::AfterTransparent`]: viewport_lib::plugin_api::EncoderScope::AfterTransparent
+//! [`ItemTypePlugin::contribute_lights`]: viewport_lib::plugin_api::ItemTypePlugin::contribute_lights
+//! [`ItemTypePlugin::encode`]: viewport_lib::plugin_api::ItemTypePlugin::encode
 
 mod types;
 pub(crate) mod volume;
