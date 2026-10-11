@@ -1,8 +1,11 @@
-use viewport_lib::{Colour, ColourSource, ItemSettings, SizeSource};
+use viewport_lib_types::colour::Colour;
+use viewport_lib_types::encoding::ColourSource;
+use viewport_lib_types::encoding::SizeSource;
+use viewport_lib_types::material::ItemSettings;
 
 const IDENTITY_MAT4: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
 
-viewport_lib::resources::handle::slot_handle! {
+viewport_lib_types::slot_handle! {
     /// Handle to a point cloud uploaded once through
     /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload).
     ///
@@ -30,14 +33,15 @@ pub enum PointRenderMode {
 /// is a screen measurement rather than a world one.
 ///
 /// A point cloud has **no natural scalar**, so
-/// [`ColourSource::Natural`](viewport_lib::ColourSource::Natural) colours every
-/// point opaque white and [`SizeSource::Natural`](viewport_lib::SizeSource)
+/// [`ColourSource::Natural`](viewport_lib_types::encoding::ColourSource::Natural) colours every
+/// point opaque white and [`SizeSource::Natural`](viewport_lib_types::encoding::SizeSource)
 /// gives every point the bottom of its output range. Name what you want
 /// instead.
 ///
 /// ```no_run
 /// # use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
-/// # use viewport_lib::{ColourSource, SizeSource};
+/// # use viewport_lib_types::encoding::ColourSource;
+/// # use viewport_lib_types::encoding::SizeSource;
 /// # let (positions, temperatures) = (Vec::new(), Vec::new());
 /// let mut cloud = PointCloudItem::default();
 /// cloud.positions = positions;
@@ -57,7 +61,7 @@ pub struct PointCloudItem {
     /// How each point is coloured. Default: opaque white for every point.
     ///
     /// Points past the end of a short
-    /// [`PerSample`](viewport_lib::ColourSource::PerSample) list are drawn
+    /// [`PerSample`](viewport_lib_types::encoding::ColourSource::PerSample) list are drawn
     /// opaque white.
     pub colour: ColourSource,
     /// Each point's radius, in pixels. Default: four pixels for every point.
@@ -122,49 +126,5 @@ impl PointCloudRefItem {
             model: IDENTITY_MAT4,
             settings: ItemSettings::default(),
         }
-    }
-}
-
-impl PointCloudItem {
-    /// Collect the point primitives a [`DebugDraw`](viewport_lib::runtime::DebugDraw)
-    /// has accumulated into one cloud.
-    ///
-    /// `None` when there are no point primitives, or when the buffer is
-    /// disabled. Dev-layer points are skipped unless `dev_enabled` is set, the
-    /// same filtering the polyline and label conversions apply.
-    pub fn from_debug_draw(dd: &viewport_lib::runtime::DebugDraw) -> Option<Self> {
-        use viewport_lib::runtime::{DebugLayer, DebugPrim};
-
-        if !dd.enabled {
-            return None;
-        }
-        let mut positions = Vec::new();
-        let mut colours = Vec::new();
-        let mut radii = Vec::new();
-        for prim in dd.prims() {
-            if prim.layer() == DebugLayer::Dev && !dd.dev_enabled {
-                continue;
-            }
-            if let DebugPrim::Point {
-                position,
-                radius,
-                colour,
-                ..
-            } = prim
-            {
-                positions.push((*position).into());
-                colours.push(*colour);
-                radii.push(*radius);
-            }
-        }
-        if positions.is_empty() {
-            return None;
-        }
-        Some(Self {
-            positions,
-            colour: ColourSource::PerSample(colours),
-            size: SizeSource::PerSample(radii),
-            ..Self::default()
-        })
     }
 }

@@ -9,7 +9,7 @@ pub struct ScatterVolumeItem {
     /// The volume definition (shape, density, colour, future parameters).
     pub volume: super::volume::ScatterVolume,
     /// Per-item render settings (visibility, opacity, picking, selection).
-    pub settings: viewport_lib::ItemSettings,
+    pub settings: viewport_lib_types::material::ItemSettings,
 }
 
 impl ScatterVolumeItem {
@@ -17,7 +17,7 @@ impl ScatterVolumeItem {
     pub fn new(volume: super::volume::ScatterVolume) -> Self {
         Self {
             volume,
-            settings: viewport_lib::ItemSettings::default(),
+            settings: viewport_lib_types::material::ItemSettings::default(),
         }
     }
 }

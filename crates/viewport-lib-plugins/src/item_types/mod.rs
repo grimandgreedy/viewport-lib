@@ -13,6 +13,10 @@
 //! the markers for its writable channels (`channels`). [`install`] registers
 //! them all.
 //!
+//! Each module splits on the crate's `gpu` feature: the item structs, the
+//! data they upload and their handles always build, and the plugin, its store,
+//! its upload calls and its shaders need `gpu`.
+//!
 //! ```no_run
 //! # use viewport_lib_plugins::item_types::{self, point_cloud::PointCloudItem};
 //! # let mut renderer: viewport_lib::renderer::ViewportRenderer = unimplemented!();
@@ -152,38 +156,22 @@ macro_rules! field_sample_writes {
     };
 }
 
-#[cfg(feature = "gpu")]
 pub mod curves;
-#[cfg(feature = "gpu")]
 pub mod decal;
-#[cfg(feature = "gpu")]
 pub mod external_instances;
 pub mod gaussian_splat;
-#[cfg(feature = "gpu")]
 pub mod gpu_implicit;
-#[cfg(feature = "gpu")]
 pub mod gpu_marching_cubes;
-#[cfg(feature = "gpu")]
 pub mod gpu_particles;
-#[cfg(feature = "gpu")]
 pub mod image_slice;
-#[cfg(feature = "gpu")]
 pub mod point_cloud;
-#[cfg(feature = "gpu")]
 pub mod scatter_volume;
-#[cfg(feature = "gpu")]
 pub mod sprite;
-#[cfg(feature = "gpu")]
 pub mod surface_contour;
-#[cfg(feature = "gpu")]
 pub mod surface_lic;
-#[cfg(feature = "gpu")]
 pub mod tensor_field;
-#[cfg(feature = "gpu")]
 pub mod vector_field;
-#[cfg(feature = "gpu")]
 pub mod volume;
-#[cfg(feature = "gpu")]
 pub mod volume_surface_slice;
 
 #[cfg(feature = "gpu")]

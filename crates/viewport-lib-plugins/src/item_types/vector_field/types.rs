@@ -3,10 +3,12 @@
 //! uploaded once.
 
 use super::VectorSamples;
-use viewport_lib::ItemSettings;
-use viewport_lib::{ColourSource, MeshId, SizeSource};
+use viewport_lib_types::encoding::ColourSource;
+use viewport_lib_types::encoding::SizeSource;
+use viewport_lib_types::ids::MeshId;
+use viewport_lib_types::material::ItemSettings;
 
-viewport_lib::resources::handle::slot_handle! {
+viewport_lib_types::slot_handle! {
     /// Handle to a vector field uploaded once through
     /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload).
     ///
@@ -60,7 +62,7 @@ impl VectorFieldRefItem {
 ///
 /// ```no_run
 /// # use viewport_lib_plugins::item_types::vector_field::VectorFieldItem;
-/// # let arrow_mesh: viewport_lib::MeshId = unimplemented!();
+/// # let arrow_mesh: viewport_lib_types::ids::MeshId = unimplemented!();
 /// # let (positions, vectors) = (Vec::new(), Vec::new());
 /// let mut field = VectorFieldItem::new(arrow_mesh);
 /// field.positions = positions;

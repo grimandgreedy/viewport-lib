@@ -6,9 +6,9 @@
 //! and submit a [`GpuParticleSystemItem`] per frame to simulate and draw it.
 
 use crate::item_types::sprite::{SpriteLitParams, SpriteSizeMode};
-use viewport_lib::Colour;
-use viewport_lib::ItemSettings;
-use viewport_lib::renderer::SpriteBlend;
+use viewport_lib_types::colour::Colour;
+use viewport_lib_types::material::ItemSettings;
+use viewport_lib_types::render_item::SpriteBlend;
 
 pub use viewport_lib_types::ids::GpuParticleSystemId;
 
@@ -42,8 +42,8 @@ pub enum ParticleRender {
     Sprite {
         /// Optional texture sampled per fragment. `None` renders solid quads
         /// tinted by the particle colour. Colour, so upload it sRGB
-        /// ([`TextureData::srgb`](viewport_lib::resources::TextureData::srgb)).
-        texture_id: Option<viewport_lib::resources::TextureId>,
+        /// ([`TextureData::srgb`](viewport_lib_types::data::texture::TextureData::srgb)).
+        texture_id: Option<viewport_lib_types::ids::TextureId>,
         /// GPU blend state.
         blend: SpriteBlend,
         /// Screen-space or world-space sizing for the per-particle `size`.
@@ -58,8 +58,8 @@ pub enum ParticleRender {
         lit_params: SpriteLitParams,
         /// Optional tangent-space normal map for the `NormalMap` mode.
         /// Directions, not colour, so upload it linear
-        /// ([`TextureData::normal_map`](viewport_lib::resources::TextureData::normal_map)).
-        normal_texture_id: Option<viewport_lib::resources::TextureId>,
+        /// ([`TextureData::normal_map`](viewport_lib_types::data::texture::TextureData::normal_map)).
+        normal_texture_id: Option<viewport_lib_types::ids::TextureId>,
     },
     /// Draw each particle as an instance of an uploaded mesh. The vertex
     /// shader composes the per-instance transform from the live particle's
@@ -67,11 +67,11 @@ pub enum ParticleRender {
     /// Unlit; the particle colour multiplies an optional albedo sample.
     Mesh {
         /// Mesh handle returned by `DeviceResources::upload_mesh_data`.
-        mesh_id: viewport_lib::resources::mesh::mesh_store::MeshId,
+        mesh_id: viewport_lib_types::ids::MeshId,
         /// Optional albedo texture handle. `None` renders flat-tinted. Colour,
         /// so upload it sRGB
-        /// ([`TextureData::srgb`](viewport_lib::resources::TextureData::srgb)).
-        texture_id: Option<viewport_lib::resources::TextureId>,
+        /// ([`TextureData::srgb`](viewport_lib_types::data::texture::TextureData::srgb)).
+        texture_id: Option<viewport_lib_types::ids::TextureId>,
         /// GPU blend state.
         blend: SpriteBlend,
         /// How per-particle rotation is derived.
@@ -210,7 +210,7 @@ pub struct EmitterConfig {
     /// Spawn shape relative to world space.
     pub spawn_shape: SpawnShape,
     /// Per-particle RGBA tint, multiplied with any texture sample at draw time.
-    pub colour: viewport_lib::Colour,
+    pub colour: viewport_lib_types::colour::Colour,
     /// Per-particle starting size. Pixels (ScreenSpace) or world units
     /// (WorldSpace) per the system's render config.
     pub size: f32,
