@@ -165,7 +165,6 @@ pub mod gpu_implicit;
 pub mod gpu_marching_cubes;
 #[cfg(feature = "gpu")]
 pub mod gpu_particles;
-#[cfg(feature = "gpu")]
 pub mod image_slice;
 #[cfg(feature = "gpu")]
 pub mod point_cloud;

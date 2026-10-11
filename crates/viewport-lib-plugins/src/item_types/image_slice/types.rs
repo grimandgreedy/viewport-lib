@@ -1,6 +1,6 @@
 //! The axis-aligned volume slice item type and the axis it slices on.
 
-use viewport_lib::ItemSettings;
+use viewport_lib_types::material::ItemSettings;
 
 /// Axis for an axis-aligned image slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -23,7 +23,7 @@ pub enum SliceAxis {
 #[derive(Debug, Clone)]
 pub struct ImageSliceItem {
     /// Reference to a previously uploaded 3D volume texture.
-    pub volume_id: viewport_lib::resources::VolumeId,
+    pub volume_id: viewport_lib_types::ids::VolumeId,
     /// Axis perpendicular to the slice plane. Default: `SliceAxis::Z`.
     pub axis: SliceAxis,
     /// Normalized position along the axis in `[0, 1]`. Default: `0.5`.
@@ -35,7 +35,7 @@ pub struct ImageSliceItem {
     /// Scalar range for colourmap mapping `[min, max]`. Default: `(0.0, 1.0)`.
     pub scalar_range: (f32, f32),
     /// Colour LUT. `None` = default builtin (viridis).
-    pub colour_lut: Option<viewport_lib::resources::ColourmapId>,
+    pub colour_lut: Option<viewport_lib_types::colourmap::ColourmapId>,
     /// Overall opacity of the slice quad. Default: `1.0`.
     pub opacity: f32,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
@@ -45,7 +45,7 @@ pub struct ImageSliceItem {
 impl Default for ImageSliceItem {
     fn default() -> Self {
         Self {
-            volume_id: viewport_lib::resources::VolumeId::INVALID,
+            volume_id: viewport_lib_types::ids::VolumeId::INVALID,
             axis: SliceAxis::Z,
             offset: 0.5,
             bbox_min: [0.0, 0.0, 0.0],
