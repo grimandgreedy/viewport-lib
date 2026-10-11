@@ -154,7 +154,6 @@ macro_rules! field_sample_writes {
 
 pub mod curves;
 pub mod decal;
-#[cfg(feature = "gpu")]
 pub mod external_instances;
 pub mod gaussian_splat;
 pub mod gpu_implicit;

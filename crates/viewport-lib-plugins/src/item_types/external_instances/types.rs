@@ -1,33 +1,9 @@
-//! The external instance set submission types: the handle a host registers, the
-//! configuration it registers with, and the per-frame item that draws a window
-//! of one.
+//! The external instance set submission types: the handle a host registers and
+//! the per-frame item that draws a window of one.
 
-use viewport_lib::Colour;
-use viewport_lib::{ItemSettings, gpu};
+use viewport_lib_types::colour::Colour;
 pub use viewport_lib_types::ids::ExternalInstanceSetId;
-
-/// Persistent configuration for an external instance set.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct ExternalInstanceSetConfig {
-    /// Mesh drawn once per instance.
-    pub mesh_id: viewport_lib::resources::mesh::mesh_store::MeshId,
-    /// Consumer-owned same-device buffer of tightly packed `[x, y, z]` `f32`
-    /// triples, 12 bytes per instance. Must have
-    /// [`wgpu::BufferUsages::STORAGE`](gpu::BufferUsages::STORAGE).
-    /// The renderer only reads it.
-    pub positions: gpu::Buffer,
-}
-
-impl ExternalInstanceSetConfig {
-    /// Set drawing `mesh_id` at every position in `positions`.
-    pub fn new(
-        mesh_id: viewport_lib::resources::mesh::mesh_store::MeshId,
-        positions: gpu::Buffer,
-    ) -> Self {
-        Self { mesh_id, positions }
-    }
-}
+use viewport_lib_types::material::ItemSettings;
 
 /// Draw a window of an external instance set this frame.
 ///
@@ -57,7 +33,7 @@ pub struct ExternalInstancesItem {
     /// Uniform scale applied to the mesh per instance.
     pub scale: f32,
     /// Instance colour (RGBA albedo).
-    pub colour: viewport_lib::Colour,
+    pub colour: viewport_lib_types::colour::Colour,
     /// Per-item settings; only `hidden` is honoured.
     pub settings: ItemSettings,
 }
