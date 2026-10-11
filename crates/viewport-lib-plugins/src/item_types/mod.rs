@@ -36,6 +36,7 @@
 // before the modules so each type's `uploads.rs` can expand them.
 /// Implement the standard upload surface for one item type whose plugin
 /// exposes the five store calls under their usual names.
+#[cfg(feature = "gpu")]
 macro_rules! standard_uploads {
     ($item:ty, $id:ty, $name:expr, $plugin:ty) => {
         impl viewport_lib::plugin_api::Uploads<$item> for viewport_lib::renderer::ViewportRenderer {
@@ -96,6 +97,7 @@ macro_rules! standard_uploads {
 /// One channel per type rather than one per component: the record's fields are
 /// derived together, and the store keeps no CPU copy to read the untouched ones
 /// back from. So a write supplies whole samples.
+#[cfg(feature = "gpu")]
 macro_rules! field_sample_writes {
     ($marker:ty, $id:ty, $name:expr, $plugin:ty, encode = $encode:expr) => {
         impl viewport_lib::plugin_api::Writes<$marker>
@@ -150,28 +152,48 @@ macro_rules! field_sample_writes {
     };
 }
 
+#[cfg(feature = "gpu")]
 pub mod curves;
+#[cfg(feature = "gpu")]
 pub mod decal;
+#[cfg(feature = "gpu")]
 pub mod external_instances;
 pub mod gaussian_splat;
+#[cfg(feature = "gpu")]
 pub mod gpu_implicit;
+#[cfg(feature = "gpu")]
 pub mod gpu_marching_cubes;
+#[cfg(feature = "gpu")]
 pub mod gpu_particles;
+#[cfg(feature = "gpu")]
 pub mod image_slice;
+#[cfg(feature = "gpu")]
 pub mod point_cloud;
+#[cfg(feature = "gpu")]
 pub mod scatter_volume;
+#[cfg(feature = "gpu")]
 pub mod sprite;
+#[cfg(feature = "gpu")]
 pub mod surface_contour;
+#[cfg(feature = "gpu")]
 pub mod surface_lic;
+#[cfg(feature = "gpu")]
 pub mod tensor_field;
+#[cfg(feature = "gpu")]
 pub mod vector_field;
+#[cfg(feature = "gpu")]
 pub mod volume;
+#[cfg(feature = "gpu")]
 pub mod volume_surface_slice;
 
+#[cfg(feature = "gpu")]
 mod helpers;
+#[cfg(feature = "gpu")]
 mod shader;
+#[cfg(feature = "gpu")]
 mod sources;
 
+#[cfg(feature = "gpu")]
 /// Every shader the item types compile, as `(name, source)`, with the shared
 /// sections already spliced in front of each body.
 ///
@@ -201,6 +223,7 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     all
 }
 
+#[cfg(feature = "gpu")]
 /// Register every item type with `renderer`.
 ///
 /// Registering one on its own is
@@ -259,11 +282,13 @@ pub fn install(
     );
 }
 
+#[cfg(feature = "gpu")]
 /// Elements that are already in the buffer's layout go across untouched.
 pub(crate) fn cast_bytes<T: bytemuck::Pod>(data: &[T]) -> std::borrow::Cow<'_, [u8]> {
     std::borrow::Cow::Borrowed(bytemuck::cast_slice(data))
 }
 
+#[cfg(feature = "gpu")]
 /// A registered item type plugin, borrowed back as its concrete type.
 pub(crate) fn plugin_mut<'a, T: viewport_lib::plugin_api::ItemTypePlugin>(
     renderer: &'a mut viewport_lib::renderer::ViewportRenderer,
@@ -274,6 +299,7 @@ pub(crate) fn plugin_mut<'a, T: viewport_lib::plugin_api::ItemTypePlugin>(
         .unwrap_or_else(|| panic!("{type_name} must be registered; call install() first"))
 }
 
+#[cfg(feature = "gpu")]
 /// The same lookup, together with the renderer-owned job runner and content
 /// arenas an upload needs.
 pub(crate) fn host<'a, T: viewport_lib::plugin_api::ItemTypePlugin>(
