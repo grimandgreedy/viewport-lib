@@ -572,6 +572,32 @@ macro_rules! emit_draw_calls {
                             else {
                                 continue;
                             };
+                            // A wireframe item draws its edge lines in place of
+                            // its triangles.
+                            if item.settings.wireframe {
+                                if let (Some(edge_buf), Some(wf)) =
+                                    (&mesh.edge_index_buffer, resources.scene.wireframe())
+                                {
+                                    if cur_pipeline != Some(wf as *const _) {
+                                        render_pass.set_pipeline(wf);
+                                        cur_pipeline = Some(wf as *const _);
+                                    }
+                                    let deform_bg = resources
+                                        .deform
+                                        .instance_bind_group_for(item.mesh_id, item.deform_instance);
+                                    if cur_deform != Some(deform_bg as *const _) {
+                                        bind_deform_group!(render_pass, resources, deform_bg);
+                                        cur_deform = Some(deform_bg as *const _);
+                                    }
+                                    render_pass.set_bind_group(1, per_item_object_bind_groups.get(item_idx).and_then(|opt| opt.as_ref()).unwrap_or(&mesh.object_bind_group), &[]);
+                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
+                                    render_pass.set_index_buffer(edge_buf.slice(..), crate::gpu::IndexFormat::Uint32);
+                                    let inst = object_inst(item_idx);
+                                    render_pass.draw_indexed(0..mesh.edge_index_count, 0, inst..inst + 1);
+                                    cur_geometry = None;
+                                }
+                                continue;
+                            }
                             let is_blended = item.settings.opacity < 1.0
                                 || item.material.is_blend();
                             let plug = resources.material_plugin_draw(item.material.shading_plugin);
@@ -817,7 +843,7 @@ macro_rules! emit_draw_calls {
                             )
                         });
 
-                        if frame.viewport.wireframe_mode {
+                        if frame.viewport.wireframe_mode || item.settings.wireframe {
                             if let (Some(edge_buf), Some(wf)) =
                                 (&mesh.edge_index_buffer, resources.scene.wireframe())
                             {

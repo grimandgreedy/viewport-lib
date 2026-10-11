@@ -23,6 +23,9 @@ use super::*;
 /// (their `param_vis` mode/scale and `alpha_mode` ride `material_gpu_buf`).
 pub(crate) fn is_instanceable(item: &SceneRenderItem, resources: &DeviceResources) -> bool {
     !item.settings.hidden
+        // A wireframe item draws its edge lines, which only the per-object path
+        // issues; an instanced batch would draw its filled triangles.
+        && !item.settings.wireframe
         && item.active_attribute.is_none()
         // Material-plugin items instance once the plugin's instanced pipeline set
         // is built (the plugin's shading composed onto the instanced modules, on
@@ -107,8 +110,12 @@ pub(crate) fn active_submesh_materials<'a>(
 
 /// Whether any of the item's draws belong in the opaque scene pass. For a
 /// per-range item that is any opaque-material range; otherwise it is the
-/// usual whole-item opacity/blend check.
+/// usual whole-item opacity/blend check. A wireframe item's edge lines are
+/// always opaque draws, whatever its opacity or materials.
 pub(crate) fn has_opaque_draws(item: &SceneRenderItem, resources: &DeviceResources) -> bool {
+    if item.settings.wireframe {
+        return true;
+    }
     if item.settings.opacity < 1.0 {
         return false;
     }
@@ -124,8 +131,11 @@ pub(crate) fn has_opaque_draws(item: &SceneRenderItem, resources: &DeviceResourc
 
 /// Whether any of the item's draws belong in the transparent pass (OIT on
 /// the HDR path). The complement of [`has_opaque_draws`] per range: a
-/// per-range item can be in both passes at once.
+/// per-range item can be in both passes at once. A wireframe item has none.
 pub(crate) fn has_transparent_draws(item: &SceneRenderItem, resources: &DeviceResources) -> bool {
+    if item.settings.wireframe {
+        return false;
+    }
     if item.settings.opacity < 1.0 {
         return true;
     }

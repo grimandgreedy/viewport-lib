@@ -107,7 +107,7 @@ pub(super) fn draw_mesh_item(
         )
     });
     let item_key = PipelineKey::two_sided(item.material.is_two_sided());
-    if wireframe_mode {
+    if wireframe_mode || item.settings.wireframe {
         if let Some(edge_buf) = &mesh.edge_index_buffer {
             let Some(wf_pl) = family.wireframe() else {
                 return;
@@ -1275,6 +1275,28 @@ impl ViewportRenderer {
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
+                            if item.settings.wireframe {
+                                let obj_bg = self
+                                    .mesh_uniforms
+                                    .bind_groups
+                                    .get(item_idx)
+                                    .and_then(|opt| opt.as_ref());
+                                draw_mesh_item(
+                                    resources,
+                                    &mut render_pass,
+                                    item,
+                                    obj_bg,
+                                    obj_bg
+                                        .map_or(0, |_| self.mesh_uniforms.object_indices[item_idx]),
+                                    true,
+                                    true,
+                                    &resources.scene.hdr_family(),
+                                    None,
+                                    None,
+                                    Some(false),
+                                );
+                                continue;
+                            }
                             let plug = resources.material_plugin_draw(item.material.shading_plugin);
                             // Early-Z fast path: a plain-opaque, single-material,
                             // non-scalar item in a frame with no clip geometry can
