@@ -217,6 +217,9 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
 /// Registering one on its own is
 /// `renderer.with_item_type_plugin(device, Box::new(point_cloud::PointCloudPlugin::default()))`;
 /// this is the same call for each type in turn.
+///
+/// Calling this links every type into the binary, shaders included. Register
+/// only the types you draw instead and the linker leaves the rest out.
 pub fn install(
     renderer: &mut viewport_lib::renderer::ViewportRenderer,
     device: &viewport_lib::gpu::Device,
