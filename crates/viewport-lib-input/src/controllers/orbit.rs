@@ -3,7 +3,7 @@
 //! [`OrbitCameraController`] wraps [`crate::input::viewport_input::ViewportInput`] and
 //! applies resolved orbit / pan / zoom actions directly to a [`crate::Camera`].
 
-use crate::Camera;
+use crate::{Camera, LookAngles};
 
 use crate::input::action::Action;
 use crate::input::action_frame::ActionFrame;
@@ -13,6 +13,8 @@ use crate::input::mode::NavigationMode;
 use crate::input::preset::{BindingPreset, viewer_bindings, viewport_default_bindings};
 use crate::input::viewport_binding::ViewportBinding;
 use crate::input::viewport_input::ViewportInput;
+
+use super::movement::wish_from_actions;
 
 /// High-level orbit / pan / zoom camera controller.
 ///
@@ -52,11 +54,16 @@ pub struct OrbitCameraController {
     ///
     /// Defaults to [`NavigationMode::Arcball`].
     pub navigation_mode: NavigationMode,
-    /// Movement speed for [`NavigationMode::Fly`], in world units per frame.
+    /// Movement speed for [`NavigationMode::Fly`], in world units per second.
+    /// Moving diagonally is as fast as moving straight.
     ///
-    /// Defaults to `0.1`. Scale this to match your scene : a value of `0.1` is
-    /// suitable for a scene with objects a few units across.
+    /// Defaults to `6.0`. Scale this to match your scene : `6.0` suits a scene
+    /// with objects a few units across.
     pub fly_speed: f32,
+    /// Multiplier on [`fly_speed`](Self::fly_speed) while
+    /// [`Action::FlySpeedBoost`](crate::input::Action::FlySpeedBoost) is held
+    /// (Shift in the default bindings). Defaults to `3.0`.
+    pub fly_boost: f32,
     /// Sensitivity for drag-based orbit (radians per pixel).
     pub orbit_sensitivity: f32,
     /// Sensitivity for scroll-based zoom (scale factor per pixel).
@@ -76,8 +83,10 @@ impl OrbitCameraController {
     pub const DEFAULT_ZOOM_SENSITIVITY: f32 = 0.001;
     /// Default gesture sensitivity: 1.0 (gesture radians applied 1:1 to camera yaw).
     pub const DEFAULT_GESTURE_SENSITIVITY: f32 = 1.0;
-    /// Default first-person fly speed: 0.1 world units per frame.
-    pub const DEFAULT_FLY_SPEED: f32 = 0.1;
+    /// Default fly speed: 6 world units per second.
+    pub const DEFAULT_FLY_SPEED: f32 = 6.0;
+    /// Default fly speed multiplier while boosting.
+    pub const DEFAULT_FLY_BOOST: f32 = 3.0;
 
     /// Create a controller that holds no bindings of its own.
     ///
@@ -112,6 +121,7 @@ impl OrbitCameraController {
             input: ViewportInput::new(bindings),
             navigation_mode: NavigationMode::Arcball,
             fly_speed: Self::DEFAULT_FLY_SPEED,
+            fly_boost: Self::DEFAULT_FLY_BOOST,
             orbit_sensitivity: Self::DEFAULT_ORBIT_SENSITIVITY,
             zoom_sensitivity: Self::DEFAULT_ZOOM_SENSITIVITY,
             gesture_sensitivity: Self::DEFAULT_GESTURE_SENSITIVITY,
@@ -128,7 +138,9 @@ impl OrbitCameraController {
     }
 
     /// Former name for [`viewer`](Self::viewer).
-    #[deprecated(note = "renamed: use OrbitCameraController::viewer, or new_stateless if the host owns the resolver")]
+    #[deprecated(
+        note = "renamed: use OrbitCameraController::viewer, or new_stateless if the host owns the resolver"
+    )]
     pub fn viewport_primitives() -> Self {
         Self::new(BindingPreset::Viewer)
     }
@@ -169,7 +181,7 @@ impl OrbitCameraController {
     /// to the resolver, and a controller holding a second one is how a session and a
     /// controller end up disagreeing about the control scheme.
     #[deprecated(
-        note = "own a ViewportInput and use OrbitCameraController::apply(&mut camera, &frame)"
+        note = "own a ViewportInput and use OrbitCameraController::apply(&mut camera, &frame, dt)"
     )]
     pub fn push_event(&mut self, event: ViewportEvent) {
         self.input.push_event(event);
@@ -197,12 +209,14 @@ impl OrbitCameraController {
     /// - [`NavigationMode::Planar`]: pan only, orbit input is ignored.
     /// - [`NavigationMode::Fly`]: mouselook + WASD translation. Requires
     ///   the `Default` binding preset so that movement keys are resolved.
+    ///
+    /// Takes no frame time, so fly movement assumes 60 frames per second.
     #[deprecated(
-        note = "own a ViewportInput and use OrbitCameraController::apply(&mut camera, &frame)"
+        note = "own a ViewportInput and use OrbitCameraController::apply(&mut camera, &frame, dt)"
     )]
     pub fn apply_to_camera(&mut self, camera: &mut Camera) -> ActionFrame {
         let frame = self.input.resolve();
-        self.apply(camera, &frame);
+        self.apply(camera, &frame, 1.0 / 60.0);
         frame
     }
 
@@ -220,13 +234,7 @@ impl OrbitCameraController {
         }
         let yaw = delta.x * self.orbit_sensitivity;
         let pitch = delta.y * self.orbit_sensitivity;
-        match self.navigation_mode {
-            NavigationMode::Arcball => camera.orbit(yaw, pitch),
-            NavigationMode::Turntable => apply_turntable(camera, yaw, pitch),
-            NavigationMode::Fly => apply_fly_look(camera, yaw, pitch),
-            // Planar ignores orbit; NavigationMode is non_exhaustive.
-            _ => {}
-        }
+        orbit_in_mode(camera, self.navigation_mode, yaw, pitch);
     }
 
     /// Apply an already-resolved [`ActionFrame`] to the camera without draining
@@ -241,7 +249,11 @@ impl OrbitCameraController {
     /// Pan needs the viewport height, read from the size recorded by the last
     /// [`begin_frame`](Self::begin_frame) or
     /// [`set_viewport_size`](Self::set_viewport_size).
-    pub fn apply(&self, camera: &mut Camera, frame: &ActionFrame) {
+    ///
+    /// `dt` is the frame time in seconds. Only held input reads it: fly movement
+    /// in [`NavigationMode::Fly`]. Drags, the wheel and touch arrive as deltas
+    /// and move the camera the same at any frame rate.
+    pub fn apply(&self, camera: &mut Camera, frame: &ActionFrame, dt: f32) {
         let nav = &frame.navigation;
         let h = self.viewport_size[1];
 
@@ -290,33 +302,15 @@ impl OrbitCameraController {
                     apply_fly_look(camera, nav.twist * self.gesture_sensitivity, 0.0);
                 }
 
-                // WASD / QE translation.
-                let forward = -(camera.orientation * glam::Vec3::Z);
-                let right = camera.orientation * glam::Vec3::X;
-                let up = camera.orientation * glam::Vec3::Y;
-                let speed = self.fly_speed;
-
-                let mut move_delta = glam::Vec3::ZERO;
-                if frame.is_active(Action::FlyForward) {
-                    move_delta += forward * speed;
-                }
-                if frame.is_active(Action::FlyBackward) {
-                    move_delta -= forward * speed;
-                }
-                if frame.is_active(Action::FlyRight) {
-                    move_delta += right * speed;
-                }
-                if frame.is_active(Action::FlyLeft) {
-                    move_delta -= right * speed;
-                }
-                if frame.is_active(Action::FlyUp) {
-                    move_delta += up * speed;
-                }
-                if frame.is_active(Action::FlyDown) {
-                    move_delta -= up * speed;
-                }
+                // WASD / QE translation in the view's own basis.
+                let wish = wish_from_actions(frame, camera.forward(), camera.right(), camera.up());
+                let speed = if frame.is_active(Action::FlySpeedBoost) {
+                    self.fly_speed * self.fly_boost
+                } else {
+                    self.fly_speed
+                };
                 // Translate center (and thus eye) without changing orientation or distance.
-                camera.center += move_delta;
+                camera.center += wish * speed * dt;
             }
 
             // NavigationMode is non_exhaustive; no-op for modes not handled here.
@@ -329,10 +323,33 @@ impl OrbitCameraController {
 // Navigation mode helpers
 // ---------------------------------------------------------------------------
 
+/// Highest eye elevation, above or below the horizon, that turntable and fly
+/// look reach: just short of the poles, where yaw stops meaning anything.
+const POLE_LIMIT: f32 = 89.0 * std::f32::consts::PI / 180.0;
+
+/// Rotate `camera` by `yaw` and `pitch` radians the way `mode` interprets an
+/// orbit drag. Planar ignores it.
+///
+/// The one rotation path for the orbit controller and for a
+/// [`CameraAnimator`](crate::controllers::CameraAnimator) coasting in a mode, so
+/// a coast after a drag turns the camera the way the drag did.
+pub(crate) fn orbit_in_mode(camera: &mut Camera, mode: NavigationMode, yaw: f32, pitch: f32) {
+    match mode {
+        NavigationMode::Arcball => camera.orbit(yaw, pitch),
+        NavigationMode::Turntable => apply_turntable(camera, yaw, pitch),
+        NavigationMode::Fly => apply_fly_look(camera, yaw, pitch),
+        // Planar ignores orbit; NavigationMode is non_exhaustive.
+        _ => {}
+    }
+}
+
 /// Apply a turntable yaw + clamped pitch to the camera.
 ///
 /// Yaw rotates around world Z. Pitch changes elevation in camera-local space,
-/// but is blocked when the eye would reach +/-89 deg above/below the XY plane.
+/// stopping at [`POLE_LIMIT`] above or below the XY plane. A step that would
+/// cross the limit takes the part of it that reaches the limit, so a fast drag
+/// ends at the limit rather than short of it, and a step that starts past the
+/// limit can still come back toward the horizon.
 fn apply_turntable(camera: &mut Camera, yaw: f32, pitch: f32) {
     // Yaw: pre-multiply by a world-Z rotation (same as the yaw component of Camera::orbit).
     if yaw != 0.0 {
@@ -340,34 +357,49 @@ fn apply_turntable(camera: &mut Camera, yaw: f32, pitch: f32) {
     }
 
     if pitch != 0.0 {
-        // Proposed orientation after applying pitch in camera-local space.
-        let proposed = (camera.orientation * glam::Quat::from_rotation_x(-pitch)).normalize();
+        // Elevation of the eye above the XY plane: the eye direction is
+        // `orientation * Z`, and its z-component is the sine of the elevation.
+        let elevation = |q: glam::Quat| (q * glam::Vec3::Z).z.clamp(-1.0, 1.0).asin();
+        let pitched =
+            |amount: f32| (camera.orientation * glam::Quat::from_rotation_x(-amount)).normalize();
 
-        // The eye direction is `orientation * Z`. Its Z-component equals
-        // sin(elevation_angle), so clamping it to sin(+/-89 deg) keeps the camera
-        // away from the poles.
-        let max_sin_el = 89.0_f32.to_radians().sin(); // ~ 0.9998
-        let eye_z = (proposed * glam::Vec3::Z).z;
-
-        if eye_z.abs() <= max_sin_el {
-            camera.orientation = proposed;
+        // How fast elevation moves per radian of pitch, from a small probe step:
+        // +/-1 when the camera carries no roll, less when it does. Working from the
+        // rate rather than the end orientation keeps a step large enough to pass
+        // over the pole from looking like a small one.
+        const PROBE: f32 = 1e-3;
+        let current = elevation(camera.orientation);
+        let rate = (elevation(pitched(PROBE)) - current) / PROBE;
+        if rate.abs() < 1e-3 {
+            // Rolled on its side: pitch does not move the elevation.
+            camera.orientation = pitched(pitch);
+            return;
         }
-        // At the pole limit: silently discard the pitch to avoid jitter.
+
+        let target = current + rate * pitch;
+        if target.abs() <= POLE_LIMIT {
+            camera.orientation = pitched(pitch);
+        } else if target.abs() > current.abs() && current.abs() >= POLE_LIMIT {
+            // Already at or past the limit and heading further out.
+        } else {
+            camera.orientation = pitched((POLE_LIMIT.copysign(target) - current) / rate);
+        }
     }
 }
 
 /// Apply mouselook (yaw + pitch) while keeping the camera eye position fixed.
 ///
-/// The orbit center is adjusted so that `eye = center + orientation * Z * distance`
-/// remains constant after the rotation.
+/// Yaw turns around world Z and pitch tilts the view, held to [`POLE_LIMIT`]
+/// so the view cannot go over the top and roll. Roll the camera carried in from
+/// another mode is levelled out. The orbit center moves so the eye stays put.
 fn apply_fly_look(camera: &mut Camera, yaw: f32, pitch: f32) {
     let eye = camera.eye_position();
-    camera.orientation = (glam::Quat::from_rotation_z(-yaw)
-        * camera.orientation
-        * glam::Quat::from_rotation_x(-pitch))
-    .normalize();
-    // Re-derive center so the eye does not shift.
-    camera.center = eye - camera.orientation * (glam::Vec3::Z * camera.distance);
+    // A positive pitch delta is a downward drag, which looks down.
+    let look = LookAngles::from_orientation(camera.orientation)
+        .turned(yaw, -pitch)
+        .with_pitch_clamped(-POLE_LIMIT, POLE_LIMIT);
+    camera.orientation = look.orientation();
+    camera.center = eye + look.direction() * camera.distance;
 }
 
 #[cfg(test)]
@@ -441,7 +473,7 @@ mod tests {
             let mut ctrl = OrbitCameraController::viewer();
             ctrl.navigation_mode = mode;
             let mut by_drag = start();
-            ctrl.apply(&mut by_drag, &frame);
+            ctrl.apply(&mut by_drag, &frame, 1.0 / 60.0);
             let mut by_call = start();
             ctrl.orbit_by(&mut by_call, delta);
             assert!(
@@ -523,7 +555,8 @@ mod tests {
     fn fly_moves_camera() {
         let mut ctrl = OrbitCameraController::new(BindingPreset::Default);
         ctrl.navigation_mode = NavigationMode::Fly;
-        ctrl.fly_speed = 1.0;
+        // The deprecated path assumes 60 Hz: 60 units per second is 1 per frame.
+        ctrl.fly_speed = 60.0;
         ctrl.begin_frame(make_ctx());
         let mut cam = Camera::default();
         cam.center = glam::Vec3::ZERO;
@@ -551,10 +584,146 @@ mod tests {
         let before = cam.orientation;
         let mut frame = ActionFrame::default();
         frame.navigation.orbit = glam::Vec2::new(20.0, 0.0);
-        ctrl.apply(&mut cam, &frame);
+        ctrl.apply(&mut cam, &frame, 1.0 / 60.0);
         assert_ne!(
             cam.orientation, before,
             "apply(&frame) should orbit from the frame's nav delta"
         );
+    }
+
+    fn fly_frame(actions: &[Action]) -> ActionFrame {
+        let mut frame = ActionFrame::default();
+        for &a in actions {
+            frame
+                .actions
+                .insert(a, crate::input::action_frame::ResolvedActionState::Held);
+        }
+        frame
+    }
+
+    fn fly_controller() -> OrbitCameraController {
+        let mut ctrl = OrbitCameraController::new_stateless();
+        ctrl.navigation_mode = NavigationMode::Fly;
+        ctrl.fly_speed = 1.0;
+        ctrl
+    }
+
+    #[test]
+    fn fly_diagonal_moves_as_far_as_straight() {
+        let ctrl = fly_controller();
+        let level = LookAngles::FORWARD.orientation();
+        let moved = |actions: &[Action]| {
+            let mut cam = Camera::default();
+            cam.orientation = level;
+            let before = cam.center;
+            ctrl.apply(&mut cam, &fly_frame(actions), 1.0);
+            (cam.center - before).length()
+        };
+        let straight = moved(&[Action::FlyForward]);
+        let diagonal = moved(&[Action::FlyForward, Action::FlyRight]);
+        let three = moved(&[Action::FlyForward, Action::FlyRight, Action::FlyUp]);
+        assert!((straight - 1.0).abs() < 1e-5);
+        assert!((diagonal - straight).abs() < 1e-5, "diagonal={diagonal}");
+        assert!((three - straight).abs() < 1e-5, "three axes={three}");
+    }
+
+    #[test]
+    fn fly_look_stops_short_of_vertical() {
+        let mut cam = Camera::default();
+        cam.orientation = LookAngles::FORWARD.orientation();
+        // Drag up a long way: negative pitch delta looks up.
+        for _ in 0..200 {
+            apply_fly_look(&mut cam, 0.0, -0.1);
+        }
+        let look = LookAngles::from_orientation(cam.orientation);
+        assert!(
+            (look.pitch - POLE_LIMIT).abs() < 1e-3,
+            "pitch={}",
+            look.pitch
+        );
+        // No roll: the camera's right vector stays level.
+        assert!((cam.orientation * glam::Vec3::X).z.abs() < 1e-4);
+    }
+
+    #[test]
+    fn fly_look_matches_the_old_turn_directions() {
+        let mut cam = Camera::default();
+        cam.orientation = LookAngles::FORWARD.orientation();
+        apply_fly_look(&mut cam, 0.2, 0.1);
+        let look = LookAngles::from_orientation(cam.orientation);
+        // Positive yaw turns right, a positive (downward) pitch delta looks down.
+        assert!(look.yaw > 0.0 && look.pitch < 0.0, "{look:?}");
+    }
+
+    #[test]
+    fn turntable_fast_step_reaches_the_limit() {
+        let mut cam = Camera::default();
+        cam.orientation = LookAngles::FORWARD.orientation();
+        // One step far past the limit lands on it instead of being dropped.
+        apply_turntable(&mut cam, 0.0, 2.0);
+        let eye_elevation = (cam.orientation * glam::Vec3::Z).z.asin();
+        assert!(
+            (eye_elevation.abs() - POLE_LIMIT).abs() < 1e-3,
+            "elevation={eye_elevation}"
+        );
+    }
+
+    #[test]
+    fn turntable_can_back_away_from_past_the_limit() {
+        let mut cam = Camera::default();
+        // Arcball left the eye past the limit, looking almost straight down.
+        cam.orientation = LookAngles::new(0.0, -1.565).orientation();
+        let before = (cam.orientation * glam::Vec3::Z).z;
+        // A drag further over the top does nothing.
+        apply_turntable(&mut cam, 0.0, 0.01);
+        assert!(((cam.orientation * glam::Vec3::Z).z - before).abs() < 1e-6);
+        // A drag back toward the horizon applies.
+        apply_turntable(&mut cam, 0.0, -0.01);
+        let after = (cam.orientation * glam::Vec3::Z).z;
+        assert!(after < before, "before={before} after={after}");
+    }
+
+    #[test]
+    fn fly_speed_is_per_second() {
+        let ctrl = fly_controller();
+        let moved = |dt: f32, frames: usize| {
+            let mut cam = Camera::default();
+            cam.orientation = LookAngles::FORWARD.orientation();
+            let before = cam.center;
+            for _ in 0..frames {
+                ctrl.apply(&mut cam, &fly_frame(&[Action::FlyForward]), dt);
+            }
+            (cam.center - before).length()
+        };
+        // One second at 30, 60 and 144 Hz covers the same ground.
+        for (dt, frames) in [(1.0 / 30.0, 30), (1.0 / 60.0, 60), (1.0 / 144.0, 144)] {
+            assert!((moved(dt, frames) - 1.0).abs() < 1e-3, "dt={dt}");
+        }
+    }
+
+    #[test]
+    fn fly_boost_multiplies_speed() {
+        let ctrl = fly_controller();
+        let mut cam = Camera::default();
+        cam.orientation = LookAngles::FORWARD.orientation();
+        let before = cam.center;
+        ctrl.apply(
+            &mut cam,
+            &fly_frame(&[Action::FlyForward, Action::FlySpeedBoost]),
+            1.0,
+        );
+        let moved = (cam.center - before).length();
+        assert!((moved - ctrl.fly_boost).abs() < 1e-5, "moved={moved}");
+    }
+
+    #[test]
+    fn shift_resolves_to_fly_speed_boost() {
+        use crate::input::binding::Modifiers;
+        let mut input = ViewportInput::new(crate::input::viewport_default_bindings());
+        input.begin_frame(make_ctx());
+        input.push_event(ViewportEvent::ModifiersChanged(Modifiers::SHIFT));
+        assert!(input.resolve().is_active(Action::FlySpeedBoost));
+        input.push_event(ViewportEvent::ModifiersChanged(Modifiers::NONE));
+        assert!(!input.resolve().is_active(Action::FlySpeedBoost));
     }
 }

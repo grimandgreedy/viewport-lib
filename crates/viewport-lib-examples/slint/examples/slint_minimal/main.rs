@@ -16,7 +16,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 
@@ -73,6 +73,8 @@ struct State {
     renderer: ViewportRenderer,
     camera: Camera,
     controller: OrbitCameraController,
+    /// When the last frame was drawn, for the frame time fly movement reads.
+    last_frame: Instant,
     /// Owns the bindings and resolves events into an `ActionFrame`. The
     /// controller keeps only its sensitivities and applies the frame.
     input: ViewportInput,
@@ -149,6 +151,7 @@ fn main() -> Result<(), slint::PlatformError> {
             ..Camera::default()
         },
         controller: OrbitCameraController::new_stateless(),
+        last_frame: Instant::now(),
         input: ViewportInput::from_preset(BindingPreset::Viewer),
         scene_items: vec![
             make(m_sphere, [-2.5, 0.0, 0.0], [0.75, 0.28, 0.05]),
@@ -255,7 +258,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     s.input.push_event(event);
                 }
                 let action_frame = s.input.resolve();
-                s.controller.apply(&mut s.camera, &action_frame);
+                let now = Instant::now();
+                let dt = (now - s.last_frame).as_secs_f32();
+                s.last_frame = now;
+                s.controller.apply(&mut s.camera, &action_frame, dt);
                 s.camera.set_aspect_ratio(w, h);
 
                 let mut frame = FrameData::new(

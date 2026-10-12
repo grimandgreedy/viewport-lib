@@ -6,6 +6,9 @@
 
 use viewport_lib_types::camera::{Camera, Projection};
 
+use super::orbit::orbit_in_mode;
+use crate::input::NavigationMode;
+
 /// Easing function for fly-to animations.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
@@ -43,8 +46,9 @@ impl Easing {
 /// Damping coefficients for camera motion channels.
 ///
 /// Each value is in the range `0.0..1.0` where 0 = no damping (instant) and
-/// 0.85 = smooth deceleration. Values are frame-rate independent via
-/// `damping.powf(dt * 60.0)`.
+/// 0.85 = smooth deceleration. A value is the share of velocity kept per 60 Hz
+/// frame; the animator scales it to the real frame time, so both how fast the
+/// motion slows and how far it coasts in total are the same at any frame rate.
 #[derive(Clone, Debug)]
 pub struct CameraDamping {
     /// Orbit (rotation) damping factor.
@@ -94,8 +98,15 @@ struct CameraFlight {
 ///
 /// For animated transitions (view presets, zoom-to-fit), use
 /// [`fly_to`](Self::fly_to). Any raw input during a flight cancels it.
+///
+/// The orbit coast rotates as an arcball unless told otherwise. Driving it from
+/// an [`OrbitCameraController`](crate::controllers::OrbitCameraController) in
+/// another mode, set the same mode with
+/// [`with_navigation_mode`](Self::with_navigation_mode) so the coast turns the
+/// camera the way the drag did.
 pub struct CameraAnimator {
     damping: CameraDamping,
+    navigation_mode: NavigationMode,
     /// (yaw_rate, pitch_rate) in radians.
     orbit_velocity: glam::Vec2,
     /// (right, up) in world units.
@@ -111,6 +122,7 @@ impl CameraAnimator {
     pub fn new(damping: CameraDamping) -> Self {
         Self {
             damping,
+            navigation_mode: NavigationMode::Arcball,
             orbit_velocity: glam::Vec2::ZERO,
             pan_velocity: glam::Vec2::ZERO,
             zoom_velocity: 0.0,
@@ -121,6 +133,25 @@ impl CameraAnimator {
     /// Create an animator with sensible default damping values.
     pub fn with_default_damping() -> Self {
         Self::new(CameraDamping::default())
+    }
+
+    /// Builder: coast orbit motion as `mode` interprets an orbit drag, matching
+    /// [`OrbitCameraController::navigation_mode`](crate::controllers::OrbitCameraController::navigation_mode).
+    /// The default is [`NavigationMode::Arcball`].
+    pub fn with_navigation_mode(mut self, mode: NavigationMode) -> Self {
+        self.navigation_mode = mode;
+        self
+    }
+
+    /// Set the mode the orbit coast rotates in. See
+    /// [`with_navigation_mode`](Self::with_navigation_mode).
+    pub fn set_navigation_mode(&mut self, mode: NavigationMode) {
+        self.navigation_mode = mode;
+    }
+
+    /// The mode the orbit coast rotates in.
+    pub fn navigation_mode(&self) -> NavigationMode {
+        self.navigation_mode
     }
 
     /// Feed a raw orbit delta (yaw, pitch) in radians.
@@ -289,8 +320,10 @@ impl CameraAnimator {
 
         // Apply orbit velocity.
         if self.orbit_velocity.length() > eps {
-            camera.orbit(self.orbit_velocity.x, self.orbit_velocity.y);
-            self.orbit_velocity *= self.damping.orbit.powf(dt * 60.0);
+            let (step, decay) = coast_step(self.damping.orbit, dt);
+            let turn = self.orbit_velocity * step;
+            orbit_in_mode(camera, self.navigation_mode, turn.x, turn.y);
+            self.orbit_velocity *= decay;
             if self.orbit_velocity.length() <= eps {
                 self.orbit_velocity = glam::Vec2::ZERO;
             }
@@ -301,8 +334,9 @@ impl CameraAnimator {
         // Note: the animator's pan_velocity.y convention is the opposite sign from
         // pan_world's up_delta (animator subtracts up, pan_world adds up), so negate y.
         if self.pan_velocity.length() > eps {
-            camera.pan_world(self.pan_velocity.x, -self.pan_velocity.y);
-            self.pan_velocity *= self.damping.pan.powf(dt * 60.0);
+            let (step, decay) = coast_step(self.damping.pan, dt);
+            camera.pan_world(self.pan_velocity.x * step, -self.pan_velocity.y * step);
+            self.pan_velocity *= decay;
             if self.pan_velocity.length() <= eps {
                 self.pan_velocity = glam::Vec2::ZERO;
             }
@@ -311,8 +345,9 @@ impl CameraAnimator {
 
         // Apply zoom velocity.
         if self.zoom_velocity.abs() > eps {
-            camera.zoom_by_delta(self.zoom_velocity);
-            self.zoom_velocity *= self.damping.zoom.powf(dt * 60.0);
+            let (step, decay) = coast_step(self.damping.zoom, dt);
+            camera.zoom_by_delta(self.zoom_velocity * step);
+            self.zoom_velocity *= decay;
             if self.zoom_velocity.abs() <= eps {
                 self.zoom_velocity = 0.0;
             }
@@ -321,6 +356,23 @@ impl CameraAnimator {
 
         changed
     }
+}
+
+/// How much of a velocity to apply over `dt`, and the factor it decays by.
+///
+/// The velocity decays continuously, keeping `damping` of itself per 60th of a
+/// second, and the step is the motion that decay covers in `dt`, normalised so
+/// a 60 Hz frame applies exactly the velocity. The total coast is then
+/// `v / (1 - damping)` however the time is sliced.
+fn coast_step(damping: f32, dt: f32) -> (f32, f32) {
+    let decay = damping.powf(dt * 60.0);
+    let step = if damping < 1.0 {
+        (1.0 - decay) / (1.0 - damping)
+    } else {
+        // No decay at all: the velocity is a plain rate per 60 Hz frame.
+        dt * 60.0
+    };
+    (step, decay)
 }
 
 #[cfg(test)]
@@ -488,5 +540,84 @@ mod tests {
                 "{easing:?}: eval(1) = {v1}, expected 1"
             );
         }
+    }
+
+    /// Coast a pan flick at a fixed frame rate until it settles, returning how
+    /// far the centre moved.
+    fn pan_coast(hz: f32) -> f32 {
+        let mut anim = CameraAnimator::with_default_damping();
+        let mut cam = default_camera();
+        let start = cam.center;
+        anim.apply_pan(0.1, 0.0);
+        for _ in 0..(hz as usize * 10) {
+            anim.update(1.0 / hz, &mut cam);
+        }
+        (cam.center - start).length()
+    }
+
+    #[test]
+    fn coast_distance_does_not_depend_on_frame_rate() {
+        let at_60 = pan_coast(60.0);
+        // At 60 Hz the coast is v / (1 - d), as it always was.
+        assert!(
+            (at_60 - 0.1 / (1.0 - 0.85)).abs() < 1e-3,
+            "60 Hz coast={at_60}"
+        );
+        for hz in [30.0, 120.0, 144.0, 240.0] {
+            let coast = pan_coast(hz);
+            assert!(
+                (coast - at_60).abs() < 1e-3,
+                "{hz} Hz coast={coast}, 60 Hz coast={at_60}"
+            );
+        }
+    }
+
+    #[test]
+    fn fly_coast_turns_about_the_eye() {
+        let mut cam = default_camera();
+        cam.orientation = crate::LookAngles::new(0.3, -0.4).orientation();
+        let eye = cam.eye_position();
+        let mut anim =
+            CameraAnimator::with_default_damping().with_navigation_mode(NavigationMode::Fly);
+        anim.apply_orbit(0.2, 0.15);
+        for _ in 0..600 {
+            anim.update(1.0 / 60.0, &mut cam);
+        }
+        assert!((cam.eye_position() - eye).length() < 1e-3, "the eye moved");
+        // The same flick coasted as an arcball swings the eye round the centre.
+        let mut arcball_cam = default_camera();
+        arcball_cam.orientation = crate::LookAngles::new(0.3, -0.4).orientation();
+        let mut arcball = CameraAnimator::with_default_damping();
+        arcball.apply_orbit(0.2, 0.15);
+        for _ in 0..600 {
+            arcball.update(1.0 / 60.0, &mut arcball_cam);
+        }
+        assert!((arcball_cam.eye_position() - eye).length() > 0.1);
+    }
+
+    #[test]
+    fn turntable_coast_stops_at_the_pole_limit() {
+        let mut cam = default_camera();
+        cam.orientation = crate::LookAngles::new(0.0, -1.3).orientation();
+        let mut anim =
+            CameraAnimator::with_default_damping().with_navigation_mode(NavigationMode::Turntable);
+        // A flick hard over the top.
+        anim.apply_orbit(0.0, 0.5);
+        for _ in 0..600 {
+            anim.update(1.0 / 60.0, &mut cam);
+        }
+        let eye_elevation = (cam.orientation * glam::Vec3::Z).z.asin();
+        assert!(
+            eye_elevation < 89.0_f32.to_radians() + 1e-3,
+            "elevation={eye_elevation}"
+        );
+    }
+
+    #[test]
+    fn arcball_is_the_default_mode() {
+        assert_eq!(
+            CameraAnimator::with_default_damping().navigation_mode(),
+            NavigationMode::Arcball
+        );
     }
 }

@@ -195,7 +195,8 @@ impl App {
                 self.session
                     .scene_mut()
                     .set_local_transform(self.cube_id, spin);
-                self.session.update_orbit(&mut self.orbit);
+                let dt = ui.input(|i| i.stable_dt);
+                self.session.update_orbit(&mut self.orbit, dt);
 
                 // Render into the offscreen texture and display it in the panel.
                 let cmd = self

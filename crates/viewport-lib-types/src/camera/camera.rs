@@ -298,6 +298,12 @@ impl Camera {
         self.proj_matrix() * self.view_matrix()
     }
 
+    /// The direction the camera looks, in world space: from the eye toward
+    /// the centre.
+    pub fn forward(&self) -> glam::Vec3 {
+        -(self.orientation * glam::Vec3::Z)
+    }
+
     /// Camera right vector in world space (used for pan).
     pub fn right(&self) -> glam::Vec3 {
         self.orientation * glam::Vec3::X

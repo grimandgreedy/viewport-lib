@@ -8,6 +8,7 @@
 //! setup without framework-specific glue.
 
 use std::sync::Arc;
+use std::time::Instant;
 use viewport_lib as vpl;
 
 use vpl::wgpu;
@@ -55,6 +56,8 @@ struct AppState {
     camera: Camera,
     mesh_id: MeshId,
     controller: OrbitCameraController,
+    /// When the last frame was drawn, for the frame time fly movement reads.
+    last_frame: Instant,
     /// Owns the bindings and resolves events into an `ActionFrame`. The
     /// controller keeps only its sensitivities and applies the frame.
     input: ViewportInput,
@@ -157,6 +160,7 @@ impl ApplicationHandler for App {
             camera,
             mesh_id,
             controller,
+            last_frame: Instant::now(),
             input,
         });
     }
@@ -280,7 +284,10 @@ impl ApplicationHandler for App {
 
                 // Apply accumulated events to camera.
                 let action_frame = state.input.resolve();
-                state.controller.apply(&mut state.camera, &action_frame);
+                let now = Instant::now();
+                let dt = (now - state.last_frame).as_secs_f32();
+                state.last_frame = now;
+                state.controller.apply(&mut state.camera, &action_frame, dt);
                 state.camera.set_aspect_ratio(w, h);
 
                 // Build scene: 4 cubes in a grid.

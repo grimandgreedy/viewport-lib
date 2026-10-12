@@ -24,7 +24,7 @@
 
 // Re-exported so controllers can name `crate::Camera` and consumers can get the
 // camera type from this crate.
-pub use viewport_lib_types::camera::Camera;
+pub use viewport_lib_types::camera::{Camera, LookAngles};
 
 /// The batteries-included camera controllers.
 pub mod controllers;
@@ -44,15 +44,29 @@ pub mod input;
 /// exists so a custom controller has a concrete shape to fill and so controllers
 /// are interchangeable by type where a consumer wants that.
 pub trait CameraController {
-    /// Apply one frame of resolved input to the camera.
-    fn apply(&mut self, camera: &mut Camera, frame: &viewport_lib_types::input::ActionFrame);
+    /// Apply one frame of resolved input to the camera. `dt` is the frame time
+    /// in seconds, for input that is held rather than moved (a key held to fly,
+    /// a stick held over): such input moves the camera at a rate, and needs the
+    /// time to turn that rate into a distance. Drags and the wheel arrive in the
+    /// frame as deltas already.
+    fn apply(
+        &mut self,
+        camera: &mut Camera,
+        frame: &viewport_lib_types::input::ActionFrame,
+        dt: f32,
+    );
 }
 
 impl CameraController for controllers::OrbitCameraController {
-    fn apply(&mut self, camera: &mut Camera, frame: &viewport_lib_types::input::ActionFrame) {
+    fn apply(
+        &mut self,
+        camera: &mut Camera,
+        frame: &viewport_lib_types::input::ActionFrame,
+        dt: f32,
+    ) {
         // Delegate to the inherent apply, which drives the camera per the
         // controller's `navigation_mode`.
-        controllers::OrbitCameraController::apply(self, camera, frame)
+        controllers::OrbitCameraController::apply(self, camera, frame, dt)
     }
 }
 // The first/third-person controllers take an extra per-frame position (eye /

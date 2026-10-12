@@ -3,8 +3,8 @@
 //! [`FirstPersonCameraController`] drives the look direction of a host-owned
 //! [`Camera`] from the resolved [`ActionFrame`] and attaches the eye to a
 //! world-space position supplied each frame (typically a player body from
-//! physics). Look is decomposed into explicit `yaw` and `pitch` so clamping is
-//! clean and the movement basis is cheap to derive.
+//! physics). Look is held as [`LookAngles`](crate::LookAngles): explicit `yaw`
+//! and `pitch`, so clamping is clean and the movement basis is cheap to derive.
 //!
 //! # Coordinate conventions (Z-up)
 //!
@@ -16,6 +16,7 @@
 //! Unlike [`OrbitCameraController`](crate::controllers::orbit::OrbitCameraController), this
 //! controller does not own a camera: call
 //! [`apply`](FirstPersonCameraController::apply) with the host's `&mut Camera`.
+//!
 //! # Input it reads
 //!
 //! `navigation.orbit` for look, and the fly actions through
@@ -24,17 +25,30 @@
 //! controller and ignored here, so the wheel does nothing while this controller is
 //! the active one unless you rebind it.
 //!
-//! Look is a **drag**, not mouselook: `navigation.orbit` is filled from a bound
-//! gesture, so moving the mouse with nothing held does not turn the camera. For
-//! mouselook, read [`ViewportEvent::RawMotion`](crate::input::ViewportEvent::RawMotion)
-//! from the event stream yourself and add it to the look delta; the resolver does
-//! not model it, because whether the cursor is grabbed is the host's decision.
+//! # Mouselook and stick look
+//!
+//! `navigation.orbit` is filled from a bound drag, so moving the mouse with nothing
+//! held does not turn the camera. For mouselook, read
+//! [`ViewportEvent::RawMotion`](crate::input::ViewportEvent::RawMotion) yourself
+//! (usually while the cursor is grabbed) and pass it to
+//! [`turn_by`](FirstPersonCameraController::turn_by) at your own scale. A gamepad
+//! stick is a rate, so scale it by the frame time:
+//!
+//! ```
+//! # use viewport_lib_input::controllers::FirstPersonCameraController;
+//! # let mut fp = FirstPersonCameraController::default();
+//! # let (raw, stick, mouse_k, rate, dt) = (glam::Vec2::ZERO, glam::Vec2::ZERO, 0.002, 2.5, 1.0 / 60.0);
+//! fp.turn_by(raw.x * mouse_k, -raw.y * mouse_k);
+//! fp.turn_by(stick.x * rate * dt, stick.y * rate * dt);
+//! ```
+//!
+//! Then call [`apply`](FirstPersonCameraController::apply) as usual; with no drag
+//! bound it only attaches the eye.
 
 use glam::Vec3;
 
-use super::look::{build_orientation, orientation_to_aim, yaw_pitch_from_orientation};
-use crate::Camera;
 use crate::input::action_frame::ActionFrame;
+use crate::{Camera, LookAngles};
 
 /// Body-attached first-person camera controller.
 ///
@@ -56,6 +70,14 @@ pub struct FirstPersonCameraController {
     pub pitch_clamp: f32,
 }
 
+impl Default for FirstPersonCameraController {
+    /// [`DEFAULT_SENSITIVITY`](Self::DEFAULT_SENSITIVITY) and
+    /// [`DEFAULT_PITCH_CLAMP`](Self::DEFAULT_PITCH_CLAMP), looking along +Y.
+    fn default() -> Self {
+        Self::new(Self::DEFAULT_SENSITIVITY, Self::DEFAULT_PITCH_CLAMP)
+    }
+}
+
 impl FirstPersonCameraController {
     /// Default look sensitivity applied to the resolved orbit delta.
     pub const DEFAULT_SENSITIVITY: f32 = 0.005;
@@ -73,6 +95,19 @@ impl FirstPersonCameraController {
         }
     }
 
+    /// Builder: set the look sensitivity.
+    pub fn with_sensitivity(mut self, sensitivity: f32) -> Self {
+        self.sensitivity = sensitivity;
+        self
+    }
+
+    /// Builder: set the pitch clamp. The sign is ignored.
+    pub fn with_pitch_clamp(mut self, pitch_clamp: f32) -> Self {
+        self.pitch_clamp = pitch_clamp.abs();
+        self.pitch = self.pitch.clamp(-self.pitch_clamp, self.pitch_clamp);
+        self
+    }
+
     /// Apply the frame's look delta, then attach the camera eye to
     /// `eye_position`.
     ///
@@ -82,25 +117,34 @@ impl FirstPersonCameraController {
         let look = frame.navigation.orbit;
         // Mouse right -> yaw increases (turn right, clockwise from above).
         // Mouse down -> pitch decreases (look down).
-        self.yaw += look.x * self.sensitivity;
-        self.pitch -= look.y * self.sensitivity;
-        self.pitch = self.pitch.clamp(-self.pitch_clamp, self.pitch_clamp);
+        self.turn_by(look.x * self.sensitivity, -look.y * self.sensitivity);
 
-        let orientation = build_orientation(self.yaw, self.pitch);
+        let look = self.look();
         // distance 1 keeps the orbit centre one unit ahead of the eye so the
         // view matrix is non-degenerate; it does not affect rendering.
-        camera.center = eye_position + orientation_to_aim(orientation);
+        camera.center = eye_position + look.direction();
         camera.distance = 1.0;
-        camera.orientation = orientation;
+        camera.orientation = look.orientation();
+    }
+
+    /// The current look.
+    pub fn look(&self) -> LookAngles {
+        LookAngles::new(self.yaw, self.pitch)
+    }
+
+    /// Turn by `yaw` and `pitch` radians, clamping pitch. Positive yaw turns
+    /// right, positive pitch looks up. For look input that does not come
+    /// through the frame: mouselook, a gamepad stick, a scripted turn.
+    pub fn turn_by(&mut self, yaw: f32, pitch: f32) {
+        self.set_look(self.yaw + yaw, self.pitch + pitch);
     }
 
     /// Adopt the current view of `camera` as this controller's `yaw` / `pitch`,
     /// so switching into first-person continues from the existing view instead
     /// of snapping. Call this when entering first-person mode.
     pub fn sync_from_camera(&mut self, camera: &Camera) {
-        let (yaw, pitch) = yaw_pitch_from_orientation(camera.orientation);
-        self.yaw = yaw;
-        self.pitch = pitch.clamp(-self.pitch_clamp, self.pitch_clamp);
+        let look = LookAngles::from_orientation(camera.orientation);
+        self.set_look(look.yaw, look.pitch);
     }
 
     /// Jump to an explicit look direction. `pitch` is clamped.
@@ -112,19 +156,18 @@ impl FirstPersonCameraController {
     /// Horizontal forward vector (yaw only, `z = 0`) for movement. At yaw 0:
     /// `+Y`; at yaw `PI/2`: `+X`.
     pub fn forward_dir(&self) -> Vec3 {
-        let (s, c) = self.yaw.sin_cos();
-        Vec3::new(s, c, 0.0)
+        self.look().forward()
     }
 
     /// Horizontal right vector perpendicular to [`forward_dir`](Self::forward_dir),
     /// for strafing.
     pub fn right_dir(&self) -> Vec3 {
-        self.forward_dir().cross(Vec3::Z).normalize_or_zero()
+        self.look().right()
     }
 
     /// Full look direction including pitch, for raycasts and aim.
     pub fn aim_dir(&self) -> Vec3 {
-        orientation_to_aim(build_orientation(self.yaw, self.pitch))
+        self.look().direction()
     }
 }
 
@@ -205,5 +248,25 @@ mod tests {
         c2.sync_from_camera(&camera);
         assert!((c2.yaw - 0.7).abs() < 1e-4, "yaw={}", c2.yaw);
         assert!((c2.pitch - 0.3).abs() < 1e-4, "pitch={}", c2.pitch);
+    }
+
+    #[test]
+    fn turn_by_clamps_pitch_and_accumulates_yaw() {
+        let mut c = FirstPersonCameraController::default();
+        c.turn_by(0.3, 0.0);
+        c.turn_by(0.2, 5.0);
+        assert!((c.yaw - 0.5).abs() < 1e-6);
+        assert!((c.pitch - FirstPersonCameraController::DEFAULT_PITCH_CLAMP).abs() < 1e-6);
+    }
+
+    #[test]
+    fn turn_by_matches_an_equal_drag() {
+        let mut dragged = cam();
+        let mut turned = cam();
+        let mut camera = Camera::default();
+        dragged.apply(&mut camera, &look(40.0, -25.0), Vec3::ZERO);
+        turned.turn_by(40.0 * turned.sensitivity, 25.0 * turned.sensitivity);
+        assert!((dragged.yaw - turned.yaw).abs() < 1e-6);
+        assert!((dragged.pitch - turned.pitch).abs() < 1e-6);
     }
 }

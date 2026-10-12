@@ -17,7 +17,7 @@
 //! // One resolve per frame; suppress orbit while manipulating:
 //! let action_frame = input.resolve();
 //! if !manip.is_active() {
-//!     orbit_controller.apply(&mut camera, &action_frame);
+//!     orbit_controller.apply(&mut camera, &action_frame, dt);
 //! }
 //! ```
 
@@ -396,7 +396,7 @@ impl ManipulationController {
     /// Use this to suppress camera orbit:
     /// ```rust,ignore
     /// let frame = input.resolve();
-    /// if !manip.is_active() { orbit.apply(&mut cam, &frame); }
+    /// if !manip.is_active() { orbit.apply(&mut cam, &frame, dt); }
     /// ```
     pub fn is_active(&self) -> bool {
         self.session.is_some()

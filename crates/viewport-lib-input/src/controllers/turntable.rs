@@ -1,6 +1,6 @@
 //! Turntable (continuous orbit) camera controller.
 
-use viewport_lib_types::camera::Camera;
+use viewport_lib_types::camera::{Camera, LookAngles};
 
 // ---------------------------------------------------------------------------
 // TurntableController
@@ -13,7 +13,14 @@ use viewport_lib_types::camera::Camera;
 ///
 /// This is the one controller that reads no input at all: it takes `dt` and
 /// nothing else, so a viewport on a turntable ignores the whole `ActionFrame`
-/// until you switch to a controller that reads one.
+/// until you switch to a controller that reads one. It is unrelated to
+/// [`NavigationMode::Turntable`](crate::input::NavigationMode::Turntable), which
+/// is a way of interpreting an orbit drag.
+///
+/// `azimuth` and `tilt` describe the eye's offset from the centre. The same
+/// orientation as a look direction ([`LookAngles`], which the first- and
+/// third-person controllers use) is `yaw = -azimuth`, `pitch = tilt - PI/2`;
+/// [`look`](Self::look) and [`set_look`](Self::set_look) convert.
 ///
 /// ```rust,ignore
 /// let mut turntable = TurntableController::from_camera(&camera, 0.5);
@@ -25,11 +32,12 @@ pub struct TurntableController {
     /// Angular velocity in radians per second. Positive rotates counter-clockwise
     /// when viewed from above (Z-up world).
     pub angular_velocity: f32,
-    /// Pitch angle in radians (angle from the vertical axis). A value of PI/4
-    /// places the eye 45 degrees from the top. Matches the convention used by
-    /// `Camera::orbit` where `Quat::from_rotation_x(tilt)` is the pitch.
+    /// Angle of the eye from the vertical axis, in radians. `PI/4` places the eye
+    /// 45 degrees from the top, `PI/2` level with the centre. The look pitch is
+    /// `tilt - PI/2`.
     pub tilt: f32,
-    /// Current azimuth angle in radians.
+    /// Current azimuth angle in radians, turning around world Z as
+    /// `Quat::from_rotation_z(azimuth)`. The look yaw is `-azimuth`.
     pub azimuth: f32,
 }
 
@@ -51,18 +59,36 @@ impl TurntableController {
     /// The azimuth and tilt are extracted from the camera's current orientation
     /// so the orbit continues smoothly from wherever the user left off.
     pub fn from_camera(camera: &Camera, angular_velocity: f32) -> Self {
+        let mut turntable = Self::new(angular_velocity, 0.0);
+        turntable.sync_from_camera(camera);
+        turntable
+    }
+
+    /// Adopt the camera's current orientation as this turntable's azimuth and
+    /// tilt, keeping the angular velocity, so the spin continues from the
+    /// current view.
+    pub fn sync_from_camera(&mut self, camera: &Camera) {
         let eye_dir = camera.orientation() * glam::Vec3::Z;
         // Tilt (colatitude): angle from +Z. cos(tilt) = eye_dir.z.
         let tilt = eye_dir.z.clamp(-1.0, 1.0).acos();
         // Azimuth: atan2 of the horizontal projection.
         // From the camera model: eye_dir = [sin(az)*sin(tilt), -cos(az)*sin(tilt), cos(tilt)]
         // So az = atan2(eye_dir.x, -eye_dir.y).
-        let azimuth = eye_dir.x.atan2(-eye_dir.y);
-        Self {
-            angular_velocity,
-            tilt,
-            azimuth,
-        }
+        self.azimuth = eye_dir.x.atan2(-eye_dir.y);
+        self.tilt = tilt;
+    }
+
+    /// The current view as a look direction.
+    pub fn look(&self) -> LookAngles {
+        LookAngles::new(-self.azimuth, self.tilt - std::f32::consts::FRAC_PI_2)
+    }
+
+    /// Set azimuth and tilt from a look direction, so a turntable started from a
+    /// first- or third-person view continues from it. Takes effect on the next
+    /// [`update`](Self::update).
+    pub fn set_look(&mut self, yaw: f32, pitch: f32) {
+        self.azimuth = normalize_angle(-yaw);
+        self.tilt = pitch + std::f32::consts::FRAC_PI_2;
     }
 
     /// Advance the turntable by `dt` seconds and write the new orientation into
@@ -172,5 +198,33 @@ mod tests {
         tt_rev.update(0.5, &mut cam);
         assert!(tt_fwd.azimuth > 0.0, "forward azimuth should be positive");
         assert!(tt_rev.azimuth < 0.0, "reverse azimuth should be negative");
+    }
+
+    #[test]
+    fn look_matches_the_orientation_it_writes() {
+        let mut cam = default_camera();
+        let mut tt = TurntableController::new(0.0, 1.1);
+        tt.azimuth = 0.8;
+        tt.update(0.0, &mut cam);
+        let from_camera = LookAngles::from_orientation(cam.orientation());
+        assert!((tt.look().direction() - from_camera.direction()).length() < 1e-4);
+    }
+
+    #[test]
+    fn set_look_round_trips() {
+        let mut tt = TurntableController::new(0.0, 0.0);
+        tt.set_look(0.6, -0.3);
+        let look = tt.look();
+        assert!((look.yaw - 0.6).abs() < 1e-5 && (look.pitch + 0.3).abs() < 1e-5);
+    }
+
+    #[test]
+    fn sync_keeps_velocity() {
+        let mut tt = TurntableController::new(2.5, 0.0);
+        let mut cam = default_camera();
+        cam.set_orientation(LookAngles::new(0.4, -0.2).orientation());
+        tt.sync_from_camera(&cam);
+        assert_eq!(tt.angular_velocity, 2.5);
+        assert!((tt.look().yaw - 0.4).abs() < 1e-4);
     }
 }

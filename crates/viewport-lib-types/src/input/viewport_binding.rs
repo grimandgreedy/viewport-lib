@@ -85,6 +85,18 @@ pub enum ViewportGesture {
         /// Required modifier state.
         modifiers: ModifiersMatch,
     },
+    /// Modifier keys held down : fires every frame while the modifier state
+    /// matches and the viewport is focused, whatever else is held. For a modifier
+    /// that changes what another action does, such as Shift for a faster fly
+    /// speed. It reads [`ViewportEvent::ModifiersChanged`](crate::input::ViewportEvent::ModifiersChanged),
+    /// which hosts send even where Shift never arrives as a key of its own.
+    ///
+    /// Use [`ModifiersMatch::Contains`]; `Any` and `Exact(Modifiers::NONE)` match
+    /// with nothing held, so they fire every frame.
+    ModifiersHeld {
+        /// Required modifier state.
+        modifiers: ModifiersMatch,
+    },
 }
 
 /// Binds an [`Action`] to a [`ViewportGesture`].

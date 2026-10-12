@@ -178,7 +178,8 @@ impl eframe::App for App {
 
                 let (w, h) = (rect.width(), rect.height());
                 let action_frame = self.input.resolve();
-                self.controller.apply(&mut self.camera, &action_frame);
+                let dt = ctx.input(|i| i.stable_dt);
+                self.controller.apply(&mut self.camera, &action_frame, dt);
                 self.camera.set_aspect_ratio(w, h);
 
                 let built = &self.builts[self.selected];

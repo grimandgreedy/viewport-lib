@@ -119,7 +119,7 @@ for ev in native_events {
         viewport.handle_event(ev);
     }
 }
-viewport.update_orbit(&mut orbit);                   // resolve input, orbit the camera, assemble
+viewport.update_orbit(&mut orbit, dt);               // resolve input, orbit the camera, assemble
 let cmd = viewport.render(&device, &queue, &view);   // submit cmd to your queue
 ```
 

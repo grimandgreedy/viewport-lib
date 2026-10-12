@@ -487,6 +487,7 @@ fn simulate_boids(time: Res<Time>, mut boids: Query<&mut Boid>) {
 }
 
 fn camera_input(
+    time: Res<Time>,
     mut cam: ResMut<CamState>,
     buttons: Res<ButtonInput<MouseButton>>,
     mut wheel: MessageReader<MouseWheel>,
@@ -549,7 +550,8 @@ fn camera_input(
 
     // Aspect is set in sync_layout so it always matches the Bevy viewport.
     let action_frame = cam.input.resolve();
-    cam.controller.apply(&mut cam.camera, &action_frame);
+    cam.controller
+        .apply(&mut cam.camera, &action_frame, time.delta_secs());
 }
 
 /// Drive the Bevy 3D camera from the shared orbit camera so both views match.

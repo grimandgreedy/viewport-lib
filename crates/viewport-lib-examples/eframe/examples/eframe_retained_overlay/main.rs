@@ -320,7 +320,8 @@ impl App {
                     self.label = Some(label);
                 }
 
-                self.session.update_orbit(&mut self.orbit);
+                let dt = ui.input(|i| i.stable_dt);
+                self.session.update_orbit(&mut self.orbit, dt);
 
                 // Scroll the content: a gentle triangle wave over the extra height
                 // that does not fit the panel. Only this offset changes per frame.

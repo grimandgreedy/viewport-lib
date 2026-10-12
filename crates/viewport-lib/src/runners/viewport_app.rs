@@ -340,9 +340,17 @@ impl std::ops::DerefMut for FrameCtx<'_> {
 pub struct InputCtx<'a> {
     session: &'a mut ViewportInstance,
     events: &'a [ViewportEvent],
+    dt: f32,
 }
 
 impl InputCtx<'_> {
+    /// Seconds since the previous frame, the same value [`FrameCtx::dt`] gives.
+    /// Pass it to a camera controller's `apply` for held input such as fly
+    /// movement.
+    pub fn dt(&self) -> f32 {
+        self.dt
+    }
+
     /// The input events that arrived since the last frame, in order. These have
     /// not been sent to the viewport: forward the ones it should process with
     /// [`forward`](Self::forward).
@@ -723,6 +731,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                     let mut ictx = InputCtx {
                         session: &mut state.session,
                         events: &self.events,
+                        dt,
                     };
                     handler(&mut ictx);
                 }
@@ -778,7 +787,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                 } else {
                     state
                         .session
-                        .update_orbit_with(&mut self.orbit, move |frame| {
+                        .update_orbit_with(&mut self.orbit, dt, move |frame| {
                             frame.overlays = overlays;
                             for inject in injects {
                                 inject(frame);
@@ -972,6 +981,7 @@ mod tests {
             let mut ictx = InputCtx {
                 session: &mut session,
                 events: &events,
+                dt: 1.0 / 60.0,
             };
             assert_eq!(ictx.events().len(), 4);
             // Forward the click, withhold the scroll (the last event).
@@ -1023,6 +1033,7 @@ mod tests {
             let mut ictx = InputCtx {
                 session: &mut session,
                 events: &events,
+                dt: 1.0 / 60.0,
             };
             // Forward nothing: the app consumed every event.
             let _ = &mut ictx;

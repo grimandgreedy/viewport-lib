@@ -22,6 +22,7 @@
 //! slightly blue background to show the per-viewport background setting.
 
 use std::sync::Arc;
+use std::time::Instant;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 
@@ -110,6 +111,8 @@ struct AppState {
     /// One camera + controller per quadrant.
     cameras: [Camera; 4],
     controllers: [OrbitCameraController; 4],
+    /// When the last frame was drawn, for the frame time fly movement reads.
+    last_frame: Instant,
     /// One resolver per quadrant: each owns its bindings and resolves the events
     /// routed to it. The controllers keep only their sensitivities.
     inputs: [ViewportInput; 4],
@@ -313,6 +316,7 @@ impl ApplicationHandler for App {
             mesh_id,
             cameras: [cam_persp, cam_top, cam_front, cam_right],
             controllers: [ctrl0, ctrl1, ctrl2, ctrl3],
+            last_frame: Instant::now(),
             inputs: [
                 make_input(true, [hw, hh]),
                 make_input(false, [hw, hh]),
@@ -461,6 +465,9 @@ impl ApplicationHandler for App {
                 let h = state.surface_config.height;
 
                 // Apply accumulated events to each camera.
+                let now = Instant::now();
+                let dt = (now - state.last_frame).as_secs_f32();
+                state.last_frame = now;
                 for (i, ((cam, ctrl), input)) in state
                     .cameras
                     .iter_mut()
@@ -469,7 +476,7 @@ impl ApplicationHandler for App {
                     .enumerate()
                 {
                     let action_frame = input.resolve();
-                    ctrl.apply(cam, &action_frame);
+                    ctrl.apply(cam, &action_frame, dt);
                     let (_, _, qw, qh) = quad_rect(
                         [
                             Quad::TopLeft,

@@ -106,7 +106,8 @@ fn main() {
                 }
             }
             let action_frame = input.resolve();
-            orbit.apply(ictx.camera_mut(), &action_frame);
+            let dt = ictx.dt();
+            orbit.apply(ictx.camera_mut(), &action_frame, dt);
         }
     })
     .run(move |ctx| {

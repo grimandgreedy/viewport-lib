@@ -920,7 +920,7 @@ impl eframe::App for App {
                 Tab::Materials => self.build_materials_items(),
             };
             let vp_index = self.vp_id.index();
-            self.session.update_orbit_with(&mut self.orbit, |fd| {
+            self.session.update_orbit_with(&mut self.orbit, dt, |fd| {
                 fd.scene = SceneFrame::from_surface_items(items);
                 fd.camera.viewport_index = vp_index;
                 fd.viewport.environment_background = background;

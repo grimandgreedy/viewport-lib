@@ -69,6 +69,8 @@ struct State {
     renderer: ViewportRenderer,
     camera: Camera,
     controller: OrbitCameraController,
+    /// When the last frame was drawn, for the frame time fly movement reads.
+    last_frame: Instant,
     /// Owns the bindings and resolves events into an `ActionFrame`. The
     /// controller keeps only its sensitivities and applies the frame.
     input: ViewportInput,
@@ -236,7 +238,10 @@ impl ApplicationHandler<State> for App {
                 let h = state.surface_config.height as f32;
 
                 let action_frame = state.input.resolve();
-                state.controller.apply(&mut state.camera, &action_frame);
+                let now = Instant::now();
+                let dt = (now - state.last_frame).as_secs_f32();
+                state.last_frame = now;
+                state.controller.apply(&mut state.camera, &action_frame, dt);
                 state.camera.set_aspect_ratio(w, h);
 
                 // Z-up: spin one item about the world up axis.
@@ -385,6 +390,7 @@ async fn build_state(window: Arc<Window>) -> State {
         renderer,
         camera,
         controller,
+        last_frame: Instant::now(),
         input,
         scene_items,
         spin_item: 1,
