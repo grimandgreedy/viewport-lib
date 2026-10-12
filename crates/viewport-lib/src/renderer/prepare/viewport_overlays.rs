@@ -2246,8 +2246,8 @@ impl ViewportRenderer {
                     let Some((min, max)) = polyline_bounds(&poly.points) else {
                         continue;
                     };
-                    let tris = triangulate_polygon(&poly.points);
-                    if tris.is_empty() {
+                    let mesh = super::overlay_vector::tessellate_polygon(&poly.points);
+                    if mesh.indices.is_empty() {
                         continue;
                     }
                     // Same clip resolution as a textured shape: an unmatched or
@@ -2291,32 +2291,37 @@ impl ViewportRenderer {
                         if tt.flip_x { 1.0 } else { 0.0 },
                         if tt.flip_y { 1.0 } else { 0.0 },
                     ];
-                    for tri in tris {
-                        for idx in tri {
-                            let p = poly.points[idx];
-                            let local = [p[0] - centre[0], p[1] - centre[1]];
-                            let uv = explicit_uvs.map_or(
-                                [(p[0] - min[0]) / size[0], (p[1] - min[1]) / size[1]],
-                                |uvs| uvs[idx],
-                            );
-                            group_verts.push(crate::resources::OverlayShapeTexVertex {
-                                position: overlay_local_px(p[0], p[1], vp_w, vp_h),
-                                local_pos: local,
-                                fill_colour: tint,
-                                half_size,
-                                radii: [0.0; 4],
-                                shape_type: 0.0,
-                                uv,
-                                shadow_index: [0.0; 3],
-                                extras: [0.0; 4],
-                                nine_slice_uv: [0.0; 4],
-                                nine_slice_frac: [0.0; 4],
-                                texture_transform_a: tt_a,
-                                texture_transform_b: tt_b,
-                                clip_index: clip_index_i as f32,
-                                clip_rect: poly_clip_rect,
-                            });
-                        }
+                    for &i in &mesh.indices {
+                        let p = mesh.positions[i as usize];
+                        let local = [p[0] - centre[0], p[1] - centre[1]];
+                        // Explicit UVs belong to the input points; a tessellated
+                        // vertex takes them from the outline point or edge it
+                        // came from.
+                        let uv = explicit_uvs.map_or(
+                            [(p[0] - min[0]) / size[0], (p[1] - min[1]) / size[1]],
+                            |uvs| {
+                                let (from, to, t) = mesh.sources[i as usize];
+                                let (a, b) = (uvs[from], uvs[to]);
+                                [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+                            },
+                        );
+                        group_verts.push(crate::resources::OverlayShapeTexVertex {
+                            position: overlay_local_px(p[0], p[1], vp_w, vp_h),
+                            local_pos: local,
+                            fill_colour: tint,
+                            half_size,
+                            radii: [0.0; 4],
+                            shape_type: 0.0,
+                            uv,
+                            shadow_index: [0.0; 3],
+                            extras: [0.0; 4],
+                            nine_slice_uv: [0.0; 4],
+                            nine_slice_frac: [0.0; 4],
+                            texture_transform_a: tt_a,
+                            texture_transform_b: tt_b,
+                            clip_index: clip_index_i as f32,
+                            clip_rect: poly_clip_rect,
+                        });
                     }
                     tex_shape_segs.push((
                         poly.z_order,

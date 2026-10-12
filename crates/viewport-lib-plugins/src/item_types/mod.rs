@@ -13,6 +13,10 @@
 //! the markers for its writable channels (`channels`). [`install`] registers
 //! them all.
 //!
+//! Each module splits on the crate's `gpu` feature: the item structs, the
+//! data they upload and their handles always build, and the plugin, its store,
+//! its upload calls and its shaders need `gpu`.
+//!
 //! ```no_run
 //! # use viewport_lib_plugins::item_types::{self, point_cloud::PointCloudItem};
 //! # let mut renderer: viewport_lib::renderer::ViewportRenderer = unimplemented!();
@@ -36,6 +40,7 @@
 // before the modules so each type's `uploads.rs` can expand them.
 /// Implement the standard upload surface for one item type whose plugin
 /// exposes the five store calls under their usual names.
+#[cfg(feature = "gpu")]
 macro_rules! standard_uploads {
     ($item:ty, $id:ty, $name:expr, $plugin:ty) => {
         impl viewport_lib::plugin_api::Uploads<$item> for viewport_lib::renderer::ViewportRenderer {
@@ -96,6 +101,7 @@ macro_rules! standard_uploads {
 /// One channel per type rather than one per component: the record's fields are
 /// derived together, and the store keeps no CPU copy to read the untouched ones
 /// back from. So a write supplies whole samples.
+#[cfg(feature = "gpu")]
 macro_rules! field_sample_writes {
     ($marker:ty, $id:ty, $name:expr, $plugin:ty, encode = $encode:expr) => {
         impl viewport_lib::plugin_api::Writes<$marker>
@@ -168,10 +174,14 @@ pub mod vector_field;
 pub mod volume;
 pub mod volume_surface_slice;
 
+#[cfg(feature = "gpu")]
 mod helpers;
+#[cfg(feature = "gpu")]
 mod shader;
+#[cfg(feature = "gpu")]
 mod sources;
 
+#[cfg(feature = "gpu")]
 /// Every shader the item types compile, as `(name, source)`, with the shared
 /// sections already spliced in front of each body.
 ///
@@ -201,11 +211,15 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     all
 }
 
+#[cfg(feature = "gpu")]
 /// Register every item type with `renderer`.
 ///
 /// Registering one on its own is
 /// `renderer.with_item_type_plugin(device, Box::new(point_cloud::PointCloudPlugin::default()))`;
 /// this is the same call for each type in turn.
+///
+/// Calling this links every type into the binary, shaders included. Register
+/// only the types you draw instead and the linker leaves the rest out.
 pub fn install(
     renderer: &mut viewport_lib::renderer::ViewportRenderer,
     device: &viewport_lib::gpu::Device,
@@ -259,11 +273,13 @@ pub fn install(
     );
 }
 
+#[cfg(feature = "gpu")]
 /// Elements that are already in the buffer's layout go across untouched.
 pub(crate) fn cast_bytes<T: bytemuck::Pod>(data: &[T]) -> std::borrow::Cow<'_, [u8]> {
     std::borrow::Cow::Borrowed(bytemuck::cast_slice(data))
 }
 
+#[cfg(feature = "gpu")]
 /// A registered item type plugin, borrowed back as its concrete type.
 pub(crate) fn plugin_mut<'a, T: viewport_lib::plugin_api::ItemTypePlugin>(
     renderer: &'a mut viewport_lib::renderer::ViewportRenderer,
@@ -274,6 +290,7 @@ pub(crate) fn plugin_mut<'a, T: viewport_lib::plugin_api::ItemTypePlugin>(
         .unwrap_or_else(|| panic!("{type_name} must be registered; call install() first"))
 }
 
+#[cfg(feature = "gpu")]
 /// The same lookup, together with the renderer-owned job runner and content
 /// arenas an upload needs.
 pub(crate) fn host<'a, T: viewport_lib::plugin_api::ItemTypePlugin>(

@@ -23,9 +23,9 @@ use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::surface_contour::{ContourLevels, SurfaceContourItem};
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, ColourmapId,
-    FrameData, LightingSettings, Material, MeshData, MeshId, PolylineItem, SceneRenderItem,
-    ViewportRenderer, VolumeMeshData, VolumeMeshItem, extract_isolines, isoline_strips,
-    scene::Scene,
+    FrameData, GridCells, LightingSettings, Material, MeshData, MeshId, PolylineItem,
+    SceneRenderItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem, extract_isolines,
+    isoline_strips, scene::Scene,
 };
 
 // ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ fn make_block() -> VolumeMeshData {
             }
         }
     }
-    let mut grid = VolumeMeshData::from_grid_cells([-1.5; 3], [0.5; 3], &cells);
+    let mut grid = GridCells::from_cells([-1.5; 3], [0.5; 3], &cells);
     let node: Vec<f32> = grid
         .data
         .positions

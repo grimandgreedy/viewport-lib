@@ -21,7 +21,7 @@ pub use crate::resources::material::matcap_data::BuiltinMatcap;
 pub use crate::resources::material::matcap_data::MatcapId;
 pub use crate::resources::material::textures::GpuTexture;
 pub use crate::resources::material::textures::{
-    TextureData, TexturePayload, TextureRole, TextureSlot,
+    TextureData, TexturePayload, TextureRequirement, TextureRole,
 };
 pub use crate::resources::memory::ResidentBytes;
 pub use crate::resources::memory::TextureMemoryStats;

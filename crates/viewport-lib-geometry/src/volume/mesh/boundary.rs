@@ -1,13 +1,17 @@
 //! Boundary extraction: the faces of a volume mesh that belong to exactly one cell.
 
+use super::VolumeMeshData;
 use super::cells::{
     CellType, HEX_FACES, PYRAMID_QUAD_FACE, PYRAMID_TRI_FACES, TET_FACES, WEDGE_QUAD_FACES,
     WEDGE_TRI_FACES, boundary_interior_ref, cell_type,
 };
-use super::{PARALLEL_THRESHOLD, VolumeMeshData};
 use crate::util::par::*;
 use std::collections::HashMap;
 use viewport_lib_types::data::{attribute::AttributeData, mesh::MeshData};
+
+/// Cell count at which boundary and clipped extraction split the face scan
+/// across threads.
+pub(super) const PARALLEL_THRESHOLD: usize = 1024;
 
 /// A canonical (sorted) face key used for boundary detection.
 pub(super) type FaceKey = (u32, u32, u32);

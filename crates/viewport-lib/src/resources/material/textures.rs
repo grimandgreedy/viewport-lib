@@ -2,7 +2,7 @@ use crate::resources::*;
 use crate::scene::material::TextureSlot as MaterialSlot;
 
 pub use viewport_lib_types::data::texture::{
-    AstcBlock, CompressedFormat, TextureData, TexturePayload, TextureRole,
+    AstcBlock, CompressedFormat, TextureData, TexturePayload, TextureRequirement, TextureRole,
 };
 use viewport_lib_types::data::texture::{TextureRejection, UploadSlot};
 
@@ -1333,14 +1333,14 @@ impl DeviceResources {
     ) {
         // Each id lands in a slot with a colour-space requirement; a mismatch is
         // recorded here and returned by `prepare` rather than rendered.
-        self.check_texture_slot(albedo_id, TextureSlot::MaterialAlbedo);
-        self.check_texture_slot(normal_map_id, TextureSlot::MaterialNormalMap);
-        self.check_texture_slot(ao_map_id, TextureSlot::MaterialAoMap);
+        self.check_texture_slot(albedo_id, MaterialSlot::Albedo.requirement());
+        self.check_texture_slot(normal_map_id, MaterialSlot::Normal.requirement());
+        self.check_texture_slot(ao_map_id, MaterialSlot::Ao.requirement());
         self.check_texture_slot(
             metallic_roughness_id,
-            TextureSlot::MaterialMetallicRoughness,
+            MaterialSlot::MetallicRoughness.requirement(),
         );
-        self.check_texture_slot(emissive_texture_id, TextureSlot::MaterialEmissive);
+        self.check_texture_slot(emissive_texture_id, MaterialSlot::Emissive.requirement());
 
         let hash_str = |name: &str| -> u64 {
             use std::hash::{Hash, Hasher};
@@ -2513,60 +2513,24 @@ mod async_texture_tests {
             "nothing bound yet"
         );
 
-        resources.check_texture_slot(Some(right), super::TextureSlot::MaterialNormalMap);
+        resources.check_texture_slot(Some(right), crate::TextureSlot::Normal.requirement());
         assert!(
             resources.texture_slot_mismatch().is_ok(),
             "a linear upload into a linear slot is not a mismatch"
         );
 
-        resources.check_texture_slot(Some(wrong), super::TextureSlot::MaterialNormalMap);
+        resources.check_texture_slot(Some(wrong), crate::TextureSlot::Normal.requirement());
         let err = resources.texture_slot_mismatch().unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("normal_map_id"), "{msg}");
         assert!(msg.contains("TextureData::normal_map"), "{msg}");
 
         // Recorded once per (texture, slot), so redrawing does not grow the list.
-        resources.check_texture_slot(Some(wrong), super::TextureSlot::MaterialNormalMap);
+        resources.check_texture_slot(Some(wrong), crate::TextureSlot::Normal.requirement());
         assert_eq!(resources.texture_slot_mismatches().len(), 1);
 
         resources.clear_texture_slot_mismatches();
         assert!(resources.texture_slot_mismatch().is_ok());
-    }
-
-    #[test]
-    fn every_slot_names_a_constructor_producing_its_space() {
-        use super::TextureSlot::*;
-        for slot in [
-            MaterialAlbedo,
-            MaterialNormalMap,
-            MaterialAoMap,
-            MaterialMetallicRoughness,
-            MaterialEmissive,
-            DecalAlbedo,
-            DecalNormalMap,
-            DecalRoughness,
-            DecalMetallic,
-            DecalEmissive,
-            SpriteAlbedo,
-            SpriteNormalMap,
-            RibbonAlbedo,
-            MeshInstanceAlbedo,
-            LightmapPrimary,
-            LightmapSecondary,
-        ] {
-            let built = match slot.constructor() {
-                "TextureData::srgb" => TextureData::srgb(1, 1, vec![0u8; 4]),
-                "TextureData::linear" => TextureData::linear(1, 1, vec![0u8; 4]),
-                "TextureData::normal_map" => TextureData::normal_map(1, 1, vec![0u8; 4]),
-                other => panic!("{} names an unknown constructor {other}", slot.field_name()),
-            };
-            assert_eq!(
-                built.colour_space(),
-                slot.required_space(),
-                "{} names a constructor that produces the wrong space",
-                slot.field_name()
-            );
-        }
     }
 
     #[test]
@@ -3133,109 +3097,6 @@ pub(crate) fn format_colour_space(format: crate::gpu::TextureFormat) -> crate::C
 }
 
 // ---------------------------------------------------------------------------
-// Slot colour-space checking
-// ---------------------------------------------------------------------------
-
-/// A public texture slot, paired with the colour space it needs its texture to
-/// have been uploaded in.
-///
-/// A slot that samples colour needs an sRGB upload so the hardware decode lands
-/// the sample in the renderer's linear working space. A slot that samples data
-/// (directions, roughness, occlusion, visibility) needs a linear upload, because
-/// there is nothing to decode and decoding it anyway bends every value.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum TextureSlot {
-    /// `Material::texture_id`.
-    MaterialAlbedo,
-    /// `Material::normal_map_id`.
-    MaterialNormalMap,
-    /// `Material::ao_map_id`.
-    MaterialAoMap,
-    /// `Material::metallic_roughness_texture_id`.
-    MaterialMetallicRoughness,
-    /// `Material::emissive_texture_id`.
-    MaterialEmissive,
-    /// `DecalItem::texture_id`.
-    DecalAlbedo,
-    /// `DecalItem::normal_texture_id`.
-    DecalNormalMap,
-    /// `DecalItem::roughness_texture_id`.
-    DecalRoughness,
-    /// `DecalItem::metallic_texture_id`.
-    DecalMetallic,
-    /// `DecalItem::emissive_texture_id`.
-    DecalEmissive,
-    /// `SpriteItem::texture_id`, or `ParticleRender::Sprite { texture_id }`.
-    SpriteAlbedo,
-    /// `SpriteItem::normal_texture_id`, or the particle sprite equivalent.
-    SpriteNormalMap,
-    /// `RibbonItem::texture_id`.
-    RibbonAlbedo,
-    /// `MeshInstanceItem::texture_id`, or `ParticleRender::Mesh { texture_id }`.
-    MeshInstanceAlbedo,
-    /// The radiance or occlusion texture of a [`LightmapData`](crate::resources::LightmapData).
-    LightmapPrimary,
-    /// The dominant-direction or shadowmask texture of a `LightmapData`.
-    LightmapSecondary,
-}
-
-impl TextureSlot {
-    /// The colour space this slot needs.
-    pub fn required_space(self) -> crate::ColourSpace {
-        use TextureSlot::*;
-        match self {
-            MaterialAlbedo | MaterialEmissive | DecalAlbedo | DecalEmissive | SpriteAlbedo
-            | RibbonAlbedo | MeshInstanceAlbedo => crate::ColourSpace::Srgb,
-            MaterialNormalMap
-            | MaterialAoMap
-            | MaterialMetallicRoughness
-            | DecalNormalMap
-            | DecalRoughness
-            | DecalMetallic
-            | SpriteNormalMap
-            | LightmapPrimary
-            | LightmapSecondary => crate::ColourSpace::Linear,
-        }
-    }
-
-    /// The field name, as a consumer writes it.
-    pub fn field_name(self) -> &'static str {
-        use TextureSlot::*;
-        match self {
-            MaterialAlbedo => "Material::texture_id",
-            MaterialNormalMap => "Material::normal_map_id",
-            MaterialAoMap => "Material::ao_map_id",
-            MaterialMetallicRoughness => "Material::metallic_roughness_texture_id",
-            MaterialEmissive => "Material::emissive_texture_id",
-            DecalAlbedo => "DecalItem::texture_id",
-            DecalNormalMap => "DecalItem::normal_texture_id",
-            DecalRoughness => "DecalItem::roughness_texture_id",
-            DecalMetallic => "DecalItem::metallic_texture_id",
-            DecalEmissive => "DecalItem::emissive_texture_id",
-            SpriteAlbedo => "SpriteItem::texture_id",
-            SpriteNormalMap => "SpriteItem::normal_texture_id",
-            RibbonAlbedo => "RibbonItem::texture_id",
-            MeshInstanceAlbedo => "MeshInstanceItem::texture_id",
-            LightmapPrimary => "LightmapData radiance / occlusion",
-            LightmapSecondary => "LightmapData direction / shadowmask",
-        }
-    }
-
-    /// The `TextureData` constructor that produces what this slot needs.
-    pub fn constructor(self) -> &'static str {
-        match self {
-            TextureSlot::MaterialNormalMap
-            | TextureSlot::DecalNormalMap
-            | TextureSlot::SpriteNormalMap => "TextureData::normal_map",
-            _ => match self.required_space() {
-                crate::ColourSpace::Srgb => "TextureData::srgb",
-                crate::ColourSpace::Linear => "TextureData::linear",
-            },
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Resolving a material texture slot to the view that binds for it
 // ---------------------------------------------------------------------------
 
@@ -3299,7 +3160,7 @@ impl crate::resources::material::texture_store::TextureStore {
 }
 
 impl DeviceResources {
-    /// Check that `id` was uploaded in the space `slot` needs, recording a
+    /// Check that `id` was uploaded in the space `required` names, recording a
     /// mismatch for `prepare` to return.
     ///
     /// Called where a texture id becomes a binding. A texture with no recorded
@@ -3308,15 +3169,20 @@ impl DeviceResources {
     ///
     /// Takes a shared borrow, so an item type preparing against
     /// `&DeviceResources` can call it too, and an item type binding a
-    /// consumer's texture into a slot with a documented colour space should:
-    /// the mismatch log is the renderer's, so this is the one part of the
-    /// check a plugin cannot do for itself.
-    pub fn check_texture_slot(&self, id: Option<crate::resources::TextureId>, slot: TextureSlot) {
+    /// consumer's texture should, with a [`TextureRequirement`] naming its own
+    /// field: the mismatch log is the renderer's, so this is the one part of
+    /// the check a plugin cannot do for itself. A material's slots come from
+    /// [`TextureSlot::requirement`](crate::TextureSlot::requirement).
+    pub fn check_texture_slot(
+        &self,
+        id: Option<crate::resources::TextureId>,
+        required: TextureRequirement,
+    ) {
         let Some(id) = id else { return };
         let Some(found) = self.texture_colour_space(id) else {
             return;
         };
-        if found == slot.required_space() {
+        if found == required.colour_space() {
             return;
         }
         let Ok(mut recorded) = self.content.texture_slot_mismatches.lock() else {
@@ -3324,20 +3190,24 @@ impl DeviceResources {
         };
         // One entry per (texture, slot): a mismatch reported every rebuild would
         // grow without bound while the scene keeps drawing.
-        if recorded.iter().any(|&(t, s)| t == id.raw() && s == slot) {
+        if recorded
+            .iter()
+            .any(|&(t, r)| t == id.raw() && r == required)
+        {
             return;
         }
-        recorded.push((id.raw(), slot));
-        tracing::error!("{}", slot_mismatch_error(id.raw(), slot));
+        recorded.push((id.raw(), required));
+        tracing::error!("{}", slot_mismatch_error(id.raw(), required));
     }
 
-    /// The recorded slot mismatches, oldest first, as `(raw texture id, slot)`.
+    /// The recorded slot mismatches, oldest first, as `(raw texture id,
+    /// requirement)`.
     ///
     /// Each pair is recorded once, the first time the texture is bound into that
     /// slot, and stays until [`clear_texture_slot_mismatches`](Self::clear_texture_slot_mismatches).
     /// An empty list means every texture drawn so far reached a slot that wants
     /// the space it was uploaded in.
-    pub fn texture_slot_mismatches(&self) -> Vec<(u64, TextureSlot)> {
+    pub fn texture_slot_mismatches(&self) -> Vec<(u64, TextureRequirement)> {
         match self.content.texture_slot_mismatches.lock() {
             Ok(recorded) => recorded.clone(),
             Err(_) => Vec::new(),
@@ -3357,7 +3227,7 @@ impl DeviceResources {
             return Ok(());
         };
         match recorded.first() {
-            Some(&(raw, slot)) => Err(slot_mismatch_error(raw, slot)),
+            Some(&(raw, required)) => Err(slot_mismatch_error(raw, required)),
             None => Ok(()),
         }
     }
@@ -3373,15 +3243,15 @@ impl DeviceResources {
 
 /// Build the error for one recorded mismatch. Shared by the log line and the
 /// accessor so both say the same thing.
-fn slot_mismatch_error(raw: u64, slot: TextureSlot) -> crate::error::ViewportError {
-    let found = match slot.required_space() {
+fn slot_mismatch_error(raw: u64, required: TextureRequirement) -> crate::error::ViewportError {
+    let found = match required.colour_space() {
         crate::ColourSpace::Srgb => "linear",
         crate::ColourSpace::Linear => "sRGB",
     };
     crate::error::ViewportError::TextureColourSpaceMismatch {
-        slot: slot.field_name(),
+        slot: required.field_name(),
         found,
-        constructor: slot.constructor(),
+        constructor: required.constructor(),
         texture: raw,
     }
 }

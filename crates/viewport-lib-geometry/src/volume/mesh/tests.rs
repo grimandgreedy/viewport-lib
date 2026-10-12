@@ -17,7 +17,7 @@ fn block(n: u32) -> Vec<[u32; 3]> {
 
 #[test]
 fn grid_single_cell_is_a_closed_box() {
-    let grid = VolumeMeshData::from_grid_cells([1.0, 2.0, 3.0], [2.0, 1.0, 0.5], &[[0, 0, 0]]);
+    let grid = GridCells::from_cells([1.0, 2.0, 3.0], [2.0, 1.0, 0.5], &[[0, 0, 0]]);
     assert_eq!(grid.data.positions.len(), 8);
     assert_eq!(grid.vertex_nodes.len(), 8);
     let (mesh, face_to_cell) = extract_boundary_faces(&grid.data);
@@ -40,7 +40,7 @@ fn grid_single_cell_is_a_closed_box() {
 
 #[test]
 fn grid_neighbours_share_corners_and_lose_their_common_face() {
-    let grid = VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &[[0, 0, 0], [1, 0, 0]]);
+    let grid = GridCells::from_cells([0.0; 3], [1.0; 3], &[[0, 0, 0], [1, 0, 0]]);
     // Two boxes with one shared face: 12 corners, 10 outer quads.
     assert_eq!(grid.data.positions.len(), 12);
     let (mesh, face_to_cell) = extract_boundary_faces(&grid.data);
@@ -51,7 +51,7 @@ fn grid_neighbours_share_corners_and_lose_their_common_face() {
 #[test]
 fn grid_solid_block_keeps_only_its_shell() {
     let n = 4;
-    let grid = VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &block(n));
+    let grid = GridCells::from_cells([0.0; 3], [1.0; 3], &block(n));
     assert_eq!(grid.data.cells.len(), (n * n * n) as usize);
     assert_eq!(
         grid.data.positions.len(),
@@ -66,13 +66,13 @@ fn grid_cells_far_apart_take_the_same_form() {
     // Two cells a long way apart: the bounding box is far larger than the
     // cell list, so node lookup goes through the map.
     let cells = [[0, 0, 0], [5000, 5000, 5000]];
-    let grid = VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &cells);
+    let grid = GridCells::from_cells([0.0; 3], [1.0; 3], &cells);
     assert_eq!(grid.data.positions.len(), 16);
     assert_eq!(grid.vertex_nodes[8], [5000, 5000, 5000]);
     let (mesh, _) = extract_boundary_faces(&grid.data);
     assert_eq!(mesh.indices.len() / 3, 24);
     assert!(
-        VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &[])
+        GridCells::from_cells([0.0; 3], [1.0; 3], &[])
             .data
             .cells
             .is_empty()
@@ -81,7 +81,7 @@ fn grid_cells_far_apart_take_the_same_form() {
 
 #[test]
 fn node_scalars_become_vertex_attributes() {
-    let mut grid = VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &[[0, 0, 0]]);
+    let mut grid = GridCells::from_cells([0.0; 3], [1.0; 3], &[[0, 0, 0]]);
     let heights: Vec<f32> = grid.data.positions.iter().map(|p| p[2]).collect();
     grid.data
         .node_scalars
@@ -116,7 +116,7 @@ fn node_scalars_interpolate_onto_cut_vertices() {
     // passes through the middle of cells. A linear field is reproduced
     // exactly by interpolation, so every output vertex must carry the
     // field's value at its own position.
-    let mut grid = VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &block(2));
+    let mut grid = GridCells::from_cells([0.0; 3], [1.0; 3], &block(2));
     let field = |p: [f32; 3]| 2.0 * p[0] - 3.0 * p[1] + 0.5 * p[2] + 1.0;
     let values: Vec<f32> = grid.data.positions.iter().map(|&p| field(p)).collect();
     grid.data.node_scalars.insert("f".into(), values);
@@ -135,7 +135,7 @@ fn node_scalars_interpolate_onto_cut_vertices() {
 
 #[test]
 fn node_scalar_gives_each_tet_the_mean_of_its_corners() {
-    let mut grid = VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &[[0, 0, 0]]);
+    let mut grid = GridCells::from_cells([0.0; 3], [1.0; 3], &[[0, 0, 0]]);
     let heights: Vec<f32> = grid.data.positions.iter().map(|p| p[1]).collect();
     grid.data.node_scalars.insert("y".into(), heights);
     grid.data.cell_scalars.insert("c".into(), vec![5.0]);
@@ -156,7 +156,7 @@ fn node_scalar_gives_each_tet_the_mean_of_its_corners() {
 
 #[test]
 fn grid_node_values_follow_vertex_order() {
-    let grid = VolumeMeshData::from_grid_cells([0.0; 3], [1.0; 3], &[[1, 0, 0]]);
+    let grid = GridCells::from_cells([0.0; 3], [1.0; 3], &[[1, 0, 0]]);
     // Nodes span i in 0..3, j and k in 0..2. Value = 100k + 10j + i.
     let dims = [3usize, 2, 2];
     let mut dense = vec![0.0; 12];
@@ -189,14 +189,39 @@ const TEST_TET_LOCAL: [[usize; 4]; 6] = [
 ];
 
 fn single_tet() -> VolumeMeshData {
-    VolumeMeshData {
-        positions: vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.5, 1.0, 0.0],
-            [0.5, 0.5, 1.0],
-        ],
-        cells: vec![[
+    let mut data = VolumeMeshData::default();
+    data.positions = vec![
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.5, 1.0, 0.0],
+        [0.5, 0.5, 1.0],
+    ];
+    data.cells = vec![[
+        0,
+        1,
+        2,
+        3,
+        CELL_SENTINEL,
+        CELL_SENTINEL,
+        CELL_SENTINEL,
+        CELL_SENTINEL,
+    ]];
+    data
+}
+
+fn two_tets_sharing_face() -> VolumeMeshData {
+    // Two tets glued along face [0, 1, 2].
+    // Tet A: [0,1,2,3], Tet B: [0,2,1,4]  (reversed to share face outwardly)
+    let mut data = VolumeMeshData::default();
+    data.positions = vec![
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.5, 1.0, 0.0],
+        [0.5, 0.5, 1.0],
+        [0.5, 0.5, -1.0],
+    ];
+    data.cells = vec![
+        [
             0,
             1,
             2,
@@ -205,63 +230,35 @@ fn single_tet() -> VolumeMeshData {
             CELL_SENTINEL,
             CELL_SENTINEL,
             CELL_SENTINEL,
-        ]],
-        ..Default::default()
-    }
-}
-
-fn two_tets_sharing_face() -> VolumeMeshData {
-    // Two tets glued along face [0, 1, 2].
-    // Tet A: [0,1,2,3], Tet B: [0,2,1,4]  (reversed to share face outwardly)
-    VolumeMeshData {
-        positions: vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.5, 1.0, 0.0],
-            [0.5, 0.5, 1.0],
-            [0.5, 0.5, -1.0],
         ],
-        cells: vec![
-            [
-                0,
-                1,
-                2,
-                3,
-                CELL_SENTINEL,
-                CELL_SENTINEL,
-                CELL_SENTINEL,
-                CELL_SENTINEL,
-            ],
-            [
-                0,
-                2,
-                1,
-                4,
-                CELL_SENTINEL,
-                CELL_SENTINEL,
-                CELL_SENTINEL,
-                CELL_SENTINEL,
-            ],
+        [
+            0,
+            2,
+            1,
+            4,
+            CELL_SENTINEL,
+            CELL_SENTINEL,
+            CELL_SENTINEL,
+            CELL_SENTINEL,
         ],
-        ..Default::default()
-    }
+    ];
+    data
 }
 
 fn single_hex() -> VolumeMeshData {
-    VolumeMeshData {
-        positions: vec![
-            [0.0, 0.0, 0.0], // 0
-            [1.0, 0.0, 0.0], // 1
-            [1.0, 0.0, 1.0], // 2
-            [0.0, 0.0, 1.0], // 3
-            [0.0, 1.0, 0.0], // 4
-            [1.0, 1.0, 0.0], // 5
-            [1.0, 1.0, 1.0], // 6
-            [0.0, 1.0, 1.0], // 7
-        ],
-        cells: vec![[0, 1, 2, 3, 4, 5, 6, 7]],
-        ..Default::default()
-    }
+    let mut data = VolumeMeshData::default();
+    data.positions = vec![
+        [0.0, 0.0, 0.0], // 0
+        [1.0, 0.0, 0.0], // 1
+        [1.0, 0.0, 1.0], // 2
+        [0.0, 0.0, 1.0], // 3
+        [0.0, 1.0, 0.0], // 4
+        [1.0, 1.0, 0.0], // 5
+        [1.0, 1.0, 1.0], // 6
+        [0.0, 1.0, 1.0], // 7
+    ];
+    data.cells = vec![[0, 1, 2, 3, 4, 5, 6, 7]];
+    data
 }
 
 fn structured_tet_grid(grid_n: usize) -> VolumeMeshData {
@@ -307,11 +304,10 @@ fn structured_tet_grid(grid_n: usize) -> VolumeMeshData {
         }
     }
 
-    VolumeMeshData {
-        positions,
-        cells,
-        ..Default::default()
-    }
+    let mut data = VolumeMeshData::default();
+    data.positions = positions;
+    data.cells = cells;
+    data
 }
 
 fn projected_sphere_tet_grid(grid_n: usize, radius: f32) -> VolumeMeshData {
@@ -363,11 +359,10 @@ fn projected_sphere_tet_grid(grid_n: usize, radius: f32) -> VolumeMeshData {
         }
     }
 
-    VolumeMeshData {
-        positions,
-        cells,
-        ..Default::default()
-    }
+    let mut data = VolumeMeshData::default();
+    data.positions = positions;
+    data.cells = cells;
+    data
 }
 
 fn cube_to_sphere([x, y, z]: [f32; 3]) -> [f32; 3] {
@@ -416,11 +411,10 @@ fn cube_sphere_hex_grid(grid_n: usize, radius: f32) -> VolumeMeshData {
         }
     }
 
-    VolumeMeshData {
-        positions,
-        cells,
-        ..Default::default()
-    }
+    let mut data = VolumeMeshData::default();
+    data.positions = positions;
+    data.cells = cells;
+    data
 }
 
 fn structured_hex_grid(grid_n: usize) -> VolumeMeshData {
@@ -454,11 +448,10 @@ fn structured_hex_grid(grid_n: usize) -> VolumeMeshData {
         }
     }
 
-    VolumeMeshData {
-        positions,
-        cells,
-        ..Default::default()
-    }
+    let mut data = VolumeMeshData::default();
+    data.positions = positions;
+    data.cells = cells;
+    data
 }
 
 #[test]
@@ -877,33 +870,29 @@ fn hex_cell_scalar_propagates_to_section_faces() {
 
 fn single_pyramid() -> VolumeMeshData {
     // Square base at y=0, apex at y=1.
-    let mut data = VolumeMeshData {
-        positions: vec![
-            [0.0, 0.0, 0.0], // 0
-            [1.0, 0.0, 0.0], // 1
-            [1.0, 0.0, 1.0], // 2
-            [0.0, 0.0, 1.0], // 3
-            [0.5, 1.0, 0.5], // 4 apex
-        ],
-        ..Default::default()
-    };
+    let mut data = VolumeMeshData::default();
+    data.positions = vec![
+        [0.0, 0.0, 0.0], // 0
+        [1.0, 0.0, 0.0], // 1
+        [1.0, 0.0, 1.0], // 2
+        [0.0, 0.0, 1.0], // 3
+        [0.5, 1.0, 0.5], // 4 apex
+    ];
     data.push_pyramid([0, 1, 2, 3], 4);
     data
 }
 
 fn single_wedge() -> VolumeMeshData {
     // Two triangular faces: tri0 at y=0, tri1 at y=1.
-    let mut data = VolumeMeshData {
-        positions: vec![
-            [0.0, 0.0, 0.0], // 0
-            [1.0, 0.0, 0.0], // 1
-            [0.5, 0.0, 1.0], // 2
-            [0.0, 1.0, 0.0], // 3
-            [1.0, 1.0, 0.0], // 4
-            [0.5, 1.0, 1.0], // 5
-        ],
-        ..Default::default()
-    };
+    let mut data = VolumeMeshData::default();
+    data.positions = vec![
+        [0.0, 0.0, 0.0], // 0
+        [1.0, 0.0, 0.0], // 1
+        [0.5, 0.0, 1.0], // 2
+        [0.0, 1.0, 0.0], // 3
+        [1.0, 1.0, 0.0], // 4
+        [0.5, 1.0, 1.0], // 5
+    ];
     data.push_wedge([0, 1, 2], [3, 4, 5]);
     data
 }
@@ -998,38 +987,36 @@ fn decompose_missing_attribute_falls_back_to_zero() {
 #[test]
 fn decompose_mixed_mesh_tet_counts_sum_correctly() {
     // One tet + one hex + one pyramid + one wedge = 1+6+2+3 = 12 tets.
-    let mut data = VolumeMeshData {
-        positions: vec![
-            // tet verts (0..3)
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.5, 1.0, 0.0],
-            [0.5, 0.5, 1.0],
-            // hex verts (4..11): unit cube offset at x=2
-            [2.0, 0.0, 0.0],
-            [3.0, 0.0, 0.0],
-            [3.0, 0.0, 1.0],
-            [2.0, 0.0, 1.0],
-            [2.0, 1.0, 0.0],
-            [3.0, 1.0, 0.0],
-            [3.0, 1.0, 1.0],
-            [2.0, 1.0, 1.0],
-            // pyramid verts (12..16): square base + apex, offset at x=4
-            [4.0, 0.0, 0.0],
-            [5.0, 0.0, 0.0],
-            [5.0, 0.0, 1.0],
-            [4.0, 0.0, 1.0],
-            [4.5, 1.0, 0.5],
-            // wedge verts (17..22): offset at x=6
-            [6.0, 0.0, 0.0],
-            [7.0, 0.0, 0.0],
-            [6.5, 0.0, 1.0],
-            [6.0, 1.0, 0.0],
-            [7.0, 1.0, 0.0],
-            [6.5, 1.0, 1.0],
-        ],
-        ..Default::default()
-    };
+    let mut data = VolumeMeshData::default();
+    data.positions = vec![
+        // tet verts (0..3)
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.5, 1.0, 0.0],
+        [0.5, 0.5, 1.0],
+        // hex verts (4..11): unit cube offset at x=2
+        [2.0, 0.0, 0.0],
+        [3.0, 0.0, 0.0],
+        [3.0, 0.0, 1.0],
+        [2.0, 0.0, 1.0],
+        [2.0, 1.0, 0.0],
+        [3.0, 1.0, 0.0],
+        [3.0, 1.0, 1.0],
+        [2.0, 1.0, 1.0],
+        // pyramid verts (12..16): square base + apex, offset at x=4
+        [4.0, 0.0, 0.0],
+        [5.0, 0.0, 0.0],
+        [5.0, 0.0, 1.0],
+        [4.0, 0.0, 1.0],
+        [4.5, 1.0, 0.5],
+        // wedge verts (17..22): offset at x=6
+        [6.0, 0.0, 0.0],
+        [7.0, 0.0, 0.0],
+        [6.5, 0.0, 1.0],
+        [6.0, 1.0, 0.0],
+        [7.0, 1.0, 0.0],
+        [6.5, 1.0, 1.0],
+    ];
     data.push_tet(0, 1, 2, 3);
     data.push_hex([4, 5, 6, 7, 8, 9, 10, 11]);
     data.push_pyramid([12, 13, 14, 15], 16);

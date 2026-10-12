@@ -3,10 +3,12 @@
 //! once.
 
 use super::eigen::{SymmetricEigen, symmetric_eigen_3x3};
-use viewport_lib::ItemSettings;
-use viewport_lib::{ColourSource, MeshId, SizeSource};
+use viewport_lib_types::encoding::ColourSource;
+use viewport_lib_types::encoding::SizeSource;
+use viewport_lib_types::ids::MeshId;
+use viewport_lib_types::material::ItemSettings;
 
-viewport_lib::resources::handle::slot_handle! {
+viewport_lib_types::slot_handle! {
     /// Handle to a tensor field uploaded once through
     /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload).
     ///
@@ -129,7 +131,7 @@ const IDENTITY_EIGEN: SymmetricEigen = SymmetricEigen {
 ///
 /// ```no_run
 /// # use viewport_lib_plugins::item_types::tensor_field::{TensorFieldItem, TensorSource};
-/// # let sphere: viewport_lib::MeshId = unimplemented!();
+/// # let sphere: viewport_lib_types::ids::MeshId = unimplemented!();
 /// # let (positions, components) = (Vec::new(), Vec::new());
 /// let mut field = TensorFieldItem::new(sphere);
 /// field.positions = positions;

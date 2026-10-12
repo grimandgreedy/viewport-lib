@@ -3,3 +3,7 @@
 //!
 //! Most `*Item` descriptors reference uploaded store ids and stay in
 //! `viewport-lib`; this module holds the wgpu-free, store-id-free exceptions.
+
+mod blend;
+
+pub use blend::SpriteBlend;

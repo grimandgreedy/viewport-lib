@@ -46,7 +46,7 @@ pub use query::{ActionState, FrameInput};
 // New pipeline re-exports
 pub use action_frame::{ActionFrame, NavigationActions, PointerFrame, ResolvedActionState};
 pub use context::{PointerOwnership, ViewportContext, forward_to_viewport};
-pub use cursor::CursorShape;
+pub use cursor::{CursorShape, UnknownCursorShape};
 pub use event::{ButtonState, ScrollUnits, Theme, TouchId, TouchPhase, ViewportEvent};
 pub use preset::{
     BindingPreset, viewer_bindings, viewport_camera_bindings, viewport_default_bindings,

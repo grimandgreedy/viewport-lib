@@ -1,18 +1,17 @@
 //! Showcase 59: vector art (SVG) as filled overlay shapes.
 //!
-//! Loads two SVGs through viewport-lib-io's `vector_from_path`, maps the neutral
-//! paths onto `OverlayShape::Vector`, and draws them side by side. This is the
-//! whole authoring path end to end: an SVG file becomes neutral vector data,
-//! which becomes a tessellated overlay fill.
+//! Loads two SVGs through viewport-lib-io's `vector_from_path` and draws them
+//! side by side as `OverlayShape::Vector` items. This is the whole authoring
+//! path end to end: an SVG file becomes subpaths, which become a tessellated
+//! overlay fill.
 //!
-//! The neutral io types (`viewport_lib_io::SubPath` and friends) mirror the
-//! renderer types field for field, so the bridge is the small `map_subpaths` /
-//! `map_rule` match below, not a dependency between the two crates.
+//! io returns the renderer's own `SubPath`, `FillRule` and `Colour`, so the
+//! only work here is fitting each drawing to its rect.
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use vpl::{FillRule, OutlineMode, OverlayFill, OverlayShapeItem, PathSegment, SubPath};
+use vpl::{OutlineMode, OverlayFill, OverlayShapeItem};
 
 use crate::App;
 
@@ -54,41 +53,6 @@ impl Default for VectorArtState {
             error: None,
         }
     }
-}
-
-fn map_rule(rule: viewport_lib_io::FillRule) -> FillRule {
-    match rule {
-        viewport_lib_io::FillRule::EvenOdd => FillRule::EvenOdd,
-        viewport_lib_io::FillRule::NonZero => FillRule::NonZero,
-    }
-}
-
-/// Map io subpaths onto renderer subpaths, scaling every coordinate by `s`.
-fn map_subpaths(src: &[viewport_lib_io::SubPath], s: f32) -> Vec<SubPath> {
-    let sp = |p: [f32; 2]| [p[0] * s, p[1] * s];
-    src.iter()
-        .map(|c| {
-            let segments = c
-                .segments
-                .iter()
-                .map(|seg| match *seg {
-                    viewport_lib_io::PathSegment::Line { to } => PathSegment::Line { to: sp(to) },
-                    viewport_lib_io::PathSegment::Quad { ctrl, to } => PathSegment::Quad {
-                        ctrl: sp(ctrl),
-                        to: sp(to),
-                    },
-                    viewport_lib_io::PathSegment::Cubic { ctrl1, ctrl2, to } => {
-                        PathSegment::Cubic {
-                            ctrl1: sp(ctrl1),
-                            ctrl2: sp(ctrl2),
-                            to: sp(to),
-                        }
-                    }
-                })
-                .collect();
-            SubPath::from_segments(sp(c.start), segments, c.closed)
-        })
-        .collect()
 }
 
 fn load(path: &str) -> Result<viewport_lib_io::VectorArt, String> {
@@ -137,11 +101,15 @@ fn place_art(
     let size = [dw, dh];
 
     for shape in &art.shapes {
-        let subpaths = map_subpaths(&shape.subpaths, s);
-        let mut item = OverlayShapeItem::vector(subpaths, map_rule(shape.fill_rule), origin, size)
-            .with_z_order(10);
+        let subpaths = shape
+            .subpaths
+            .iter()
+            .map(|sub| sub.clone().map_points(|p| [p[0] * s, p[1] * s]))
+            .collect();
+        let mut item =
+            OverlayShapeItem::vector(subpaths, shape.fill_rule, origin, size).with_z_order(10);
         item = match shape.fill {
-            Some(rgba) => item.with_fill(OverlayFill::Solid(Colour::from_linear_array(rgba))),
+            Some(colour) => item.with_fill(OverlayFill::Solid(colour)),
             // Stroke-only paths (fill "none", or gradients we do not resolve)
             // carry no fill; the outline below makes them visible.
             None => item.with_fill(OverlayFill::Solid(Colour::linear(0.0, 0.0, 0.0, 0.0))),

@@ -1,4 +1,4 @@
-use viewport_lib::ItemSettings;
+use viewport_lib_types::material::ItemSettings;
 
 /// One GPU implicit surface draw item.
 ///
@@ -13,7 +13,7 @@ use viewport_lib::ItemSettings;
 /// prim.kind   = 1;  // sphere
 /// prim.blend  = 0.9;
 /// prim.params = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];  // center=origin, radius=1
-/// prim.colour  = viewport_lib::Colour::linear(1.0, 0.5, 0.2, 1.0);
+/// prim.colour  = viewport_lib_types::colour::Colour::linear(1.0, 0.5, 0.2, 1.0);
 ///
 /// let mut item = GpuImplicitItem::default();
 /// item.primitives    = vec![prim];
@@ -71,7 +71,7 @@ pub struct ImplicitPrimitive {
     pub params: [f32; 8],
     /// Linear RGBA colour for this primitive.
     /// Colours are blended by proximity weight at the hit point.
-    pub colour: viewport_lib::Colour,
+    pub colour: viewport_lib_types::colour::Colour,
 }
 
 /// How multiple primitives are combined into a single SDF.

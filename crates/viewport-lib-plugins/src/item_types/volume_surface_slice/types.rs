@@ -1,6 +1,6 @@
 //! The mesh-sampled volume slice item type.
 
-use viewport_lib::ItemSettings;
+use viewport_lib_types::material::ItemSettings;
 
 /// A volume slice sampled on an arbitrary surface mesh.
 ///
@@ -10,7 +10,7 @@ use viewport_lib::ItemSettings;
 /// a disk, a saddle, a paraboloid -- any shape that can be expressed as a mesh.
 ///
 /// Upload the surface mesh once with `DeviceResources::upload_mesh_data`
-/// to get a [`MeshId`](viewport_lib::resources::mesh::mesh_store::MeshId), then submit a
+/// to get a [`MeshId`](viewport_lib_types::ids::MeshId), then submit a
 /// `VolumeSurfaceSliceItem` referencing that mesh each frame.
 ///
 /// Fragments whose world position falls outside the volume bounding box are
@@ -33,9 +33,9 @@ use viewport_lib::ItemSettings;
 #[derive(Debug, Clone)]
 pub struct VolumeSurfaceSliceItem {
     /// Reference to a previously uploaded 3D volume texture.
-    pub volume_id: viewport_lib::resources::VolumeId,
+    pub volume_id: viewport_lib_types::ids::VolumeId,
     /// Mesh defining the slice surface shape. Any mesh works: flat quad, disk, saddle, etc.
-    pub mesh_id: viewport_lib::resources::mesh::mesh_store::MeshId,
+    pub mesh_id: viewport_lib_types::ids::MeshId,
     /// World-space bounding box minimum corner of the volume.
     pub bbox_min: [f32; 3],
     /// World-space bounding box maximum corner of the volume.
@@ -43,7 +43,7 @@ pub struct VolumeSurfaceSliceItem {
     /// Scalar range for colourmap mapping `[min, max]`. Default: `(0.0, 1.0)`.
     pub scalar_range: (f32, f32),
     /// Colour LUT. `None` = default builtin (viridis).
-    pub colour_lut: Option<viewport_lib::resources::ColourmapId>,
+    pub colour_lut: Option<viewport_lib_types::colourmap::ColourmapId>,
     /// Overall opacity of the slice. Default: `1.0`.
     ///
     /// Prefer [`ItemSettings::opacity`] (`settings.opacity`) for new code; the two
@@ -59,8 +59,8 @@ pub struct VolumeSurfaceSliceItem {
 impl Default for VolumeSurfaceSliceItem {
     fn default() -> Self {
         Self {
-            volume_id: viewport_lib::resources::VolumeId::INVALID,
-            mesh_id: viewport_lib::resources::mesh::mesh_store::MeshId::INVALID,
+            volume_id: viewport_lib_types::ids::VolumeId::INVALID,
+            mesh_id: viewport_lib_types::ids::MeshId::INVALID,
             bbox_min: [0.0, 0.0, 0.0],
             bbox_max: [1.0, 1.0, 1.0],
             scalar_range: (0.0, 1.0),

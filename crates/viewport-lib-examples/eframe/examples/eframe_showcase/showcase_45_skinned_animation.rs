@@ -810,7 +810,7 @@ fn try_load_gltf_character(path: &std::path::Path) -> Option<GltfCharacterAsset>
     let first_skinned = scene
         .meshes
         .iter()
-        .find(|m| m.skeleton_index.is_some() && m.mesh.skin_weights.is_some())?;
+        .find(|m| m.skeleton_index.is_some() && m.skin_weights.is_some())?;
     let skeleton_idx = first_skinned.skeleton_index.unwrap();
     let io_skeleton: &IoSkeleton = scene.skeletons.get(skeleton_idx)?;
 
@@ -842,7 +842,7 @@ fn try_load_gltf_character(path: &std::path::Path) -> Option<GltfCharacterAsset>
         if io_mesh.skeleton_index != Some(skeleton_idx) {
             continue;
         }
-        let io_sw = match io_mesh.mesh.skin_weights.as_ref() {
+        let io_sw = match io_mesh.skin_weights.as_ref() {
             Some(sw) => sw,
             None => continue,
         };

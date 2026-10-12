@@ -143,10 +143,16 @@ pub(super) fn resolve_bindings_for(
     normal_texture_id: Option<viewport_lib::resources::TextureId>,
     report: bool,
 ) -> SpriteBindings {
-    use viewport_lib::resources::TextureSlot;
+    use viewport_lib::resources::TextureRequirement;
     if report {
-        resources.check_texture_slot(texture_id, TextureSlot::SpriteAlbedo);
-        resources.check_texture_slot(normal_texture_id, TextureSlot::SpriteNormalMap);
+        resources.check_texture_slot(
+            texture_id,
+            TextureRequirement::colour("SpriteItem::texture_id"),
+        );
+        resources.check_texture_slot(
+            normal_texture_id,
+            TextureRequirement::normal_map("SpriteItem::normal_texture_id"),
+        );
     }
 
     let (texture_view, has_texture) = match texture_id.and_then(|id| resources.texture_view(id)) {

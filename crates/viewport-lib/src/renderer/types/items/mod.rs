@@ -8,7 +8,6 @@
 //! batch, volume mesh), which is not an item type, plus the identity transform
 //! the item structs default to.
 
-mod blend;
 mod mesh;
 mod mesh_instance;
 mod volume_mesh;
@@ -18,8 +17,8 @@ mod volume_mesh;
 /// from the column-major convention the rest of the renderer uses.
 pub(crate) const IDENTITY_MAT4: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
 
-pub use self::blend::SpriteBlend;
 pub use self::mesh::*;
 pub use self::mesh_instance::*;
 pub use self::volume_mesh::*;
 pub use crate::renderer::item_plugins::polyline::types::*;
+pub use viewport_lib_types::render_item::SpriteBlend;

@@ -120,64 +120,6 @@ pub(super) fn polygon_area(points: &[[f32; 2]]) -> f32 {
     area * 0.5
 }
 
-pub(super) fn point_in_tri(p: [f32; 2], a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> bool {
-    let cross = |u: [f32; 2], v: [f32; 2], w: [f32; 2]| {
-        (v[0] - u[0]) * (w[1] - u[1]) - (v[1] - u[1]) * (w[0] - u[0])
-    };
-    let ab = cross(a, b, p);
-    let bc = cross(b, c, p);
-    let ca = cross(c, a, p);
-    (ab >= -1e-5 && bc >= -1e-5 && ca >= -1e-5) || (ab <= 1e-5 && bc <= 1e-5 && ca <= 1e-5)
-}
-
-pub(super) fn triangulate_polygon(points: &[[f32; 2]]) -> Vec<[usize; 3]> {
-    let n = points.len();
-    if n < 3 || polygon_area(points).abs() < 1e-5 {
-        return Vec::new();
-    }
-    let ccw = polygon_area(points) > 0.0;
-    let mut idx: Vec<usize> = if ccw {
-        (0..n).collect()
-    } else {
-        (0..n).rev().collect()
-    };
-    let mut tris = Vec::with_capacity(n.saturating_sub(2));
-    let mut guard = 0usize;
-    while idx.len() > 3 && guard < n * n {
-        guard += 1;
-        let mut clipped = false;
-        for i in 0..idx.len() {
-            let ia = idx[(i + idx.len() - 1) % idx.len()];
-            let ib = idx[i];
-            let ic = idx[(i + 1) % idx.len()];
-            let a = points[ia];
-            let b = points[ib];
-            let c = points[ic];
-            let cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-            if cross <= 1e-5 {
-                continue;
-            }
-            let contains = idx
-                .iter()
-                .any(|&j| j != ia && j != ib && j != ic && point_in_tri(points[j], a, b, c));
-            if contains {
-                continue;
-            }
-            tris.push([ia, ib, ic]);
-            idx.remove(i);
-            clipped = true;
-            break;
-        }
-        if !clipped {
-            break;
-        }
-    }
-    if idx.len() == 3 {
-        tris.push([idx[0], idx[1], idx[2]]);
-    }
-    tris
-}
-
 pub(super) fn emit_filled_polyline(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
     points: &[[f32; 2]],
@@ -189,21 +131,20 @@ pub(super) fn emit_filled_polyline(
     let Some((min, max)) = polyline_bounds(points) else {
         return;
     };
-    for tri in triangulate_polygon(points) {
-        for idx in tri {
-            let p = points[idx];
-            let mut colour = sample_overlay_fill(fill, p, min, max);
-            colour[3] *= opacity;
-            verts.push(crate::resources::OverlayTextVertex {
-                position: overlay_local_px(p[0], p[1], vp_w, vp_h),
-                uv: [0.0, 0.0],
-                colour,
-                use_texture: 0.0,
-                clip_index: -1.0,
-                clip_rect: [0.0; 4],
-                group_tint: 0.0,
-            });
-        }
+    let mesh = super::overlay_vector::tessellate_polygon(points);
+    for &i in &mesh.indices {
+        let p = mesh.positions[i as usize];
+        let mut colour = sample_overlay_fill(fill, p, min, max);
+        colour[3] *= opacity;
+        verts.push(crate::resources::OverlayTextVertex {
+            position: overlay_local_px(p[0], p[1], vp_w, vp_h),
+            uv: [0.0, 0.0],
+            colour,
+            use_texture: 0.0,
+            clip_index: -1.0,
+            clip_rect: [0.0; 4],
+            group_tint: 0.0,
+        });
     }
 }
 

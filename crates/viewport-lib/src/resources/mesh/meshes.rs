@@ -1086,9 +1086,15 @@ impl DeviceResources {
         // Lightmaps are radiance, direction, and visibility: all linear. This one
         // is caught at set time rather than at bind, because the call already
         // returns a result.
-        use crate::resources::TextureSlot;
-        self.check_texture_slot(Some(data.texture_id()), TextureSlot::LightmapPrimary);
-        self.check_texture_slot(data.direction_texture_id(), TextureSlot::LightmapSecondary);
+        use crate::resources::TextureRequirement;
+        self.check_texture_slot(
+            Some(crate::resources::lightmap::primary_texture(data)),
+            TextureRequirement::linear("LightmapData radiance / occlusion"),
+        );
+        self.check_texture_slot(
+            crate::resources::lightmap::secondary_texture(data),
+            TextureRequirement::linear("LightmapData direction / shadowmask"),
+        );
         self.texture_slot_mismatch()?;
 
         let store_len = self.mesh_store.len();
@@ -1122,10 +1128,13 @@ impl DeviceResources {
         uv1_buffer.unmap();
         mesh.lightmap = Some(crate::resources::lightmap::MeshLightmap {
             uv1_buffer,
-            texture_id: data.texture_id(),
-            direction_texture_id: data.direction_texture_id(),
-            is_shadowmask: data.is_shadowmask(),
-            mode: mode.to_shader(),
+            texture_id: crate::resources::lightmap::primary_texture(data),
+            direction_texture_id: crate::resources::lightmap::secondary_texture(data),
+            is_shadowmask: matches!(
+                data,
+                crate::resources::lightmap::LightmapData::Shadowmask { .. }
+            ),
+            mode: crate::resources::lightmap::mode_code(mode),
             // A per-mesh lightmap owns its whole atlas: identity sub-rect, layer 0.
             // The array layer for a multi-page lightmap comes per vertex (UV1.z),
             // not from here. Scene lightmaps override both via `set_scene_lightmap`.
@@ -1200,7 +1209,7 @@ impl DeviceResources {
             texture_id: radiance,
             direction_texture_id: None,
             is_shadowmask: false,
-            mode: mode.to_shader(),
+            mode: crate::resources::lightmap::mode_code(mode),
             scale_bias,
             layer,
         });

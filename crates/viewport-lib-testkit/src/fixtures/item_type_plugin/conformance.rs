@@ -54,13 +54,13 @@ use viewport_lib::resources::{
 };
 use viewport_lib::{ItemSettings, PickHit, PickId, PolylineItem, wgpu};
 
-// Two public enums are called `TextureSlot` and neither accepts the other.
-// `viewport_lib::TextureSlot` names a slot in the material's own layout and is
-// what `fallback_texture_view` wants; `viewport_lib::resources::TextureSlot`
-// names a slot across every item type and is what `check_texture_slot` wants.
-// Aliased rather than imported so each call site says which it means.
 use viewport_lib::TextureSlot as MaterialSlot;
-use viewport_lib::resources::TextureSlot as ReportedSlot;
+use viewport_lib::resources::TextureRequirement;
+
+/// What the quad's texture field needs. An item type outside the renderer
+/// names its own field, so a mismatch report points at it.
+const QUAD_TEXTURE: TextureRequirement =
+    TextureRequirement::colour("ConformanceItemTypePlugin::upload texture");
 
 /// Half-extent of the quad each stored entry draws, in world units.
 const HALF: f32 = 0.9;
@@ -459,7 +459,7 @@ impl ConformanceItemTypePlugin {
         let view = texture
             .and_then(|id| resources.texture_view(id))
             .unwrap_or_else(|| resources.fallback_texture_view(MaterialSlot::Albedo));
-        resources.check_texture_slot(texture, ReportedSlot::MaterialAlbedo);
+        resources.check_texture_slot(texture, QUAD_TEXTURE);
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("conformance_entry_bg"),
             layout: &self.entry_bgl,

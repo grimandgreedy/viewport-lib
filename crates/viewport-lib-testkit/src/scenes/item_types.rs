@@ -1726,7 +1726,7 @@ fn build_volume_mesh_node_scalars(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             }
         }
     }
-    let mut grid = viewport_lib::VolumeMeshData::from_grid_cells([-1.5; 3], [1.0; 3], &cells);
+    let mut grid = viewport_lib::GridCells::from_cells([-1.5; 3], [1.0; 3], &cells);
     let node_field: Vec<f32> = grid
         .data
         .positions
@@ -1778,7 +1778,7 @@ fn build_volume_mesh_node_scalars_cut(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             }
         }
     }
-    let mut grid = viewport_lib::VolumeMeshData::from_grid_cells([-1.5; 3], [1.0; 3], &cells);
+    let mut grid = viewport_lib::GridCells::from_cells([-1.5; 3], [1.0; 3], &cells);
     let node_field: Vec<f32> = grid
         .data
         .positions
@@ -1977,7 +1977,7 @@ fn build_surface_contours_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             }
         }
     }
-    let mut grid = viewport_lib::VolumeMeshData::from_grid_cells([-1.5; 3], [1.0; 3], &cells);
+    let mut grid = viewport_lib::GridCells::from_cells([-1.5; 3], [1.0; 3], &cells);
     let node_field: Vec<f32> = grid
         .data
         .positions

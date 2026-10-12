@@ -12,6 +12,21 @@
 //! Nothing is re-exported at the crate root; a type is named by the module it
 //! belongs to.
 //!
+//! The plugins themselves (stores, pipelines, shaders, upload calls) need the
+//! `gpu` feature, which every wgpu leg feature turns on. Without it the crate
+//! holds only the data types a consumer builds and depends on neither
+//! viewport-lib nor wgpu, for a loader, a scene file or an ECS that names them
+//! without drawing:
+//!
+//! ```toml
+//! viewport-lib-plugins = { version = "0.1", default-features = false, features = ["item-types"] }
+//! ```
+//!
+//! Every item type's data builds that way. What stays behind `gpu` is anything
+//! that holds a GPU resource or reads the renderer's own state:
+//! `ExternalInstanceSetConfig` (a consumer buffer), `PointCloudItem::from_debug_draw`
+//! and `VolumeItem::region`. The deformers need `gpu` throughout.
+//!
 //! ```no_run
 //! use viewport_lib_plugins::item_types::{self, point_cloud::PointCloudItem};
 //! # let mut renderer: viewport_lib::renderer::ViewportRenderer = unimplemented!();
@@ -25,22 +40,25 @@
 // takes this crate with `default-features = false` and forwards no leg leaves
 // the features unset while wgpu resolves to 29 or 30, and the 27 arm of every
 // seam compiles against the wrong crate. Assert the two agree.
-#[cfg(all(feature = "wgpu27", not(feature = "wgpu29"), not(feature = "wgpu30")))]
-const OWN_WGPU_LEG: u32 = 27;
-#[cfg(all(feature = "wgpu29", not(feature = "wgpu27"), not(feature = "wgpu30")))]
-const OWN_WGPU_LEG: u32 = 29;
-#[cfg(all(feature = "wgpu30", not(feature = "wgpu27"), not(feature = "wgpu29")))]
-const OWN_WGPU_LEG: u32 = 30;
-#[cfg(not(any(feature = "wgpu27", feature = "wgpu29", feature = "wgpu30")))]
-const OWN_WGPU_LEG: u32 = 0;
+#[cfg(feature = "gpu")]
+const _: () = {
+    #[cfg(all(feature = "wgpu27", not(feature = "wgpu29"), not(feature = "wgpu30")))]
+    const OWN_WGPU_LEG: u32 = 27;
+    #[cfg(all(feature = "wgpu29", not(feature = "wgpu27"), not(feature = "wgpu30")))]
+    const OWN_WGPU_LEG: u32 = 29;
+    #[cfg(all(feature = "wgpu30", not(feature = "wgpu27"), not(feature = "wgpu29")))]
+    const OWN_WGPU_LEG: u32 = 30;
+    #[cfg(not(any(feature = "wgpu27", feature = "wgpu29", feature = "wgpu30")))]
+    const OWN_WGPU_LEG: u32 = 0;
 
-const _: () = assert!(
-    OWN_WGPU_LEG == viewport_lib::gpu::WGPU_LEG,
-    "viewport-lib-plugins was compiled with a wgpu leg feature that does not match the \
-     wgpu viewport-lib resolved to (0 below means no leg feature was enabled at all). \
-     Whoever depends on this crate has to forward the same `wgpu27` / `wgpu29` / `wgpu30` \
-     feature it gives viewport-lib."
-);
+    assert!(
+        OWN_WGPU_LEG == viewport_lib::gpu::WGPU_LEG,
+        "viewport-lib-plugins was compiled with a wgpu leg feature that does not match the \
+         wgpu viewport-lib resolved to (0 below means no leg feature was enabled at all). \
+         Whoever depends on this crate has to forward the same `wgpu27` / `wgpu29` / `wgpu30` \
+         feature it gives viewport-lib."
+    );
+};
 
 #[cfg(feature = "deformers")]
 pub mod deformers;
@@ -56,6 +74,7 @@ pub mod item_types;
 ///
 /// Deformer bodies are not here: the renderer splices them into its own mesh
 /// shaders and validates the result when the deformer registers.
+#[cfg(feature = "gpu")]
 pub fn shader_sources() -> Vec<(&'static str, String)> {
     #[allow(unused_mut)]
     let mut all = Vec::new();

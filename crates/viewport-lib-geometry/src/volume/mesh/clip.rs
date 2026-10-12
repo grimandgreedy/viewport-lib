@@ -1,14 +1,14 @@
 //! Clipped extraction: the boundary of the part of a volume mesh on the kept side
 //! of a set of planes, with the cut faces filled in.
 
+use super::VolumeMeshData;
 use super::boundary::{
-    MAX_QUAD_FACES, MAX_TRI_FACES, QuadEntry, TriEntry, collect_boundary_quad,
+    MAX_QUAD_FACES, MAX_TRI_FACES, PARALLEL_THRESHOLD, QuadEntry, TriEntry, collect_boundary_quad,
     collect_boundary_tri, correct_winding, extract_boundary_faces, generate_quad_entries,
     generate_tri_entries,
 };
 use super::cells::{boundary_interior_ref, cell_type};
 use super::tets::cell_tets;
-use super::{PARALLEL_THRESHOLD, VolumeMeshData};
 use crate::maths::vec3::{cross3, dot3, normalize3};
 use crate::util::par::*;
 use std::collections::HashMap;
