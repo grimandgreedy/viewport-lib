@@ -391,7 +391,7 @@ impl ViewportRenderer {
         self.polyline_gpu_data.clear();
         // Refresh any deform slots bound to a same-device consumer buffer,
         // GPU-to-GPU, before the mesh render pass reads them.
-        resources.run_deform_slot_copies(device, queue);
+        resources.run_deform_slot_copies(device, sink);
         // Volume wireframe overlay: OBB from bbox + model matrix.
         // Transparent volume meshes wireframe: boundary mesh edge overlay.
         // Items rendering as opaque already participate in the standard

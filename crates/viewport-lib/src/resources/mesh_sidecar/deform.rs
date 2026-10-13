@@ -1689,10 +1689,14 @@ impl DeviceResources {
     /// consumer buffer into the packed deform buffer. Called once per frame in
     /// `prepare`, before the mesh render pass. Cheap no-op when no slot is
     /// buffer-backed.
+    ///
+    /// The copies go into `sink` like every other prepare pass, so under
+    /// `prepare_deferred` they are submitted with the frame on the driving
+    /// thread, after anything the caller submits ahead of the batch.
     pub(crate) fn run_deform_slot_copies(
         &self,
         device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
+        sink: &mut crate::renderer::SubmitSink,
     ) {
         if self.deform.external_source_count == 0 {
             return;
@@ -1701,7 +1705,7 @@ impl DeviceResources {
             label: Some("deform_slot_copy_encoder"),
         });
         self.deform.record_deform_copies(&mut encoder);
-        queue.submit(std::iter::once(encoder.finish()));
+        sink.push(encoder.finish());
     }
 
     /// Register a deformer against the mesh shader family.
