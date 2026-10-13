@@ -478,9 +478,16 @@ pub struct InputCtxV2<'a> {
     session: &'a mut ViewportInstance,
     window_id: WindowId,
     events: &'a [ViewportEvent],
+    dt: f32,
 }
 
 impl InputCtxV2<'_> {
+    /// Seconds since this window's previous frame. Pass it to a camera
+    /// controller's `apply` for held input such as fly movement.
+    pub fn dt(&self) -> f32 {
+        self.dt
+    }
+
     /// Which window this input handler invocation is for.
     pub fn window_id(&self) -> WindowId {
         self.window_id
@@ -964,6 +971,7 @@ impl AppHandlerV2 {
                     session: &mut state.session,
                     window_id: id,
                     events: &state.events,
+                    dt,
                 };
                 handler(&mut ictx);
             }
@@ -1022,7 +1030,7 @@ impl AppHandlerV2 {
             } else {
                 state
                     .session
-                    .update_orbit_with(&mut state.orbit, move |frame| {
+                    .update_orbit_with(&mut state.orbit, dt, move |frame| {
                         frame.overlays = overlays;
                         for inject in injects {
                             inject(frame);

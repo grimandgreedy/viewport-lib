@@ -239,7 +239,7 @@ impl eframe::App for App {
                         }
                     }
                 });
-                self.session.update_orbit(&mut self.orbit);
+                self.session.update_orbit(&mut self.orbit, dt);
 
                 let cmd = self
                     .session

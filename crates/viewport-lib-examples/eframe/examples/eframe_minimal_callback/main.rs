@@ -254,7 +254,8 @@ impl App {
         // session is holding the pointer.
         let action_frame = self.input.resolve();
         if !self.manip.is_active() {
-            self.controller.apply(&mut self.camera, &action_frame);
+            let dt = ui.input(|i| i.stable_dt);
+            self.controller.apply(&mut self.camera, &action_frame, dt);
         }
         self.camera.set_aspect_ratio(w, h);
 

@@ -566,7 +566,8 @@ impl App {
                 let action_frame = self.inputs[hq].resolve();
                 if !self.manip.is_active() {
                     let camera = &mut self.cameras[hq];
-                    self.controllers[hq].apply(camera, &action_frame);
+                    let dt = ui.input(|i| i.stable_dt);
+                    self.controllers[hq].apply(camera, &action_frame, dt);
                 }
 
                 // Tab cycles gizmo mode when no session is active.
@@ -602,7 +603,8 @@ impl App {
                     if i != hq {
                         let frame = self.inputs[i].resolve();
                         let camera = &mut self.cameras[i];
-                        self.controllers[i].apply(camera, &frame);
+                        let dt = ui.input(|input| input.stable_dt);
+                        self.controllers[i].apply(camera, &frame, dt);
                     }
                     let qr = quads[i];
                     self.cameras[i].set_aspect_ratio(qr.width(), qr.height());

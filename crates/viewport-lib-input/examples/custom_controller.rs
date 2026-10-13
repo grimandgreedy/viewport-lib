@@ -17,11 +17,12 @@ use viewport_lib_types::input::ActionFrame;
 /// A custom controller: orbit at half sensitivity and ignore pan/zoom entirely.
 ///
 /// Replacing the built-in policy is this small - implement `apply`, read the
-/// resolved navigation deltas, drive the camera your way.
+/// resolved navigation deltas, drive the camera your way. `dt` is there for held
+/// input (a key held to move); this controller reads only deltas, so it ignores it.
 struct HalfSpeedOrbit;
 
 impl CameraController for HalfSpeedOrbit {
-    fn apply(&mut self, camera: &mut Camera, frame: &ActionFrame) {
+    fn apply(&mut self, camera: &mut Camera, frame: &ActionFrame, _dt: f32) {
         let nav = &frame.navigation;
         if nav.orbit.x != 0.0 || nav.orbit.y != 0.0 {
             camera.orbit(nav.orbit.x * 0.5, nav.orbit.y * 0.5);
@@ -61,7 +62,7 @@ fn main() {
     let before = camera.orientation;
 
     let mut controller = HalfSpeedOrbit;
-    controller.apply(&mut camera, &frame);
+    controller.apply(&mut camera, &frame, 1.0 / 60.0);
 
     println!("resolved orbit delta : {:?}", frame.navigation.orbit);
     println!("camera orientation before : {before:?}");

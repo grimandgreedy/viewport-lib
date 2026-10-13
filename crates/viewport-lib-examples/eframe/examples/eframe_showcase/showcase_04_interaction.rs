@@ -675,7 +675,8 @@ pub(crate) fn drive_camera(app: &mut crate::App, cx: &crate::ViewportCtx) -> boo
         // session owns the pointer.
         let action_frame = app.input.resolve();
         if !app.interact_state.manip.is_active() {
-            app.controller.apply(&mut app.camera, &action_frame);
+            let dt = cx.egui.input(|i| i.stable_dt);
+            app.controller.apply(&mut app.camera, &action_frame, dt);
         }
 
         // Tab cycles gizmo mode when no session is active.
@@ -723,7 +724,8 @@ pub(crate) fn drive_camera(app: &mut crate::App, cx: &crate::ViewportCtx) -> boo
         }
     } else {
         let action_frame = app.input.resolve();
-        app.controller.apply(&mut app.camera, &action_frame);
+        let dt = cx.egui.input(|i| i.stable_dt);
+        app.controller.apply(&mut app.camera, &action_frame, dt);
     }
     true
 }

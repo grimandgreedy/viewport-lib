@@ -722,7 +722,7 @@ mod tests {
 
         session.begin_frame(ctx());
         let mut orbit = OrbitCameraController::new_stateless();
-        let frame = session.update_orbit(&mut orbit);
+        let frame = session.update_orbit(&mut orbit, 1.0 / 60.0);
         // Assembly collected the scene node and stamped a non-default generation.
         assert!(
             frame.scene.generation != 0,
@@ -799,7 +799,7 @@ mod tests {
         line.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         line.strip_lengths = vec![2];
         let id = session.add_item(line);
-        let frame = session.update_orbit(&mut orbit);
+        let frame = session.update_orbit(&mut orbit, 1.0 / 60.0);
         assert_eq!(
             frame.scene.items_of::<crate::PolylineItem>().len(),
             1,
@@ -807,7 +807,7 @@ mod tests {
         );
 
         // The injection closure runs after assembly, so per-frame items land.
-        let frame = session.update_orbit_with(&mut orbit, |f| {
+        let frame = session.update_orbit_with(&mut orbit, 1.0 / 60.0, |f| {
             let mut extra = PolylineItem::default();
             extra.positions = vec![[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]];
             extra.strip_lengths = vec![2];
@@ -821,7 +821,7 @@ mod tests {
 
         // Removing the retained extra drops it from later frames.
         assert!(session.remove_extra(id));
-        let frame = session.update_orbit(&mut orbit);
+        let frame = session.update_orbit(&mut orbit, 1.0 / 60.0);
         assert_eq!(
             frame.scene.items_of::<crate::PolylineItem>().len(),
             0,

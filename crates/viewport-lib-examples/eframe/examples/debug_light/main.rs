@@ -334,7 +334,8 @@ impl App {
             });
 
             let action_frame = self.input.resolve();
-            self.controller.apply(&mut self.camera, &action_frame);
+            let dt = ui.input(|i| i.stable_dt);
+            self.controller.apply(&mut self.camera, &action_frame, dt);
             self.camera.set_aspect_ratio(rect.width(), rect.height());
 
             let mut frame_data = FrameData::new(

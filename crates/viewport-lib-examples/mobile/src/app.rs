@@ -40,6 +40,8 @@ struct AppState {
     renderer: ViewportRenderer,
     camera: Camera,
     controller: OrbitCameraController,
+    /// When the last frame was drawn, for the frame time fly movement reads.
+    last_frame: Instant,
     input: ViewportInput,
     scene_items: Vec<SceneRenderItem>,
     /// Elapsed-seconds clock. The viewport reads no clock of its own, and the
@@ -170,6 +172,7 @@ impl ApplicationHandler for App {
             renderer,
             camera,
             controller,
+            last_frame: Instant::now(),
             input,
             scene_items,
             start: Instant::now(),
@@ -230,7 +233,10 @@ impl ApplicationHandler for App {
                 let h = state.surface_config.height as f32;
 
                 let actions = state.input.resolve();
-                state.controller.apply(&mut state.camera, &actions);
+                let now = Instant::now();
+                let dt = (now - state.last_frame).as_secs_f32();
+                state.last_frame = now;
+                state.controller.apply(&mut state.camera, &actions, dt);
                 state.camera.set_aspect_ratio(w, h);
 
                 let mut frame_data = FrameData::new(

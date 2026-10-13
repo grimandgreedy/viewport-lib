@@ -2,10 +2,10 @@
 //!
 //! [`ThirdPersonCameraController`] orbits a host-owned [`Camera`] around a
 //! target point supplied each frame (typically a player body from physics).
-//! Look is driven from the resolved [`ActionFrame`], decomposed into explicit
-//! `yaw` and `pitch`. A `distance` boom pulls the eye back behind the target
-//! along the look direction; a `height` offset raises the orbit pivot above the
-//! target's feet.
+//! Look is driven from the resolved [`ActionFrame`] and held as
+//! [`LookAngles`](crate::LookAngles): explicit `yaw` and `pitch`. A `distance`
+//! boom pulls the eye back behind the target along the look direction; a
+//! `height` offset raises the orbit pivot above the target's feet.
 //!
 //! # Input it reads
 //!
@@ -16,13 +16,14 @@
 //! The coordinate conventions match
 //! [`FirstPersonCameraController`](crate::controllers::first_person::FirstPersonCameraController), so the
 //! shared [`wish_xy_from_actions`](crate::controllers::movement::wish_xy_from_actions) helper produces
-//! the same world-space movement vector in either view.
+//! the same world-space movement vector in either view. Mouselook and stick look go
+//! through [`turn_by`](ThirdPersonCameraController::turn_by), as they do for the
+//! first-person controller.
 
 use glam::{Vec2, Vec3};
 
-use super::look::{build_orientation, orientation_to_aim, yaw_pitch_from_orientation};
-use crate::Camera;
 use crate::input::action_frame::ActionFrame;
+use crate::{Camera, LookAngles};
 
 /// Body-attached third-person orbit-and-boom camera controller.
 ///
@@ -55,7 +56,18 @@ pub struct ThirdPersonCameraController {
     pub shoulder_offset: Vec2,
 }
 
+impl Default for ThirdPersonCameraController {
+    /// [`DEFAULT_SENSITIVITY`](Self::DEFAULT_SENSITIVITY) on both axes and the
+    /// defaults [`new`](Self::new) documents.
+    fn default() -> Self {
+        Self::new(Self::DEFAULT_SENSITIVITY, Self::DEFAULT_SENSITIVITY)
+    }
+}
+
 impl ThirdPersonCameraController {
+    /// Default look sensitivity on each axis, in radians per unit of
+    /// `navigation.orbit`.
+    pub const DEFAULT_SENSITIVITY: f32 = 0.005;
     /// Default boom distance.
     pub const DEFAULT_DISTANCE: f32 = 6.0;
     /// Default pivot height above the target.
@@ -107,11 +119,12 @@ impl ThirdPersonCameraController {
     /// `shoulder_offset` in the camera-local right / up axes.
     pub fn apply(&mut self, camera: &mut Camera, frame: &ActionFrame, target: Vec3) {
         let look = frame.navigation.orbit;
-        self.yaw += look.x * self.yaw_sensitivity;
-        self.pitch -= look.y * self.pitch_sensitivity;
-        self.pitch = self.pitch.clamp(self.pitch_clamp.0, self.pitch_clamp.1);
+        self.turn_by(
+            look.x * self.yaw_sensitivity,
+            -look.y * self.pitch_sensitivity,
+        );
 
-        let orientation = build_orientation(self.yaw, self.pitch);
+        let orientation = self.look().orientation();
 
         let mut pivot = target + Vec3::Z * self.height;
         if self.shoulder_offset.x != 0.0 {
@@ -126,13 +139,24 @@ impl ThirdPersonCameraController {
         camera.orientation = orientation;
     }
 
+    /// The current look.
+    pub fn look(&self) -> LookAngles {
+        LookAngles::new(self.yaw, self.pitch)
+    }
+
+    /// Turn by `yaw` and `pitch` radians, clamping pitch. Positive yaw turns
+    /// right, positive pitch looks up. For look input that does not come
+    /// through the frame: mouselook, a gamepad stick, a scripted turn.
+    pub fn turn_by(&mut self, yaw: f32, pitch: f32) {
+        self.set_look(self.yaw + yaw, self.pitch + pitch);
+    }
+
     /// Adopt the current view of `camera` as this controller's `yaw` / `pitch`,
     /// so switching into third-person continues from the existing view instead
     /// of snapping. Call this when entering third-person mode.
     pub fn sync_from_camera(&mut self, camera: &Camera) {
-        let (yaw, pitch) = yaw_pitch_from_orientation(camera.orientation);
-        self.yaw = yaw;
-        self.pitch = pitch.clamp(self.pitch_clamp.0, self.pitch_clamp.1);
+        let look = LookAngles::from_orientation(camera.orientation);
+        self.set_look(look.yaw, look.pitch);
     }
 
     /// Jump to an explicit look direction. `pitch` is clamped.
@@ -143,18 +167,17 @@ impl ThirdPersonCameraController {
 
     /// Horizontal forward vector (yaw only, `z = 0`) for movement.
     pub fn forward_dir(&self) -> Vec3 {
-        let (s, c) = self.yaw.sin_cos();
-        Vec3::new(s, c, 0.0)
+        self.look().forward()
     }
 
     /// Horizontal right vector, for strafing and the shoulder offset.
     pub fn right_dir(&self) -> Vec3 {
-        self.forward_dir().cross(Vec3::Z).normalize_or_zero()
+        self.look().right()
     }
 
     /// Full look direction including pitch.
     pub fn aim_dir(&self) -> Vec3 {
-        orientation_to_aim(build_orientation(self.yaw, self.pitch))
+        self.look().direction()
     }
 }
 
@@ -229,5 +252,15 @@ mod tests {
         c2.sync_from_camera(&camera);
         assert!((c2.yaw - 0.6).abs() < 1e-4, "yaw={}", c2.yaw);
         assert!((c2.pitch - 0.2).abs() < 1e-4, "pitch={}", c2.pitch);
+    }
+
+    #[test]
+    fn turn_by_clamps_to_the_pitch_range() {
+        let mut c = ThirdPersonCameraController::default().with_pitch_clamp(-0.2, 0.4);
+        c.turn_by(0.1, 1.0);
+        assert!((c.pitch - 0.4).abs() < 1e-6);
+        c.turn_by(0.1, -5.0);
+        assert!((c.pitch + 0.2).abs() < 1e-6);
+        assert!((c.yaw - 0.2).abs() < 1e-6);
     }
 }

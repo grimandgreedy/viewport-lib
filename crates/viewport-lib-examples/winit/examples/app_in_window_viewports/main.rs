@@ -74,6 +74,7 @@ impl Pane {
         ppp: f32,
         active: bool,
         events: &[ViewportEvent],
+        dt: f32,
     ) {
         // Events land in the accumulator, which begin_frame resets, so feed them
         // after begin_frame and before update_orbit resolves them.
@@ -89,7 +90,7 @@ impl Pane {
                 self.session.handle_event(ev.clone());
             }
         }
-        let _ = self.session.update_orbit(&mut self.orbit);
+        let _ = self.session.update_orbit(&mut self.orbit, dt);
         let cmd = self
             .session
             .render(device, queue, self.target.render_view());
@@ -212,6 +213,7 @@ fn main() {
                         ppp,
                         active == Some(0),
                         &left_events,
+                        ctx.dt(),
                     );
                 }
                 if panes.left.as_ref().is_some_and(|p| p.blit.is_none()) {
@@ -233,6 +235,7 @@ fn main() {
                         ppp,
                         active == Some(1),
                         &right_events,
+                        ctx.dt(),
                     );
                 }
                 if panes.right.as_ref().is_some_and(|p| p.blit.is_none()) {

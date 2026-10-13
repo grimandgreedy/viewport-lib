@@ -38,6 +38,11 @@ pub struct ObjSnapshot {
 // ViewportState - persists across frames, tracks mouse + camera
 // ---------------------------------------------------------------------------
 
+// The widget applies input once per event rather than once per frame, so there
+// is no frame time to pass. Zero leaves drags, the wheel and pinch unchanged; fly
+// movement, which is held input, would need a per-frame call with a real dt.
+const EVENT_DT: f32 = 0.0;
+
 /// Iced shader widget state. Owns the camera, the resolver, and the controller,
 /// so that input events in `update()` resolve into an `ActionFrame` the
 /// controller applies.
@@ -418,7 +423,9 @@ impl shader::Program<Message> for SceneSnapshot {
                         Modifiers::NONE
                     }));
                 let action_frame = state.input.resolve();
-                state.controller.apply(&mut state.camera, &action_frame);
+                state
+                    .controller
+                    .apply(&mut state.camera, &action_frame, EVENT_DT);
                 None
             }
 
@@ -439,7 +446,9 @@ impl shader::Program<Message> for SceneSnapshot {
                     state: ButtonState::Pressed,
                 });
                 let action_frame = state.input.resolve();
-                state.controller.apply(&mut state.camera, &action_frame);
+                state
+                    .controller
+                    .apply(&mut state.camera, &action_frame, EVENT_DT);
                 state.any_pressed = true;
                 Some(iced::widget::shader::Action::request_redraw().and_capture())
             }
@@ -457,7 +466,9 @@ impl shader::Program<Message> for SceneSnapshot {
                     state: ButtonState::Released,
                 });
                 let action_frame = state.input.resolve();
-                state.controller.apply(&mut state.camera, &action_frame);
+                state
+                    .controller
+                    .apply(&mut state.camera, &action_frame, EVENT_DT);
                 state.any_pressed = false;
                 None
             }
@@ -469,7 +480,9 @@ impl shader::Program<Message> for SceneSnapshot {
                     position: glam::vec2(pos.x, pos.y),
                 });
                 let action_frame = state.input.resolve();
-                state.controller.apply(&mut state.camera, &action_frame);
+                state
+                    .controller
+                    .apply(&mut state.camera, &action_frame, EVENT_DT);
                 if state.any_pressed {
                     Some(iced::widget::shader::Action::request_redraw().and_capture())
                 } else {
@@ -489,7 +502,9 @@ impl shader::Program<Message> for SceneSnapshot {
                     units,
                 });
                 let action_frame = state.input.resolve();
-                state.controller.apply(&mut state.camera, &action_frame);
+                state
+                    .controller
+                    .apply(&mut state.camera, &action_frame, EVENT_DT);
                 Some(iced::widget::shader::Action::request_redraw().and_capture())
             }
 
@@ -497,7 +512,9 @@ impl shader::Program<Message> for SceneSnapshot {
                 state.input.begin_frame(vp_ctx);
                 state.input.push_event(ViewportEvent::PointerLeft);
                 let action_frame = state.input.resolve();
-                state.controller.apply(&mut state.camera, &action_frame);
+                state
+                    .controller
+                    .apply(&mut state.camera, &action_frame, EVENT_DT);
                 state.any_pressed = false;
                 None
             }

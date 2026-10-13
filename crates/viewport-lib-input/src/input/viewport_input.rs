@@ -775,6 +775,14 @@ impl ViewportInput {
                             .or_insert(ResolvedActionState::Held);
                     }
                 }
+                ViewportGesture::ModifiersHeld { modifiers } => {
+                    // Gated on focus like a held key, since a modifier is one.
+                    if self.ctx.focused && modifiers.matches(self.modifiers) {
+                        actions
+                            .entry(binding.action)
+                            .or_insert(ResolvedActionState::Held);
+                    }
+                }
                 // ViewportGesture is non_exhaustive; a gesture this resolver does not
                 // model contributes nothing rather than failing to build.
                 _ => {}

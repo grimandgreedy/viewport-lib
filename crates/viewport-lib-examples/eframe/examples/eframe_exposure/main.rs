@@ -529,7 +529,7 @@ impl eframe::App for App {
                 eff.lighting = lighting;
                 eff.display.exposure = exposure;
 
-                self.session.update_orbit(&mut self.orbit);
+                self.session.update_orbit(&mut self.orbit, dt);
 
                 let cmd = self.session.render(&rs.device, &rs.queue, &target.view);
                 rs.queue.submit(std::iter::once(cmd));

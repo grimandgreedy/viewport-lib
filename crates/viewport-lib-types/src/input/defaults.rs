@@ -117,8 +117,9 @@ pub fn default_bindings() -> Vec<Binding> {
         Binding::in_modes(Action::FlyRight, key_held_any_mod(KeyCode::D), fly),
         Binding::in_modes(Action::FlyUp, key_held_any_mod(KeyCode::E), fly),
         Binding::in_modes(Action::FlyDown, key_held_any_mod(KeyCode::Q), fly),
-        // FlySpeedBoost is handled by checking modifiers.shift directly in fly-mode logic,
-        // not via a binding, because Shift is a modifier and not a standalone key.
+        // FlySpeedBoost has no binding in this legacy set: Shift is a modifier, not a
+        // key, and a Trigger names a key. viewport_default_bindings binds it with
+        // ViewportGesture::ModifiersHeld.
         // -- Gizmo space toggle --
         Binding::in_modes(
             Action::ToggleGizmoSpace,
@@ -273,9 +274,7 @@ mod tests {
 
     /// Every action must be reachable from at least one of the two shipped
     /// binding sets (`default_bindings` or `viewport_default_bindings`), so no action
-    /// is defined but impossible to trigger. The single documented exception is
-    /// `FlySpeedBoost`, which fly-mode logic reads from the Shift modifier
-    /// directly rather than through a binding.
+    /// is defined but impossible to trigger.
     #[test]
     fn every_action_is_bound_or_a_documented_exception() {
         let bound: HashSet<Action> = default_bindings()
@@ -292,7 +291,7 @@ mod tests {
 
         assert_eq!(
             unbound,
-            vec![Action::FlySpeedBoost],
+            Vec::<Action>::new(),
             "actions with no binding in either set: bind them, or add to the \
              documented exceptions with a reason"
         );

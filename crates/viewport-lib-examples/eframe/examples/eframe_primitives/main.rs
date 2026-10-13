@@ -254,7 +254,8 @@ impl App {
                 let ppp = ui.ctx().pixels_per_point();
 
                 let action_frame = self.input.resolve();
-                self.controller.apply(&mut self.camera, &action_frame);
+                let dt = ui.input(|i| i.stable_dt);
+                self.controller.apply(&mut self.camera, &action_frame, dt);
                 self.camera.set_aspect_ratio(w, h);
 
                 let mut frame_data = FrameData::new(

@@ -91,7 +91,7 @@ impl CameraRig {
 
         match self.mode {
             CameraMode::Orbit => {
-                session.update_orbit(&mut self.orbit);
+                session.update_orbit(&mut self.orbit, dt);
             }
             CameraMode::FirstPerson => {
                 // A manipulation drag owns the pointer; do not also look/move then.

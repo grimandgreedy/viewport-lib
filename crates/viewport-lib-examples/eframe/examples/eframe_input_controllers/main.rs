@@ -664,7 +664,8 @@ impl eframe::App for App {
                 let scene_items: Vec<SceneRenderItem> = match self.mode {
                     Mode::Primitives => {
                         let frame = self.input_primitives.resolve();
-                        self.ctrl_primitives.apply(&mut self.camera, &frame);
+                        let dt = ctx.input(|i| i.stable_dt);
+                        self.ctrl_primitives.apply(&mut self.camera, &frame, dt);
 
                         // Render the same objects as Mode 2 so the scene looks
                         // identical across modes (no confusing shape swaps).
@@ -757,7 +758,8 @@ impl eframe::App for App {
                         // while a manipulation session owns the pointer.
                         let action_frame = self.input_all.resolve();
                         if !self.manip.is_active() {
-                            self.ctrl_all.apply(&mut self.camera, &action_frame);
+                            let dt = ctx.input(|i| i.stable_dt);
+                            self.ctrl_all.apply(&mut self.camera, &action_frame, dt);
                         }
 
                         // Tab cycles the gizmo mode when no manipulation is active.

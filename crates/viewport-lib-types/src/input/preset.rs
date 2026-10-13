@@ -281,6 +281,12 @@ pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
             modifiers: any,
         },
     ));
+    bindings.push(ViewportBinding::new(
+        Action::FlySpeedBoost,
+        ViewportGesture::ModifiersHeld {
+            modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
+        },
+    ));
 
     // -- Manipulation mode: axis constraints --
     bindings.push(ViewportBinding::new(

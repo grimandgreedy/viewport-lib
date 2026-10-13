@@ -16,14 +16,15 @@ impl ViewportInstance {
     ///
     /// Orbit is suppressed while a manipulation session is active so pointer
     /// motion drives the gizmo, not the camera. `orbit` is borrowed so the
-    /// application keeps its own handle for tuning.
-    pub fn update_orbit(&mut self, orbit: &mut OrbitCameraController) -> &FrameData {
+    /// application keeps its own handle for tuning. `dt` is the frame time in
+    /// seconds, passed to [`OrbitCameraController::apply`] for fly movement.
+    pub fn update_orbit(&mut self, orbit: &mut OrbitCameraController, dt: f32) -> &FrameData {
         self.action = self.input.resolve();
         orbit.set_viewport_size(self.viewport_size);
 
         let manip_active = self.manip.as_ref().is_some_and(|m| m.is_active());
         if !manip_active {
-            orbit.apply(&mut self.camera, &self.action);
+            orbit.apply(&mut self.camera, &self.action, dt);
         }
 
         self.run_manip();
@@ -50,7 +51,7 @@ impl ViewportInstance {
     /// the update; this closure runs at that exact point.
     ///
     /// ```rust,ignore
-    /// session.update_orbit_with(&mut orbit, |frame| {
+    /// session.update_orbit_with(&mut orbit, dt, |frame| {
     ///     frame.scene.items_mut::<crate::PointCloudItem>().push(cloud);
     ///     frame.overlays.labels.push(label);
     /// });
@@ -58,9 +59,10 @@ impl ViewportInstance {
     pub fn update_orbit_with(
         &mut self,
         orbit: &mut OrbitCameraController,
+        dt: f32,
         inject: impl FnOnce(&mut FrameData),
     ) -> &FrameData {
-        self.update_orbit(orbit);
+        self.update_orbit(orbit, dt);
         inject(&mut self.frame);
         &self.frame
     }

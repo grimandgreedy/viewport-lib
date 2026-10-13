@@ -225,6 +225,7 @@ pub use plugin_api::{
     PostEffectStageId, Uploads, build_post_effect_pipeline, install_plugin,
 };
 
+pub use camera::LookAngles;
 pub use camera::camera::{Camera, CameraTarget, Projection};
 pub use camera::controllers::TurntableController;
 pub use camera::controllers::{CameraAnimator, CameraDamping, Easing};

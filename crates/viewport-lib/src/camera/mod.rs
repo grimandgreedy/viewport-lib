@@ -14,3 +14,4 @@ pub mod view_preset;
 // Re-export the most-used types at the module level so that
 // `viewport_lib::camera::Camera` continues to resolve.
 pub use camera::{Camera, CameraTarget, Projection};
+pub use viewport_lib_types::camera::look::{self, LookAngles};
