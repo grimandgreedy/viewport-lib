@@ -94,19 +94,16 @@ pub enum OverlayShape {
     /// vector art (paths). Subpath coordinates are path-local logical pixels,
     /// placed at the item's `position`.
     ///
-    /// A vector shape honours most of [`OverlayShapeItem`]: `style.fill` as a
-    /// solid or a gradient, `style.shadows` and `style.inner_shadows` (drawn as
-    /// geometry running alongside the contour rather than from a distance
-    /// field, so the curve differs slightly from an analytic shape's),
-    /// `style.opacity`, `style.tint`, `z_order`, `clip`, `animations`, and the
-    /// whole `transform`. `position` places the path origin and `size` sets the
-    /// rotation centre; the fill and gradient bounds come from the path's own
-    /// extent, not `size`.
-    ///
-    /// Two things need the distance field this variant does not have, and are
-    /// ignored: `style.backdrop` and its filters, and an `OverlayFill::Texture`
-    /// fill (a solid or gradient fill still draws). Ask
-    /// [`OverlayStyleSupport::for_shape`] rather than hard-coding that list.
+    /// A vector shape honours [`OverlayShapeItem`]: `style.fill` as a solid, a
+    /// gradient or an image, `style.backdrop` and its filters,
+    /// `style.shadows` and `style.inner_shadows` (drawn as geometry running
+    /// alongside the contour rather than from a distance field, so the curve
+    /// differs slightly from an analytic shape's), `style.opacity`,
+    /// `style.tint`, `z_order`, `clip`, `animations`, and the whole
+    /// `transform`. `position` places the path origin and `size` sets the
+    /// rotation centre; gradient and image fills map across the path's own
+    /// extent, not `size`. An image fill's `nine_slice` is ignored. Ask
+    /// [`OverlayStyleSupport::for_shape`] rather than hard-coding any of this.
     ///
     /// A vector shape also cannot serve as a clip mask. Setting `provides_mask`
     /// on one registers no mask, so items naming that id draw unclipped, the

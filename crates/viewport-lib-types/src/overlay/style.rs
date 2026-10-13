@@ -226,24 +226,15 @@ impl OverlayStyleSupport {
         backdrop: false,
     };
 
-    /// What an [`OverlayShapeItem`] draws, which depends on its variant:
-    /// analytic variants have a distance field and draw everything, while
-    /// `OverlayShape::Vector` is tessellated triangles, with no image sampling
-    /// and no distance field to run a backdrop mask off.
+    /// What an [`OverlayShapeItem`] draws. Every variant draws every fill kind
+    /// and the backdrop, `OverlayShape::Vector` included.
     ///
-    /// This is why the query takes the shape rather than being a constant per
-    /// type: the variant is known where the item is built, which is where a
-    /// lowering layer needs the answer.
+    /// The query takes the shape so a lowering layer can ask where the item is
+    /// built, and so a variant that cannot draw a field can say so.
     ///
     /// [`OverlayShapeItem`]: crate::overlay::OverlayShapeItem
-    pub const fn for_shape(shape: &crate::overlay::OverlayShape) -> Self {
-        match shape {
-            crate::overlay::OverlayShape::Vector { .. } => Self {
-                fill: COLOUR_FILLS,
-                backdrop: false,
-            },
-            _ => Self::ALL,
-        }
+    pub const fn for_shape(_shape: &crate::overlay::OverlayShape) -> Self {
+        Self::ALL
     }
 
     /// What an `OverlayPolylineItem` draws. Only a closed polyline has an
@@ -304,7 +295,7 @@ mod tests {
     use crate::overlay::{OverlayShape, ShadowLayer};
 
     #[test]
-    fn vector_shapes_report_the_cells_they_cannot_draw() {
+    fn vector_shapes_draw_every_cell() {
         let style = OverlayStyle::solid(Colour::linear(1.0, 0.0, 0.0, 1.0))
             .with_inner_shadows(vec![ShadowLayer::default()])
             .with_backdrop(BackdropEffects::default().with_blur(4.0));
@@ -316,7 +307,8 @@ mod tests {
             subpaths: Vec::new(),
             fill_rule: crate::overlay::FillRule::NonZero,
         });
-        assert_eq!(vector.inert_fields(&style), ["backdrop"]);
+        assert!(vector.inert_fields(&style).is_empty());
+        assert!(vector.draws_fill(&OverlayFill::texture(crate::overlay::OverlayTextureId(0))));
     }
 
     #[test]

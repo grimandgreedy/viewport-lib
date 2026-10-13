@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`OverlayShape::Vector` draws an image fill and a backdrop blur** - a texture fill samples across the path's own extent with the fill's `TextureTransform`, turning and scaling with the shape (`nine_slice` is ignored), and `style.backdrop` blurs and filters the scene behind the path, cut to its outline. A texture fill used to draw a white silhouette and a backdrop was dropped. `OverlayStyleSupport::for_shape` now reports every fill kind and the backdrop for a vector shape, so a lowering layer that fell back for these can stop. In a retained group a vector shape's image fill and backdrop are skipped, as an analytic shape's are.
 - **`TextureData` carries block-compressed images** - `TextureData::compressed(w, h, format, colour_space, mip_levels)` and `compressed_normal_map` hold a pre-built BC, ETC2/EAC or ASTC mip chain as the new `TexturePayload::Compressed`, with the encoding named by `CompressedFormat` (and `AstcBlock`) and the sRGB-or-linear choice taken from the colour space like every other payload. `upload_texture`, `begin_upload_texture` and `replace_texture` accept it, checking the device supports the format. `TexturePayload` is exhaustive, so a `match` on it needs the new arm.
 - **`TextureData::with_colour_space`** - relabels the pixels without converting them, for a loader that cannot tell colour from data: it returns sRGB and the caller marks a data map linear.
 - **`ViewportError::UnsupportedTextureData { slot, reason }`** - the error an upload returns for a well-formed `TextureData` its slot cannot take, with `UploadSlot` and `TextureRejection` to match on. The overlay, matcap and environment uploads move onto it as they take `TextureData`.
@@ -151,6 +152,7 @@
 
 ### Fixed
 
+- **A textured closed polyline no longer fades along its bounding box** - the edges of a texture-filled polygon that touch its bounding box drew about a pixel of fade into the background; they are now solid like the rest of the edge.
 - **`NavigationMode::Fly` moves at the same speed diagonally** - holding forward and strafe moved about 1.41 times as fast as forward alone, and forward, strafe and up about 1.73 times; the movement direction is now normalised.
 - **Shift boosts fly speed** - `Action::FlySpeedBoost` existed and the default bindings claimed fly mode read Shift directly, but nothing did. `viewport_default_bindings` now binds it to Shift, and `NavigationMode::Fly` multiplies `fly_speed` by the new `OrbitCameraController::fly_boost` (default `3.0`) while it is held.
 - **`CameraAnimator` coasts the same distance at any frame rate** - each update applied the whole velocity before decaying it, so a flick coasted about twice as far at 120 Hz as at 60 Hz. Each step is now scaled to the frame time. Motion at 60 Hz is unchanged.
