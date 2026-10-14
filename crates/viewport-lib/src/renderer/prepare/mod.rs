@@ -159,6 +159,13 @@ impl ViewportRenderer {
 
         self.ensure_frame_pipelines(device, frame);
 
+        // A glyph atlas that filled up last frame is cleared here, before any
+        // text this frame is laid out against it. A derivative render leaves it
+        // alone: the presented frame it runs beside may still draw the old cells.
+        if self.render_advances_state() {
+            self.resources.content.glyph_atlas.evict_if_full();
+        }
+
         // Reset the per-material transform interner for this frame. The per-object
         // and instanced passes below intern each item's material into it; the
         // buffer is uploaded at the end of this function (and again after
