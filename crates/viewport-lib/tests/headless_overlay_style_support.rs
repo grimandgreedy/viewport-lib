@@ -173,6 +173,29 @@ fn reported_support_matches_what_the_renderer_draws() {
             }),
         ),
         (
+            "textured vector shape",
+            OverlayStyleSupport::for_shape(&vector),
+            Box::new(move |style| {
+                let mut ovl = OverlayFrame::default();
+                let mut item = OverlayShapeItem::new(
+                    OverlayShape::Vector {
+                        subpaths: vec![SubPath::polygon(&[
+                            [0.0, 0.0],
+                            [40.0, 0.0],
+                            [40.0, 40.0],
+                            [0.0, 40.0],
+                        ])],
+                        fill_rule: viewport_lib::FillRule::NonZero,
+                    },
+                    [28.0, 28.0],
+                    [40.0, 40.0],
+                );
+                item.style = style;
+                ovl.shapes = vec![item];
+                ovl
+            }),
+        ),
+        (
             "polyline",
             OverlayStyleSupport::for_polyline(true),
             Box::new(|style| {
@@ -273,7 +296,9 @@ fn base_style(family: &str, texture: viewport_lib::OverlayTextureId) -> OverlayS
         // The textured pipeline is reached by the fill being a texture, so
         // that is this family's baseline: the fill probe then replaces it with
         // a gradient, which is exactly the swap the table has to predict.
-        "textured shape" => OverlayStyle::default().with_fill(OverlayFill::texture(texture)),
+        "textured shape" | "textured vector shape" => {
+            OverlayStyle::default().with_fill(OverlayFill::texture(texture))
+        }
         _ => OverlayStyle::solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)),
     }
 }

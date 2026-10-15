@@ -155,8 +155,10 @@ pub(super) fn emit_vector_shape(
         emit_vector_shadow(batch, shape, subpaths, layer, vp_w, vp_h);
     }
 
+    // An image fill samples in the shape pass (`push_tessellated_tex_verts`);
+    // only the shadows draw here.
     let content_start = batch.len();
-    if !mesh.indices.is_empty() {
+    if !mesh.indices.is_empty() && shape.style.fill.texture_id().is_none() {
         let positions = transform_vector_positions(&mesh.positions, shape);
         emit_vector_fill(
             batch,
@@ -184,6 +186,69 @@ pub(super) fn emit_vector_shape(
         .filter(|l| l.is_visible())
     {
         emit_vector_inner_shadow(batch, shape, subpaths, layer, vp_w, vp_h);
+    }
+}
+
+/// Pack a `TextureTransform` into the two `OverlayShapeTexVertex` fields that
+/// carry it.
+fn texture_transform_gpu(tt: &crate::renderer::types::TextureTransform) -> ([f32; 4], [f32; 4]) {
+    (
+        [tt.offset[0], tt.offset[1], tt.scale[0], tt.scale[1]],
+        [
+            tt.rotation,
+            tile_mode_to_f(tt.tile_mode),
+            if tt.flip_x { 1.0 } else { 0.0 },
+            if tt.flip_y { 1.0 } else { 0.0 },
+        ],
+    )
+}
+
+/// Push a tessellated fill (a closed polyline or a vector shape) as a triangle
+/// list for the texture pipeline, which serves both an image fill and a
+/// backdrop blur. `positions` are screen logical pixels and `uv(i)` gives the
+/// sample coordinate for vertex `i`.
+///
+/// The triangles are the coverage, so each vertex is encoded as a sharp rect
+/// grown a pixel past the fill's bounds: the shader's distance test then reads
+/// fully inside everywhere, instead of fading the edges that touch the bounds.
+#[allow(clippy::too_many_arguments)]
+fn push_tessellated_tex_verts(
+    out: &mut Vec<crate::resources::OverlayShapeTexVertex>,
+    positions: &[[f32; 2]],
+    indices: &[u32],
+    uv: impl Fn(u32) -> [f32; 2],
+    fill_colour: [f32; 4],
+    extras: [f32; 4],
+    texture_transform: ([f32; 4], [f32; 4]),
+    clip_index: f32,
+    clip_rect: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let Some((min, max)) = polyline_bounds(positions) else {
+        return;
+    };
+    let centre = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
+    let half_size = [(max[0] - min[0]) * 0.5 + 1.0, (max[1] - min[1]) * 0.5 + 1.0];
+    for &i in indices {
+        let p = positions[i as usize];
+        out.push(crate::resources::OverlayShapeTexVertex {
+            position: overlay_local_px(p[0], p[1], vp_w, vp_h),
+            local_pos: [p[0] - centre[0], p[1] - centre[1]],
+            fill_colour,
+            half_size,
+            radii: [0.0; 4],
+            shape_type: 0.0,
+            uv: uv(i),
+            shadow_index: [0.0; 3],
+            extras,
+            nine_slice_uv: [0.0; 4],
+            nine_slice_frac: [0.0; 4],
+            texture_transform_a: texture_transform.0,
+            texture_transform_b: texture_transform.1,
+            clip_index,
+            clip_rect,
+        });
     }
 }
 
@@ -821,9 +886,9 @@ impl ViewportRenderer {
                 // --- Vector shapes (tessellated fills + outline strokes) ---
                 // A vector shape has no SDF, so it draws here through the same
                 // triangle-fill pipeline as filled polylines rather than the
-                // SDF shape pass. Fill, gradient, opacity, clip and the shadow
-                // layers carry over; the effects that need a distance field
-                // (texture, backdrop, nine-slice) do not apply.
+                // SDF shape pass. An image fill and a backdrop blur go through
+                // the shape pass's texture pipeline instead (see
+                // `prepare_overlay_shapes`); the shadows still draw here.
                 for shape in &frame.overlays.shapes {
                     let crate::renderer::types::OverlayShape::Vector {
                         subpaths,
@@ -833,9 +898,7 @@ impl ViewportRenderer {
                         continue;
                     };
                     // Mask-only shapes contribute a clip rect, not a draw; skip
-                    // fully transparent ones. A `texture` set on a vector shape
-                    // is ignored (documented on the variant): the fill still
-                    // draws.
+                    // fully transparent ones.
                     if shape.provides_mask.is_some() || shape.style.opacity <= 0.0 {
                         continue;
                     }
@@ -1615,9 +1678,11 @@ impl ViewportRenderer {
                     .collect();
                 sorted.sort_by_key(|s| s.z_order);
 
-                let has_solid = sorted
-                    .iter()
-                    .any(|s| s.style.fill.texture_id().is_none() && s.style.backdrop.blur <= 0.0);
+                let has_solid = sorted.iter().any(|s| {
+                    !matches!(s.shape, crate::renderer::types::OverlayShape::Vector { .. })
+                        && s.style.fill.texture_id().is_none()
+                        && s.style.backdrop.blur <= 0.0
+                });
                 let has_tex = sorted.iter().any(|s| s.style.fill.texture_id().is_some())
                     || has_textured_polyline_fill;
                 let has_blur = sorted
@@ -1679,14 +1744,144 @@ impl ViewportRenderer {
                     if shape_orig.provides_mask.is_some() {
                         continue;
                     }
-                    // Vector shapes have no analytic SDF; the solid/textured
-                    // paths below cannot draw them. They are tessellated to a
-                    // triangle fill on a separate path (not yet wired), so skip
-                    // them here rather than encoding them as a rect quad.
-                    if matches!(
-                        &shape_orig.shape,
-                        crate::renderer::types::OverlayShape::Vector { .. }
-                    ) {
+                    // A vector shape has no distance field, so its fill and
+                    // shadows draw as triangles in the label pass. Only an image
+                    // fill and a backdrop blur come here, as the tessellated
+                    // triangles through the texture pipeline. As on an analytic
+                    // shape, an image fill takes the place of the backdrop.
+                    if let crate::renderer::types::OverlayShape::Vector {
+                        subpaths,
+                        fill_rule,
+                    } = &shape_orig.shape
+                    {
+                        let textured = shape_orig.style.fill.texture_id().is_some();
+                        if !textured && shape_orig.style.backdrop.blur <= 0.0 {
+                            continue;
+                        }
+                        let mut owned = (*shape_orig).clone();
+                        if let Some(anims) = owned.animations.take() {
+                            anims.apply(
+                                overlay_time,
+                                &mut owned.transform,
+                                &mut owned.style.opacity,
+                                &mut owned.style.tint,
+                            );
+                        }
+                        let Some(tl) = owned.resolve_top_left([vp_w, vp_h], view, proj) else {
+                            continue;
+                        };
+                        owned.transform.translate = tl;
+                        if owned.style.opacity <= 0.0 {
+                            continue;
+                        }
+                        let mesh = super::overlay_vector::tessellate(
+                            subpaths,
+                            *fill_rule,
+                            VECTOR_FILL_TOLERANCE,
+                        );
+                        let Some((lmin, lmax)) = polyline_bounds(&mesh.positions) else {
+                            continue;
+                        };
+                        if mesh.indices.is_empty() {
+                            continue;
+                        }
+                        let positions = transform_vector_positions(&mesh.positions, &owned);
+                        if let crate::renderer::types::OverlayFill::Texture {
+                            id: tex_id,
+                            transform: tex_transform,
+                            tint: tex_tint,
+                            ..
+                        } = &owned.style.fill
+                        {
+                            let mut colour = tex_tint.to_linear_rgba();
+                            colour[3] *= owned.style.opacity;
+                            for (c, t) in colour.iter_mut().zip(owned.style.tint) {
+                                *c *= t;
+                            }
+                            let clip_index_i = owned
+                                .clip
+                                .mask
+                                .and_then(|id| clip_index_of.get(&id).copied())
+                                .unwrap_or(-1);
+                            let mask_rect = if clip_index_i >= 0 {
+                                clip_bboxes[clip_index_i as usize]
+                            } else {
+                                [0.0; 4]
+                            };
+                            let clip_rect = match owned.clip.rect {
+                                Some(r) => {
+                                    combine_clip_rects(mask_rect, clip_rect_to_framebuffer(r, ppp))
+                                }
+                                None => mask_rect,
+                            };
+                            let group_idx = tex_groups
+                                .iter()
+                                .position(|(id, _)| id == tex_id)
+                                .unwrap_or_else(|| {
+                                    tex_groups.push((*tex_id, Vec::new()));
+                                    tex_group_z.push(i32::MAX);
+                                    tex_groups.len() - 1
+                                });
+                            tex_group_z[group_idx] = tex_group_z[group_idx].min(owned.z_order);
+                            let group_verts = &mut tex_groups[group_idx].1;
+                            let seg_start = group_verts.len() as u32;
+                            // UVs come from the path-local positions over the
+                            // path's own extent, so the image turns and scales
+                            // with the shape.
+                            let lsize =
+                                [(lmax[0] - lmin[0]).max(1e-6), (lmax[1] - lmin[1]).max(1e-6)];
+                            push_tessellated_tex_verts(
+                                group_verts,
+                                &positions,
+                                &mesh.indices,
+                                |i| {
+                                    let lp = mesh.positions[i as usize];
+                                    [(lp[0] - lmin[0]) / lsize[0], (lp[1] - lmin[1]) / lsize[1]]
+                                },
+                                colour,
+                                [0.0; 4],
+                                texture_transform_gpu(tex_transform),
+                                clip_index_i as f32,
+                                clip_rect,
+                                vp_w,
+                                vp_h,
+                            );
+                            tex_shape_segs.push((
+                                owned.z_order,
+                                group_idx,
+                                seg_start,
+                                group_verts.len() as u32 - seg_start,
+                            ));
+                        } else {
+                            let backdrop = &owned.style.backdrop;
+                            max_blur_radius = max_blur_radius.max(backdrop.blur);
+                            // A transparent tint leaves the filtered backdrop
+                            // alone: the shape's own fill draws over it in the
+                            // label pass, which keeps a gradient fill intact.
+                            // Like an analytic backdrop, it is not clipped by a
+                            // mask.
+                            push_tessellated_tex_verts(
+                                &mut blur_verts,
+                                &positions,
+                                &mesh.indices,
+                                |i| {
+                                    let p = positions[i as usize];
+                                    [p[0] / vp_w, p[1] / vp_h]
+                                },
+                                [0.0; 4],
+                                [
+                                    1.0,
+                                    backdrop.saturation,
+                                    backdrop.brightness,
+                                    backdrop.hue_shift,
+                                ],
+                                ([0.0, 0.0, 1.0, 1.0], [0.0; 4]),
+                                -1.0,
+                                [0.0; 4],
+                                vp_w,
+                                vp_h,
+                            );
+                        }
                         continue;
                     }
                     super::overlay_style_check::warn_inert_style(
@@ -2098,14 +2293,7 @@ impl ViewportRenderer {
                                 ([0.0; 4], [0.0; 4], [0.0, 0.0, 0.0])
                             };
 
-                        let tt = *tex_transform;
-                        let tt_a = [tt.offset[0], tt.offset[1], tt.scale[0], tt.scale[1]];
-                        let tt_b = [
-                            tt.rotation,
-                            tile_mode_to_f(tt.tile_mode),
-                            if tt.flip_x { 1.0 } else { 0.0 },
-                            if tt.flip_y { 1.0 } else { 0.0 },
-                        ];
+                        let (tt_a, tt_b) = texture_transform_gpu(tex_transform);
                         for (px, py, lx, ly) in corners_px {
                             group_verts.push(crate::resources::OverlayShapeTexVertex {
                                 position: overlay_local_px(px, py, vp_w, vp_h),
@@ -2275,54 +2463,38 @@ impl ViewportRenderer {
                     let group_verts = &mut tex_groups[group_idx].1;
                     let poly_seg_start = group_verts.len() as u32;
                     let size = [(max[0] - min[0]).max(1e-6), (max[1] - min[1]).max(1e-6)];
-                    let centre = [min[0] + size[0] * 0.5, min[1] + size[1] * 0.5];
-                    let half_size = [size[0] * 0.5, size[1] * 0.5];
                     let mut tint = tex_tint.to_linear_rgba();
                     tint[3] *= poly.style.opacity;
                     let explicit_uvs = poly
                         .uvs
                         .as_ref()
                         .filter(|uvs| uvs.len() == poly.points.len());
-                    let tt = *tex_transform;
-                    let tt_a = [tt.offset[0], tt.offset[1], tt.scale[0], tt.scale[1]];
-                    let tt_b = [
-                        tt.rotation,
-                        tile_mode_to_f(tt.tile_mode),
-                        if tt.flip_x { 1.0 } else { 0.0 },
-                        if tt.flip_y { 1.0 } else { 0.0 },
-                    ];
-                    for &i in &mesh.indices {
-                        let p = mesh.positions[i as usize];
-                        let local = [p[0] - centre[0], p[1] - centre[1]];
-                        // Explicit UVs belong to the input points; a tessellated
-                        // vertex takes them from the outline point or edge it
-                        // came from.
-                        let uv = explicit_uvs.map_or(
-                            [(p[0] - min[0]) / size[0], (p[1] - min[1]) / size[1]],
-                            |uvs| {
-                                let (from, to, t) = mesh.sources[i as usize];
-                                let (a, b) = (uvs[from], uvs[to]);
-                                [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
-                            },
-                        );
-                        group_verts.push(crate::resources::OverlayShapeTexVertex {
-                            position: overlay_local_px(p[0], p[1], vp_w, vp_h),
-                            local_pos: local,
-                            fill_colour: tint,
-                            half_size,
-                            radii: [0.0; 4],
-                            shape_type: 0.0,
-                            uv,
-                            shadow_index: [0.0; 3],
-                            extras: [0.0; 4],
-                            nine_slice_uv: [0.0; 4],
-                            nine_slice_frac: [0.0; 4],
-                            texture_transform_a: tt_a,
-                            texture_transform_b: tt_b,
-                            clip_index: clip_index_i as f32,
-                            clip_rect: poly_clip_rect,
-                        });
-                    }
+                    push_tessellated_tex_verts(
+                        group_verts,
+                        &mesh.positions,
+                        &mesh.indices,
+                        |i| {
+                            let p = mesh.positions[i as usize];
+                            // Explicit UVs belong to the input points; a
+                            // tessellated vertex takes them from the outline
+                            // point or edge it came from.
+                            explicit_uvs.map_or(
+                                [(p[0] - min[0]) / size[0], (p[1] - min[1]) / size[1]],
+                                |uvs| {
+                                    let (from, to, t) = mesh.sources[i as usize];
+                                    let (a, b) = (uvs[from], uvs[to]);
+                                    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+                                },
+                            )
+                        },
+                        tint,
+                        [0.0; 4],
+                        texture_transform_gpu(tex_transform),
+                        clip_index_i as f32,
+                        poly_clip_rect,
+                        vp_w,
+                        vp_h,
+                    );
                     tex_shape_segs.push((
                         poly.z_order,
                         group_idx,
