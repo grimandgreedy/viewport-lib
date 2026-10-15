@@ -96,6 +96,24 @@ impl GlyphStyle {
         }
     }
 
+    /// The same style for a cell rasterised at `factor` times the drawn size.
+    /// Spread, blur and the clip offset are in pixels of the cell, so they
+    /// scale with it.
+    pub(crate) fn scaled(self, factor: f32) -> Self {
+        if self.is_plain() || factor == 1.0 {
+            return self;
+        }
+        let tenths = |v: u32| (v as f32 * factor).round() as u32;
+        let px = |v: i32| (v as f32 * factor).round() as i32;
+        Self {
+            spread_tenths: tenths(self.spread_tenths),
+            blur_tenths: tenths(self.blur_tenths),
+            clip_dx: px(self.clip_dx),
+            clip_dy: px(self.clip_dy),
+            ..self
+        }
+    }
+
     pub(crate) fn is_plain(&self) -> bool {
         self.falloff_tenths == 0
     }

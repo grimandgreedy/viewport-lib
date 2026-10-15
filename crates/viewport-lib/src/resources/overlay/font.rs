@@ -34,6 +34,51 @@ const DEFAULT_FONT_BYTES: &[u8] = include_bytes!("../../fonts/Roboto-Regular.ttf
 /// designer drew, and the call belongs with a side-by-side rather than a default.
 const HINT_GLYPHS: bool = false;
 
+/// Text at or below this physical size rasterises at its own size, to a tenth of
+/// a pixel. Above it, sizes snap to steps of `SIZE_STEP` and the quad is scaled
+/// to the requested size, so a smooth zoom reuses a bounded set of cells instead
+/// of caching new ones every frame.
+const EXACT_SIZE_PX: f32 = 48.0;
+
+/// Ratio between neighbouring raster sizes above `EXACT_SIZE_PX`.
+const SIZE_STEP: f32 = 1.04;
+
+/// Largest physical size a glyph is rasterised at. Larger text draws this raster
+/// scaled up, so no single glyph needs a cell anywhere near the atlas limit.
+const MAX_RASTER_PX: f32 = 256.0;
+
+/// The size a glyph drawn at some physical size is rasterised at, and how that
+/// raster scales back up to the drawn size.
+#[derive(Debug, Clone, Copy)]
+struct RasterSize {
+    px: f32,
+    /// `px` in tenths of a pixel, the size part of the cache key.
+    tenths: u32,
+    /// Drawn size over raster size. Exactly 1 up to `EXACT_SIZE_PX`.
+    scale: f32,
+}
+
+impl RasterSize {
+    fn for_px(px: f32) -> Self {
+        let raster = if px <= EXACT_SIZE_PX {
+            px
+        } else {
+            let capped = px.min(MAX_RASTER_PX);
+            let steps = ((capped / EXACT_SIZE_PX).ln() / SIZE_STEP.ln()).round();
+            (EXACT_SIZE_PX * SIZE_STEP.powf(steps)).min(MAX_RASTER_PX)
+        };
+        Self {
+            px: raster,
+            tenths: (raster * 10.0).round() as u32,
+            scale: if raster > 0.0 && raster != px {
+                px / raster
+            } else {
+                1.0
+            },
+        }
+    }
+}
+
 /// The table-directory offset and a cache key for face `face` of `font_bytes`.
 /// The key is minted once per font and reused for every scaler built from it,
 /// which is what lets `ScaleContext` cache per font.
@@ -96,8 +141,7 @@ use super::glyph_style::{GlyphStyle, style_coverage};
 struct GlyphKey {
     font_index: usize,
     glyph_index: u16,
-    /// Font size in tenths of a pixel (e.g. 140 = 14.0 px).
-    /// Quantised to avoid unbounded atlas growth from fractional sizes.
+    /// Raster size in tenths of a pixel (e.g. 140 = 14.0 px). See `RasterSize`.
     size_tenths: u32,
     /// Post-processing applied to the cell (plain glyph, or a shadow bake).
     style: GlyphStyle,
@@ -118,6 +162,19 @@ struct GlyphEntry {
     /// `true` for a color glyph (the atlas cell holds real RGBA); `false` for a
     /// coverage glyph (the cell holds `[255, 255, 255, coverage]`).
     color: bool,
+}
+
+impl GlyphEntry {
+    /// A glyph that draws nothing.
+    const EMPTY: Self = Self {
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        offset_x: 0.0,
+        offset_y: 0.0,
+        color: false,
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -216,10 +273,18 @@ pub(crate) struct GlyphAtlas {
     /// Stored as RGBA for direct GPU upload: R=G=B=255, A=coverage.
     pixels: Vec<[u8; 4]>,
 
-    /// Current atlas dimensions (always square, power of two). Zero until the
-    /// first glyph is packed: an application that draws no text never pays
-    /// for the pixel buffer or the texture.
+    /// Current atlas dimensions (always square). Zero until the first glyph is
+    /// packed: an application that draws no text never pays for the pixel
+    /// buffer or the texture.
     size: u32,
+
+    /// Largest `size` the atlas grows to: the device's texture limit or
+    /// `MAX_SIZE`, whichever is smaller.
+    max_size: u32,
+
+    /// Set when a glyph did not fit at `max_size`. Glyphs that miss while it is
+    /// set draw nothing, and the next `evict_if_full` clears the atlas.
+    full: bool,
 
     /// Simple row-based packer state.
     cursor_x: u32,
@@ -231,15 +296,16 @@ pub(crate) struct GlyphAtlas {
     /// View into the atlas texture.
     pub view: crate::gpu::TextureView,
 
-    /// Set to `true` whenever new glyphs have been rasterized since the last
-    /// GPU upload.  Cleared by [`GlyphAtlas::upload_if_dirty`].
-    dirty: bool,
+    /// Rows written since the last GPU upload, as `start..end`. Cleared by
+    /// [`GlyphAtlas::upload_if_dirty`], which writes only those rows.
+    dirty_rows: Option<(u32, u32)>,
 
-    /// Monotonic counter bumped every time the atlas grows. Growing doubles
-    /// `size`, so every existing glyph's UV (`pixel / size`) changes even though
-    /// its pixel position is unchanged. Cached glyph geometry (retained overlay
+    /// Monotonic counter bumped every time the atlas grows or is cleared.
+    /// Growing changes `size`, so every existing glyph's UV (`pixel / size`)
+    /// changes even though its pixel position is unchanged; clearing drops the
+    /// cells outright. Cached glyph geometry (retained overlay
     /// groups) records the version it baked UVs against and re-emits when this
-    /// moves. Unlike `dirty` (a per-frame upload gate reset every frame), this is
+    /// moves. Unlike `dirty_rows` (a per-frame upload gate reset every frame), this is
     /// a persistent invalidation signal.
     atlas_version: u64,
 }
@@ -247,6 +313,11 @@ pub(crate) struct GlyphAtlas {
 impl GlyphAtlas {
     /// Initial atlas size in pixels (width = height).
     const INITIAL_SIZE: u32 = 512;
+
+    /// Largest atlas edge in pixels, whatever the device allows. An atlas that
+    /// fills at this size is cleared and refilled rather than grown, which keeps
+    /// text memory bounded on mobile and web.
+    const MAX_SIZE: u32 = 4096;
 
     /// Create a new atlas with the built-in default font pre-loaded. The
     /// texture is a 1x1 placeholder until the first glyph is packed.
@@ -267,18 +338,21 @@ impl GlyphAtlas {
             entries: HashMap::new(),
             pixels,
             size,
+            max_size: device.limits().max_texture_dimension_2d.min(Self::MAX_SIZE),
+            full: false,
             cursor_x: 0,
             cursor_y: 0,
             row_height: 0,
             texture,
             view,
-            dirty: false,
+            dirty_rows: None,
             atlas_version: 0,
         }
     }
 
-    /// The atlas growth generation. Bumped each time the atlas grows (which
-    /// changes every glyph's UV). Retained glyph geometry re-emits when this moves.
+    /// The atlas generation. Bumped each time the atlas grows (which changes
+    /// every glyph's UV) or is cleared. Retained glyph geometry re-emits when
+    /// this moves.
     pub fn version(&self) -> u64 {
         self.atlas_version
     }
@@ -396,7 +470,7 @@ impl GlyphAtlas {
     ) -> TextLayout {
         let font_index = font.map_or(0, |h| h.0);
         let px = font_size * ppp;
-        let size_tenths = (px * 10.0).round() as u32;
+        let raster = RasterSize::for_px(px);
 
         let (_, line_height) = self.line_metrics(font_index, px);
 
@@ -417,19 +491,12 @@ impl GlyphAtlas {
             for g in std::mem::take(&mut shaped) {
                 // Whether a glyph draws is `ensure_glyph`'s call: it may have an
                 // outline, a colour strike, or nothing at all.
-                let entry = self.ensure_glyph(device, font_index, g.id, size_tenths, px, style);
+                let entry = self.ensure_glyph(device, font_index, g.id, raster, style);
                 if entry.width > 0 {
-                    let atlas_size = self.size as f32;
-                    quads.push(GlyphQuad {
-                        pos: [pen_x + g.x + entry.offset_x, pen_y - g.y + entry.offset_y],
-                        size: [entry.width as f32, entry.height as f32],
-                        uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
-                        uv_max: [
-                            (entry.x + entry.width) as f32 / atlas_size,
-                            (entry.y + entry.height) as f32 / atlas_size,
-                        ],
-                        color: entry.color,
-                    });
+                    let mut q = self.quad(&entry, raster.scale);
+                    q.pos[0] += pen_x + g.x;
+                    q.pos[1] += pen_y - g.y;
+                    quads.push(q);
                 }
                 pen_x += g.advance;
             }
@@ -461,7 +528,7 @@ impl GlyphAtlas {
         font_index: usize,
         word: &str,
         px: f32,
-        size_tenths: u32,
+        raster: RasterSize,
         style: GlyphStyle,
     ) -> (Vec<GlyphQuad>, f32) {
         // One word is one run. Shaping stops at the word boundary the wrapper
@@ -472,19 +539,12 @@ impl GlyphAtlas {
         let mut quads = Vec::new();
         let mut pen_x: f32 = 0.0;
         for g in shaped {
-            let entry = self.ensure_glyph(device, font_index, g.id, size_tenths, px, style);
+            let entry = self.ensure_glyph(device, font_index, g.id, raster, style);
             if entry.width > 0 {
-                let atlas_size = self.size as f32;
-                quads.push(GlyphQuad {
-                    pos: [pen_x + g.x + entry.offset_x, -g.y + entry.offset_y],
-                    size: [entry.width as f32, entry.height as f32],
-                    uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
-                    uv_max: [
-                        (entry.x + entry.width) as f32 / atlas_size,
-                        (entry.y + entry.height) as f32 / atlas_size,
-                    ],
-                    color: entry.color,
-                });
+                let mut q = self.quad(&entry, raster.scale);
+                q.pos[0] += pen_x + g.x;
+                q.pos[1] += -g.y;
+                quads.push(q);
             }
             pen_x += g.advance;
         }
@@ -515,7 +575,7 @@ impl GlyphAtlas {
 
         let (_, line_height) = self.line_metrics(font_index, px);
 
-        let size_tenths = (px * 10.0).round() as u32;
+        let raster = RasterSize::for_px(px);
         let space_advance = self.advance_of(font_index, " ", px);
 
         // Shape and rasterize each word at its own origin, then let the shared
@@ -526,8 +586,7 @@ impl GlyphAtlas {
         for logical_line in text.split('\n') {
             let mut widths = Vec::new();
             for word in logical_line.split_whitespace() {
-                let (quads, width) =
-                    self.word_quads(device, font_index, word, px, size_tenths, style);
+                let (quads, width) = self.word_quads(device, font_index, word, px, raster, style);
                 word_quads.push(quads);
                 widths.push(width);
             }
@@ -594,7 +653,7 @@ impl GlyphAtlas {
     {
         let font_index = font.map_or(0, |h| h.0);
         let px = font_size * ppp;
-        let size_tenths = (px * 10.0).round() as u32;
+        let raster = RasterSize::for_px(px);
         let inv = 1.0 / ppp;
 
         let mut quads = Vec::new();
@@ -602,25 +661,17 @@ impl GlyphAtlas {
             // Glyphs with no visible bitmap (whitespace) are skipped, as in
             // `layout_text`. `ensure_glyph` decides that: a glyph may draw from an
             // outline, from a colour strike, or not at all.
-            let entry = self.ensure_glyph(device, font_index, glyph_id, size_tenths, px, style);
+            let entry = self.ensure_glyph(device, font_index, glyph_id, raster, style);
             if entry.width == 0 {
                 continue;
             }
-            let atlas_size = self.size as f32;
 
             // Pen position arrives in logical pixels; the glyph's bitmap bearing
             // and size come from the physical rasterization, so scale those by
             // `inv` to land in the same logical space.
-            let quad = GlyphQuad {
-                pos: [x + entry.offset_x * inv, y + entry.offset_y * inv],
-                size: [entry.width as f32 * inv, entry.height as f32 * inv],
-                uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
-                uv_max: [
-                    (entry.x + entry.width) as f32 / atlas_size,
-                    (entry.y + entry.height) as f32 / atlas_size,
-                ],
-                color: entry.color,
-            };
+            let mut quad = self.quad(&entry, raster.scale);
+            quad.pos = [x + quad.pos[0] * inv, y + quad.pos[1] * inv];
+            quad.size = [quad.size[0] * inv, quad.size[1] * inv];
             quads.push((quad, payload));
         }
         quads
@@ -727,35 +778,83 @@ impl GlyphAtlas {
     /// Upload new glyph data to the GPU if any glyphs were rasterized since
     /// the last upload.
     pub fn upload_if_dirty(&mut self, queue: &crate::gpu::Queue) {
-        if !self.dirty {
+        let Some((start, end)) = self.dirty_rows.take() else {
             return;
-        }
-        let flat: Vec<u8> = self.pixels.iter().flat_map(|p| p.iter().copied()).collect();
+        };
+        let row = self.size as usize;
+        let rows = &self.pixels[start as usize * row..end as usize * row];
         queue.write_texture(
             crate::gpu::TexelCopyTextureInfo {
                 texture: &self.texture,
                 mip_level: 0,
-                origin: crate::gpu::Origin3d::ZERO,
+                origin: crate::gpu::Origin3d {
+                    x: 0,
+                    y: start,
+                    z: 0,
+                },
                 aspect: crate::gpu::TextureAspect::All,
             },
-            &flat,
+            bytemuck::cast_slice(rows),
             crate::gpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(self.size * 4),
-                rows_per_image: Some(self.size),
+                rows_per_image: Some(end - start),
             },
             crate::gpu::Extent3d {
                 width: self.size,
-                height: self.size,
+                height: end - start,
                 depth_or_array_layers: 1,
             },
         );
-        self.dirty = false;
+    }
+
+    /// Clear the atlas if a glyph failed to fit at its largest size, so this
+    /// frame's text repacks from empty.
+    ///
+    /// Call once per frame, before any text is laid out: quads laid out earlier
+    /// point at cells this drops. Bumps the version, so retained glyph geometry
+    /// re-emits against the repacked cells.
+    pub fn evict_if_full(&mut self) {
+        if !self.full {
+            return;
+        }
+        tracing::info!(
+            "Glyph atlas full at {}x{}, clearing {} cached glyphs",
+            self.size,
+            self.size,
+            self.entries.len()
+        );
+        self.entries.clear();
+        // Cleared rather than left stale: the 1px gutters between new cells must
+        // be transparent, or bilinear filtering bleeds old glyphs into new ones.
+        self.pixels.fill([255, 255, 255, 0]);
+        self.cursor_x = 0;
+        self.cursor_y = 0;
+        self.row_height = 0;
+        self.full = false;
+        self.dirty_rows = Some((0, self.size));
+        self.atlas_version += 1;
     }
 
     // ------------------------------------------------------------------
     // Private helpers
     // ------------------------------------------------------------------
+
+    /// The quad for `entry` with its pen at the origin, in drawn physical
+    /// pixels. `scale` takes the cell from its raster size to the drawn size.
+    fn quad(&self, entry: &GlyphEntry, scale: f32) -> GlyphQuad {
+        let atlas_size = self.size as f32;
+        GlyphQuad {
+            pos: [entry.offset_x * scale, entry.offset_y * scale],
+            size: [entry.width as f32 * scale, entry.height as f32 * scale],
+            uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
+            uv_max: [
+                (entry.x + entry.width) as f32 / atlas_size,
+                (entry.y + entry.height) as f32 / atlas_size,
+            ],
+            color: entry.color,
+        }
+    }
 
     /// Ensure a glyph is in the atlas, rasterizing and packing it if needed.
     /// Returns the atlas entry.
@@ -764,19 +863,25 @@ impl GlyphAtlas {
         device: &crate::gpu::Device,
         font_index: usize,
         glyph_index: u16,
-        size_tenths: u32,
-        px: f32,
+        raster: RasterSize,
         style: GlyphStyle,
     ) -> GlyphEntry {
+        // A style is in drawn pixels; the cell is baked at the raster size.
+        let style = style.scaled(1.0 / raster.scale);
         let key = GlyphKey {
             font_index,
             glyph_index,
-            size_tenths,
+            size_tenths: raster.tenths,
             style,
         };
 
         if let Some(&entry) = self.entries.get(&key) {
             return entry;
+        }
+        // Nothing more fits until the atlas is cleared at the start of the next
+        // frame, so skip the rasterisation as well.
+        if self.full {
+            return GlyphEntry::EMPTY;
         }
 
         // One cascade for every glyph, in priority order: layered colour outlines,
@@ -805,7 +910,11 @@ impl GlyphAtlas {
                 offset,
                 key,
             };
-            let mut scaler = scale.builder(font).size(px).hint(HINT_GLYPHS).build();
+            let mut scaler = scale
+                .builder(font)
+                .size(raster.px)
+                .hint(HINT_GLYPHS)
+                .build();
             Render::new(&[
                 Source::ColorOutline(0),
                 Source::ColorBitmap(StrikeWith::BestFit),
@@ -817,17 +926,8 @@ impl GlyphAtlas {
         // No outline and no strike: whitespace, or an id past the end of the font.
         // Cache a zero-area entry so the miss is paid once.
         let Some(image) = image.filter(|i| i.placement.width > 0 && i.placement.height > 0) else {
-            let entry = GlyphEntry {
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-                offset_x: 0.0,
-                offset_y: 0.0,
-                color: false,
-            };
-            self.entries.insert(key, entry);
-            return entry;
+            self.entries.insert(key, GlyphEntry::EMPTY);
+            return GlyphEntry::EMPTY;
         };
 
         let w = image.placement.width;
@@ -875,6 +975,9 @@ impl GlyphAtlas {
 
     /// Pack a `w * h` RGBA cell into the atlas, growing if needed, and record the
     /// entry. Shared by the coverage and color glyph paths.
+    ///
+    /// A cell that does not fit at `max_size` marks the atlas full and draws
+    /// nothing; it is not cached, so it packs again after the next clear.
     #[allow(clippy::too_many_arguments)]
     fn pack_rgba(
         &mut self,
@@ -887,17 +990,31 @@ impl GlyphAtlas {
         offset_y: f32,
         color: bool,
     ) -> GlyphEntry {
+        // Simple row packer with 1px padding.
+        let pad = 1;
+
+        // A cell bigger than the largest atlas never fits, cleared or not.
+        if w + pad > self.max_size || h + pad > self.max_size {
+            self.entries.insert(key, GlyphEntry::EMPTY);
+            return GlyphEntry::EMPTY;
+        }
+
         if self.size == 0 {
             self.grow(device);
         }
-        // Simple row packer with 1px padding.
-        let pad = 1;
-        if self.cursor_x + w + pad > self.size {
-            self.cursor_y += self.row_height + pad;
-            self.cursor_x = 0;
-            self.row_height = 0;
-        }
-        if self.cursor_y + h + pad > self.size {
+        loop {
+            if self.cursor_x > 0 && self.cursor_x + w + pad > self.size {
+                self.cursor_y += self.row_height + pad;
+                self.cursor_x = 0;
+                self.row_height = 0;
+            }
+            if self.cursor_x + w + pad <= self.size && self.cursor_y + h + pad <= self.size {
+                break;
+            }
+            if self.size >= self.max_size {
+                self.full = true;
+                return GlyphEntry::EMPTY;
+            }
             self.grow(device);
         }
 
@@ -905,13 +1022,14 @@ impl GlyphAtlas {
         let y = self.cursor_y;
 
         for row in 0..h {
-            for col in 0..w {
-                let src = (row * w + col) as usize;
-                let dst = ((y + row) * self.size + (x + col)) as usize;
-                self.pixels[dst] = cell[src];
-            }
+            let src = (row * w) as usize;
+            let dst = ((y + row) * self.size + x) as usize;
+            self.pixels[dst..dst + w as usize].copy_from_slice(&cell[src..src + w as usize]);
         }
-        self.dirty = true;
+        self.dirty_rows = Some(match self.dirty_rows {
+            Some((start, end)) => (start.min(y), end.max(y + h)),
+            None => (y, y + h),
+        });
 
         self.cursor_x = x + w + pad;
         self.row_height = self.row_height.max(h);
@@ -929,15 +1047,17 @@ impl GlyphAtlas {
         entry
     }
 
-    /// Double the atlas size (or allocate it at its initial size), copying
-    /// existing pixel data into the new buffer and recreating the GPU texture.
+    /// Double the atlas size (or allocate it at its initial size), up to
+    /// `max_size`, copying existing pixel data into the new buffer and recreating
+    /// the GPU texture.
     fn grow(&mut self, device: &crate::gpu::Device) {
         let old_size = self.size;
         let new_size = if old_size == 0 {
             Self::INITIAL_SIZE
         } else {
             old_size * 2
-        };
+        }
+        .min(self.max_size);
         if old_size > 0 {
             tracing::info!(
                 "Growing glyph atlas from {}x{} to {}x{}",
@@ -962,7 +1082,7 @@ impl GlyphAtlas {
         let (texture, view) = Self::create_texture(device, new_size);
         self.texture = texture;
         self.view = view;
-        self.dirty = true; // Full re-upload needed.
+        self.dirty_rows = Some((0, new_size)); // Full re-upload needed.
         // Every existing glyph's UV divisor (the atlas size) just changed, so any
         // cached glyph geometry baked against the old size is now stale.
         self.atlas_version += 1;
@@ -1642,6 +1762,134 @@ mod tests {
         assert!((plain.width - wrapped.width).abs() < 0.01);
         assert!((plain.height - wrapped.height).abs() < 0.01);
         assert_eq!(plain.ascent, wrapped.ascent);
+    }
+
+    /// Up to `EXACT_SIZE_PX` a glyph rasterises at its own size; above it the
+    /// raster sizes form a short ladder capped at `MAX_RASTER_PX`.
+    #[test]
+    fn raster_size_is_exact_when_small_and_bounded_when_large() {
+        for px in [0.0_f32, 13.0, 13.37, 44.0, EXACT_SIZE_PX] {
+            let r = RasterSize::for_px(px);
+            assert_eq!((r.px, r.scale), (px, 1.0), "{px}");
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut px = EXACT_SIZE_PX + 0.1;
+        while px < 5000.0 {
+            let r = RasterSize::for_px(px);
+            assert!(r.px <= MAX_RASTER_PX && (r.px * r.scale - px).abs() < px * 1e-4);
+            if px <= MAX_RASTER_PX {
+                assert!(r.scale > 0.97 && r.scale < 1.03, "{px} -> {}", r.px);
+            }
+            seen.insert(r.tenths);
+            px += 0.1;
+        }
+        assert!(seen.len() < 50, "{} raster sizes", seen.len());
+    }
+
+    /// One glyph at 5,000px draws, at about its drawn size, without the atlas
+    /// leaving its cap.
+    #[test]
+    fn one_huge_glyph_draws_within_the_atlas_cap() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut atlas = GlyphAtlas::new(&device);
+        let laid = atlas.layout_text("W", 5000.0, None, 1.0, &device, GlyphStyle::PLAIN);
+        atlas.upload_if_dirty(&queue);
+        assert_eq!(laid.quads.len(), 1);
+        assert!(laid.quads[0].size[1] > 2500.0, "{:?}", laid.quads[0].size);
+        assert!(atlas.size <= atlas.max_size && atlas.size <= GlyphAtlas::MAX_SIZE);
+
+        // A shadow cell scales with the raster too, so it stays registered.
+        let style = GlyphStyle::from_shadow(0.0, 20.0, 1.0, [0.0, 0.0]);
+        let shadow = atlas.layout_text("W", 5000.0, None, 1.0, &device, style);
+        assert!(shadow.quads[0].size[0] > laid.quads[0].size[0]);
+    }
+
+    /// Text zoomed smoothly from 10px to 200px in tenth-of-a-pixel steps never
+    /// grows the atlas past its cap, with an eviction between frames.
+    #[test]
+    fn smooth_zoom_stays_within_the_atlas_cap() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut atlas = GlyphAtlas::new(&device);
+        // A small cap, so the full-and-clear path is reached quickly.
+        atlas.max_size = 1024;
+        let mut evictions = 0;
+        let mut tenths = 100;
+        while tenths <= 2000 {
+            let version = atlas.version();
+            atlas.evict_if_full();
+            if atlas.version() != version {
+                evictions += 1;
+            }
+            atlas.layout_text(
+                "Sphinx of black quartz",
+                tenths as f32 * 0.1,
+                None,
+                1.0,
+                &device,
+                GlyphStyle::PLAIN,
+            );
+            atlas.upload_if_dirty(&queue);
+            assert!(atlas.size <= 1024);
+            tenths += 1;
+        }
+        assert!(evictions > 0, "the zoom should fill a 1024 atlas");
+    }
+
+    /// Text laid out in the frame after an eviction draws in full again.
+    #[test]
+    fn text_draws_after_an_eviction() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut atlas = GlyphAtlas::new(&device);
+        atlas.max_size = 512;
+        let mut size = 30.0;
+        while !atlas.full {
+            atlas.layout_text("ABCDEFGHIJ", size, None, 1.0, &device, GlyphStyle::PLAIN);
+            size += 0.1;
+        }
+        let version = atlas.version();
+        atlas.evict_if_full();
+        assert!(atlas.version() > version && atlas.entries.is_empty());
+
+        let laid = atlas.layout_text("ABCDEFGHIJ", 30.0, None, 1.0, &device, GlyphStyle::PLAIN);
+        atlas.upload_if_dirty(&queue);
+        assert_eq!(laid.quads.len(), 10);
+        assert!(!atlas.full);
+    }
+
+    /// A cell wider than the atlas grows it instead of wrapping into the rows
+    /// below, and a cell wider than the cap is skipped rather than packed.
+    #[test]
+    fn a_wide_cell_grows_the_atlas_or_is_skipped() {
+        let Some((device, _queue)) = headless_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut atlas = GlyphAtlas::new(&device);
+        let key = |glyph_index| GlyphKey {
+            font_index: 0,
+            glyph_index,
+            size_tenths: 0,
+            style: GlyphStyle::PLAIN,
+        };
+        let cell = vec![[255, 255, 255, 255]; 600 * 10];
+        let entry = atlas.pack_rgba(&device, key(1), &cell, 600, 10, 0.0, 0.0, false);
+        assert_eq!(entry.width, 600);
+        assert!(entry.x + entry.width <= atlas.size, "packed past its row");
+
+        atlas.max_size = 1024;
+        let wide = vec![[255, 255, 255, 255]; 2000 * 10];
+        let entry = atlas.pack_rgba(&device, key(2), &wide, 2000, 10, 0.0, 0.0, false);
+        assert_eq!(entry.width, 0);
+        assert!(atlas.size <= 1024);
     }
 }
 
