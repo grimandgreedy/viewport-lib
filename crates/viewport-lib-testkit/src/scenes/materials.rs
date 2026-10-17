@@ -269,7 +269,7 @@ fn build_materials_textures(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     };
     let with_emissive = |mut m: Material| {
         m.emissive = Colour::linear_rgb(1.0, 1.0, 1.0);
-        m.emissive_strength = 4.0;
+        m.emissive_strength = 1.5;
         m.with_texture(TextureSlot::Emissive, emissive_tex)
             .with_texture_transform(TextureSlot::Emissive, transform(1.5, 0.8))
     };
