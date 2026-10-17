@@ -66,11 +66,14 @@ struct CutoutOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) inst_idx: u32,
+    // Vertex-colour alpha, one of the mask's alpha sources with the texture.
+    @location(2) vertex_alpha: f32,
 };
 
 @vertex
 fn vs_cutout(
     @location(0) position: vec3<f32>,
+    @location(2) colour: vec4<f32>,
     @location(3) uv: vec2<f32>,
     @builtin(instance_index) idx: u32,
 ) -> CutoutOut {
@@ -78,6 +81,7 @@ fn vs_cutout(
     var out: CutoutOut;
     out.clip_pos = light.view_proj * inst.model * vec4<f32>(position, 1.0);
     out.uv = uv;  // shadow alpha-test uses raw UV; the material UV transform lives in material_gpu_buf, not bound here
+    out.vertex_alpha = colour.a;
     out.inst_idx = idx;
     return out;
 }
@@ -85,6 +89,7 @@ fn vs_cutout(
 @vertex
 fn vs_cutout_cull(
     @location(0) position: vec3<f32>,
+    @location(2) colour: vec4<f32>,
     @location(3) uv: vec2<f32>,
     @builtin(instance_index) idx: u32,
 ) -> CutoutOut {
@@ -93,6 +98,7 @@ fn vs_cutout_cull(
     var out: CutoutOut;
     out.clip_pos = light.view_proj * inst.model * vec4<f32>(position, 1.0);
     out.uv = uv;  // shadow alpha-test uses raw UV; the material UV transform lives in material_gpu_buf, not bound here
+    out.vertex_alpha = colour.a;
     out.inst_idx = real_idx;
     return out;
 }
@@ -105,8 +111,13 @@ fn fs_cutout(in: CutoutOut) {
     // derivative is rejected by strict WGSL validators.
     let uv_ddx = dpdx(in.uv);
     let uv_ddy = dpdy(in.uv);
-    if inst.alpha_flag == 1u && inst.has_texture == 1u {
-        let a = textureSampleGrad(obj_texture, obj_sampler, in.uv, uv_ddx, uv_ddy).a;
+    // Same alpha sources as the surface: vertex colour and albedo. Opacity is
+    // not one, because a transparent batch casts no shadow at all.
+    if inst.alpha_flag == 1u {
+        var a = in.vertex_alpha;
+        if inst.has_texture == 1u {
+            a = a * textureSampleGrad(obj_texture, obj_sampler, in.uv, uv_ddx, uv_ddy).a;
+        }
         if a < inst.alpha_cutoff { discard; }
     }
 }

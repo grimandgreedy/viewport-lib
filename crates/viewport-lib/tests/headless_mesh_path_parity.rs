@@ -6,7 +6,9 @@
 //! centre pixel, covered only by the first copy, must match.
 
 use viewport_lib::wgpu;
-use viewport_lib::{AlphaMode, Colour, FrameStats, Material, MeshId, PipelineMode};
+use viewport_lib::{
+    AlphaMode, Colour, FrameStats, LightKind, LightSource, Material, MeshId, PipelineMode,
+};
 
 mod common;
 use common::*;
@@ -232,4 +234,95 @@ fn freed_emissive_texture_falls_back_on_both_paths() {
         "per-object should keep its emissive factor: {alone:?}"
     );
     assert_close("freed emissive texture", alone, batched, 4);
+}
+
+/// A caster masked by vertex-colour alpha casts no shadow where it is cut out,
+/// on both paths: the floor under it is as bright as with no caster at all.
+#[test]
+fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
+    let Some(mut scene) = Scene::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let floor_mesh = scene
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(&scene.device, &viewport_lib::primitives::plane(8.0, 8.0))
+        .unwrap();
+    let mut caster_mesh = quad_mesh(1.0);
+    caster_mesh.vertex_colours = Some(vec![[1.0, 1.0, 1.0, 0.2]; 4]);
+    let caster_mesh = scene
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(&scene.device, &caster_mesh)
+        .unwrap();
+
+    let mut floor = SceneRenderItem::default();
+    floor.mesh_id = floor_mesh;
+    floor.material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
+    let caster_at = |x: f32, per_object: bool| {
+        let mut it = SceneRenderItem::default();
+        it.mesh_id = caster_mesh;
+        it.model = glam::Mat4::from_translation(glam::Vec3::new(x, x, 0.5)).to_cols_array_2d();
+        it.material = Material::from_colour(Colour::linear_rgb(0.2, 0.2, 0.8));
+        it.material.alpha_mode = AlphaMode::Mask(0.5);
+        // A lone quad casts only when two-sided: the shadow pass culls front
+        // faces, and this one faces the light.
+        it.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+        if per_object {
+            // A per-material sampler keeps an item per-object without changing
+            // what its shadow pass does.
+            it.material = it.material.with_sampler(
+                viewport_lib::TextureSlot::Albedo,
+                viewport_lib::SamplerKey::default(),
+            );
+        }
+        it
+    };
+
+    let mut floor_centre = |items: Vec<SceneRenderItem>| -> i32 {
+        const SIZE: u32 = 64;
+        scene.generation += 1;
+        let mut frame = FrameData::default();
+        frame.scene.generation = scene.generation;
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
+        let mut sun = LightSource::default();
+        sun.kind = LightKind::Directional {
+            direction: [0.0, 0.0, 1.0],
+        };
+        frame.effects.lighting.lights = vec![sun];
+        frame.effects.lighting.hemisphere_intensity = 0.05;
+        frame.camera.render_camera = {
+            let mut cam = Camera::default();
+            cam.center = glam::Vec3::ZERO;
+            cam.distance = 6.0;
+            cam.orientation = glam::Quat::IDENTITY;
+            let mut rc = RenderCamera::from_camera(&cam);
+            rc.aspect = 1.0;
+            rc
+        };
+        frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
+        frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+        let px = scene
+            .renderer
+            .render_offscreen(&scene.device, &scene.queue, &frame, SIZE, SIZE);
+        let i = (((SIZE / 2) * SIZE + SIZE / 2) * 4) as usize;
+        px[i] as i32 + px[i + 1] as i32 + px[i + 2] as i32
+    };
+
+    let no_caster = floor_centre(vec![floor.clone()]);
+    let per_object = floor_centre(vec![floor.clone(), caster_at(0.0, true)]);
+    let batched = floor_centre(vec![
+        floor.clone(),
+        caster_at(0.0, false),
+        caster_at(2.5, false),
+    ]);
+    for (label, lit) in [("per-object", per_object), ("instanced", batched)] {
+        assert!(
+            (lit - no_caster).abs() < 30,
+            "{label}: the floor under a cut-out caster ({lit}) should be lit as with no caster ({no_caster})"
+        );
+    }
 }

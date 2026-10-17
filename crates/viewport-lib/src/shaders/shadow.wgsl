@@ -134,6 +134,8 @@ struct CutoutOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) obj_idx: u32,
+    // Vertex-colour alpha, one of the mask's alpha sources with the texture.
+    @location(3) vertex_alpha: f32,
     // Kept-surface value from deformers that define `keep`. A caster that can
     // be cut draws through this cutout path, since the plain one has no
     // fragment stage to discard in.
@@ -143,6 +145,7 @@ struct CutoutOut {
 @vertex
 fn vs_cutout(
     @location(0) position: vec3<f32>,
+    @location(2) colour: vec4<f32>,
     @location(3) uv: vec2<f32>,
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
@@ -151,6 +154,7 @@ fn vs_cutout(
     out.clip_pos = shadow_clip_position(position, vertex_index, instance_index);
     out.uv = uv;
     out.obj_idx = instance_index;
+    out.vertex_alpha = colour.a;
     // <viewport-deform-keep> out.deform_keep = shadow_keep;
     return out;
 }
@@ -165,11 +169,16 @@ fn fs_cutout(in: CutoutOut) {
     let uv_ddy = dpdy(in.uv);
     // <viewport-deform-keep> if in.deform_keep < 0.0 { discard; }
     let obj = objects[in.obj_idx];
-    if obj.alpha_mode == 1u && obj.has_texture == 1u {
-        let mat_uv = in.uv * obj.uv_transform.zw + obj.uv_transform.xy;
-        let muv_ddx = uv_ddx * obj.uv_transform.zw;
-        let muv_ddy = uv_ddy * obj.uv_transform.zw;
-        let a = textureSampleGrad(obj_texture, obj_sampler, mat_uv, muv_ddx, muv_ddy).a;
+    // Same alpha sources as the surface: vertex colour and albedo. Opacity is
+    // not one, because a caster below full opacity casts no shadow at all.
+    if obj.alpha_mode == 1u {
+        var a = in.vertex_alpha;
+        if obj.has_texture == 1u {
+            let mat_uv = in.uv * obj.uv_transform.zw + obj.uv_transform.xy;
+            let muv_ddx = uv_ddx * obj.uv_transform.zw;
+            let muv_ddy = uv_ddy * obj.uv_transform.zw;
+            a = a * textureSampleGrad(obj_texture, obj_sampler, mat_uv, muv_ddx, muv_ddy).a;
+        }
         if a < obj.alpha_cutoff {
             discard;
         }
