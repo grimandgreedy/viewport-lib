@@ -1,14 +1,15 @@
-//! Material scenes that put each material on both mesh paths side by side.
+//! Material scenes that draw each material on both mesh paths.
 //!
-//! Every material appears twice, side by side: the left copy carries a
-//! per-material sampler, which keeps it on the per-object path, and the right
-//! copy is batched onto the instanced path. The two should look the same, so a parity break shows up as
+//! Every material appears twice: one copy carries a per-material sampler,
+//! which keeps it on the per-object path, and the other is batched onto the
+//! instanced path. The two should look the same, so a parity break shows up as
 //! a difference inside one reference image as well as against the reference.
 
 use glam::{Mat4, Vec3};
 use viewport_lib::{
     AlphaMode, BackfacePolicy, Colour, LightKind, LightSource, LightingSettings, Material,
-    MeshData, SamplerKey, SceneRenderItem, TextureSlot, UvTransform, primitives,
+    MeshData, Projection, SamplerKey, SceneRenderItem, ShadingModel, TextureSlot, UvTransform,
+    primitives,
 };
 
 use super::{
@@ -111,7 +112,7 @@ fn holes(size: u32, cells: u32) -> viewport_lib::TextureData {
 // that as correct. Register it (camera: `orbit_camera(Vec3::new(0.0, 1.0,
 // 0.4), 12.5, 0.0, 0.95)`) once both copies cast.
 #[allow(dead_code)]
-fn build_materials_alpha(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+fn build_materials_alpha_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let g = ground(ctx, 0.0);
     let card_mesh = upload(ctx, &card(0.7, 1.6));
     let holes_tex = upload_texture(ctx, holes(256, 6));
@@ -168,11 +169,55 @@ fn build_materials_alpha(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
 }
 
-/// The texture slots on both paths, each with its own `UvTransform` so a slot
-/// that read another slot's UV would draw a visibly different pattern:
-/// metallic-roughness, emissive, normal with AO, and a rotated albedo.
-fn build_materials_slots(ctx: &mut BuildCtx<'_>) -> BuiltScene {
-    let sphere = upload(ctx, &primitives::sphere(0.8, 48, 24));
+/// Push one item at `pos`, kept on the per-object path when `per_object` is
+/// set and left to batch onto the instanced path otherwise.
+fn place(
+    items: &mut Vec<SceneRenderItem>,
+    mesh: viewport_lib::MeshId,
+    model: Mat4,
+    material: Material,
+    opacity: f32,
+    per_object_path: bool,
+) {
+    let material = if per_object_path {
+        per_object(material)
+    } else {
+        material
+    };
+    let mut it = item_model(mesh, model, material);
+    it.settings.opacity = opacity;
+    items.push(it);
+}
+
+/// Grid placement: column `c` of `columns`, row `r` counted from the top. Rows
+/// come in per-object/instanced pairs, with a wider gap between pairs.
+fn grid_pos(c: usize, columns: usize, r: usize, col_step: f32, row_step: f32) -> Vec3 {
+    let x = (c as f32 - (columns as f32 - 1.0) * 0.5) * col_step;
+    let z = -(r as f32 * row_step + (r / 2) as f32 * row_step * 0.3);
+    Vec3::new(x, 0.0, z)
+}
+
+/// `mesh` with vertex colours taken from its normals, so every face gets a
+/// different tint.
+fn tinted(mut mesh: MeshData) -> MeshData {
+    mesh.vertex_colours = Some(
+        mesh.normals
+            .iter()
+            .map(|n| [0.5 + 0.5 * n[0], 0.5 + 0.5 * n[1], 0.5 + 0.5 * n[2], 1.0])
+            .collect(),
+    );
+    mesh
+}
+
+/// Texture slots crossed with shading models. Columns: untextured, albedo,
+/// normal with AO, metallic-roughness, emissive, all five slots, and vertex
+/// colours. Rows: Phong, PBR and flat, each drawn once per path (per-object
+/// above, instanced below). Every slot carries its own `UvTransform`, so a slot
+/// that read another slot's UV draws a visibly different pattern.
+fn build_materials_textures(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let sphere_data = primitives::sphere(0.42, 24, 12);
+    let sphere = upload(ctx, &sphere_data);
+    let tinted_sphere = upload(ctx, &tinted(sphere_data));
 
     // glTF ORM packing: G is roughness, B is metallic. Polished metal cells
     // against rough dielectric ones.
@@ -202,61 +247,241 @@ fn build_materials_slots(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         viewport_lib::TextureData::srgb(albedo.width, albedo.height, albedo.rgba),
     );
 
-    let rotated = |scale: f32, rotation: f32| UvTransform {
+    let transform = |scale: f32, rotation: f32| UvTransform {
         scale: [scale, scale],
         rotation,
         ..UvTransform::default()
     };
-    let at = Mat4::from_translation(Vec3::new(0.0, 0.0, 0.8));
+    let with_albedo = |m: Material| {
+        let mut m = m.with_texture(TextureSlot::Albedo, albedo_tex);
+        m.uv_rotation = 0.5;
+        m
+    };
+    let with_normal_ao = |m: Material| {
+        m.with_texture(TextureSlot::Normal, normal_tex)
+            .with_texture(TextureSlot::Ao, ao_tex)
+            .with_texture_transform(TextureSlot::Normal, transform(2.0, 0.4))
+            .with_texture_transform(TextureSlot::Ao, transform(0.5, 0.0))
+    };
+    let with_mr = |m: Material| {
+        m.with_texture(TextureSlot::MetallicRoughness, mr_tex)
+            .with_texture_transform(TextureSlot::MetallicRoughness, transform(2.0, 0.6))
+    };
+    let with_emissive = |mut m: Material| {
+        m.emissive = Colour::linear_rgb(1.0, 1.0, 1.0);
+        m.emissive_strength = 4.0;
+        m.with_texture(TextureSlot::Emissive, emissive_tex)
+            .with_texture_transform(TextureSlot::Emissive, transform(1.5, 0.8))
+    };
+    let columns: [&dyn Fn(Material) -> Material; 7] = [
+        &|m| m,
+        &with_albedo,
+        &with_normal_ao,
+        &with_mr,
+        &with_emissive,
+        &|m| with_emissive(with_mr(with_normal_ao(with_albedo(m)))),
+        &|m| m,
+    ];
+
+    let base = Colour::linear_rgb(0.8, 0.78, 0.74);
+    let mut phong = Material::from_colour(base);
+    phong.shading_model = ShadingModel::Phong;
+    let shading = [phong, Material::pbr(base, 1.0, 1.0), Material::flat(base)];
+
     let mut items = Vec::new();
-
-    let mut metal = Material::pbr(Colour::linear_rgb(0.9, 0.85, 0.75), 1.0, 1.0);
-    metal.metallic_roughness_texture_id = Some(mr_tex);
-    metal = metal.with_texture_transform(TextureSlot::MetallicRoughness, rotated(2.0, 0.6));
-    both_paths(&mut items, sphere, pair_x(0), at, metal, 1.0);
-
-    let mut glow = Material::pbr(Colour::linear_rgb(0.1, 0.1, 0.12), 0.0, 0.6);
-    glow.emissive = Colour::linear_rgb(1.0, 1.0, 1.0);
-    glow.emissive_strength = 4.0;
-    glow.emissive_texture_id = Some(emissive_tex);
-    glow = glow.with_texture_transform(TextureSlot::Emissive, rotated(1.5, 0.8));
-    both_paths(&mut items, sphere, pair_x(1), at, glow, 1.0);
-
-    let mut bumpy = Material::pbr(Colour::linear_rgb(0.7, 0.72, 0.78), 0.1, 0.45);
-    bumpy.normal_map_id = Some(normal_tex);
-    bumpy.ao_map_id = Some(ao_tex);
-    bumpy = bumpy
-        .with_texture_transform(TextureSlot::Normal, rotated(2.0, 0.4))
-        .with_texture_transform(TextureSlot::Ao, rotated(0.5, 0.0));
-    both_paths(&mut items, sphere, pair_x(2), at, bumpy, 1.0);
-
-    let mut checker = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.6);
-    checker.texture_id = Some(albedo_tex);
-    checker = checker.with_uv_rotation(0.5);
-    both_paths(&mut items, sphere, pair_x(3), at, checker, 1.0);
+    for (s, model) in shading.iter().enumerate() {
+        for (c, column) in columns.iter().enumerate() {
+            let mesh = if c == columns.len() - 1 {
+                tinted_sphere
+            } else {
+                sphere
+            };
+            for path in 0..2 {
+                let pos = grid_pos(c, columns.len(), s * 2 + path, 1.15, 0.95);
+                place(
+                    &mut items,
+                    mesh,
+                    Mat4::from_translation(pos),
+                    column(model.clone()),
+                    1.0,
+                    path == 0,
+                );
+            }
+        }
+    }
 
     BuiltScene {
         items,
-        lighting: rigs::three_point(),
+        lighting: {
+            let mut l = rigs::three_point();
+            for light in &mut l.lights {
+                light.cast_shadows = false;
+            }
+            l
+        },
         background: None,
         ..Default::default()
     }
 }
 
-/// Looking along +Y from above the front, so the four pairs read left to
-/// right with the ground behind them in view.
-fn front_camera(distance: f32) -> Vec<NamedCamera> {
+/// Alpha modes crossed with alpha sources, on upright cards in front of a
+/// banded wall. Columns: no alpha, opacity 0.6, a vertex-alpha ramp, a
+/// texture with transparent cells, the texture and the ramp together, the
+/// texture at opacity 0.6, then the back face of the textured ramp card under
+/// `Identical` and under `Cull` (which draws nothing). Rows: opaque, mask,
+/// blend and premultiplied blend, each drawn once per path (per-object above,
+/// instanced below).
+fn build_materials_alpha(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    const COL_STEP: f32 = 1.05;
+    let ramp_card = upload(ctx, &card(0.42, 0.6));
+    let mut solid = card(0.42, 0.6);
+    solid.vertex_colours = None;
+    let solid_card = upload(ctx, &solid);
+    let holes_tex = upload_texture(ctx, holes(256, 4));
+
+    // Two-colour vertical bands, one pair per column, split down the middle of
+    // each card: every card has a light and a dark half behind it, and every
+    // row of cards has the same backdrop.
+    let bands = textures::checker(64, 2, [150, 140, 125], [90, 90, 100]);
+    let row = bands.rgba[..64 * 4].to_vec();
+    let wall_tex = upload_texture(ctx, viewport_lib::TextureData::srgb(64, 64, row.repeat(64)));
+    let wall_half_width = 6.5;
+    let wall_mesh = upload(ctx, &card(wall_half_width, 9.6));
+    let mut wall = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0))
+        .with_texture(TextureSlot::Albedo, wall_tex);
+    // One band pair per column step, with a band edge on each card centre
+    // (x = 0.5 * COL_STEP). The wall's u runs 0 -> 1 across its width.
+    let repeats = 2.0 * wall_half_width / COL_STEP;
+    let phase = (wall_half_width + 0.5 * COL_STEP) / COL_STEP;
+    wall.uv_scale = [repeats, 1.0];
+    wall.uv_offset = [phase.ceil() - phase, 0.0];
+    let mut items = vec![item_model(
+        wall_mesh,
+        Mat4::from_translation(Vec3::new(0.0, 1.5, -7.6)),
+        wall,
+    )];
+
+    let modes = [
+        AlphaMode::Opaque,
+        AlphaMode::Mask(0.5),
+        AlphaMode::Blend,
+        AlphaMode::BlendPremultiplied,
+    ];
+    let back = Mat4::from_rotation_z(std::f32::consts::PI);
+    // (mesh, textured, opacity, model, backface policy)
+    let columns = [
+        (
+            solid_card,
+            false,
+            1.0,
+            Mat4::IDENTITY,
+            BackfacePolicy::Identical,
+        ),
+        (
+            solid_card,
+            false,
+            0.6,
+            Mat4::IDENTITY,
+            BackfacePolicy::Identical,
+        ),
+        (
+            ramp_card,
+            false,
+            1.0,
+            Mat4::IDENTITY,
+            BackfacePolicy::Identical,
+        ),
+        (
+            solid_card,
+            true,
+            1.0,
+            Mat4::IDENTITY,
+            BackfacePolicy::Identical,
+        ),
+        (
+            ramp_card,
+            true,
+            1.0,
+            Mat4::IDENTITY,
+            BackfacePolicy::Identical,
+        ),
+        (
+            solid_card,
+            true,
+            0.6,
+            Mat4::IDENTITY,
+            BackfacePolicy::Identical,
+        ),
+        (ramp_card, true, 1.0, back, BackfacePolicy::Identical),
+        (ramp_card, true, 1.0, back, BackfacePolicy::Cull),
+    ];
+
+    for (m, mode) in modes.iter().enumerate() {
+        for (c, (mesh, textured, opacity, turn, policy)) in columns.iter().enumerate() {
+            let mut material = Material::pbr(Colour::linear_rgb(0.3, 0.6, 0.9), 0.0, 0.5);
+            material.alpha_mode = *mode;
+            material.backface_policy = *policy;
+            if *textured {
+                material = material.with_texture(TextureSlot::Albedo, holes_tex);
+            }
+            for path in 0..2 {
+                let pos = grid_pos(c, columns.len(), m * 2 + path, COL_STEP, 0.72);
+                place(
+                    &mut items,
+                    *mesh,
+                    Mat4::from_translation(pos) * *turn,
+                    material.clone(),
+                    *opacity,
+                    path == 0,
+                );
+            }
+        }
+    }
+
+    // A light from the camera side; no shadows, so only the surfaces are
+    // compared.
+    let mut sun = LightSource::default();
+    sun.kind = LightKind::Directional {
+        direction: [0.3, -1.0, 0.6],
+    };
+    sun.cast_shadows = false;
+    let mut lighting = LightingSettings::default();
+    lighting.lights = vec![sun];
+    lighting.hemisphere_intensity = 0.4;
+
+    BuiltScene {
+        items,
+        lighting,
+        background: None,
+        ..Default::default()
+    }
+}
+
+/// Straight on from -Y, looking at the middle of a grid that hangs below z = 0.
+/// Orthographic, so under directional light every cell shades the same
+/// wherever it sits and the per-object and instanced rows compare exactly.
+fn grid_camera(centre_z: f32, distance: f32) -> Vec<NamedCamera> {
+    let mut camera = orbit_camera(Vec3::new(0.0, 0.0, centre_z), distance, 0.0, 1.5708);
+    camera.projection = Projection::Orthographic;
+    camera.aspect = 4.0 / 3.0;
     vec![NamedCamera {
         name: "front",
-        camera: orbit_camera(Vec3::new(0.0, 0.5, 0.8), distance, 0.0, 1.2),
+        camera,
     }]
 }
 
 /// The material scenes.
 pub fn scenes() -> Vec<NamedScene> {
-    vec![NamedScene {
-        name: "materials_slots",
-        cameras: front_camera(12.5),
-        build: build_materials_slots,
-    }]
+    vec![
+        NamedScene {
+            name: "materials_textures",
+            cameras: grid_camera(-2.66, 8.6),
+            build: build_materials_textures,
+        },
+        NamedScene {
+            name: "materials_alpha",
+            cameras: grid_camera(-2.55, 10.5),
+            build: build_materials_alpha,
+        },
+    ]
 }
