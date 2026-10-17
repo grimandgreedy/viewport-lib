@@ -6,8 +6,9 @@
 //! - [`ViewportInstance`]: the runner you drive yourself. Your application owns
 //!   the window, the event loop, and tool state; you feed the instance events and
 //!   drive it once per frame.
-//! - `ViewportApp` (feature `app`): the runner that owns the window and event
-//!   loop for you, so you write only scene setup and a per-frame closure.
+//! - `ViewportApp` (feature `app`): the runner that owns the windows and event
+//!   loop for you, so you write only scene setup and a per-frame closure for
+//!   each window.
 //!
 //! The library deliberately stops at [`FrameData`]: without a runner, every
 //! consumer writes the same setup by hand (translate native events, resolve
@@ -34,15 +35,10 @@ mod settings;
 pub use extras::ExtraId;
 pub use offscreen::OffscreenViewportTarget;
 
-/// The standalone winit runner: `ViewportApp` owns the window and event loop
-/// (feature-gated behind `app`).
+/// The winit runner: `ViewportApp` owns one or more OS windows, one
+/// `ViewportInstance` each (feature-gated behind `app`).
 #[cfg(feature = "app")]
 pub mod viewport_app;
-
-/// The experimental multi-window winit runner: `ViewportAppV2` owns a set of OS
-/// windows, one `ViewportInstance` each (feature-gated behind `app`).
-#[cfg(feature = "app")]
-pub mod viewport_app_v2;
 
 use crate::camera::Camera;
 use crate::interaction::input::{

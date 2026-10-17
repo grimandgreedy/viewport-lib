@@ -183,7 +183,7 @@ pub mod bake;
 
 /// Ready-made ways to run a viewport: [`ViewportInstance`](runners::ViewportInstance),
 /// the runner you drive from your own loop, and `ViewportApp` (feature `app`),
-/// the runner that owns the window and event loop for you.
+/// the runner that owns the windows and event loop for you.
 pub mod runners;
 
 // ---------------------------------------------------------------------------
@@ -342,11 +342,8 @@ pub use resources::PipelineCompilation;
 pub use runners::{ExtraId, OffscreenViewportTarget, ViewportInstance};
 
 #[cfg(feature = "app")]
-pub use runners::viewport_app::{AppConfig, FrameCtx, RedrawMode, ViewportApp};
-
-#[cfg(feature = "app")]
-pub use runners::viewport_app_v2::{
-    AppConfigV2, FrameCtxV2, InputCtxV2, PaintCtxV2, ViewportAppV2, WindowConfig, WindowId,
+pub use runners::viewport_app::{
+    AppConfig, FrameCtx, InputCtx, PaintCtx, RedrawMode, ViewportApp, WindowConfig, WindowId,
 };
 
 pub use resources::PolylineId;

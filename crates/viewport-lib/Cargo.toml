@@ -124,8 +124,8 @@ raytrace-hardware = ["raytrace"]
 # runtime.
 future = []
 # Session host integrations (consumer-facing). `winit-adapter` enables the
-# `from_winit` event translation; `app` adds the fullscreen `ViewportApp` runner
-# (winit window + wgpu bring-up + event loop); `egui-adapter` enables the
+# `from_winit` event translation; `app` adds the `ViewportApp` runner
+# (winit windows + wgpu bring-up + event loop); `egui-adapter` enables the
 # `from_egui` event translation for hosts embedding a viewport in egui.
 winit-adapter = ["dep:winit", "viewport-lib-input/winit-adapter"]
 app = ["winit-adapter", "dep:pollster"]

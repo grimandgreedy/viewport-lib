@@ -1,6 +1,6 @@
 //! Two independent, individually-navigable 3D scenes side by side in one OS window.
 //!
-//! `ViewportAppV2`'s per-window paint hook lets a window host in-window viewports
+//! `ViewportApp`'s per-window paint hook lets a window host in-window viewports
 //! while the consumer owns the layout. Each half is its own `ViewportInstance`
 //! rendered into an `OffscreenViewportTarget`, then blitted into its rect of the
 //! window surface in the paint hook. The window's own instance is an empty
@@ -20,8 +20,8 @@ use viewport_lib::Colour;
 
 use viewport_lib as vpl;
 use vpl::{
-    AppConfigV2, BlitTexture, ButtonState, Material, NodeId, OffscreenViewportTarget,
-    OrbitCameraController, ViewportAppV2, ViewportContext, ViewportEvent, ViewportInstance,
+    AppConfig, BlitTexture, ButtonState, Material, NodeId, OffscreenViewportTarget,
+    OrbitCameraController, ViewportApp, ViewportContext, ViewportEvent, ViewportInstance,
     WindowConfig, primitives,
 };
 
@@ -123,7 +123,7 @@ fn main() {
     let state: Rc<RefCell<Panes>> = Rc::new(RefCell::new(Panes::default()));
     let paint_state = state.clone();
 
-    ViewportAppV2::new(AppConfigV2::default())
+    ViewportApp::new(AppConfig::default())
         .window_with_paint(
             WindowConfig::default()
                 .with_title("viewport-lib : two viewports in one window")

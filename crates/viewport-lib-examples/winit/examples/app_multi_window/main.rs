@@ -1,6 +1,6 @@
 //! Several OS windows driven by one runner, each with its own scene and camera.
 //!
-//! `ViewportAppV2` owns every window, the shared wgpu device, and the event loop.
+//! `ViewportApp` owns every window, the shared wgpu device, and the event loop.
 //! Each window drives its own `ViewportInstance`: orbit navigation (left/middle
 //! drag), pan (right drag), and zoom (scroll) act only on the window they happen in.
 //! The left window animates every frame (`RedrawMode::Continuous`); the right window
@@ -23,14 +23,14 @@ use viewport_lib::Colour;
 use viewport_lib as vpl;
 use vpl::runners::viewport_app::RedrawMode;
 use vpl::{
-    AppConfigV2, ButtonState, FrameCtxV2, KeyCode, Material, MouseButton, NodeId, ViewportAppV2,
+    AppConfig, ButtonState, FrameCtx, KeyCode, Material, MouseButton, NodeId, ViewportApp,
     ViewportEvent, WindowConfig, primitives,
 };
 
 /// N opens a new window, W closes the focused one. Called from every window's
 /// per-frame callback (including windows opened at runtime), so the keys work no
 /// matter which window has focus.
-fn handle_open_close(ctx: &mut FrameCtxV2) {
+fn handle_open_close(ctx: &mut FrameCtx) {
     let mut open_new = false;
     let mut close_self = false;
     for ev in ctx.events() {
@@ -91,7 +91,7 @@ fn main() {
     let cube_id: Rc<Cell<Option<NodeId>>> = Rc::new(Cell::new(None));
     let left_setup_id = cube_id.clone();
 
-    ViewportAppV2::new(AppConfigV2::default())
+    ViewportApp::new(AppConfig::default())
         .window(
             WindowConfig::default()
                 .with_title("viewport-lib : left (animated)")
