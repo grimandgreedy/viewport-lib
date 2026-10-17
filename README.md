@@ -74,7 +74,7 @@ Native events reach either runner as a `ViewportEvent`, translated by an adapter
 `ViewportApp` owns the windows and event loop, so you only write scene setup and a per-frame closure for each window. One `window` call is a single-window app; call it again for more windows, or open and close them at runtime from a frame callback (see the `app-multi-window` example).
 
 ```rust
-use viewport_lib::{AppConfig, Material, ViewportApp, WindowConfig, primitives};
+use viewport_lib::{AppConfig, Colour, Material, ViewportApp, WindowConfig, primitives};
 
 ViewportApp::new(AppConfig::default())
     .window(
@@ -84,7 +84,7 @@ ViewportApp::new(AppConfig::default())
             let mesh = viewport.resources_mut()
                 .upload_mesh_data(device, &primitives::cube(1.0)).unwrap();
             viewport.scene_mut().add(
-                Some(mesh), glam::Mat4::IDENTITY, Material::from_colour([0.85, 0.25, 0.2]));
+                Some(mesh), glam::Mat4::IDENTITY, Material::from_colour(Colour::srgb_rgb(0.85, 0.25, 0.2)));
         },
         |_ctx| {
             // runs once per frame, before rendering: update the scene here
@@ -101,7 +101,7 @@ When your app already owns the window, wgpu device/queue, and event loop, drive 
 
 ```rust
 use viewport_lib::{
-    Material, OrbitCameraController, PointerOwnership, ViewportContext, ViewportInstance,
+    Colour, Material, OrbitCameraController, PointerOwnership, ViewportContext, ViewportInstance,
     forward_to_viewport, primitives,
 };
 
@@ -113,7 +113,7 @@ let mut viewport = ViewportInstance::new(&device, target_format);
 let mut orbit = OrbitCameraController::new_stateless();
 
 let mesh = viewport.resources_mut().upload_mesh_data(&device, &primitives::cube(1.0))?;
-viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, Material::from_colour([0.85, 0.25, 0.2]));
+viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, Material::from_colour(Colour::srgb_rgb(0.85, 0.25, 0.2)));
 
 // Then, each frame inside your app's render loop:
 // `ownership` is your routing decision: Owned when the viewport won the input this
