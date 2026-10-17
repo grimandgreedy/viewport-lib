@@ -816,8 +816,11 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     let z = in.clip_pos.z;
     let w = alpha * max(1e-2, min(3e3, 10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0))));
 
+    // alpha_mode 3 (BlendPremultiplied): final_rgb already carries the alpha
+    // premultiply, so weight it as-is. Straight blend applies `* alpha` here.
+    let premult_rgb = select(final_rgb * alpha, final_rgb, e_mat.flags.z == 3u);
     var out: OitOut;
-    out.accum  = vec4<f32>(final_rgb * alpha * w, alpha * w);
+    out.accum  = vec4<f32>(premult_rgb * w, alpha * w);
     out.reveal = alpha;
     return out;
 }
