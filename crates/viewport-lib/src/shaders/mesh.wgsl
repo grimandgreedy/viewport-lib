@@ -551,6 +551,13 @@ struct Surface {
     normal: vec3<f32>,
     ao_factor: f32,
     mat_uv: vec2<f32>,
+    // Gradients of the raw UV sets, taken in uniform control flow so the
+    // metallic-roughness and emissive slots can resolve their own transform
+    // later, inside their texture branches.
+    d_uv_dx: vec2<f32>,
+    d_uv_dy: vec2<f32>,
+    d_uv1_dx: vec2<f32>,
+    d_uv1_dy: vec2<f32>,
     alpha: f32,
     front_facing: u32,
 };
@@ -643,6 +650,10 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     let d_uv_dy = dpdy(in.uv);
     let d_uv1_dx = dpdx(in.uv1);
     let d_uv1_dy = dpdy(in.uv1);
+    out.d_uv_dx = d_uv_dx;
+    out.d_uv_dy = d_uv_dy;
+    out.d_uv1_dx = d_uv1_dx;
+    out.d_uv1_dy = d_uv1_dy;
     let d_wp_dx = dpdx(in.world_pos);
     let d_wp_dy = dpdy(in.world_pos);
     let d_wn_dx = dpdx(in.world_normal);
@@ -670,9 +681,8 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         return out;
     }
 
-    // Per-material UV transform (slot 0 = albedo; also feeds the plugin surf.uv
-    // and, under a shared transform, the MR/emissive samples). Identity
-    // material_id 0 passes the authored UV through unchanged.
+    // Per-material UV transform (slot 0 = albedo; also feeds the plugin surf.uv).
+    // Identity material_id 0 passes the authored UV through unchanged.
     let s0 = material_slot_uv(
         object.material_id, 0u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
     );
@@ -932,7 +942,11 @@ fn compute_lit(
             // glTF ORM texture: G=roughness factor, B=metallic factor. Per-material
             // `metallic_range` / `roughness_range` remap the raw samples before the
             // scalar factor; identity `(0, 1)` is a no-op.
-            let mr = textureSampleGrad(metallic_roughness_tex, obj_sampler, mat_uv, uv_ddx, uv_ddy);
+            let s_mr = material_slot_uv(
+                object.material_id, 3u, in.uv, in.uv1,
+                surface.d_uv_dx, surface.d_uv_dy, surface.d_uv1_dx, surface.d_uv1_dy,
+            );
+            let mr = textureSampleGrad(metallic_roughness_tex, obj_sampler, s_mr.uv, s_mr.ddx, s_mr.ddy);
             let m_remapped = mix(object.metallic_range.x, object.metallic_range.y, mr.b);
             let r_remapped = mix(object.roughness_range.x, object.roughness_range.y, mr.g);
             metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
@@ -1230,7 +1244,11 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     // Emissive term: added after lighting so it can push HDR values above 1.0.
     var emissive = object.emissive;
     if object.has_emissive_tex != 0u {
-        emissive = emissive * textureSampleGrad(emissive_tex, obj_sampler, mat_uv, uv_ddx, uv_ddy).rgb;
+        let s_em = material_slot_uv(
+            object.material_id, 4u, in.uv, in.uv1,
+            surface.d_uv_dx, surface.d_uv_dy, surface.d_uv1_dx, surface.d_uv1_dy,
+        );
+        emissive = emissive * textureSampleGrad(emissive_tex, obj_sampler, s_em.uv, s_em.ddx, s_em.ddy).rgb;
     }
     final_rgb += emissive;
     var dbg_emissive_lum = dot(emissive, lum_weights);
