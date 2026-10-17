@@ -204,3 +204,32 @@ fn untextured_alpha_mask_discards_on_both_paths() {
     );
     assert_close("untextured Mask", alone, batched, 2);
 }
+
+/// A material whose emissive texture has been freed falls back to its plain
+/// emissive factor on both paths, rather than sampling the empty fallback.
+#[test]
+fn freed_emissive_texture_falls_back_on_both_paths() {
+    let Some(mut scene) = Scene::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let tex = scene
+        .renderer
+        .resources_mut()
+        .upload_texture(
+            &scene.device,
+            &scene.queue,
+            viewport_lib::TextureData::srgb(1, 1, vec![255, 255, 255, 255]),
+        )
+        .unwrap();
+    scene.renderer.resources_mut().free_texture(tex);
+    let mut material = Material::from_colour(Colour::linear_rgb(0.0, 0.0, 0.0));
+    material.emissive = Colour::linear_rgb(0.5, 0.5, 0.5);
+    material.emissive_texture_id = Some(tex);
+    let (alone, batched) = scene.both_paths(material, 1.0);
+    assert!(
+        alone[0] > 20,
+        "per-object should keep its emissive factor: {alone:?}"
+    );
+    assert_close("freed emissive texture", alone, batched, 4);
+}

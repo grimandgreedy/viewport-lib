@@ -58,7 +58,9 @@ pub(super) fn build_object_uniform(
     } else {
         (0u32, 0.0, 1.0)
     };
-    let cm = common_material(item, resources.resolve_material_slots(&item.material));
+    use crate::scene::material::TextureSlot::{Emissive, MetallicRoughness};
+    let resolved = resources.resolve_material_slots(&item.material);
+    let cm = common_material(item, resolved);
     ObjectUniform {
         model: cm.model,
         colour: cm.colour,
@@ -163,16 +165,10 @@ pub(super) fn build_object_uniform(
             crate::scene::material::AlphaMode::Mask(c) => c,
             _ => 0.5,
         },
-        has_metallic_roughness_tex: if m.metallic_roughness_texture_id.is_some() {
-            1
-        } else {
-            0
-        },
-        has_emissive_tex: if m.emissive_texture_id.is_some() {
-            1
-        } else {
-            0
-        },
+        // A freed texture reads as absent, so the shader falls back to the
+        // scalar factors rather than sampling the empty fallback.
+        has_metallic_roughness_tex: resolved.live(MetallicRoughness) as u32,
+        has_emissive_tex: resolved.live(Emissive) as u32,
         material_id,
         uv1_base: {
             // Per-object draws bind a mesh vertex sub-slice, so the vertex index
