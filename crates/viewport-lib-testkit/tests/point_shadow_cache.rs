@@ -43,10 +43,12 @@ fn cubemap_cache_reuses_and_invalidates() {
         caster.material = Material::from_colour(Colour::linear_rgb(0.6, 0.2, 0.2));
 
         let camera = orbit_camera(Vec3::new(0.0, 0.0, 0.0), 10.0, 0.9, 0.9);
-        let mut fd = FrameData::new(
-            CameraFrame::from_camera(&camera, [320.0, 240.0]),
-            SceneFrame::from_surface_items(vec![ground, caster]),
-        );
+        let mut scene = SceneFrame::from_surface_items(vec![ground, caster]);
+        // A moved caster is changed scene content, so it needs a new
+        // generation; otherwise the instanced batches (and the instanced
+        // shadow casters drawn from them) are reused as they were.
+        scene.generation = 1 + caster_x.to_bits() as u64;
+        let mut fd = FrameData::new(CameraFrame::from_camera(&camera, [320.0, 240.0]), scene);
         let mut lighting = LightingSettings::default();
         lighting.shadows.enabled = true;
         let mut l = LightSource::default();

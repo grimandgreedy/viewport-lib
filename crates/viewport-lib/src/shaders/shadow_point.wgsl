@@ -30,7 +30,7 @@ struct Object {
     _pad_diffuse: f32,                     // offset  92
     _pad_specular: f32,                    // offset  96
     _pad_shininess: f32,                   // offset 100
-    _pad_has_texture: u32,                 // offset 104
+    has_texture: u32,                      // offset 104 : 1 when the albedo texture (binding 1) is bound
     _pad_use_pbr: u32,                     // offset 108
     _pad_metallic: f32,                    // offset 112
     _pad_roughness: f32,                   // offset 116
@@ -56,11 +56,11 @@ struct Object {
     _pad_has_normal_override: u32,         // offset 220
     _pad_emissive: vec3<f32>,              // offset 224
     _pad_use_flat: u32,                    // offset 236
-    _pad_alpha_mode: u32,                  // offset 240
-    _pad_alpha_cutoff: f32,                // offset 244
+    alpha_mode: u32,                       // offset 240 : 0=Opaque 1=Mask 2=Blend
+    alpha_cutoff: f32,                     // offset 244
     _pad_has_metallic_roughness_tex: u32,  // offset 248
     _pad_has_emissive_tex: u32,            // offset 252
-    _pad_uv_transform: vec4<f32>,          // offset 256
+    uv_transform: vec4<f32>,               // offset 256 : (offset.xy, scale.xy)
     deform_flags: u32,                     // offset 272 : bit i set when deformer slot i is active for this draw
     _pad_normal_strength: f32,             // offset 276
     _pad_ao_range: vec2<f32>,              // offset 280
@@ -82,6 +82,9 @@ struct Object {
 // selected by @builtin(instance_index) and copied into `object` at entry.
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
 var<private> object: Object;
+// Albedo texture + sampler, read only by the cutout pipeline.
+@group(1) @binding(1) var obj_texture: texture_2d<f32>;
+@group(1) @binding(2) var obj_sampler: sampler;
 // Per-vertex position override (binding 13 of the shared object bind group). Read here for the
 // same reason shadow.wgsl reads it: a `GpuPlugin` driving positions through
 // `set_position_override_buffer` leaves the mesh's own vertex buffer at the rest pose, so a
@@ -99,12 +102,14 @@ struct VsOut {
     // <viewport-deform-keep> @location(1) deform_keep: f32,
 };
 
-@vertex
-fn vs_main(
-    @location(0) position: vec3<f32>,
-    @builtin(vertex_index) vertex_index: u32,
-    @builtin(instance_index) instance_index: u32,
-) -> VsOut {
+// World position of a caster vertex: the position override and deformers,
+// as the main pass applies them. Also returns the deformers' keep value.
+struct CasterVertex {
+    world_pos: vec3<f32>,
+    keep: f32,
+};
+
+fn caster_vertex(position: vec3<f32>, vertex_index: u32, instance_index: u32) -> CasterVertex {
     object = objects[instance_index];
     // Override replaces the vertex-buffer position outright, matching the main mesh pass and the
     // cascade pass; deformers layer on top.
@@ -126,16 +131,88 @@ fn vs_main(
     let world_pos4 = object.model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;
     dv = viewport_deform_world_space(dv, dctx);
-    var out: VsOut;
-    // <viewport-deform-keep> out.deform_keep = viewport_deform_keep(dv, dctx);
+    var out: CasterVertex;
     out.world_pos = dv.position;
-    out.clip_pos = face.view_proj * vec4<f32>(dv.position, 1.0);
+    out.keep = 0.0;
+    // <viewport-deform-keep> out.keep = viewport_deform_keep(dv, dctx);
     return out;
+}
+
+@vertex
+fn vs_main(
+    @location(0) position: vec3<f32>,
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
+) -> VsOut {
+    let v = caster_vertex(position, vertex_index, instance_index);
+    var out: VsOut;
+    // <viewport-deform-keep> out.deform_keep = v.keep;
+    out.world_pos = v.world_pos;
+    out.clip_pos = face.view_proj * vec4<f32>(v.world_pos, 1.0);
+    return out;
+}
+
+fn light_distance(world_pos: vec3<f32>) -> f32 {
+    let d = length(world_pos - face.light_pos.xyz) / max(face.light_pos.w, 1e-5);
+    return clamp(d, 0.0, 1.0);
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @builtin(frag_depth) f32 {
     // <viewport-deform-keep> if in.deform_keep < 0.0 { discard; }
-    let d = length(in.world_pos - face.light_pos.xyz) / max(face.light_pos.w, 1e-5);
-    return clamp(d, 0.0, 1.0);
+    return light_distance(in.world_pos);
+}
+
+// Alpha-cutout variant for `AlphaMode::Mask` casters: carries the UV, vertex
+// alpha and object index to the fragment stage, which discards below the
+// cutoff so the cubemap gets the same holes as the cascade atlas.
+struct CutoutOut {
+    @builtin(position) clip_pos: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    // <viewport-deform-keep> @location(1) deform_keep: f32,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) obj_idx: u32,
+    @location(4) vertex_alpha: f32,
+};
+
+@vertex
+fn vs_cutout(
+    @location(0) position: vec3<f32>,
+    @location(2) colour: vec4<f32>,
+    @location(3) uv: vec2<f32>,
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
+) -> CutoutOut {
+    let v = caster_vertex(position, vertex_index, instance_index);
+    var out: CutoutOut;
+    // <viewport-deform-keep> out.deform_keep = v.keep;
+    out.world_pos = v.world_pos;
+    out.clip_pos = face.view_proj * vec4<f32>(v.world_pos, 1.0);
+    out.uv = uv;
+    out.obj_idx = instance_index;
+    out.vertex_alpha = colour.a;
+    return out;
+}
+
+@fragment
+fn fs_cutout(in: CutoutOut) -> @builtin(frag_depth) f32 {
+    // Gradients in uniform control flow; the sample below is per-object.
+    let uv_ddx = dpdx(in.uv);
+    let uv_ddy = dpdy(in.uv);
+    // <viewport-deform-keep> if in.deform_keep < 0.0 { discard; }
+    let obj = objects[in.obj_idx];
+    // The same alpha sources as the surface: vertex colour and albedo.
+    if obj.alpha_mode == 1u {
+        var a = in.vertex_alpha;
+        if obj.has_texture == 1u {
+            let mat_uv = in.uv * obj.uv_transform.zw + obj.uv_transform.xy;
+            let muv_ddx = uv_ddx * obj.uv_transform.zw;
+            let muv_ddy = uv_ddy * obj.uv_transform.zw;
+            a = a * textureSampleGrad(obj_texture, obj_sampler, mat_uv, muv_ddx, muv_ddy).a;
+        }
+        if a < obj.alpha_cutoff {
+            discard;
+        }
+    }
+    return light_distance(in.world_pos);
 }

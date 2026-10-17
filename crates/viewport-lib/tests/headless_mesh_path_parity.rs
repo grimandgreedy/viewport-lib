@@ -298,7 +298,9 @@ fn freed_emissive_texture_falls_back_on_both_paths() {
 }
 
 /// A caster masked by vertex-colour alpha casts no shadow where it is cut out,
-/// on both paths: the floor under it is as bright as with no caster at all.
+/// under directional and point lights, on both paths. The same caster with a
+/// cutoff its alpha passes does cast one, so the check is not passing for want
+/// of a shadow at all.
 #[test]
 fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
     let Some(mut scene) = Scene::new() else {
@@ -310,23 +312,25 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
         .resources_mut()
         .upload_mesh_data(&scene.device, &viewport_lib::primitives::plane(8.0, 8.0))
         .unwrap();
-    let mut caster_mesh = quad_mesh(1.0);
+    let mut caster_mesh = quad_mesh(0.4);
     caster_mesh.vertex_colours = Some(vec![[1.0, 1.0, 1.0, 0.2]; 4]);
     let caster_mesh = scene
         .renderer
         .resources_mut()
         .upload_mesh_data(&scene.device, &caster_mesh)
         .unwrap();
-
     let mut floor = SceneRenderItem::default();
     floor.mesh_id = floor_mesh;
     floor.material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
-    let caster_at = |x: f32, per_object: bool| {
+    // Raised above the floor under angled lights, so the shadow lands on open
+    // floor beside the caster. Vertex alpha 0.2: cut out at a 0.5 cutoff, kept
+    // at 0.1.
+    let caster_at = |y: f32, cutoff: f32, per_object: bool| {
         let mut it = SceneRenderItem::default();
         it.mesh_id = caster_mesh;
-        it.model = glam::Mat4::from_translation(glam::Vec3::new(x, x, 0.5)).to_cols_array_2d();
+        it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).to_cols_array_2d();
         it.material = Material::from_colour(Colour::linear_rgb(0.2, 0.2, 0.8));
-        it.material.alpha_mode = AlphaMode::Mask(0.5);
+        it.material.alpha_mode = AlphaMode::Mask(cutoff);
         // A lone quad casts only when two-sided: the shadow pass culls front
         // faces, and this one faces the light.
         it.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
@@ -341,7 +345,8 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
         it
     };
 
-    let mut floor_centre = |items: Vec<SceneRenderItem>| -> i32 {
+    // Pixels dark enough to be floor in shadow.
+    let mut shadowed = |light: &LightSource, items: Vec<SceneRenderItem>| -> usize {
         const SIZE: u32 = 64;
         scene.generation += 1;
         let mut frame = FrameData::default();
@@ -349,11 +354,7 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
         frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
-        let mut sun = LightSource::default();
-        sun.kind = LightKind::Directional {
-            direction: [0.0, 0.0, 1.0],
-        };
-        frame.effects.lighting.lights = vec![sun];
+        frame.effects.lighting.lights = vec![light.clone()];
         frame.effects.lighting.hemisphere_intensity = 0.05;
         frame.camera.render_camera = {
             let mut cam = Camera::default();
@@ -369,30 +370,61 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
         let px = scene
             .renderer
             .render_offscreen(&scene.device, &scene.queue, &frame, SIZE, SIZE);
-        let i = (((SIZE / 2) * SIZE + SIZE / 2) * 4) as usize;
-        px[i] as i32 + px[i + 1] as i32 + px[i + 2] as i32
+        px.chunks_exact(4)
+            .filter(|p| (p[0] as u32 + p[1] as u32 + p[2] as u32) < 300)
+            .count()
     };
 
-    let no_caster = floor_centre(vec![floor.clone()]);
-    let per_object = floor_centre(vec![floor.clone(), caster_at(0.0, true)]);
-    let batched = floor_centre(vec![
-        floor.clone(),
-        caster_at(0.0, false),
-        caster_at(2.5, false),
-    ]);
-    for (label, lit) in [("per-object", per_object), ("instanced", batched)] {
-        assert!(
-            (lit - no_caster).abs() < 30,
-            "{label}: the floor under a cut-out caster ({lit}) should be lit as with no caster ({no_caster})"
-        );
+    let mut sun = LightSource::default();
+    sun.kind = LightKind::Directional {
+        direction: [1.0, 0.0, 1.0],
+    };
+    let mut bulb = LightSource::default();
+    bulb.kind = LightKind::Point {
+        position: [3.0, 0.0, 3.0],
+        range: 30.0,
+        radius: 0.0,
+    };
+    bulb.intensity = 40.0;
+    bulb.cast_shadows = true;
+    for (light_label, light) in [("directional", &sun), ("point", &bulb)] {
+        for (path, per_object) in [("per-object", true), ("instanced", false)] {
+            let label = format!("{light_label}, {path}");
+            // A second caster far off to one side keeps the instanced case
+            // batched; it never shadows the counted area, which it leaves
+            // the same in both renders.
+            let other = caster_at(-1.5, 0.1, per_object);
+            let kept = shadowed(
+                light,
+                vec![
+                    floor.clone(),
+                    caster_at(1.0, 0.1, per_object),
+                    other.clone(),
+                ],
+            );
+            let alone = shadowed(light, vec![floor.clone(), other.clone()]);
+            let cut = shadowed(
+                light,
+                vec![floor.clone(), caster_at(1.0, 0.5, per_object), other],
+            );
+            assert!(
+                kept > alone + 10,
+                "{label}: a caster its mask keeps should cast a shadow: {kept} vs {alone} without it"
+            );
+            assert!(
+                cut.abs_diff(alone) <= 2,
+                "{label}: a caster its mask cuts out should cast none: {cut} vs {alone} without it"
+            );
+        }
     }
 }
 
-/// Per-object casters that share a mesh each cast their own shadow. The shadow
-/// passes draw every per-object caster from its own element of the frame's
-/// object data, not from the mesh's single shared slot.
+/// Casters that share a mesh each cast their own shadow, under directional and
+/// point lights, on both paths: per-object casters draw from their own element
+/// of the frame's object data, instanced ones from the instance buffer, never
+/// from the mesh's single shared slot.
 #[test]
-fn per_object_casters_sharing_a_mesh_each_cast_a_shadow() {
+fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
     let Some(mut scene) = Scene::new() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -412,14 +444,17 @@ fn per_object_casters_sharing_a_mesh_each_cast_a_shadow() {
     floor.material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
     // Raised well above the floor under a 45-degree sun, so each shadow lands
     // on open floor beside its caster rather than under it.
-    let caster_at = |y: f32| {
+    let caster_at = |y: f32, per_object: bool| {
         let mut it = SceneRenderItem::default();
         it.mesh_id = caster_mesh;
         it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).to_cols_array_2d();
-        it.material = Material::from_colour(Colour::linear_rgb(0.2, 0.2, 0.8)).with_sampler(
-            viewport_lib::TextureSlot::Albedo,
-            viewport_lib::SamplerKey::default(),
-        );
+        it.material = Material::from_colour(Colour::linear_rgb(0.2, 0.2, 0.8));
+        if per_object {
+            it.material = it.material.with_sampler(
+                viewport_lib::TextureSlot::Albedo,
+                viewport_lib::SamplerKey::default(),
+            );
+        }
         // A lone quad casts only when two-sided: the shadow pass culls front
         // faces, and this one faces the light.
         it.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
@@ -469,19 +504,30 @@ fn per_object_casters_sharing_a_mesh_each_cast_a_shadow() {
     };
     bulb.intensity = 40.0;
     bulb.cast_shadows = true;
-    for (label, light) in [("directional", &sun), ("point", &bulb)] {
-        let none = shadowed(light, vec![floor.clone()]);
-        let a = shadowed(light, vec![floor.clone(), caster_at(1.0)]);
-        let b = shadowed(light, vec![floor.clone(), caster_at(-1.0)]);
-        let both = shadowed(light, vec![floor.clone(), caster_at(1.0), caster_at(-1.0)]);
-        eprintln!("{label}: none {none} a {a} b {b} both {both}");
-        assert!(
-            none == 0 && a > 20 && b > 20,
-            "{label}: each caster alone should shadow the floor: none {none}, a {a}, b {b}"
-        );
-        assert!(
-            both.abs_diff(a + b) <= 4,
-            "{label}: two casters on one mesh should cast both shadows: {both} vs {a} + {b}"
-        );
+    for (light_label, light) in [("directional", &sun), ("point", &bulb)] {
+        for (path, per_object) in [("per-object", true), ("instanced", false)] {
+            let label = format!("{light_label}, {path}");
+            let none = shadowed(light, vec![floor.clone()]);
+            // A single caster still has the floor beside it, so the instanced
+            // case batches with one instance.
+            let a = shadowed(light, vec![floor.clone(), caster_at(1.0, per_object)]);
+            let b = shadowed(light, vec![floor.clone(), caster_at(-1.0, per_object)]);
+            let both = shadowed(
+                light,
+                vec![
+                    floor.clone(),
+                    caster_at(1.0, per_object),
+                    caster_at(-1.0, per_object),
+                ],
+            );
+            assert!(
+                none == 0 && a > 20 && b > 20,
+                "{label}: each caster alone should shadow the floor: none {none}, a {a}, b {b}"
+            );
+            assert!(
+                both.abs_diff(a + b) <= 4,
+                "{label}: two casters on one mesh should cast both shadows: {both} vs {a} + {b}"
+            );
+        }
     }
 }

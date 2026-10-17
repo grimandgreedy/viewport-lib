@@ -1213,22 +1213,24 @@ impl ViewportRenderer {
         // ----------------------------------------------------------------
         // Point-light cubemap shadow passes.
         //
-        // One depth-only render pass per (slot, face). Reuses the cascade
-        // shadow rasterisation conventions (front-face culling, opaque
-        // casters only) but writes linear distance-to-light to frag_depth
-        // via `shadow_point_pipeline`. Per-face culling uses the standard
-        // CPU frustum from the face's view-projection.
+        // One depth-only render pass per (slot, face). Opaque casters only,
+        // writing linear distance-to-light to frag_depth. Per-object casters
+        // draw through `shadow_point.wgsl` from their own object data, culled
+        // per face against the face frustum; instanced batches draw through
+        // `shadow_point_instanced.wgsl` from the instance buffer. Masked
+        // casters use the cutout variants.
         // ----------------------------------------------------------------
-        // The slot hashes below record what was rendered, so while the
-        // pipeline is still on a worker the whole block waits rather than
-        // marking a cubemap up to date that was never drawn.
-        let point_pipeline = resources.shadow.point();
+        let point_batching = instancing.use_instancing && !instancing.batches.is_empty();
+        if lighting.shadows.enabled && point_batching && !light.point_shadow_faces.is_empty() {
+            resources.ensure_point_instanced_shadow_pipeline(device);
+        }
         if lighting.shadows.enabled
             && !scene_items.is_empty()
             && !light.point_shadow_faces.is_empty()
-            && point_pipeline.is_some()
+            && resources.shadow.point_pipeline.is_some()
         {
-            let point_pipeline = point_pipeline.expect("checked above");
+            // Items an instanced batch draws; the per-object loop skips them.
+            let batched = |item_idx: usize| point_batching && instanceable[item_idx];
             // Collect the caster list once: item filter, mesh lookup, and
             // world AABB are shared by every slot and face below instead of
             // being recomputed per (face, item).
@@ -1261,6 +1263,88 @@ impl ViewportRenderer {
                 })
                 .collect();
 
+            // Instanced batches that cast, each drawn as the runs of its
+            // instances whose item casts shadows (`cast_shadows` per
+            // instance, in instance order in `cached_aabbs`).
+            struct PointBatch<'a> {
+                mesh: &'a crate::resources::GpuMesh,
+                group1: &'a crate::gpu::BindGroup,
+                cutout: bool,
+                runs: Vec<std::ops::Range<u32>>,
+            }
+            let point_batches: Vec<PointBatch> = if point_batching {
+                instancing
+                    .batches
+                    .iter()
+                    .filter(|b| {
+                        !b.is_transparent
+                            && resources.batch_colour_ready(b, colour_hdr, clipping_active)
+                    })
+                    .filter_map(|b| {
+                        let mesh = resources.mesh_store.get(b.mesh_id)?;
+                        // The batch's own group: its instance range and, for a
+                        // cutout, its albedo.
+                        let group1 = resources.instancing.bind_groups.get(&(
+                            b.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                            b.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                            b.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                            b.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                            b.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                            resources.uv1_chunk_key(mesh.vertex_span.chunk),
+                        ))?;
+                        let start = b.instance_offset;
+                        let end = b.instance_offset + b.instance_count;
+                        let mut runs = Vec::new();
+                        let mut run_start = None;
+                        for i in start..end {
+                            let casts = instancing
+                                .cached_aabbs
+                                .get(i as usize)
+                                .is_none_or(|a| a.cast_shadows != 0);
+                            match (casts, run_start) {
+                                (true, None) => run_start = Some(i),
+                                (false, Some(r)) => {
+                                    runs.push(r..i);
+                                    run_start = None;
+                                }
+                                _ => {}
+                            }
+                        }
+                        if let Some(r) = run_start {
+                            runs.push(r..end);
+                        }
+                        (!runs.is_empty()).then_some(PointBatch {
+                            mesh,
+                            group1,
+                            cutout: b.is_cutout,
+                            runs,
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            // The slot hashes below record what was rendered, so while any
+            // pipeline these casters need is still on a worker the whole block
+            // waits rather than marking a cubemap up to date that was never
+            // fully drawn.
+            let is_mask = |m: &crate::scene::material::Material| {
+                matches!(m.alpha_mode, crate::scene::material::AlphaMode::Mask(_))
+            };
+            let mut ready = resources.shadow.point(false).is_some();
+            if casters
+                .iter()
+                .any(|c| !batched(c.item_idx) && is_mask(&c.item.material))
+            {
+                ready &= resources.shadow.point(true).is_some();
+            }
+            for cutout in [false, true] {
+                if point_batches.iter().any(|b| b.cutout == cutout) {
+                    ready &= resources.shadow.point_instanced(cutout).is_some();
+                }
+            }
+
             // Decide per pool slot whether its cubemap must re-render this
             // frame. A slot's content is fully determined by its light's
             // position and range plus every in-range caster's mesh identity,
@@ -1276,7 +1360,7 @@ impl ViewportRenderer {
                 (p - c).length_squared()
             };
             let mut slot_dirty = std::collections::HashMap::new();
-            for fc in light.point_shadow_faces.iter() {
+            for fc in light.point_shadow_faces.iter().filter(|_| ready) {
                 if slot_dirty.contains_key(&fc.slot) {
                     continue;
                 }
@@ -1308,6 +1392,19 @@ impl ViewportRenderer {
                     mix(&c.item.mesh_id.generation().to_le_bytes());
                     mix(&c.mesh.content_rev.to_le_bytes());
                     mix(bytemuck::cast_slice(&c.item.model));
+                    // A mask cuts the cubemap, so its cutoff and albedo count.
+                    if let crate::scene::material::AlphaMode::Mask(cutoff) =
+                        c.item.material.alpha_mode
+                    {
+                        mix(&cutoff.to_le_bytes());
+                        let tex = c
+                            .item
+                            .material
+                            .texture_id
+                            .map(|t| t.raw())
+                            .unwrap_or(u64::MAX);
+                        mix(&tex.to_le_bytes());
+                    }
                 }
                 let slot_idx = fc.slot as usize;
                 let dirty = !cacheable
@@ -1322,35 +1419,11 @@ impl ViewportRenderer {
                 }
                 slot_dirty.insert(fc.slot, dirty);
             }
-            let any_dirty = slot_dirty.values().any(|&d| d);
-
-            // Per-object casters draw from their own element of the frame's
-            // object data (`per_object_slot`). Instanced casters have none:
-            // the point pass draws them through the mesh's single-element
-            // buffer, so write each one's model there first. Several instanced
-            // casters sharing a mesh therefore all cast from the last one
-            // written. Skipped entirely when every slot's cubemap is reused
-            // this frame.
-            if any_dirty {
-                for c in casters.iter() {
-                    // Only the model matrix (offset 0, 64 bytes) is read by
-                    // `shadow_point.wgsl`. Write just that prefix so we don't
-                    // clobber the rest of the per-mesh `ObjectUniform`.
-                    queue.write_buffer(
-                        &c.mesh.object_uniform_buf,
-                        0,
-                        bytemuck::cast_slice(&c.item.model),
-                    );
-                    // The per-object prepare's record of this buffer no
-                    // longer holds.
-                    *c.mesh.last_object_uniform.lock().unwrap() = None;
-                }
-            }
 
             let rendered: Vec<&super::PointShadowFace> = light
                 .point_shadow_faces
                 .iter()
-                .filter(|fc| slot_dirty.get(&fc.slot).copied().unwrap_or(true))
+                .filter(|fc| ready && slot_dirty.get(&fc.slot).copied().unwrap_or(true))
                 .collect();
             if !rendered.is_empty() {
                 let mut enc =
@@ -1397,16 +1470,24 @@ impl ViewportRenderer {
                         timestamp_writes: ts_writes,
                         occlusion_query_set: None,
                     });
-                    pass.set_pipeline(point_pipeline);
                     let dyn_offset = layer * POINT_FACE_STRIDE as u32;
                     pass.set_bind_group(0, &resources.shadow.point_face_bind_group, &[dyn_offset]);
 
                     let face_frustum =
                         crate::camera::frustum::Frustum::from_view_proj(&fc.view_proj);
 
+                    let mut bound_cutout: Option<bool> = None;
                     for c in casters.iter() {
-                        if face_frustum.cull_aabb(&c.world_aabb) {
+                        if batched(c.item_idx) || face_frustum.cull_aabb(&c.world_aabb) {
                             continue;
+                        }
+                        let cutout = is_mask(&c.item.material);
+                        if bound_cutout != Some(cutout) {
+                            let Some(pl) = resources.shadow.point(cutout) else {
+                                continue;
+                            };
+                            pass.set_pipeline(pl);
+                            bound_cutout = Some(cutout);
                         }
                         let (group1, inst) = per_object_slot(per_object, c.item_idx, c.mesh);
                         pass.set_bind_group(1, group1, &[]);
@@ -1426,6 +1507,39 @@ impl ViewportRenderer {
                             crate::gpu::IndexFormat::Uint32,
                         );
                         pass.draw_indexed(0..c.mesh.index_count, 0, inst..inst + 1);
+                    }
+
+                    let mut bound_cutout: Option<bool> = None;
+                    for b in &point_batches {
+                        if bound_cutout != Some(b.cutout) {
+                            let Some(pl) = resources.shadow.point_instanced(b.cutout) else {
+                                continue;
+                            };
+                            pass.set_pipeline(pl);
+                            bound_cutout = Some(b.cutout);
+                        }
+                        pass.set_bind_group(1, b.group1, &[]);
+                        pass.set_vertex_buffer(
+                            0,
+                            resources
+                                .geometry
+                                .vertex_chunk_slice(b.mesh.vertex_span.chunk),
+                        );
+                        pass.set_index_buffer(
+                            resources
+                                .geometry
+                                .index_chunk_slice(b.mesh.index_span.chunk),
+                            crate::gpu::IndexFormat::Uint32,
+                        );
+                        let base_vertex = resources.geometry.base_vertex(b.mesh.vertex_span);
+                        let first_index = resources.geometry.first_index(b.mesh.index_span);
+                        for run in &b.runs {
+                            pass.draw_indexed(
+                                first_index..first_index + b.mesh.index_count,
+                                base_vertex,
+                                run.clone(),
+                            );
+                        }
                     }
                 }
                 sink.push(enc.finish());
@@ -1675,9 +1789,7 @@ struct ShadowDrawCounts {
 
 /// The group-1 bind group and instance a shadow caster draws with: the item's
 /// own element of the frame's per-object data when it has one, otherwise the
-/// mesh's single-element group at instance 0. Instanced items have no
-/// per-object element; the point pass writes their model into the mesh's
-/// buffer instead.
+/// mesh's single-element group at instance 0.
 fn per_object_slot<'a>(
     per_object: &'a crate::renderer::per_object_state::PerObjectState,
     item_idx: usize,

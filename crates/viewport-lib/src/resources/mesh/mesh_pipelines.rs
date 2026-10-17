@@ -335,8 +335,11 @@ pub(crate) fn build_shadow_pipeline(
     )
 }
 
-/// `shadow_point.wgsl`: depth + fragment pipeline for point-light cubemap
-/// shadow faces. Writes linear distance-to-light to `frag_depth`.
+/// `shadow_point.wgsl` (per-object casters) and `shadow_point_instanced.wgsl`
+/// (instanced batches): depth + fragment pipeline for point-light cubemap
+/// shadow faces. Writes linear distance-to-light to `frag_depth`. `cutout`
+/// selects `vs_cutout`/`fs_cutout`, which discard below an
+/// `AlphaMode::Mask` caster's cutoff.
 ///
 /// Uses back-face culling (front faces visible to the light are rendered) so
 /// the cubemap stores the near-side distance of each occluder. With linear
@@ -350,19 +353,21 @@ pub(crate) fn build_shadow_point_pipeline(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
+    label: &str,
+    cutout: bool,
     cache: Option<&crate::gpu::PipelineCache>,
 ) -> crate::gpu::RenderPipeline {
     crate::resources::builders::render_pipeline(
         device,
         crate::resources::builders::RenderPipelineDesc {
-            label: "shadow_point_pipeline",
+            label,
             layout,
             vertex_module: shader,
-            vertex_entry: "vs_main",
+            vertex_entry: if cutout { "vs_cutout" } else { "vs_main" },
             vertex_buffers: &[Vertex::buffer_layout()],
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some(if cutout { "fs_cutout" } else { "fs_main" }),
                 targets: &[],
                 compilation_options: crate::gpu::PipelineCompilationOptions::default(),
             }),

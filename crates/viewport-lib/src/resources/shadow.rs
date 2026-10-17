@@ -45,11 +45,16 @@ pub(crate) struct ShadowResources {
     /// shadow render pass. `len() == MAX_POINT_SHADOW_LIGHTS * 6`, indexed
     /// as `slot * 6 + face`.
     pub(crate) point_face_views: Vec<crate::gpu::TextureView>,
-    /// Render pipeline for the point-shadow depth pass. Same vertex layout
-    /// as the cascade shadow pipeline; writes linear distance-to-light.
-    /// `None` until a frame has point-shadow faces to draw; see
+    /// Render pipelines for the point-shadow depth pass of per-object casters:
+    /// plain (0) and alpha cutout (1). Same vertex layout as the cascade
+    /// shadow pipeline; write linear distance-to-light. `None` until a frame
+    /// has point-shadow faces to draw; see
     /// [`DeviceResources::ensure_point_shadow_pipeline`](crate::resources::DeviceResources::ensure_point_shadow_pipeline).
-    pub(crate) point_pipeline: Option<LazyFamily<ShadowRecipe, 1>>,
+    pub(crate) point_pipeline: Option<LazyFamily<ShadowRecipe, 2>>,
+    /// The same pair for instanced batches, reading per-instance transforms
+    /// from the instanced colour pass's per-batch group. `None` until the
+    /// instance layout exists and a frame has point-shadow faces.
+    pub(crate) point_instanced_pipeline: Option<LazyFamily<ShadowRecipe, 2>>,
     /// Bind group layout for the point-shadow per-face uniform (group 0
     /// of the point shadow pass). Kept for pipeline rebuilds.
     #[allow(dead_code)]
@@ -217,9 +222,35 @@ pub(crate) fn build_cascade(r: &ShadowRecipe, i: usize) -> crate::gpu::RenderPip
     )
 }
 
-pub(crate) fn build_point(r: &ShadowRecipe, _i: usize) -> crate::gpu::RenderPipeline {
+/// Point-shadow pipeline `i`: 0 plain, 1 alpha cutout.
+pub(crate) fn build_point(r: &ShadowRecipe, i: usize) -> crate::gpu::RenderPipeline {
     crate::resources::mesh::mesh_pipelines::build_shadow_point_pipeline(
-        &r.device, &r.layout, &r.shader, None,
+        &r.device,
+        &r.layout,
+        &r.shader,
+        if i == 1 {
+            "shadow_point_cutout_pipeline"
+        } else {
+            "shadow_point_pipeline"
+        },
+        i == 1,
+        None,
+    )
+}
+
+/// Instanced point-shadow pipeline `i`: 0 plain, 1 alpha cutout.
+pub(crate) fn build_point_instanced(r: &ShadowRecipe, i: usize) -> crate::gpu::RenderPipeline {
+    crate::resources::mesh::mesh_pipelines::build_shadow_point_pipeline(
+        &r.device,
+        &r.layout,
+        &r.shader,
+        if i == 1 {
+            "shadow_point_instanced_cutout_pipeline"
+        } else {
+            "shadow_point_instanced_pipeline"
+        },
+        i == 1,
+        None,
     )
 }
 
@@ -231,9 +262,15 @@ impl ShadowResources {
         self.pipeline.as_ref()?.get(cascade_index(key))
     }
 
-    /// The point-shadow depth pipeline, composed alongside the cube array.
-    pub(crate) fn point(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.point_pipeline.as_ref()?.get(0)
+    /// The point-shadow depth pipeline for per-object casters, composed
+    /// alongside the cube array. `cutout` selects the alpha-tested variant.
+    pub(crate) fn point(&self, cutout: bool) -> Option<&crate::gpu::RenderPipeline> {
+        self.point_pipeline.as_ref()?.get(cutout as usize)
+    }
+
+    /// The point-shadow depth pipeline for instanced batches.
+    pub(crate) fn point_instanced(&self, cutout: bool) -> Option<&crate::gpu::RenderPipeline> {
+        self.point_instanced_pipeline.as_ref()?.get(cutout as usize)
     }
 }
 

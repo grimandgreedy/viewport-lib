@@ -1535,6 +1535,40 @@ impl DeviceResources {
         ));
     }
 
+    /// Build the instanced point-shadow pipelines: the point face layout at
+    /// group 0 and the instanced colour pass's per-batch layout at group 1. A
+    /// no-op once built, and until the instance layout exists (no instanced
+    /// batch has been prepared yet, so there is nothing to draw).
+    pub(crate) fn ensure_point_instanced_shadow_pipeline(&mut self, device: &crate::gpu::Device) {
+        if self.shadow.point_instanced_pipeline.is_some() {
+            return;
+        }
+        let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() else {
+            return;
+        };
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "shadow_point_instanced_shader",
+            crate::resources::builders::wgsl_source!("shadow_point_instanced"),
+        );
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "shadow_point_instanced_pipeline_layout",
+            &[&self.shadow.point_face_bgl, instance_bgl],
+        );
+        self.shadow.point_instanced_pipeline =
+            Some(crate::resources::pipeline_slot::LazyFamily::new(
+                crate::resources::shadow::ShadowRecipe {
+                    device: device.clone(),
+                    layout,
+                    shader,
+                },
+                std::sync::Arc::clone(&self.pipeline_compiler),
+                crate::resources::shadow::build_point_instanced,
+            ));
+    }
+
     /// Promote the cascade shadow atlas from its 1x1 placeholder to the full
     /// `SHADOW_ATLAS_SIZE` depth texture and rebuild every bind group that
     /// samples it. A no-op once promoted.

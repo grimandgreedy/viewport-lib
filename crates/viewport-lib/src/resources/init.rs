@@ -1844,6 +1844,7 @@ impl DeviceResources {
                 point_cubes_allocated: false,
                 point_face_views: point_shadow_face_views,
                 point_pipeline: None,
+                point_instanced_pipeline: None,
                 point_face_bgl: shadow_point_face_bgl,
                 point_face_buf: shadow_point_face_buf,
                 point_face_bind_group: shadow_point_face_bind_group,
