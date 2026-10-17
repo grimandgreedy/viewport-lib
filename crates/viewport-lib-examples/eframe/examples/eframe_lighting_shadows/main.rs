@@ -274,12 +274,12 @@ struct App {
     light_kind: u8, // 0 = Directional, 1 = Point, 2 = Spot
     light_colour: [f32; 3],
     // Author intensity either in nominal units (the faithful "colour is data"
-    // scale, read directly at EV 0) or in real photometric units. The unit and
+    // scale, read directly at passthrough exposure) or in real photometric units. The unit and
     // slider range change with this toggle; the two regimes are what the exposure
     // controls exist to reconcile.
     photometric: bool,
     // Nominal-mode magnitudes: directional is a plain multiplier (~pi reads as a
-    // lit surface at EV 0); point/spot are candela.
+    // lit surface at passthrough exposure); point/spot are candela.
     dir_nominal: f32,
     point_candela: f32,
     spot_candela: f32,
@@ -302,7 +302,7 @@ struct App {
 
     // Display transform (HDR -> pixels): pipeline mode, exposure, tone map.
     hdr_pipeline: bool, // true = Hdr (exposure + tonemap), false = Direct passthrough
-    exposure_mode: u8,  // 0 = Manual, 1 = Physical camera, 2 = Automatic
+    exposure_mode: u8,  // 0 = Manual, 1 = Physical camera, 2 = Automatic, 3 = Passthrough
     manual_ev: f32,
     aperture: f32,
     shutter_denom: f32,
@@ -421,7 +421,7 @@ impl App {
             // Match showcase_27 defaults: a known-problematic setup useful for reproducing bugs.
             light_kind: 0,
             light_colour: [1.0, 0.97, 0.90],
-            // Nominal by default: the faithful "colour is data" regime at EV 0.
+            // Nominal by default: the faithful "colour is data" regime at passthrough exposure.
             photometric: false,
             dir_nominal: std::f32::consts::PI,
             point_candela: 40.0,
@@ -440,10 +440,10 @@ impl App {
             spot_range: 20.0,
             spot_inner_deg: 15.0,
             spot_outer_deg: 25.0,
-            // Display / exposure: neutral by default so the faithful lighting
-            // reads as authored (HDR pipeline, manual EV 0, KhronosNeutral).
+            // Display / exposure: passthrough by default so the faithful lighting
+            // reads as authored (HDR pipeline, no exposure scaling, KhronosNeutral).
             hdr_pipeline: true,
-            exposure_mode: 0,
+            exposure_mode: 3,
             manual_ev: 0.0,
             aperture: 16.0,
             shutter_denom: 125.0,
@@ -590,6 +590,7 @@ impl App {
     fn build_exposure(&self, dt: f32) -> ExposureSettings {
         let mode = match self.exposure_mode {
             0 => ExposureMode::Manual { ev: self.manual_ev },
+            3 => ExposureMode::Passthrough,
             1 => ExposureMode::PhysicalCamera {
                 aperture: self.aperture,
                 shutter: 1.0 / self.shutter_denom.max(1.0),
@@ -638,6 +639,7 @@ impl App {
     fn panel_ev(&self) -> Option<f32> {
         match self.exposure_mode {
             0 => Some(self.manual_ev),
+            3 => Some(viewport_lib::PASSTHROUGH_EV100),
             1 => {
                 let n = self.aperture;
                 let t = 1.0 / self.shutter_denom.max(1.0);
@@ -1085,7 +1087,7 @@ impl App {
                 ui.add_space(4.0);
                 ui.checkbox(&mut self.photometric, "Photometric units");
                 // Intensity in the unit that matches the kind and mode. Nominal is
-                // the faithful scale (reads at EV 0); photometric is real lux for
+                // the faithful scale (reads at passthrough exposure); photometric is real lux for
                 // directional and lumens for point/spot bulbs.
                 match (self.light_kind, self.photometric) {
                     (0, false) => {
@@ -1518,12 +1520,14 @@ impl App {
                 ui.add_space(4.0);
                 ui.label("Exposure mode:");
                 ui.horizontal(|ui| {
+                    ui.radio_value(&mut self.exposure_mode, 3, "Passthrough");
                     ui.radio_value(&mut self.exposure_mode, 0, "Manual");
                     ui.radio_value(&mut self.exposure_mode, 1, "Physical");
                     ui.radio_value(&mut self.exposure_mode, 2, "Auto");
                 });
 
                 match self.exposure_mode {
+                    3 => {}
                     0 => {
                         ui.add(egui::Slider::new(&mut self.manual_ev, -6.0..=16.0).text("EV100"));
                     }
@@ -1623,14 +1627,14 @@ impl App {
             });
     }
 
-    /// Faithful posture: nominal magnitudes at neutral EV 0 ("colour is data").
+    /// Faithful posture: nominal magnitudes at passthrough exposure ("colour is data").
     /// Mirrors `LightingPosture::Faithful` into the panel state.
     fn apply_posture_faithful(&mut self) {
         self.photometric = false;
         self.dir_nominal = std::f32::consts::PI;
         self.hemisphere_intensity = 1.5;
         self.hdr_pipeline = true;
-        self.exposure_mode = 0;
+        self.exposure_mode = 3;
         self.manual_ev = 0.0;
         self.exposure_compensation = 0.0;
         self.tone_mapping = ToneMapping::KhronosNeutral;

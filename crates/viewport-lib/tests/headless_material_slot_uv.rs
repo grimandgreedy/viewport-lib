@@ -50,7 +50,7 @@ fn emissive_slot_brightness(offset_u: f32, alpha_mode: AlphaMode) -> Option<f64>
     frame.viewport.show_axes_indicator = false;
     frame.effects.lighting.lights = vec![];
     frame.effects.lighting.hemisphere_intensity = 0.0;
-    frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
+    frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;

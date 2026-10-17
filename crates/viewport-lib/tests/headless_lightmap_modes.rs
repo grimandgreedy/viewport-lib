@@ -115,7 +115,7 @@ fn lightmap_ao_mode_darkens_object() {
         // defaults (a large daylight hemisphere fill and auto-exposure, which
         // would re-brighten the occluded box and mask the darkening).
         frame.effects.lighting.hemisphere_intensity = 0.5;
-        frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
+        frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();

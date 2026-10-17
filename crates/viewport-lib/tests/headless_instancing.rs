@@ -66,7 +66,7 @@ fn position_override_takes_effect_through_render_path() {
     // Pin a fixed neutral exposure and a modest single light so the red plane
     // tone-maps to a clear saturated red, independent of the library's
     // photometric default lighting (daylight lux + auto-exposure).
-    frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
+    frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
     frame.effects.lighting.lights = vec![{
         let mut s = LightSource::default();
         s.intensity = 1.0;
@@ -291,7 +291,7 @@ fn position_override_slice_reads_correct_pool_window() {
     // Pin a fixed neutral exposure and a modest single light so the red plane
     // tone-maps to a clear saturated red, independent of the library's
     // photometric default lighting (daylight lux + auto-exposure).
-    frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
+    frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
     frame.effects.lighting.lights = vec![{
         let mut s = LightSource::default();
         s.intensity = 1.0;

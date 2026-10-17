@@ -688,7 +688,7 @@ pub struct EffectsFrame {
     /// Clip objects (planes/box/sphere) and cap-fill toggle. Default: no clipping.
     pub clip: ClipSettings,
     /// Display transform: pipeline mode (HDR / Direct), exposure, and tone-map
-    /// operator. Default: HDR pipeline, neutral manual EV 0, KhronosNeutral.
+    /// operator. Default: HDR pipeline, passthrough exposure, KhronosNeutral.
     pub display: DisplaySettings,
     /// Post-processing effects (bloom, SSAO, DOF, ...). Default: all off. Every
     /// effect requires `display.mode == PipelineMode::Hdr`.

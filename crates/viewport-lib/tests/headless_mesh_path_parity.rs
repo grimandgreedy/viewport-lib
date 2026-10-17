@@ -69,7 +69,7 @@ impl Scene {
         frame.viewport.show_axes_indicator = false;
         frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
         frame.effects.display.mode = PipelineMode::Hdr;
-        frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
+        frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
         // A dim, fixed ambient and no direct light, so lit colours stay well
         // inside the displayable range and a factor-of-two error shows.
         frame.effects.lighting.lights = vec![];
@@ -348,7 +348,7 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
         frame.scene.generation = scene.generation;
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
-        frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
+        frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
         let mut sun = LightSource::default();
         sun.kind = LightKind::Directional {
             direction: [0.0, 0.0, 1.0],

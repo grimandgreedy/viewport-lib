@@ -178,7 +178,7 @@ pub struct LightSource {
     /// [`LightSource::point_candela`], [`LightSource::point_lumens`],
     /// [`LightSource::spot_candela`], [`LightSource::spot_lumens`]) over setting
     /// this field directly. Default: a modest key light (`~pi`) that reads as a
-    /// plain lit surface at neutral exposure (EV 0), not a physical daylight
+    /// plain lit surface at passthrough exposure, not a physical daylight
     /// magnitude. Real photometric values ([`Lux::FULL_DAYLIGHT`] and friends)
     /// are an opt-in paired with auto or physical exposure.
     pub intensity: f32,
@@ -224,7 +224,7 @@ impl Default for LightSource {
             // Faithful default: a modest key light, not a physical daylight
             // magnitude. With the energy-normalised (albedo/pi) diffuse, an
             // illuminance of ~pi reproduces the classic `albedo * intensity` look
-            // at neutral exposure (EV 0), so a surface reads as its own colour
+            // at passthrough exposure, so a surface reads as its own colour
             // ("colour is data"). Physical lux/candela values are an opt-in paired
             // with auto or physical exposure.
             intensity: core::f32::consts::PI,

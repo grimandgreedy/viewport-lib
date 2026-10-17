@@ -38,8 +38,9 @@ pub struct ExposureParams {
     pub max_ev: f32,
     /// Exposure compensation in stops (positive brightens).
     pub compensation: f32,
-    /// Interim neutral boost folded into the EV->multiplier form (temporary).
-    pub exposure_boost: f32,
+    /// EV100 that partial adaptation scales from: the passthrough EV, whose
+    /// multiplier is exactly `1.0`.
+    pub anchor_ev: f32,
     /// Adaptation rate (per second) when the scene brightens.
     pub speed_up: f32,
     /// Adaptation rate (per second) when the scene darkens.

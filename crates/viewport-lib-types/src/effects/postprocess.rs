@@ -16,13 +16,11 @@ pub enum ToneMapping {
     KhronosNeutral,
 }
 
-/// Neutral exposure numerator. Cancels the `1.2` maxLuminance divisor so
-/// `ExposureMode::Manual { ev: 0.0 }` maps to a linear multiplier of exactly
-/// `1.0`, keeping exposure neutral while light intensities are still unitless
-/// (`~1`, not yet lux/candela). It goes away once lights carry photometric
-/// units, when the full `exposure = 1 / (1.2 * 2^EV)` form becomes correct.
-#[doc(hidden)]
-pub const INTERIM_EXPOSURE_BOOST: f32 = 1.2;
+/// The EV100 whose exposure multiplier is exactly `1.0`: `-log2(1.2)`.
+///
+/// [`ExposureMode::Passthrough`] exposes at this EV, and auto-exposure scales
+/// partial adaptation from it.
+pub const PASSTHROUGH_EV100: f32 = -0.263_034_4;
 
 /// Reflected-light meter calibration constant `K` used to convert an average
 /// scene luminance to EV100 (`EV100 = log2(L * 100 / K)`). `12.5` is the
@@ -40,8 +38,13 @@ pub const METER_CALIBRATION_K: f32 = 12.5;
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ExposureMode {
-    /// Manual EV100. `ev = 0.0` is the neutral default (a `1.0` multiplier
-    /// during the interim; see `INTERIM_EXPOSURE_BOOST`). Higher EV darkens.
+    /// No exposure scaling: scene radiance in nits goes to the tone map as-is,
+    /// so a white surface reflecting 1 nit displays as white. The default, for
+    /// lighting authored at the faithful scale. Equivalent to `Manual` at
+    /// [`PASSTHROUGH_EV100`].
+    Passthrough,
+    /// Manual EV100, mapped to a multiplier as `1 / (1.2 * 2^EV100)` (the
+    /// saturation-based form HDRP and Filament use). Higher EV darkens.
     Manual {
         /// Exposure value at ISO 100. Higher is darker.
         ev: f32,
@@ -61,8 +64,8 @@ pub enum ExposureMode {
 }
 
 impl ExposureMode {
-    /// The physically-neutral default: a fixed `EV 0` manual exposure.
-    pub const NEUTRAL: ExposureMode = ExposureMode::Manual { ev: 0.0 };
+    /// The neutral default: [`ExposureMode::Passthrough`].
+    pub const NEUTRAL: ExposureMode = ExposureMode::Passthrough;
 }
 
 /// Auto-exposure metering and adaptation parameters (used by
@@ -111,10 +114,10 @@ pub struct AutoExposure {
     /// Adaptation strength in `[0, 1]`: how fully the exposure follows the
     /// metered scene. `1` (the default) is full auto-exposure, driving the metered
     /// value to middle grey so the scene is correctly exposed regardless of its
-    /// magnitude. `0` holds a fixed exposure. The correction is scaled from a
-    /// neutral (EV 0) anchor, so values below `1` leave scenes far from EV 0
-    /// permanently under-corrected: a real-daylight scene at `0.5` stays several
-    /// stops overexposed. Lower it only for near-neutral lighting where you want a
+    /// magnitude. `0` holds the passthrough exposure. The correction is scaled
+    /// from that passthrough anchor ([`PASSTHROUGH_EV100`]), so values below `1`
+    /// leave scenes far from it permanently under-corrected: a real-daylight
+    /// scene at `0.5` stays several stops overexposed. Lower it only for near-neutral lighting where you want a
     /// touch of brightness constancy and smaller framing-driven swings (orbit,
     /// zoom onto a bright/dark object). Default: `1.0`.
     pub adaptation: f32,
@@ -145,9 +148,9 @@ impl Default for AutoExposure {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ExposureSettings {
     /// How the base exposure multiplier is derived. Default:
-    /// [`ExposureMode::NEUTRAL`] (`Manual { ev: 0.0 }`) - a fixed neutral exposure
-    /// that passes linear radiance straight through, so the faithful default
-    /// lighting reads as authored ("colour is data"). Switch to
+    /// [`ExposureMode::NEUTRAL`] ([`ExposureMode::Passthrough`]) - no exposure
+    /// scaling, so the faithful default lighting reads as authored ("colour is
+    /// data"). Switch to
     /// [`ExposureMode::Automatic`] (e.g. via [`ExposureSettings::automatic`]) or
     /// [`ExposureMode::PhysicalCamera`] when authoring real photometric magnitudes
     /// that need mapping down.
@@ -179,6 +182,14 @@ impl ExposureSettings {
     pub fn with_compensation(mut self, stops: f32) -> Self {
         self.compensation = stops;
         self
+    }
+
+    /// Convenience: the passthrough exposure with no compensation.
+    pub fn passthrough() -> Self {
+        Self {
+            mode: ExposureMode::Passthrough,
+            compensation: 0.0,
+        }
     }
 
     /// Convenience: a manual EV100 exposure with no compensation.
@@ -214,6 +225,7 @@ impl ExposureSettings {
     #[doc(hidden)]
     pub fn base_ev100(&self) -> Option<f32> {
         match self.mode {
+            ExposureMode::Passthrough => Some(PASSTHROUGH_EV100),
             ExposureMode::Manual { ev } => Some(ev),
             ExposureMode::PhysicalCamera {
                 aperture,
@@ -239,13 +251,10 @@ pub(crate) fn ev100_from_physical(aperture: f32, shutter: f32, iso: f32) -> f32 
     (aperture * aperture / shutter).log2() + (100.0 / iso).log2()
 }
 
-/// EV100 to a linear exposure multiplier via the maxLuminance form:
-/// `maxLum = 1.2 * 2^EV100`, `exposure = boost / maxLum`. `boost` is the
-/// temporary neutral numerator (see `INTERIM_EXPOSURE_BOOST`); it is `1.0` once
-/// photometric units are pinned.
+/// EV100 to a linear exposure multiplier via the saturation-based maxLuminance
+/// form: `maxLum = 1.2 * 2^EV100`, `exposure = 1 / maxLum`.
 pub(crate) fn ev100_to_exposure(ev100: f32) -> f32 {
-    let max_lum = 1.2 * 2.0_f32.powf(ev100);
-    INTERIM_EXPOSURE_BOOST / max_lum
+    1.0 / (1.2 * 2.0_f32.powf(ev100))
 }
 
 /// Which render pipeline turns scene geometry into display pixels.
@@ -283,7 +292,7 @@ pub struct DisplaySettings {
     /// Which render pipeline runs. Default: [`PipelineMode::Hdr`].
     pub mode: PipelineMode,
     /// Exposure model applied to linear radiance before tone mapping. Default:
-    /// neutral ([`ExposureMode::NEUTRAL`]).
+    /// [`ExposureMode::Passthrough`].
     pub exposure: ExposureSettings,
     /// Tone-map operator mapping exposed HDR radiance into display range.
     /// Default: [`ToneMapping::KhronosNeutral`].
@@ -540,11 +549,19 @@ mod exposure_tests {
     }
 
     #[test]
-    fn ev0_is_unit_multiplier() {
-        // The neutral boost is chosen so EV 0 lands on a 1.0 multiplier,
-        // keeping exposure neutral. It goes away once lights carry
-        // photometric units.
-        assert!(approx(ev100_to_exposure(0.0), 1.0, 1e-4));
+    fn ev0_is_the_saturation_based_multiplier() {
+        assert!(approx(ev100_to_exposure(0.0), 1.0 / 1.2, 1e-4));
+    }
+
+    #[test]
+    fn passthrough_is_unit_multiplier() {
+        assert!(approx(ev100_to_exposure(PASSTHROUGH_EV100), 1.0, 1e-5));
+        let s = ExposureSettings::default();
+        assert!(matches!(s.mode, ExposureMode::Passthrough));
+        assert!(approx(s.manual_multiplier().unwrap(), 1.0, 1e-5));
+        // Compensation still applies: +1 stop doubles it.
+        let plus = ExposureSettings::passthrough().with_compensation(1.0);
+        assert!(approx(plus.manual_multiplier().unwrap(), 2.0, 1e-4));
     }
 
     #[test]

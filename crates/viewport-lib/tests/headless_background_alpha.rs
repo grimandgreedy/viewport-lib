@@ -55,7 +55,7 @@ fn probe_frame(mesh: MeshId, bg_alpha: f32, opacity: f32) -> FrameData {
     frame.viewport.show_axes_indicator = false;
     frame.viewport.background_colour = Some(Colour::linear(BG, 0.0, 0.0, bg_alpha));
     // Fixed exposure so the readback is not chasing an adapting meter.
-    frame.effects.display.exposure = ExposureSettings::manual(0.0);
+    frame.effects.display.exposure = ExposureSettings::passthrough();
     frame.effects.lighting.hemisphere_intensity = 0.0;
 
     if opacity > 0.0 {
