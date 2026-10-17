@@ -215,6 +215,9 @@ impl App {
                     .as_ref()
                     .map_or(true, |t| t.inner.size() != size)
                 {
+                    if let Some(old) = self.target.take() {
+                        rs.renderer.write().free_texture(&old.id);
+                    }
                     let inner = OffscreenViewportTarget::new(&rs.device, rs.target_format, size);
                     let id = rs.renderer.write().register_native_texture(
                         &rs.device,

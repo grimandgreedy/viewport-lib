@@ -720,7 +720,9 @@ impl App {
                         .zip(quads.iter())
                         .any(|(t, qr)| t.inner.size() != quad_px(qr));
                 if needs_rebuild {
-                    self.mv_targets.clear();
+                    for old in self.mv_targets.drain(..) {
+                        guard.free_texture(&old.id);
+                    }
                     for qr in &quads {
                         let inner =
                             OffscreenViewportTarget::new(&rs.device, rs.target_format, quad_px(qr));

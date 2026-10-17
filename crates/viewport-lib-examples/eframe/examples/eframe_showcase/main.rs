@@ -991,6 +991,9 @@ impl eframe::App for App {
                         .as_ref()
                         .map_or(true, |t| t.inner.size() != size_px)
                     {
+                        if let Some(old) = self.viewport_target.take() {
+                            guard.free_texture(&old.id);
+                        }
                         let inner =
                             OffscreenViewportTarget::new(&self.device, rs.target_format, size_px);
                         let id = guard.register_native_texture(

@@ -97,7 +97,7 @@ fn main() -> eframe::Result {
             // The session draws into an app-owned offscreen texture built as the
             // sRGB variant of egui's format (so the tone map's linear output is
             // sRGB-encoded on write); build the session for that same format.
-            let format = rs.target_format.add_srgb_suffix();
+            let format = vpl::OffscreenViewportTarget::render_format(rs.target_format);
 
             let mut session = ViewportInstance::new(device, format);
 
@@ -371,10 +371,8 @@ struct App {
 
 /// App-owned offscreen render target displayed by egui as an image.
 struct Target {
-    _texture: wgpu::Texture,
-    view: wgpu::TextureView,
+    inner: vpl::OffscreenViewportTarget,
     id: egui::TextureId,
-    size: [u32; 2],
 }
 
 impl App {
@@ -825,41 +823,29 @@ impl eframe::App for App {
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
             // Offscreen target in physical pixels; (re)created when the viewport
-            // resizes. sRGB variant so the tone map's linear output is encoded on
-            // write and egui displays it correctly.
+            // resizes. The session draws into its sRGB view, so the tone map's
+            // linear output is encoded on write, and egui samples its non-sRGB
+            // view so the encoded bytes are shown as-is.
             let ppp = ui.ctx().pixels_per_point();
             let size = [
                 (rect.width() * ppp).round().max(1.0) as u32,
                 (rect.height() * ppp).round().max(1.0) as u32,
             ];
-            if self.target.as_ref().map_or(true, |t| t.size != size) {
-                let texture = rs.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("lighting_offscreen"),
-                    size: wgpu::Extent3d {
-                        width: size[0],
-                        height: size[1],
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: rs.target_format.add_srgb_suffix(),
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                });
-                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            if self
+                .target
+                .as_ref()
+                .map_or(true, |t| t.inner.size() != size)
+            {
+                if let Some(old) = self.target.take() {
+                    rs.renderer.write().free_texture(&old.id);
+                }
+                let inner = vpl::OffscreenViewportTarget::new(&rs.device, rs.target_format, size);
                 let id = rs.renderer.write().register_native_texture(
                     &rs.device,
-                    &view,
+                    inner.sample_view(),
                     wgpu::FilterMode::Linear,
                 );
-                self.target = Some(Target {
-                    _texture: texture,
-                    view,
-                    id,
-                    size,
-                });
+                self.target = Some(Target { inner, id });
             }
             let target = self.target.as_ref().unwrap();
 
@@ -938,7 +924,9 @@ impl eframe::App for App {
             }
 
             // Render into the offscreen target.
-            let cmd = self.session.render(&rs.device, &rs.queue, &target.view);
+            let cmd = self
+                .session
+                .render(&rs.device, &rs.queue, target.inner.render_view());
             rs.queue.submit(std::iter::once(cmd));
 
             // Latch diagnostics from this frame's render.

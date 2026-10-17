@@ -603,7 +603,9 @@ impl App {
                 .zip(quad_rects.iter())
                 .any(|(t, qr)| t.inner.size() != quad_px(qr));
         if needs_rebuild {
-            self.mv_targets.clear();
+            for old in self.mv_targets.drain(..) {
+                guard.free_texture(&old.id);
+            }
             for qr in &quad_rects {
                 let inner =
                     vpl::OffscreenViewportTarget::new(&self.device, rs.target_format, quad_px(qr));
