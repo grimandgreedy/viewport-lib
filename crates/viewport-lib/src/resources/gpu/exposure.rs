@@ -13,11 +13,14 @@ use crate::resources::builders::LoggedAlloc;
 /// `exposure.wgsl`.
 pub const HISTOGRAM_BINS: u32 = 256;
 
-/// Lower bound of the metered log2-luminance range (bin 0). Chosen to cover deep
-/// shadow through a bright sky across the 256 bins.
+/// Lower bound of the metered log2-luminance range (bin 0), in nits: deep
+/// shadow.
 pub const LOG_LUM_MIN: f32 = -10.0;
-/// Upper bound of the metered log2-luminance range (last bin).
-pub const LOG_LUM_MAX: f32 = 12.0;
+/// Upper bound of the metered log2-luminance range (last bin), in nits. About
+/// 260,000 nits, well above a white surface in full sun (~30,000), so daylight
+/// scenes meter inside the range rather than piling into the top bin. The 256
+/// bins span 28 stops, about 0.11 stops each.
+pub const LOG_LUM_MAX: f32 = 18.0;
 
 /// Per-frame metering + adaptation parameters. Matches `ExposureParams` in
 /// `exposure.wgsl` (64 bytes, 16-byte aligned).
