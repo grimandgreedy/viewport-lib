@@ -719,6 +719,7 @@ impl ViewportRenderer {
             lighting,
             scene_items,
             &instanceable,
+            &self.mesh_uniforms,
             &lighting_frame,
             self.degradation_shadows_skipped,
             &mut self.last_stats,

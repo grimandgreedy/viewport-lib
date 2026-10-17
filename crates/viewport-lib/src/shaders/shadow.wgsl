@@ -64,6 +64,13 @@ struct Object {
     _pad_roughness_range: vec2<f32>,       // offset 296
     position_override_base: u32,           // offset 304 : first vec3 element read from binding 13 (pool slicing)
     position_override_len: u32,            // offset 308 : element count of the window; 0xffffffff = whole buffer
+    _pad_normal_override: vec2<u32>,       // offset 312
+    _pad_light_probe: vec2<u32>,           // offset 320
+    _pad_lightmap_mode: vec2<u32>,         // offset 328
+    _pad_lightmap_scale_bias: vec4<f32>,   // offset 336
+    _pad_tail: vec4<u32>,                  // offset 352 : lightmap index through object mask
+    // The full 368 bytes of the Rust ObjectUniform: `objects` is indexed by
+    // instance, so a shorter struct would stride into the wrong element.
 };
 
 @group(0) @binding(0) var<uniform> light: Light;

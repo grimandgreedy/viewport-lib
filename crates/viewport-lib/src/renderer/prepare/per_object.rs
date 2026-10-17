@@ -543,11 +543,11 @@ impl ViewportRenderer {
                 );
 
                 // Keep the mesh's single-element object buffer in sync: it backs
-                // the mesh's fallback bind group and the shadow (directional and
-                // point) caster passes, which draw at instance 0. Written once
-                // per mesh per frame; when several items share a MeshId it holds
-                // the first item's transform (the multi-item-per-mesh shadow
-                // caster case was already a shared-buffer approximation).
+                // the mesh's fallback bind group, drawn at instance 0 by items
+                // without a per-object element. Written once per mesh per frame,
+                // so when several items share a MeshId it holds the first item's
+                // transform. Shadow casters on this path draw from their own
+                // element instead.
                 if shared_written.insert(item.mesh_id) {
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
                         let mut last = mesh.last_object_uniform.lock().unwrap();

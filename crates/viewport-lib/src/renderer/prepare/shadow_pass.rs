@@ -38,6 +38,9 @@ impl ViewportRenderer {
         scene_items: &[SceneRenderItem],
         // `is_instanceable` per scene item, computed once by the caller.
         instanceable: &[bool],
+        // This frame's per-object bind groups and object-data indices, built
+        // before the shadow pass, so each caster draws with its own data.
+        per_object: &crate::renderer::per_object_state::PerObjectState,
         light: &LightingFrame,
         shadows_skipped: bool,
         last_stats: &mut crate::renderer::stats::FrameStats,
@@ -994,7 +997,11 @@ impl ViewportRenderer {
                                 shadow_pass.set_pipeline(pl);
                                 bound.pipeline = Some(key);
                             }
-                            let group1 = &mesh.object_bind_group;
+                            // The caster's own element of the frame's object-data
+                            // array, as the surface pass draws it. The mesh's
+                            // single-element group holds one item's transform, so
+                            // casters sharing a mesh would all cast from it.
+                            let (group1, inst) = per_object_slot(per_object, item_idx, mesh);
                             if bound.group1 != Some(group1 as *const _) {
                                 shadow_pass.set_bind_group(1, group1, &[]);
                                 bound.group1 = Some(group1 as *const _);
@@ -1024,7 +1031,7 @@ impl ViewportRenderer {
                             shadow_pass.draw_indexed(
                                 first_index..first_index + mesh.index_count,
                                 base_vertex,
-                                0..1,
+                                inst..inst + 1,
                             );
                             shadow_draws += 1;
                             shadow_draw_cmds += 1;
@@ -1060,7 +1067,7 @@ impl ViewportRenderer {
                         );
                         let mut bound = BoundCaster::default();
 
-                        for item in scene_items.iter() {
+                        for (item_idx, item) in scene_items.iter().enumerate() {
                             if item.settings.hidden {
                                 continue;
                             }
@@ -1106,7 +1113,11 @@ impl ViewportRenderer {
                                 shadow_pass.set_pipeline(pl);
                                 bound.pipeline = Some(key);
                             }
-                            let group1 = &mesh.object_bind_group;
+                            // The caster's own element of the frame's object-data
+                            // array, as the surface pass draws it. The mesh's
+                            // single-element group holds one item's transform, so
+                            // casters sharing a mesh would all cast from it.
+                            let (group1, inst) = per_object_slot(per_object, item_idx, mesh);
                             if bound.group1 != Some(group1 as *const _) {
                                 shadow_pass.set_bind_group(1, group1, &[]);
                                 bound.group1 = Some(group1 as *const _);
@@ -1136,7 +1147,7 @@ impl ViewportRenderer {
                             shadow_pass.draw_indexed(
                                 first_index..first_index + mesh.index_count,
                                 base_vertex,
-                                0..1,
+                                inst..inst + 1,
                             );
                             shadow_draws += 1;
                             shadow_draw_cmds += 1;
@@ -1222,24 +1233,27 @@ impl ViewportRenderer {
             // world AABB are shared by every slot and face below instead of
             // being recomputed per (face, item).
             struct PointCaster<'a> {
+                item_idx: usize,
                 item: &'a SceneRenderItem,
                 mesh: &'a crate::resources::GpuMesh,
                 world_aabb: crate::scene::aabb::Aabb,
             }
             let casters: Vec<PointCaster> = scene_items
                 .iter()
-                .filter(|item| {
+                .enumerate()
+                .filter(|(_, item)| {
                     !item.settings.hidden
                         && item.settings.cast_shadows
                         && item.settings.opacity >= 1.0
                         && !item.material.is_blend()
                 })
-                .filter_map(|item| {
+                .filter_map(|(item_idx, item)| {
                     let mesh = resources.mesh_store.get(item.mesh_id)?;
                     let world_aabb = mesh
                         .aabb
                         .transformed(&glam::Mat4::from_cols_array_2d(&item.model));
                     Some(PointCaster {
+                        item_idx,
                         item,
                         mesh,
                         world_aabb,
@@ -1310,18 +1324,13 @@ impl ViewportRenderer {
             }
             let any_dirty = slot_dirty.values().any(|&d| d);
 
-            // Make sure each casting item's `mesh.object_uniform_buf` carries
-            // the item's current world model matrix. When instancing is on,
-            // the per-item write-buffer pass earlier in `prepare_scene_internal`
-            // skips items that go through the instanced path, leaving the
-            // shared per-mesh uniform stale. The cascade shadow pass works
-            // around this by drawing instanced items through a different
-            // pipeline; the point shadow path here renders every caster
-            // through `shadow_point_pipeline` (non-instanced), so it needs
-            // a fresh per-mesh write here. Multi-item-per-mesh scenes need a
-            // dedicated per-item shadow uniform; the single-item case is the
-            // priority bug fix. Skipped entirely when every slot's cubemap is
-            // reused this frame.
+            // Per-object casters draw from their own element of the frame's
+            // object data (`per_object_slot`). Instanced casters have none:
+            // the point pass draws them through the mesh's single-element
+            // buffer, so write each one's model there first. Several instanced
+            // casters sharing a mesh therefore all cast from the last one
+            // written. Skipped entirely when every slot's cubemap is reused
+            // this frame.
             if any_dirty {
                 for c in casters.iter() {
                     // Only the model matrix (offset 0, 64 bytes) is read by
@@ -1399,7 +1408,8 @@ impl ViewportRenderer {
                         if face_frustum.cull_aabb(&c.world_aabb) {
                             continue;
                         }
-                        pass.set_bind_group(1, &c.mesh.object_bind_group, &[]);
+                        let (group1, inst) = per_object_slot(per_object, c.item_idx, c.mesh);
+                        pass.set_bind_group(1, group1, &[]);
                         bind_deform_group!(
                             pass,
                             resources,
@@ -1415,7 +1425,7 @@ impl ViewportRenderer {
                             resources.geometry.index_slice(c.mesh.index_span),
                             crate::gpu::IndexFormat::Uint32,
                         );
-                        pass.draw_indexed(0..c.mesh.index_count, 0, 0..1);
+                        pass.draw_indexed(0..c.mesh.index_count, 0, inst..inst + 1);
                     }
                 }
                 sink.push(enc.finish());
@@ -1661,4 +1671,31 @@ struct ShadowDrawCounts {
     batch_draws: u32,
     binds: u32,
     draw_commands: u32,
+}
+
+/// The group-1 bind group and instance a shadow caster draws with: the item's
+/// own element of the frame's per-object data when it has one, otherwise the
+/// mesh's single-element group at instance 0. Instanced items have no
+/// per-object element; the point pass writes their model into the mesh's
+/// buffer instead.
+fn per_object_slot<'a>(
+    per_object: &'a crate::renderer::per_object_state::PerObjectState,
+    item_idx: usize,
+    mesh: &'a crate::resources::GpuMesh,
+) -> (&'a crate::gpu::BindGroup, u32) {
+    match per_object
+        .bind_groups
+        .get(item_idx)
+        .and_then(|g| g.as_ref())
+    {
+        Some(bg) => (
+            bg,
+            per_object
+                .object_indices
+                .get(item_idx)
+                .copied()
+                .unwrap_or(0),
+        ),
+        None => (&mesh.object_bind_group, 0),
+    }
 }
