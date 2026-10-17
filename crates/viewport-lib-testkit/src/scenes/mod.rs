@@ -13,6 +13,7 @@ use viewport_lib::Colour;
 // The corpus the catalogue builds from: procedural meshes, lighting rigs,
 // textures, and (optionally) real model files. All behind the `scenes` feature
 // with this module.
+pub mod exposure;
 pub mod item_types;
 pub mod materials;
 pub mod meshes;
@@ -130,6 +131,9 @@ pub struct BuiltScene {
     /// post-process configuration (supersampling, say) rather than an item
     /// type. `None` leaves the frame's defaults alone.
     pub post_process: Option<viewport_lib::PostProcessSettings>,
+    /// Exposure override, for a scene that exercises an exposure mode. `None`
+    /// leaves the default (passthrough) exposure.
+    pub exposure: Option<viewport_lib::ExposureSettings>,
     /// Screen-space overlay items: shapes, labels, glyph runs, polylines, and
     /// retained groups compiled during `build`.
     pub overlays: viewport_lib::OverlayFrame,
@@ -253,6 +257,9 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     }
     if let Some(post) = scene.post_process.clone() {
         fd.effects.post_process = post;
+    }
+    if let Some(exposure) = scene.exposure {
+        fd.effects.display.exposure = exposure;
     }
     if let Some((objects, cap_fill)) = scene.clip.clone() {
         fd.effects.clip.objects = objects;
@@ -952,6 +959,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(overlays::scenes());
     scenes.extend(shadows::scenes());
     scenes.extend(materials::scenes());
+    scenes.extend(exposure::scenes());
     scenes
 }
 

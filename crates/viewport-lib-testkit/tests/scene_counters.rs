@@ -59,6 +59,12 @@ fn expected(name: &str) -> Option<Expected> {
         // grid's backdrop wall is the extra item.
         "materials_textures" => e(42, 42, 28, 7, 21, 22176),
         "materials_alpha" => e(65, 65, 43, 11, 32, 130),
+        // Exposure charts: the ground and the twelve cards, two instanced
+        // batches (the ground mesh and the shared card mesh).
+        "exposure_manual_ev15" => e(13, 13, 2, 2, 0, 26),
+        "exposure_physical_sunny16" => e(13, 13, 2, 2, 0, 26),
+        "exposure_auto" => e(13, 13, 2, 2, 0, 26),
+        "exposure_auto_partial" => e(13, 13, 2, 2, 0, 26),
         "many_objects" => e(144, 144, 2, 2, 0, 16992),
         "lights_eight" => e(4, 4, 2, 2, 0, 2892),
         "game_mix" => e(85, 85, 4, 4, 0, 2972),
