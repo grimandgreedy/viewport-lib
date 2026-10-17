@@ -77,7 +77,8 @@ pub(crate) fn fallback_reason(
     // per-instance custom-data channel), so instancing such a plugin would feed
     // it the wrong data. This mirrors the per-object-only `active_attribute`
     // exclusion above.
-    if let Some(pid) = item.material.shading_plugin {
+    let material = resources.material_or_default(item.material);
+    if let Some(pid) = material.shading_plugin {
         if !resources.material_plugin_instanced_ready(pid) {
             return Some(R::MaterialPluginNotReady);
         }
@@ -93,7 +94,7 @@ pub(crate) fn fallback_reason(
         return Some(R::Warp);
     }
     // A matcap is a texture bind the instanced path does not carry.
-    if item.material.matcap_id().is_some() {
+    if material.matcap_id().is_some() {
         return Some(R::Matcap);
     }
     // Per-submesh materials mean one draw per index range, each with its
@@ -146,7 +147,7 @@ pub(crate) fn fallback_reason(
 pub(crate) fn active_submesh_materials<'a>(
     item: &'a SceneRenderItem,
     mesh: &crate::resources::GpuMesh,
-) -> Option<&'a [crate::scene::material::Material]> {
+) -> Option<&'a [crate::resources::MaterialId]> {
     let mats = item.submesh_materials.as_deref()?;
     if mesh.submeshes.is_empty() || mats.len() != mesh.submeshes.len() {
         if !mesh.submeshes.is_empty() {
@@ -178,8 +179,10 @@ pub(crate) fn has_transparent_draws(item: &SceneRenderItem, resources: &DeviceRe
         .get(item.mesh_id)
         .and_then(|m| active_submesh_materials(item, m))
     {
-        Some(mats) => mats.iter().any(|m| m.is_blend()),
-        None => item.material.is_blend(),
+        Some(mats) => mats
+            .iter()
+            .any(|m| resources.material_or_default(*m).is_blend()),
+        None => resources.material_or_default(item.material).is_blend(),
     }
 }
 
@@ -203,14 +206,19 @@ pub(super) struct CommonMaterial {
 /// it were authored.
 pub(super) fn common_material(
     item: &SceneRenderItem,
+    m: &crate::scene::material::Material,
     resolved: crate::resources::material_gpu::MaterialSlots,
 ) -> CommonMaterial {
     use crate::scene::material::TextureSlot::{Albedo, Ao, Normal};
-    let m = &item.material;
     CommonMaterial {
         model: item.model,
         colour: {
-            let bc = m.base_colour.to_linear_rgb();
+            // The item's own colour, when set, replaces the material's.
+            let bc = item
+                .settings
+                .colour
+                .unwrap_or(m.base_colour)
+                .to_linear_rgb();
             [bc[0], bc[1], bc[2], item.settings.opacity]
         },
         selected: if item.settings.selected { 1 } else { 0 },
@@ -233,11 +241,11 @@ mod tests {
     /// on the two-sided pipeline.
     #[test]
     fn identical_is_not_a_styled_backface() {
-        let mut item = SceneRenderItem::default();
-        item.material.backface_policy = BackfacePolicy::Identical;
-        item.material.alpha_mode = AlphaMode::Mask(0.45);
-        assert!(item.material.is_two_sided());
-        assert!(!item.material.backface_needs_per_object());
+        let mut m = crate::scene::material::Material::default();
+        m.backface_policy = BackfacePolicy::Identical;
+        m.alpha_mode = AlphaMode::Mask(0.45);
+        assert!(m.is_two_sided());
+        assert!(!m.backface_needs_per_object());
     }
 
     /// Styled back-face policies now instance: the per-material policy/colour ride
@@ -256,8 +264,10 @@ mod tests {
 
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
-        item.material.backface_policy =
+        let mut m = crate::scene::material::Material::default();
+        m.backface_policy =
             BackfacePolicy::DifferentColour(crate::Colour::linear_rgb(1.0, 0.0, 0.0));
+        item.material = resources.upload_material(m).unwrap();
         assert!(
             is_instanceable(&item, &resources),
             "a styled-backface item should instance",
@@ -299,7 +309,9 @@ mod tests {
 
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
-        item.material.shading_plugin = Some(id);
+        let mut m = crate::scene::material::Material::default();
+        m.shading_plugin = Some(id);
+        item.material = resources.upload_material(m).unwrap();
 
         assert!(
             !is_instanceable(&item, &resources),
@@ -415,13 +427,16 @@ mod tests {
 
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
-        item.material.alpha_mode = AlphaMode::Blend;
+        let mut m = crate::scene::material::Material::default();
+        m.alpha_mode = AlphaMode::Blend;
+        item.material = resources.upload_material(m).unwrap();
         assert!(
             is_instanceable(&item, &resources),
             "a straight-blend item should instance",
         );
 
-        item.material.alpha_mode = AlphaMode::BlendPremultiplied;
+        m.alpha_mode = AlphaMode::BlendPremultiplied;
+        resources.replace_material(item.material, m).unwrap();
         assert!(
             is_instanceable(&item, &resources),
             "a premultiplied-blend item should instance (alpha_mode rides the material buffer)",
@@ -443,10 +458,12 @@ mod tests {
 
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
-        item.material.param_vis = Some(crate::scene::material::ParamVis {
+        let mut m = crate::scene::material::Material::default();
+        m.param_vis = Some(crate::scene::material::ParamVis {
             mode: crate::scene::material::ParamVisMode::Checker,
             scale: 8.0,
         });
+        item.material = resources.upload_material(m).unwrap();
         assert!(
             is_instanceable(&item, &resources),
             "a param-vis item should instance (mode/scale ride the material buffer)",
@@ -473,15 +490,17 @@ mod tests {
 
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
-        item.material.emissive = Colour::linear_rgb(2.0, 2.0, 2.0);
-        item.material.emissive_texture_id = Some(crate::resources::TextureId::from_raw(1));
+        let mut m = crate::scene::material::Material::default();
+        m.emissive = Colour::linear_rgb(2.0, 2.0, 2.0);
+        m.emissive_texture_id = Some(crate::resources::TextureId::from_raw(1));
+        item.material = resources.upload_material(m).unwrap();
         assert!(
             is_instanceable(&item, &resources),
             "an emissive-textured item should instance",
         );
 
-        item.material.metallic_roughness_texture_id =
-            Some(crate::resources::TextureId::from_raw(2));
+        m.metallic_roughness_texture_id = Some(crate::resources::TextureId::from_raw(2));
+        resources.replace_material(item.material, m).unwrap();
         assert!(
             is_instanceable(&item, &resources),
             "a metallic-roughness-textured item should instance",

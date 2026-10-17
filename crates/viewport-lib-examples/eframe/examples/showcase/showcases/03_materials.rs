@@ -14,7 +14,7 @@ use crate::eframe::egui;
 use glam::{Mat4, Vec3};
 use vpl::{
     AlphaMode, BackfacePattern, BackfacePolicy, BuiltinMatcap, ClipObject, ItemSettings, LightKind,
-    LightSource, MatcapId, Material, MeshData, MeshId, NodeId, ParamVis, ParamVisMode,
+    LightSource, MatcapId, Material, MaterialId, MeshData, MeshId, NodeId, ParamVis, ParamVisMode,
     PatternConfig, ShadingModel, TextureId, ViewportInstance, primitives,
 };
 
@@ -56,10 +56,34 @@ impl Spec {
     }
 }
 
+/// A specimen whose material has been uploaded.
+#[derive(Clone, Copy)]
+struct Cell {
+    mesh: MeshId,
+    material: MaterialId,
+    settings: ItemSettings,
+}
+
+/// Upload every specimen's material once, keeping the ids for the grid.
+fn upload_set(ctx: &mut SetupCtx, rows: Vec<Vec<Spec>>) -> Vec<Vec<Cell>> {
+    let res = ctx.session.resources_mut();
+    rows.into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(|spec| Cell {
+                    mesh: spec.mesh,
+                    material: res.upload_material(spec.material).unwrap(),
+                    settings: spec.settings,
+                })
+                .collect()
+        })
+        .collect()
+}
+
 pub struct MaterialsShowcase {
     /// `sets[0]` = Set A (kinds), `sets[1]` = Set B (surface); each is rows of
     /// specimens. Built once in setup; the chip swaps which set is in the scene.
-    sets: Vec<Vec<Vec<Spec>>>,
+    sets: Vec<Vec<Vec<Cell>>>,
     active: usize,
     shown: Option<usize>,
     nodes: Vec<NodeId>,
@@ -181,7 +205,7 @@ impl Showcase for MaterialsShowcase {
             to_specs(sphere, backface_family()),
         ];
 
-        self.sets = vec![set_a, set_b];
+        self.sets = vec![upload_set(ctx, set_a), upload_set(ctx, set_b)];
         self.rebuild(ctx.session.scene_mut());
         self.apply_clip(ctx.session);
         self.shown = Some(self.active);

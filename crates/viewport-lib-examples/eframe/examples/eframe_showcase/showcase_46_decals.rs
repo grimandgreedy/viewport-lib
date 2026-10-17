@@ -729,14 +729,14 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
     scene.add(
         Some(wall_id),
         glam::Mat4::from_translation(glam::Vec3::new(0.0, -0.1, 2.0)),
-        wall_mat,
+        res.upload_material(wall_mat).expect("material upload"),
     );
 
     let ground_mat = Material::from_colour(Colour::linear_rgb(0.78, 0.76, 0.72));
     scene.add(
         Some(ground_id),
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 3.0, -0.1)),
-        ground_mat,
+        res.upload_material(ground_mat).expect("material upload"),
     );
 
     // column standing on the ground, right side. Wax matcap with black base colour.
@@ -748,7 +748,7 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
     let column_node = scene.add(
         Some(column_id),
         glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.5, 1.5)),
-        column_mat,
+        res.upload_material(column_mat).expect("material upload"),
     );
     app.decal46_state.column_node = Some(column_node);
 
@@ -757,7 +757,8 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
     let wall_obstacle_node = scene.add(
         Some(wall_obstacle_id),
         glam::Mat4::from_translation(glam::Vec3::new(-1.5, 0.125, 2.0)),
-        Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05)),
+        res.upload_material(Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05)))
+            .expect("material upload"),
     );
     // Off the layers the surface mask holds, so no decal lands on it. It
     // stays on the higher layers, which keeps it drawn and lit.

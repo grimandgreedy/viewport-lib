@@ -25,6 +25,7 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use std::collections::HashMap;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
@@ -314,9 +315,11 @@ fn upload_mesh(
         .resources_mut()
         .upload_mesh_data(&app.device, &mesh)
         .expect("LIC mesh upload");
-    app.lic_state
-        .scene
-        .add(Some(id), transform(col, row), make_material(row));
+    app.lic_state.scene.add(
+        Some(id),
+        transform(col, row),
+        upload_material(renderer, make_material(row)),
+    );
     id
 }
 

@@ -15,15 +15,16 @@ pub(crate) fn build_instance_record(
     material_id: u32,
 ) -> InstanceData {
     use crate::resources::mesh::instancing::instance_flags as f;
-    let resolved = resources.resolve_material_slots(&item.material);
-    let cm = common_material(item, resolved);
+    let m = resources.material_or_default(item.material);
+    let resolved = resources.resolve_material_slots(m);
+    let cm = common_material(item, m, resolved);
     let mesh_closed = mesh.is_some_and(|m| m.closed);
     let has_position_override = mesh.is_some_and(|m| m.position_override_buffer.is_some());
     let has_normal_override = mesh.is_some_and(|m| m.normal_override_buffer.is_some());
     // Styled back-face `Pattern` world scale: transform the mesh AABB by this
     // instance's model to get its world extent, then divide the pattern scale
     // by it. Zero for every non-Pattern policy.
-    let backface_pattern_scale = match item.material.backface_policy {
+    let backface_pattern_scale = match m.backface_policy {
         crate::scene::material::BackfacePolicy::Pattern(cfg) => {
             let world_extent = mesh
                 .map(|m| {
@@ -45,15 +46,9 @@ pub(crate) fn build_instance_record(
         | f::when(cm.unlit != 0, f::UNLIT)
         | f::when(cm.receive_shadows != 0, f::RECEIVE_SHADOWS)
         | f::when(mesh_closed, f::MESH_CLOSED)
+        | f::when(m.is_two_sided() && !mesh_closed, f::TWO_SIDED_RECEIVER)
         | f::when(
-            item.material.is_two_sided() && !mesh_closed,
-            f::TWO_SIDED_RECEIVER,
-        )
-        | f::when(
-            matches!(
-                item.material.alpha_mode,
-                crate::scene::material::AlphaMode::Mask(_)
-            ),
+            matches!(m.alpha_mode, crate::scene::material::AlphaMode::Mask(_)),
             f::ALPHA_MASK,
         )
         | f::when(light_probe_index.is_some(), f::HAS_LIGHT_PROBE)
@@ -73,7 +68,7 @@ pub(crate) fn build_instance_record(
         colour: cm.colour,
         flags,
         material_id,
-        alpha_cutoff: match item.material.alpha_mode {
+        alpha_cutoff: match m.alpha_mode {
             crate::scene::material::AlphaMode::Mask(c) => c,
             _ => 0.5,
         },
@@ -199,27 +194,28 @@ impl ViewportRenderer {
                 continue;
             }
 
+            let m = *resources.material_or_default(item.material);
             resources.update_mesh_texture_bind_group(
                 device,
                 item.mesh_id,
-                item.material.texture_id,
-                item.material.normal_map_id,
-                item.material.ao_map_id,
+                m.texture_id,
+                m.normal_map_id,
+                m.ao_map_id,
                 item.colourmap_id,
                 item.active_attribute.as_ref().map(|a| a.name.as_str()),
-                item.material.matcap_id(),
+                m.matcap_id(),
                 item.warp_attribute.as_deref(),
-                item.material.metallic_roughness_texture_id,
-                item.material.emissive_texture_id,
+                m.metallic_roughness_texture_id,
+                m.emissive_texture_id,
             );
 
-            let mesh = resources.mesh_store.get(item.mesh_id);
-            let shading = crate::resources::material_gpu::ItemShading::from_item(item, mesh);
-            let material_id = resources.material_gpu_builder.intern(
-                &item.material,
-                resources.resolve_material_slots(&item.material),
-                &shading,
+            let shading = crate::resources::material_gpu::ItemShading::from_item(
+                item,
+                &m,
+                resources.mesh_store.get(item.mesh_id),
             );
+            let material_id = resources.material_block(item.material, &shading);
+            let mesh = resources.mesh_store.get(item.mesh_id);
             let obj_uniform =
                 build_instance_record(resources, item, mesh, false, None, material_id);
             let entry = &mut entries[idx];
@@ -237,16 +233,16 @@ impl ViewportRenderer {
                 device,
                 item.mesh_id,
                 &entry.uniform_buf,
-                item.material.texture_id,
-                item.material.normal_map_id,
-                item.material.ao_map_id,
+                m.texture_id,
+                m.normal_map_id,
+                m.ao_map_id,
                 item.colourmap_id,
                 item.active_attribute.as_ref().map(|a| a.name.as_str()),
-                item.material.matcap_id(),
+                m.matcap_id(),
                 item.warp_attribute.as_deref(),
-                item.material.metallic_roughness_texture_id,
-                item.material.emissive_texture_id,
-                item.material.selected_sampler(),
+                m.metallic_roughness_texture_id,
+                m.emissive_texture_id,
+                m.selected_sampler(),
                 prev_key,
             );
             if let Some((bg, key)) = built {

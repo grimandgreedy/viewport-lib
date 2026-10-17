@@ -146,13 +146,14 @@ fn per_object_items_select_distinct_object_data() {
     frame.viewport.show_axes_indicator = false;
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
-    let make = |x: f32, colour: [f32; 3]| {
+    let mut make = |x: f32, colour: [f32; 3]| {
+        let mut m = Material::default();
+        m.base_colour = Colour::from_linear_rgb_array(colour);
+        // Styled back faces => is_instanceable is false => per-object path.
+        m.backface_policy = BackfacePolicy::DifferentColour(Colour::linear_rgb(0.0, 0.0, 0.0));
         let mut it = SceneRenderItem::default();
         it.mesh_id = mesh_id;
-        it.material.base_colour = Colour::from_linear_rgb_array(colour);
-        // Styled back faces => is_instanceable is false => per-object path.
-        it.material.backface_policy =
-            BackfacePolicy::DifferentColour(Colour::linear_rgb(0.0, 0.0, 0.0));
+        it.material = upload_material(&mut renderer, m);
         it.settings.unlit = true;
         it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
         it
@@ -215,8 +216,9 @@ fn renderer_fits_recommended_device_limits() {
     // pass (default lighting casts shadows) all build under the capped limits.
     let mut opaque = SceneRenderItem::default();
     opaque.mesh_id = mesh_id;
-    opaque.material.backface_policy =
-        BackfacePolicy::DifferentColour(Colour::linear_rgb(0.0, 0.0, 0.0));
+    let mut styled = Material::default();
+    styled.backface_policy = BackfacePolicy::DifferentColour(Colour::linear_rgb(0.0, 0.0, 0.0));
+    opaque.material = upload_material(&mut renderer, styled);
     let mut transparent = SceneRenderItem::default();
     transparent.mesh_id = mesh_id;
     transparent.settings.opacity = 0.5;

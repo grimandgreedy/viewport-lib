@@ -22,6 +22,7 @@
 //! showcases 5, 6, 7, 19.
 
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib::plugin_api::Uploads;
@@ -166,7 +167,7 @@ impl App {
                 "Surface mesh",
                 Some(box_mesh),
                 glam::Mat4::from_translation(p),
-                mat,
+                upload_material(renderer, mat),
             );
         }
 

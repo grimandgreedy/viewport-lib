@@ -61,6 +61,7 @@ fn main() {
     renderer.set_pipeline_compilation(vpl::PipelineCompilation::Blocking);
 
     let (m_ground, m_sphere, m_cube, m_torus);
+    let (ground_mat, sphere_mat, cube_mat, torus_mat);
     {
         let res = renderer.resources_mut();
         m_ground = res
@@ -75,6 +76,20 @@ fn main() {
         m_torus = res
             .upload_mesh_data(&device, &primitives::torus(0.5, 0.18, 40, 20))
             .expect("torus");
+
+        let mut ground = Material::from_colour(Colour::linear_rgb(0.88, 0.84, 0.76));
+        ground.roughness = 0.85;
+        ground.backface_policy = BackfacePolicy::Cull;
+        ground_mat = res.upload_material(ground).expect("ground material");
+        sphere_mat = res
+            .upload_material(Material::from_colour(Colour::linear_rgb(0.78, 0.90, 0.80)))
+            .expect("sphere material");
+        cube_mat = res
+            .upload_material(Material::from_colour(Colour::linear_rgb(0.78, 0.83, 0.95)))
+            .expect("cube material");
+        torus_mat = res
+            .upload_material(Material::from_colour(Colour::linear_rgb(0.95, 0.82, 0.74)))
+            .expect("torus material");
     }
 
     // Same scene as the eframe_lighting_shadows Basic tab.
@@ -84,30 +99,28 @@ fn main() {
         ground.mesh_id = m_ground;
         ground.model =
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-        ground.material = Material::from_colour(Colour::linear_rgb(0.88, 0.84, 0.76));
-        ground.material.roughness = 0.85;
-        ground.material.backface_policy = BackfacePolicy::Cull;
+        ground.material = ground_mat;
         items.push(ground);
 
         let mut sphere = SceneRenderItem::default();
         sphere.mesh_id = m_sphere;
         sphere.model =
             glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).to_cols_array_2d();
-        sphere.material = Material::from_colour(Colour::linear_rgb(0.78, 0.90, 0.80));
+        sphere.material = sphere_mat;
         items.push(sphere);
 
         let mut cube = SceneRenderItem::default();
         cube.mesh_id = m_cube;
         cube.model =
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).to_cols_array_2d();
-        cube.material = Material::from_colour(Colour::linear_rgb(0.78, 0.83, 0.95));
+        cube.material = cube_mat;
         items.push(cube);
 
         let mut torus = SceneRenderItem::default();
         torus.mesh_id = m_torus;
         torus.model =
             glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).to_cols_array_2d();
-        torus.material = Material::from_colour(Colour::linear_rgb(0.95, 0.82, 0.74));
+        torus.material = torus_mat;
         items.push(torus);
         items
     };

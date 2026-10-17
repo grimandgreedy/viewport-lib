@@ -382,15 +382,16 @@ impl std::ops::DerefMut for InputCtx<'_> {
 /// A fullscreen winit application driving a [`ViewportInstance`].
 ///
 /// ```rust,ignore
-/// use viewport_lib::{AppConfig, Material, ViewportApp, primitives};
+/// use viewport_lib::{AppConfig, Colour, Material, ViewportApp, primitives};
 ///
 /// let mut cube = None;
 /// ViewportApp::new(AppConfig::default().with_title("demo"))
 ///     .setup(|viewport, device| {
 ///         let mesh = viewport.resources_mut()
 ///             .upload_mesh_data(device, &primitives::cube(1.0)).unwrap();
-///         cube = Some(viewport.scene_mut().add(
-///             Some(mesh), glam::Mat4::IDENTITY, Material::from_colour([0.85, 0.25, 0.2])));
+///         let red = viewport.resources_mut()
+///             .upload_material(Material::from_colour(Colour::linear_rgb(0.85, 0.25, 0.2))).unwrap();
+///         cube = Some(viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, red));
 ///     })
 ///     .run(move |ctx| {
 ///         if let Some(id) = cube {

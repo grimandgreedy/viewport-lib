@@ -22,6 +22,11 @@ pub struct ItemSettings {
     pub unlit: bool,
     /// Global opacity multiplier. 1.0 = fully opaque, 0.0 = fully transparent. Default 1.0.
     pub opacity: f32,
+    /// Replaces the material's base colour for this item. Default `None`.
+    ///
+    /// Items that differ only in colour can share one material, and so one
+    /// batch, with a colour each; recolouring one item needs no new material.
+    pub colour: Option<crate::colour::Colour>,
     /// Render as wireframe regardless of the global wireframe flag. Default `false`. Extended conceptually to non-mesh
     /// objects to render their sub-objects as meshes, e.g., a VolumeItem has its voxels as wireframe boxes.
     pub wireframe: bool,
@@ -111,6 +116,7 @@ impl Default for ItemSettings {
             hidden: false,
             unlit: false,
             opacity: 1.0,
+            colour: None,
             wireframe: false,
             pick_id: crate::ids::PickId::NONE,
             selected: false,

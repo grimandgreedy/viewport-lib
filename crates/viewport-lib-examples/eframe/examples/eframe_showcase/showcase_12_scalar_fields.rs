@@ -7,6 +7,7 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
@@ -111,7 +112,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
                 m.roughness = 0.5;
-                m
+                upload_material(renderer, m)
             },
         );
         self.scalar_state.node_ids[0] = sphere_node;
@@ -131,7 +132,9 @@ impl App {
                 .add_named("Wave Grid", Some(wave_id), glam::Mat4::IDENTITY, {
                     let mut m = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
                     m.roughness = 0.5;
-                    m
+                    // The open sheet is seen from both sides.
+                    m.backface_policy = vpl::BackfacePolicy::Identical;
+                    upload_material(renderer, m)
                 });
         self.scalar_state.node_ids[1] = wave_node;
         self.scalar_state.pick_positions[1] = wave_mesh.positions.clone();
@@ -151,7 +154,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
                 m.roughness = 0.5;
-                m
+                upload_material(renderer, m)
             },
         );
         self.scalar_state.node_ids[2] = box_node;
@@ -350,7 +353,6 @@ pub(crate) fn scene(
             .collect_render_items(&app.scalar_state.selection);
         let colourmap_id = vpl::ColourmapId(app.scalar_state.colourmap as usize);
         let active_node_id = app.scalar_state.node_ids[app.scalar_state.active_object];
-        let wave_node_id = app.scalar_state.node_ids[1];
         if let Some(item) = items
             .iter_mut()
             .find(|item| item.settings.pick_id == vpl::PickId(active_node_id))
@@ -370,12 +372,6 @@ pub(crate) fn scene(
             } else {
                 None
             };
-        }
-        if let Some(item) = items
-            .iter_mut()
-            .find(|item| item.settings.pick_id == vpl::PickId(wave_node_id))
-        {
-            item.material.backface_policy = vpl::BackfacePolicy::Identical;
         }
         let sg = app.scalar_state.scene.version();
         let lighting = {

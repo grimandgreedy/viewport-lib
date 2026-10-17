@@ -31,6 +31,12 @@ fn frustum_cull_rejects_behind_camera() {
         .upload_mesh_data(&h.device, &cube(1.0))
         .expect("cube upload");
 
+    let grey = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
+        .expect("material upload");
+
     // 20 cubes along x = -47.5 .. 47.5, all in one instanced batch.
     let items: Vec<SceneRenderItem> = (0..20)
         .map(|i| {
@@ -38,7 +44,7 @@ fn frustum_cull_rejects_behind_camera() {
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(Vec3::new(-47.5 + 5.0 * i as f32, 0.0, 0.0))
                 .to_cols_array_2d();
-            item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
+            item.material = grey;
             item
         })
         .collect();

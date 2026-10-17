@@ -72,13 +72,15 @@ fn two_sided_transparent_draws_back_faces_on_hdr_oit() {
         frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
         frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
         let mut item = SceneRenderItem::default();
+        let mut mat = Material::default();
         item.mesh_id = mesh_id;
-        item.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
+        mat.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
         item.settings.unlit = true;
         item.settings.opacity = opacity;
         if two_sided {
-            item.material.backface_policy = BackfacePolicy::Identical;
+            mat.backface_policy = BackfacePolicy::Identical;
         }
+        item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         coverage(&renderer.render_offscreen(&device, &queue, &frame, size, size))
     };
@@ -166,11 +168,13 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
 
     let mut item = SceneRenderItem::default();
+    let mut mat = Material::default();
     item.mesh_id = mesh_id;
-    item.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
-    item.material.shading_plugin = Some(plugin_id);
-    item.material.backface_policy = BackfacePolicy::Identical;
+    mat.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
+    mat.shading_plugin = Some(plugin_id);
+    mat.backface_policy = BackfacePolicy::Identical;
     item.settings.opacity = 0.75;
+    item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);

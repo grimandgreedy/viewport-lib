@@ -89,7 +89,11 @@ fn contour_lines_coincide_with_extracted_isolines() {
     let mut surface = SceneRenderItem::default();
     surface.mesh_id = mesh_id;
     surface.model = model.to_cols_array_2d();
-    surface.material = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
+    surface.material = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0)))
+        .expect("material upload");
     surface.settings.unlit = true;
 
     let mut extracted = frame(surface.clone());

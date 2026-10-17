@@ -375,7 +375,7 @@ impl ViewportRenderer {
                 );
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id: item.mesh_id,
-                    two_sided: item.material.is_two_sided(),
+                    two_sided: resources.material_or_default(item.material).is_two_sided(),
                     deform_instance: item.deform_instance,
                     mask,
                 });
@@ -511,7 +511,15 @@ impl ViewportRenderer {
                         if let Some(cap) = crate::geometry::mesh::cap::generate_cap_mesh(
                             pos, idx, &model, plane_n, distance,
                         ) {
-                            let bc = item.material.base_colour.to_linear_rgb();
+                            let bc = item
+                                .settings
+                                .colour
+                                .unwrap_or(
+                                    self.resources
+                                        .material_or_default(item.material)
+                                        .base_colour,
+                                )
+                                .to_linear_rgb();
                             let colour = cap_colour.unwrap_or([bc[0], bc[1], bc[2], 1.0]);
                             let i = cap_buffers.len();
                             if i == cap_pool.len() {

@@ -47,7 +47,11 @@ fn scene(harness: &mut Harness, refraction: bool) -> BuiltScene {
     let mut wall = viewport_lib::SceneRenderItem::default();
     wall.mesh_id = slab;
     wall.model = glam::Mat4::from_translation(Vec3::new(0.0, 2.5, 0.0)).to_cols_array_2d();
-    wall.material = Material::pbr(Colour::linear_rgb(0.7, 0.35, 0.3), 0.0, 0.8);
+    wall.material = harness
+        .renderer
+        .resources_mut()
+        .upload_material(Material::pbr(Colour::linear_rgb(0.7, 0.35, 0.3), 0.0, 0.8))
+        .expect("material upload");
 
     let mut volume = ScatterVolume::box_uniform(
         Aabb {

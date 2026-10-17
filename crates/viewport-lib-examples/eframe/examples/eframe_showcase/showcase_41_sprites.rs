@@ -19,6 +19,7 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystems;
@@ -34,8 +35,9 @@ use vpl::Selection;
 #[allow(unused_imports)]
 use vpl::scene::{Scene, build_light_indicators};
 use vpl::{
-    BackfacePolicy, FrameData, LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem,
-    PolylineItem, SceneRenderItem, SpriteBlend, ViewportRenderer, primitives,
+    BackfacePolicy, FrameData, LightKind, LightSource, LightingSettings, Material, MaterialId,
+    MeshId, MeshInstanceItem, PolylineItem, SceneRenderItem, SpriteBlend, ViewportRenderer,
+    primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -171,6 +173,8 @@ pub(crate) struct SpriteState {
     /// Flat plane mesh used as the three corner walls in the Distortion
     /// sub-mode.
     pub wall_id: MeshId,
+    /// Backdrop sphere, shadow slab and corner wall materials.
+    pub backdrop_materials: [MaterialId; 3],
     /// Strength slider for the Distortion sub-mode (NDC pixels).
     pub distortion_strength: f32,
     /// Current directional-light azimuth (radians around Z) for the Lit demo.
@@ -278,6 +282,7 @@ impl Default for SpriteState {
             flame_tex: vpl::TextureId::INVALID,
             shockwave_tex: vpl::TextureId::INVALID,
             wall_id: MeshId::INVALID,
+            backdrop_materials: [MaterialId::DEFAULT; 3],
             distortion_strength: 60.0,
             lit_angle: 0.0,
             lit_auto_rotate: true,
@@ -671,6 +676,23 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
     app.sprite_state.particles = spawn_burst(2000);
     app.sprite_state.glow_tex = glow_tex;
     app.sprite_state.atlas_tex = atlas_tex;
+    let mut sphere_mat = Material::from_colour(Colour::linear_rgb(0.10, 0.26, 0.68));
+    sphere_mat.specular = 0.2;
+    let mut slab_mat = Material::from_colour(Colour::linear_rgb(0.35, 0.3, 0.25));
+    slab_mat.specular = 0.1;
+    let mut wall_mat = Material::from_colour(Colour::linear_rgb(0.85, 0.85, 0.85));
+    wall_mat.specular = 0.1;
+    wall_mat.texture_id = Some(atlas_tex);
+    // Render both sides of each wall so the textured surface is visible from
+    // every orbit angle, not just the side the primitive normal points toward.
+    // Without this the shockwave sees an empty scene behind it from half the
+    // orbit and the distortion samples the clear colour.
+    wall_mat.backface_policy = BackfacePolicy::Identical;
+    app.sprite_state.backdrop_materials = [
+        upload_material(renderer, sphere_mat),
+        upload_material(renderer, slab_mat),
+        upload_material(renderer, wall_mat),
+    ];
     app.sprite_state.atlas_positions = atlas_positions;
     app.sprite_state.atlas_frame = 0;
     app.sprite_state.trails = trails;
@@ -1566,15 +1588,12 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
     if !app.sprite_state.built {
         return vec![];
     }
+    let [sphere_mat, slab_mat, wall_mat] = app.sprite_state.backdrop_materials;
     match app.sprite_state.sub_mode {
         SpriteSubMode::Placed | SpriteSubMode::Blend | SpriteSubMode::Soft => {
             // The sphere acts as both a backdrop (Placed, Blend) and the
             // opaque geometry the soft-particle fade is measured against.
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = app.sprite_state.sphere_id;
-            item.material.base_colour = Colour::linear_rgb(0.10, 0.26, 0.68);
-            item.material.specular = 0.2;
-            vec![item]
+            vec![SceneRenderItem::new(app.sprite_state.sphere_id, sphere_mat)]
         }
         SpriteSubMode::Lit => {
             // A small slab between the two columns acts as a shadow caster.
@@ -1585,16 +1604,13 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
             if !app.sprite_state.lit_receive_shadows {
                 return vec![];
             }
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = app.sprite_state.sphere_id;
+            let mut item = SceneRenderItem::new(app.sprite_state.sphere_id, slab_mat);
             item.model = glam::Mat4::from_scale_rotation_translation(
                 glam::Vec3::new(0.05, 1.4, 1.0),
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(0.0, 0.0, 2.0),
             )
             .to_cols_array_2d();
-            item.material.base_colour = Colour::linear_rgb(0.35, 0.3, 0.25);
-            item.material.specular = 0.1;
             vec![item]
         }
         SpriteSubMode::Distortion => {
@@ -1616,18 +1632,8 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
             walls
                 .iter()
                 .map(|m| {
-                    let mut item = SceneRenderItem::default();
-                    item.mesh_id = app.sprite_state.wall_id;
+                    let mut item = SceneRenderItem::new(app.sprite_state.wall_id, wall_mat);
                     item.model = m.to_cols_array_2d();
-                    item.material.base_colour = Colour::linear_rgb(0.85, 0.85, 0.85);
-                    item.material.specular = 0.1;
-                    item.material.texture_id = Some(app.sprite_state.atlas_tex);
-                    // Render both sides of each wall so the textured surface
-                    // is visible from every orbit angle, not just the side
-                    // the primitive normal points toward. Without this the
-                    // shockwave sees an empty scene behind it from half the
-                    // orbit and the distortion samples the clear colour.
-                    item.material.backface_policy = BackfacePolicy::Identical;
                     item
                 })
                 .collect()
@@ -1638,28 +1644,28 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
             SpriteOrientation::CameraFacing => vec![],
             // Candle flames sit on a dark slab so the additive glow reads.
             SpriteOrientation::AxisLocked => {
-                let mut item = SceneRenderItem::default();
-                item.mesh_id = app.sprite_state.sphere_id;
+                let mut item =
+                    SceneRenderItem::new(app.sprite_state.sphere_id, MaterialId::DEFAULT);
                 item.model = glam::Mat4::from_scale_rotation_translation(
                     glam::Vec3::new(5.0, 5.0, 0.02),
                     glam::Quat::IDENTITY,
                     glam::Vec3::new(0.0, 0.0, -0.05),
                 )
                 .to_cols_array_2d();
-                item.material.base_colour = Colour::linear_rgb(0.18, 0.12, 0.08);
+                item.settings.colour = Some(Colour::linear_rgb(0.18, 0.12, 0.08));
                 vec![item]
             }
             // Rain reads against a darker disc that acts as a puddle.
             SpriteOrientation::VelocityStretched => {
-                let mut item = SceneRenderItem::default();
-                item.mesh_id = app.sprite_state.sphere_id;
+                let mut item =
+                    SceneRenderItem::new(app.sprite_state.sphere_id, MaterialId::DEFAULT);
                 item.model = glam::Mat4::from_scale_rotation_translation(
                     glam::Vec3::new(5.0, 5.0, 0.02),
                     glam::Quat::IDENTITY,
                     glam::Vec3::new(0.0, 0.0, -0.5),
                 )
                 .to_cols_array_2d();
-                item.material.base_colour = Colour::linear_rgb(0.18, 0.22, 0.28);
+                item.settings.colour = Some(Colour::linear_rgb(0.18, 0.22, 0.28));
                 vec![item]
             }
         },

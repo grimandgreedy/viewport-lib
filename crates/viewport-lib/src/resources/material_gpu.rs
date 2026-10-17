@@ -13,15 +13,8 @@
 
 use crate::scene::material::Material;
 
-/// Maximum distinct material transform blocks per frame. Distinct blocks are rare
-/// (identity collapses to one entry), so this is a generous ceiling that is not
-/// expected to bind in practice. On overflow, further materials fall back to the
-/// identity entry (id 0) and [`MaterialGpuBuilder::overflowed`] is set so the
-/// caller can log it.
-pub(crate) const MATERIAL_GPU_CAPACITY: usize = 4096;
-
-/// Blocks the material buffer holds before its first growth. A scene with more
-/// distinct transforms grows it, up to [`MATERIAL_GPU_CAPACITY`].
+/// Blocks the material buffer holds before its first growth. It doubles as
+/// materials are uploaded, up to what one storage binding can hold.
 pub(crate) const MATERIAL_GPU_INITIAL_CAPACITY: usize = 64;
 
 /// Number of texture slots carrying an independent transform, in this order:
@@ -172,9 +165,46 @@ impl Default for ItemShading {
 }
 
 impl ItemShading {
-    /// Read the item's shading facts off the item and its resident mesh.
+    /// The shading a stored material's own block is built with: the defaults,
+    /// plus the matcap blend flag, which the material decides.
+    pub(crate) fn for_material(m: &Material) -> ItemShading {
+        ItemShading {
+            matcap: m.matcap_id().map(|id| id.blendable),
+            ..ItemShading::default()
+        }
+    }
+
+    /// The shading as hashable bits.
+    pub(crate) fn key(&self) -> ShadingKey {
+        let (mode, directional, shadowmask, sb, layer) =
+            self.lightmap
+                .unwrap_or((u32::MAX, false, false, [0.0; 4], 0));
+        let nan = self.nan_colour.unwrap_or([0.0; 4]);
+        [
+            self.scalar_range.0.to_bits(),
+            self.scalar_range.1.to_bits(),
+            self.nan_colour.is_some() as u32
+                | (self.matcap.is_some() as u32) << 1
+                | ((self.matcap == Some(true)) as u32) << 2
+                | (directional as u32) << 3
+                | (shadowmask as u32) << 4,
+            nan[0].to_bits(),
+            nan[1].to_bits(),
+            nan[2].to_bits(),
+            nan[3].to_bits(),
+            mode,
+            sb[0].to_bits(),
+            sb[1].to_bits(),
+            sb[2].to_bits() ^ sb[3].to_bits().rotate_left(16),
+            layer,
+        ]
+    }
+
+    /// Read the item's shading facts off the item, its material and its
+    /// resident mesh.
     pub(crate) fn from_item(
         item: &crate::renderer::SceneRenderItem,
+        material: &Material,
         mesh: Option<&crate::resources::GpuMesh>,
     ) -> ItemShading {
         let scalar_range = match &item.active_attribute {
@@ -187,7 +217,7 @@ impl ItemShading {
         ItemShading {
             scalar_range,
             nan_colour: item.nan_colour.map(|c| c.to_linear_rgba()),
-            matcap: item.material.matcap_id().map(|id| id.blendable),
+            matcap: material.matcap_id().map(|id| id.blendable),
             lightmap: mesh.and_then(|m| m.lightmap.as_ref()).map(|lm| {
                 (
                     lm.mode,
@@ -420,114 +450,189 @@ impl MaterialGpu {
     }
 }
 
-/// Per-frame interner that deduplicates material transform blocks and assigns each
-/// a stable `material_id` (its index in the uploaded buffer). Entry 0 is always
-/// the identity block, so any material with no authored transform maps to 0.
-pub(crate) struct MaterialGpuBuilder {
-    entries: Vec<MaterialGpu>,
-    lookup: crate::resources::fast_hash::FastMap<[u8; MATERIAL_GPU_BYTES], u32>,
-    /// The last block interned and its id: consecutive items usually share a
-    /// material, and a byte compare is far cheaper than a hash.
-    last: Option<([u8; MATERIAL_GPU_BYTES], u32)>,
-    /// Set when the capacity was hit and some materials were forced to entry 0.
-    pub(crate) overflowed: bool,
-    /// When true, `from_material` fills the bindless texture array indices; when
-    /// false (the per-batch binding), the index slots are constant `NO_TEXTURE`
-    /// so blocks dedup independently of their textures. Fixed for the renderer's
-    /// lifetime, set from the device's texture-binding mode.
+/// The GPU material table: one block per stored material at a fixed index,
+/// plus variant blocks for items whose shading facts differ from their
+/// material's default (`ItemShading`).
+///
+/// A stored material's block is written at upload and rewritten in place on
+/// replace, so a handle names the same index for its lifetime. Variants are
+/// keyed by material and shading, built on first use, and dropped when the
+/// instanced batch cache rebuilds, since every item that names one is
+/// re-packed then. Block 0 is the default material.
+pub(crate) struct MaterialTable {
+    blocks: Vec<MaterialGpu>,
+    free: Vec<u32>,
+    /// `(material, shading key) -> (block, shading)`.
+    variants: crate::resources::fast_hash::FastMap<
+        (crate::resources::MaterialId, ShadingKey),
+        (u32, ItemShading),
+    >,
+    /// Lowest and one-past-highest block written since the last upload.
+    dirty: Option<(usize, usize)>,
+    /// When true, blocks carry bindless texture array indices; when false (the
+    /// per-batch binding), the index slots are constant `NO_TEXTURE`. Fixed
+    /// for the renderer's lifetime, set from the device's texture-binding mode.
     bindless: bool,
 }
 
-impl Default for MaterialGpuBuilder {
+/// Variant blocks the table holds before the instanced batch cache is forced
+/// to rebuild and drop them. Variants accumulate only from items whose shading
+/// facts change between rebuilds (an animated scalar range on a static scene).
+pub(crate) const MATERIAL_VARIANT_LIMIT: usize = 4096;
+
+/// [`ItemShading`] as hashable bits.
+pub(crate) type ShadingKey = [u32; 12];
+
+impl Default for MaterialTable {
     fn default() -> Self {
-        let mut b = MaterialGpuBuilder {
-            entries: Vec::new(),
-            lookup: Default::default(),
-            last: None,
-            overflowed: false,
+        let mut t = MaterialTable {
+            blocks: Vec::new(),
+            free: Vec::new(),
+            variants: Default::default(),
+            dirty: None,
             bindless: false,
         };
-        b.reset();
-        b
-    }
-}
-
-impl MaterialGpuBuilder {
-    /// Clear to a single default-material entry (id 0) for a new frame. Entry 0 is
-    /// the default material block, so a draw with `material_id` 0 (the normal-vis
-    /// uniform, or an overflow fallback) reads sensible default shading. A default
-    /// material interns straight to 0.
-    pub(crate) fn reset(&mut self) {
-        self.entries.clear();
-        self.lookup.clear();
-        self.last = None;
-        self.overflowed = false;
-        // The default material names no textures, so nothing to resolve.
-        let default_block = MaterialGpu::from_material(
+        let block = t.build(
             &Material::default(),
-            self.bindless,
             MaterialSlots::default(),
             &ItemShading::default(),
         );
-        self.entries.push(default_block);
-        self.lookup.insert(bytemuck::cast(default_block), 0);
+        t.blocks.push(block);
+        t.mark(0);
+        t
     }
+}
 
-    /// Select whether interned blocks carry bindless texture array indices. Set
-    /// once from the device's texture-binding mode; re-runs `reset` so the
-    /// default entry matches.
+impl MaterialTable {
+    /// Select whether blocks carry bindless texture array indices. The caller
+    /// rewrites every stored block afterwards.
     pub(crate) fn set_bindless(&mut self, bindless: bool) {
         self.bindless = bindless;
-        self.reset();
     }
 
-    /// Intern a material's block, returning its `material_id` (its index in the
-    /// uploaded buffer). Deduplicates by the block bytes, so instances sharing a
-    /// material share an id. On overflow, returns 0.
-    ///
-    /// `resolved` comes from [`MaterialSlots::resolve`] against the texture store.
-    /// The caller resolves rather than this method, so one resolve serves both the
-    /// block and the per-item flags in `common_material`.
-    pub(crate) fn intern(
-        &mut self,
+    pub(crate) fn build(
+        &self,
         m: &Material,
         resolved: MaterialSlots,
-        item: &ItemShading,
-    ) -> u32 {
-        let block = MaterialGpu::from_material(m, self.bindless, resolved, item);
-        let key: [u8; MATERIAL_GPU_BYTES] = bytemuck::cast(block);
-        if let Some((last, id)) = &self.last
-            && *last == key
-        {
-            return *id;
-        }
-        let id = if let Some(&id) = self.lookup.get(&key) {
-            id
-        } else if self.entries.len() >= MATERIAL_GPU_CAPACITY {
-            self.overflowed = true;
-            return 0;
-        } else {
-            let id = self.entries.len() as u32;
-            self.entries.push(block);
-            self.lookup.insert(key, id);
-            id
+        shading: &ItemShading,
+    ) -> MaterialGpu {
+        MaterialGpu::from_material(m, self.bindless, resolved, shading)
+    }
+
+    fn mark(&mut self, index: usize) {
+        self.dirty = Some(match self.dirty {
+            Some((lo, hi)) => (lo.min(index), hi.max(index + 1)),
+            None => (index, index + 1),
+        });
+    }
+
+    /// Store `block` at a free index and return it, or `None` when the table
+    /// is at `capacity`.
+    pub(crate) fn alloc(&mut self, block: MaterialGpu, capacity: usize) -> Option<u32> {
+        let index = match self.free.pop() {
+            Some(i) => {
+                self.blocks[i as usize] = block;
+                i
+            }
+            None => {
+                if self.blocks.len() >= capacity {
+                    return None;
+                }
+                self.blocks.push(block);
+                (self.blocks.len() - 1) as u32
+            }
         };
-        self.last = Some((key, id));
-        id
+        self.mark(index as usize);
+        Some(index)
     }
 
-    /// The blocks to upload this frame (always at least the identity entry).
-    pub(crate) fn entries(&self) -> &[MaterialGpu] {
-        &self.entries
+    pub(crate) fn write(&mut self, index: u32, block: MaterialGpu) {
+        self.blocks[index as usize] = block;
+        self.mark(index as usize);
     }
 
-    /// True when the table has grown past half its capacity. The table is
-    /// only reset when the instanced batch cache misses, so a long run of hit
-    /// frames that keep interning new blocks (per-object items changing
-    /// material without a generation bump) needs a forced miss before it
-    /// overflows.
-    pub(crate) fn near_capacity(&self) -> bool {
-        self.entries.len() > MATERIAL_GPU_CAPACITY / 2
+    pub(crate) fn release(&mut self, index: u32) {
+        debug_assert_ne!(index, 0, "block 0 is the default material");
+        self.free.push(index);
+    }
+
+    /// The variant block for `id` drawn with `shading`, built with `build` on
+    /// first use. Falls back to `base` when the table is full.
+    pub(crate) fn variant(
+        &mut self,
+        id: crate::resources::MaterialId,
+        shading: &ItemShading,
+        base: u32,
+        capacity: usize,
+        build: impl FnOnce(&Self) -> MaterialGpu,
+    ) -> u32 {
+        let key = (id, shading.key());
+        if let Some(&(index, _)) = self.variants.get(&key) {
+            return index;
+        }
+        let block = build(self);
+        match self.alloc(block, capacity) {
+            Some(index) => {
+                self.variants.insert(key, (index, *shading));
+                index
+            }
+            None => base,
+        }
+    }
+
+    /// The variants of `id`, with their shading, for a rewrite after replace.
+    pub(crate) fn variants_of(&self, id: crate::resources::MaterialId) -> Vec<(u32, ItemShading)> {
+        self.variants
+            .iter()
+            .filter(|((m, _), _)| *m == id)
+            .map(|(_, v)| *v)
+            .collect()
+    }
+
+    /// Drop the variants of `id`, freeing their blocks.
+    pub(crate) fn release_variants_of(&mut self, id: crate::resources::MaterialId) {
+        let freed: Vec<u32> = self
+            .variants
+            .iter()
+            .filter(|((m, _), _)| *m == id)
+            .map(|(_, (b, _))| *b)
+            .collect();
+        self.variants.retain(|(m, _), _| *m != id);
+        self.free.extend(freed);
+    }
+
+    /// Drop every variant. Called when the instanced batch cache rebuilds, so
+    /// no packed record still names one.
+    pub(crate) fn clear_variants(&mut self) {
+        let mut freed: Vec<u32> = self.variants.values().map(|(b, _)| *b).collect();
+        self.variants.clear();
+        // Highest first, so `alloc` pops the lowest: a rebuild of the same
+        // scene hands its variants the same blocks, and its records match the
+        // last upload byte for byte.
+        freed.sort_unstable_by(|a, b| b.cmp(a));
+        self.free.extend(freed);
+    }
+
+    pub(crate) fn variants_near_limit(&self) -> bool {
+        self.variants.len() > MATERIAL_VARIANT_LIMIT
+    }
+
+    /// Every block, indexed by `material_id`. Freed indices hold stale data
+    /// nothing reads.
+    pub(crate) fn blocks(&self) -> &[MaterialGpu] {
+        &self.blocks
+    }
+
+    /// The block range written since the last call, clearing it.
+    pub(crate) fn take_dirty(&mut self) -> Option<(usize, usize)> {
+        self.dirty.take()
+    }
+
+    /// Mark every block for upload, after the GPU buffer was replaced.
+    pub(crate) fn mark_all(&mut self) {
+        if !self.blocks.is_empty() {
+            self.dirty = Some((0, self.blocks.len()));
+        }
     }
 }
 
@@ -549,33 +654,49 @@ mod tests {
     use super::*;
     use crate::scene::material::{Material, TextureSlot, UvTransform};
 
-    #[test]
-    fn identity_material_interns_to_zero() {
-        let mut b = MaterialGpuBuilder::default();
-        assert_eq!(
-            b.intern(
-                &Material::default(),
-                all_live(&Material::default()),
-                &ItemShading::default()
-            ),
-            0
-        );
-        // Only the reserved identity entry exists.
-        assert_eq!(b.entries().len(), 1);
+    fn bytes(m: &Material, bindless: bool) -> [u8; MATERIAL_GPU_BYTES] {
+        bytemuck::cast(MaterialGpu::from_material(
+            m,
+            bindless,
+            all_live(m),
+            &ItemShading::default(),
+        ))
     }
 
     #[test]
-    fn rotation_makes_a_distinct_entry_and_dedups() {
-        let mut b = MaterialGpuBuilder::default();
+    fn default_table_holds_the_default_block() {
+        let t = MaterialTable::default();
+        assert_eq!(t.blocks().len(), 1);
+        let block: [u8; MATERIAL_GPU_BYTES] = bytemuck::cast(t.blocks()[0]);
+        assert_eq!(block, bytes(&Material::default(), false));
+    }
+
+    #[test]
+    fn rotation_changes_the_block() {
         let rotated = Material::default().with_uv_rotation(std::f32::consts::FRAC_PI_2);
-        let id = b.intern(&rotated, all_live(&rotated), &ItemShading::default());
-        assert_ne!(id, 0, "a rotated material is not identity");
-        // Same transform interns to the same id (dedup), no new entry.
+        assert_ne!(bytes(&rotated, false), bytes(&Material::default(), false));
+    }
+
+    #[test]
+    fn variants_are_keyed_by_shading_and_dropped_on_clear() {
+        let mut t = MaterialTable::default();
+        let id = crate::resources::MaterialId::DEFAULT;
+        let ranged = ItemShading {
+            scalar_range: (2.0, 5.0),
+            ..ItemShading::default()
+        };
+        let build =
+            |t: &MaterialTable| t.build(&Material::default(), MaterialSlots::default(), &ranged);
+        let a = t.variant(id, &ranged, 0, 64, build);
+        assert_ne!(a, 0);
         assert_eq!(
-            b.intern(&rotated, all_live(&rotated), &ItemShading::default()),
-            id
+            t.variant(id, &ranged, 0, 64, build),
+            a,
+            "same shading, same block"
         );
-        assert_eq!(b.entries().len(), 2);
+        t.clear_variants();
+        let b = t.variant(id, &ranged, 0, 64, build);
+        assert_eq!(b, a, "the freed block is reused");
     }
 
     #[test]
@@ -673,26 +794,10 @@ mod tests {
     fn sampler_key_splits_blocks_and_default_key_does_not() {
         use crate::scene::material::{SamplerKey, TextureSlot};
         let plain = Material::default();
-        let default_key = plain
-            .clone()
-            .with_sampler(TextureSlot::Albedo, SamplerKey::default());
-        let clamp = plain
-            .clone()
-            .with_sampler(TextureSlot::Albedo, SamplerKey::clamp());
-        let mut b = MaterialGpuBuilder::default();
-        let a = b.intern(&plain, all_live(&plain), &ItemShading::default());
-        assert_eq!(
-            b.intern(
-                &default_key,
-                all_live(&default_key),
-                &ItemShading::default()
-            ),
-            a
-        );
-        assert_ne!(
-            b.intern(&clamp, all_live(&clamp), &ItemShading::default()),
-            a
-        );
+        let default_key = plain.with_sampler(TextureSlot::Albedo, SamplerKey::default());
+        let clamp = plain.with_sampler(TextureSlot::Albedo, SamplerKey::clamp());
+        assert_eq!(bytes(&default_key, false), bytes(&plain, false));
+        assert_ne!(bytes(&clamp, false), bytes(&plain, false));
     }
 
     #[test]
@@ -709,24 +814,19 @@ mod tests {
         assert_eq!(b.tex_index0[2], NO_TEXTURE, "no AO texture");
         assert_eq!(b.tex_index0[3], NO_TEXTURE, "no MR texture");
         assert_eq!(b.tex_index1[0], 9, "emissive index");
-        // The interner keys on the full block, so under bindless two materials
-        // that differ only by texture no longer dedup together.
-        let mut with_indices = MaterialGpuBuilder::default();
-        with_indices.set_bindless(true);
-        let a_id = with_indices.intern(&m, all_live(&m), &ItemShading::default());
-        let mut m2 = m.clone();
+        // Under bindless two materials that differ only by texture build
+        // different blocks; per-batch, the textures are not in the block.
+        let mut m2 = m;
         m2.texture_id = Some(crate::resources::TextureId::from_raw(5));
         assert_ne!(
-            a_id,
-            with_indices.intern(&m2, all_live(&m2), &ItemShading::default()),
+            bytes(&m, true),
+            bytes(&m2, true),
             "bindless splits by texture"
         );
-        // Per-batch: the same two materials dedup (textures not in the block).
-        let mut per_batch = MaterialGpuBuilder::default();
         assert_eq!(
-            per_batch.intern(&m, all_live(&m), &ItemShading::default()),
-            per_batch.intern(&m2, all_live(&m2), &ItemShading::default()),
-            "per-batch dedups across textures",
+            bytes(&m, false),
+            bytes(&m2, false),
+            "per-batch ignores textures"
         );
     }
 }

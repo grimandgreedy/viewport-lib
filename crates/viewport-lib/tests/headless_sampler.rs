@@ -83,12 +83,14 @@ fn material_sampler_wrap_mode_changes_tiling() {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh;
             item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-            item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
-            item.material.texture_id = Some(tex);
-            item.settings.unlit = true;
+            let mut m = Material::default();
+            m.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            m.texture_id = Some(tex);
             if let Some(key) = sampler {
-                item.material = item.material.with_sampler(TextureSlot::Albedo, key);
+                m = m.with_sampler(TextureSlot::Albedo, key);
             }
+            item.material = upload_material(renderer, m);
+            item.settings.unlit = true;
             // The single copy draws per-object, so the two paths compare.
             item.settings.force_per_object = copies == 1;
             frame.scene.surfaces = SurfaceSubmission::Flat(vec![item; copies].into());

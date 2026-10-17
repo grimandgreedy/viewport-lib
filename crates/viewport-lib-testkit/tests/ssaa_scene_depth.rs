@@ -21,11 +21,12 @@ fn decal_frame(
     ssaa_factor: u32,
     texture: viewport_lib::TextureId,
     mesh: viewport_lib::MeshId,
+    material: viewport_lib::MaterialId,
 ) -> FrameData {
     let camera = orbit_camera(glam::Vec3::ZERO, 6.0, 0.6, 1.0);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
+    item.material = material;
     let mut fd = FrameData::new(
         CameraFrame::from_camera(&camera, [W as f32, H as f32]),
         SceneFrame::from_surface_items(vec![item]),
@@ -70,7 +71,13 @@ fn a_decal_survives_supersampling() {
         )
         .expect("texture upload");
 
-    let plain = decal_frame(1, texture, mesh);
+    let grey = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
+        .expect("material upload");
+
+    let plain = decal_frame(1, texture, mesh, grey);
     let _ = h.render(&plain, W, H);
     let without_ssaa = redness(&h.render(&plain, W, H));
     assert!(
@@ -78,7 +85,7 @@ fn a_decal_survives_supersampling() {
         "test premise: the decal must render at all without SSAA, got {without_ssaa}"
     );
 
-    let supersampled = decal_frame(2, texture, mesh);
+    let supersampled = decal_frame(2, texture, mesh, grey);
     let _ = h.render(&supersampled, W, H);
     let with_ssaa = redness(&h.render(&supersampled, W, H));
 

@@ -27,7 +27,7 @@ use crate::eframe::{egui, wgpu};
 use vpl::{
     Action, BindingPreset, ButtonState, Camera, CameraFrame, FirstPersonCameraController,
     FrameData, Gizmo, GizmoAxis, GizmoInfo, GizmoMode, InteractionFrame, KeyCode, LightingSettings,
-    ManipResult, ManipulationContext, ManipulationController, ManipulationKind, Material, MeshId,
+    ManipResult, ManipulationContext, ManipulationController, ManipulationKind, MeshId,
     OffscreenViewportTarget, OrbitCameraController, PickId, PivotMode, SceneFrame, SceneRenderItem,
     ScrollUnits, Selection, ThirdPersonCameraController, ViewportContext, ViewportEvent,
     ViewportInput, ViewportRenderer, gizmo_center_for_pivot, primitives, viewport_default_bindings,
@@ -675,9 +675,9 @@ impl eframe::App for App {
                                 let mut item = SceneRenderItem::default();
                                 item.mesh_id = obj.mesh;
                                 item.model = obj.model.to_cols_array_2d();
-                                item.material = Material::from_colour(
-                                    Colour::from_linear_rgb_array(obj.colour),
-                                );
+                                // The default material, coloured per item.
+                                item.settings.colour =
+                                    Some(Colour::from_linear_rgb_array(obj.colour));
                                 item
                             })
                             .collect()
@@ -725,9 +725,8 @@ impl eframe::App for App {
                                 let mut item = SceneRenderItem::default();
                                 item.mesh_id = obj.mesh;
                                 item.model = obj.model.to_cols_array_2d();
-                                item.material = Material::from_colour(
-                                    Colour::from_linear_rgb_array(obj.colour),
-                                );
+                                item.settings.colour =
+                                    Some(Colour::from_linear_rgb_array(obj.colour));
                                 item
                             })
                             .collect();
@@ -739,8 +738,7 @@ impl eframe::App for App {
                             marker.mesh_id = self.body_mesh;
                             let stand = self.body_pos + glam::Vec3::Z * (CAPSULE_HEIGHT * 0.5);
                             marker.model = glam::Mat4::from_translation(stand).to_cols_array_2d();
-                            marker.material =
-                                Material::from_colour(Colour::linear_rgb(0.85, 0.2, 0.3));
+                            marker.settings.colour = Some(Colour::linear_rgb(0.85, 0.2, 0.3));
                             items.push(marker);
                         }
                         items
@@ -886,9 +884,8 @@ impl eframe::App for App {
                                 let mut item = SceneRenderItem::default();
                                 item.mesh_id = obj.mesh;
                                 item.model = obj.model.to_cols_array_2d();
-                                item.material = Material::from_colour(
-                                    Colour::from_linear_rgb_array(obj.colour),
-                                );
+                                item.settings.colour =
+                                    Some(Colour::from_linear_rgb_array(obj.colour));
                                 item.settings.selected = self.selection.contains(i as u64);
                                 // pick_id is 1-indexed so 0 can mean "no hit".
                                 item.settings.pick_id = PickId((i as u64) + 1);

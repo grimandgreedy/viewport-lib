@@ -34,11 +34,11 @@ pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     Action, BackfacePolicy, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo,
     GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, KeyCode, LightingSettings, ManipResult,
-    ManipulationContext, ManipulationController, Material, MeshId, Modifiers, MouseButton,
-    OffscreenViewportTarget, OrbitCameraController, Projection, SceneFrame, SceneRenderItem,
-    ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportId, ViewportInput,
-    ViewportRenderer, gizmo::compute_gizmo_scale, gizmo_center_for_pivot, picking::screen_to_ray,
-    primitives,
+    ManipulationContext, ManipulationController, Material, MaterialId, MeshId, Modifiers,
+    MouseButton, OffscreenViewportTarget, OrbitCameraController, Projection, SceneFrame,
+    SceneRenderItem, ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportId,
+    ViewportInput, ViewportRenderer, gizmo::compute_gizmo_scale, gizmo_center_for_pivot,
+    picking::screen_to_ray, primitives,
 };
 
 const QUAD_LABELS: [&str; 4] = ["Perspective", "Top", "Front", "Right"];
@@ -96,6 +96,10 @@ fn main() -> eframe::Result {
             let m_torus = res
                 .upload_mesh_data(device, &primitives::torus(0.5, 0.18, 32, 16))
                 .unwrap();
+            // One material for every object; each item sets its own colour.
+            let mut material = Material::default();
+            material.backface_policy = BackfacePolicy::Identical;
+            let material = res.upload_material(material).unwrap();
 
             let vp_ids = [
                 renderer.create_viewport(device),
@@ -106,7 +110,9 @@ fn main() -> eframe::Result {
 
             rs.renderer.write().callback_resources.insert(renderer);
 
-            Ok(Box::new(App::new(vp_ids, m_sphere, m_cube, m_torus)))
+            Ok(Box::new(App::new(
+                vp_ids, material, m_sphere, m_cube, m_torus,
+            )))
         }),
     )
 }
@@ -152,6 +158,7 @@ impl SceneObject {
 
 struct App {
     objects: Vec<SceneObject>,
+    material: MaterialId,
     snapshots: HashMap<u64, glam::Mat4>,
     selection: Selection,
 
@@ -183,7 +190,13 @@ struct Target {
 }
 
 impl App {
-    fn new(vp_ids: [ViewportId; 4], m_sphere: MeshId, m_cube: MeshId, m_torus: MeshId) -> Self {
+    fn new(
+        vp_ids: [ViewportId; 4],
+        material: MaterialId,
+        m_sphere: MeshId,
+        m_cube: MeshId,
+        m_torus: MeshId,
+    ) -> Self {
         use std::f32::consts::FRAC_PI_2;
         let cameras = [
             // Perspective (TL)
@@ -246,6 +259,7 @@ impl App {
             gizmo_scales: [1.0; 4],
             manip: ManipulationController::new(),
             vp_ids,
+            material,
             hovered_quad: 0,
             cursor_local: glam::Vec2::ZERO,
             left_held: false,
@@ -650,12 +664,9 @@ impl App {
                     .iter()
                     .enumerate()
                     .map(|(i, obj)| {
-                        let mut item = SceneRenderItem::default();
-                        item.mesh_id = obj.mesh_id;
+                        let mut item = SceneRenderItem::new(obj.mesh_id, self.material);
                         item.model = obj.model.to_cols_array_2d();
-                        item.material =
-                            Material::from_colour(Colour::from_linear_rgb_array(obj.colour));
-                        item.material.backface_policy = BackfacePolicy::Identical;
+                        item.settings.colour = Some(Colour::from_linear_rgb_array(obj.colour));
                         item.settings.selected = self.selection.contains(i as u64);
                         item
                     })

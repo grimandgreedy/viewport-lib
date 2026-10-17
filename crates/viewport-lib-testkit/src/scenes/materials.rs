@@ -7,8 +7,7 @@
 use glam::{Mat4, Vec3};
 use viewport_lib::{
     AlphaMode, BackfacePolicy, Colour, LightKind, LightSource, LightingSettings, Material,
-    MeshData, Projection, SceneRenderItem, ShadingModel, TextureSlot, UvTransform,
-    primitives,
+    MeshData, Projection, SceneRenderItem, ShadingModel, TextureSlot, UvTransform, primitives,
 };
 
 use super::{
@@ -31,6 +30,7 @@ fn pair_x(i: usize) -> f32 {
 /// Push one copy of `material` per path, at `x`, with `model` placing the mesh
 /// relative to that spot.
 fn both_paths(
+    ctx: &mut BuildCtx<'_>,
     items: &mut Vec<SceneRenderItem>,
     mesh: viewport_lib::MeshId,
     x: f32,
@@ -40,6 +40,7 @@ fn both_paths(
 ) {
     for (dx, per_object) in [(-HALF_PAIR, true), (HALF_PAIR, false)] {
         let mut it = item_model(
+            ctx,
             mesh,
             Mat4::from_translation(Vec3::new(x + dx, 0.0, 0.0)) * model,
             material.clone(),
@@ -118,6 +119,7 @@ fn build_materials_alpha_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     tex_mask.texture_id = Some(holes_tex);
     tex_mask.alpha_mode = AlphaMode::Mask(0.5);
     both_paths(
+        ctx,
         &mut items,
         card_mesh,
         pair_x(0),
@@ -129,16 +131,32 @@ fn build_materials_alpha_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // Vertex-colour mask: the left half of the card is cut away.
     let mut vertex_mask = two_sided(Material::pbr(Colour::linear_rgb(0.3, 0.6, 0.9), 0.0, 0.5));
     vertex_mask.alpha_mode = AlphaMode::Mask(0.5);
-    both_paths(&mut items, card_mesh, pair_x(1), upright, vertex_mask, 1.0);
+    both_paths(
+        ctx,
+        &mut items,
+        card_mesh,
+        pair_x(1),
+        upright,
+        vertex_mask,
+        1.0,
+    );
 
     // The texture mask again below full opacity: drawn through the
     // transparent pass, still cut out, and casting no shadow.
-    both_paths(&mut items, card_mesh, pair_x(2), upright, tex_mask, 0.8);
+    both_paths(
+        ctx,
+        &mut items,
+        card_mesh,
+        pair_x(2),
+        upright,
+        tex_mask,
+        0.8,
+    );
 
     // A premultiplied pane: its colour already carries the alpha.
     let mut premult = two_sided(Material::pbr(Colour::linear_rgb(0.45, 0.2, 0.05), 0.0, 0.3));
     premult.alpha_mode = AlphaMode::BlendPremultiplied;
-    both_paths(&mut items, card_mesh, pair_x(3), upright, premult, 0.5);
+    both_paths(ctx, &mut items, card_mesh, pair_x(3), upright, premult, 0.5);
 
     // A sun from the front right, so each card's shadow falls on the ground
     // behind it, in view.
@@ -161,6 +179,7 @@ fn build_materials_alpha_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// Push one item at `pos`, kept on the per-object path when `per_object` is
 /// set and left to batch onto the instanced path otherwise.
 pub(super) fn place(
+    ctx: &mut BuildCtx<'_>,
     items: &mut Vec<SceneRenderItem>,
     mesh: viewport_lib::MeshId,
     model: Mat4,
@@ -168,7 +187,7 @@ pub(super) fn place(
     opacity: f32,
     per_object_path: bool,
 ) {
-    let mut it = item_model(mesh, model, material);
+    let mut it = item_model(ctx, mesh, model, material);
     it.settings.opacity = opacity;
     it.settings.force_per_object = per_object_path;
     items.push(it);
@@ -284,6 +303,7 @@ fn build_materials_textures(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             for path in 0..2 {
                 let pos = grid_pos(c, columns.len(), s * 2 + path, 1.15, 0.95);
                 place(
+                    ctx,
                     &mut items,
                     mesh,
                     Mat4::from_translation(pos),
@@ -338,6 +358,7 @@ fn build_materials_alpha(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     wall.uv_scale = [repeats, 1.0];
     wall.uv_offset = [phase.ceil() - phase, 0.0];
     let mut items = vec![item_model(
+        ctx,
         wall_mesh,
         Mat4::from_translation(Vec3::new(0.0, 1.5, -7.6)),
         wall,
@@ -409,6 +430,7 @@ fn build_materials_alpha(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             for path in 0..2 {
                 let pos = grid_pos(c, columns.len(), m * 2 + path, COL_STEP, 0.72);
                 place(
+                    ctx,
                     &mut items,
                     *mesh,
                     Mat4::from_translation(pos) * *turn,

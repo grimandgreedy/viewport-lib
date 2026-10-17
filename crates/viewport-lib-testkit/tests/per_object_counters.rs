@@ -21,6 +21,11 @@ fn per_object_draws_are_counted() {
         .upload_mesh_data(&h.device, &data)
         .expect("upload");
 
+    let material = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.7)))
+        .expect("material upload");
     let count = 4usize;
     let items: Vec<SceneRenderItem> = (0..count)
         .map(|i| {
@@ -28,7 +33,7 @@ fn per_object_draws_are_counted() {
             item.mesh_id = id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 5.0, 0.0, 0.0))
                 .to_cols_array_2d();
-            item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.7));
+            item.material = material;
             item.settings.force_per_object = true;
             item
         })

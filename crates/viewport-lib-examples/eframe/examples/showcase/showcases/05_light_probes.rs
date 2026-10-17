@@ -34,8 +34,8 @@ use vpl::resources::{
 };
 use vpl::{
     Aabb, BackfacePolicy, EnvironmentLighting, EnvironmentMapId, EnvironmentOptions,
-    EnvironmentZone, IndirectLightSource, LightKind, LightSource, Material, MeshId, NodeId,
-    TextureData, primitives,
+    EnvironmentZone, IndirectLightSource, LightKind, LightSource, Material, MaterialId, MeshId,
+    NodeId, TextureData, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -384,6 +384,62 @@ fn marker_material(colour: [f32; 3], on: bool) -> Material {
     m
 }
 
+/// Materials for every mode, uploaded once in `setup`. Each marker has its own
+/// material so its on/off state is an in-place edit.
+#[derive(Default)]
+struct Materials {
+    probe_markers: Vec<MaterialId>,
+    zone_markers: Vec<MaterialId>,
+    probe_sphere: MaterialId,
+    metal: MaterialId,
+    panel: MaterialId,
+    /// One per `gi_layout` piece, in order.
+    gi: Vec<MaterialId>,
+}
+
+impl Materials {
+    fn upload(res: &mut vpl::DeviceResources) -> Self {
+        let mut up = |m: Material| res.upload_material(m).unwrap();
+        let probe_markers = PROBES
+            .iter()
+            .map(|&(colour, _)| up(marker_material(colour, true)))
+            .collect();
+        let zone_markers = ENVS
+            .iter()
+            .map(|e| up(marker_material(e.sky, true)))
+            .collect();
+        let probe_sphere = up(Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.85));
+        let metal = up(Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 1.0, 0.12));
+        let mut panel = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.9);
+        // The panel is single-sided geometry; show it whichever way it faces.
+        panel.backface_policy = BackfacePolicy::Identical;
+        let panel = up(panel);
+        let gi = gi_layout()
+            .iter()
+            .map(|piece| {
+                // The floor's display albedo is white; its baked lightmap already
+                // carries the surface colour. Walls and blocks show their albedo.
+                let base = if piece.kind == GiKind::Floor {
+                    [1.0, 1.0, 1.0]
+                } else {
+                    piece.albedo
+                };
+                let mut m = Material::pbr(Colour::from_linear_rgb_array(base), 0.0, 0.9);
+                m.backface_policy = BackfacePolicy::Identical;
+                up(m)
+            })
+            .collect();
+        Self {
+            probe_markers,
+            zone_markers,
+            probe_sphere,
+            metal,
+            panel,
+            gi,
+        }
+    }
+}
+
 pub struct IndirectLightingShowcase {
     /// 0 = light probes, 1 = environment zones, 2 = lightmaps, 3 = baked GI.
     mode: usize,
@@ -393,10 +449,10 @@ pub struct IndirectLightingShowcase {
     /// Shared meshes, uploaded once in `setup`.
     sphere: Option<MeshId>,
     cube: Option<MeshId>,
+    mats: Materials,
 
     // Probe mode.
     probe_spheres: Vec<NodeId>,
-    probe_markers: Vec<NodeId>,
     probe_enabled: Vec<bool>,
     use_probes: bool,
     applied_probes: Option<(bool, Vec<bool>)>,
@@ -405,7 +461,6 @@ pub struct IndirectLightingShowcase {
     env_ids: Vec<EnvironmentMapId>,
     /// The environment that lights the scene in zone mode.
     default_env: Option<EnvironmentMapId>,
-    zone_markers: Vec<NodeId>,
     zone_enabled: Vec<bool>,
     use_zones: bool,
     applied_zones: Option<(bool, Vec<bool>)>,
@@ -441,14 +496,13 @@ impl IndirectLightingShowcase {
             nodes: Vec::new(),
             sphere: None,
             cube: None,
+            mats: Materials::default(),
             probe_spheres: Vec::new(),
-            probe_markers: Vec::new(),
             probe_enabled: vec![true; PROBES.len()],
             use_probes: true,
             applied_probes: None,
             env_ids: Vec::new(),
             default_env: None,
-            zone_markers: Vec::new(),
             zone_enabled: vec![true; ENVS.len()],
             use_zones: true,
             applied_zones: None,
@@ -554,8 +608,6 @@ impl IndirectLightingShowcase {
             session.scene_mut().remove_many(&ids);
         }
         self.probe_spheres.clear();
-        self.probe_markers.clear();
-        self.zone_markers.clear();
 
         let sphere = self.sphere.unwrap();
         let cube = self.cube.unwrap();
@@ -583,13 +635,12 @@ impl IndirectLightingShowcase {
             session.effects_mut().environment = None;
             session.renderer_mut().clear_environment_zones();
 
-            for &(colour, x) in PROBES.iter() {
+            for (i, &(_, x)) in PROBES.iter().enumerate() {
                 let id = session.scene_mut().add(
                     Some(cube),
                     Mat4::from_translation(Vec3::new(x, 0.0, PROBE_ROW_Z + 1.6)),
-                    marker_material(colour, true),
+                    self.mats.probe_markers[i],
                 );
-                self.probe_markers.push(id);
                 self.nodes.push(id);
             }
             let x0 = PROBES[0].1;
@@ -600,7 +651,7 @@ impl IndirectLightingShowcase {
                 let id = session.scene_mut().add(
                     Some(sphere),
                     Mat4::from_translation(Vec3::new(x, 0.0, PROBE_ROW_Z)),
-                    Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.85),
+                    self.mats.probe_sphere,
                 );
                 self.probe_spheres.push(id);
                 self.nodes.push(id);
@@ -619,17 +670,16 @@ impl IndirectLightingShowcase {
                 let id = session.scene_mut().add(
                     Some(sphere),
                     Mat4::from_translation(Vec3::new(x, 0.0, ZONE_ROW_Z)),
-                    Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 1.0, 0.12),
+                    self.mats.metal,
                 );
                 self.nodes.push(id);
             }
-            for e in ENVS.iter() {
+            for (i, e) in ENVS.iter().enumerate() {
                 let id = session.scene_mut().add(
                     Some(cube),
                     Mat4::from_translation(Vec3::new(e.x, 0.0, ZONE_ROW_Z + 2.2)),
-                    marker_material(e.sky, true),
+                    self.mats.zone_markers[i],
                 );
-                self.zone_markers.push(id);
                 self.nodes.push(id);
             }
         } else if self.mode == 2 {
@@ -643,13 +693,10 @@ impl IndirectLightingShowcase {
                 .set_light_probes(LightProbeSet::new(vec![]));
 
             let panel = self.lightmap_panel.unwrap();
-            let mut mat = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.9);
-            // The panel is single-sided geometry; show it whichever way it faces.
-            mat.backface_policy = BackfacePolicy::Identical;
             // Stand the XY panel upright, its face toward -Y (the camera).
             let xf = Mat4::from_translation(Vec3::new(0.0, 3.0, 2.6))
                 * Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2);
-            let id = session.scene_mut().add(Some(panel), xf, mat);
+            let id = session.scene_mut().add(Some(panel), xf, self.mats.panel);
             self.nodes.push(id);
         } else {
             // Baked GI mode: no IBL, no zones, no probes. Runtime lights are off
@@ -669,21 +716,12 @@ impl IndirectLightingShowcase {
                 l.ground_colour = Colour::linear_rgb(0.16, 0.16, 0.18);
             }
 
-            for piece in gi_layout() {
+            for (piece, &mat) in gi_layout().iter().zip(&self.mats.gi) {
                 let mesh = match piece.kind {
                     GiKind::Floor => self.gi_floor_mesh.unwrap(),
                     GiKind::Wall => self.gi_wall_mesh.unwrap(),
                     GiKind::Block => self.gi_block_mesh.unwrap(),
                 };
-                // The floor's display albedo is white; its baked lightmap already
-                // carries the surface colour. Walls and blocks show their albedo.
-                let base = if piece.kind == GiKind::Floor {
-                    [1.0, 1.0, 1.0]
-                } else {
-                    piece.albedo
-                };
-                let mut mat = Material::pbr(Colour::from_linear_rgb_array(base), 0.0, 0.9);
-                mat.backface_policy = BackfacePolicy::Identical;
                 let id = session.scene_mut().add(Some(mesh), piece.xf, mat);
                 self.nodes.push(id);
             }
@@ -724,6 +762,7 @@ impl Showcase for IndirectLightingShowcase {
     }
 
     fn setup(&mut self, ctx: &mut SetupCtx) {
+        self.mats = Materials::upload(ctx.session.resources_mut());
         self.sphere = Some(
             ctx.session
                 .resources_mut()
@@ -887,11 +926,12 @@ impl Showcase for IndirectLightingShowcase {
                 for &id in &self.probe_spheres {
                     ctx.session.scene_mut().set_indirect_light(id, source);
                 }
-                for (i, &id) in self.probe_markers.iter().enumerate() {
+                for (i, &mat) in self.mats.probe_markers.iter().enumerate() {
                     let on = self.use_probes && self.probe_enabled[i];
                     ctx.session
-                        .scene_mut()
-                        .set_material(id, marker_material(PROBES[i].0, on));
+                        .resources_mut()
+                        .replace_material(mat, marker_material(PROBES[i].0, on))
+                        .unwrap();
                 }
                 self.applied_probes = Some(state);
             }
@@ -902,11 +942,12 @@ impl Showcase for IndirectLightingShowcase {
                 ctx.session
                     .renderer_mut()
                     .set_environment_zones(ctx.queue, &zones);
-                for (i, &id) in self.zone_markers.iter().enumerate() {
+                for (i, &mat) in self.mats.zone_markers.iter().enumerate() {
                     let on = self.use_zones && self.zone_enabled[i];
                     ctx.session
-                        .scene_mut()
-                        .set_material(id, marker_material(ENVS[i].sky, on));
+                        .resources_mut()
+                        .replace_material(mat, marker_material(ENVS[i].sky, on))
+                        .unwrap();
                 }
                 self.applied_zones = Some(state);
             }

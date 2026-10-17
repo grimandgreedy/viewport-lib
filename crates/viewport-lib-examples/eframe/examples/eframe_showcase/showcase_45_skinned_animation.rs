@@ -21,8 +21,8 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use vpl::{
-    BuiltinMatcap, MatcapId, Material, MeshData, MeshId, PickAccelerator, RuntimeFrameContext,
-    RuntimePlugin, RuntimeStepContext, ViewportRuntime,
+    BuiltinMatcap, MatcapId, Material, MaterialId, MeshData, MeshId, PickAccelerator,
+    RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, ViewportRuntime,
     plugins::skeleton::{
         AnimationClip, Channel, ClipPlayerPlugin, Interpolation, Joint, Pose, Sampler, Skeleton,
         SkeletonPlugin, SkinnedActor, SkinnedActorPart, SkinnedActorPlugin, SkinningPath, Track,
@@ -121,6 +121,7 @@ pub(crate) const GLTF_DEMO_PATH: &str = concat!(
 );
 
 use crate::App;
+use crate::shared::upload_material;
 
 // ---------------------------------------------------------------------------
 // Speed resource
@@ -286,6 +287,10 @@ pub(crate) struct Skin47State {
     /// Mesh IDs uploaded for each loaded glTF part. Empty when no asset is
     /// available or the demo file is absent.
     pub gltf_mesh_ids: Vec<MeshId>,
+    /// Arm material, and one material per glTF part shared by the character
+    /// and every crowd actor. The appearance toggles edit these in place.
+    pub arm_material: MaterialId,
+    pub part_materials: Vec<MaterialId>,
     pub gltf_asset: Option<GltfCharacterAsset>,
     /// True when the glTF demo path was checked and the file was absent.
     pub gltf_missing: bool,
@@ -398,6 +403,8 @@ impl Default for Skin47State {
             skin_weights_uploaded: std::collections::HashSet::new(),
             last_step_us: 0.0,
             gltf_mesh_ids: Vec::new(),
+            arm_material: MaterialId::DEFAULT,
+            part_materials: Vec::new(),
             gltf_asset: None,
             gltf_missing: false,
             arm_node: None,
@@ -453,6 +460,9 @@ pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut vpl::ViewportRend
         .expect("arm mesh upload");
 
     app.skin_state.mesh_id = Some(mesh_id);
+    let mut arm_mat = Material::from_colour(Colour::linear_rgb(0.10, 0.26, 0.68));
+    arm_mat.backface_policy = BackfacePolicy::Tint(0.4);
+    app.skin_state.arm_material = upload_material(renderer, arm_mat);
     app.skin_state.bind_positions = positions.clone();
     app.skin_state.bind_normals = normals.clone();
     app.skin_state.bind_skin_weights = Some(skin_weights.clone());
@@ -466,6 +476,11 @@ pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut vpl::ViewportRend
                 .upload_mesh_data(&app.device, &part.mesh_data)
                 .expect("glTF part mesh upload");
             app.skin_state.gltf_mesh_ids.push(id);
+            let mut part_mat = Material::from_colour(Colour::from_linear_rgb_array(part.colour));
+            part_mat.backface_policy = BackfacePolicy::Tint(0.4);
+            app.skin_state
+                .part_materials
+                .push(upload_material(renderer, part_mat));
         }
         app.skin_state.gltf_asset = Some(asset);
     } else {
@@ -530,18 +545,23 @@ fn populate_scene_for_demo(state: &mut Skin47State) {
     // Add the arm if needed and not already present.
     if arm_demos && state.arm_node.is_none() {
         if let Some(mesh_id) = state.mesh_id {
-            let mut mat = Material::from_colour(Colour::linear_rgb(0.10, 0.26, 0.68));
-            mat.backface_policy = BackfacePolicy::Tint(0.4);
-            state.arm_node = Some(state.scene.add(Some(mesh_id), glam::Mat4::IDENTITY, mat));
+            state.arm_node = Some(state.scene.add(
+                Some(mesh_id),
+                glam::Mat4::IDENTITY,
+                state.arm_material,
+            ));
         }
     }
 
     // Add glTF parts if needed and not already present.
     if gltf_demo && state.gltf_nodes.is_empty() {
         if let Some(asset) = state.gltf_asset.as_ref() {
-            for (id, part) in state.gltf_mesh_ids.iter().zip(asset.parts.iter()) {
-                let mut gmat = Material::from_colour(Colour::from_linear_rgb_array(part.colour));
-                gmat.backface_policy = BackfacePolicy::Tint(0.4);
+            for ((id, part), &gmat) in state
+                .gltf_mesh_ids
+                .iter()
+                .zip(asset.parts.iter())
+                .zip(state.part_materials.iter())
+            {
                 let node = state.scene.add(Some(*id), part.scene_transform, gmat);
                 state.gltf_nodes.push(node);
             }
@@ -557,13 +577,11 @@ fn populate_scene_for_demo(state: &mut Skin47State) {
             for actor_idx in 0..total {
                 let translation = crowd_translation(actor_idx, total);
                 let actor_offset = glam::Mat4::from_translation(translation);
-                for (mid, part) in state.crowd_actor_meshes[actor_idx]
+                for ((mid, part), &gmat) in state.crowd_actor_meshes[actor_idx]
                     .iter()
                     .zip(asset.parts.iter())
+                    .zip(state.part_materials.iter())
                 {
-                    let mut gmat =
-                        Material::from_colour(Colour::from_linear_rgb_array(part.colour));
-                    gmat.backface_policy = BackfacePolicy::Tint(0.4);
                     let node =
                         state
                             .scene
@@ -1095,7 +1113,7 @@ pub(crate) fn update_skin47(
 /// Apply the current appearance toggles to every scene node belonging to the
 /// active demo. Re-stamps each frame only when the appearance version bumps,
 /// so unchanged frames pay no cost.
-fn apply_skin47_appearance(state: &mut Skin47State, renderer: &vpl::ViewportRenderer) {
+fn apply_skin47_appearance(state: &mut Skin47State, renderer: &mut vpl::ViewportRenderer) {
     if state.appearance_version == state.applied_appearance_version {
         return;
     }
@@ -1107,10 +1125,32 @@ fn apply_skin47_appearance(state: &mut Skin47State, renderer: &vpl::ViewportRend
         None
     };
 
-    // Each (node, base_colour) pair gets its own material so the per-node
-    // colour set by build_skin47_scene / populate_scene_for_demo survives the
-    // re-stamp. Read the colour back off the existing material so a future
-    // edit to the base palette doesn't have to come back to this function.
+    // Edit the shared materials in place, keeping each one's base colour.
+    let shading_model = if let Some(id) = matcap_id {
+        vpl::ShadingModel::Matcap(id)
+    } else if state.use_pbr {
+        vpl::ShadingModel::Pbr
+    } else {
+        vpl::ShadingModel::Phong
+    };
+    let backface_policy = if state.two_sided {
+        BackfacePolicy::Tint(0.4)
+    } else {
+        BackfacePolicy::Cull
+    };
+    let resources = renderer.resources_mut();
+    for &id in std::iter::once(&state.arm_material).chain(&state.part_materials) {
+        let Some(base_colour) = resources.material(id).map(|m| m.base_colour) else {
+            continue;
+        };
+        let mut mat = Material::from_colour(base_colour);
+        mat.shading_model = shading_model;
+        mat.backface_policy = backface_policy;
+        resources
+            .replace_material(id, mat)
+            .expect("skinned material");
+    }
+
     let mut nodes: Vec<vpl::NodeId> = Vec::new();
     if let Some(arm) = state.arm_node {
         nodes.push(arm);
@@ -1119,25 +1159,6 @@ fn apply_skin47_appearance(state: &mut Skin47State, renderer: &vpl::ViewportRend
     nodes.extend(state.crowd_nodes.iter().copied());
 
     for node_id in nodes {
-        let Some(node) = state.scene.node(node_id) else {
-            continue;
-        };
-        let base_colour = node.material().base_colour;
-        let mut mat = Material::from_colour(base_colour);
-        mat.shading_model = if let Some(id) = matcap_id {
-            vpl::ShadingModel::Matcap(id)
-        } else if state.use_pbr {
-            vpl::ShadingModel::Pbr
-        } else {
-            vpl::ShadingModel::Phong
-        };
-        mat.backface_policy = if state.two_sided {
-            BackfacePolicy::Tint(0.4)
-        } else {
-            BackfacePolicy::Cull
-        };
-        state.scene.set_material(node_id, mat);
-
         let mut app = vpl::scene::material::ItemSettings::default();
         app.opacity = state.opacity;
         app.wireframe = state.per_item_wireframe;

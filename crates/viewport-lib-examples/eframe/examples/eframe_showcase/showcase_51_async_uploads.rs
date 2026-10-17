@@ -38,12 +38,13 @@ use viewport_lib_plugins::item_types::{
 
 use crate::eframe::egui;
 use vpl::{
-    ColourmapId, JobId, LightKind, LightSource, LightingSettings, Material, MeshData, MeshId,
-    OverlayTextureId, PolylineId, PolylineItem, PolylineRefItem, SceneRenderItem, UploadStatus,
-    ViewportRenderer, VolumeId, plugins::skinning::SkinWeights,
+    ColourmapId, JobId, LightKind, LightSource, LightingSettings, Material, MaterialId, MeshData,
+    MeshId, OverlayTextureId, PolylineId, PolylineItem, PolylineRefItem, SceneRenderItem,
+    UploadStatus, ViewportRenderer, VolumeId, plugins::skinning::SkinWeights,
 };
 
 use crate::App;
+use crate::shared::upload_material;
 use viewport_lib::plugin_api::Handles;
 
 // ---------------------------------------------------------------------------
@@ -170,6 +171,10 @@ pub(crate) struct AsyncUploadsState {
 
     pub loaded_mesh_id: Option<MeshId>,
     pub loaded_texture_id: Option<vpl::TextureId>,
+    /// White flat material shared by the plain spheres, each setting its own colour.
+    pub flat_material: MaterialId,
+    /// Flat material showing the loaded texture; its texture is set on load.
+    pub textured_material: MaterialId,
     pub loaded_polyline_id: Option<PolylineId>,
     pub loaded_streamtube_id: Option<StreamtubeId>,
     pub loaded_tube_id: Option<TubeId>,
@@ -230,6 +235,8 @@ impl Default for AsyncUploadsState {
             sprite_instance_set_state: AssetState::Idle,
             loaded_mesh_id: None,
             loaded_texture_id: None,
+            flat_material: MaterialId::DEFAULT,
+            textured_material: MaterialId::DEFAULT,
             loaded_polyline_id: None,
             loaded_streamtube_id: None,
             loaded_tube_id: None,
@@ -269,6 +276,9 @@ impl App {
                 .upload_mesh_data(&self.device, &plane_mesh)
                 .expect("base mesh"),
         );
+        let white = Material::flat(Colour::linear_rgb(1.0, 1.0, 1.0));
+        self.async_uploads_state.flat_material = upload_material(renderer, white);
+        self.async_uploads_state.textured_material = upload_material(renderer, white);
         // A second sphere serves as the target for async skin weights.
         let skin_mesh = vpl::primitives::sphere(0.5, 16, 12);
         self.async_uploads_state.skin_target_vertex_count = skin_mesh.positions.len();
@@ -415,6 +425,7 @@ impl App {
                     Ok(tex_id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_texture_id = Some(tex_id);
+                        set_loaded_texture(renderer, &self.async_uploads_state, tex_id);
                         self.async_uploads_state.texture_state = AssetState::Loaded { duration_ms };
                     }
                     Err(e) => {
@@ -1074,6 +1085,20 @@ fn take_job_duration_ms(
     dur
 }
 
+/// Point the textured material at a newly loaded texture.
+fn set_loaded_texture(
+    renderer: &mut ViewportRenderer,
+    state: &AsyncUploadsState,
+    tex_id: vpl::TextureId,
+) {
+    let mut material = Material::flat(Colour::linear_rgb(1.0, 1.0, 1.0));
+    material.texture_id = Some(tex_id);
+    renderer
+        .resources_mut()
+        .replace_material(state.textured_material, material)
+        .expect("textured material");
+}
+
 // ---------------------------------------------------------------------------
 // Scene items
 // ---------------------------------------------------------------------------
@@ -1084,36 +1109,29 @@ impl App {
         let state = &self.async_uploads_state;
 
         if let Some(id) = state.base_mesh_id {
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = id;
+            let mut item = SceneRenderItem::new(id, state.flat_material);
             item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-            item.material = Material::flat(Colour::linear_rgb(0.7, 0.7, 0.7));
+            item.settings.colour = Some(Colour::linear_rgb(0.7, 0.7, 0.7));
             items.push(item);
         }
 
         if let Some(id) = state.loaded_mesh_id {
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = id;
+            let mut item = SceneRenderItem::new(id, state.flat_material);
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).to_cols_array_2d();
-            item.material = Material::flat(Colour::linear_rgb(0.4, 0.8, 0.4));
+            item.settings.colour = Some(Colour::linear_rgb(0.4, 0.8, 0.4));
             items.push(item);
         }
 
-        if let (Some(mesh_id), Some(tex_id)) = (state.base_mesh_id, state.loaded_texture_id) {
-            let mut material = Material::flat(Colour::linear_rgb(1.0, 1.0, 1.0));
-            material.texture_id = Some(tex_id);
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = mesh_id;
+        if let (Some(mesh_id), Some(_)) = (state.base_mesh_id, state.loaded_texture_id) {
+            let mut item = SceneRenderItem::new(mesh_id, state.textured_material);
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).to_cols_array_2d();
-            item.material = material;
             items.push(item);
         }
 
         if let Some(id) = state.skin_target_mesh_id {
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = id;
+            let mut item = SceneRenderItem::new(id, state.flat_material);
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(-2.0, 0.0, 0.0)).to_cols_array_2d();
             let colour = if state.skin_installed {
@@ -1121,7 +1139,7 @@ impl App {
             } else {
                 [0.4, 0.4, 0.4]
             };
-            item.material = Material::flat(Colour::from_linear_rgb_array(colour));
+            item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
             items.push(item);
         }
 
@@ -1540,6 +1558,7 @@ impl App {
             ) {
                 Ok(tex_id) => {
                     self.async_uploads_state.loaded_texture_id = Some(tex_id);
+                    set_loaded_texture(renderer, &self.async_uploads_state, tex_id);
                     self.async_uploads_state.texture_state = AssetState::Loaded {
                         duration_ms: started.elapsed().as_millis() as u64,
                     };

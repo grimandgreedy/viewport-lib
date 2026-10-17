@@ -74,15 +74,16 @@ Native events reach either runner as a `ViewportEvent`, translated by an adapter
 `ViewportApp` owns the window and event loop, so you only write scene setup and a per-frame closure.
 
 ```rust
-use viewport_lib::{AppConfig, Material, ViewportApp, primitives};
+use viewport_lib::{AppConfig, Colour, Material, ViewportApp, primitives};
 
 ViewportApp::new(AppConfig::default().with_title("demo").with_window_size(1280, 720))
     .setup(|viewport, device| {
         // runs once, with the device in hand: upload meshes and build the scene
         let mesh = viewport.resources_mut()
             .upload_mesh_data(device, &primitives::cube(1.0)).unwrap();
-        viewport.scene_mut().add(
-            Some(mesh), glam::Mat4::IDENTITY, Material::from_colour([0.85, 0.25, 0.2]));
+        let red = viewport.resources_mut()
+            .upload_material(Material::from_colour(Colour::linear_rgb(0.85, 0.25, 0.2))).unwrap();
+        viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, red);
     })
     .run(|_ctx| {
         // runs once per frame, before rendering: update the scene here
@@ -95,7 +96,7 @@ When your app already owns the window, wgpu device/queue, and event loop, drive 
 
 ```rust
 use viewport_lib::{
-    Material, OrbitCameraController, PointerOwnership, ViewportContext, ViewportInstance,
+    Colour, Material, OrbitCameraController, PointerOwnership, ViewportContext, ViewportInstance,
     forward_to_viewport, primitives,
 };
 
@@ -107,7 +108,8 @@ let mut viewport = ViewportInstance::new(&device, target_format);
 let mut orbit = OrbitCameraController::new_stateless();
 
 let mesh = viewport.resources_mut().upload_mesh_data(&device, &primitives::cube(1.0))?;
-viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, Material::from_colour([0.85, 0.25, 0.2]));
+let red = viewport.resources_mut().upload_material(Material::from_colour(Colour::linear_rgb(0.85, 0.25, 0.2)))?;
+viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, red);
 
 // Then, each frame inside your app's render loop:
 // `ownership` is your routing decision: Owned when the viewport won the input this

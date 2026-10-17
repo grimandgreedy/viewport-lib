@@ -41,12 +41,13 @@ impl DeviceResources {
         // The colour pass binds the discard-free twin when the early-Z gate
         // allows it and the discarding pipeline otherwise; which of the two a
         // given draw site picks differs, so either counts as ready.
-        let two_sided = item.material.is_two_sided();
+        let material = self.material_or_default(item.material);
+        let two_sided = material.is_two_sided();
         let may_skip_discard = hdr
             && !clipping_active
             && !self.force_po_discard
             && matches!(
-                item.material.alpha_mode,
+                material.alpha_mode,
                 crate::scene::material::AlphaMode::Opaque
             )
             && item.active_attribute.is_none()
@@ -60,10 +61,10 @@ impl DeviceResources {
                 ..PipelineKey::default()
             },
         ];
-        match self.material_plugin_draw(item.material.shading_plugin) {
+        match self.material_plugin_draw(material.shading_plugin) {
             Some((set, _)) => keys.iter().any(|&k| set.opaque_ready(hdr, k)),
             // A plugin item whose set is not composed yet draws nothing.
-            None if item.material.shading_plugin.is_some() => false,
+            None if material.shading_plugin.is_some() => false,
             None => keys.iter().any(|&k| self.scene.opaque_ready(hdr, k)),
         }
     }

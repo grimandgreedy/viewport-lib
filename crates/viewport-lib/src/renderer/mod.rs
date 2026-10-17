@@ -71,6 +71,8 @@ mod lazy_pipeline_tests;
 #[cfg(test)]
 mod lod_instance_tests;
 #[cfg(test)]
+mod material_store_tests;
+#[cfg(test)]
 mod prepare_timing_tests;
 
 /// Item-type names beginning with this prefix belong to the types viewport-lib
@@ -941,8 +943,9 @@ impl ViewportRenderer {
         }
         resources.instancing.material_texture_binding = material_texture_binding;
         resources
-            .material_gpu_builder
+            .material_table
             .set_bindless(material_texture_binding == MaterialTextureBinding::Bindless);
+        resources.rebuild_material_blocks(|_| true);
         let mut renderer = Self {
             resources,
             instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
@@ -1570,9 +1573,10 @@ impl ViewportRenderer {
     pub fn use_per_batch_material_textures(&mut self) {
         use crate::resources::mesh::instanced_bindless::MaterialTextureBinding;
         self.resources.instancing.material_texture_binding = MaterialTextureBinding::PerBatch;
-        // The interner keys blocks on their bytes, and the texture indices are
-        // part of those bytes only on the bindless path, so it has to be told.
-        self.resources.material_gpu_builder.set_bindless(false);
+        // Material blocks carry texture array indices only on the bindless
+        // path, so every block is rebuilt for the new mode.
+        self.resources.material_table.set_bindless(false);
+        self.resources.rebuild_material_blocks(|_| true);
     }
 
     /// Returns the number of instanced batches prepared for the current frame.

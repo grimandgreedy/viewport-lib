@@ -489,6 +489,11 @@ impl Showcase for DecalCoverageShowcase {
         // picking) and keeps the real meshes off node id 0.
         let mut marker_mat = Material::from_colour(Colour::linear_rgb(1.0, 0.9, 0.15));
         marker_mat.emissive = Colour::linear_rgb(1.0, 0.85, 0.1);
+        let marker_mat = ctx
+            .session
+            .resources_mut()
+            .upload_material(marker_mat)
+            .unwrap();
         let marker = ctx.session.scene_mut().add(
             Some(sphere),
             Mat4::from_scale(Vec3::splat(0.001)),
@@ -1055,11 +1060,18 @@ impl Showcase for DecalCoverageShowcase {
 // ---------------------------------------------------------------------------
 
 fn add_mesh(ctx: &mut SetupCtx, mesh: MeshId, pos: Vec3, colour: [f32; 3]) -> NodeId {
-    ctx.session.scene_mut().add(
-        Some(mesh),
-        Mat4::from_translation(pos),
-        Material::pbr(Colour::from_linear_rgb_array(colour), 0.1, 0.5),
-    )
+    let material = ctx
+        .session
+        .resources_mut()
+        .upload_material(Material::pbr(
+            Colour::from_linear_rgb_array(colour),
+            0.1,
+            0.5,
+        ))
+        .unwrap();
+    ctx.session
+        .scene_mut()
+        .add(Some(mesh), Mat4::from_translation(pos), material)
 }
 
 fn sub_desc(sub: Option<SubObjectRef>) -> String {

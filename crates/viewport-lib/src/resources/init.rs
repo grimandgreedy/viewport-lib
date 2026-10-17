@@ -786,9 +786,8 @@ impl DeviceResources {
             mapped_at_creation: false,
         });
 
-        // Per-material UV transform buffer (group 0, binding 21). Starts small
-        // and grows when a frame interns more blocks than it holds; see
-        // `upload_material_gpu`.
+        // Material block buffer (group 0, binding 21). Starts small and grows
+        // when the material table outgrows it; see `upload_material_gpu`.
         let material_gpu_buf = Self::create_material_gpu_buffer(
             device,
             crate::resources::material_gpu::MATERIAL_GPU_INITIAL_CAPACITY,
@@ -1908,6 +1907,7 @@ impl DeviceResources {
                 material_bind_groups: std::collections::HashMap::new(),
                 texture_slot_mismatches: std::sync::Mutex::new(Vec::new()),
                 textures: crate::resources::material::texture_store::TextureStore::new(),
+                materials: crate::resources::material::material_store::MaterialStore::new(),
                 volume_textures: crate::resources::handle::SlotStore::default(),
                 projected_tet_store: crate::resources::handle::SlotStore::default(),
                 glyph_atlas,
@@ -1988,7 +1988,10 @@ impl DeviceResources {
             ),
             material_gpu_buf,
             material_gpu_capacity: crate::resources::material_gpu::MATERIAL_GPU_INITIAL_CAPACITY,
-            material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder::default(),
+            material_gpu_limit: (device.limits().max_storage_buffer_binding_size as usize
+                / std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>())
+            .max(crate::resources::material_gpu::MATERIAL_GPU_INITIAL_CAPACITY),
+            material_table: crate::resources::material_gpu::MaterialTable::default(),
             instance_custom_data_buf,
             instance_custom_data_capacity:
                 crate::resources::custom_data::CUSTOM_DATA_INITIAL_CAPACITY,
@@ -1997,7 +2000,6 @@ impl DeviceResources {
             frame_pipelines_built: std::sync::atomic::AtomicU32::new(0),
             pipeline_compiler: std::sync::Arc::clone(&pipeline_compiler),
             hiz_pipelines: std::sync::OnceLock::new(),
-            material_gpu_written: Vec::new(),
             custom_data_written: Vec::new(),
             pipeline_compiler_shutdown: crate::resources::pipeline_slot::CompilerShutdown(
                 pipeline_compiler,

@@ -20,7 +20,7 @@ use viewport_lib::{
 };
 
 use super::materials::{card, grid_camera, grid_pos, place, upload_texture};
-use super::{BuildCtx, BuiltScene, NamedScene, rigs, textures, upload};
+use super::{BuildCtx, BuiltScene, NamedScene, material, rigs, textures, upload};
 
 const COL_STEP: f32 = 1.15;
 const ROW_STEP: f32 = 0.95;
@@ -96,24 +96,31 @@ fn grey() -> Material {
 }
 
 /// A column: a mesh, the material to draw it with, and a closure that sets
-/// the item-level fields the feature needs.
+/// the item-level fields the feature needs (uploading through the context
+/// anything it names by id).
 struct Column {
     mesh: viewport_lib::MeshId,
     material: Material,
-    set: fn(&mut SceneRenderItem),
+    set: fn(&mut BuildCtx<'_>, &mut SceneRenderItem),
     /// Model offset applied before the grid translation.
     model: Mat4,
 }
 
-fn no_op(_: &mut SceneRenderItem) {}
+fn no_op(_: &mut BuildCtx<'_>, _: &mut SceneRenderItem) {}
 
-fn lay_out(items: &mut Vec<SceneRenderItem>, columns: &[Column], row_pairs: &[f32]) {
+fn lay_out(
+    ctx: &mut BuildCtx<'_>,
+    items: &mut Vec<SceneRenderItem>,
+    columns: &[Column],
+    row_pairs: &[f32],
+) {
     for (pair, opacity) in row_pairs.iter().enumerate() {
         for (c, column) in columns.iter().enumerate() {
             for path in 0..2 {
                 let pos = grid_pos(c, columns.len(), pair * 2 + path, COL_STEP, ROW_STEP);
                 let before = items.len();
                 place(
+                    ctx,
                     items,
                     column.mesh,
                     Mat4::from_translation(pos) * column.model,
@@ -121,7 +128,7 @@ fn lay_out(items: &mut Vec<SceneRenderItem>, columns: &[Column], row_pairs: &[f3
                     *opacity,
                     path == 0,
                 );
-                (column.set)(&mut items[before]);
+                (column.set)(ctx, &mut items[before]);
             }
         }
     }
@@ -186,7 +193,7 @@ fn build_materials_fallbacks(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         scale: 8.0,
     });
 
-    let plain_col = |material: Material, set: fn(&mut SceneRenderItem)| Column {
+    let plain_col = |material: Material, set: fn(&mut BuildCtx<'_>, &mut SceneRenderItem)| Column {
         mesh: plain,
         material,
         set,
@@ -198,7 +205,7 @@ fn build_materials_fallbacks(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         Column {
             mesh: scalar,
             material: grey(),
-            set: |it| {
+            set: |_, it| {
                 it.active_attribute = Some(AttributeRef {
                     name: "height".into(),
                     kind: AttributeKind::Vertex,
@@ -212,7 +219,7 @@ fn build_materials_fallbacks(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         Column {
             mesh: faces,
             material: grey(),
-            set: |it| {
+            set: |_, it| {
                 it.active_attribute = Some(AttributeRef {
                     name: "faces".into(),
                     kind: AttributeKind::FaceColour,
@@ -223,7 +230,7 @@ fn build_materials_fallbacks(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         Column {
             mesh: warp,
             material: grey(),
-            set: |it| {
+            set: |_, it| {
                 it.warp_attribute = Some("ripple".into());
                 it.warp_scale = 0.06;
             },
@@ -245,15 +252,15 @@ fn build_materials_fallbacks(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             model: Mat4::from_translation(Vec3::new(0.0, 0.0, -0.42))
                 * Mat4::from_rotation_z(std::f32::consts::PI),
         },
-        plain_col(grey(), |it| {
+        plain_col(grey(), |_, it| {
             it.settings.custom_data = [0.0, 1.5, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0];
         }),
-        plain_col(grey(), |it| it.settings.wireframe = true),
-        plain_col(grey(), |it| it.show_normals = true),
+        plain_col(grey(), |_, it| it.settings.wireframe = true),
+        plain_col(grey(), |_, it| it.show_normals = true),
     ];
 
     let mut items = Vec::new();
-    lay_out(&mut items, &columns, &[1.0, 0.6]);
+    lay_out(ctx, &mut items, &columns, &[1.0, 0.6]);
 
     BuiltScene {
         items,
@@ -420,10 +427,16 @@ fn build_mesh_sidecars(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         Column {
             mesh: ranges,
             material: grey(),
-            set: |it| {
+            set: |ctx, it| {
                 it.submesh_materials = Some(vec![
-                    Material::pbr(Colour::linear_rgb(0.9, 0.3, 0.2), 0.0, 0.5),
-                    Material::pbr(Colour::linear_rgb(0.2, 0.4, 0.9), 1.0, 0.3),
+                    material(
+                        ctx,
+                        Material::pbr(Colour::linear_rgb(0.9, 0.3, 0.2), 0.0, 0.5),
+                    ),
+                    material(
+                        ctx,
+                        Material::pbr(Colour::linear_rgb(0.2, 0.4, 0.9), 1.0, 0.3),
+                    ),
                 ]);
             },
             model: Mat4::IDENTITY,
@@ -431,13 +444,16 @@ fn build_mesh_sidecars(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         Column {
             mesh: ranges,
             material: grey(),
-            set: |it| {
+            set: |ctx, it| {
                 let mut glass = Material::pbr(Colour::linear_rgb(0.2, 0.8, 0.4), 0.0, 0.3);
                 glass.alpha_mode = viewport_lib::AlphaMode::Blend;
                 glass.base_colour = glass.base_colour.with_alpha(0.45);
                 it.submesh_materials = Some(vec![
-                    Material::pbr(Colour::linear_rgb(0.9, 0.3, 0.2), 0.0, 0.5),
-                    glass,
+                    material(
+                        ctx,
+                        Material::pbr(Colour::linear_rgb(0.9, 0.3, 0.2), 0.0, 0.5),
+                    ),
+                    material(ctx, glass),
                 ]);
             },
             model: Mat4::IDENTITY,
@@ -445,7 +461,7 @@ fn build_mesh_sidecars(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     ];
 
     let mut items = Vec::new();
-    lay_out(&mut items, &columns, &[1.0]);
+    lay_out(ctx, &mut items, &columns, &[1.0]);
 
     BuiltScene {
         items,

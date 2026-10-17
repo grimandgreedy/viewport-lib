@@ -57,7 +57,7 @@ impl Scene {
     /// `instanced`. Returns the centre pixel and the frame's stats.
     fn render(
         &mut self,
-        material: Material,
+        material: MaterialId,
         opacity: f32,
         instanced: bool,
     ) -> ([u8; 4], FrameStats) {
@@ -90,7 +90,7 @@ impl Scene {
             item.mesh_id = self.mesh;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(x, x, 0.0)).to_cols_array_2d();
-            item.material = material.clone();
+            item.material = material;
             item.settings.opacity = opacity;
             // The per-object render pins its item to the per-object pipelines.
             item.settings.force_per_object = !instanced;
@@ -115,7 +115,8 @@ impl Scene {
     /// Render `material` on both paths, check each took the path it was meant
     /// to, and return the two centre pixels (per-object, instanced).
     fn both_paths(&mut self, material: Material, opacity: f32) -> ([u8; 4], [u8; 4]) {
-        let (alone, alone_stats) = self.render(material.clone(), opacity, false);
+        let material = upload_material(&mut self.renderer, material);
+        let (alone, alone_stats) = self.render(material, opacity, false);
         assert!(
             alone_stats.per_object_items == 1,
             "the single item should draw through the per-object pipelines"
@@ -323,19 +324,27 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
         .unwrap();
     let mut floor = SceneRenderItem::default();
     floor.mesh_id = floor_mesh;
-    floor.material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
+    floor.material = upload_material(
+        &mut scene.renderer,
+        Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8)),
+    );
     // Raised above the floor under angled lights, so the shadow lands on open
     // floor beside the caster. Vertex alpha 0.2: cut out at a 0.5 cutoff, kept
     // at 0.1.
-    let caster_at = |y: f32, cutoff: f32, per_object: bool| {
+    let mut masked = |cutoff: f32| {
+        let mut m = Material::from_colour(Colour::linear_rgb(0.2, 0.2, 0.8));
+        m.alpha_mode = AlphaMode::Mask(cutoff);
+        // A lone quad casts only when two-sided: the shadow pass culls front
+        // faces, and this one faces the light.
+        m.backface_policy = viewport_lib::BackfacePolicy::Identical;
+        upload_material(&mut scene.renderer, m)
+    };
+    let (keep, cut) = (masked(0.1), masked(0.5));
+    let caster_at = |y: f32, material: MaterialId, per_object: bool| {
         let mut it = SceneRenderItem::default();
         it.mesh_id = caster_mesh;
         it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).to_cols_array_2d();
-        it.material = Material::from_colour(Colour::linear_rgb(0.2, 0.2, 0.8));
-        it.material.alpha_mode = AlphaMode::Mask(cutoff);
-        // A lone quad casts only when two-sided: the shadow pass culls front
-        // faces, and this one faces the light.
-        it.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+        it.material = material;
         it.settings.force_per_object = per_object;
         it
     };
@@ -388,19 +397,19 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
             // A second caster far off to one side keeps the instanced case
             // batched; it never shadows the counted area, which it leaves
             // the same in both renders.
-            let other = caster_at(-1.5, 0.1, per_object);
+            let other = caster_at(-1.5, keep, per_object);
             let kept = shadowed(
                 light,
                 vec![
                     floor.clone(),
-                    caster_at(1.0, 0.1, per_object),
+                    caster_at(1.0, keep, per_object),
                     other.clone(),
                 ],
             );
             let alone = shadowed(light, vec![floor.clone(), other.clone()]);
             let cut = shadowed(
                 light,
-                vec![floor.clone(), caster_at(1.0, 0.5, per_object), other],
+                vec![floor.clone(), caster_at(1.0, cut, per_object), other],
             );
             assert!(
                 kept > alone + 10,
@@ -436,18 +445,23 @@ fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
         .unwrap();
     let mut floor = SceneRenderItem::default();
     floor.mesh_id = floor_mesh;
-    floor.material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
+    floor.material = upload_material(
+        &mut scene.renderer,
+        Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8)),
+    );
     // Raised well above the floor under a 45-degree sun, so each shadow lands
     // on open floor beside its caster rather than under it.
+    let mut caster = Material::from_colour(Colour::linear_rgb(0.2, 0.2, 0.8));
+    // A lone quad casts only when two-sided: the shadow pass culls front
+    // faces, and this one faces the light.
+    caster.backface_policy = viewport_lib::BackfacePolicy::Identical;
+    let caster = upload_material(&mut scene.renderer, caster);
     let caster_at = |y: f32, per_object: bool| {
         let mut it = SceneRenderItem::default();
         it.mesh_id = caster_mesh;
         it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).to_cols_array_2d();
-        it.material = Material::from_colour(Colour::linear_rgb(0.2, 0.2, 0.8));
+        it.material = caster;
         it.settings.force_per_object = per_object;
-        // A lone quad casts only when two-sided: the shadow pass culls front
-        // faces, and this one faces the light.
-        it.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
         it
     };
 

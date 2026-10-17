@@ -15,6 +15,7 @@
 //! it is clear how the implicit surface interacts with scene geometry.
 
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use crate::{App, MeshId};
 use glam::Vec3;
 use viewport_lib as vpl;
@@ -26,8 +27,8 @@ use viewport_lib_plugins::item_types::gpu_marching_cubes::{
     GpuMarchingCubesItem, McVolumeId, McVolumes,
 };
 use vpl::{
-    Camera, LightKind, LightSource, LightingSettings, Material, SceneRenderItem, VolumeData,
-    extract_isosurface, primitives,
+    Camera, LightKind, LightSource, LightingSettings, Material, MaterialId, SceneRenderItem,
+    VolumeData, extract_isosurface, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -65,6 +66,8 @@ pub(crate) struct IsState {
     pub built: bool,
     pub mesh_id: MeshId,
     pub mc_mesh_id: Option<MeshId>,
+    /// Materials for the near sphere, the far sphere and the marching cubes mesh.
+    pub materials: [MaterialId; 3],
     pub sdf_variant: IsSdfVariant,
     pub gmc_volume_id: Option<McVolumeId>,
     pub gmc_isovalue: f32,
@@ -76,6 +79,7 @@ impl Default for IsState {
             built: false,
             mesh_id: MeshId::INVALID,
             mc_mesh_id: None,
+            materials: [MaterialId::DEFAULT; 3],
             sdf_variant: IsSdfVariant::GpuImplicit,
             gmc_volume_id: None,
             gmc_isovalue: 0.0,
@@ -96,6 +100,16 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere)
             .expect("implicit showcase sphere mesh");
+        let material = |rgb: [f32; 3], roughness: f32| {
+            let mut m = Material::from_colour(Colour::from_linear_rgb_array(rgb));
+            m.roughness = roughness;
+            m
+        };
+        self.is_state.materials = [
+            upload_material(renderer, material([0.10, 0.26, 0.68], 0.35)),
+            upload_material(renderer, material([0.75, 0.28, 0.05], 0.35)),
+            upload_material(renderer, material([0.55, 0.50, 0.45], 0.5)),
+        ];
 
         // Marching cubes: sample the blob smin SDF on a 64^3 grid over [-3.5, 3.5]^3.
         let mc_mesh = {
@@ -228,47 +242,30 @@ impl App {
             return vec![];
         }
 
+        let [near_mat, far_mat, mc_mat] = self.is_state.materials;
         let mut items = Vec::new();
 
         // Near (blue): in front of the blob cloud.
         {
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = self.is_state.mesh_id;
+            let mut item = SceneRenderItem::new(self.is_state.mesh_id, near_mat);
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 4.5)).to_cols_array_2d();
-            item.material = {
-                let mut m = Material::from_colour(Colour::linear_rgb(0.10, 0.26, 0.68));
-                m.roughness = 0.35;
-                m
-            };
             items.push(item);
         }
 
         // Far (orange): behind the blob cloud.
         {
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = self.is_state.mesh_id;
+            let mut item = SceneRenderItem::new(self.is_state.mesh_id, far_mat);
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.5)).to_cols_array_2d();
-            item.material = {
-                let mut m = Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05));
-                m.roughness = 0.35;
-                m
-            };
             items.push(item);
         }
 
         // Marching cubes mesh (MarchingCubes variant only).
         if self.is_state.sdf_variant == IsSdfVariant::MarchingCubes {
             if let Some(mc_id) = self.is_state.mc_mesh_id {
-                let mut item = SceneRenderItem::default();
-                item.mesh_id = mc_id;
+                let mut item = SceneRenderItem::new(mc_id, mc_mat);
                 item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-                item.material = {
-                    let mut m = Material::from_colour(Colour::linear_rgb(0.55, 0.50, 0.45));
-                    m.roughness = 0.5;
-                    m
-                };
                 items.push(item);
             }
         }

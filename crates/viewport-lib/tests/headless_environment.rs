@@ -61,7 +61,7 @@ fn sphere_frame(
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    item.material = material;
+    item.material = upload_material(renderer, material);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     frame
 }
@@ -249,6 +249,9 @@ fn lux_environment_matches_a_directional_light_of_the_same_lux() {
         .upload_mesh_data(&device, &viewport_lib::primitives::plane(40.0, 40.0))
         .unwrap();
     let lux = 1.5;
+    let mut plane = matte();
+    plane.ambient = 0.0;
+    let plane = upload_material(&mut renderer, plane);
     let render = |renderer: &mut ViewportRenderer, from_environment: bool| {
         let mut frame = FrameData::default();
         let camera = Camera {
@@ -282,8 +285,7 @@ fn lux_environment_matches_a_directional_light_of_the_same_lux() {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-        item.material = matte();
-        item.material.ambient = 0.0;
+        item.material = plane;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         centre(&renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE))[0]
     };

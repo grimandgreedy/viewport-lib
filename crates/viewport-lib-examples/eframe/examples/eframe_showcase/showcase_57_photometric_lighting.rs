@@ -17,6 +17,7 @@
 use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
@@ -520,7 +521,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.5, 0.5, 0.52));
                 m.roughness = 0.9;
-                m
+                upload_material(renderer, m)
             },
         );
 
@@ -540,7 +541,7 @@ impl App {
                 &format!("Sphere {c}"),
                 Some(sphere_id),
                 glam::Mat4::from_translation(glam::Vec3::new(x, 0.8, 0.85)),
-                m,
+                upload_material(renderer, m),
             );
         }
 
@@ -564,7 +565,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.5, 0.5, 0.52));
                 m.roughness = 0.9;
-                m
+                upload_material(renderer, m)
             },
         );
 
@@ -582,7 +583,7 @@ impl App {
                 {
                     let mut m = Material::from_colour(Colour::linear_rgb(0.9, 0.9, 0.9));
                     m.roughness = 0.4;
-                    m
+                    upload_material(renderer, m)
                 },
             );
         }
@@ -606,7 +607,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.45, 0.45, 0.48));
                 m.roughness = 0.95;
-                m
+                upload_material(renderer, m)
             },
         );
 
@@ -627,7 +628,7 @@ impl App {
                 &format!("Sphere {c}"),
                 Some(sphere_id),
                 glam::Mat4::from_translation(glam::Vec3::new(x, 0.8, 0.85)),
-                m,
+                upload_material(renderer, m),
             );
         }
 

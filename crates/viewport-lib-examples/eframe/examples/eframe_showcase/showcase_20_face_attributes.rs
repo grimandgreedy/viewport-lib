@@ -17,6 +17,7 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
@@ -118,7 +119,7 @@ impl App {
         let grey_mat = {
             let mut m = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
             m.roughness = 0.5;
-            m
+            upload_material(renderer, m)
         };
 
         // ---- Mesh 0: Vertex attribute (interpolated) ----
@@ -170,7 +171,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
                 m.roughness = 0.5;
-                m
+                upload_material(renderer, m)
             },
         );
 

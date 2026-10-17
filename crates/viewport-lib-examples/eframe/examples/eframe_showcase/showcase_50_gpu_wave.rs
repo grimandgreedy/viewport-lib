@@ -24,6 +24,7 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib::wgpu;
@@ -32,8 +33,8 @@ use viewport_lib_plugins::item_types::external_instances::{
     ExternalInstancesItem,
 };
 use vpl::{
-    LightKind, LightSource, LightingSettings, Material, MeshId, SceneRenderItem, ViewportRenderer,
-    runtime::GpuPlugin,
+    LightKind, LightSource, LightingSettings, Material, MaterialId, MeshId, SceneRenderItem,
+    ViewportRenderer, runtime::GpuPlugin,
 };
 
 #[path = "../plugins/buoy_plugin.rs"]
@@ -71,6 +72,8 @@ pub(crate) enum DeformMode {
 pub(crate) struct WaveState {
     pub built: bool,
     pub plane_id: Option<MeshId>,
+    /// Water material, uploaded on the first build and kept across rebuilds.
+    pub water_material: Option<MaterialId>,
     /// External instance set drawing one sphere per buoy centre out of
     /// `BuoyPlugin`'s output buffer.
     pub buoy_set: Option<ExternalInstanceSetId>,
@@ -116,6 +119,7 @@ impl Default for WaveState {
         Self {
             built: false,
             plane_id: None,
+            water_material: None,
             buoy_set: None,
             plugin: None,
             buoy_plugin: None,
@@ -239,6 +243,13 @@ impl App {
             .expect("create buoy instance set");
 
         self.wave_state.plane_id = Some(plane_id);
+        if self.wave_state.water_material.is_none() {
+            // PBR water-like surface. Dielectric (metallic=0), fairly smooth so
+            // the wave crests catch specular highlights.
+            let mut m = Material::pbr(Colour::linear_rgb(0.08, 0.28, 0.80), 0.0, 0.35);
+            m.backface_policy = vpl::BackfacePolicy::Identical;
+            self.wave_state.water_material = Some(upload_material(renderer, m));
+        }
         self.wave_state.buoy_set = Some(buoy_set);
         self.wave_state.plugin = Some(Box::new(plugin));
         self.wave_state.buoy_plugin = Some(Box::new(buoy_plugin));
@@ -261,20 +272,13 @@ fn app_grid_dim(app: &App) -> u32 {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn wave_collect(app: &App) -> (Vec<SceneRenderItem>, LightingSettings) {
-    let Some(plane_id) = app.wave_state.plane_id else {
+    let (Some(plane_id), Some(water)) = (app.wave_state.plane_id, app.wave_state.water_material)
+    else {
         return (Vec::new(), LightingSettings::default());
     };
 
-    let mut item = SceneRenderItem::default();
-    item.mesh_id = plane_id;
+    let mut item = SceneRenderItem::new(plane_id, water);
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    // PBR water-like surface. Dielectric (metallic=0), fairly smooth so the
-    // wave crests catch specular highlights.
-    item.material = {
-        let mut m = Material::pbr(Colour::linear_rgb(0.08, 0.28, 0.80), 0.0, 0.35);
-        m.backface_policy = vpl::BackfacePolicy::Identical;
-        m
-    };
     item.settings.selected = app.wave_state.select_surface;
 
     // The buoys are not scene items: they render as an external instance set

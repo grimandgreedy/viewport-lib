@@ -37,7 +37,7 @@ pub mod prelude {
     pub use crate::colourmap::BuiltinColourmap;
     pub use crate::data::{attribute::AttributeData, mesh::MeshData, texture::TextureData};
     pub use crate::error::{ViewportError, ViewportResult};
-    pub use crate::ids::{MeshId, TextureId};
+    pub use crate::ids::{MaterialId, MeshId, TextureId};
     pub use crate::input::{Action, ActionFrame, ViewportEvent};
     pub use crate::material::Material;
     pub use crate::overlay::{LabelItem, OverlayShape, OverlayShapeItem};

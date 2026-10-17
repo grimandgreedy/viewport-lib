@@ -33,9 +33,9 @@ use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::from_egui;
 use vpl::{
-    AutoExposure, ExposureMode, ExposureSettings, LightKind, LightSource, LightingSettings, Lumen,
-    Lux, Material, Modifiers, OrbitCameraController, ViewportContext, ViewportEvent,
-    ViewportInstance, primitives,
+    AutoExposure, ExposureMode, ExposureSettings, ItemSettings, LightKind, LightSource,
+    LightingSettings, Lumen, Lux, Material, Modifiers, OrbitCameraController, ViewportContext,
+    ViewportEvent, ViewportInstance, primitives,
 };
 
 const COLUMNS: usize = 6;
@@ -101,27 +101,41 @@ fn main() -> eframe::Result {
 
             // Static scene: a ground slab and a row of spheres from dark to bright
             // albedo. Geometry never changes, so add it once here.
+            let ground_material = {
+                let mut m = Material::from_colour(Colour::linear_rgb(0.45, 0.45, 0.48));
+                m.roughness = 0.95;
+                session
+                    .resources_mut()
+                    .upload_material(m)
+                    .expect("ground material")
+            };
+            let sphere_material = {
+                let mut m = Material::default();
+                m.roughness = 0.6;
+                m.metallic = 0.0;
+                session
+                    .resources_mut()
+                    .upload_material(m)
+                    .expect("sphere material")
+            };
             let scene = session.scene_mut();
             scene.add(
                 Some(ground_mesh),
                 glam::Mat4::from_translation(glam::Vec3::new(span * 0.5, 0.0, -0.2)),
-                {
-                    let mut m = Material::from_colour(Colour::linear_rgb(0.45, 0.45, 0.48));
-                    m.roughness = 0.95;
-                    m
-                },
+                ground_material,
             );
+            // The spheres share one material and differ only in colour.
             for c in 0..COLUMNS {
                 let x = c as f32 * COL_SPACING;
                 let a = 0.05 + (c as f32 / (COLUMNS - 1) as f32) * 0.85;
-                let mut m = Material::from_colour(Colour::linear_rgb(a, a, a));
-                m.roughness = 0.6;
-                m.metallic = 0.0;
-                scene.add(
+                let node = scene.add(
                     Some(sphere_mesh),
                     glam::Mat4::from_translation(glam::Vec3::new(x, 0.8, 0.8)),
-                    m,
+                    sphere_material,
                 );
+                let mut settings = ItemSettings::default();
+                settings.colour = Some(Colour::linear_rgb(a, a, a));
+                scene.set_appearance(node, settings);
             }
 
             // Background is a persistent viewport setting.

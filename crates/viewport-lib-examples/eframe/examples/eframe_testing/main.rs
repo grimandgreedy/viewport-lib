@@ -17,9 +17,9 @@ use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource,
-    LightingSettings, Material, MeshId, OffscreenViewportTarget, OrbitCameraController, SceneFrame,
-    SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
-    primitives,
+    LightingSettings, Material, MaterialId, MeshId, OffscreenViewportTarget, OrbitCameraController,
+    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
+    ViewportRenderer, primitives,
 };
 
 // Solid unlit colours for the subsurface objects. Picked to be visually distinct
@@ -63,6 +63,24 @@ fn main() -> eframe::Result {
             let unlit_box_mesh = primitives::cuboid(3.0, 3.0, 3.0);
             let unlit_box_id = res.upload_mesh_data(device, &unlit_box_mesh).unwrap();
 
+            // The ground has a material per back-face policy so the two-sided
+            // toggle only swaps ids.
+            let ground_mat = Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.7), 0.0, 0.8);
+            let mut ground_one_sided = ground_mat;
+            ground_one_sided.backface_policy = BackfacePolicy::Cull;
+            let mut ground_two_sided = ground_mat;
+            ground_two_sided.backface_policy = BackfacePolicy::Identical;
+            let materials = Materials {
+                ground_one_sided: res.upload_material(ground_one_sided).unwrap(),
+                ground_two_sided: res.upload_material(ground_two_sided).unwrap(),
+                boxes: res
+                    .upload_material(Material::pbr(Colour::linear_rgb(0.8, 0.5, 0.3), 0.0, 0.6))
+                    .unwrap(),
+                sphere: res
+                    .upload_material(Material::pbr(Colour::linear_rgb(0.4, 0.6, 0.9), 0.0, 0.3))
+                    .unwrap(),
+            };
+
             rs.renderer.write().callback_resources.insert(renderer);
 
             Ok(Box::new(App::new(
@@ -71,6 +89,7 @@ fn main() -> eframe::Result {
                 sphere_id,
                 unlit_sphere_id,
                 unlit_box_id,
+                materials,
             )))
         }),
     )
@@ -94,6 +113,13 @@ fn cascade_splits(near: f32, far: f32, count: u32) -> Vec<f32> {
 // App state
 // ---------------------------------------------------------------------------
 
+struct Materials {
+    ground_one_sided: MaterialId,
+    ground_two_sided: MaterialId,
+    boxes: MaterialId,
+    sphere: MaterialId,
+}
+
 struct App {
     camera: Camera,
     controller: OrbitCameraController,
@@ -105,6 +131,7 @@ struct App {
     sphere_id: MeshId,
     unlit_sphere_id: MeshId,
     unlit_box_id: MeshId,
+    materials: Materials,
     lighting: LightingSettings,
     show_hemisphere: bool,
     log_next_frame: bool,
@@ -127,6 +154,7 @@ impl App {
         sphere_id: MeshId,
         unlit_sphere_id: MeshId,
         unlit_box_id: MeshId,
+        materials: Materials,
     ) -> Self {
         let mut lighting = LightingSettings::default();
         lighting.lights = vec![{
@@ -155,6 +183,7 @@ impl App {
             sphere_id,
             unlit_sphere_id,
             unlit_box_id,
+            materials,
             lighting,
             show_hemisphere: true,
             log_next_frame: false,
@@ -166,22 +195,14 @@ impl App {
     }
 
     fn build_scene(&self) -> Vec<SceneRenderItem> {
-        let ground_mat = Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.7), 0.0, 0.8);
-        let box_mat = Material::pbr(Colour::linear_rgb(0.8, 0.5, 0.3), 0.0, 0.6);
-        let sphere_mat = Material::pbr(Colour::linear_rgb(0.4, 0.6, 0.9), 0.0, 0.3);
-
         let ground = {
             let mut item = SceneRenderItem::default();
             item.mesh_id = self.ground_id;
 
-            item.material = {
-                let mut m = ground_mat;
-                m.backface_policy = if self.ground_two_sided {
-                    BackfacePolicy::Identical
-                } else {
-                    BackfacePolicy::Cull
-                };
-                m
+            item.material = if self.ground_two_sided {
+                self.materials.ground_two_sided
+            } else {
+                self.materials.ground_one_sided
             };
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.15)).to_cols_array_2d();
@@ -201,7 +222,7 @@ impl App {
             let mut item = SceneRenderItem::default();
             item.mesh_id = self.box_id;
 
-            item.material = box_mat;
+            item.material = self.materials.boxes;
             item.model = glam::Mat4::from_translation(*pos).to_cols_array_2d();
             items.push(item);
         }
@@ -211,7 +232,7 @@ impl App {
             let mut item = SceneRenderItem::default();
             item.mesh_id = self.sphere_id;
 
-            item.material = sphere_mat;
+            item.material = self.materials.sphere;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.8)).to_cols_array_2d();
             items.push(item);
@@ -225,7 +246,7 @@ impl App {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = self.unlit_sphere_id;
                 item.settings.unlit = true;
-                item.material.base_colour = Colour::from_linear_rgb_array(COLOUR_MAGENTA);
+                item.settings.colour = Some(Colour::from_linear_rgb_array(COLOUR_MAGENTA));
                 item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0))
                     .to_cols_array_2d();
                 items.push(item);
@@ -236,7 +257,7 @@ impl App {
                 item.mesh_id = self.unlit_box_id;
 
                 item.settings.unlit = true;
-                item.material.base_colour = Colour::from_linear_rgb_array(COLOUR_CYAN);
+                item.settings.colour = Some(Colour::from_linear_rgb_array(COLOUR_CYAN));
                 item.model = glam::Mat4::from_translation(glam::Vec3::new(8.0, 5.0, -2.5))
                     .to_cols_array_2d();
                 items.push(item);

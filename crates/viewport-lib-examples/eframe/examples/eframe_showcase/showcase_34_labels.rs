@@ -4,6 +4,7 @@
 use crate::App;
 use crate::eframe;
 use crate::geometry::make_box_with_uvs;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{LabelAnchor, LabelItem, Material, ViewportRenderer};
@@ -174,7 +175,10 @@ impl App {
                 part.name,
                 Some(id),
                 glam::Mat4::from_translation(glam::Vec3::from(exploded_pos)),
-                Material::from_colour(Colour::from_linear_rgb_array(part.colour)),
+                upload_material(
+                    renderer,
+                    Material::from_colour(Colour::from_linear_rgb_array(part.colour)),
+                ),
             );
 
             self.lbl_state.labels.push(

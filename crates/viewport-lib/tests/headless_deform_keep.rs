@@ -55,13 +55,21 @@ fn top_down() -> RenderCamera {
     RenderCamera::from_camera(&cam)
 }
 
-fn flat(mesh: MeshId, model: glam::Mat4, colour: [f32; 3]) -> SceneRenderItem {
+fn flat(
+    renderer: &mut ViewportRenderer,
+    mesh: MeshId,
+    model: glam::Mat4,
+    colour: [f32; 3],
+) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = model.to_cols_array_2d();
-    item.material = Material::from_colour(viewport_lib::Colour::linear_rgb(
-        colour[0], colour[1], colour[2],
-    ));
+    item.material = upload_material(
+        renderer,
+        Material::from_colour(viewport_lib::Colour::linear_rgb(
+            colour[0], colour[1], colour[2],
+        )),
+    );
     item.settings.unlit = true;
     item
 }
@@ -120,10 +128,11 @@ fn a_keep_hook_cuts_only_the_item_that_selects_it() {
 
     let left = glam::Mat4::from_translation(glam::Vec3::new(-0.6, 0.0, 0.0));
     let right = glam::Mat4::from_translation(glam::Vec3::new(0.6, 0.0, 0.0));
-    let mut cut = flat(quad, left, [1.0, 1.0, 1.0]);
+    let mut cut = flat(&mut renderer, quad, left, [1.0, 1.0, 1.0]);
     cut.deform_instance = Some(1);
-    let whole = flat(quad, right, [1.0, 1.0, 1.0]);
+    let whole = flat(&mut renderer, quad, right, [1.0, 1.0, 1.0]);
     let backdrop = flat(
+        &mut renderer,
         quad,
         glam::Mat4::from_scale_rotation_translation(
             glam::Vec3::splat(4.0),
@@ -203,10 +212,11 @@ fn a_keep_hook_cuts_transparent_items() {
         bytemuck::cast_slice(&plane),
     );
 
-    let mut glass = flat(quad, glam::Mat4::IDENTITY, [1.0, 1.0, 1.0]);
+    let mut glass = flat(&mut renderer, quad, glam::Mat4::IDENTITY, [1.0, 1.0, 1.0]);
     glass.settings.opacity = 0.9;
     glass.deform_instance = Some(1);
     let backdrop = flat(
+        &mut renderer,
         quad,
         glam::Mat4::from_scale_rotation_translation(
             glam::Vec3::splat(4.0),
@@ -303,12 +313,16 @@ fn a_cut_caster_casts_no_shadow_from_its_removed_half() {
 
     let mut floor = SceneRenderItem::default();
     floor.mesh_id = floor_mesh;
-    floor.material = Material::from_colour(viewport_lib::Colour::linear_rgb(0.8, 0.8, 0.8));
+    floor.material = upload_material(
+        &mut renderer,
+        Material::from_colour(viewport_lib::Colour::linear_rgb(0.8, 0.8, 0.8)),
+    );
     let mut caster = SceneRenderItem::default();
     caster.mesh_id = quad;
     caster.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).to_cols_array_2d();
-    caster.material = Material::from_colour(viewport_lib::Colour::linear_rgb(0.2, 0.2, 0.8));
-    caster.material.backface_policy = BackfacePolicy::Identical;
+    let mut m = Material::from_colour(viewport_lib::Colour::linear_rgb(0.2, 0.2, 0.8));
+    m.backface_policy = BackfacePolicy::Identical;
+    caster.material = upload_material(&mut renderer, m);
     caster.deform_instance = Some(1);
 
     let mut sun = LightSource::default();
@@ -347,10 +361,11 @@ fn the_outline_follows_the_cut() {
         eprintln!("skipping: no GPU adapter or no deformer support");
         return;
     };
-    let mut cut = flat(quad, glam::Mat4::IDENTITY, [0.2, 0.2, 0.8]);
+    let mut cut = flat(&mut renderer, quad, glam::Mat4::IDENTITY, [0.2, 0.2, 0.8]);
     cut.deform_instance = Some(1);
     cut.settings.selected = true;
     let backdrop = flat(
+        &mut renderer,
         quad,
         glam::Mat4::from_scale_rotation_translation(
             glam::Vec3::splat(4.0),
@@ -394,10 +409,11 @@ fn a_pick_on_the_removed_half_hits_what_is_behind() {
         eprintln!("skipping: no GPU adapter or no deformer support");
         return;
     };
-    let mut cut = flat(quad, glam::Mat4::IDENTITY, [0.2, 0.2, 0.8]);
+    let mut cut = flat(&mut renderer, quad, glam::Mat4::IDENTITY, [0.2, 0.2, 0.8]);
     cut.deform_instance = Some(1);
     cut.settings.pick_id = PickId(1);
     let mut backdrop = flat(
+        &mut renderer,
         quad,
         glam::Mat4::from_scale_rotation_translation(
             glam::Vec3::splat(4.0),

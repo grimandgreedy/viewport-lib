@@ -9,7 +9,7 @@
 use viewport_lib::Colour;
 mod common;
 use common::*;
-use viewport_lib::{AttributeData, Material, MeshId, SceneRenderItem, SurfaceSubmission};
+use viewport_lib::{AttributeData, MeshId, SceneRenderItem, SurfaceSubmission};
 use viewport_lib_plugins::item_types::surface_contour::{ContourLevels, SurfaceContourItem};
 
 const SIZE: u32 = 96;
@@ -61,7 +61,7 @@ fn surface(mesh: MeshId) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = MODEL;
-    item.material = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
+    item.settings.colour = Some(Colour::linear_rgb(1.0, 1.0, 1.0));
     item.settings.unlit = true;
     item
 }

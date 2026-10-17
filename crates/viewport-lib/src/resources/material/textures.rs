@@ -669,6 +669,11 @@ impl DeviceResources {
         }
         self.evict_texture_bind_group_caches(id.raw());
         self.resource_free_epoch += 1;
+        // Bindless blocks hold the slot's array index; the slot now reads as
+        // unset, so rebuild the blocks that name it.
+        self.rebuild_material_blocks(|m| {
+            crate::resources::material::materials::names_texture(m, id)
+        });
         true
     }
 

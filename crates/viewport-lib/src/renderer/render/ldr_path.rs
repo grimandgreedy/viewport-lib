@@ -264,7 +264,9 @@ impl ViewportRenderer {
                     if (item.settings.visibility_mask & frame.camera.cull_mask) == 0 {
                         continue;
                     }
-                    if item.settings.opacity < 1.0 || item.material.is_blend() {
+                    if item.settings.opacity < 1.0
+                        || self.resources.material_or_default(item.material).is_blend()
+                    {
                         transparent.push((idx, item));
                     } else {
                         opaque.push((idx, item));

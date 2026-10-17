@@ -16,6 +16,7 @@
 use crate::App;
 use crate::eframe::egui;
 use crate::geometry::{make_box_with_uvs, make_uv_sphere};
+use crate::shared::{edit_material, upload_material};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
@@ -114,7 +115,7 @@ impl App {
                     } else {
                         BackfacePolicy::Cull
                     };
-                    m
+                    upload_material(renderer, m)
                 };
                 let mut transform =
                     glam::Mat4::from_translation(glam::Vec3::new(X_POSITIONS[col], 0.0, z));
@@ -179,7 +180,7 @@ impl App {
 // Controls
 // ---------------------------------------------------------------------------
 
-pub(crate) fn controls_param_vis(app: &mut App, ui: &mut egui::Ui) {
+pub(crate) fn controls_param_vis(app: &mut App, ui: &mut egui::Ui, frame: &crate::eframe::Frame) {
     ui.label("Four mesh rows, four ParamVisMode columns:");
     ui.label("  Back row    : torus");
     ui.label("  .           : sphere");
@@ -207,7 +208,7 @@ pub(crate) fn controls_param_vis(app: &mut App, ui: &mut egui::Ui) {
         .changed();
 
     if (vis_changed || scale_changed) && app.param_vis_state.built {
-        update_param_vis_materials(app);
+        update_param_vis_materials(app, frame);
     }
 
     ui.separator();
@@ -217,34 +218,19 @@ pub(crate) fn controls_param_vis(app: &mut App, ui: &mut egui::Ui) {
     ui.weak("LocalRadial: concentric rings at UV (0.5, 0.5).");
 }
 
-fn update_param_vis_materials(app: &mut App) {
-    let s = &mut app.param_vis_state;
-    let rows: [(usize, [f32; 3], bool); 4] = [
-        (IDX_TORUS, [0.55, 0.70, 0.65], false),
-        (IDX_SPHERE, [0.7, 0.7, 0.7], false),
-        (IDX_CUBE, [0.72, 0.65, 0.55], false),
-        (IDX_PLANE, [0.65, 0.65, 0.80], true),
-    ];
-    for (base_idx, colour, two_sided) in rows {
+fn update_param_vis_materials(app: &mut App, frame: &crate::eframe::Frame) {
+    let s = &app.param_vis_state;
+    let param_vis = |mode| {
+        s.on.then_some(ParamVis {
+            mode,
+            scale: s.scale,
+        })
+    };
+    for row in [IDX_TORUS, IDX_SPHERE, IDX_CUBE, IDX_PLANE] {
         for (col, (mode, _)) in MODES.iter().enumerate() {
-            let mat = {
-                let mut m = Material::pbr(Colour::from_linear_rgb_array(colour), 0.0, 0.4);
-                m.param_vis = if s.on {
-                    Some(ParamVis {
-                        mode: *mode,
-                        scale: s.scale,
-                    })
-                } else {
-                    None
-                };
-                m.backface_policy = if two_sided {
-                    BackfacePolicy::Identical
-                } else {
-                    BackfacePolicy::Cull
-                };
-                m
-            };
-            s.scene.set_material(s.node_ids[base_idx + col], mat);
+            if let Some(node) = s.scene.node(s.node_ids[row + col]) {
+                edit_material(frame, node.material(), |m| m.param_vis = param_vis(*mode));
+            }
         }
     }
 }
@@ -402,8 +388,8 @@ impl crate::Showcase for ScParameterization {
         &self,
         app: &mut crate::App,
         ui: &mut crate::eframe::egui::Ui,
-        _frame: &crate::eframe::Frame,
+        frame: &crate::eframe::Frame,
     ) {
-        controls_param_vis(app, ui)
+        controls_param_vis(app, ui, frame)
     }
 }

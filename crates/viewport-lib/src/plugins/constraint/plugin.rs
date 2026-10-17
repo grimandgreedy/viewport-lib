@@ -158,14 +158,14 @@ impl crate::plugin_api::PluginInstaller for ConstraintPlugin {
 mod tests {
     use super::*;
     use crate::interaction::select::selection::Selection;
+    use crate::resources::MaterialId;
     use crate::runtime::context::RuntimeFrameContext;
-    use crate::scene::material::Material;
     use crate::scene::scene::Scene;
 
     #[test]
     fn spring_target_pulls_the_node_toward_its_target() {
         let mut scene = Scene::new();
-        let node = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
 
         let plugin = ConstraintPlugin::new().add(Constraint::SpringTarget {
             node_id: node,

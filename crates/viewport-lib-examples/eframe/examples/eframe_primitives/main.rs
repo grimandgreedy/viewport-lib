@@ -80,13 +80,16 @@ fn main() -> eframe::Result {
             let cx = [-5.25f32, -1.75, 1.75, 5.25];
             let rz = [-7.0f32, -3.5, 0.0, 3.5, 7.0];
 
+            // One material for every primitive; each item sets its own colour.
+            let mut material = Material::default();
+            material.backface_policy = vpl::BackfacePolicy::Identical;
+            let material = res.upload_material(material).expect("upload material");
+
             let item = |mesh_id: MeshId, x, z, colour: [f32; 3]| {
-                let mut s = SceneRenderItem::default();
-                s.mesh_id = mesh_id;
+                let mut s = SceneRenderItem::new(mesh_id, material);
                 s.model =
                     glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).to_cols_array_2d();
-                s.material = Material::from_colour(Colour::from_linear_rgb_array(colour));
-                s.material.backface_policy = vpl::BackfacePolicy::Identical;
+                s.settings.colour = Some(Colour::from_linear_rgb_array(colour));
                 s
             };
 

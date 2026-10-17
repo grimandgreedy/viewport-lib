@@ -5,7 +5,7 @@
 
 use crate::Colour;
 use crate::renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission};
-use crate::{Camera, Material, ViewportRenderer};
+use crate::{Camera, ViewportRenderer};
 
 #[test]
 #[ignore]
@@ -28,8 +28,7 @@ fn per_object_prepare_timing() {
             let (x, y) = ((i % 100) as f32, (i / 100) as f32);
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x - 50.0, y - 50.0, 0.0))
                 .to_cols_array_2d();
-            item.material =
-                Material::from_colour(Colour::linear_rgb((i % 7) as f32 / 7.0, 0.5, 0.5));
+            item.settings.colour = Some(Colour::linear_rgb((i % 7) as f32 / 7.0, 0.5, 0.5));
             item.settings.force_per_object = true;
             item
         })

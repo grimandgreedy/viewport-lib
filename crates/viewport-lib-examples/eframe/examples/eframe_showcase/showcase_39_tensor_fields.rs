@@ -20,10 +20,12 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use std::collections::HashMap;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::tensor_field::{TensorFieldItem, TensorSource};
+use vpl::{Material, MaterialId};
 
 use vpl::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, CellSelectionInfo, ColourSource,
@@ -88,6 +90,8 @@ pub(crate) enum TgSelection {
 pub(crate) struct TensorFieldState {
     pub built: bool,
     pub mesh_id: Option<MeshId>,
+    /// Two-sided material for the beam surface.
+    pub material: MaterialId,
     /// Unit sphere the tensor field instances; each one is scaled by its own
     /// eigenvalues.
     pub shape_id: Option<MeshId>,
@@ -108,6 +112,7 @@ impl Default for TensorFieldState {
         Self {
             built: false,
             mesh_id: None,
+            material: MaterialId::DEFAULT,
             shape_id: None,
             face_to_cell: Vec::new(),
             beam_positions: Vec::new(),
@@ -284,6 +289,9 @@ pub(crate) fn build_tensor_field_scene(app: &mut App, renderer: &mut ViewportRen
         .upload_volume_mesh(&app.device, &data)
     {
         app.tg_state.mesh_id = Some(item.boundary_mesh_id);
+        let mut two_sided = Material::default();
+        two_sided.backface_policy = BackfacePolicy::Identical;
+        app.tg_state.material = upload_material(renderer, two_sided);
         app.tg_state.face_to_cell = item.face_to_cell;
     }
     app.tg_state.shape_id = renderer
@@ -373,7 +381,7 @@ pub(crate) fn submit_beam_item(app: &App, fd: &mut FrameData) {
         kind: AttributeKind::Face,
     });
     item.colourmap_id = Some(ColourmapId(0)); // viridis
-    item.material.backface_policy = BackfacePolicy::Identical;
+    item.material = app.tg_state.material;
     item.settings.pick_id = PickId(PICK_BEAM_MESH);
     fd.scene.volume_meshes.push(item);
 }
@@ -383,15 +391,13 @@ pub(crate) fn beam_scene_items(app: &App) -> Vec<SceneRenderItem> {
     let Some(mesh_id) = app.tg_state.mesh_id else {
         return vec![];
     };
-    let mut item = SceneRenderItem::default();
-    item.mesh_id = mesh_id;
+    let mut item = SceneRenderItem::new(mesh_id, app.tg_state.material);
     item.active_attribute = Some(AttributeRef {
         name: "sigma_xx".to_string(),
         kind: AttributeKind::Face,
     });
     item.scalar_range = Some((-1.2, 1.2));
     item.colourmap_id = Some(ColourmapId(app.tg_state.colourmap as usize));
-    item.material.backface_policy = BackfacePolicy::Identical;
     // Must match the VolumeMeshItem pick_id so the picking loop can convert face hits to cells.
     item.settings.pick_id = PickId(PICK_BEAM_MESH);
     vec![item]

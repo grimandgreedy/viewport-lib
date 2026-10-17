@@ -33,9 +33,26 @@ fn fill_quad() -> MeshData {
     mesh
 }
 
+/// The quad's material: matte, non-metal, to minimise the head-on specular
+/// highlight so the readback tracks diffuse radiance (which scales cleanly with
+/// light intensity).
+fn matte_material(renderer: &mut ViewportRenderer) -> MaterialId {
+    let mut m = Material::default();
+    m.base_colour = Colour::linear_rgb(0.6, 0.6, 0.6);
+    m.roughness = 1.0;
+    m.metallic = 0.0;
+    upload_material(renderer, m)
+}
+
 /// Build a frame with a full-frame white quad lit head-on by a directional
 /// light of the given intensity, exposure `exposure`, no ambient. `size` px.
-fn lit_frame(size: u32, mesh: MeshId, intensity: f32, exposure: ExposureSettings) -> FrameData {
+fn lit_frame(
+    size: u32,
+    mesh: MeshId,
+    material: MaterialId,
+    intensity: f32,
+    exposure: ExposureSettings,
+) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
     frame.camera.render_camera = {
@@ -63,11 +80,7 @@ fn lit_frame(size: u32, mesh: MeshId, intensity: f32, exposure: ExposureSettings
     item.mesh_id = mesh;
     // Scale the unit quad up so it covers the whole 1:1 frame.
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).to_cols_array_2d();
-    item.material.base_colour = Colour::linear_rgb(0.6, 0.6, 0.6);
-    // Matte, non-metal: minimise the head-on specular highlight so the readback
-    // tracks diffuse radiance (which scales cleanly with light intensity).
-    item.material.roughness = 1.0;
-    item.material.metallic = 0.0;
+    item.material = material;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     frame
 }
@@ -99,6 +112,7 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
         .resources_mut()
         .upload_mesh_data(&device, &fill_quad())
         .unwrap();
+    let matte = matte_material(&mut renderer);
 
     let size = 128u32;
     let dark_i = 0.5f32;
@@ -110,14 +124,14 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
     let man_dark = renderer.render_offscreen(
         &device,
         &queue,
-        &lit_frame(size, mesh, dark_i, ExposureSettings::manual(2.0)),
+        &lit_frame(size, mesh, matte, dark_i, ExposureSettings::manual(2.0)),
         size,
         size,
     );
     let man_bright = renderer.render_offscreen(
         &device,
         &queue,
-        &lit_frame(size, mesh, bright_i, ExposureSettings::manual(2.0)),
+        &lit_frame(size, mesh, matte, bright_i, ExposureSettings::manual(2.0)),
         size,
         size,
     );
@@ -144,6 +158,7 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
             &lit_frame(
                 size,
                 mesh,
+                matte,
                 i,
                 ExposureSettings::from_mode(ExposureMode::Automatic(a)),
             ),
@@ -179,6 +194,7 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
             &lit_frame(
                 size,
                 mesh,
+                matte,
                 i,
                 ExposureSettings::from_mode(ExposureMode::Automatic(a)),
             ),

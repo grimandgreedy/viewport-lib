@@ -16,11 +16,12 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
-    AttributeData, BackfacePolicy, LightKind, LightSource, LightingSettings, MeshId,
-    SceneRenderItem, ViewportRenderer, primitives,
+    AttributeData, BackfacePolicy, LightKind, LightSource, LightingSettings, Material, MaterialId,
+    MeshId, SceneRenderItem, ViewportRenderer, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -30,6 +31,8 @@ use vpl::{
 pub(crate) struct VertexWarpState {
     pub built: bool,
     pub mesh_ids: [MeshId; 3],
+    /// One two-sided material shared by the three meshes; each sets its own colour.
+    pub material: MaterialId,
     pub scale: f32,
 }
 
@@ -38,6 +41,7 @@ impl Default for VertexWarpState {
         Self {
             built: false,
             mesh_ids: [MeshId::INVALID; 3],
+            material: MaterialId::DEFAULT,
             scale: 0.5,
         }
     }
@@ -112,6 +116,10 @@ pub(crate) fn build_warp_scene(app: &mut App, renderer: &mut ViewportRenderer) {
     };
 
     app.warp_state.mesh_ids = [plane_id, sphere_4lobe_id, sphere_y20_id];
+    let mut material = Material::default();
+    material.backface_policy = BackfacePolicy::Identical;
+    material.specular = 0.15;
+    app.warp_state.material = upload_material(renderer, material);
     app.warp_state.built = true;
 }
 
@@ -155,13 +163,10 @@ pub(crate) fn warp_scene_items(app: &App) -> Vec<SceneRenderItem> {
         .zip(colours.iter())
         .zip(offsets.iter())
         .map(|((&mesh_id, &colour), &tx)| {
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = mesh_id;
+            let mut item = SceneRenderItem::new(mesh_id, app.warp_state.material);
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(tx, 0.0, 0.0)).to_cols_array_2d();
-            item.material.backface_policy = BackfacePolicy::Identical;
-            item.material.base_colour = Colour::from_linear_rgb_array(colour);
-            item.material.specular = 0.15;
+            item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
             item.warp_attribute = Some("warp".to_string());
             item.warp_scale = app.warp_state.scale;
             item

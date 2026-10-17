@@ -163,7 +163,7 @@ mod tests {
     use crate::camera::camera::Camera;
     use crate::interaction::input::ActionFrame;
     use crate::interaction::select::selection::{NodeId, Selection};
-    use crate::scene::material::Material;
+    use crate::resources::MaterialId;
     use crate::scene::scene::Scene;
     use std::sync::{Arc, Mutex};
 
@@ -397,7 +397,7 @@ mod tests {
     fn test_writeback_flushes_to_scene() {
         let target = glam::Affine3A::from_translation(glam::Vec3::new(3.0, 4.0, 5.0));
         let mut scene = Scene::new();
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
 
         let mut runtime = ViewportRuntime::new().with_plugin(WritebackPlugin {
             node_id,
@@ -425,7 +425,7 @@ mod tests {
     fn test_writeback_ops_in_output() {
         let target = glam::Affine3A::from_translation(glam::Vec3::new(1.0, 0.0, 0.0));
         let mut scene = Scene::new();
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
 
         let mut runtime = ViewportRuntime::new().with_plugin(WritebackPlugin {
             node_id,
@@ -489,7 +489,7 @@ mod tests {
     fn test_snapshot_updated_after_writeback() {
         let target = glam::Affine3A::from_translation(glam::Vec3::new(7.0, 0.0, 0.0));
         let mut scene = Scene::new();
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
 
         let mut runtime = ViewportRuntime::new().with_plugin(WritebackPlugin {
             node_id,
@@ -619,7 +619,7 @@ mod tests {
         assert!(added.lock().unwrap().is_empty(), "no events on first step");
 
         // Add a node, then step.
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         runtime.step(
             &mut scene,
             &mut sel,
@@ -649,7 +649,7 @@ mod tests {
         let mut scene = Scene::new();
         let mut sel = Selection::new();
 
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
 
         // First step with the node present.
         runtime.step(

@@ -2,8 +2,8 @@
 //! the first test it fails, and sums to `per_object_items`.
 
 use viewport_lib::{
-    BuiltinMatcap, CameraFrame, Colour, FrameData, Material, PerObjectReasons, SamplerKey,
-    SceneFrame, SceneRenderItem, ShadingModel, TextureSlot,
+    BuiltinMatcap, CameraFrame, Colour, FrameData, Material, MaterialId, PerObjectReasons,
+    SamplerKey, SceneFrame, SceneRenderItem, ShadingModel, TextureSlot,
 };
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
@@ -35,14 +35,27 @@ fn per_object_items_are_split_by_reason() {
         .clone()
         .with_sampler(TextureSlot::Albedo, SamplerKey::default());
 
+    let mut upload = |m: Material| {
+        h.renderer
+            .resources_mut()
+            .upload_material(m)
+            .expect("material upload")
+    };
+    let (base, matcap, sampler, matcap_and_sampler) = (
+        upload(base),
+        upload(matcap),
+        upload(sampler),
+        upload(matcap_and_sampler),
+    );
+
     let mut items = Vec::new();
-    let mut push = |material: &Material, wireframe: bool, hidden: bool, force: bool| {
+    let mut push = |material: &MaterialId, wireframe: bool, hidden: bool, force: bool| {
         let mut item = SceneRenderItem::default();
         item.mesh_id = id;
         item.model =
             glam::Mat4::from_translation(glam::Vec3::new(items.len() as f32 * 1.5, 0.0, 0.0))
                 .to_cols_array_2d();
-        item.material = material.clone();
+        item.material = *material;
         item.settings.wireframe = wireframe;
         item.settings.hidden = hidden;
         item.settings.force_per_object = force;

@@ -12,9 +12,9 @@ use viewport_lib::Colour;
 
 use viewport_lib::interaction::input::adapters::from_winit;
 use viewport_lib::{
-    Camera, CameraFrame, FrameData, LightingSettings, Material, OrbitCameraController,
-    PostProcessSettings, SceneFrame, SceneRenderItem, ViewportContext, ViewportInput,
-    ViewportRenderer, primitives, viewport_default_bindings,
+    Camera, CameraFrame, FrameData, LightingSettings, OrbitCameraController, PostProcessSettings,
+    SceneFrame, SceneRenderItem, ViewportContext, ViewportInput, ViewportRenderer, primitives,
+    viewport_default_bindings,
 };
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
@@ -137,7 +137,8 @@ impl ApplicationHandler for App {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-            item.material = Material::from_colour(Colour::from_linear_rgb_array(colour));
+            // The default material, coloured per item.
+            item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
             item
         };
 

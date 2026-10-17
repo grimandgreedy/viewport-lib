@@ -342,6 +342,8 @@ pub struct ContentResources {
     /// User-uploaded textures, keyed by the `texture_id` in Material. Slotted
     /// with generational ids so a freed slot cannot alias a later upload.
     pub(crate) textures: crate::resources::material::texture_store::TextureStore,
+    /// Uploaded materials, keyed by `MaterialId`. Slot 0 is the default.
+    pub(crate) materials: crate::resources::material::material_store::MaterialStore,
     /// Uploaded 3D volume textures, keyed by `VolumeId`. Slotted with
     /// generational ids so a freed slot cannot alias a later upload, and the
     /// per-entry byte charge feeds `ResidentBytes::volume_bytes`.
@@ -624,16 +626,16 @@ pub struct DeviceResources {
     // The depth-blit and dynamic-resolution upscale pipelines live on `post`.
 
     // --- Per-material UV transform buffer (group 0, binding 13) ---
-    /// Scene-global buffer of per-material UV transform blocks
-    /// (`MaterialGpu`, one per distinct transform this frame). Fixed capacity
-    /// ([`MATERIAL_GPU_CAPACITY`](crate::resources::material_gpu::MATERIAL_GPU_CAPACITY)),
-    /// so its handle is stable and the camera bind group never rebuilds for it.
+    /// Scene-global buffer of material blocks (`MaterialGpu`), indexed by
+    /// `material_id`. Grows when the table outgrows it, which replaces the
+    /// buffer and rebuilds the camera bind groups that name it.
     pub(crate) material_gpu_buf: crate::gpu::Buffer,
     /// Blocks `material_gpu_buf` holds.
     pub(crate) material_gpu_capacity: usize,
-    /// Per-frame interner that deduplicates transform blocks and hands out
-    /// `material_id` indices into `material_gpu_buf`. Reset at each `prepare()`.
-    pub(crate) material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder,
+    /// The most blocks one storage binding of the device can hold.
+    pub(crate) material_gpu_limit: usize,
+    /// The material blocks: one per stored material plus shading variants.
+    pub(crate) material_table: crate::resources::material_gpu::MaterialTable,
 
     // --- Per-instance custom-data buffer (group 0, binding 22) ---
     /// Scene-global buffer of per-instance custom-data blocks
@@ -673,9 +675,8 @@ pub struct DeviceResources {
     /// depth for occlusion culling.
     pub(crate) hiz_pipelines:
         std::sync::OnceLock<std::sync::Arc<crate::resources::gpu::hiz::HizPipelines>>,
-    /// The material table and instance custom data as last uploaded, so an
-    /// unchanged table is not written again.
-    pub(crate) material_gpu_written: Vec<u8>,
+    /// The instance custom data as last uploaded, so an unchanged table is not
+    /// written again.
     pub(crate) custom_data_written: Vec<u8>,
     /// Cancels and waits for this renderer's compiles when it is dropped.
     pub(crate) pipeline_compiler_shutdown: crate::resources::pipeline_slot::CompilerShutdown,
@@ -1050,53 +1051,40 @@ impl DeviceResources {
     ///
     /// NOTE: The initial bind group in `init.rs` is constructed inline (before
     /// `Self` exists). Keep the binding layout in sync when modifying either site.
-    /// Upload the current per-material transform blocks to `material_gpu_buf`.
-    /// Called after interning finishes (end of scene prep, and again after
-    /// per-viewport foreground objects intern). Overwriting a superset each time
-    /// is safe: index 0 is always identity and ids only grow within a frame, so
-    /// earlier material_ids stay valid.
+    /// Write the material blocks changed since the last upload to
+    /// `material_gpu_buf`. Called after each prepare stage that can write
+    /// blocks (the scene, then each viewport's foreground items).
     ///
-    /// A frame that interns more blocks than the buffer holds replaces it with
-    /// a larger one and sets `camera_bind_groups_dirty`, like
+    /// A table that outgrows the buffer replaces it with a larger one, writes
+    /// every block, and sets `camera_bind_groups_dirty`, like
     /// `upload_custom_data`.
     pub(crate) fn upload_material_gpu(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
     ) {
-        let entries = self.material_gpu_builder.entries();
-        let n = entries
-            .len()
-            .min(crate::resources::material_gpu::MATERIAL_GPU_CAPACITY);
+        let n = self.material_table.blocks().len();
         if n > self.material_gpu_capacity {
             let capacity = n
                 .next_power_of_two()
                 .max(self.material_gpu_capacity * 2)
-                .min(crate::resources::material_gpu::MATERIAL_GPU_CAPACITY);
+                .min(self.material_gpu_limit);
             self.material_gpu_buf = Self::create_material_gpu_buffer(device, capacity);
             self.material_gpu_capacity = capacity;
             self.camera_bind_groups_dirty = true;
-            self.material_gpu_written.clear();
+            self.material_table.mark_all();
         }
-        let entries = self.material_gpu_builder.entries();
-        // Prepare runs this once for the scene and again per viewport, and a
-        // static scene's table does not change between frames: write only
-        // what differs from the last upload.
-        let data: &[u8] = bytemuck::cast_slice(&entries[..n]);
-        if self.material_gpu_written.as_slice() == data {
+        let Some((lo, hi)) = self.material_table.take_dirty() else {
+            return;
+        };
+        let hi = hi.min(self.material_gpu_capacity);
+        if lo >= hi {
             return;
         }
-        queue.write_buffer(&self.material_gpu_buf, 0, data);
-        self.material_gpu_written.clear();
-        self.material_gpu_written.extend_from_slice(data);
-        let bytes = data.len() as u64;
-        if self.material_gpu_builder.overflowed {
-            tracing::warn!(
-                capacity = crate::resources::material_gpu::MATERIAL_GPU_CAPACITY,
-                "material UV transform buffer overflowed; excess materials fell back to identity"
-            );
-        }
-        self.frame_upload_bytes += bytes;
+        let data: &[u8] = bytemuck::cast_slice(&self.material_table.blocks()[lo..hi]);
+        let stride = std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>() as u64;
+        queue.write_buffer(&self.material_gpu_buf, lo as u64 * stride, data);
+        self.frame_upload_bytes += data.len() as u64;
     }
 
     /// A custom-data buffer holding `capacity` blocks.

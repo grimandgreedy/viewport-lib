@@ -12,7 +12,11 @@ use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 /// per-object pipelines: under GPU-driven submission the bundle covers the
 /// fat batches only, and the HDR harness turns that on from its second
 /// frame. `hidden` names the item left out, which changes the batch list.
-fn items(mesh_ids: &[viewport_lib::MeshId], hidden: Option<u32>) -> Vec<SceneRenderItem> {
+fn items(
+    mesh_ids: &[viewport_lib::MeshId],
+    material: viewport_lib::MaterialId,
+    hidden: Option<u32>,
+) -> Vec<SceneRenderItem> {
     mesh_ids
         .iter()
         .enumerate()
@@ -20,7 +24,7 @@ fn items(mesh_ids: &[viewport_lib::MeshId], hidden: Option<u32>) -> Vec<SceneRen
             let i = i as u32;
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.65, 0.7));
+            item.material = material;
             item.settings.force_per_object = true;
             let x = (i % 16) as f32 * 2.0;
             let y = (i / 16) as f32 * 2.0;
@@ -49,12 +53,17 @@ fn bundle_backs_off_under_churn_and_rearms() {
                 .expect("mesh upload")
         })
         .collect();
+    let material = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.6, 0.65, 0.7)))
+        .expect("material upload");
     let camera = orbit_camera(glam::Vec3::new(16.0, 12.0, 0.0), 60.0, 0.6, 1.0);
     let size = [96.0f32, 64.0];
     let fd = |hidden: Option<u32>| {
         FrameData::new(
             CameraFrame::from_camera(&camera, size),
-            SceneFrame::from_surface_items(items(&mesh_ids, hidden)),
+            SceneFrame::from_surface_items(items(&mesh_ids, material, hidden)),
         )
     };
 

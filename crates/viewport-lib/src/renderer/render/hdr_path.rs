@@ -89,7 +89,8 @@ pub(super) fn draw_mesh_item(
     };
     let obj_bg = obj_bg_override.unwrap_or(&mesh.object_bind_group);
     render_pass.set_bind_group(1, obj_bg, &[]);
-    let plug = resources.material_plugin_draw(item.material.shading_plugin);
+    let material = resources.material_or_default(item.material);
+    let plug = resources.material_plugin_draw(material.shading_plugin);
     if let Some((_, mat_bg)) = plug {
         bind_material_group!(render_pass, mat_bg);
     }
@@ -106,7 +107,7 @@ pub(super) fn draw_mesh_item(
                 | crate::resources::AttributeKind::Corner
         )
     });
-    let item_key = PipelineKey::two_sided(item.material.is_two_sided());
+    let item_key = PipelineKey::two_sided(material.is_two_sided());
     if wireframe_mode || item.settings.wireframe {
         if let Some(edge_buf) = &mesh.edge_index_buffer {
             let Some(wf_pl) = family.wireframe() else {
@@ -157,6 +158,7 @@ pub(super) fn draw_mesh_item(
                 crate::gpu::IndexFormat::Uint32,
             );
             for (r, (mat, range)) in mats.iter().zip(&mesh.submeshes).enumerate() {
+                let mat = resources.material_or_default(*mat);
                 let is_trans = item.settings.opacity < 1.0 || mat.is_blend();
                 if let Some(want) = submesh_transparent {
                     if is_trans != want {
@@ -2345,7 +2347,9 @@ impl ViewportRenderer {
             if (item.settings.visibility_mask & frame.camera.cull_mask) == 0 {
                 continue;
             }
-            if item.settings.opacity < 1.0 || item.material.is_blend() {
+            if item.settings.opacity < 1.0
+                || resources.material_or_default(item.material).is_blend()
+            {
                 transparent.push((idx, item));
             } else {
                 opaque.push((idx, item));

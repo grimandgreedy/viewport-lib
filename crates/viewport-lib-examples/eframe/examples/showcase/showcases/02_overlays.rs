@@ -96,10 +96,15 @@ impl Showcase for OverlaysShowcase {
             (TROUGH, [0.65, 0.16, 0.10]),
             (ORIGIN, [0.35, 0.35, 0.38]),
         ] {
+            let material = ctx
+                .session
+                .resources_mut()
+                .upload_material(Material::from_colour(Colour::from_linear_rgb_array(colour)))
+                .unwrap();
             ctx.session.scene_mut().add(
                 Some(cube),
                 Mat4::from_translation(Vec3::from(pos)),
-                Material::from_colour(Colour::from_linear_rgb_array(colour)),
+                material,
             );
         }
 

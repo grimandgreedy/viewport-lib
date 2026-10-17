@@ -30,7 +30,7 @@ use crate::eframe::egui;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
-    LightKind, LightSource, LightingSettings, Material, MaterialPluginId,
+    LightKind, LightSource, LightingSettings, Material, MaterialId, MaterialPluginId,
     MaterialPluginParamsHandle, MeshId, SceneRenderItem, ViewportRenderer,
 };
 
@@ -62,6 +62,8 @@ pub(crate) struct CustomShadingState {
     pub parallax: Option<MaterialPluginId>,
     pub dissolve: Option<MaterialPluginId>,
     pub detail_mesh_id: Option<MeshId>,
+    /// One material per sphere, in `SPHERES` order.
+    pub materials: Vec<MaterialId>,
     pub toon_a_handle: Option<MaterialPluginParamsHandle>,
     pub toon_b_handle: Option<MaterialPluginParamsHandle>,
     pub rim_handle: Option<MaterialPluginParamsHandle>,
@@ -97,6 +99,7 @@ impl Default for CustomShadingState {
             parallax: None,
             dissolve: None,
             detail_mesh_id: None,
+            materials: Vec::new(),
             toon_a_handle: None,
             toon_b_handle: None,
             rim_handle: None,
@@ -338,9 +341,46 @@ impl App {
         self.cs_state.detail_mesh_id = Some(detail_mesh_id);
         self.cs_state.toon_a = Some(toon_a);
         self.cs_state.rim = Some(rim);
+
+        let s = &self.cs_state;
+        let plugins = [
+            None, // built-in PBR reference
+            s.toon_a, s.toon_b, s.toon_tex, s.rim, s.detail, s.parallax, s.dissolve,
+        ];
+        let resources = renderer.resources_mut();
+        let materials = SPHERES
+            .iter()
+            .zip(plugins)
+            .map(|(sphere, plugin)| {
+                let mut m = Material::pbr(Colour::from_linear_rgb_array(sphere.1), 0.1, 0.55);
+                m.shading_plugin = plugin;
+                // The dissolve sphere runs on a Mask material so the hook's
+                // alpha output discards fragments below the cutoff.
+                if plugin.is_some() && plugin == s.dissolve {
+                    m.alpha_mode = vpl::material::AlphaMode::Mask(0.5);
+                }
+                resources.upload_material(m).expect("material upload")
+            })
+            .collect();
+        self.cs_state.materials = materials;
         self.cs_state.built = true;
     }
 }
+
+/// Each sphere's x position and base colour, and whether it uses the detail
+/// mesh. Its shading plugin is set on its material at build.
+const SPHERES: [(f32, [f32; 3], bool); 8] = [
+    (-9.0, [0.75, 0.3, 0.3], false),
+    (-6.0, [0.75, 0.3, 0.3], false),
+    (-3.0, [0.75, 0.3, 0.3], false),
+    (0.0, [0.85, 0.85, 0.85], false),
+    (3.0, [0.25, 0.25, 0.3], false),
+    // Detail layer reads the per-vertex mask baked into this mesh's extension
+    // attributes.
+    (6.0, [0.4, 0.5, 0.35], true),
+    (9.0, [0.8, 0.8, 0.8], false),
+    (12.0, [0.55, 0.35, 0.25], false),
+];
 
 // ---------------------------------------------------------------------------
 // Render items
@@ -352,32 +392,14 @@ pub(crate) fn custom_shading_items(app: &App) -> Vec<SceneRenderItem> {
     };
     let s = &app.cs_state;
     let detail_mesh = s.detail_mesh_id.unwrap_or(mesh_id);
-    let entries: [(f32, [f32; 3], Option<MaterialPluginId>, MeshId); 8] = [
-        (-9.0, [0.75, 0.3, 0.3], None, mesh_id), // built-in PBR reference
-        (-6.0, [0.75, 0.3, 0.3], s.toon_a, mesh_id),
-        (-3.0, [0.75, 0.3, 0.3], s.toon_b, mesh_id),
-        (0.0, [0.85, 0.85, 0.85], s.toon_tex, mesh_id),
-        (3.0, [0.25, 0.25, 0.3], s.rim, mesh_id),
-        // Detail layer reads the per-vertex mask baked into this mesh's
-        // extension attributes.
-        (6.0, [0.4, 0.5, 0.35], s.detail, detail_mesh),
-        (9.0, [0.8, 0.8, 0.8], s.parallax, mesh_id),
-        (12.0, [0.55, 0.35, 0.25], s.dissolve, mesh_id),
-    ];
-    entries
+    SPHERES
         .iter()
-        .map(|(x, colour, plugin, mesh)| {
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = *mesh;
+        .zip(&s.materials)
+        .map(|(&(x, _, detail), &material)| {
+            let mesh = if detail { detail_mesh } else { mesh_id };
+            let mut item = SceneRenderItem::new(mesh, material);
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(*x, 0.0, 1.0)).to_cols_array_2d();
-            item.material = Material::pbr(Colour::from_linear_rgb_array(*colour), 0.1, 0.55);
-            item.material.shading_plugin = *plugin;
-            // The dissolve sphere runs on a Mask material so the hook's
-            // alpha output discards fragments below the cutoff.
-            if *plugin == s.dissolve && plugin.is_some() {
-                item.material.alpha_mode = vpl::material::AlphaMode::Mask(0.5);
-            }
+                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 1.0)).to_cols_array_2d();
             item
         })
         .collect()

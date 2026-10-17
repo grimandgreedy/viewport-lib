@@ -37,7 +37,11 @@ fn quad_frame(harness: &mut Harness) -> viewport_lib::FrameData {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).to_cols_array_2d();
-    item.material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
+    item.material = harness
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8)))
+        .expect("material upload");
     item.settings.unlit = true;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     frame

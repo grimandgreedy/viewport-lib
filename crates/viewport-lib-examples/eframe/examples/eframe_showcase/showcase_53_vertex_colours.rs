@@ -22,11 +22,12 @@
 use crate::App;
 use crate::eframe;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
-    BackfacePolicy, LightKind, LightSource, LightingSettings, MeshId, SceneRenderItem,
-    ViewportRenderer, primitives,
+    BackfacePolicy, LightKind, LightSource, LightingSettings, Material, MaterialId, MeshId,
+    SceneRenderItem, ViewportRenderer, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -35,6 +36,9 @@ use vpl::{
 
 pub(crate) struct VertexColourState {
     pub built: bool,
+
+    /// White two-sided material shared by all three meshes.
+    pub material: MaterialId,
 
     // Left: static baked colours.
     pub static_id: MeshId,
@@ -66,6 +70,7 @@ impl Default for VertexColourState {
     fn default() -> Self {
         Self {
             built: false,
+            material: MaterialId::DEFAULT,
             static_id: MeshId::INVALID,
             paint_id: MeshId::INVALID,
             paint_positions: Vec::new(),
@@ -157,8 +162,15 @@ pub(crate) fn build_vertex_colour_scene(app: &mut App, renderer: &mut ViewportRe
     // keep the sphere's origin in sync there.
     let _ = static_origin;
 
+    // White base colour so the per-vertex colour shows unmodified; PBR
+    // shading still applies on top.
+    let mut material = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
+    material.specular = 0.2;
+    material.backface_policy = BackfacePolicy::Identical;
+
     app.vcol_state = VertexColourState {
         built: true,
+        material: upload_material(renderer, material),
         static_id,
         paint_id,
         paint_positions,
@@ -356,14 +368,8 @@ pub(crate) fn vcol_scene_items(app: &App) -> Vec<SceneRenderItem> {
     }
 
     let make = |mesh_id: MeshId, origin: glam::Vec3| {
-        let mut item = SceneRenderItem::default();
-        item.mesh_id = mesh_id;
+        let mut item = SceneRenderItem::new(mesh_id, s.material);
         item.model = glam::Mat4::from_translation(origin).to_cols_array_2d();
-        // White base colour so the per-vertex colour shows unmodified; PBR
-        // shading still applies on top.
-        item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
-        item.material.specular = 0.2;
-        item.material.backface_policy = BackfacePolicy::Identical;
         item
     };
 

@@ -42,7 +42,7 @@ fn fill_quad() -> MeshData {
 /// `opacity` (skipped entirely at 0). The quad is unlit so it contributes no
 /// radiance beyond its own colour, and smaller than the frame so the corners
 /// stay pure background and both regions come from one render.
-fn probe_frame(mesh: MeshId, bg_alpha: f32, opacity: f32) -> FrameData {
+fn probe_frame(quad: Quad, bg_alpha: f32, opacity: f32) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
     frame.camera.render_camera = {
@@ -60,10 +60,9 @@ fn probe_frame(mesh: MeshId, bg_alpha: f32, opacity: f32) -> FrameData {
 
     if opacity > 0.0 {
         let mut item = SceneRenderItem::default();
-        item.mesh_id = mesh;
+        item.mesh_id = quad.0;
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(1.2)).to_cols_array_2d();
-        item.material.base_colour = Colour::linear(0.0, 1.0, 0.0, 1.0);
-        item.material.alpha_mode = AlphaMode::Blend;
+        item.material = quad.1;
         item.settings.unlit = true;
         item.settings.opacity = opacity;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -99,13 +98,20 @@ fn to_linear(srgb: f32) -> f32 {
     }
 }
 
-fn renderer_and_quad(device: &wgpu::Device) -> (ViewportRenderer, MeshId) {
+/// The quad mesh and its blended green material.
+type Quad = (MeshId, MaterialId);
+
+fn renderer_and_quad(device: &wgpu::Device) -> (ViewportRenderer, Quad) {
     let mut renderer = ViewportRenderer::new(device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let mesh = renderer
         .resources_mut()
         .upload_mesh_data(device, &fill_quad())
         .unwrap();
-    (renderer, mesh)
+    let mut m = Material::default();
+    m.base_colour = Colour::linear(0.0, 1.0, 0.0, 1.0);
+    m.alpha_mode = AlphaMode::Blend;
+    let material = upload_material(&mut renderer, m);
+    (renderer, (mesh, material))
 }
 
 /// The background is applied exactly once to a partially covered pixel.

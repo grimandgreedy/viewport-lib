@@ -18,12 +18,13 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::surface_contour::{ContourLevels, SurfaceContourItem};
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, ColourmapId,
-    FrameData, GridCells, LightingSettings, Material, MeshData, MeshId, PolylineItem,
+    FrameData, GridCells, LightingSettings, Material, MaterialId, MeshData, MeshId, PolylineItem,
     SceneRenderItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem, extract_isolines,
     isoline_strips, scene::Scene,
 };
@@ -34,6 +35,9 @@ use vpl::{
 
 pub(crate) struct IsolinesState {
     pub built: bool,
+    /// Grid and block materials, uploaded on the first build and kept across
+    /// rebuilds.
+    pub materials: Option<(MaterialId, MaterialId)>,
     pub scene: Scene,
     pub mesh_index: MeshId,
     pub positions: Vec<[f32; 3]>,
@@ -150,6 +154,7 @@ impl Default for IsolinesState {
     fn default() -> Self {
         Self {
             built: false,
+            materials: None,
             scene: Scene::new(),
             mesh_index: MeshId::INVALID,
             positions: Vec::new(),
@@ -195,13 +200,23 @@ impl App {
             .expect("iso wave mesh");
         self.iso_state.mesh_index = mesh_id;
 
+        // Both are seen from either side: the grid is an open sheet, and the
+        // block's section faces point into the kept side.
+        let (grid_mat, block_mat) = *self.iso_state.materials.get_or_insert_with(|| {
+            let mut grid = Material::from_colour(Colour::linear_rgb(0.6, 0.65, 0.7));
+            grid.roughness = 0.6;
+            grid.backface_policy = BackfacePolicy::Identical;
+            let mut block = Material::default();
+            block.backface_policy = BackfacePolicy::Identical;
+            (
+                upload_material(renderer, grid),
+                upload_material(renderer, block),
+            )
+        });
+
         self.iso_state
             .scene
-            .add_named("Wave Grid", Some(mesh_id), glam::Mat4::IDENTITY, {
-                let mut m = Material::from_colour(Colour::linear_rgb(0.6, 0.65, 0.7));
-                m.roughness = 0.6;
-                m
-            });
+            .add_named("Wave Grid", Some(mesh_id), glam::Mat4::IDENTITY, grid_mat);
 
         let data = make_block();
         let node_range = data.node_scalars["node"]
@@ -210,10 +225,11 @@ impl App {
                 (lo.min(*v), hi.max(*v))
             });
         let offset = self.iso_state.cut_offset;
-        let item = renderer
+        let mut item = renderer
             .resources_mut()
             .upload_clipped_volume_mesh(&self.device, &data, &[cut_plane(offset)])
             .expect("cut volume mesh");
+        item.material = block_mat;
         let mut block = CutBlock {
             data,
             item,
@@ -387,11 +403,6 @@ pub(crate) fn iso_collect_scene_items(
                 kind: AttributeKind::Vertex,
             });
             item.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
-            item.material.backface_policy = BackfacePolicy::Identical;
-        }
-    } else {
-        for item in items.iter_mut() {
-            item.material.backface_policy = BackfacePolicy::Identical;
         }
     }
     let sg = app.iso_state.scene.version();
@@ -428,8 +439,6 @@ fn submit_block(app: &mut App, fd: &mut FrameData) {
         });
         item.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
     }
-    // Section faces point into the kept side, so draw both sides.
-    item.material.backface_policy = BackfacePolicy::Identical;
     let boundary = item.boundary_mesh_id;
     fd.scene.volume_meshes.push(item);
 

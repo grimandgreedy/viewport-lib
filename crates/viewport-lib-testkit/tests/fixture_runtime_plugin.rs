@@ -99,7 +99,7 @@ fn runtime_fixture_receives_lifecycle_events() {
     let node = scene.add(
         None,
         glam::Mat4::IDENTITY,
-        viewport_lib::Material::default(),
+        viewport_lib::MaterialId::DEFAULT,
     );
     step(&mut runtime, &mut scene);
     assert_eq!(

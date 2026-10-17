@@ -14,6 +14,7 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::vector_field::{
@@ -23,6 +24,7 @@ use vpl::{
     BackfacePolicy, BuiltinColourmap, ColourSource, ColourmapId, FrameData, LightingSettings,
     MeshData, MeshId, SceneRenderItem,
 };
+use vpl::{Material, MaterialId};
 
 // ---------------------------------------------------------------------------
 // Sub-mode
@@ -51,6 +53,8 @@ pub(crate) struct SvState {
     pub glyph_density: f32,
     /// Mesh upload indices: [sphere, torus, plane].
     pub mesh_index: [MeshId; 3],
+    /// Two-sided material shared by the three surfaces.
+    pub surface_material: MaterialId,
     /// CPU-side positions for each mesh.
     pub positions: [Vec<[f32; 3]>; 3],
     /// CPU-side normals for each mesh.
@@ -80,6 +84,7 @@ impl Default for SvState {
             density: 1.0,
             glyph_density: -1.0,
             mesh_index: [MeshId::INVALID; 3],
+            surface_material: MaterialId::DEFAULT,
             positions: [Vec::new(), Vec::new(), Vec::new()],
             normals: [Vec::new(), Vec::new(), Vec::new()],
             tangents: [None, None, None],
@@ -126,6 +131,9 @@ impl App {
             .expect("sv plane");
 
         self.sv_state.mesh_index = [sphere_idx, torus_idx, plane_idx];
+        let mut two_sided = Material::default();
+        two_sided.backface_policy = BackfacePolicy::Identical;
+        self.sv_state.surface_material = upload_material(renderer, two_sided);
         self.sv_state.rainbow_id = Some(
             renderer
                 .resources()
@@ -202,9 +210,7 @@ impl App {
             SvMode::FaceIntrinsic => self.sv_state.mesh_index[1],
             SvMode::EdgeOneForm => self.sv_state.mesh_index[2],
         };
-        let mut item = SceneRenderItem::default();
-        item.mesh_id = mesh_id;
-        item.material.backface_policy = BackfacePolicy::Identical;
+        let mut item = SceneRenderItem::new(mesh_id, self.sv_state.surface_material);
         // Lit so the hemisphere light shapes the surface instead of showing a
         // flat gray. The glyphs on top stay unlit for a clean, even colour.
         item.settings.unlit = false;

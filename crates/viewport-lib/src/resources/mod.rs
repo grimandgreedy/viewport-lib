@@ -68,6 +68,7 @@ pub use self::light_probes::{
 };
 pub use self::lightmap::{LightmapData, LightmapMode};
 pub use self::material::environment::{EnvironmentMapId, EnvironmentOptions, EnvironmentZone};
+pub use self::material::material_store::MaterialId;
 pub use self::material::texture_store::TextureId;
 pub use self::material::textures::{CompressedTextureDesc, supports_texture_format};
 pub use self::memory::vram_budget;

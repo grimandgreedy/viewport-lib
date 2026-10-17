@@ -1,4 +1,5 @@
-use crate::scene::material::{ItemSettings, Material};
+use crate::resources::MaterialId;
+use crate::scene::material::ItemSettings;
 
 /// Per-object render data for one frame.
 #[derive(Clone)]
@@ -12,17 +13,18 @@ pub struct SceneRenderItem {
     pub settings: ItemSettings,
     /// Whether to render per-vertex normal visualization lines for this object.
     pub show_normals: bool,
-    /// Per-object material (colour, shading coefficients, texture).
-    pub material: Material,
+    /// The material this item draws with, from
+    /// [`upload_material`](crate::resources::DeviceResources::upload_material).
+    /// Default [`MaterialId::DEFAULT`].
+    pub material: MaterialId,
     /// One material per submesh range of the mesh, indexed to match
     /// `MeshData::submeshes` at upload time.
     ///
     /// `None` draws every range (or the whole mesh, if it has no ranges)
-    /// with `material`. When set, the renderer issues one draw per range
-    /// with the matching material; a length mismatch against the mesh's
-    /// range count falls back to `material` for the whole mesh. Items with
-    /// this set are drawn per-object (no instancing).
-    pub submesh_materials: Option<Vec<Material>>,
+    /// with `material`. When set, the renderer draws each range with the
+    /// matching material; a length mismatch against the mesh's range count
+    /// falls back to `material` for the whole mesh.
+    pub submesh_materials: Option<Vec<MaterialId>>,
     /// Named scalar attribute to colour by. `None` = use material base colour.
     pub active_attribute: Option<crate::resources::AttributeRef>,
     /// Explicit scalar range `(min, max)`. `None` = use auto-range computed at upload time.
@@ -94,6 +96,18 @@ pub enum IndirectLightSource {
     ProbeVolume,
 }
 
+impl SceneRenderItem {
+    /// An item drawing `mesh_id` with `material`, at the identity transform,
+    /// with default settings.
+    pub fn new(mesh_id: crate::resources::mesh::mesh_store::MeshId, material: MaterialId) -> Self {
+        Self {
+            mesh_id,
+            material,
+            ..Self::default()
+        }
+    }
+}
+
 impl Default for SceneRenderItem {
     fn default() -> Self {
         Self {
@@ -101,7 +115,7 @@ impl Default for SceneRenderItem {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             settings: ItemSettings::default(),
             show_normals: false,
-            material: Material::default(),
+            material: MaterialId::DEFAULT,
             submesh_materials: None,
             active_attribute: None,
             scalar_range: None,

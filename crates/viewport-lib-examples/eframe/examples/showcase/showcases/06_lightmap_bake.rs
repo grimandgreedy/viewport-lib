@@ -40,8 +40,8 @@ use vpl::bake::TexelGeometry;
 use vpl::raytrace::{RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, Tracer};
 use vpl::resources::{LightmapData, LightmapMode, TextureId};
 use vpl::{
-    BackfacePolicy, ItemSettings, LightKind, LightSource, Material, MeshData, MeshId, NodeId,
-    ShadowFilter, primitives,
+    BackfacePolicy, ItemSettings, LightKind, LightSource, Material, MaterialId, MeshData, MeshId,
+    NodeId, ShadowFilter, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -165,12 +165,65 @@ struct Piece {
     dir_tex: Option<TextureId>,
 }
 
+/// Materials uploaded once in `setup`, reused by every `rebuild`.
+#[derive(Default)]
+struct Materials {
+    /// One per entry of `pieces`, in order.
+    pieces: Vec<MaterialId>,
+    dynamic_occluder: MaterialId,
+    emissive_panel: MaterialId,
+    atlas: MaterialId,
+}
+
+impl Materials {
+    fn upload(res: &mut vpl::DeviceResources, pieces: &[Piece]) -> Self {
+        let mut up = |mut m: Material| {
+            m.backface_policy = BackfacePolicy::Identical;
+            res.upload_material(m).unwrap()
+        };
+        let pieces = pieces
+            .iter()
+            .map(|p| {
+                // Every piece keeps its true albedo: the baked lightmap now stores
+                // material-independent incident radiance (E/pi), and Replace mode
+                // multiplies it by the material's base_colour (albedo).
+                let mut m = Material::pbr(Colour::from_linear_rgb_array(p.albedo), 0.0, 0.9);
+                // Normal-mapped pieces carry their map in both modes; combined with
+                // the directional lightmap (baked mode) the bumps pick up the baked
+                // light.
+                if let Some(nt) = p.normal_tex {
+                    m.normal_map_id = Some(nt);
+                    m.normal_strength = 1.0;
+                }
+                up(m)
+            })
+            .collect();
+        let dynamic_occluder = up(Material::pbr(
+            Colour::linear_rgb(0.85, 0.85, 0.88),
+            0.0,
+            0.6,
+        ));
+        // Carries the same radiance as the emitter in the trace scene.
+        let mut panel = Material::pbr(Colour::linear_rgb(0.0, 0.0, 0.0), 0.0, 1.0);
+        panel.emissive = Colour::from_linear_rgb_array(PANEL_RADIANCE);
+        let emissive_panel = up(panel);
+        let atlas = up(Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 1.0));
+        Self {
+            pieces,
+            dynamic_occluder,
+            emissive_panel,
+            atlas,
+        }
+    }
+}
+
 pub struct LightmapBakeShowcase {
     /// 0 = baked GI (directional), 1 = emissive GI (area light), 2 = realtime only.
     mode: usize,
     shown: Option<usize>,
     built: bool,
     pieces: Vec<Piece>,
+    mats: Materials,
     nodes: Vec<NodeId>,
     // Bake controls.
     samples: u32,
@@ -227,6 +280,7 @@ impl LightmapBakeShowcase {
             shown: None,
             built: false,
             pieces: Vec::new(),
+            mats: Materials::default(),
             nodes: Vec::new(),
             samples: 64,
             denoise: true,
@@ -863,18 +917,7 @@ impl LightmapBakeShowcase {
             }
         }
 
-        for p in &self.pieces {
-            // Every piece keeps its true albedo: the baked lightmap now stores
-            // material-independent incident radiance (E/pi), and Replace mode
-            // multiplies it by the material's base_colour (albedo).
-            let mut mat = Material::pbr(Colour::from_linear_rgb_array(p.albedo), 0.0, 0.9);
-            mat.backface_policy = BackfacePolicy::Identical;
-            // Normal-mapped pieces carry their map in both modes; combined with the
-            // directional lightmap (baked mode) the bumps pick up the baked light.
-            if let Some(nt) = p.normal_tex {
-                mat.normal_map_id = Some(nt);
-                mat.normal_strength = 1.0;
-            }
+        for (p, &mat) in self.pieces.iter().zip(&self.mats.pieces) {
             let id = session.scene_mut().add(Some(p.mesh), p.xf, mat);
             // Per-object cast-shadows: the shadow pass skips items with this off, so
             // the toggle reliably shows/hides the realtime shadow. Baked/Emissive
@@ -893,11 +936,11 @@ impl LightmapBakeShowcase {
         // GI plus a moving object that shadows it in realtime.
         if self.mode == MIXED_MODE {
             if let Some(sphere) = self.dynamic_occluder {
-                let mut mat = Material::pbr(Colour::linear_rgb(0.85, 0.85, 0.88), 0.0, 0.6);
-                mat.backface_policy = BackfacePolicy::Identical;
-                let id = session
-                    .scene_mut()
-                    .add(Some(sphere), dynamic_occluder_xf(), mat);
+                let id = session.scene_mut().add(
+                    Some(sphere),
+                    dynamic_occluder_xf(),
+                    self.mats.dynamic_occluder,
+                );
                 let mut ap = ItemSettings::default();
                 ap.cast_shadows = true;
                 session.scene_mut().set_appearance(id, ap);
@@ -911,10 +954,9 @@ impl LightmapBakeShowcase {
         // caster or receiver: it is the light, not lit geometry.
         if self.mode == EMISSIVE_MODE {
             if let Some(panel) = self.emissive_panel {
-                let mut mat = Material::pbr(Colour::linear_rgb(0.0, 0.0, 0.0), 0.0, 1.0);
-                mat.emissive = Colour::from_linear_rgb_array(PANEL_RADIANCE);
-                mat.backface_policy = BackfacePolicy::Identical;
-                let id = session.scene_mut().add(Some(panel), panel_xf(), mat);
+                let id = session
+                    .scene_mut()
+                    .add(Some(panel), panel_xf(), self.mats.emissive_panel);
                 let mut ap = ItemSettings::default();
                 ap.cast_shadows = false;
                 ap.receive_shadows = false;
@@ -927,11 +969,9 @@ impl LightmapBakeShowcase {
         // reads as a preview of the torus' lightmap rather than stray geometry.
         if baked_mode && self.show_atlas {
             if let Some(atlas) = self.atlas_mesh {
-                let mut mat = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 1.0);
-                mat.backface_policy = BackfacePolicy::Identical;
                 let xf = Mat4::from_translation(Vec3::new(5.5, 6.85, 4.0))
                     * Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2);
-                let id = session.scene_mut().add(Some(atlas), xf, mat);
+                let id = session.scene_mut().add(Some(atlas), xf, self.mats.atlas);
                 // The preview poster is not part of the lighting: no casting or
                 // receiving shadows.
                 let mut ap = ItemSettings::default();
@@ -1209,6 +1249,7 @@ impl Showcase for LightmapBakeShowcase {
             false,
         ));
 
+        self.mats = Materials::upload(ctx.session.resources_mut(), &pieces);
         self.pieces = pieces;
 
         // The floating atlas quad and its full-quad UV1.

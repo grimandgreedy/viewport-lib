@@ -16,7 +16,7 @@ use glam::{Mat4, Vec3};
 use parry3d::math::Vector;
 use parry3d::query::{Ray as PRay, RayCast};
 use parry3d::shape::TriMesh;
-use viewport_lib::{Aabb, Material, MeshId, PickAccelerator, Scene};
+use viewport_lib::{Aabb, MaterialId, MeshId, PickAccelerator, Scene};
 
 /// Unit cube geometry (positions + triangle indices).
 fn unit_cube() -> (Vec<[f32; 3]>, Vec<u32>) {
@@ -70,7 +70,7 @@ fn scatter(n: usize) -> (Scene, Vec<Vec3>) {
         scene.add(
             Some(MeshId::from_index(0)),
             Mat4::from_translation(t),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
     }
     scene.update_transforms();
@@ -141,7 +141,10 @@ fn main() {
     mesh_lookup.insert(0u64, (positions.clone(), indices.clone()));
 
     // Shared TriMesh for the linear scan.
-    let verts: Vec<Vector> = positions.iter().map(|p| Vector::new(p[0], p[1], p[2])).collect();
+    let verts: Vec<Vector> = positions
+        .iter()
+        .map(|p| Vector::new(p[0], p[1], p[2]))
+        .collect();
     let tris: Vec<[u32; 3]> = indices.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
     let cube_tm = TriMesh::new(verts, tris).unwrap();
 

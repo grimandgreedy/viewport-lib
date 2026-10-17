@@ -584,7 +584,7 @@ impl ViewportInstance {
         device: &crate::gpu::Device,
         data: &crate::resources::MeshData,
         transform: glam::Mat4,
-        material: crate::Material,
+        material: crate::MaterialId,
     ) -> crate::error::ViewportResult<(crate::NodeId, crate::MeshId)> {
         let id = self
             .renderer
@@ -672,12 +672,16 @@ mod tests {
         let mut session = ViewportInstance::new(&device, format);
 
         // upload_and_add creates a node already bound to the uploaded mesh.
+        let material = session
+            .resources_mut()
+            .upload_material(Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.9)))
+            .unwrap();
         let (node, mesh) = session
             .upload_and_add(
                 &device,
                 &primitives::cube(1.0),
                 glam::Mat4::IDENTITY,
-                Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.9)),
+                material,
             )
             .unwrap();
         assert_eq!(
@@ -713,11 +717,13 @@ mod tests {
             .resources_mut()
             .upload_mesh_data(&device, &primitives::cube(1.0))
             .unwrap();
-        session.scene_mut().add(
-            Some(cube),
-            glam::Mat4::IDENTITY,
-            Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.9)),
-        );
+        let material = session
+            .resources_mut()
+            .upload_material(Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.9)))
+            .unwrap();
+        session
+            .scene_mut()
+            .add(Some(cube), glam::Mat4::IDENTITY, material);
         session.camera_mut().distance = 6.0;
 
         session.begin_frame(ctx());

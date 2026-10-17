@@ -1428,7 +1428,7 @@ mod tests {
                 mesh_id: mesh,
                 ..Default::default()
             };
-            item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            item.settings.colour = Some(Colour::linear_rgb(1.0, 1.0, 1.0));
             item.settings.unlit = true;
             item.settings.visibility_mask = 0b01;
             frame.scene.foreground_items = vec![item];

@@ -353,14 +353,12 @@ async fn build_state(window: Arc<Window>) -> State {
         .upload_mesh_data(&device, &primitives::torus(0.5, 0.18, 32, 16))
         .unwrap();
 
-    let make_item = |mesh_id: MeshId, [x, y, z]: [f32; 3], colour: [f32; 3]| {
-        let mut item = SceneRenderItem::default();
-        item.mesh_id = mesh_id;
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-        item.material = Material::from_colour(Colour::from_linear_rgb_array(colour));
+    let mut make_item = |mesh_id: MeshId, [x, y, z]: [f32; 3], colour: [f32; 3]| {
+        let mut material = Material::from_colour(Colour::from_linear_rgb_array(colour));
         // A little emissive above 1.0 gives bloom some HDR energy to extract.
-        item.material.emissive =
-            Colour::linear_rgb(colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2);
+        material.emissive = Colour::linear_rgb(colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2);
+        let mut item = SceneRenderItem::new(mesh_id, res.upload_material(material).unwrap());
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
         item
     };
     let scene_items = vec![

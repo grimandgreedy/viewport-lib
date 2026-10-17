@@ -12,12 +12,13 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib_plugins::deformers::cut::{Cut, CutDeformer};
 use vpl::{
-    AttributeKind, AttributeRef, BuiltinColourmap, ColourmapId, LightingSettings, Material, MeshId,
-    SceneRenderItem,
+    AttributeKind, AttributeRef, BuiltinColourmap, ColourmapId, LightingSettings, Material,
+    MaterialId, MeshId, SceneRenderItem,
 };
 
 /// Which shape the torus is cut by.
@@ -42,6 +43,8 @@ pub(crate) struct CutViewsState {
     torus: Option<MeshId>,
     column: Option<MeshId>,
     floor: Option<MeshId>,
+    /// Floor, column and torus materials.
+    materials: [MaterialId; 3],
     shape: CutShape,
     flipped: bool,
     /// Plane offset, box half-size, sphere radius or range top, by shape.
@@ -58,6 +61,7 @@ impl Default for CutViewsState {
             torus: None,
             column: None,
             floor: None,
+            materials: [MaterialId::DEFAULT; 3],
             shape: CutShape::Plane,
             flipped: false,
             amount: 0.3,
@@ -108,6 +112,19 @@ pub(crate) fn build(app: &mut App, renderer: &mut vpl::ViewportRenderer) {
     state.torus = Some(torus);
     state.column = Some(column);
     state.floor = Some(floor);
+    let mut torus_material = Material::from_colour(Colour::linear_rgb(0.35, 0.5, 0.8));
+    torus_material.backface_policy = vpl::BackfacePolicy::Identical;
+    state.materials = [
+        upload_material(
+            renderer,
+            Material::from_colour(Colour::linear_rgb(0.75, 0.75, 0.72)),
+        ),
+        upload_material(
+            renderer,
+            Material::from_colour(Colour::linear_rgb(0.85, 0.55, 0.2)),
+        ),
+        upload_material(renderer, torus_material),
+    ];
     state.dirty = true;
     state.built = true;
 
@@ -124,26 +141,19 @@ pub(crate) fn scene_items(app: &App) -> Vec<SceneRenderItem> {
     let (Some(torus), Some(column), Some(floor)) = (state.torus, state.column, state.floor) else {
         return Vec::new();
     };
+    let [floor_material, column_material, torus_material] = state.materials;
     let mut items = Vec::new();
 
-    let mut floor_item = SceneRenderItem::default();
-    floor_item.mesh_id = floor;
-    floor_item.material = Material::from_colour(Colour::linear_rgb(0.75, 0.75, 0.72));
-    items.push(floor_item);
+    items.push(SceneRenderItem::new(floor, floor_material));
 
-    let mut column_item = SceneRenderItem::default();
-    column_item.mesh_id = column;
+    let mut column_item = SceneRenderItem::new(column, column_material);
     column_item.model =
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.3)).to_cols_array_2d();
-    column_item.material = Material::from_colour(Colour::linear_rgb(0.85, 0.55, 0.2));
     items.push(column_item);
 
-    let mut torus_item = SceneRenderItem::default();
-    torus_item.mesh_id = torus;
+    let mut torus_item = SceneRenderItem::new(torus, torus_material);
     torus_item.model =
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, TORUS_Z)).to_cols_array_2d();
-    torus_item.material = Material::from_colour(Colour::linear_rgb(0.35, 0.5, 0.8));
-    torus_item.material.backface_policy = vpl::BackfacePolicy::Identical;
     torus_item.deform_instance = Some(TORUS_INSTANCE);
     torus_item.settings.selected = state.outline;
     if state.shape == CutShape::HeightRange {

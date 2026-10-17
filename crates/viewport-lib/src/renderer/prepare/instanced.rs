@@ -291,10 +291,10 @@ struct Entry<'a> {
 
 impl Entry<'_> {
     /// The material this record draws with: the item's, or its range's.
-    fn material(&self) -> &crate::scene::material::Material {
+    fn material(&self) -> crate::resources::MaterialId {
         match (self.kind, self.item.submesh_materials.as_deref()) {
-            (RecordKind::Range(r), Some(mats)) => &mats[r as usize],
-            _ => &self.item.material,
+            (RecordKind::Range(r), Some(mats)) => mats[r as usize],
+            _ => self.item.material,
         }
     }
 }
@@ -357,6 +357,23 @@ fn fat_key(
             .shading_plugin
             .is_some_and(|p| !resources.material_plugin_instanced_ready(p)),
     ))
+}
+
+/// Visible items that draw through a fat batch: the count the batch cache
+/// keys on, so a per-frame change that moves an item between lean and fat
+/// rebuilds without a generation bump.
+fn fat_item_count(
+    scene_items: &[SceneRenderItem],
+    resources: &DeviceResources,
+    wireframe_mode: bool,
+) -> usize {
+    scene_items
+        .iter()
+        .filter(|i| {
+            !i.settings.hidden
+                && (wireframe_mode || i.show_normals || fallback_reason(i, resources).is_some())
+        })
+        .count()
 }
 
 /// Whether a record draws blended. Edge and normal lines always draw opaque,
@@ -435,9 +452,17 @@ fn material_group_key(
     )
 }
 
+/// The inputs of a lean batch key, for the key tests.
 #[cfg(test)]
-fn batch_group_key(item: &SceneRenderItem, binding: MaterialTextureBinding) -> BatchGroupKey {
-    material_group_key(item.mesh_id, &item.material, item.settings.opacity, binding)
+struct KeyProbe {
+    mesh_id: crate::resources::mesh::mesh_store::MeshId,
+    material: crate::scene::material::Material,
+    opacity: f32,
+}
+
+#[cfg(test)]
+fn batch_group_key(p: &KeyProbe, binding: MaterialTextureBinding) -> BatchGroupKey {
+    material_group_key(p.mesh_id, &p.material, p.opacity, binding)
 }
 
 /// Whether every resource a cached batch list names is still resident.
@@ -494,30 +519,20 @@ impl ViewportRenderer {
         // many static boxes) to still hit the instanced batch cache on frames where the
         // filtered set is unchanged.
         //
-        // Material identity (texture ids, emissive/plugin selection) is NOT in this
-        // cache key: a change to it is a scene change and must bump
-        // `frame.scene.generation`, like any other material edit. Emissive-textured
-        // and shading-plugin items now instance (they used to fall per-object), so a
-        // per-frame swap of those no longer changes `instancable_count` on its own;
-        // the generation bump is what rebuilds the batch list for them.
+        // Material identity is NOT in this cache key. An edit through
+        // `replace_material` that moves batching bumps `resource_view_epoch`;
+        // pointing an item at a different `MaterialId` is a scene change and
+        // must bump `frame.scene.generation`.
         // Per-frame item mutations that do not bump the scene generation
         // (an attribute toggled on, an item hidden) move these two counts.
-        let fat_count = scene_items
-            .iter()
-            .filter(|i| {
-                !i.settings.hidden
-                    && (frame.viewport.wireframe_mode
-                        || i.show_normals
-                        || fallback_reason(i, resources).is_some())
-            })
-            .count();
+        let fat_count = fat_item_count(scene_items, resources, frame.viewport.wireframe_mode);
         let visible_count = scene_items.iter().filter(|i| !i.settings.hidden).count();
         // A single-item scene repacks every frame. Packing one record costs
         // nothing, and it keeps the behaviour such scenes have always had: an
         // item changed between two frames takes effect without a generation
         // bump. Every larger scene keeps the generation contract.
         visible_count > SMALL_SCENE_REPACK
-            && !resources.material_gpu_builder.near_capacity()
+            && !resources.material_table.variants_near_limit()
             && resources.mesh_sidecar_epoch == instancing.last_sidecar_epoch
             && resources.deform.epoch == instancing.last_deform_epoch
             && fat_count == instancing.last_instancable_count
@@ -595,7 +610,8 @@ impl ViewportRenderer {
                 let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                     continue;
                 };
-                let mut push = |kind: RecordKind, material: &crate::scene::material::Material| {
+                let mut push = |kind: RecordKind, material: crate::resources::MaterialId| {
+                    let material = resources.material_or_default(material);
                     let key =
                         material_group_key(item.mesh_id, material, item.settings.opacity, binding);
                     let fat = fat_key(item, material, kind, resources, wireframe_mode);
@@ -615,13 +631,13 @@ impl ViewportRenderer {
                 match super::mesh_material::active_submesh_materials(item, mesh) {
                     Some(mats) if !item.settings.wireframe && !wireframe_mode => {
                         for (r, mat) in mats.iter().enumerate() {
-                            push(RecordKind::Range(r as u32), mat);
+                            push(RecordKind::Range(r as u32), *mat);
                         }
                     }
-                    _ => push(RecordKind::Main, &item.material),
+                    _ => push(RecordKind::Main, item.material),
                 }
                 if item.show_normals && !wireframe_mode {
-                    push(RecordKind::Normals, &item.material);
+                    push(RecordKind::Normals, item.material);
                 }
             }
 
@@ -684,16 +700,26 @@ impl ViewportRenderer {
                     if at_end || key_changed {
                         let batch_entries = &entries[batch_start..i];
                         let rep = &batch_entries[0];
-                        let rep_material = rep.material();
+                        let rep_material = *resources.material_or_default(rep.material());
+                        let rep_item_two_sided = resources
+                            .material_or_default(rep.item.material)
+                            .is_two_sided();
+                        let has_alpha_mask = batch_entries.iter().any(|e| {
+                            matches!(
+                                resources.material_or_default(e.material()).alpha_mode,
+                                crate::scene::material::AlphaMode::Mask(_)
+                            )
+                        });
                         let instance_offset = all_instances.len() as u32;
                         let is_transparent = record_blends(&rep.key, rep.fat.as_ref());
 
-                        // All records in a batch share the same mesh_id (batch key).
-                        // Look up the mesh once and reuse it for both index_count and
-                        // per-instance AABB transforms, avoiding N redundant hash map
-                        // lookups inside the inner loop.
+                        // All records in a batch share the same mesh_id (batch key),
+                        // so its counts and bounds are read once here. The record
+                        // builder looks the mesh up again after the material block,
+                        // which can add a variant.
                         let batch_idx = instanced_batches.len() as u32;
                         let batch_mesh = resources.mesh_store.get(rep.item.mesh_id);
+                        let mesh_aabb = batch_mesh.map(|m| m.aabb);
                         let mesh_index_count = batch_mesh.map(|m| m.index_count).unwrap_or(0);
                         // The draw binds the whole slab chunk once and offsets
                         // per mesh; carry those offsets so the cull kernel writes
@@ -745,26 +771,21 @@ impl ViewportRenderer {
                                 let record_item: std::borrow::Cow<SceneRenderItem> =
                                     if let RecordKind::Range(_) = entry.kind {
                                         let mut range_item = item.clone();
-                                        range_item.material = *entry.material();
+                                        range_item.material = entry.material();
                                         range_item.submesh_materials = None;
                                         std::borrow::Cow::Owned(range_item)
                                     } else {
                                         std::borrow::Cow::Borrowed(item)
                                     };
-                                // The interners are fields, so they borrow
-                                // disjointly from the batch mesh held above.
-                                let resolved =
-                                    resources.resolve_material_slots(&record_item.material);
                                 let shading =
                                     crate::resources::material_gpu::ItemShading::from_item(
                                         &record_item,
-                                        batch_mesh,
+                                        resources.material_or_default(record_item.material),
+                                        resources.mesh_store.get(rep.item.mesh_id),
                                     );
-                                let material_id = resources.material_gpu_builder.intern(
-                                    &record_item.material,
-                                    resolved,
-                                    &shading,
-                                );
+                                let material_id =
+                                    resources.material_block(record_item.material, &shading);
+                                let batch_mesh = resources.mesh_store.get(rep.item.mesh_id);
                                 let custom_data_id = resources
                                     .custom_data_builder
                                     .intern(record_item.settings.custom_data);
@@ -780,9 +801,9 @@ impl ViewportRenderer {
                                 record
                             };
                             all_instances.push(record);
-                            if let Some(mesh) = batch_mesh {
+                            if let Some(aabb) = &mesh_aabb {
                                 let model = glam::Mat4::from_cols_array_2d(&item.model);
-                                let world_aabb = mesh.aabb.transformed(&model);
+                                let world_aabb = aabb.transformed(&model);
                                 bounds_min = bounds_min.min(world_aabb.min);
                                 bounds_max = bounds_max.max(world_aabb.max);
                                 all_aabbs.push(InstanceAabb {
@@ -835,8 +856,7 @@ impl ViewportRenderer {
                             // A range draws two-sided when its own material or
                             // the item's says so.
                             two_sided: rep_material.is_two_sided()
-                                || (matches!(rep.kind, RecordKind::Range(_))
-                                    && rep.item.material.is_two_sided()),
+                                || (matches!(rep.kind, RecordKind::Range(_)) && rep_item_two_sided),
                             is_cutout: matches!(
                                 rep_material.alpha_mode,
                                 crate::scene::material::AlphaMode::Mask(_)
@@ -844,12 +864,7 @@ impl ViewportRenderer {
                             // Any masked instance needs the discard-capable
                             // pipeline: its alpha can come from the opacity,
                             // the vertex colours or the albedo texture.
-                            has_alpha_mask: batch_entries.iter().any(|e| {
-                                matches!(
-                                    e.material().alpha_mode,
-                                    crate::scene::material::AlphaMode::Mask(_)
-                                )
-                            }),
+                            has_alpha_mask,
                             // Batch-uniform: `shading_plugin` is part of the
                             // batch key, so every item in the batch selects the
                             // same plugin (or built-in shading).
@@ -868,7 +883,9 @@ impl ViewportRenderer {
                     }
                 }
             }
-            let fat_count = entries.iter().filter(|e| e.fat.is_some()).count();
+            // Items, not records: a show_normals or submesh item packs several
+            // records, and the cache check counts items.
+            let fat_count = fat_item_count(scene_items, resources, wireframe_mode);
 
             // Partial upload: when the batch structure is unchanged (same
             // count, same offsets and sizes per batch), compare each
@@ -1054,10 +1071,12 @@ impl ViewportRenderer {
             let Some(item) = scene_items.get(fat.rep_idx) else {
                 continue;
             };
-            let material = match (fat.rep_range, item.submesh_materials.as_deref()) {
-                (Some(r), Some(mats)) => mats[r as usize],
-                _ => item.material,
-            };
+            let material = *resources.material_or_default(
+                match (fat.rep_range, item.submesh_materials.as_deref()) {
+                    (Some(r), Some(mats)) => mats[r as usize],
+                    _ => item.material,
+                },
+            );
             match fat.draw {
                 crate::renderer::types::FatDraw::Edges => {
                     resources.ensure_edge_indices(device, mesh_id)
@@ -1395,15 +1414,18 @@ impl ViewportRenderer {
 mod batch_key_tests {
     use super::*;
 
-    fn item_with(mesh: usize, tex: Option<u64>, two_sided: bool) -> SceneRenderItem {
-        let mut item = SceneRenderItem::default();
-        // MeshId is a generational slot handle; the key only reads its index.
-        item.mesh_id = crate::resources::mesh::mesh_store::MeshId::from_index(mesh as u32);
-        item.material.texture_id = tex.map(TextureId::from_raw);
+    fn item_with(mesh: usize, tex: Option<u64>, two_sided: bool) -> KeyProbe {
+        let mut material = crate::scene::material::Material::default();
+        material.texture_id = tex.map(TextureId::from_raw);
         if two_sided {
-            item.material.backface_policy = crate::scene::material::BackfacePolicy::Identical;
+            material.backface_policy = crate::scene::material::BackfacePolicy::Identical;
         }
-        item
+        KeyProbe {
+            // MeshId is a generational slot handle; the key only reads its index.
+            mesh_id: crate::resources::mesh::mesh_store::MeshId::from_index(mesh as u32),
+            material,
+            opacity: 1.0,
+        }
     }
 
     #[test]
@@ -1461,9 +1483,9 @@ mod batch_key_tests {
         ] {
             let opaque = item_with(0, None, false);
             let mut half = item_with(0, None, false);
-            half.settings.opacity = 0.5;
+            half.opacity = 0.5;
             let mut quarter = item_with(0, None, false);
-            quarter.settings.opacity = 0.25;
+            quarter.opacity = 0.25;
             assert_ne!(
                 batch_group_key(&opaque, binding),
                 batch_group_key(&half, binding)

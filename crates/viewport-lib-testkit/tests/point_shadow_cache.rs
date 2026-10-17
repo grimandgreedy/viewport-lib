@@ -27,20 +27,30 @@ fn cubemap_cache_reuses_and_invalidates() {
         .resources_mut()
         .upload_mesh_data(&h.device, &viewport_lib::primitives::plane(1.0, 1.0))
         .expect("plane");
+    let ground_material = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8)))
+        .expect("material upload");
+    let caster_material = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.6, 0.2, 0.2)))
+        .expect("material upload");
     let build = |caster_x: f32, light_x: f32| {
         let mut ground = SceneRenderItem::default();
         ground.mesh_id = plane_id;
         ground.model = (glam::Mat4::from_translation(Vec3::new(0.0, 0.0, -1.0))
             * glam::Mat4::from_scale(Vec3::splat(12.0)))
         .to_cols_array_2d();
-        ground.material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
+        ground.material = ground_material;
         ground.settings.cast_shadows = false;
 
         let mut caster = SceneRenderItem::default();
         caster.mesh_id = cube_id;
         caster.model =
             glam::Mat4::from_translation(Vec3::new(caster_x, 0.0, 1.0)).to_cols_array_2d();
-        caster.material = Material::from_colour(Colour::linear_rgb(0.6, 0.2, 0.2));
+        caster.material = caster_material;
 
         let camera = orbit_camera(Vec3::new(0.0, 0.0, 0.0), 10.0, 0.9, 0.9);
         let mut scene = SceneFrame::from_surface_items(vec![ground, caster]);

@@ -321,6 +321,15 @@ pub enum ViewportError {
         max: u32,
     },
 
+    /// `upload_material` was called with every material block in use. The
+    /// limit is what one storage-buffer binding of the device holds; free
+    /// materials with `free_material` before uploading more.
+    #[error("too many materials: the table holds at most {max}")]
+    TooManyMaterials {
+        /// How many material blocks the table holds.
+        max: usize,
+    },
+
     /// A compressed-texture upload requested a format the device cannot sample,
     /// or a format that is not block-compressed.
     ///

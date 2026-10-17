@@ -83,12 +83,16 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     frame.viewport.show_axes_indicator = false;
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
+    let mut m = Material::default();
+    let mat = upload_material(&mut renderer, m);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
+    item.material = mat;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let builtin = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    item.material.shading_plugin = Some(plugin_id);
+    m.shading_plugin = Some(plugin_id);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let toon = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_ne!(
@@ -125,14 +129,16 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     let stats = renderer.resources().material_plugin_stats();
     assert_eq!(stats[0].variants, 2);
     assert_eq!(stats[0].pipelines_built, 1);
-    item.material.shading_plugin = Some(variant_b);
+    m.shading_plugin = Some(variant_b);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let toon_variant_b = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_ne!(
         toon_reparam, toon_variant_b,
         "a second variant must carry its own params window"
     );
-    item.material.shading_plugin = Some(plugin_id);
+    m.shading_plugin = Some(plugin_id);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
 
     // HDR path (and, with a transparent second item, the OIT path).
     let mut transparent = item.clone();
@@ -211,13 +217,17 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     frame.viewport.show_axes_indicator = false;
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
+    let mut m = Material::default();
+    m.shading_plugin = Some(plugin_id);
+    let mat = upload_material(&mut renderer, m);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material.shading_plugin = Some(plugin_id);
+    item.material = mat;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let white_fallback = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    item.material.shading_plugin = Some(red_variant);
+    m.shading_plugin = Some(red_variant);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     let red_textured = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_ne!(
@@ -277,9 +287,11 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
     frame.viewport.show_axes_indicator = false;
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
+    let mut m = Material::default();
+    m.shading_plugin = Some(plugin_id);
     let mut item = SceneRenderItem::default();
     item.mesh_id = plain_id;
-    item.material.shading_plugin = Some(plugin_id);
+    item.material = upload_material(&mut renderer, m);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let no_channel = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
@@ -364,13 +376,17 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     frame.viewport.show_axes_indicator = false;
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
+    let mut m = Material::default();
+    let mat = upload_material(&mut renderer, m);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
+    item.material = mat;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let builtin = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
     // Authored base colour under stock lighting.
-    item.material.shading_plugin = Some(plugin_id);
+    m.shading_plugin = Some(plugin_id);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let painted = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_ne!(builtin, painted, "surface hook must change the image");
@@ -402,7 +418,8 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     );
 
     // Blend materials take it as output alpha.
-    item.material.alpha_mode = viewport_lib::material::AlphaMode::Blend;
+    m.alpha_mode = viewport_lib::material::AlphaMode::Blend;
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     params.write(&queue, &[[0.9, 0.0, 0.0, 0.0]]);
     let blend_high = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
@@ -412,7 +429,8 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
 
     // Mask materials re-test the cutoff against the hook's alpha: below it,
     // every fragment discards and the image matches an empty scene.
-    item.material.alpha_mode = viewport_lib::material::AlphaMode::Mask(0.5);
+    m.alpha_mode = viewport_lib::material::AlphaMode::Mask(0.5);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     params.write(&queue, &[[0.1, 0.0, 0.0, 0.0]]);
     let mask_discarded = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
@@ -521,22 +539,25 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     // Four instances of the one mesh at the origin: they overlap into one
     // visible box but still form a four-instance batch, which is all the
     // routing assertion needs. Matches the single-item test's visible framing.
-    let make = |plugin: Option<viewport_lib::MaterialPluginId>| {
+    let mut toon = Material::default();
+    toon.shading_plugin = Some(plugin_id);
+    let toon_mat = upload_material(&mut renderer, toon);
+    let make = |material: MaterialId| {
         let mut it = SceneRenderItem::default();
         it.mesh_id = mesh_id;
-        it.material.shading_plugin = plugin;
+        it.material = material;
         it
     };
 
     // Built-in shading reference.
-    let builtin_items: Vec<_> = (0..4).map(|_| make(None)).collect();
+    let builtin_items: Vec<_> = (0..4).map(|_| make(MaterialId::DEFAULT)).collect();
     frame.scene.surfaces = SurfaceSubmission::Flat(builtin_items.into());
     let builtin = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
     // Same four instances, now selecting the plugin. Bump the scene generation
     // so the instanced batch cache rebuilds (a material change is a scene
     // change; the cache keys on the generation for exactly this).
-    let plugin_items: Vec<_> = (0..4).map(|_| make(Some(plugin_id))).collect();
+    let plugin_items: Vec<_> = (0..4).map(|_| make(toon_mat)).collect();
     frame.scene.surfaces = SurfaceSubmission::Flat(plugin_items.into());
     frame.scene.generation += 1;
     let toon = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
@@ -615,11 +636,14 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     // The cull plugin path is on the HDR scene pass.
     frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
 
+    let mut toon = Material::default();
+    toon.shading_plugin = Some(plugin_id);
+    let toon = upload_material(&mut renderer, toon);
     let items: Vec<_> = (0..4)
         .map(|_| {
             let mut it = SceneRenderItem::default();
             it.mesh_id = mesh_id;
-            it.material.shading_plugin = Some(plugin_id);
+            it.material = toon;
             it
         })
         .collect();
@@ -712,11 +736,13 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     frame.viewport.show_axes_indicator = false;
     frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
 
+    let mut m = Material::pbr(Colour::linear_rgb(0.75, 0.3, 0.3), 0.1, 0.55);
+    m.shading_plugin = Some(plugin_id);
+    let mat = upload_material(&mut renderer, m);
     let sphere = || {
         let mut it = SceneRenderItem::default();
         it.mesh_id = mesh_id;
-        it.material = Material::pbr(Colour::linear_rgb(0.75, 0.3, 0.3), 0.1, 0.55);
-        it.material.shading_plugin = Some(plugin_id);
+        it.material = mat;
         it
     };
 
@@ -816,10 +842,13 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
     frame.viewport.show_axes_indicator = false;
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
+    let mut m = Material::default();
+    m.shading_plugin = Some(plugin_id);
+    let mat = upload_material(&mut renderer, m);
     let item = || {
         let mut it = SceneRenderItem::default();
         it.mesh_id = mesh_id;
-        it.material.shading_plugin = Some(plugin_id);
+        it.material = mat;
         it
     };
 
@@ -878,26 +907,26 @@ fn a_plugin_draws_the_same_built_on_demand_as_built_up_front() {
     type Case = (
         &'static str,
         usize,
-        fn(&mut FrameData, &mut SceneRenderItem),
+        fn(&mut FrameData, &mut SceneRenderItem, &mut Material),
     );
     let cases: [Case; 7] = [
-        ("direct, one item", 1, |frame, _| {
+        ("direct, one item", 1, |frame, _, _| {
             frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
         }),
-        ("direct, a batch", 3, |frame, _| {
+        ("direct, a batch", 3, |frame, _, _| {
             frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
         }),
-        ("hdr, one item", 1, |_, _| {}),
-        ("hdr, a batch", 3, |_, _| {}),
-        ("hdr, a transparent batch", 3, |_, item| {
+        ("hdr, one item", 1, |_, _, _| {}),
+        ("hdr, a batch", 3, |_, _, _| {}),
+        ("hdr, a transparent batch", 3, |_, item, _| {
             item.settings.opacity = 0.5;
         }),
-        ("hdr, one transparent item", 1, |_, item| {
+        ("hdr, one transparent item", 1, |_, item, _| {
             item.settings.opacity = 0.5;
         }),
-        ("hdr, a two-sided cutout batch", 3, |frame, item| {
-            item.material.alpha_mode = viewport_lib::material::AlphaMode::Mask(0.5);
-            item.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+        ("hdr, a two-sided cutout batch", 3, |frame, _, material| {
+            material.alpha_mode = viewport_lib::material::AlphaMode::Mask(0.5);
+            material.backface_policy = viewport_lib::BackfacePolicy::Identical;
             // The test box is wound inside out, so two-sided every visible
             // face is a back face of a closed solid and sits in its own
             // shadow; the hook's light term then has nothing to change.
@@ -929,10 +958,12 @@ fn a_plugin_draws_the_same_built_on_demand_as_built_up_front() {
             frame.viewport.show_axes_indicator = false;
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            configure(&mut frame, &mut item);
+            let mut material = Material::default();
+            configure(&mut frame, &mut item, &mut material);
             if with_plugin {
-                item.material.shading_plugin = Some(plugin);
+                material.shading_plugin = Some(plugin);
             }
+            item.material = upload_material(&mut renderer, material);
             let items: Vec<SceneRenderItem> = (0..count)
                 .map(|i| {
                     let mut item = item.clone();
@@ -1008,9 +1039,11 @@ fn a_plugin_compiled_in_the_background_is_skipped_then_drawn() {
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
         if with_item {
+            let mut m = Material::default();
+            m.shading_plugin = Some(plugin);
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.material.shading_plugin = Some(plugin);
+            item.material = upload_material(&mut renderer, m);
             frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         }
         (renderer, frame, plugin)
@@ -1101,9 +1134,11 @@ fn a_background_warm_up_is_counted_then_waited_for() {
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
+    let mut m = Material::default();
+    m.shading_plugin = Some(plugin);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material.shading_plugin = Some(plugin);
+    item.material = upload_material(&mut renderer, m);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     // The built-in pipelines this frame binds still compile on this thread;

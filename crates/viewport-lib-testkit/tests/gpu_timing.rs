@@ -37,7 +37,11 @@ fn gpu_samples_stay_fresh_on_short_frames() {
         .expect("upload");
     let mut item = SceneRenderItem::default();
     item.mesh_id = id;
-    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
+    item.material = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
+        .expect("material upload");
     let camera = orbit_camera(glam::Vec3::ZERO, 20.0, 0.6, 1.0);
     let fd = FrameData::new(
         CameraFrame::from_camera(&camera, [200.0, 150.0]),

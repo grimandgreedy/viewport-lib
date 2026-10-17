@@ -96,11 +96,13 @@ impl Child {
             .resources_mut()
             .upload_mesh_data(device, mesh)
             .expect("upload child mesh");
-        session.scene_mut().add(
-            Some(id),
-            glam::Mat4::IDENTITY,
-            Material::from_colour(Colour::from_linear_rgb_array(colour)),
-        );
+        let material = session
+            .resources_mut()
+            .upload_material(Material::from_colour(Colour::from_linear_rgb_array(colour)))
+            .unwrap();
+        session
+            .scene_mut()
+            .add(Some(id), glam::Mat4::IDENTITY, material);
         session.camera_mut().distance = 3.4;
         Self {
             session,
@@ -195,6 +197,11 @@ fn main() {
                     .resources_mut()
                     .upload_mesh_data(device, &primitives::cube(1.0))
                     .expect("upload parent mesh");
+                // One material shared by every bar.
+                let material = vp
+                    .resources_mut()
+                    .upload_material(Material::from_colour(Colour::linear_rgb(0.30, 0.32, 0.38)))
+                    .unwrap();
                 for i in 0..12 {
                     let a = i as f32 / 12.0 * std::f32::consts::TAU;
                     let m = glam::Mat4::from_translation(glam::Vec3::new(
@@ -203,11 +210,7 @@ fn main() {
                         0.0,
                     )) * glam::Mat4::from_rotation_z(a)
                         * glam::Mat4::from_scale(glam::Vec3::new(0.5, 0.5, 2.2));
-                    vp.scene_mut().add(
-                        Some(bar),
-                        m,
-                        Material::from_colour(Colour::linear_rgb(0.30, 0.32, 0.38)),
-                    );
+                    vp.scene_mut().add(Some(bar), m, material);
                 }
                 vp.camera_mut().distance = 11.0;
                 vp.viewport_frame_mut().background_colour =

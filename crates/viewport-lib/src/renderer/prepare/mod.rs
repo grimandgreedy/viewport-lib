@@ -195,7 +195,7 @@ impl ViewportRenderer {
         // Write the built-in colourmap texels on the first frame, and upload
         // the built-in matcaps on the first frame whose scene uses a matcap.
         self.resources.ensure_colourmaps_initialized(device, queue);
-        if !self.resources.content.matcaps_initialized && Self::uses_matcap(frame) {
+        if !self.resources.content.matcaps_initialized && self.uses_matcap(frame) {
             self.resources.ensure_matcaps_initialized(device, queue);
         }
 
@@ -279,7 +279,7 @@ impl ViewportRenderer {
         // shading.
         let mut seen: Vec<u32> = Vec::new();
         for item in scene_items.iter() {
-            let Some(pid) = item.material.shading_plugin else {
+            let Some(pid) = resources.material_or_default(item.material).shading_plugin else {
                 continue;
             };
             if seen.contains(&pid.plugin_index()) {
@@ -324,11 +324,11 @@ impl ViewportRenderer {
         // same block. No probes uploaded -> all None and nothing written.
         let probe_indices = per_object::prepare_light_probe_sh(resources, scene_items, queue);
 
-        // The material and custom-data tables persist across frames while the
-        // instanced batch cache holds: cached records keep their ids, and the
-        // per-object and foreground items that intern every frame dedup to
-        // the existing entries. A miss re-interns everything, so the tables
-        // reset there, before any packer runs.
+        // Material blocks persist for their material's lifetime. The shading
+        // variants and the custom-data table hold while the instanced batch
+        // cache does: cached records keep their ids, and the foreground items
+        // that intern every frame dedup to the existing entries. A miss
+        // re-packs every record, so they reset there, before any packer runs.
         let instanced_cache_valid = Self::instanced_cache_valid(
             resources,
             &self.instancing,
@@ -337,7 +337,7 @@ impl ViewportRenderer {
             hdr_family,
         );
         if !instanced_cache_valid {
-            resources.material_gpu_builder.reset();
+            resources.material_table.clear_variants();
             resources.custom_data_builder.reset();
         }
         let uniforms_ms = per_object_start.elapsed().as_secs_f32() * 1000.0;
@@ -758,13 +758,15 @@ impl ViewportRenderer {
     /// Whether `frame` is drawn through the HDR path. A frame that asks for
     /// HDR is still drawn with the LDR pipelines when the caller paints it
     /// straight into its own render pass.
-    /// Whether any surface item in `frame` draws with a matcap. Matcaps are
-    /// read only by the per-object surface path.
-    fn uses_matcap(frame: &FrameData) -> bool {
+    /// Whether any surface item in `frame` draws with a matcap.
+    fn uses_matcap(&self, frame: &FrameData) -> bool {
         match &frame.scene.surfaces {
-            SurfaceSubmission::Flat(items) => {
-                items.iter().any(|i| i.material.matcap_id().is_some())
-            }
+            SurfaceSubmission::Flat(items) => items.iter().any(|i| {
+                self.resources
+                    .material_or_default(i.material)
+                    .matcap_id()
+                    .is_some()
+            }),
         }
     }
 

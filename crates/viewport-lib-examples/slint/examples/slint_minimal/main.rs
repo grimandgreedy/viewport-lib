@@ -135,12 +135,15 @@ fn main() -> Result<(), slint::PlatformError> {
         .upload_mesh_data(&device, &primitives::torus(0.5, 0.18, 32, 16))
         .unwrap();
 
+    // One material for all three; each item sets its own colour.
+    let mut material = Material::default();
+    material.backface_policy = vpl::BackfacePolicy::Identical;
+    let material = res.upload_material(material).unwrap();
+
     let make = |mesh_id, [x, y, z]: [f32; 3], colour: [f32; 3]| {
-        let mut item = SceneRenderItem::default();
-        item.mesh_id = mesh_id;
+        let mut item = SceneRenderItem::new(mesh_id, material);
         item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-        item.material = Material::from_colour(Colour::from_linear_rgb_array(colour));
-        item.material.backface_policy = vpl::BackfacePolicy::Identical;
+        item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
         item
     };
 

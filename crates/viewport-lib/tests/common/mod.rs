@@ -20,8 +20,8 @@ use viewport_lib::wgpu;
 // warn, so each file only pays for what it actually references.
 pub use viewport_lib::{
     Aabb, AlphaMode, AnchorX, AnchorY, BackfacePolicy, Camera, IndirectLightSource, ItemSettings,
-    LightKind, LightSource, Material, MeshId, OverrideBufferSlice, PickBackend, PickId, PickMask,
-    PickPoll, PolylineItem, Scene, Selection, ShadingModel, VolumeMeshItem,
+    LightKind, LightSource, Material, MaterialId, MeshId, OverrideBufferSlice, PickBackend, PickId,
+    PickMask, PickPoll, PolylineItem, Scene, Selection, ShadingModel, VolumeMeshItem,
     error::ViewportError,
     plugin_api::{
         ItemTypePlugin, PickPassContext, PluginItemCollection, SharedBindings,
@@ -36,6 +36,14 @@ pub use viewport_lib::{
 // request, limits policy, and feature negotiation. Each function here just names
 // the `DeviceProfile` its suite needs.
 use viewport_lib_testkit::{DeviceProfile, headless_device_with};
+
+/// Upload `material` to the renderer's material store.
+pub fn upload_material(renderer: &mut ViewportRenderer, material: Material) -> MaterialId {
+    renderer
+        .resources_mut()
+        .upload_material(material)
+        .expect("upload material")
+}
 
 /// A bare 64x64 frame with the grid and axes indicator off: the starting point
 /// for pick tests, which want nothing in the scene but the item under test.

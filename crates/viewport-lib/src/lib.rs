@@ -370,9 +370,9 @@ pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
     ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc, DeviceResources,
     EnvironmentMapId, EnvironmentOptions, EnvironmentZone, FontError, FontHandle, FrameBudget,
-    JobId, MatcapId, MeshData, ProgressHandle, ResidentBytes, SubmeshRange, TextMetrics, TextureId,
-    TextureMemoryStats, UnknownColourmap, UploadStatus, VolumeId, VramBudget, lerp_attributes,
-    supports_texture_format, vram_budget,
+    JobId, MatcapId, MaterialId, MeshData, ProgressHandle, ResidentBytes, SubmeshRange,
+    TextMetrics, TextureId, TextureMemoryStats, UnknownColourmap, UploadStatus, VolumeId,
+    VramBudget, lerp_attributes, supports_texture_format, vram_budget,
 };
 pub use resources::{
     DEFORM_PARAMS_PER_SLOT_PUB as DEFORM_PARAMS_PER_SLOT,

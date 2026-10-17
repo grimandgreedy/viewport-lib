@@ -55,17 +55,18 @@ fn emissive_slot_brightness(offset_u: f32, alpha_mode: AlphaMode) -> Option<f64>
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    item.material.shading_model = ShadingModel::Pbr;
-    item.material.base_colour = Colour::linear_rgb(0.0, 0.0, 0.0);
-    item.material.emissive = Colour::linear_rgb(1.0, 1.0, 1.0);
-    item.material.emissive_texture_id = Some(emissive_tex);
-    item.material.alpha_mode = alpha_mode;
+    let mut m = Material::default();
+    m.shading_model = ShadingModel::Pbr;
+    m.base_colour = Colour::linear_rgb(0.0, 0.0, 0.0);
+    m.emissive = Colour::linear_rgb(1.0, 1.0, 1.0);
+    m.emissive_texture_id = Some(emissive_tex);
+    m.alpha_mode = alpha_mode;
     if alpha_mode == AlphaMode::Blend {
-        item.material.base_colour = Colour::linear(0.0, 0.0, 0.0, 0.8);
+        m.base_colour = Colour::linear(0.0, 0.0, 0.0, 0.8);
     }
     // Collapse the emissive slot's UVs onto one texel; the shared (albedo)
     // transform stays identity, so only a per-slot read can pick the texel.
-    item.material = item.material.with_texture_transform(
+    m = m.with_texture_transform(
         TextureSlot::Emissive,
         UvTransform {
             offset: [offset_u, 0.5],
@@ -73,6 +74,7 @@ fn emissive_slot_brightness(offset_u: f32, alpha_mode: AlphaMode) -> Option<f64>
             ..UvTransform::default()
         },
     );
+    item.material = upload_material(&mut renderer, m);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let (w, h) = (64u32, 64u32);

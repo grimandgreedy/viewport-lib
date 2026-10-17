@@ -45,18 +45,18 @@ fn chart(
 
     // A light ground: auto-exposure meters mostly ground, and a light one keeps
     // the brighter cards below white once it is exposed to its target.
-    let mut items = vec![item_model(ground, Mat4::IDENTITY, lambert(0.5))];
+    let mut items = vec![item_model(ctx, ground, Mat4::IDENTITY, lambert(0.5))];
     let x = |i: usize| (i as f32 - 2.5) * COL_STEP;
     for (i, &albedo) in REFLECTANCES.iter().enumerate() {
         let at = Mat4::from_translation(Vec3::new(x(i), 0.75, 0.01));
-        items.push(item_model(card, at, lambert(albedo)));
+        items.push(item_model(ctx, card, at, lambert(albedo)));
     }
     for i in 0..6 {
         let mut m = lambert(0.0);
         m.emissive = Colour::linear_rgb(1.0, 1.0, 1.0);
         m.emissive_strength = grey_nits * 2f32.powi(i as i32 - 3);
         let at = Mat4::from_translation(Vec3::new(x(i), -0.75, 0.01));
-        items.push(item_model(card, at, m));
+        items.push(item_model(ctx, card, at, m));
     }
 
     BuiltScene {

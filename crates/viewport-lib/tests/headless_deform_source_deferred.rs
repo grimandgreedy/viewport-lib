@@ -35,11 +35,19 @@ fn keep(v: DeformVertex, ctx: DeformContext) -> f32 {
 }
 ";
 
-fn flat(mesh: MeshId, model: glam::Mat4, colour: [f32; 3]) -> SceneRenderItem {
+fn flat(
+    renderer: &mut ViewportRenderer,
+    mesh: MeshId,
+    model: glam::Mat4,
+    colour: [f32; 3],
+) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = model.to_cols_array_2d();
-    item.material = Material::from_colour(Colour::linear_rgb(colour[0], colour[1], colour[2]));
+    item.material = upload_material(
+        renderer,
+        Material::from_colour(Colour::linear_rgb(colour[0], colour[1], colour[2])),
+    );
     item.settings.unlit = true;
     item
 }
@@ -157,6 +165,7 @@ fn a_deferred_frame_copies_the_source_written_before_its_submit() {
         .unwrap();
 
     let backdrop = flat(
+        &mut renderer,
         backdrop_mesh,
         glam::Mat4::from_scale_rotation_translation(
             glam::Vec3::splat(4.0),
@@ -165,7 +174,7 @@ fn a_deferred_frame_copies_the_source_written_before_its_submit() {
         ),
         [1.0, 0.0, 0.0],
     );
-    let kept = flat(quad, glam::Mat4::IDENTITY, [1.0, 1.0, 1.0]);
+    let kept = flat(&mut renderer, quad, glam::Mat4::IDENTITY, [1.0, 1.0, 1.0]);
     let mut cam = Camera::default();
     cam.orientation = glam::Quat::IDENTITY;
     cam.center = glam::Vec3::ZERO;
