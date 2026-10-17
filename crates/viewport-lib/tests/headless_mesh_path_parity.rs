@@ -182,6 +182,36 @@ fn transparent_alpha_mask_discards_on_both_paths() {
     assert_close("transparent Mask", alone, batched, 2);
 }
 
+/// A blend material at full opacity still draws through the transparent pass
+/// on both paths, so its albedo alpha fades it over the background.
+#[test]
+fn blend_at_full_opacity_blends_on_both_paths() {
+    let Some(mut scene) = Scene::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let tex = scene
+        .renderer
+        .resources_mut()
+        .upload_texture(
+            &scene.device,
+            &scene.queue,
+            viewport_lib::TextureData::srgb(1, 1, vec![220, 220, 220, 51]),
+        )
+        .unwrap();
+    let mut solid = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
+    solid.texture_id = Some(tex);
+    let (opaque, _) = scene.both_paths(solid.clone(), 1.0);
+    let mut material = solid;
+    material.alpha_mode = AlphaMode::Blend;
+    let (alone, batched) = scene.both_paths(material, 1.0);
+    assert!(
+        alone[0] > 4 && (alone[0] as i32) < opaque[0] as i32 / 2,
+        "per-object should fade the quad: {alone:?} vs opaque {opaque:?}"
+    );
+    assert_close("Blend at full opacity", alone, batched, 4);
+}
+
 /// An opaque masked material with no albedo texture takes its alpha from the
 /// vertex colours; both paths cut it out.
 #[test]

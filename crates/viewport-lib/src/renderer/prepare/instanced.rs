@@ -261,7 +261,7 @@ fn batch_group_key(item: &SceneRenderItem, binding: MaterialTextureBinding) -> B
         m.is_two_sided(),
         // The batch draws opaque or through OIT as a whole, so opaque and
         // translucent copies of a mesh must not share one.
-        item.settings.opacity < 1.0,
+        item.settings.opacity < 1.0 || m.is_blend(),
         m.shading_plugin
             .map(|p| (p.plugin_index(), p.variant_index())),
     )
@@ -432,7 +432,7 @@ impl ViewportRenderer {
                         let batch_items = &sorted_items[batch_start..i];
                         let rep = batch_items[0].1;
                         let instance_offset = all_instances.len() as u32;
-                        let is_transparent = rep.settings.opacity < 1.0;
+                        let is_transparent = rep.settings.opacity < 1.0 || rep.material.is_blend();
 
                         // All items in a batch share the same mesh_id (batch key).
                         // Look up the mesh once and reuse it for both index_count and

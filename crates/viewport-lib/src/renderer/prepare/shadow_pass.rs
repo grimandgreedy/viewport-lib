@@ -935,6 +935,7 @@ impl ViewportRenderer {
                             if item.settings.hidden
                                 || !item.settings.cast_shadows
                                 || item.settings.opacity < 1.0
+                                || item.material.is_blend()
                                 || !resources.item_colour_ready(item, colour_hdr, clipping_active)
                             {
                                 continue;
@@ -1067,6 +1068,7 @@ impl ViewportRenderer {
                                 continue;
                             }
                             if item.settings.opacity < 1.0
+                                || item.material.is_blend()
                                 || !resources.item_colour_ready(item, colour_hdr, clipping_active)
                             {
                                 continue;
@@ -1230,6 +1232,7 @@ impl ViewportRenderer {
                     !item.settings.hidden
                         && item.settings.cast_shadows
                         && item.settings.opacity >= 1.0
+                        && !item.material.is_blend()
                 })
                 .filter_map(|item| {
                     let mesh = resources.mesh_store.get(item.mesh_id)?;
