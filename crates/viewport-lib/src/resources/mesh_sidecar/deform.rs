@@ -171,7 +171,7 @@ pub(crate) struct MeshDeform {
     pub flag_bits: u32,
     /// Bit `i` set when *any* instance of this mesh has slot `i`
     /// per-instance data attached. Combined with `flag_bits` at
-    /// `ObjectUniform.deform_flags` write time so the shader sees both
+    /// `InstanceData::deform_flags` write time so the shader sees both
     /// per-mesh and per-instance slot activity.
     pub instance_flag_bits_union: u32,
     pub instances: HashMap<u32, InstanceDeform>,
@@ -179,6 +179,10 @@ pub(crate) struct MeshDeform {
 
 /// Renderer-side deformation state.
 pub(crate) struct DeformationState {
+    /// Bumped whenever a mesh's or an instance's deform slot data is attached
+    /// or removed, so the instanced batch cache repacks the records whose
+    /// `deform_flags` changed.
+    pub(crate) epoch: u64,
     /// False when the device's max_bind_groups < 3. When false, the deform
     /// bind group layout is not included in pipeline layouts and deformer
     /// registration is silently skipped.
@@ -328,6 +332,7 @@ impl DeformationState {
         });
 
         Self {
+            epoch: 0,
             enabled: true,
             bind_group_layout,
             header_buffer,
@@ -382,7 +387,7 @@ impl DeformationState {
         self.meshes.get(&mesh_id).is_some_and(|m| m.flag_bits != 0)
     }
 
-    /// `deform_flags` value to write into the `ObjectUniform` for `mesh_id`.
+    /// `deform_flags` value to write into the instance record for `mesh_id`.
     /// Folds per-mesh and per-instance slot activity together: any slot
     /// with data on either side is reported as live so the registered
     /// body's flag branch executes.
@@ -639,6 +644,7 @@ impl DeformationState {
         entry.slot_data[slot] = Some(data.to_vec());
         entry.slot_stride[slot] = stride_words;
         entry.flag_bits |= 1u32 << slot;
+        self.epoch = self.epoch.wrapping_add(1);
         if had_external {
             self.external_source_count -= 1;
         }
@@ -732,6 +738,7 @@ impl DeformationState {
         if had {
             m.slot_stride[slot] = 0;
             m.flag_bits &= !(1u32 << slot);
+            self.epoch = self.epoch.wrapping_add(1);
             self.refresh(device, mesh_id);
         }
         had
@@ -821,6 +828,7 @@ impl DeformationState {
             inst.slot_data[slot] = Some(data.to_vec());
             inst.slot_stride[slot] = stride_words;
             inst.flag_bits |= 1u32 << slot;
+            self.epoch = self.epoch.wrapping_add(1);
             had_external
         };
         if had_external {
@@ -926,6 +934,7 @@ impl DeformationState {
         }
         inst.slot_stride[slot] = 0;
         inst.flag_bits &= !(1u32 << slot);
+        self.epoch = self.epoch.wrapping_add(1);
         let drop_instance = inst.flag_bits == 0;
 
         if drop_instance {
@@ -1001,6 +1010,7 @@ impl DeformationState {
         entry.slot_stride[slot] = src.stride_words;
         entry.slot_external[slot] = Some(src);
         entry.flag_bits |= 1u32 << slot;
+        self.epoch = self.epoch.wrapping_add(1);
         if !had_external {
             self.external_source_count += 1;
         }
@@ -1024,6 +1034,7 @@ impl DeformationState {
         }
         m.slot_stride[slot] = 0;
         m.flag_bits &= !(1u32 << slot);
+        self.epoch = self.epoch.wrapping_add(1);
         self.external_source_count -= 1;
         self.refresh(device, mesh_id);
         true
@@ -1097,6 +1108,7 @@ impl DeformationState {
             inst.slot_stride[slot] = src.stride_words;
             inst.slot_external[slot] = Some(src);
             inst.flag_bits |= 1u32 << slot;
+            self.epoch = self.epoch.wrapping_add(1);
             had_external
         };
         if !had_external {
@@ -1197,6 +1209,7 @@ impl DeformationState {
         }
         inst.slot_stride[slot] = 0;
         inst.flag_bits &= !(1u32 << slot);
+        self.epoch = self.epoch.wrapping_add(1);
         self.external_source_count -= 1;
         let drop_instance = inst.flag_bits == 0;
         if drop_instance {

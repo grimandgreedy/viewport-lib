@@ -30,7 +30,6 @@ pub use crate::resources::mesh::gpu_mesh::GpuMesh;
 pub use crate::resources::mesh::instancing::BatchMeta;
 pub(crate) use crate::resources::mesh::instancing::InstanceAabb;
 pub(crate) use crate::resources::mesh::instancing::InstanceData;
-pub(crate) use crate::resources::mesh::instancing::ObjectUniform;
 pub use crate::resources::mesh::instancing::PickInstance;
 pub use crate::resources::mesh::meshes::{MeshData, SubmeshRange};
 pub use crate::resources::overlay::highlight::OutlineEdgeUniform;

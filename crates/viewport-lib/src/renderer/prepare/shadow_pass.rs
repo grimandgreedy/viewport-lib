@@ -36,10 +36,8 @@ impl ViewportRenderer {
         plugin_frame_index: u64,
         lighting: &crate::renderer::types::LightingSettings,
         scene_items: &[SceneRenderItem],
-        // `is_instanceable` per scene item, computed once by the caller.
-        instanceable: &[bool],
-        // This frame's per-object bind groups and object-data indices, built
-        // before the shadow pass, so each caster draws with its own data.
+        // The fat batches' group-1 bind groups, built by the packer before
+        // the shadow pass.
         per_object: &crate::renderer::per_object_state::PerObjectState,
         light: &LightingFrame,
         shadows_skipped: bool,
@@ -407,7 +405,7 @@ impl ViewportRenderer {
                             let cutout_keys: Vec<_> = instancing
                                 .batches
                                 .iter()
-                                .filter(|b| b.is_cutout && !b.is_transparent)
+                                .filter(|b| b.is_cutout && !b.is_transparent && b.fat.is_none())
                                 .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id, b.sampler))
                                 .collect();
                             for cascade in 0..light.effective_cascade_count {
@@ -418,7 +416,8 @@ impl ViewportRenderer {
                                         cascade,
                                         t,
                                         n,
-                                        a, smp,
+                                        a,
+                                        smp,
                                     );
                                 }
                             }
@@ -477,6 +476,7 @@ impl ViewportRenderer {
                                 let mut binds = 0u32;
                                 for (bi, batch) in instancing.batches.iter().enumerate() {
                                     if batch.is_transparent
+                                        || batch.fat.is_some()
                                         || !resources.batch_colour_ready(
                                             batch,
                                             colour_hdr,
@@ -642,7 +642,7 @@ impl ViewportRenderer {
                             let cutout_keys: Vec<_> = instancing
                                 .batches
                                 .iter()
-                                .filter(|b| b.is_cutout && !b.is_transparent)
+                                .filter(|b| b.is_cutout && !b.is_transparent && b.fat.is_none())
                                 .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id, b.sampler))
                                 .collect();
                             for (t, n, a, smp) in cutout_keys {
@@ -652,7 +652,8 @@ impl ViewportRenderer {
                                     cascade,
                                     t,
                                     n,
-                                    a, smp,
+                                    a,
+                                    smp,
                                 );
                             }
                             let Some(cascade_bg) =
@@ -672,6 +673,7 @@ impl ViewportRenderer {
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for (bi, batch) in instancing.batches.iter().enumerate() {
                                 if batch.is_transparent
+                                    || batch.fat.is_some()
                                     || !resources.batch_colour_ready(
                                         batch,
                                         colour_hdr,
@@ -794,6 +796,7 @@ impl ViewportRenderer {
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for batch in &instancing.batches {
                                 if batch.is_transparent
+                                    || batch.fat.is_some()
                                     || !resources.batch_colour_ready(
                                         batch,
                                         colour_hdr,
@@ -810,11 +813,14 @@ impl ViewportRenderer {
                                 // Cutout batches sample the albedo alpha, so they need the
                                 // batch's own texture bind group (not the shared first-batch
                                 // one) at group 1.
-                                let cutout_bg = if batch.is_cutout {
-                                    resources.instancing.bind_groups.get(&batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk)))
-                                } else {
-                                    None
-                                };
+                                let cutout_bg =
+                                    if batch.is_cutout {
+                                        resources.instancing.bind_groups.get(&batch.bind_key(
+                                            resources.uv1_chunk_key(mesh.vertex_span.chunk),
+                                        ))
+                                    } else {
+                                        None
+                                    };
                                 let use_cutout = cutout_bg.is_some();
 
                                 if cur_pipe != Some((two_sided, use_cutout)) {
@@ -862,20 +868,10 @@ impl ViewportRenderer {
                         }
                     }
 
-                    // Per-item shadow casters for items excluded from
-                    // instanced batches.
-                    //
-                    // `sorted_items` in the instancing builder filters out
-                    // items with: active scalar attributes, two-sided
-                    // materials, matcap shading, UV/param visualisation,
-                    // per-instance deformer data (skinned), and
-                    // position/normal overrides. Those items render through
-                    // the per-item lit path; without this loop they would
-                    // also be silently dropped from the shadow atlas. Draw
-                    // them here with the non-instanced `shadow_pipeline`
-                    // (group 0 = `shadow_bind_group` with cascade dynamic
-                    // offset, group 1 = mesh.object_bind_group, group 2 =
-                    // per-mesh deform sidecar).
+                    // Fat batches: casters that draw through the per-object
+                    // shadow pipelines (deform-aware, override-aware) with
+                    // their twenty-binding group-1 bind group, by instance run.
+                    // The GPU-cull and multi-draw paths above skip them.
                     for cascade in 0..light.effective_cascade_count {
                         let tile_col = (cascade % 2) as f32;
                         let tile_row = (cascade / 2) as f32;
@@ -904,59 +900,47 @@ impl ViewportRenderer {
                         );
                         let mut bound = BoundCaster::default();
 
-                        for (item_idx, item) in scene_items.iter().enumerate() {
-                            if item.settings.hidden
-                                || !item.settings.cast_shadows
-                                || item.settings.opacity < 1.0
-                                || item.material.is_blend()
-                                || !resources.item_colour_ready(item, colour_hdr, clipping_active)
+                        for batch in &instancing.batches {
+                            let Some(fat) = batch.fat.as_ref() else {
+                                continue;
+                            };
+                            if batch.is_transparent
+                                || matches!(fat.draw, crate::renderer::types::FatDraw::NormalLines)
+                                || !resources.batch_colour_ready(batch, colour_hdr, clipping_active)
                             {
                                 continue;
                             }
-                            let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
+                            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                 continue;
                             };
-
-                            // Mirror the instanced-batch inclusion filter
-                            // (`is_instanceable`). When the item is in a batch it
-                            // was already drawn by the instanced shadow path above
-                            // and must not be drawn again here. All back-face
-                            // policies and param-vis now instance, so they are not
-                            // excluded; matcap, emissive texture, submesh, plugin,
-                            // warp, deform, and overrides still fall here.
-                            let in_instanced_batch = instanceable[item_idx];
-                            if in_instanced_batch {
+                            let Some(group1) = per_object
+                                .material_bind_groups
+                                .get(&fat.bind_key)
+                                .map(|m| &m.bind_group)
+                            else {
                                 continue;
-                            }
-
-                            let world_aabb = mesh
-                                .aabb
-                                .transformed(&glam::Mat4::from_cols_array_2d(&item.model));
-                            if cascade_frustum.cull_aabb(&world_aabb) {
+                            };
+                            // The instances that cast and sit in this cascade,
+                            // as contiguous runs.
+                            let runs = fat_caster_runs(instancing, batch, |aabb| {
+                                !cascade_frustum.cull_aabb(aabb)
+                            });
+                            if runs.is_empty() {
                                 continue;
                             }
 
                             // Two-sided materials on open surfaces cast
                             // through the cull-none pipeline so both faces
-                            // rasterise; its larger caster-side bias keeps the
-                            // surface from self-shadowing where it is its own
-                            // receiver. A closed mesh keeps the cull-front
-                            // pipeline whatever its policy: its back faces are
-                            // the casters, so it never compares against itself
-                            // and the cull-none slope bias cannot leak through
-                            // it. A masked material casts through the cutout
-                            // pipeline, punching holes instead of a solid
-                            // silhouette.
+                            // rasterise; a closed mesh keeps the cull-front
+                            // pipeline whatever its policy. A masked material
+                            // (or a deformer that can cut) casts through the
+                            // cutout pipeline.
                             let key = PipelineKey {
-                                two_sided: item.material.is_two_sided() && !mesh.closed,
-                                // A caster a deformer can cut needs the
-                                // cutout pipeline's fragment stage to discard in.
-                                cutout: matches!(
-                                    item.material.alpha_mode,
-                                    crate::scene::material::AlphaMode::Mask(_)
-                                ) || resources
-                                    .deform
-                                    .may_discard(item.mesh_id, item.deform_instance),
+                                two_sided: batch.two_sided && !mesh.closed,
+                                cutout: batch.has_alpha_mask
+                                    || resources
+                                        .deform
+                                        .may_discard(batch.mesh_id, fat.deform_instance),
                                 ..PipelineKey::default()
                             };
                             // Still compiling: the caster waits a frame.
@@ -967,160 +951,45 @@ impl ViewportRenderer {
                                 shadow_pass.set_pipeline(pl);
                                 bound.pipeline = Some(key);
                             }
-                            // The caster's own element of the frame's object-data
-                            // array, as the surface pass draws it. The mesh's
-                            // single-element group holds one item's transform, so
-                            // casters sharing a mesh would all cast from it.
-                            let (group1, inst) = per_object_slot(per_object, item_idx, mesh);
                             if bound.group1 != Some(group1 as *const _) {
                                 shadow_pass.set_bind_group(1, group1, &[]);
                                 bound.group1 = Some(group1 as *const _);
                             }
                             let group2 = resources
                                 .deform
-                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
+                                .instance_bind_group_for(batch.mesh_id, fat.deform_instance);
                             if bound.group2 != Some(group2 as *const _) {
                                 bind_deform_group!(shadow_pass, resources, group2);
                                 bound.group2 = Some(group2 as *const _);
                             }
-                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                            if bound.chunks != Some(chunks) {
+                            // The mesh sub-slice, so the per-vertex sidecars
+                            // (overrides, deform data) index mesh-locally as
+                            // they do in the colour pass.
+                            let chunks = (mesh.vertex_span.chunk, u32::MAX);
+                            if bound.chunks != Some(chunks) || bound.mesh != Some(batch.mesh_id) {
                                 shadow_pass.set_vertex_buffer(
                                     0,
-                                    resources.geometry.vertex_chunk_slice(chunks.0),
+                                    resources.geometry.vertex_slice(mesh.vertex_span),
                                 );
                                 shadow_pass.set_index_buffer(
-                                    resources.geometry.index_chunk_slice(chunks.1),
+                                    resources.geometry.index_slice(mesh.index_span),
                                     crate::gpu::IndexFormat::Uint32,
                                 );
                                 shadow_binds += 2;
                                 bound.chunks = Some(chunks);
+                                bound.mesh = Some(batch.mesh_id);
                             }
-                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                            let first_index = resources.geometry.first_index(mesh.index_span);
-                            shadow_pass.draw_indexed(
-                                first_index..first_index + mesh.index_count,
-                                base_vertex,
-                                inst..inst + 1,
-                            );
-                            shadow_draws += 1;
-                            shadow_draw_cmds += 1;
-                        }
-                    }
-                } else {
-                    for cascade in 0..light.effective_cascade_count {
-                        let tile_col = (cascade % 2) as f32;
-                        let tile_row = (cascade / 2) as f32;
-                        shadow_pass.set_viewport(
-                            tile_col * tile_px,
-                            tile_row * tile_px,
-                            tile_px,
-                            tile_px,
-                            0.0,
-                            1.0,
-                        );
-                        shadow_pass.set_scissor_rect(
-                            (tile_col * tile_px) as u32,
-                            (tile_row * tile_px) as u32,
-                            light.tile_size,
-                            light.tile_size,
-                        );
-
-                        shadow_pass.set_bind_group(
-                            0,
-                            &resources.shadow.bind_group,
-                            &[cascade as u32 * 256],
-                        );
-
-                        let cascade_frustum = crate::camera::frustum::Frustum::from_view_proj(
-                            &light.cascade_view_projs[cascade],
-                        );
-                        let mut bound = BoundCaster::default();
-
-                        for (item_idx, item) in scene_items.iter().enumerate() {
-                            if item.settings.hidden {
-                                continue;
-                            }
-                            if !item.settings.cast_shadows {
-                                continue;
-                            }
-                            if item.settings.opacity < 1.0
-                                || item.material.is_blend()
-                                || !resources.item_colour_ready(item, colour_hdr, clipping_active)
-                            {
-                                continue;
-                            }
-                            let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
-                                continue;
+                            let indices = match fat.draw {
+                                crate::renderer::types::FatDraw::Range(first, count) => {
+                                    first..first + count
+                                }
+                                _ => 0..mesh.index_count,
                             };
-
-                            let world_aabb = mesh
-                                .aabb
-                                .transformed(&glam::Mat4::from_cols_array_2d(&item.model));
-                            if cascade_frustum.cull_aabb(&world_aabb) {
-                                continue;
+                            for run in &runs {
+                                shadow_pass.draw_indexed(indices.clone(), 0, run.clone());
+                                shadow_draws += 1;
+                                shadow_draw_cmds += 1;
                             }
-
-                            // Two-sided and cutout selection as the instanced
-                            // path above.
-                            let key = PipelineKey {
-                                two_sided: item.material.is_two_sided() && !mesh.closed,
-                                // A caster a deformer can cut needs the
-                                // cutout pipeline's fragment stage to discard in.
-                                cutout: matches!(
-                                    item.material.alpha_mode,
-                                    crate::scene::material::AlphaMode::Mask(_)
-                                ) || resources
-                                    .deform
-                                    .may_discard(item.mesh_id, item.deform_instance),
-                                ..PipelineKey::default()
-                            };
-                            // Still compiling: the caster waits a frame.
-                            let Some(pl) = resources.shadow.cascade(key) else {
-                                continue;
-                            };
-                            if bound.pipeline != Some(key) {
-                                shadow_pass.set_pipeline(pl);
-                                bound.pipeline = Some(key);
-                            }
-                            // The caster's own element of the frame's object-data
-                            // array, as the surface pass draws it. The mesh's
-                            // single-element group holds one item's transform, so
-                            // casters sharing a mesh would all cast from it.
-                            let (group1, inst) = per_object_slot(per_object, item_idx, mesh);
-                            if bound.group1 != Some(group1 as *const _) {
-                                shadow_pass.set_bind_group(1, group1, &[]);
-                                bound.group1 = Some(group1 as *const _);
-                            }
-                            let group2 = resources
-                                .deform
-                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
-                            if bound.group2 != Some(group2 as *const _) {
-                                bind_deform_group!(shadow_pass, resources, group2);
-                                bound.group2 = Some(group2 as *const _);
-                            }
-                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                            if bound.chunks != Some(chunks) {
-                                shadow_pass.set_vertex_buffer(
-                                    0,
-                                    resources.geometry.vertex_chunk_slice(chunks.0),
-                                );
-                                shadow_pass.set_index_buffer(
-                                    resources.geometry.index_chunk_slice(chunks.1),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                shadow_binds += 2;
-                                bound.chunks = Some(chunks);
-                            }
-                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                            let first_index = resources.geometry.first_index(mesh.index_span);
-                            shadow_pass.draw_indexed(
-                                first_index..first_index + mesh.index_count,
-                                base_vertex,
-                                inst..inst + 1,
-                            );
-                            shadow_draws += 1;
-                            shadow_draw_cmds += 1;
                         }
                     }
                 }
@@ -1190,7 +1059,7 @@ impl ViewportRenderer {
         // `shadow_point_instanced.wgsl` from the instance buffer. Masked
         // casters use the cutout variants.
         // ----------------------------------------------------------------
-        let point_batching = instancing.use_instancing && !instancing.batches.is_empty();
+        let point_batching = !instancing.batches.is_empty();
         if lighting.shadows.enabled && point_batching && !light.point_shadow_faces.is_empty() {
             resources.ensure_point_instanced_shadow_pipeline(device);
         }
@@ -1199,36 +1068,40 @@ impl ViewportRenderer {
             && !light.point_shadow_faces.is_empty()
             && resources.shadow.point_pipeline.is_some()
         {
-            // Items an instanced batch draws; the per-object loop skips them.
-            let batched = |item_idx: usize| point_batching && instanceable[item_idx];
-            // Collect the caster list once: item filter, mesh lookup, and
-            // world AABB are shared by every slot and face below instead of
-            // being recomputed per (face, item).
+            // Fat batches that cast: drawn through the per-object point
+            // shadow pipelines with their own bind group, by instance run.
             struct PointCaster<'a> {
-                item_idx: usize,
-                item: &'a SceneRenderItem,
+                batch: &'a InstancedBatch,
+                fat: &'a crate::renderer::types::FatBatch,
                 mesh: &'a crate::resources::GpuMesh,
-                world_aabb: crate::scene::aabb::Aabb,
+                group1: &'a crate::gpu::BindGroup,
+                cutout: bool,
             }
-            let casters: Vec<PointCaster> = scene_items
+            let casters: Vec<PointCaster> = instancing
+                .batches
                 .iter()
-                .enumerate()
-                .filter(|(_, item)| {
-                    !item.settings.hidden
-                        && item.settings.cast_shadows
-                        && item.settings.opacity >= 1.0
-                        && !item.material.is_blend()
+                .filter(|b| {
+                    !b.is_transparent
+                        && b.fat.is_some()
+                        && resources.batch_colour_ready(b, colour_hdr, clipping_active)
                 })
-                .filter_map(|(item_idx, item)| {
-                    let mesh = resources.mesh_store.get(item.mesh_id)?;
-                    let world_aabb = mesh
-                        .aabb
-                        .transformed(&glam::Mat4::from_cols_array_2d(&item.model));
+                .filter_map(|b| {
+                    let fat = b.fat.as_ref()?;
+                    if matches!(fat.draw, crate::renderer::types::FatDraw::NormalLines) {
+                        return None;
+                    }
+                    let mesh = resources.mesh_store.get(b.mesh_id)?;
+                    let group1 = per_object
+                        .material_bind_groups
+                        .get(&fat.bind_key)
+                        .map(|m| &m.bind_group)?;
                     Some(PointCaster {
-                        item_idx,
-                        item,
+                        batch: b,
+                        fat,
                         mesh,
-                        world_aabb,
+                        group1,
+                        cutout: b.has_alpha_mask
+                            || resources.deform.may_discard(b.mesh_id, fat.deform_instance),
                     })
                 })
                 .collect();
@@ -1248,13 +1121,17 @@ impl ViewportRenderer {
                     .iter()
                     .filter(|b| {
                         !b.is_transparent
+                            && b.fat.is_none()
                             && resources.batch_colour_ready(b, colour_hdr, clipping_active)
                     })
                     .filter_map(|b| {
                         let mesh = resources.mesh_store.get(b.mesh_id)?;
                         // The batch's own group: its instance range and, for a
                         // cutout, its albedo.
-                        let group1 = resources.instancing.bind_groups.get(&b.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk)))?;
+                        let group1 = resources
+                            .instancing
+                            .bind_groups
+                            .get(&b.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk)))?;
                         let start = b.instance_offset;
                         let end = b.instance_offset + b.instance_count;
                         let mut runs = Vec::new();
@@ -1292,14 +1169,8 @@ impl ViewportRenderer {
             // pipeline these casters need is still on a worker the whole block
             // waits rather than marking a cubemap up to date that was never
             // fully drawn.
-            let is_mask = |m: &crate::scene::material::Material| {
-                matches!(m.alpha_mode, crate::scene::material::AlphaMode::Mask(_))
-            };
             let mut ready = resources.shadow.point(false).is_some();
-            if casters
-                .iter()
-                .any(|c| !batched(c.item_idx) && is_mask(&c.item.material))
-            {
+            if casters.iter().any(|c| c.cutout) {
                 ready &= resources.shadow.point(true).is_some();
             }
             for cutout in [false, true] {
@@ -1340,32 +1211,57 @@ impl ViewportRenderer {
                 mix(&fc.range.to_le_bytes());
                 let mut cacheable = true;
                 let range_sq = fc.range * fc.range;
-                for c in casters.iter() {
-                    if closest_sq(&c.world_aabb, fc.light_pos) > range_sq {
+                // Every batch, lean or fat, contributes the identity of its
+                // mesh and the hash of its instance records (which carry each
+                // caster's model matrix) when any of its instances is in
+                // range. A deform instance or an override animates without
+                // changing any hashed input, so such a batch keeps its slot
+                // re-rendering every frame.
+                for (bi, b) in instancing.batches.iter().enumerate() {
+                    if b.is_transparent {
                         continue;
                     }
-                    if c.item.deform_instance.is_some()
-                        || c.mesh.position_override_buffer.is_some()
-                        || c.mesh.normal_override_buffer.is_some()
+                    let Some(mesh) = resources.mesh_store.get(b.mesh_id) else {
+                        continue;
+                    };
+                    let start = b.instance_offset as usize;
+                    let end = start + b.instance_count as usize;
+                    let in_range = instancing.cached_aabbs[start.min(instancing.cached_aabbs.len())
+                        ..end.min(instancing.cached_aabbs.len())]
+                        .iter()
+                        .any(|a| {
+                            a.cast_shadows != 0
+                                && closest_sq(
+                                    &crate::scene::aabb::Aabb {
+                                        min: a.min.into(),
+                                        max: a.max.into(),
+                                    },
+                                    fc.light_pos,
+                                ) <= range_sq
+                        });
+                    if !in_range {
+                        continue;
+                    }
+                    if b.fat.as_ref().is_some_and(|f| f.deform_instance.is_some())
+                        || mesh.position_override_buffer.is_some()
+                        || mesh.normal_override_buffer.is_some()
                     {
                         cacheable = false;
                         break;
                     }
-                    mix(&(c.item.mesh_id.index() as u64).to_le_bytes());
-                    mix(&c.item.mesh_id.generation().to_le_bytes());
-                    mix(&c.mesh.content_rev.to_le_bytes());
-                    mix(bytemuck::cast_slice(&c.item.model));
-                    // A mask cuts the cubemap, so its cutoff and albedo count.
-                    if let crate::scene::material::AlphaMode::Mask(cutoff) =
-                        c.item.material.alpha_mode
-                    {
-                        mix(&cutoff.to_le_bytes());
-                        let tex = c
-                            .item
-                            .material
-                            .texture_id
-                            .map(|t| t.raw())
-                            .unwrap_or(u64::MAX);
+                    mix(&(b.mesh_id.index() as u64).to_le_bytes());
+                    mix(&b.mesh_id.generation().to_le_bytes());
+                    mix(&mesh.content_rev.to_le_bytes());
+                    mix(&instancing
+                        .cached_instance_hashes
+                        .get(bi)
+                        .copied()
+                        .unwrap_or(0)
+                        .to_le_bytes());
+                    // A mask cuts the cubemap, so its albedo counts (the
+                    // cutoff rides the hashed records).
+                    if b.is_cutout {
+                        let tex = b.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX);
                         mix(&tex.to_le_bytes());
                     }
                 }
@@ -1441,25 +1337,26 @@ impl ViewportRenderer {
 
                     let mut bound_cutout: Option<bool> = None;
                     for c in casters.iter() {
-                        if batched(c.item_idx) || face_frustum.cull_aabb(&c.world_aabb) {
+                        let runs = fat_caster_runs(instancing, c.batch, |aabb| {
+                            !face_frustum.cull_aabb(aabb)
+                        });
+                        if runs.is_empty() {
                             continue;
                         }
-                        let cutout = is_mask(&c.item.material);
-                        if bound_cutout != Some(cutout) {
-                            let Some(pl) = resources.shadow.point(cutout) else {
+                        if bound_cutout != Some(c.cutout) {
+                            let Some(pl) = resources.shadow.point(c.cutout) else {
                                 continue;
                             };
                             pass.set_pipeline(pl);
-                            bound_cutout = Some(cutout);
+                            bound_cutout = Some(c.cutout);
                         }
-                        let (group1, inst) = per_object_slot(per_object, c.item_idx, c.mesh);
-                        pass.set_bind_group(1, group1, &[]);
+                        pass.set_bind_group(1, c.group1, &[]);
                         bind_deform_group!(
                             pass,
                             resources,
                             resources
                                 .deform
-                                .instance_bind_group_for(c.item.mesh_id, c.item.deform_instance,)
+                                .instance_bind_group_for(c.batch.mesh_id, c.fat.deform_instance)
                         );
                         pass.set_vertex_buffer(
                             0,
@@ -1469,7 +1366,15 @@ impl ViewportRenderer {
                             resources.geometry.index_slice(c.mesh.index_span),
                             crate::gpu::IndexFormat::Uint32,
                         );
-                        pass.draw_indexed(0..c.mesh.index_count, 0, inst..inst + 1);
+                        let indices = match c.fat.draw {
+                            crate::renderer::types::FatDraw::Range(first, count) => {
+                                first..first + count
+                            }
+                            _ => 0..c.mesh.index_count,
+                        };
+                        for run in &runs {
+                            pass.draw_indexed(indices.clone(), 0, run.clone());
+                        }
                     }
 
                     let mut bound_cutout: Option<bool> = None;
@@ -1586,7 +1491,7 @@ fn draw_shadow_cascades_multi_draw(
         let cutout_keys: Vec<_> = instancing
             .batches
             .iter()
-            .filter(|b| b.is_cutout && !b.is_transparent)
+            .filter(|b| b.is_cutout && !b.is_transparent && b.fat.is_none())
             .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id, b.sampler))
             .collect();
         for (t, n, a, smp) in cutout_keys {
@@ -1596,7 +1501,8 @@ fn draw_shadow_cascades_multi_draw(
                 cascade,
                 t,
                 n,
-                a, smp,
+                a,
+                smp,
             );
         }
 
@@ -1622,6 +1528,7 @@ fn draw_shadow_cascades_multi_draw(
 
         for (bi, batch) in instancing.batches.iter().enumerate() {
             if batch.is_transparent
+                || batch.fat.is_some()
                 || !resources.batch_colour_ready(batch, colour_hdr, clipping_active)
             {
                 continue;
@@ -1722,6 +1629,41 @@ fn draw_shadow_cascades_multi_draw(
     }
 }
 
+/// The contiguous runs of a batch's instances whose item casts shadows and
+/// whose world AABB passes `visible`, in instance order (the cull inputs hold
+/// one AABB per record, in record order).
+fn fat_caster_runs(
+    instancing: &InstancingState,
+    batch: &InstancedBatch,
+    visible: impl Fn(&crate::scene::aabb::Aabb) -> bool,
+) -> Vec<std::ops::Range<u32>> {
+    let start = batch.instance_offset;
+    let end = batch.instance_offset + batch.instance_count;
+    let mut runs = Vec::new();
+    let mut run_start = None;
+    for i in start..end {
+        let casts = instancing.cached_aabbs.get(i as usize).is_none_or(|a| {
+            a.cast_shadows != 0
+                && visible(&crate::scene::aabb::Aabb {
+                    min: a.min.into(),
+                    max: a.max.into(),
+                })
+        });
+        match (casts, run_start) {
+            (true, None) => run_start = Some(i),
+            (false, Some(r)) => {
+                runs.push(r..i);
+                run_start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(r) = run_start {
+        runs.push(r..end);
+    }
+    runs
+}
+
 /// What a per-item caster loop last bound, so a run of casters that share a
 /// pipeline, object bind group, deform group and slab chunk binds them once
 /// and draws each from the bound chunk with its own base vertex and first
@@ -1732,6 +1674,8 @@ struct BoundCaster {
     group1: Option<*const crate::gpu::BindGroup>,
     group2: Option<*const crate::gpu::BindGroup>,
     chunks: Option<(u32, u32)>,
+    /// The mesh whose sub-slice is bound, for draws that bind one.
+    mesh: Option<crate::resources::mesh::mesh_store::MeshId>,
 }
 
 /// Shadow instanced-draw tallies for one pass: `batch_draws` is the pre-collapse
@@ -1743,29 +1687,4 @@ struct ShadowDrawCounts {
     batch_draws: u32,
     binds: u32,
     draw_commands: u32,
-}
-
-/// The group-1 bind group and instance a shadow caster draws with: the item's
-/// own element of the frame's per-object data when it has one, otherwise the
-/// mesh's single-element group at instance 0.
-fn per_object_slot<'a>(
-    per_object: &'a crate::renderer::per_object_state::PerObjectState,
-    item_idx: usize,
-    mesh: &'a crate::resources::GpuMesh,
-) -> (&'a crate::gpu::BindGroup, u32) {
-    match per_object
-        .bind_groups
-        .get(item_idx)
-        .and_then(|g| g.as_ref())
-    {
-        Some(bg) => (
-            bg,
-            per_object
-                .object_indices
-                .get(item_idx)
-                .copied()
-                .unwrap_or(0),
-        ),
-        None => (&mesh.object_bind_group, 0),
-    }
 }

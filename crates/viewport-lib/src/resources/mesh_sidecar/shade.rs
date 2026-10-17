@@ -224,14 +224,23 @@ fn rewrite_region(source: &str, marker: &str, content: &str) -> Result<String, S
 /// Compose one lit shader's (already deform-composed) source with a shading
 /// hook, producing that hook's module for the shader. Pure string surgery;
 /// the caller validates the result with wgpu.
+/// The shading-loop select each mesh shader declares, and the form a hook
+/// module gets.
+const PBR_SELECT: &str = "fn shading_is_pbr(flag: u32) -> bool {\n    return flag != 0u;\n}";
+const PBR_FORCED: &str = "fn shading_is_pbr(flag: u32) -> bool {\n    return true;\n}";
+
 pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Result<String, String> {
     let name = hook.desc.name;
 
     // Hook materials always shade on the PBR loop: strip the alternate
-    // shading-model regions and force the PBR branch.
+    // shading-model regions and force the branch select. Every mesh shader
+    // routes its selection through `shading_is_pbr`, so this one rewrite
+    // covers the per-object and instanced modules alike.
     let mut s = crate::resources::builders::strip_pbr_regions(base);
-    s = s.replace("if object.use_pbr != 0u {", "if true {");
-    s = s.replace("if inst.use_pbr != 0u {", "if true {");
+    if !s.contains(PBR_SELECT) {
+        return Err("missing shading_is_pbr".to_string());
+    }
+    s = s.replace(PBR_SELECT, PBR_FORCED);
 
     // Splice the prefixed body above the fragment stage, preceded by the
     // group-3 params window every material plugin gets. Bodies read it as
@@ -304,8 +313,8 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
         "1.0"
     };
 
-    // The emissive/alpha slots exist only in the per-object shaders (like the
-    // vertex markers); their absence elsewhere just skips the wiring.
+    // Every mesh shader carries the emissive/alpha slots; a base without
+    // them just skips the wiring.
     let wire_emissive = hook.has_surface && region_bounds(&s, "emissive").is_some();
     let wire_alpha = hook.has_surface && region_bounds(&s, "alpha").is_some();
 
@@ -345,10 +354,10 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
             // Mask re-tests the cutoff here (the built-in test in
             // compute_surface ran on the texture alpha, before the hook).
             surface_region.push_str(&format!(
-                "        if object.alpha_mode != 0u {{\n\
+                "        if surface.alpha_mode != 0u {{\n\
                  \x20           {name}__hook_alpha = clamp(sov.alpha, 0.0, 1.0);\n\
                  \x20           surf.alpha = {name}__hook_alpha;\n\
-                 \x20           if object.alpha_mode == 1u && {name}__hook_alpha < object.alpha_cutoff {{\n\
+                 \x20           if surface.alpha_mode == 1u && {name}__hook_alpha < surface.alpha_cutoff {{\n\
                  \x20               discard;\n\
                  \x20           }}\n\
                  \x20       }}\n"
@@ -782,13 +791,14 @@ pub struct MaterialPluginStats {
     pub variants: u32,
     /// Declared texture slots per variant.
     pub texture_count: u32,
-    /// Per-object render pipelines built for this plugin so far. Each is
-    /// built by the first draw that selects it, so this counts what the
-    /// frames so far have used: `0` before the plugin is drawn, up to 10
-    /// (3 LDR, 5 HDR, 2 OIT) once `warm_material_plugin_pipelines` has
-    /// finished. One compiling on a worker is not counted until a draw
-    /// picks it up. Drops back to `0` when a deformer registration or
-    /// debug-vis toggle invalidates the set.
+    /// Render pipelines built for this plugin so far, across its instanced
+    /// set (what a batch of plugin items draws with) and its per-object set
+    /// (items that fall off the batch path). Each is built by the first draw
+    /// that selects it, so this counts what the frames so far have used:
+    /// `0` before the plugin is drawn, up to 23 once
+    /// `warm_material_plugin_pipelines` has finished. One compiling on a
+    /// worker is not counted until a draw picks it up. Drops back to `0`
+    /// when a deformer registration or debug-vis toggle invalidates the sets.
     pub pipelines_built: u32,
 }
 
@@ -811,10 +821,12 @@ pub(crate) struct MaterialPluginVariantGpu {
 /// As with the per-object set, each pipeline and module is built by the first
 /// draw that selects it, and an accessor returns `None` while a worker has it.
 pub(crate) struct MaterialPluginInstancedPipelines {
-    family: LazyFamily<PluginSetContext, 13>,
+    family: LazyFamily<PluginSetContext, { Self::COUNT as usize }>,
 }
 
 impl MaterialPluginInstancedPipelines {
+    /// Members: 3 LDR, 4 HDR opaque, 2 OIT, 2 cull, 2 OIT cull.
+    pub(crate) const COUNT: u32 = 13;
     /// LDR pipelines drawn into the swapchain by the `emit_draw_calls` path,
     /// built with the renderer's target format and sample count.
     const LDR_SOLID: usize = 0;
@@ -1304,7 +1316,11 @@ impl crate::resources::DeviceResources {
                     pipelines_built: gpu
                         .pipelines
                         .as_ref()
-                        .map_or(0, MaterialPluginPipelines::built_count),
+                        .map_or(0, MaterialPluginPipelines::built_count)
+                        + gpu
+                            .instanced_pipelines
+                            .as_ref()
+                            .map_or(0, |set| set.family.ready_count() as u32),
                 }
             })
             .collect()
@@ -1761,7 +1777,10 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         assert!(!resources.material_plugin_needs_build(id));
         let stats = resources.material_plugin_stats();
         let row = stats.iter().find(|s| s.id == id).expect("stats row");
-        assert_eq!(row.pipelines_built, MaterialPluginPipelines::COUNT);
+        assert_eq!(
+            row.pipelines_built,
+            MaterialPluginPipelines::COUNT + MaterialPluginInstancedPipelines::COUNT
+        );
 
         let unknown = MaterialPluginId::from_parts(9999, 0);
         assert!(!resources.material_plugin_pipelines_ready(unknown));
@@ -1908,7 +1927,8 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
                 "{shader}: backface cull should be kept"
             );
             // use_pbr forced on; alternate branches stripped where present.
-            assert!(!composed.contains(".use_pbr != 0u {"), "{shader}: use_pbr");
+            assert!(composed.contains(PBR_FORCED), "{shader}: use_pbr");
+            assert!(!composed.contains(PBR_SELECT), "{shader}: use_pbr");
             assert!(!composed.contains("BEGIN_PBR_STRIP"), "{shader}: strip");
         }
     }
@@ -2055,7 +2075,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     #[test]
     fn compose_wires_surface_hook() {
         let hook = stored("paint", SURFACE_BODY, false);
-        for shader in ["mesh.wgsl", "mesh_oit.wgsl"] {
+        for shader in SHADE_FAMILY_SHADERS {
             let base = registry::lookup_source(shader).expect("lit shader");
             let composed = compose_shade_shader(base, &hook).expect("compose");
             assert!(
@@ -2075,7 +2095,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
                 "{shader}: missing emissive add"
             );
             assert!(
-                composed.contains("if object.alpha_mode != 0u {"),
+                composed.contains("if surface.alpha_mode != 0u {"),
                 "{shader}: missing alpha gate"
             );
             assert!(
@@ -2089,13 +2109,6 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
                 "{shader}: missing mask re-test"
             );
         }
-        // Instanced shaders (validation-only) apply the override but carry no
-        // emissive/alpha slots, so none of that wiring appears.
-        let base = registry::lookup_source("mesh_instanced.wgsl").expect("lit shader");
-        let composed = compose_shade_shader(base, &hook).expect("compose");
-        assert!(composed.contains("let sov = paint__shade_surface(surf);"));
-        assert!(!composed.contains("final_rgb += paint__hook_emissive;"));
-        assert!(!composed.contains("alpha_mode != 0u"));
         // A lighting-only hook gets none of the surface plumbing. (The
         // SurfaceOverride contract comments in shade.wgsl mention the hook
         // by name, so test for the prefixed call and carriers.)

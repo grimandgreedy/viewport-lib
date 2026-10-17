@@ -1,252 +1,107 @@
 //! Non-instanced (per-object) mesh draw preparation.
 
 use super::*;
-use crate::renderer::per_object_state::PerObjectState;
 
-/// Ensure the shared object-data storage buffer holds at least `needed`
-/// `ObjectUniform` elements. Grows by reallocating to the next power of two
-/// (never shrinks), bumps `object_data_gen`, and clears the material bind-group
-/// map (whose binding-0 reference points at the old buffer) when it does.
-fn ensure_object_data_buffer(
-    state: &mut PerObjectState,
-    device: &crate::gpu::Device,
-    needed: usize,
-) {
-    let needed = needed.max(1);
-    if state.object_data_buf.is_some() && state.object_data_capacity >= needed {
-        return;
-    }
-    let new_cap = needed.next_power_of_two().max(256);
-    let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-        label: Some("object_data_buf"),
-        size: (new_cap * std::mem::size_of::<ObjectUniform>()) as u64,
-        usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    state.object_data_buf = Some(buf);
-    state.object_data_written.clear();
-    state.object_data_capacity = new_cap;
-    state.object_data_gen += 1;
-    // The previously built bind groups reference the old buffer at binding 0.
-    state.material_bind_groups.clear();
-}
-
-/// Assemble the per-item `ObjectUniform` for a scene item: the model
-/// transform, material and feature flags the mesh shaders read at group 1
-/// binding 0. Shared by the per-object scene prepare and the foreground
-/// item prepare.
-pub(super) fn build_object_uniform(
+/// Assemble the instance record for a scene item: the model transform, the
+/// per-instance flags and the per-mesh sidecar words every mesh draw reads at
+/// group 1 binding 0. `mesh` is the item's resident mesh, looked up once by
+/// the caller. Shared by every packer so the two draw paths cannot drift.
+pub(crate) fn build_instance_record(
     resources: &DeviceResources,
     item: &SceneRenderItem,
+    mesh: Option<&crate::resources::GpuMesh>,
     wireframe_mode: bool,
     light_probe_index: Option<u32>,
     material_id: u32,
-) -> ObjectUniform {
-    let m = &item.material;
-    // Compute scalar attribute range.
-    let (has_attr, s_min, s_max) = if let Some(attr_ref) = &item.active_attribute {
-        let range = item
-            .scalar_range
-            .or_else(|| {
-                resources
-                    .mesh_store
-                    .get(item.mesh_id)
-                    .and_then(|mesh| mesh.attribute_ranges.get(&attr_ref.name).copied())
-            })
-            .unwrap_or((0.0, 1.0));
-        (1u32, range.0, range.1)
-    } else {
-        (0u32, 0.0, 1.0)
-    };
-    use crate::scene::material::TextureSlot::{Emissive, MetallicRoughness};
+) -> InstanceData {
+    use crate::resources::mesh::instancing::instance_flags as f;
     let resolved = resources.resolve_material_slots(&item.material);
     let cm = common_material(item, resolved);
-    ObjectUniform {
+    let mesh_closed = mesh.is_some_and(|m| m.closed);
+    let has_position_override = mesh.is_some_and(|m| m.position_override_buffer.is_some());
+    let has_normal_override = mesh.is_some_and(|m| m.normal_override_buffer.is_some());
+    // Styled back-face `Pattern` world scale: transform the mesh AABB by this
+    // instance's model to get its world extent, then divide the pattern scale
+    // by it. Zero for every non-Pattern policy.
+    let backface_pattern_scale = match item.material.backface_policy {
+        crate::scene::material::BackfacePolicy::Pattern(cfg) => {
+            let world_extent = mesh
+                .map(|m| {
+                    m.aabb
+                        .transformed(&glam::Mat4::from_cols_array_2d(&item.model))
+                        .longest_side()
+                })
+                .unwrap_or(1.0)
+                .max(1e-6);
+            cfg.scale / world_extent
+        }
+        _ => 0.0,
+    };
+    let flags = f::when(cm.selected != 0, f::SELECTED)
+        | f::when(wireframe_mode || item.settings.wireframe, f::WIREFRAME)
+        | f::when(cm.has_texture != 0, f::HAS_TEXTURE)
+        | f::when(cm.has_normal_map != 0, f::HAS_NORMAL_MAP)
+        | f::when(cm.has_ao_map != 0, f::HAS_AO_MAP)
+        | f::when(cm.unlit != 0, f::UNLIT)
+        | f::when(cm.receive_shadows != 0, f::RECEIVE_SHADOWS)
+        | f::when(mesh_closed, f::MESH_CLOSED)
+        | f::when(
+            item.material.is_two_sided() && !mesh_closed,
+            f::TWO_SIDED_RECEIVER,
+        )
+        | f::when(
+            matches!(
+                item.material.alpha_mode,
+                crate::scene::material::AlphaMode::Mask(_)
+            ),
+            f::ALPHA_MASK,
+        )
+        | f::when(light_probe_index.is_some(), f::HAS_LIGHT_PROBE)
+        | f::when(item.settings.ignore_clip, f::IGNORE_CLIP)
+        | f::when(has_position_override, f::HAS_POSITION_OVERRIDE)
+        | f::when(has_normal_override, f::HAS_NORMAL_OVERRIDE)
+        | f::when(item.active_attribute.is_some(), f::HAS_ATTRIBUTE)
+        | f::when(
+            item.active_attribute
+                .as_ref()
+                .is_some_and(|a| a.kind == crate::resources::AttributeKind::FaceColour),
+            f::USE_FACE_COLOUR,
+        )
+        | f::when(item.warp_attribute.is_some(), f::HAS_WARP);
+    InstanceData {
         model: cm.model,
         colour: cm.colour,
-        selected: cm.selected,
-        wireframe: if wireframe_mode || item.settings.wireframe {
-            1
-        } else {
-            0
-        },
-        ambient: cm.ambient,
-        diffuse: cm.diffuse,
-        specular: cm.specular,
-        shininess: cm.shininess,
-        has_texture: cm.has_texture,
-        use_pbr: cm.use_pbr,
-        metallic: cm.metallic,
-        roughness: cm.roughness,
-        has_normal_map: cm.has_normal_map,
-        has_ao_map: cm.has_ao_map,
-        has_attribute: has_attr,
-        scalar_min: s_min,
-        scalar_max: s_max,
-        receive_shadows: cm.receive_shadows,
-        nan_colour: item
-            .nan_colour
-            .map(|c| c.to_linear_rgba())
-            .unwrap_or([0.0; 4]),
-        use_nan_colour: if item.nan_colour.is_some() { 1 } else { 0 },
-        use_matcap: if m.matcap_id().is_some() { 1 } else { 0 },
-        matcap_blendable: m
-            .matcap_id()
-            .map_or(0, |id| if id.blendable { 1 } else { 0 }),
-        unlit: cm.unlit,
-        use_face_colour: u32::from(item.active_attribute.as_ref().map_or(false, |a| {
-            a.kind == crate::resources::AttributeKind::FaceColour
-        })),
-        uv_vis_mode: m.param_vis.map_or(0, |pv| pv.mode as u32),
-        uv_vis_scale: m.param_vis.map_or(8.0, |pv| pv.scale),
-        backface_policy: match m.backface_policy {
-            crate::scene::material::BackfacePolicy::Cull => 0,
-            crate::scene::material::BackfacePolicy::Identical => 1,
-            crate::scene::material::BackfacePolicy::DifferentColour(_) => 2,
-            crate::scene::material::BackfacePolicy::Tint(_) => 3,
-            crate::scene::material::BackfacePolicy::Pattern(cfg) => 4 + cfg.pattern as u32,
-            // Forward-compat: an unknown future policy renders as Cull (the default).
-            _ => 0,
-        },
-        backface_colour: match m.backface_policy {
-            crate::scene::material::BackfacePolicy::DifferentColour(c) => {
-                let c = c.to_linear_rgb();
-                [c[0], c[1], c[2], 1.0]
-            }
-            crate::scene::material::BackfacePolicy::Tint(factor) => [factor, 0.0, 0.0, 1.0],
-            crate::scene::material::BackfacePolicy::Pattern(cfg) => {
-                let world_extent = resources
-                    .mesh_store
-                    .get(item.mesh_id)
-                    .map(|mesh| {
-                        mesh.aabb
-                            .transformed(&glam::Mat4::from_cols_array_2d(&item.model))
-                            .longest_side()
-                    })
-                    .unwrap_or(1.0)
-                    .max(1e-6);
-                let world_scale = cfg.scale / world_extent;
-                let cc = cfg.colour.to_linear_rgb();
-                [cc[0], cc[1], cc[2], world_scale]
-            }
-            _ => [0.0; 4],
-        },
-        has_warp: if item.warp_attribute.is_some() { 1 } else { 0 },
-        warp_scale: item.warp_scale,
-        has_position_override: {
-            let mesh = resources.mesh_store.get(item.mesh_id);
-            if mesh.map_or(false, |m| m.position_override_buffer.is_some()) {
-                1
-            } else {
-                0
-            }
-        },
-        has_normal_override: {
-            let mesh = resources.mesh_store.get(item.mesh_id);
-            if mesh.map_or(false, |m| m.normal_override_buffer.is_some()) {
-                1
-            } else {
-                0
-            }
-        },
-        emissive: m.emissive_nits(),
-        use_flat: cm.use_flat,
-        alpha_mode: match m.alpha_mode {
-            crate::scene::material::AlphaMode::Opaque => 0,
-            crate::scene::material::AlphaMode::Mask(_) => 1,
-            crate::scene::material::AlphaMode::Blend => 2,
-            // The OIT fragment shader reads 3 as "RGB is already premultiplied":
-            // it skips the `* alpha` it applies to straight-blend colour.
-            crate::scene::material::AlphaMode::BlendPremultiplied => 3,
-            // Forward-compat: an unknown future mode renders as Opaque (the default).
-            _ => 0,
-        },
-        alpha_cutoff: match m.alpha_mode {
+        flags,
+        material_id,
+        alpha_cutoff: match item.material.alpha_mode {
             crate::scene::material::AlphaMode::Mask(c) => c,
             _ => 0.5,
         },
-        // A freed texture reads as absent, so the shader falls back to the
-        // scalar factors rather than sampling the empty fallback.
-        has_metallic_roughness_tex: resolved.live(MetallicRoughness) as u32,
-        has_emissive_tex: resolved.live(Emissive) as u32,
-        material_id,
-        uv1_base: {
-            // Per-object draws bind a mesh vertex sub-slice, so the vertex index
-            // the shader sees is mesh-local. Add the mesh's base vertex to index
-            // the whole-chunk uv1 buffer. 0 when the mesh has no second UV set
-            // (it binds the zero fallback and the index is clamped to entry 0).
-            resources
-                .mesh_store
-                .get(item.mesh_id)
-                .filter(|mesh| mesh.has_uv1)
-                .map_or(0, |mesh| {
-                    resources.geometry.base_vertex(mesh.vertex_span) as u32
-                })
-        },
-        mesh_closed: resources
-            .mesh_store
-            .get(item.mesh_id)
-            .is_some_and(|m| m.closed) as u32,
-        _pad_uv: 0,
-        deform_flags: resources.deform.flag_bits(item.mesh_id),
-        normal_strength: cm.normal_strength,
-        ao_range: cm.ao_range,
-        metallic_range: m.metallic_range,
-        roughness_range: m.roughness_range,
-        position_override_base: {
-            let mesh = resources.mesh_store.get(item.mesh_id);
-            mesh.and_then(|m| m.position_override_slice)
-                .map_or(0, |s| s.base_element)
-        },
-        position_override_len: {
-            let mesh = resources.mesh_store.get(item.mesh_id);
-            mesh.and_then(|m| m.position_override_slice)
-                .map_or(u32::MAX, |s| s.element_count)
-        },
-        normal_override_base: {
-            let mesh = resources.mesh_store.get(item.mesh_id);
-            mesh.and_then(|m| m.normal_override_slice)
-                .map_or(0, |s| s.base_element)
-        },
-        normal_override_len: {
-            let mesh = resources.mesh_store.get(item.mesh_id);
-            mesh.and_then(|m| m.normal_override_slice)
-                .map_or(u32::MAX, |s| s.element_count)
-        },
-        has_light_probe: light_probe_index.map_or(0, |_| 1),
         light_probe_index: light_probe_index.unwrap_or(0),
-        lightmap_mode: resources
-            .mesh_store
-            .get(item.mesh_id)
-            .and_then(|mesh| mesh.lightmap.as_ref())
-            .map_or(0, |lm| lm.mode),
-        lightmap_directional: resources
-            .mesh_store
-            .get(item.mesh_id)
-            .and_then(|mesh| mesh.lightmap.as_ref())
-            .map_or(0, |lm| {
-                (lm.direction_texture_id.is_some() && !lm.is_shadowmask) as u32
-            }),
-        // Scene-atlas placement: a per-mesh lightmap owns its whole atlas
-        // (identity scale/bias, layer 0); a scene lightmap sits in a sub-rect of a
-        // shared page. Both read straight off the registration.
-        lightmap_scale_bias: resources
-            .mesh_store
-            .get(item.mesh_id)
-            .and_then(|mesh| mesh.lightmap.as_ref())
-            .map_or([1.0, 1.0, 0.0, 0.0], |lm| lm.scale_bias),
-        lightmap_index: resources
-            .mesh_store
-            .get(item.mesh_id)
-            .and_then(|mesh| mesh.lightmap.as_ref())
-            .map_or(0, |lm| lm.layer),
-        has_shadowmask: resources
-            .mesh_store
-            .get(item.mesh_id)
-            .and_then(|mesh| mesh.lightmap.as_ref())
-            .map_or(0, |lm| lm.is_shadowmask as u32),
-        ignore_clip: item.settings.ignore_clip as u32,
+        custom_data_id: 0,
+        backface_pattern_scale,
         object_mask: item.settings.visibility_mask,
+        // Draws that bind a mesh sub-slice see a mesh-local vertex index; the
+        // base recovers the whole-chunk index into the uv1 buffer. 0 when the
+        // mesh has no second UV set (the one-entry zero fallback is bound).
+        uv1_base: mesh
+            .filter(|m| m.has_uv1)
+            .map_or(0, |m| resources.geometry.base_vertex(m.vertex_span) as u32),
+        deform_flags: resources.deform.flag_bits(item.mesh_id),
+        position_override_base: mesh
+            .and_then(|m| m.position_override_slice)
+            .map_or(0, |s| s.base_element),
+        position_override_len: mesh
+            .and_then(|m| m.position_override_slice)
+            .map_or(u32::MAX, |s| s.element_count),
+        normal_override_base: mesh
+            .and_then(|m| m.normal_override_slice)
+            .map_or(0, |s| s.base_element),
+        normal_override_len: mesh
+            .and_then(|m| m.normal_override_slice)
+            .map_or(u32::MAX, |s| s.element_count),
+        warp_scale: item.warp_scale,
+        _spare: [0; 2],
     }
 }
 
@@ -303,597 +158,6 @@ pub(super) fn prepare_light_probe_sh(
 }
 
 impl ViewportRenderer {
-    /// Non-instanced (per-object) mesh draw preparation: compute the per-item
-    /// material/feature flags, write one `ObjectUniform` per scene item, and build
-    /// or reuse the per-item bind groups (plus the wireframe-mode uniform pool).
-    ///
-    /// `probe_indices` is index-aligned with `scene_items` and maps each item to
-    /// its light-probe SH block (see [`prepare_light_probe_sh`]).
-    pub(super) fn prepare_per_object(
-        resources: &mut DeviceResources,
-        mesh_uniforms: &mut PerObjectState,
-        use_instancing: bool,
-        scene_items: &[SceneRenderItem],
-        instanceable: &[bool],
-        probe_indices: &[Option<u32>],
-        frame_index: u64,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        frame: &FrameData,
-    ) -> u32 {
-        // Count of per-item bind groups actually (re)built this frame, reported
-        // in FrameStats so a cache that is silently missing is visible.
-        let mut bind_groups_built = 0u32;
-
-        // Drop material bind groups that no longer match what they sample, so no
-        // bind group keeps freed GPU memory alive or draws a texture that has
-        // been swapped underneath it. A free keeps every entry whose deps still
-        // resolve: under a streaming eviction budget almost nothing in this map
-        // references what a given frame freed, and rebuilding all of it was the
-        // dominant cost.
-        match mesh_uniforms.deps_gate.poll(resources) {
-            crate::resources::resource_deps::Revalidate::RebuildAll => {
-                mesh_uniforms.material_bind_groups.clear();
-            }
-            crate::resources::resource_deps::Revalidate::CheckEach => {
-                mesh_uniforms
-                    .material_bind_groups
-                    .retain(|_, bg| bg.resources_resolve(resources));
-            }
-            crate::resources::resource_deps::Revalidate::Valid => {}
-        }
-
-        // Reset this frame's per-item slot maps. Slots for items on the
-        // instanced path stay None; a None slot at draw time falls back to the
-        // mesh's single-element bind group drawn at instance 0.
-        mesh_uniforms.bind_groups.clear();
-        mesh_uniforms
-            .bind_groups
-            .resize_with(scene_items.len(), || None);
-        mesh_uniforms.object_indices.clear();
-        mesh_uniforms.object_indices.resize(scene_items.len(), 0);
-        mesh_uniforms.submesh_bind_groups.clear();
-        mesh_uniforms.submesh_indices.clear();
-
-        // Collect per-item uniforms when wireframe mode is on so we can give each
-        // visible item its own wireframe bind group.
-        let mut wireframe_uniforms: Vec<ObjectUniform> = Vec::new();
-        let collect_wf_uniforms = frame.viewport.wireframe_mode;
-        // Enter the per-object path when at least one item needs it. An item is
-        // non-instanceable for any of the reasons is_instanceable tests, so
-        // `instanceable` already folds those in; wireframe and normal
-        // visualization force the per-object path directly.
-        let any_non_instanceable = instanceable.iter().any(|&b| !b);
-        let any_wireframe_or_normals = scene_items
-            .iter()
-            .any(|i| i.settings.wireframe || i.show_normals);
-        if !use_instancing
-            || frame.viewport.wireframe_mode
-            || any_non_instanceable
-            || any_wireframe_or_normals
-        {
-            // Pass 1 gathers every per-object draw's ObjectUniform into one
-            // contiguous Vec and records its element index; the group-1 bind
-            // groups are built in pass 2, after the shared storage buffer is
-            // sized, so a build never references a buffer a later grow
-            // reallocated. `pending` lists the draws (whole-mesh entry, then each
-            // submesh range) to bind in pass 2.
-            let mut object_data: Vec<ObjectUniform> = Vec::with_capacity(scene_items.len());
-            let mut pending: Vec<(usize, u32)> = Vec::new();
-            let mut range_mats_by_item: std::collections::HashMap<
-                usize,
-                Vec<crate::scene::material::Material>,
-            > = std::collections::HashMap::new();
-            // Meshes whose single-element `object_uniform_buf` fallback has been
-            // written this frame, so a mesh shared by many per-object items pays
-            // one write instead of one per item (the write is only a shadow /
-            // fallback buffer; the items themselves draw from the shared
-            // object-data buffer).
-            let mut shared_written: std::collections::HashSet<
-                crate::resources::mesh::mesh_store::MeshId,
-            > = std::collections::HashSet::new();
-            for (item_idx, item) in scene_items.iter().enumerate() {
-                // When instancing is active, skip items that will be rendered
-                // via the instanced path. They don't need per-object uniform
-                // writes; writing them anyway causes O(n) write_buffer calls
-                // for the whole scene whenever any single item is two-sided.
-                //
-                // Items whose mesh has a GPU position or normal override bound
-                // (`set_position_override_buffer` / `set_normal_override_buffer`)
-                // MUST go through this per-item write path. The override
-                // binding at group 1 binding 13/14 is selected by the shader's
-                // `has_position_override` / `has_normal_override` flag, which
-                // lives in the per-item `ObjectUniform`. Skipping the write
-                // leaves the flag at the default 0, the shader ignores the
-                // override binding, and the consumer's compute output silently
-                // does nothing.
-                // Items that go through the instanced path do not need a per-item
-                // uniform write, unless something forces them back to per-object:
-                // wireframe mode, a wireframe or warp item, or normal visualization.
-                if use_instancing
-                    && instanceable[item_idx]
-                    && !frame.viewport.wireframe_mode
-                    && !item.settings.wireframe
-                    && item.warp_attribute.is_none()
-                    && !item.show_normals
-                {
-                    continue;
-                }
-
-                // Wireframe edge and normal-line buffers are built lazily on
-                // the first frame a view needs them, not at upload time.
-                if item.show_normals {
-                    resources.ensure_normal_lines(device, item.mesh_id);
-                }
-                if item.settings.wireframe || frame.viewport.wireframe_mode {
-                    resources.ensure_edge_indices(device, item.mesh_id);
-                }
-
-                if resources.mesh_store.get(item.mesh_id).is_none() {
-                    tracing::warn!(
-                        mesh_index = item.mesh_id.index(),
-                        "scene item mesh_index invalid, skipping"
-                    );
-                    continue;
-                };
-                let resolved = resources.resolve_material_slots(&item.material);
-                let material_id = resources
-                    .material_gpu_builder
-                    .intern(&item.material, resolved);
-                let obj_uniform = build_object_uniform(
-                    resources,
-                    item,
-                    frame.viewport.wireframe_mode,
-                    probe_indices[item_idx],
-                    material_id,
-                );
-
-                // Collect per-item uniform for wireframe per-item bind groups.
-                if collect_wf_uniforms && !item.settings.hidden {
-                    wireframe_uniforms.push(obj_uniform);
-                }
-
-                // The normal-visualization uniform feeds only the normal-line
-                // pass, so assemble and write it only for items showing normals.
-                if item.show_normals {
-                    let normal_obj_uniform = ObjectUniform {
-                        model: item.model,
-                        colour: [1.0, 1.0, 1.0, 1.0],
-                        selected: 0,
-                        wireframe: 0,
-                        ambient: 0.15,
-                        diffuse: 0.75,
-                        specular: 0.4,
-                        shininess: 32.0,
-                        has_texture: 0,
-                        use_pbr: 0,
-                        metallic: 0.0,
-                        roughness: 0.5,
-                        has_normal_map: 0,
-                        has_ao_map: 0,
-                        has_attribute: 0,
-                        scalar_min: 0.0,
-                        scalar_max: 1.0,
-                        receive_shadows: 1,
-                        nan_colour: [0.0; 4],
-                        use_nan_colour: 0,
-                        use_matcap: 0,
-                        matcap_blendable: 0,
-                        unlit: 0,
-                        use_face_colour: 0,
-                        uv_vis_mode: 0,
-                        uv_vis_scale: 8.0,
-                        backface_policy: 0,
-                        backface_colour: [0.0; 4],
-                        has_warp: 0,
-                        warp_scale: 1.0,
-                        has_position_override: 0,
-                        has_normal_override: 0,
-                        emissive: [0.0; 3],
-                        use_flat: 0,
-                        alpha_mode: 0,
-                        alpha_cutoff: 0.5,
-                        has_metallic_roughness_tex: 0,
-                        has_emissive_tex: 0,
-                        material_id: 0,
-                        uv1_base: 0,
-                        mesh_closed: 0,
-                        _pad_uv: 0,
-                        deform_flags: 0,
-                        normal_strength: 1.0,
-                        ao_range: [0.0, 1.0],
-                        metallic_range: [0.0, 1.0],
-                        roughness_range: [0.0, 1.0],
-                        position_override_base: 0,
-                        position_override_len: u32::MAX,
-                        normal_override_base: 0,
-                        normal_override_len: u32::MAX,
-                        has_light_probe: 0,
-                        light_probe_index: 0,
-                        lightmap_mode: 0,
-                        lightmap_directional: 0,
-                        lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
-                        lightmap_index: 0,
-                        has_shadowmask: 0,
-                        ignore_clip: item.settings.ignore_clip as u32,
-                        object_mask: item.settings.visibility_mask,
-                    };
-                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                        queue.write_buffer(
-                            &mesh.normal_uniform_buf,
-                            0,
-                            bytemuck::cast_slice(&[normal_obj_uniform]),
-                        );
-                    }
-                }
-
-                // Rebuild the object bind group if material/attribute/LUT/matcap/warp changed.
-                resources.update_mesh_texture_bind_group(
-                    device,
-                    item.mesh_id,
-                    item.material.texture_id,
-                    item.material.normal_map_id,
-                    item.material.ao_map_id,
-                    item.colourmap_id,
-                    item.active_attribute.as_ref().map(|a| a.name.as_str()),
-                    item.material.matcap_id(),
-                    item.warp_attribute.as_deref(),
-                    item.material.metallic_roughness_texture_id,
-                    item.material.emissive_texture_id,
-                );
-
-                // Keep the mesh's single-element object buffer in sync: it backs
-                // the mesh's fallback bind group, drawn at instance 0 by items
-                // without a per-object element. Written once per mesh per frame,
-                // so when several items share a MeshId it holds the first item's
-                // transform. Shadow casters on this path draw from their own
-                // element instead.
-                if shared_written.insert(item.mesh_id) {
-                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                        let mut last = mesh.last_object_uniform.lock().unwrap();
-                        let unchanged = last.as_ref().is_some_and(|u| {
-                            bytemuck::bytes_of(u) == bytemuck::bytes_of(&obj_uniform)
-                        });
-                        if !unchanged {
-                            queue.write_buffer(
-                                &mesh.object_uniform_buf,
-                                0,
-                                bytemuck::cast_slice(&[obj_uniform]),
-                            );
-                            *last = Some(obj_uniform);
-                            resources.frame_upload_bytes +=
-                                std::mem::size_of::<ObjectUniform>() as u64;
-                        }
-                    }
-                }
-
-                // Whole-mesh draw: record this item's element in the shared
-                // object-data array; the group-1 bind group is built in pass 2.
-                let idx = object_data.len() as u32;
-                object_data.push(obj_uniform);
-                mesh_uniforms.object_indices[item_idx] = idx;
-                pending.push((item_idx, 0));
-
-                // Items drawn with per-submesh materials get one extra array
-                // element and one pending bind per range.
-                let range_mats: Option<Vec<crate::scene::material::Material>> = resources
-                    .mesh_store
-                    .get(item.mesh_id)
-                    .and_then(|m| super::mesh_material::active_submesh_materials(item, m))
-                    .map(|mats| mats.to_vec());
-                if let Some(mats) = range_mats {
-                    let mut range_item = item.clone();
-                    range_item.submesh_materials = None;
-                    let mut range_indices: Vec<u32> = Vec::with_capacity(mats.len());
-                    for (r, mat) in mats.iter().enumerate() {
-                        range_item.material = mat.clone();
-                        let range_material_id = resources.material_gpu_builder.intern(
-                            &range_item.material,
-                            resources.resolve_material_slots(&range_item.material),
-                        );
-                        let range_uniform = build_object_uniform(
-                            resources,
-                            &range_item,
-                            frame.viewport.wireframe_mode,
-                            probe_indices[item_idx],
-                            range_material_id,
-                        );
-                        let ridx = object_data.len() as u32;
-                        object_data.push(range_uniform);
-                        range_indices.push(ridx);
-                        pending.push((item_idx, r as u32 + 1));
-                    }
-                    mesh_uniforms
-                        .submesh_bind_groups
-                        .insert(item_idx, vec![None; mats.len()]);
-                    mesh_uniforms
-                        .submesh_indices
-                        .insert(item_idx, range_indices);
-                    range_mats_by_item.insert(item_idx, mats);
-                }
-            }
-
-            // Size and fill the shared object-data buffer, then build pass-2
-            // bind groups against it (deduped by mesh+material fingerprint).
-            ensure_object_data_buffer(mesh_uniforms, device, object_data.len());
-            if !object_data.is_empty() {
-                let data: &[u8] = bytemuck::cast_slice(&object_data);
-                if let Some(buf) = mesh_uniforms.object_data_buf.as_ref()
-                    && mesh_uniforms.object_data_written.as_slice() != data
-                {
-                    queue.write_buffer(buf, 0, data);
-                    resources.frame_upload_bytes += data.len() as u64;
-                    mesh_uniforms.object_data_written.clear();
-                    mesh_uniforms.object_data_written.extend_from_slice(data);
-                }
-            }
-            let data_gen = mesh_uniforms.object_data_gen;
-            let buf = mesh_uniforms.object_data_buf.clone();
-            if let Some(buf) = buf {
-                for &(item_idx, submesh) in &pending {
-                    let item = &scene_items[item_idx];
-                    let mat: &crate::scene::material::Material = if submesh == 0 {
-                        &item.material
-                    } else {
-                        &range_mats_by_item[&item_idx][(submesh - 1) as usize]
-                    };
-                    let Some(key) = resources.per_item_object_bg_key(
-                        item.mesh_id,
-                        mat.texture_id,
-                        mat.normal_map_id,
-                        mat.ao_map_id,
-                        item.colourmap_id,
-                        item.active_attribute.as_ref().map(|a| a.name.as_str()),
-                        mat.matcap_id(),
-                        item.warp_attribute.as_deref(),
-                        mat.metallic_roughness_texture_id,
-                        mat.emissive_texture_id,
-                        mat.selected_sampler(),
-                    ) else {
-                        continue;
-                    };
-                    let fresh = mesh_uniforms
-                        .material_bind_groups
-                        .get(&key)
-                        .is_some_and(|m| m.data_gen == data_gen);
-                    if !fresh {
-                        if let Some((bg, _)) = resources.build_per_item_object_bind_group(
-                            device,
-                            item.mesh_id,
-                            &buf,
-                            mat.texture_id,
-                            mat.normal_map_id,
-                            mat.ao_map_id,
-                            item.colourmap_id,
-                            item.active_attribute.as_ref().map(|a| a.name.as_str()),
-                            mat.matcap_id(),
-                            item.warp_attribute.as_deref(),
-                            mat.metallic_roughness_texture_id,
-                            mat.emissive_texture_id,
-                            mat.selected_sampler(),
-                            None,
-                        ) {
-                            bind_groups_built += 1;
-                            mesh_uniforms.material_bind_groups.insert(
-                                key,
-                                crate::renderer::per_object_state::MaterialBindGroup {
-                                    bind_group: bg,
-                                    data_gen,
-                                    last_frame: frame_index,
-                                    deps: crate::resources::resource_deps::ResourceDeps {
-                                        mesh_id: Some(item.mesh_id),
-                                        texture_ids: [
-                                            mat.texture_id,
-                                            mat.normal_map_id,
-                                            mat.ao_map_id,
-                                            mat.metallic_roughness_texture_id,
-                                            mat.emissive_texture_id,
-                                        ],
-                                    },
-                                },
-                            );
-                        }
-                    }
-                    let bg = mesh_uniforms.material_bind_groups.get_mut(&key).map(|m| {
-                        m.last_frame = frame_index;
-                        m.bind_group.clone()
-                    });
-                    if let Some(bg) = bg {
-                        if submesh == 0 {
-                            mesh_uniforms.bind_groups[item_idx] = Some(bg);
-                        } else if let Some(slot) =
-                            mesh_uniforms.submesh_bind_groups.get_mut(&item_idx)
-                        {
-                            slot[(submesh - 1) as usize] = Some(bg);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Capacity-based eviction of the deduped material bind-group map. A
-        // material whose items left the frame keeps its bind group until the map
-        // exceeds its budget, so re-showing a large set does not rebuild every
-        // bind group in one frame (~11 us per build measured). Entries used this
-        // frame are never evicted: the budget is at least twice the live set, so
-        // eviction only removes stale entries, oldest first. (A resource free
-        // already cleared the whole map at the top of this function.)
-        const CACHE_MIN_CAPACITY: usize = 8192;
-        if mesh_uniforms.material_bind_groups.len() > CACHE_MIN_CAPACITY {
-            let live = mesh_uniforms
-                .material_bind_groups
-                .values()
-                .filter(|e| e.last_frame == frame_index)
-                .count();
-            let cap = CACHE_MIN_CAPACITY.max(live.saturating_mul(2));
-            let len = mesh_uniforms.material_bind_groups.len();
-            if len > cap {
-                let excess = len - cap;
-                let mut stale_frames: Vec<u64> = mesh_uniforms
-                    .material_bind_groups
-                    .values()
-                    .map(|e| e.last_frame)
-                    .filter(|f| *f != frame_index)
-                    .collect();
-                stale_frames.sort_unstable();
-                let threshold = stale_frames[excess.min(stale_frames.len()) - 1];
-                mesh_uniforms
-                    .material_bind_groups
-                    .retain(|_, e| e.last_frame == frame_index || e.last_frame > threshold);
-            }
-        }
-
-        // Build per-item wireframe bind groups so each visible item gets its own
-        // object uniform, avoiding the shared-MeshId overwrite problem.
-        if !wireframe_uniforms.is_empty() {
-            let n = wireframe_uniforms.len();
-            let uniform_size = std::mem::size_of::<ObjectUniform>() as u64;
-
-            // Grow the buffer/bind-group pools if needed. We never shrink them.
-            while mesh_uniforms.wireframe_uniform_bufs.len() < n {
-                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("wireframe_item_uniform"),
-                    size: uniform_size,
-                    usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("wireframe_item_bg"),
-                    layout: &resources.binds.object_bgl,
-                    entries: &[
-                        crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: buf.as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 1,
-                            resource: crate::gpu::BindingResource::TextureView(
-                                &resources.material.texture.view,
-                            ),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 2,
-                            resource: crate::gpu::BindingResource::Sampler(
-                                &resources.material.mesh_sampler,
-                            ),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 3,
-                            resource: crate::gpu::BindingResource::TextureView(
-                                &resources.material.normal_map_view,
-                            ),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 4,
-                            resource: crate::gpu::BindingResource::TextureView(
-                                &resources.material.ao_map_view,
-                            ),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 5,
-                            resource: crate::gpu::BindingResource::TextureView(
-                                &resources.content.fallback_lut_view,
-                            ),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 6,
-                            resource: resources.content.fallback_scalar_buf.as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 7,
-                            resource: crate::gpu::BindingResource::TextureView(
-                                resources
-                                    .content
-                                    .fallback_matcap_view
-                                    .as_ref()
-                                    .unwrap_or(&resources.material.texture.view),
-                            ),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 8,
-                            resource: resources
-                                .content
-                                .fallback_face_colour_buf
-                                .as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 9,
-                            resource: resources.content.fallback_warp_buf.as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 10,
-                            resource: crate::gpu::BindingResource::Sampler(
-                                &resources.material.lut_sampler,
-                            ),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 11,
-                            resource: crate::gpu::BindingResource::TextureView(
-                                &resources.material.metallic_roughness_view,
-                            ),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 12,
-                            resource: crate::gpu::BindingResource::TextureView(
-                                &resources.material.emissive_view,
-                            ),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 13,
-                            resource: resources
-                                .content
-                                .fallback_position_override_buf
-                                .as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 14,
-                            resource: resources
-                                .content
-                                .fallback_normal_override_buf
-                                .as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 15,
-                            resource: resources
-                                .content
-                                .fallback_extension_attr_buf
-                                .as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 17,
-                            resource: crate::gpu::BindingResource::TextureView(
-                                &resources.material.texture_array_view,
-                            ),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 18,
-                            resource: crate::gpu::BindingResource::TextureView(
-                                &resources.material.texture_array_view,
-                            ),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 19,
-                            resource: resources.content.fallback_uv1_buf.as_entire_binding(),
-                        },
-                    ],
-                });
-                mesh_uniforms.wireframe_uniform_bufs.push(buf);
-                mesh_uniforms.wireframe_bind_groups.push(bg);
-            }
-
-            // Write each item's uniform into its dedicated buffer.
-            for (i, uniform) in wireframe_uniforms.iter().enumerate() {
-                queue.write_buffer(
-                    &mesh_uniforms.wireframe_uniform_bufs[i],
-                    0,
-                    bytemuck::cast_slice(std::slice::from_ref(uniform)),
-                );
-            }
-        }
-
-        bind_groups_built
-    }
-
     /// Write the per-item uniforms and build the group-1 bind groups for one
     /// viewport's foreground items.
     ///
@@ -910,7 +174,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
     ) {
         entries.truncate(items.len());
-        let uniform_size = std::mem::size_of::<ObjectUniform>() as u64;
+        let uniform_size = std::mem::size_of::<InstanceData>() as u64;
         for (idx, item) in items.iter().enumerate() {
             if entries.len() <= idx {
                 let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -949,11 +213,15 @@ impl ViewportRenderer {
                 item.material.emissive_texture_id,
             );
 
+            let mesh = resources.mesh_store.get(item.mesh_id);
+            let shading = crate::resources::material_gpu::ItemShading::from_item(item, mesh);
             let material_id = resources.material_gpu_builder.intern(
                 &item.material,
                 resources.resolve_material_slots(&item.material),
+                &shading,
             );
-            let obj_uniform = build_object_uniform(resources, item, false, None, material_id);
+            let obj_uniform =
+                build_instance_record(resources, item, mesh, false, None, material_id);
             let entry = &mut entries[idx];
             let uniform_changed = entry.last_uniform.as_ref().map_or(true, |u| {
                 bytemuck::bytes_of(u) != bytemuck::bytes_of(&obj_uniform)
@@ -988,27 +256,25 @@ impl ViewportRenderer {
         }
     }
 
-    /// Rebuild or drop the cached per-object render bundle for this frame.
+    /// Rebuild or drop the cached batch render bundle for this frame.
     ///
-    /// Eligible frames are the all-per-object case (instancing selected but no
-    /// batch formed) with plain solid meshes: no wireframe mode or per-item
-    /// wireframe/normals/attribute/warp/deform features, no registered
-    /// deformers, and the LDR path (the HDR
-    /// path records its own scene pass). The bundle stores the opaque draws
-    /// in item order; blended items are listed for immediate depth-sorted
-    /// drawing after the bundle. Per-item transforms and colours flow through
-    /// the uniform buffers referenced by the recorded bind groups, so camera
-    /// and object motion do not re-record; changes to the item set, material
-    /// bind groups, or LOD-resolved meshes do (via the key hash and the
-    /// bind-groups-built counter).
+    /// Eligible frames draw the batch list directly (no GPU-driven submission,
+    /// no wireframe mode) with no registered deformers (their bind groups
+    /// change under the recording) and enough opaque draws to be worth the
+    /// recording. The bundle stores the opaque lean and fat batch draws in
+    /// batch order; plugin batches and blended batches draw immediately after
+    /// it. Per-instance transforms and colours flow through the instance
+    /// buffer the recorded bind groups reference, so camera and object motion
+    /// do not re-record; a batch-list rebuild, an instance-buffer
+    /// reallocation or a rebuilt fat bind group does.
     pub(super) fn update_per_object_bundle(
         &mut self,
         device: &crate::gpu::Device,
         frame: &FrameData,
     ) {
-        /// Below this many opaque items the recording cost is not worth
+        /// Below this many opaque draws the recording cost is not worth
         /// caching against.
-        const MIN_BUNDLE_ITEMS: usize = 64;
+        const MIN_BUNDLE_DRAWS: usize = 64;
         self.last_stats.per_object_bundle_cached = false;
         // Measurement kill-switch (`dev-knobs` feature) so the bundle can be
         // A/B'd in one binary.
@@ -1023,118 +289,60 @@ impl ViewportRenderer {
         // HDR pipelines build on the first HDR frame, so frame one records
         // nothing and the bundle starts on frame two.
         let hdr = frame.effects.display.is_hdr();
-        // Clip geometry needs the discarding pipeline (its clip test is a
-        // discard); with it active the whole bundle keeps discards.
-        let clipping_active = frame
-            .effects
-            .clip
-            .objects
-            .iter()
-            .any(|o| o.enabled && o.clip_geometry);
+        let clipping_active = DeviceResources::clipping_active(frame);
+        // GPU-driven submission draws the lean batches from cull-written
+        // indirect args, so under it the bundle records the fat batches only.
+        let fat_only =
+            hdr && self.instancing.gpu_culling_enabled && self.resources.cull.hdr.is_some();
         let plan = 'plan: {
             if frame.viewport.wireframe_mode
-                || !self.instancing.use_instancing
-                || !self.instancing.batches.is_empty()
+                || self.instancing.batches.is_empty()
                 || !self.resources.deform.meshes.is_empty()
-                || self.prepared_surfaces.len() < MIN_BUNDLE_ITEMS
             {
                 break 'plan None;
             }
             if hdr && self.resources.scene.hdr.is_none() {
                 break 'plan None;
             }
+            let opaque = self
+                .instancing
+                .batches
+                .iter()
+                .filter(|b| {
+                    !b.is_transparent
+                        && b.shading_plugin.is_none()
+                        && (!fat_only || b.fat.is_some())
+                        && !b.fat.as_ref().is_some_and(|f| {
+                            matches!(f.draw, crate::renderer::types::FatDraw::NormalLines)
+                        })
+                })
+                .count();
+            if opaque < MIN_BUNDLE_DRAWS {
+                break 'plan None;
+            }
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
             hdr.hash(&mut h);
+            fat_only.hash(&mut h);
+            clipping_active.hash(&mut h);
             frame.camera.viewport_index.hash(&mut h);
-            self.prepared_surfaces.len().hash(&mut h);
-            let mut transparent: Vec<usize> = Vec::new();
-            let mut opaque = 0usize;
-            // An alpha-mask item's fragment shader discards below the cutoff, so
-            // one in the opaque set forces the whole bundle to keep discards.
-            let mut any_mask = false;
-            for (i, item) in self.prepared_surfaces.iter().enumerate() {
-                if item.settings.hidden {
-                    (i, 0u8).hash(&mut h);
-                    continue;
+            self.instancing.batches_gen.hash(&mut h);
+            self.instancing.instance_gen.hash(&mut h);
+            // Fat bind keys move with a mesh's override or lightmap
+            // generation without a batch rebuild.
+            for b in &self.instancing.batches {
+                if let Some(f) = &b.fat {
+                    f.bind_key.hash(&mut h);
                 }
-                if item.settings.wireframe
-                    || item.show_normals
-                    || item.warp_attribute.is_some()
-                    || item.active_attribute.is_some()
-                    || item.deform_instance.is_some()
-                    // Material-plugin items need a per-item pipeline and a
-                    // group-3 bind the bundle recorder does not capture.
-                    || item.material.shading_plugin.is_some()
-                    // Per-submesh materials need one draw and one bind group
-                    // per index range; the bundle records a single
-                    // full-range draw per mesh.
-                    || item.submesh_materials.is_some()
-                {
-                    break 'plan None;
-                }
-                if self.resources.mesh_store.get(item.mesh_id).is_none() {
-                    (i, 1u8).hash(&mut h);
-                    continue;
-                }
-                if item.settings.opacity < 1.0 || item.material.is_blend() {
-                    (i, 2u8).hash(&mut h);
-                    transparent.push(i);
-                    continue;
-                }
-                if !matches!(
-                    item.material.alpha_mode,
-                    crate::scene::material::AlphaMode::Opaque
-                ) {
-                    any_mask = true;
-                }
-                (
-                    i,
-                    3u8,
-                    item.mesh_id,
-                    item.material.is_two_sided(),
-                    item.settings.pick_id.0,
-                )
-                    .hash(&mut h);
-                opaque += 1;
             }
-            if opaque < MIN_BUNDLE_ITEMS {
-                break 'plan None;
-            }
-            // Early-Z: a plain-opaque HDR set with no clip geometry and no
-            // alpha mask can never hit a discard, so record it with the
-            // discard-free pipeline twins and let hidden fragments be depth
-            // rejected before shading. The choice is hashed so flipping it
-            // (clip toggled, the force-discard measurement knob) re-records.
-            let no_discard =
-                hdr && !clipping_active && !any_mask && !self.resources.force_po_discard;
-            no_discard.hash(&mut h);
-            Some((h.finish(), transparent, no_discard))
+            self.resources.force_po_discard.hash(&mut h);
+            Some(h.finish())
         };
 
-        let Some((key, transparent, no_discard)) = plan else {
+        let Some(key) = plan else {
             self.per_object_bundle = None;
             return;
         };
-
-        // A bundle records its pipelines up front, so until both solids are
-        // built the items draw one by one (and skip while compiling).
-        let both_solids_ready = [false, true].iter().all(|&two_sided| {
-            let key = PipelineKey {
-                two_sided,
-                no_discard_eligible: no_discard,
-                ..PipelineKey::default()
-            };
-            if hdr {
-                self.resources.scene.hdr_opaque(key).is_some()
-            } else {
-                self.resources.scene.ldr_opaque(key).is_some()
-            }
-        });
-        if !both_solids_ready {
-            self.per_object_bundle = None;
-            return;
-        }
 
         // Churn gate. A single isolated change re-records immediately (the
         // measured cost of one re-record is a wash against immediate draws),
@@ -1145,10 +353,13 @@ impl ViewportRenderer {
         // been stable for a stretch.
         const SUPPRESS_WINDOW: u32 = 8;
         const REARM_STABLE: u32 = 30;
-        // A rebuilt per-item bind group means the recorded one is stale even
-        // though the key (which hashes item facts, not resource identity)
-        // still matches, so it counts as a change too.
+        // A rebuilt bind group means the recorded one is stale even though
+        // the key still matches, so it counts as a change too.
         let dirty = self.last_stats.per_object_bind_groups_built > 0;
+        if self.per_object_bundle_gate.last_fat_only != Some(fat_only) {
+            self.per_object_bundle_gate.last_fat_only = Some(fat_only);
+            self.per_object_bundle_gate.frames_since_change = u32::MAX;
+        }
         let changed = dirty || self.per_object_bundle_gate.last_key != Some(key);
         self.per_object_bundle_gate.last_key = Some(key);
         if changed {
@@ -1168,9 +379,8 @@ impl ViewportRenderer {
             }
         }
         // Diagnostic kill-switch for the churn gate (`dev-knobs` feature): with
-        // it set, sustained
-        // churn re-records the bundle every frame instead of backing off.
-        // Exists for leak retests on wgpu versions that ship the
+        // it set, sustained churn re-records the bundle every frame instead of
+        // backing off. Exists for leak retests on wgpu versions that ship the
         // render-bundle drop fix (gfx-rs/wgpu#8661); leave it unset
         // otherwise, since per-frame re-record costs more than it saves.
         static GATE_DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -1190,31 +400,33 @@ impl ViewportRenderer {
                 .as_ref()
                 .is_some_and(|pb| pb.key == key && pb.camera_bg == camera_bg);
         if !reusable {
-            self.per_object_bundle = Some(self.record_per_object_bundle(
-                device,
-                key,
-                camera_bg,
-                transparent,
-                hdr,
-                no_discard,
-            ));
+            match self.record_batch_bundle(device, key, camera_bg, hdr, fat_only, clipping_active) {
+                Some(bundle) => self.per_object_bundle = Some(bundle),
+                // A pipeline the list needs is still compiling: draw
+                // immediately and try again next frame.
+                None => {
+                    self.per_object_bundle = None;
+                    return;
+                }
+            }
         }
         self.last_stats.per_object_bundle_cached = true;
     }
 
-    /// Record the opaque per-object draws into a render bundle. Mirrors the
-    /// plain-solid-mesh subset of the paint path's per-object loop; the
-    /// eligibility checks in `update_per_object_bundle` guarantee no item
-    /// needs the wireframe/attribute/filter/deform variants.
-    fn record_per_object_bundle(
+    /// Record the opaque batch draws into a render bundle. Mirrors the direct
+    /// opaque loops of the colour pass: lean batches through the instanced
+    /// pipelines, fat batches through the per-object ones. `None` when a
+    /// pipeline is still compiling.
+    fn record_batch_bundle(
         &self,
         device: &crate::gpu::Device,
         key: u64,
         camera_bg: crate::gpu::BindGroup,
-        transparent: Vec<usize>,
         hdr: bool,
-        no_discard: bool,
-    ) -> crate::renderer::per_object_state::PerObjectBundle {
+        fat_only: bool,
+        clipping_active: bool,
+    ) -> Option<crate::renderer::per_object_state::PerObjectBundle> {
+        use crate::renderer::types::{FatBound, FatDraw, FatPass, MeshDrawEncoder, draw_fat_batch};
         let resources = &self.resources;
         // The HDR scene pass renders Rgba16Float at sample count 1 with a
         // writable stencil aspect; the LDR passes render the surface format
@@ -1226,21 +438,6 @@ impl ViewportRenderer {
         } else {
             (resources.target_format, resources.sample_count)
         };
-        // The caller checked both are built.
-        let opaque = |two_sided: bool| {
-            let key = PipelineKey {
-                two_sided,
-                no_discard_eligible: no_discard,
-                ..PipelineKey::default()
-            };
-            if hdr {
-                resources.scene.hdr_opaque(key)
-            } else {
-                resources.scene.ldr_opaque(key)
-            }
-            .expect("the bundle is only recorded once its pipelines are built")
-        };
-        let (solid, solid_two_sided) = (opaque(false), opaque(true));
         let mut enc = crate::resources::builders::render_bundle_encoder(
             device,
             "per_object_bundle",
@@ -1252,60 +449,107 @@ impl ViewportRenderer {
             }),
             sample_count,
         );
-        enc.set_bind_group(0, &camera_bg, &[]);
+        MeshDrawEncoder::set_bind_group(&mut enc, 0, &camera_bg, &[]);
         bind_deform_group!(enc, resources, &resources.deform.dummy_bind_group);
 
-        let mut cur_two_sided: Option<bool> = None;
-        let mut cur_mesh = None;
-        for (i, item) in self.prepared_surfaces.iter().enumerate() {
-            if item.settings.hidden || item.settings.opacity < 1.0 || item.material.is_blend() {
-                continue;
-            }
-            let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
-                continue;
-            };
-            let two_sided = item.material.is_two_sided();
-            if cur_two_sided != Some(two_sided) {
-                enc.set_pipeline(select_two_sided(
-                    PipelineKey::two_sided(two_sided),
-                    solid,
-                    solid_two_sided,
-                ));
-                cur_two_sided = Some(two_sided);
-            }
-            // A per-item slot means this item draws with the shared material
-            // bind group and selects its data at object_indices[i]; a None slot
-            // falls back to the mesh's single-element bind group at instance 0.
-            let (obj_bg, inst) = match self
-                .mesh_uniforms
-                .bind_groups
-                .get(i)
-                .and_then(|opt| opt.as_ref())
+        // Lean batches: the instanced pipelines, bound as the direct loop binds
+        // them.
+        let mut cur_key: Option<PipelineKey> = None;
+        let mut cur_chunks: Option<(u32, u32)> = None;
+        for batch in &self.instancing.batches {
+            if fat_only
+                || batch.is_transparent
+                || batch.shading_plugin.is_some()
+                || batch.fat.is_some()
             {
-                Some(bg) => (bg, self.mesh_uniforms.object_indices[i]),
-                None => (&mesh.object_bind_group, 0),
+                continue;
+            }
+            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                continue;
             };
-            enc.set_bind_group(1, obj_bg, &[]);
-            if cur_mesh != Some(item.mesh_id) {
-                enc.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-                enc.set_index_buffer(
-                    resources.geometry.index_slice(mesh.index_span),
+            let key = PipelineKey {
+                two_sided: batch.two_sided,
+                no_discard_eligible: hdr && !clipping_active && !batch.has_alpha_mask,
+                ..PipelineKey::default()
+            };
+            if cur_key != Some(key) {
+                let pl = if hdr {
+                    resources.instancing.hdr_opaque(key)
+                } else {
+                    resources.instancing.ldr_opaque(key)
+                }?;
+                MeshDrawEncoder::set_pipeline(&mut enc, pl);
+                cur_key = Some(key);
+            }
+            let mat_key = batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
+            let inst_bg = resources.instanced_colour_bind_group(mat_key)?;
+            MeshDrawEncoder::set_bind_group(&mut enc, 1, inst_bg, &[]);
+            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+            if cur_chunks != Some(chunks) {
+                MeshDrawEncoder::set_vertex_buffer(
+                    &mut enc,
+                    0,
+                    resources.geometry.vertex_chunk_slice(chunks.0),
+                );
+                MeshDrawEncoder::set_index_buffer(
+                    &mut enc,
+                    resources.geometry.index_chunk_slice(chunks.1),
                     crate::gpu::IndexFormat::Uint32,
                 );
-                cur_mesh = Some(item.mesh_id);
+                cur_chunks = Some(chunks);
             }
-            enc.draw_indexed(0..mesh.index_count, 0, inst..inst + 1);
+            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+            let first_index = resources.geometry.first_index(mesh.index_span);
+            MeshDrawEncoder::draw_indexed(
+                &mut enc,
+                first_index..first_index + mesh.index_count,
+                base_vertex,
+                batch.instance_offset..batch.instance_offset + batch.instance_count,
+            );
+        }
+
+        // Fat batches through the per-object pipelines.
+        let ldr_family = resources.scene.ldr_family();
+        let hdr_family = resources.scene.hdr_family();
+        let family: &dyn crate::resources::scene_pipelines::MeshColourFamily =
+            if hdr { &hdr_family } else { &ldr_family };
+        let fat_pass = FatPass::Colour {
+            family,
+            hdr,
+            clipping_active,
+        };
+        let mut bound = FatBound::default();
+        for batch in &self.instancing.batches {
+            let Some(fat) = batch.fat.as_ref() else {
+                continue;
+            };
+            if batch.is_transparent
+                || batch.shading_plugin.is_some()
+                || matches!(fat.draw, FatDraw::NormalLines)
+            {
+                continue;
+            }
+            if !draw_fat_batch(
+                resources,
+                &self.mesh_uniforms.material_bind_groups,
+                &mut enc,
+                batch,
+                &fat_pass,
+                &mut bound,
+            ) {
+                return None;
+            }
         }
 
         let bundle = enc.finish(&crate::gpu::RenderBundleDescriptor {
             label: Some("per_object_bundle"),
         });
-        crate::renderer::per_object_state::PerObjectBundle {
+        Some(crate::renderer::per_object_state::PerObjectBundle {
             bundle,
             key,
             hdr,
+            fat_only,
             camera_bg,
-            transparent,
-        }
+        })
     }
 }

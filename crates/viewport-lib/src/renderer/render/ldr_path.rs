@@ -151,27 +151,13 @@ impl ViewportRenderer {
                 &self.resources,
                 &mut render_pass,
                 frame,
-                self.instancing.use_instancing,
                 &self.instancing.batches,
                 camera_bg,
                 grid_bg,
                 Some(slot),
-                &self.mesh_uniforms.wireframe_bind_groups,
-                &self.mesh_uniforms.bind_groups,
-                &self.mesh_uniforms.submesh_bind_groups,
-                &self.mesh_uniforms.object_indices,
-                &self.mesh_uniforms.submesh_indices,
+                &self.mesh_uniforms.material_bind_groups,
                 scene_items,
-                // The cached bundle was recorded from `prepared_surfaces` (the
-                // surface submission, with the opaque volume-mesh boundaries
-                // truncated off). When those boundaries are appended to
-                // `scene_items` the bundle no longer covers the full list, so
-                // fall back to the per-item draw path that walks every item.
-                if scene_items.len() == self.prepared_surface_count {
-                    self.per_object_bundle.as_ref()
-                } else {
-                    None
-                }
+                self.per_object_bundle.as_ref()
             );
             self.draw_line_and_instance_layers(&mut render_pass, camera_bg, false);
             // TransparentVolumeMesh boundary wireframe overlay.

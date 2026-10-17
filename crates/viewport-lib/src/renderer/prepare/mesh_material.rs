@@ -163,29 +163,8 @@ pub(crate) fn active_submesh_materials<'a>(
     Some(mats)
 }
 
-/// Whether any of the item's draws belong in the opaque scene pass. For a
-/// per-range item that is any opaque-material range; otherwise it is the
-/// usual whole-item opacity/blend check. A wireframe item's edge lines are
-/// always opaque draws, whatever its opacity or materials.
-pub(crate) fn has_opaque_draws(item: &SceneRenderItem, resources: &DeviceResources) -> bool {
-    if item.settings.wireframe {
-        return true;
-    }
-    if item.settings.opacity < 1.0 {
-        return false;
-    }
-    match resources
-        .mesh_store
-        .get(item.mesh_id)
-        .and_then(|m| active_submesh_materials(item, m))
-    {
-        Some(mats) => mats.iter().any(|m| !m.is_blend()),
-        None => !item.material.is_blend(),
-    }
-}
-
 /// Whether any of the item's draws belong in the transparent pass (OIT on
-/// the HDR path). The complement of [`has_opaque_draws`] per range: a
+/// the HDR path). Per range for a per-range item: a
 /// per-range item can be in both passes at once. A wireframe item has none.
 pub(crate) fn has_transparent_draws(item: &SceneRenderItem, resources: &DeviceResources) -> bool {
     if item.settings.wireframe {
@@ -204,25 +183,17 @@ pub(crate) fn has_transparent_draws(item: &SceneRenderItem, resources: &DeviceRe
     }
 }
 
+/// The per-instance facts of an item that both packers derive the same way.
+/// Material scalars are not here: they live in the material block.
 pub(super) struct CommonMaterial {
     pub(super) model: [[f32; 4]; 4],
     pub(super) colour: [f32; 4],
     pub(super) selected: u32,
-    pub(super) ambient: f32,
-    pub(super) diffuse: f32,
-    pub(super) specular: f32,
-    pub(super) shininess: f32,
     pub(super) has_texture: u32,
-    pub(super) use_pbr: u32,
-    pub(super) metallic: f32,
-    pub(super) roughness: f32,
     pub(super) has_normal_map: u32,
-    pub(super) normal_strength: f32,
     pub(super) has_ao_map: u32,
     pub(super) unlit: u32,
     pub(super) receive_shadows: u32,
-    pub(super) use_flat: u32,
-    pub(super) ao_range: [f32; 2],
 }
 
 /// `resolved` carries the material's texture slots looked up against the store.
@@ -243,21 +214,11 @@ pub(super) fn common_material(
             [bc[0], bc[1], bc[2], item.settings.opacity]
         },
         selected: if item.settings.selected { 1 } else { 0 },
-        ambient: m.ambient,
-        diffuse: m.diffuse,
-        specular: m.specular,
-        shininess: m.shininess,
         has_texture: if resolved.live(Albedo) { 1 } else { 0 },
-        use_pbr: if m.is_pbr() { 1 } else { 0 },
-        metallic: m.metallic,
-        roughness: m.roughness,
         has_normal_map: if resolved.live(Normal) { 1 } else { 0 },
-        normal_strength: m.normal_strength,
         has_ao_map: if resolved.live(Ao) { 1 } else { 0 },
         unlit: if item.settings.unlit { 1 } else { 0 },
         receive_shadows: if item.settings.receive_shadows { 1 } else { 0 },
-        use_flat: if m.is_flat() { 1 } else { 0 },
-        ao_range: m.ao_range,
     }
 }
 

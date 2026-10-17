@@ -17,71 +17,13 @@ struct PointFace {
     light_pos: vec4<f32>,
 };
 
-// The per-object layout the main pass writes, reproduced field for field the way shadow.wgsl
-// does rather than padded to the two fields this pass happens to read. A depth pass that
-// gets an offset wrong reads someone else's field and fails silently, and the padded form
-// has to be re-derived by hand every time a field is added between the ones it names.
-struct Object {
-    model: mat4x4<f32>,                    // offset   0
-    _pad_colour: vec4<f32>,                // offset  64
-    _pad_selected: u32,                    // offset  80
-    _pad_wireframe: u32,                   // offset  84
-    _pad_ambient: f32,                     // offset  88
-    _pad_diffuse: f32,                     // offset  92
-    _pad_specular: f32,                    // offset  96
-    _pad_shininess: f32,                   // offset 100
-    has_texture: u32,                      // offset 104 : 1 when the albedo texture (binding 1) is bound
-    _pad_use_pbr: u32,                     // offset 108
-    _pad_metallic: f32,                    // offset 112
-    _pad_roughness: f32,                   // offset 116
-    _pad_has_normal_map: u32,              // offset 120
-    _pad_has_ao_map: u32,                  // offset 124
-    _pad_has_attribute: u32,               // offset 128
-    _pad_scalar_min: f32,                  // offset 132
-    _pad_scalar_max: f32,                  // offset 136
-    _pad_receive_shadows: u32,             // offset 140
-    _pad_nan_colour: vec4<f32>,            // offset 144
-    _pad_use_nan_colour: u32,              // offset 160
-    _pad_use_matcap: u32,                  // offset 164
-    _pad_matcap_blendable: u32,            // offset 168
-    _pad_unlit: u32,                       // offset 172
-    _pad_use_face_colour: u32,             // offset 176
-    _pad_uv_vis_mode: u32,                 // offset 180
-    _pad_uv_vis_scale: f32,                // offset 184
-    _pad_backface_policy: u32,             // offset 188
-    _pad_backface_colour: vec4<f32>,       // offset 192
-    _pad_has_warp: u32,                    // offset 208
-    _pad_warp_scale: f32,                  // offset 212
-    has_position_override: u32,            // offset 216 : 1 when a per-vertex position storage buffer is bound at binding 13
-    _pad_has_normal_override: u32,         // offset 220
-    _pad_emissive: vec3<f32>,              // offset 224
-    _pad_use_flat: u32,                    // offset 236
-    alpha_mode: u32,                       // offset 240 : 0=Opaque 1=Mask 2=Blend
-    alpha_cutoff: f32,                     // offset 244
-    _pad_has_metallic_roughness_tex: u32,  // offset 248
-    _pad_has_emissive_tex: u32,            // offset 252
-    uv_transform: vec4<f32>,               // offset 256 : (offset.xy, scale.xy)
-    deform_flags: u32,                     // offset 272 : bit i set when deformer slot i is active for this draw
-    _pad_normal_strength: f32,             // offset 276
-    _pad_ao_range: vec2<f32>,              // offset 280
-    _pad_metallic_range: vec2<f32>,        // offset 288
-    _pad_roughness_range: vec2<f32>,       // offset 296
-    position_override_base: u32,           // offset 304 : first vec3 element read from binding 13 (pool slicing)
-    position_override_len: u32,            // offset 308 : element count of the window; 0xffffffff = whole buffer
-    _pad_normal_override: vec2<u32>,       // offset 312
-    _pad_light_probe: vec2<u32>,           // offset 320
-    _pad_lightmap_mode: vec2<u32>,         // offset 328
-    _pad_lightmap_scale_bias: vec4<f32>,   // offset 336
-    _pad_tail: vec4<u32>,                  // offset 352 : lightmap index through object mask
-    // The full 368 bytes of the Rust ObjectUniform: `objects` is indexed by
-    // instance, so a shorter struct would stride into the wrong element.
-};
+// #include "helpers/instance_data.wgsl"
 
 @group(0) @binding(0) var<uniform> face: PointFace;
 // Indexed per-object storage array (see mesh.wgsl); the caster's element is
 // selected by @builtin(instance_index) and copied into `object` at entry.
-@group(1) @binding(0) var<storage, read> objects: array<Object>;
-var<private> object: Object;
+@group(1) @binding(0) var<storage, read> objects: array<InstanceData>;
+var<private> object: InstanceData;
 // Albedo texture + sampler, read only by the cutout pipeline.
 @group(1) @binding(1) var obj_texture: texture_2d<f32>;
 @group(1) @binding(2) var obj_sampler: sampler;
@@ -114,7 +56,7 @@ fn caster_vertex(position: vec3<f32>, vertex_index: u32, instance_index: u32) ->
     // Override replaces the vertex-buffer position outright, matching the main mesh pass and the
     // cascade pass; deformers layer on top.
     var local_pos = position;
-    if object.has_position_override != 0u && vertex_index < object.position_override_len {
+    if (object.flags & INST_HAS_POSITION_OVERRIDE) != 0u && vertex_index < object.position_override_len {
         let pi = (object.position_override_base + vertex_index) * 3u;
         let plen = arrayLength(&position_override_buffer);
         if pi + 2u < plen {
@@ -202,12 +144,12 @@ fn fs_cutout(in: CutoutOut) -> @builtin(frag_depth) f32 {
     // <viewport-deform-keep> if in.deform_keep < 0.0 { discard; }
     let obj = objects[in.obj_idx];
     // The same alpha sources as the surface: vertex colour and albedo.
-    if obj.alpha_mode == 1u {
+    if (obj.flags & INST_ALPHA_MASK) != 0u {
         var a = in.vertex_alpha;
-        if obj.has_texture == 1u {
-            let mat_uv = in.uv * obj.uv_transform.zw + obj.uv_transform.xy;
-            let muv_ddx = uv_ddx * obj.uv_transform.zw;
-            let muv_ddy = uv_ddy * obj.uv_transform.zw;
+        if (obj.flags & INST_HAS_TEXTURE) != 0u {
+            let mat_uv = in.uv;
+            let muv_ddx = uv_ddx;
+            let muv_ddy = uv_ddy;
             a = a * textureSampleGrad(obj_texture, obj_sampler, mat_uv, muv_ddx, muv_ddy).a;
         }
         if a < obj.alpha_cutoff {

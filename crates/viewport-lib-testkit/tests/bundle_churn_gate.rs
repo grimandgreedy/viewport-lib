@@ -1,4 +1,4 @@
-//! Per-object bundle churn gate: sustained item-set churn must back the
+//! Batch bundle churn gate: sustained batch-list churn must back the
 //! bundle off to immediate draws (re-recording every frame doubles the
 //! encode and leaks the dropped bundle in wgpu 27, gfx-rs/wgpu#8656), an
 //! isolated change must still re-record immediately, and a set that
@@ -8,9 +8,16 @@ use viewport_lib::Colour;
 use viewport_lib::{CameraFrame, FrameData, Material, PickId, SceneFrame, SceneRenderItem};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
-fn items(mesh_id: viewport_lib::MeshId, count: u32, id_base: u64) -> Vec<SceneRenderItem> {
-    (0..count)
-        .map(|i| {
+/// One item per mesh (so one batch each), every item pinned to the
+/// per-object pipelines: under GPU-driven submission the bundle covers the
+/// fat batches only, and the HDR harness turns that on from its second
+/// frame. `hidden` names the item left out, which changes the batch list.
+fn items(mesh_ids: &[viewport_lib::MeshId], hidden: Option<u32>) -> Vec<SceneRenderItem> {
+    mesh_ids
+        .iter()
+        .enumerate()
+        .map(|(i, &mesh_id)| {
+            let i = i as u32;
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
             item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.65, 0.7));
@@ -19,7 +26,8 @@ fn items(mesh_id: viewport_lib::MeshId, count: u32, id_base: u64) -> Vec<SceneRe
             let y = (i / 16) as f32 * 2.0;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
-            item.settings.pick_id = PickId(id_base + u64::from(i));
+            item.settings.pick_id = PickId(1 + u64::from(i));
+            item.settings.hidden = hidden == Some(i);
             item
         })
         .collect()
@@ -31,38 +39,41 @@ fn bundle_backs_off_under_churn_and_rearms() {
         eprintln!("skipping: no GPU adapter");
         return;
     };
-    let mesh_id = h
-        .renderer
-        .resources_mut()
-        .upload_mesh_data(&h.device, &meshes::stress_sphere(0.8, 2).into())
-        .expect("mesh upload");
-
-    let count = 100u32; // above the bundle's 64-item minimum
+    let count = 100u32; // above the bundle's 64-draw minimum
+    let data: viewport_lib::MeshData = meshes::stress_sphere(0.8, 2).into();
+    let mesh_ids: Vec<_> = (0..count)
+        .map(|_| {
+            h.renderer
+                .resources_mut()
+                .upload_mesh_data(&h.device, &data)
+                .expect("mesh upload")
+        })
+        .collect();
     let camera = orbit_camera(glam::Vec3::new(16.0, 12.0, 0.0), 60.0, 0.6, 1.0);
     let size = [96.0f32, 64.0];
-    let fd = |id_base: u64| {
+    let fd = |hidden: Option<u32>| {
         FrameData::new(
             CameraFrame::from_camera(&camera, size),
-            SceneFrame::from_surface_items(items(mesh_id, count, id_base)),
+            SceneFrame::from_surface_items(items(&mesh_ids, hidden)),
         )
     };
 
     // Stable set: the bundle engages.
     for _ in 0..3 {
-        let _ = h.render(&fd(1), 96, 64);
+        let _ = h.render(&fd(None), 96, 64);
     }
     assert!(
         h.stats().per_object_bundle_cached,
         "stable set must be served by the bundle"
     );
 
-    // Sustained churn: fresh pick ids every frame. The first change may
-    // still re-record; by the third churn frame the gate must have backed
-    // off to immediate draws.
-    let mut id_base = 1000u64;
+    // Sustained churn: a different item hidden every frame, so the batch
+    // list changes each time. The first change may still re-record; by the
+    // third churn frame the gate must have backed off to immediate draws.
+    let mut hidden = 0u32;
     for _ in 0..3 {
-        id_base += u64::from(count);
-        let _ = h.render(&fd(id_base), 96, 64);
+        hidden += 1;
+        let _ = h.render(&fd(Some(hidden)), 96, 64);
     }
     assert!(
         !h.stats().per_object_bundle_cached,
@@ -72,7 +83,7 @@ fn bundle_backs_off_under_churn_and_rearms() {
     // Stability again: after the re-arm stretch the bundle returns.
     let mut rearmed_at = None;
     for f in 0..40 {
-        let _ = h.render(&fd(id_base), 96, 64);
+        let _ = h.render(&fd(Some(hidden)), 96, 64);
         if h.stats().per_object_bundle_cached {
             rearmed_at = Some(f);
             break;
@@ -86,7 +97,7 @@ fn bundle_backs_off_under_churn_and_rearms() {
 
     // Isolated change on a stable set: the bundle re-records immediately,
     // so the change frame is still served by a bundle.
-    let _ = h.render(&fd(500_000), 96, 64);
+    let _ = h.render(&fd(Some(hidden + 10)), 96, 64);
     assert!(
         h.stats().per_object_bundle_cached,
         "an isolated change must re-record immediately, not fall to immediate draws"

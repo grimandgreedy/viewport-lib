@@ -306,12 +306,9 @@ fn per_mesh_deform_items_stay_off_the_instanced_path() {
     let _ = renderer.prepare_callback(&device, &queue, &many);
     let deformed = renderer.last_frame_stats();
     assert_eq!(
-        deformed.instanced_batches, 0,
-        "the deform exclusion takes every item off the instanced path"
-    );
-    assert_eq!(
         deformed.per_object_items, 4,
-        "and they draw per-object, which binds the mesh's real deform group"
+        "the deform exclusion takes every item off the lean path; they draw \
+         through the per-object pipelines, which bind the mesh's real deform group"
     );
     assert_eq!(
         deformed.deform_slots_ignored, 0,

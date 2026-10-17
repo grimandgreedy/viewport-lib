@@ -837,6 +837,7 @@ impl DeviceResources {
         // triggers the rebuild that actually swaps the fallback binding for
         // this buffer.
         mesh.position_override_gen = mesh.position_override_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
         Ok(())
     }
 
@@ -884,6 +885,7 @@ impl DeviceResources {
         mesh.position_override_slice = Some(slice);
         // See `set_position_override_buffer` for why only the gen moves.
         mesh.position_override_gen = mesh.position_override_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
         Ok(())
     }
 
@@ -912,6 +914,7 @@ impl DeviceResources {
         // See `set_position_override_buffer` for why this only bumps the gen
         // counter and not `last_tex_key.10`.
         mesh.normal_override_gen = mesh.normal_override_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
         Ok(())
     }
 
@@ -943,6 +946,7 @@ impl DeviceResources {
         mesh.normal_override_buffer = Some(buffer);
         mesh.normal_override_slice = Some(slice);
         mesh.normal_override_gen = mesh.normal_override_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
         Ok(())
     }
 
@@ -986,6 +990,7 @@ impl DeviceResources {
         mesh.position_override_buffer = None;
         mesh.position_override_slice = None;
         mesh.position_override_gen = mesh.position_override_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
         Ok(())
     }
 
@@ -1010,6 +1015,7 @@ impl DeviceResources {
         mesh.normal_override_buffer = None;
         mesh.normal_override_slice = None;
         mesh.normal_override_gen = mesh.normal_override_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
         Ok(())
     }
 
@@ -1144,6 +1150,7 @@ impl DeviceResources {
         // The gen bump forces the object bind-group rebuild that swaps the
         // fallbacks at bindings 16/17 for this UV1 buffer and texture.
         mesh.lightmap_gen = mesh.lightmap_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
         Ok(())
     }
 
@@ -1214,6 +1221,7 @@ impl DeviceResources {
             layer,
         });
         mesh.lightmap_gen = mesh.lightmap_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
         Ok(())
     }
 
@@ -1238,6 +1246,7 @@ impl DeviceResources {
                 })?;
         mesh.lightmap = None;
         mesh.lightmap_gen = mesh.lightmap_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
         Ok(())
     }
 
@@ -2617,73 +2626,30 @@ impl DeviceResources {
         use bytemuck::cast_slice;
 
         let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
-        let object_uniform = ObjectUniform {
+        let object_uniform = InstanceData {
             model: identity,
             colour: [1.0, 1.0, 1.0, 1.0],
-            selected: 0,
-            wireframe: 0,
-            ambient: 0.15,
-            diffuse: 0.75,
-            specular: 0.4,
-            shininess: 32.0,
-            has_texture: 0,
-            use_pbr: 0,
-            metallic: 0.0,
-            roughness: 0.5,
-            has_normal_map: 0,
-            has_ao_map: 0,
-            has_attribute: 0,
-            scalar_min: 0.0,
-            scalar_max: 1.0,
-            receive_shadows: 1,
-            nan_colour: [0.0, 0.0, 0.0, 0.0],
-            use_nan_colour: 0,
-            use_matcap: 0,
-            matcap_blendable: 0,
-            unlit: 0,
-            use_face_colour: 0,
-            uv_vis_mode: 0,
-            uv_vis_scale: 8.0,
-            backface_policy: 0,
-            backface_colour: [0.0; 4],
-            has_warp: 0,
-            warp_scale: 1.0,
-            has_position_override: 0,
-            has_normal_override: 0,
-            emissive: [0.0; 3],
-            use_flat: 0,
-            alpha_mode: 0,
-            alpha_cutoff: 0.5,
-            has_metallic_roughness_tex: 0,
-            has_emissive_tex: 0,
+            flags: crate::resources::mesh::instancing::instance_flags::RECEIVE_SHADOWS,
             material_id: 0,
+            alpha_cutoff: 0.5,
+            light_probe_index: 0,
+            custom_data_id: 0,
+            backface_pattern_scale: 0.0,
+            // Template record for mesh registration; real per-item masks are
+            // written by the prepare path. `!0` = lit by every light.
+            object_mask: !0,
             uv1_base: 0,
-            mesh_closed: 0,
-            _pad_uv: 0,
             deform_flags: 0,
-            normal_strength: 1.0,
-            ao_range: [0.0, 1.0],
-            metallic_range: [0.0, 1.0],
-            roughness_range: [0.0, 1.0],
             position_override_base: 0,
             position_override_len: u32::MAX,
             normal_override_base: 0,
             normal_override_len: u32::MAX,
-            has_light_probe: 0,
-            light_probe_index: 0,
-            lightmap_mode: 0,
-            lightmap_directional: 0,
-            lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
-            lightmap_index: 0,
-            has_shadowmask: 0,
-            ignore_clip: 0,
-            // Template uniform for mesh registration; real per-item masks are
-            // written by the prepare path. `!0` = lit by every light.
-            object_mask: !0,
+            warp_scale: 1.0,
+            _spare: [0; 2],
         };
         let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
-            size: std::mem::size_of::<ObjectUniform>() as u64,
+            size: std::mem::size_of::<InstanceData>() as u64,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
@@ -2789,73 +2755,30 @@ impl DeviceResources {
             ],
         });
 
-        let normal_override_uniform = ObjectUniform {
+        let normal_override_uniform = InstanceData {
             model: identity,
             colour: [1.0, 1.0, 1.0, 1.0],
-            selected: 0,
-            wireframe: 0,
-            ambient: 0.15,
-            diffuse: 0.75,
-            specular: 0.4,
-            shininess: 32.0,
-            has_texture: 0,
-            use_pbr: 0,
-            metallic: 0.0,
-            roughness: 0.5,
-            has_normal_map: 0,
-            has_ao_map: 0,
-            has_attribute: 0,
-            scalar_min: 0.0,
-            scalar_max: 1.0,
-            receive_shadows: 1,
-            nan_colour: [0.0, 0.0, 0.0, 0.0],
-            use_nan_colour: 0,
-            use_matcap: 0,
-            matcap_blendable: 0,
-            unlit: 0,
-            use_face_colour: 0,
-            uv_vis_mode: 0,
-            uv_vis_scale: 8.0,
-            backface_policy: 0,
-            backface_colour: [0.0; 4],
-            has_warp: 0,
-            warp_scale: 1.0,
-            has_position_override: 0,
-            has_normal_override: 0,
-            emissive: [0.0; 3],
-            use_flat: 0,
-            alpha_mode: 0,
-            alpha_cutoff: 0.5,
-            has_metallic_roughness_tex: 0,
-            has_emissive_tex: 0,
+            flags: crate::resources::mesh::instancing::instance_flags::RECEIVE_SHADOWS,
             material_id: 0,
+            alpha_cutoff: 0.5,
+            light_probe_index: 0,
+            custom_data_id: 0,
+            backface_pattern_scale: 0.0,
+            // Template record for mesh registration; real per-item masks are
+            // written by the prepare path. `!0` = lit by every light.
+            object_mask: !0,
             uv1_base: 0,
-            mesh_closed: 0,
-            _pad_uv: 0,
             deform_flags: 0,
-            normal_strength: 1.0,
-            ao_range: [0.0, 1.0],
-            metallic_range: [0.0, 1.0],
-            roughness_range: [0.0, 1.0],
             position_override_base: 0,
             position_override_len: u32::MAX,
             normal_override_base: 0,
             normal_override_len: u32::MAX,
-            has_light_probe: 0,
-            light_probe_index: 0,
-            lightmap_mode: 0,
-            lightmap_directional: 0,
-            lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
-            lightmap_index: 0,
-            has_shadowmask: 0,
-            ignore_clip: 0,
-            // Template uniform for mesh registration; real per-item masks are
-            // written by the prepare path. `!0` = lit by every light.
-            object_mask: !0,
+            warp_scale: 1.0,
+            _spare: [0; 2],
         };
         let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),
-            size: std::mem::size_of::<ObjectUniform>() as u64,
+            size: std::mem::size_of::<InstanceData>() as u64,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
@@ -2969,7 +2892,6 @@ impl DeviceResources {
             normal_line_buffer: None,
             normal_line_count: 0,
             object_uniform_buf,
-            last_object_uniform: std::sync::Mutex::new(None),
             object_bind_group,
             last_tex_key: (
                 u64::MAX,

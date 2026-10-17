@@ -313,16 +313,11 @@ impl ViewportRenderer {
                 &self.resources,
                 &mut render_pass,
                 frame,
-                self.instancing.use_instancing,
                 &self.instancing.batches,
                 camera_bg,
                 grid_bg,
                 Some(slot),
-                &self.mesh_uniforms.wireframe_bind_groups,
-                &self.mesh_uniforms.bind_groups,
-                &self.mesh_uniforms.submesh_bind_groups,
-                &self.mesh_uniforms.object_indices,
-                &self.mesh_uniforms.submesh_indices,
+                &self.mesh_uniforms.material_bind_groups,
                 &self.prepared_surfaces,
                 self.per_object_bundle.as_ref()
             );

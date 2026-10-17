@@ -409,7 +409,8 @@ pub struct FrameStats {
     /// Objects culled by frustum or visibility. Excludes plugin content, as
     /// [`Self::total_objects`] describes.
     pub culled_objects: u32,
-    /// Number of draw calls issued in the main pass for mesh-family content.
+    /// Number of draw calls issued in the main pass for mesh-family content:
+    /// one per batch, since every mesh draw is a batch draw.
     ///
     /// Plugin draws are **not** counted here: an
     /// [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin) records its own
@@ -420,19 +421,22 @@ pub struct FrameStats {
     /// drawn entirely by plugins reads `draw_calls: 0`, which is correct rather
     /// than broken.
     pub draw_calls: u32,
-    /// Number of instanced batches (0 when using per-object path).
+    /// Number of mesh batches this frame. Every visible mesh item is packed
+    /// into a batch, so a one-item scene reads 1; items that miss the lean
+    /// instanced path form batches that draw through the per-object
+    /// pipelines instead, counted in [`Self::per_object_items`].
     pub instanced_batches: u32,
     /// True when `prepare()` holds a cached render bundle for the opaque
-    /// per-object draws this frame (large all-per-object scenes on the LDR
-    /// path). The paint pass replays the bundle instead of recording one draw
-    /// per item.
+    /// batch draws this frame (a stable batch list with enough opaque
+    /// draws). The paint pass replays the bundle instead of recording one
+    /// draw per batch.
     pub per_object_bundle_cached: bool,
-    /// Visible items that miss the instanced fast path and are drawn one at a
-    /// time through the per-object path.
+    /// Visible items that miss the lean instanced path and draw through the
+    /// per-object pipelines, batched by the facts those pipelines bind.
     ///
-    /// Each such item costs a uniform write and a bind-group build in
-    /// `prepare`, so a large count here means `prepare` is paying per-object
-    /// cost across much of the scene rather than batching it.
+    /// Each such batch binds the full per-object bind group and binds its
+    /// mesh on its own, so a large count here means the scene is paying
+    /// per-object cost rather than batching across meshes.
     /// [`Self::per_object_by_reason`] says why.
     pub per_object_items: u32,
     /// [`Self::per_object_items`] split by the reason each item missed the

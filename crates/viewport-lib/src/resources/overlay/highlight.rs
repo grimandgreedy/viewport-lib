@@ -644,9 +644,9 @@ pub(crate) struct OutlineUniform {
     /// vertex shader then reads binding 1 so the halo tracks the driven
     /// geometry instead of the bind pose.
     pub(crate) has_position_override: u32, //   4 bytes
-    /// Mirror of `ObjectUniform::position_override_base` for the mask pass.
+    /// Mirror of `InstanceData::position_override_base` for the mask pass.
     pub(crate) position_override_base: u32, //   4 bytes
-    /// Mirror of `ObjectUniform::position_override_len`.
+    /// Mirror of `InstanceData::position_override_len`.
     pub(crate) position_override_len: u32, //   4 bytes
     pub(crate) deform_flags: u32,    //   4 bytes
     pub(crate) _deform_pad: [u32; 3], //  12 bytes

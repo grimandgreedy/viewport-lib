@@ -69,30 +69,7 @@ struct InstanceAabb {
     cast_shadows: u32,
 }
 
-// Per-instance record, matching the 144-byte `InstanceData` in
-// `mesh_instanced.wgsl` and the Rust `InstanceData`. The cull reads only
-// `object_mask` (offset 140); the other fields keep the array stride at 144 so
-// the instance index aligns with `instance_aabbs`.
-struct InstanceData {
-    model:                  mat4x4<f32>,  // offset 0
-    colour:                 vec4<f32>,    // offset 64
-    selected:               u32,          // offset 80
-    wireframe:              u32,          // offset 84
-    has_texture:            u32,          // offset 88
-    has_normal_map:         u32,          // offset 92
-    has_ao_map:             u32,          // offset 96
-    unlit:                  u32,          // offset 100
-    receive_shadows:        u32,          // offset 104
-    material_id:            u32,          // offset 108
-    alpha_cutoff:           f32,          // offset 112
-    alpha_flag:             u32,          // offset 116
-    has_light_probe:        u32,          // offset 120
-    light_probe_index:      u32,          // offset 124
-    ignore_clip:            u32,          // offset 128
-    custom_data_id:         u32,          // offset 132
-    backface_pattern_scale: f32,          // offset 136
-    object_mask:            u32,          // offset 140
-}
+// #include "helpers/instance_data.wgsl"
 
 struct BatchMeta {
     index_count:     u32,

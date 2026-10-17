@@ -29,8 +29,7 @@ pub(crate) struct InstancingResources {
     /// carries a uv1 stream, else `u32::MAX`, so all no-uv1 chunks share one group
     /// binding the zero fallback) and the sampler code (`sampler_code`). Cleared
     /// and rebuilt when the signature below changes.
-    pub(crate) bindless_bind_groups:
-        std::collections::HashMap<(u32, u32), crate::gpu::BindGroup>,
+    pub(crate) bindless_bind_groups: std::collections::HashMap<(u32, u32), crate::gpu::BindGroup>,
     /// Change signature `(instance_gen, texture slot_count, free_epoch)` the
     /// `bindless_bind_groups` were built for; a mismatch clears and rebuilds them.
     pub(crate) bindless_signature: Option<(u64, usize, u64)>,
@@ -1733,76 +1732,46 @@ impl DeviceResources {
             return None;
         }
 
-        // Per-instance struct must match `InstanceData` in `mesh_instanced.wgsl`
-        // and the `InstanceData` Rust struct (128 bytes). These instances are
-        // `unlit`, so the material scalars in `material_gpu_buf` (indexed by
-        // `material_id`) are not read; pinning `material_id` to 0 (the default
-        // block) is safe. `has_texture` stays per-instance so the albedo still
-        // samples.
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct GpuInstanceData {
-            model: [[f32; 4]; 4],
-            colour: [f32; 4],
-            selected: u32,
-            wireframe: u32,
-            has_texture: u32,
-            has_normal_map: u32,
-            has_ao_map: u32,
-            unlit: u32,
-            receive_shadows: u32,
-            material_id: u32,
-            alpha_cutoff: f32,
-            alpha_flag: u32,
-            has_light_probe: u32,
-            light_probe_index: u32,
-            ignore_clip: u32,
-            custom_data_id: u32,
-            backface_pattern_scale: f32,
-            object_mask: u32,
-        }
-
-        const _: () = assert!(std::mem::size_of::<GpuInstanceData>() == 144);
-
-        let has_texture = if item
+        // These instances are `unlit`, so the material scalars in
+        // `material_gpu_buf` (indexed by `material_id`) are not read; pinning
+        // `material_id` to 0 (the default block) is safe. `HAS_TEXTURE` stays
+        // per-instance so the albedo still samples.
+        use crate::resources::mesh::instancing::instance_flags as f;
+        let has_texture = item
             .texture_id
-            .is_some_and(|id| self.content.textures.get(id).is_some())
-        {
-            1u32
-        } else {
-            0u32
-        };
+            .is_some_and(|id| self.content.textures.get(id).is_some());
 
-        let build = |i: usize| -> GpuInstanceData {
-            GpuInstanceData {
+        let build = |i: usize| -> InstanceData {
+            InstanceData {
                 model: item.transforms[i],
                 colour: item
                     .colours
                     .get(i)
                     .map(|c| c.to_linear_rgba())
                     .unwrap_or([1.0, 1.0, 1.0, 1.0]),
-                selected: 0,
-                wireframe: 0,
-                has_texture,
-                has_normal_map: 0,
-                has_ao_map: 0,
-                unlit: 1,
-                receive_shadows: 0,
+                flags: f::UNLIT
+                    | f::when(has_texture, f::HAS_TEXTURE)
+                    | f::when(item.settings.ignore_clip, f::IGNORE_CLIP),
                 material_id: 0,
                 alpha_cutoff: 0.5,
-                alpha_flag: 0,
-                has_light_probe: 0,
                 light_probe_index: 0,
-                ignore_clip: item.settings.ignore_clip as u32,
                 // The explicit particle path renders unlit, so the built-in
                 // custom-data emissive read is bypassed; pin to the zero block.
                 custom_data_id: 0,
                 // Particles use no styled back-face policy.
                 backface_pattern_scale: 0.0,
                 object_mask: item.settings.visibility_mask,
+                uv1_base: 0,
+                deform_flags: 0,
+                position_override_base: 0,
+                position_override_len: u32::MAX,
+                normal_override_base: 0,
+                normal_override_len: u32::MAX,
+                warp_scale: 1.0,
+                _spare: [0; 2],
             }
         };
-        let instances: Vec<GpuInstanceData> = match indices {
+        let instances: Vec<InstanceData> = match indices {
             Some(idx) => idx.iter().map(|&i| build(i as usize)).collect(),
             None => (0..item.transforms.len()).map(build).collect(),
         };
@@ -1812,7 +1781,7 @@ impl DeviceResources {
             label: Some("mesh_instance_buf"),
             size: instance_bytes
                 .len()
-                .max(std::mem::size_of::<GpuInstanceData>()) as u64,
+                .max(std::mem::size_of::<InstanceData>()) as u64,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -2076,66 +2045,123 @@ pub(crate) struct ObjectUniform {
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 368);
-/// Per-instance GPU data for instanced rendering. Matches the WGSL `InstanceData` struct.
+/// One record per mesh draw instance. Matches the WGSL `InstanceData` struct in
+/// `shaders/helpers/instance_data.wgsl`.
 ///
-/// Layout: 144 bytes.
-/// Only genuinely per-instance fields ride here; every material scalar
-/// (PBR terms, `has_*` flags, `ao_range`, alpha, emissive, `normal_strength`)
-/// moved into the per-material `material_gpu_buf`, read via `material_id`. The
-/// instanced shaders fetch those from the buffer, so a shared material is stored
-/// once instead of duplicated across instances. `colour` stays per-instance
-/// (per-instance tinting).
+/// Layout: 144 bytes. Only per-instance and per-mesh facts ride here; every
+/// material scalar lives in the per-material `material_gpu_buf`, read via
+/// `material_id`, so a shared material is stored once. `colour` stays per
+/// instance (per-instance tinting). The boolean lanes pack into `flags`
+/// ([`instance_flags`]). The per-mesh words at the tail (uv1 base, deform
+/// flags, override windows) are read by draws that bind a mesh sub-slice and
+/// its sidecar buffers; the chunk-bound instanced draws ignore them.
+///
+/// - model:                  mat4     = 64 bytes  offset   0
+/// - colour:                 [f32;4]  = 16 bytes  offset  64
+/// - flags:                  u32      =  4 bytes  offset  80
+/// - material_id:            u32      =  4 bytes  offset  84
+/// - alpha_cutoff:           f32      =  4 bytes  offset  88
+/// - light_probe_index:      u32      =  4 bytes  offset  92
+/// - custom_data_id:         u32      =  4 bytes  offset  96
+/// - backface_pattern_scale: f32      =  4 bytes  offset 100
+/// - object_mask:            u32      =  4 bytes  offset 104
+/// - uv1_base:               u32      =  4 bytes  offset 108
+/// - deform_flags:           u32      =  4 bytes  offset 112
+/// - position_override_base: u32      =  4 bytes  offset 116
+/// - position_override_len:  u32      =  4 bytes  offset 120
+/// - normal_override_base:   u32      =  4 bytes  offset 124
+/// - normal_override_len:    u32      =  4 bytes  offset 128
+/// - warp_scale:             f32      =  4 bytes  offset 132
+/// - spare:                  [u32;2]  =  8 bytes  offset 136
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct InstanceData {
-    pub(crate) model: [[f32; 4]; 4], //  64 bytes, offset   0
-    pub(crate) colour: [f32; 4],     //  16 bytes, offset  64
-    pub(crate) selected: u32,        //   4 bytes, offset  80
-    pub(crate) wireframe: u32,       //   4 bytes, offset  84
-    /// Which material textures are bound for this batch. These stay per-instance
-    /// (the explicit `MeshInstanceItem` path sets them at upload time); the shading
-    /// scalars and mode flags they gate live in `material_gpu_buf`.
-    pub(crate) has_texture: u32, //   4 bytes, offset  88
-    pub(crate) has_normal_map: u32,  //   4 bytes, offset  92
-    pub(crate) has_ao_map: u32,      //   4 bytes, offset  96
-    pub(crate) unlit: u32,           //   4 bytes, offset 100
-    /// Bit 0: 1 = sample the shadow atlas, 0 = treat the fragment as
-    /// unshadowed. Bit 1: the mesh is a closed surface (`GpuMesh::closed`),
-    /// so its back faces shade as inside the solid's own shadow. Bit 2: the
-    /// instance is a two-sided receiver (a styled back-face policy on an open
-    /// mesh), which takes the cull-none path's receiver bias.
-    pub(crate) receive_shadows: u32, //   4 bytes, offset 104
-    /// Index into `material_gpu_buf` (group 0 binding 21): this instance's
-    /// transforms and scalar shading params. 0 is the default-material block.
-    pub(crate) material_id: u32, //   4 bytes, offset 108
-    /// `AlphaMode::Mask` cutoff, and 1 = alpha-test enabled. Stay per-instance:
-    /// the instanced shadow-cutout pass reads them without the material buffer.
-    pub(crate) alpha_cutoff: f32, //   4 bytes, offset 112
-    pub(crate) alpha_flag: u32,      //   4 bytes, offset 116
-    /// 1 = take indirect diffuse from `light_probe_sh` at `light_probe_index`.
-    pub(crate) has_light_probe: u32, //   4 bytes, offset 120
-    /// Base block index into the shared light-probe SH buffer (group 0 binding 18).
-    pub(crate) light_probe_index: u32, //   4 bytes, offset 124
-    /// 1 = exempt from the global clip planes/volumes.
-    pub(crate) ignore_clip: u32, //   4 bytes, offset 128
-    /// Index into `instance_custom_data_buf` (group 0 binding 22): this
-    /// instance's raw `[f32; 8]` custom-data payload. 0 is the zero block.
-    pub(crate) custom_data_id: u32, //   4 bytes, offset 132
+    pub(crate) model: [[f32; 4]; 4],
+    /// Base colour with the item opacity in `.a`.
+    pub(crate) colour: [f32; 4],
+    /// [`instance_flags`] bits.
+    pub(crate) flags: u32,
+    /// Index into `material_gpu_buf` (group 0 binding 21). 0 is the default
+    /// material block.
+    pub(crate) material_id: u32,
+    /// `AlphaMode::Mask` cutoff. Stays per instance: the instanced shadow-cutout
+    /// pass reads it without the material buffer.
+    pub(crate) alpha_cutoff: f32,
+    /// Base block index into the shared light-probe SH buffer (group 0 binding
+    /// 18), read when [`instance_flags::HAS_LIGHT_PROBE`] is set.
+    pub(crate) light_probe_index: u32,
+    /// Index into `instance_custom_data_buf` (group 0 binding 22). 0 is the zero
+    /// block.
+    pub(crate) custom_data_id: u32,
     /// Styled back-face `Pattern` world scale (`cfg.scale / world_extent`), which
-    /// depends on this instance's transform, so it stays per-instance. 0 for every
-    /// non-Pattern policy. The rest of the styled-backface state (policy, colour)
-    /// lives in `material_gpu_buf`.
-    pub(crate) backface_pattern_scale: f32, // 4 bytes, offset 136
-    /// Shared per-object layer mask (a `u32`). The lit instanced shaders
-    /// AND-test it against each light's `channel_mask` to skip lights that do
-    /// not illuminate this object's layers. Wired from
-    /// `ItemSettings::visibility_mask`; `!0` (the default) takes every light.
-    /// The per-camera cull half of the same mask is applied CPU-side before an
-    /// instance reaches this buffer, so it is not re-tested here.
-    pub(crate) object_mask: u32, //   4 bytes, offset 140 (stride to 144)
+    /// depends on this instance's transform. 0 for every non-Pattern policy.
+    pub(crate) backface_pattern_scale: f32,
+    /// Layer mask, AND-tested against each light's `channel_mask`. Wired from
+    /// `ItemSettings::visibility_mask`; `!0` takes every light. The per-camera
+    /// cull half of the mask is applied CPU-side before an instance is packed.
+    pub(crate) object_mask: u32,
+    /// First vertex of the mesh in its vertex-slab chunk, for draws that bind
+    /// a mesh sub-slice (their `vertex_index` is mesh-local) and index the
+    /// whole-chunk uv1 buffer. 0 when the mesh has no second UV set.
+    pub(crate) uv1_base: u32,
+    /// Bit `i` set when deformer slot `i` is active for this draw.
+    pub(crate) deform_flags: u32,
+    /// First vec3 element read from the position override buffer; slices one
+    /// mesh's window out of a shared pool buffer, 0 when unsliced.
+    pub(crate) position_override_base: u32,
+    /// Element count readable from `position_override_base`; `u32::MAX` means
+    /// the whole buffer.
+    pub(crate) position_override_len: u32,
+    /// Same as `position_override_base` for the normal override.
+    pub(crate) normal_override_base: u32,
+    /// Same as `position_override_len` for the normal override.
+    pub(crate) normal_override_len: u32,
+    /// Vertex warp scale, read when [`instance_flags::HAS_WARP`] is set.
+    pub(crate) warp_scale: f32,
+    pub(crate) _spare: [u32; 2],
 }
 
 const _: () = assert!(std::mem::size_of::<InstanceData>() == 144);
+
+/// Bit lanes of [`InstanceData::flags`]. The WGSL `INST_*` constants in
+/// `shaders/helpers/instance_data.wgsl` mirror these.
+pub(crate) mod instance_flags {
+    pub(crate) const SELECTED: u32 = 1 << 0;
+    pub(crate) const WIREFRAME: u32 = 1 << 1;
+    pub(crate) const HAS_TEXTURE: u32 = 1 << 2;
+    pub(crate) const HAS_NORMAL_MAP: u32 = 1 << 3;
+    pub(crate) const HAS_AO_MAP: u32 = 1 << 4;
+    pub(crate) const UNLIT: u32 = 1 << 5;
+    /// Sample the shadow atlas; without it the fragment is unshadowed. Wired
+    /// from `ItemSettings::receive_shadows`.
+    pub(crate) const RECEIVE_SHADOWS: u32 = 1 << 6;
+    /// The mesh is a closed surface (`GpuMesh::closed`): its back faces shade
+    /// as inside the solid's own shadow instead of sampling the shadow map.
+    pub(crate) const MESH_CLOSED: u32 = 1 << 7;
+    /// A two-sided receiver (styled back-face policy on an open mesh), which
+    /// takes the cull-none path's receiver bias.
+    pub(crate) const TWO_SIDED_RECEIVER: u32 = 1 << 8;
+    /// `AlphaMode::Mask`: discard below `alpha_cutoff`.
+    pub(crate) const ALPHA_MASK: u32 = 1 << 9;
+    pub(crate) const HAS_LIGHT_PROBE: u32 = 1 << 10;
+    /// Exempt from the global clip planes and volumes
+    /// (`ItemSettings::ignore_clip`).
+    pub(crate) const IGNORE_CLIP: u32 = 1 << 11;
+    pub(crate) const HAS_POSITION_OVERRIDE: u32 = 1 << 12;
+    pub(crate) const HAS_NORMAL_OVERRIDE: u32 = 1 << 13;
+    /// The item has an active scalar attribute (per-vertex scalar buffer).
+    pub(crate) const HAS_ATTRIBUTE: u32 = 1 << 14;
+    /// The attribute is a per-face colour buffer rather than a scalar.
+    pub(crate) const USE_FACE_COLOUR: u32 = 1 << 15;
+    /// The item has a GPU vertex warp (per-vertex warp buffer).
+    pub(crate) const HAS_WARP: u32 = 1 << 16;
+
+    /// `bit` when `on`, else 0.
+    #[inline]
+    pub(crate) const fn when(on: bool, bit: u32) -> u32 {
+        if on { bit } else { 0 }
+    }
+}
 /// Per-instance GPU data for the object-ID pick pass.
 ///
 /// Stores only the model matrix and a sentinel object ID : none of the material

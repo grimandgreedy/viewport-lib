@@ -44,7 +44,7 @@ pub use readback::ExposureReadback;
 // Gaussian splat upload vocabulary lives in `resources`; re-exported here so the
 // public `renderer::GaussianSplat*` path and its doc links stay stable.
 pub(crate) mod pipeline_key;
-use pipeline_key::{PipelineKey, select_two_sided};
+use pipeline_key::PipelineKey;
 mod point_shadow_pool;
 mod prepare;
 mod render;
@@ -130,12 +130,12 @@ impl ViewportId {
 
 use self::shadows::{compute_cascade_matrix, compute_cascade_splits};
 pub(crate) use self::types::BatchBindKey;
-use self::types::{INSTANCING_THRESHOLD, InstancedBatch};
+use self::types::InstancedBatch;
 use crate::resources::{
     BatchMeta, CLIP_VOLUME_MAX, CameraUniform, ClipPlanesUniform, ClipVolumeEntry,
     ClipVolumesUniform, DeviceResources, GridUniform, InstanceAabb, InstanceData, LightsUniform,
-    ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, PickInstance,
-    PipelineCompilation, ShadowAtlasUniform, SingleLightUniform,
+    OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, PickInstance, PipelineCompilation,
+    ShadowAtlasUniform, SingleLightUniform,
 };
 
 /// Per-frame selection-outline state for one viewport, rebuilt in prepare().
@@ -3498,16 +3498,11 @@ impl ViewportRenderer {
             &self.resources,
             &mut *render_pass,
             frame,
-            self.instancing.use_instancing,
             &self.instancing.batches,
             camera_bg,
             grid_bg,
             vp_slot,
-            &self.mesh_uniforms.wireframe_bind_groups,
-            &self.mesh_uniforms.bind_groups,
-            &self.mesh_uniforms.submesh_bind_groups,
-            &self.mesh_uniforms.object_indices,
-            &self.mesh_uniforms.submesh_indices,
+            &self.mesh_uniforms.material_bind_groups,
             &self.prepared_surfaces,
             self.per_object_bundle.as_ref()
         );

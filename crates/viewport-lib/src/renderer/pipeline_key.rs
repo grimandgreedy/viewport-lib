@@ -77,15 +77,3 @@ impl PipelineKey {
         })
     }
 }
-
-/// Two-way facedness select, shared by every family whose only axis is
-/// `Cull` vs a two-sided policy: OIT, the LDR opaque and inline-transparent
-/// draws, per-submesh material ranges, and shadow casting once cutout is not
-/// in play.
-pub(crate) fn select_two_sided<'p>(
-    key: PipelineKey,
-    one_sided: &'p crate::gpu::RenderPipeline,
-    two_sided: &'p crate::gpu::RenderPipeline,
-) -> &'p crate::gpu::RenderPipeline {
-    if key.two_sided { two_sided } else { one_sided }
-}

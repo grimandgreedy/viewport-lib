@@ -92,6 +92,8 @@ impl Scene {
                 glam::Mat4::from_translation(glam::Vec3::new(x, x, 0.0)).to_cols_array_2d();
             item.material = material.clone();
             item.settings.opacity = opacity;
+            // The per-object render pins its item to the per-object pipelines.
+            item.settings.force_per_object = !instanced;
             item
         };
         let mut items = vec![item_at(0.0)];
@@ -115,8 +117,8 @@ impl Scene {
     fn both_paths(&mut self, material: Material, opacity: f32) -> ([u8; 4], [u8; 4]) {
         let (alone, alone_stats) = self.render(material.clone(), opacity, false);
         assert!(
-            alone_stats.instanced_batches == 0,
-            "a single item should draw per-object"
+            alone_stats.per_object_items == 1,
+            "the single item should draw through the per-object pipelines"
         );
         let (batched, batched_stats) = self.render(material, opacity, true);
         assert!(

@@ -80,6 +80,39 @@ impl DeviceResources {
         if self.pipeline_compiler.policy() == crate::resources::PipelineCompilation::Blocking {
             return true;
         }
+        if let Some(fat) = batch.fat.as_ref() {
+            // A fat batch draws through the per-object sets. Either the
+            // discarding pipeline or its discard-free twin counts as ready,
+            // whichever the draw site picks.
+            use crate::renderer::types::FatDraw;
+            if matches!(fat.draw, FatDraw::Edges | FatDraw::NormalLines) {
+                return if hdr {
+                    self.scene.hdr_wireframe().is_some()
+                } else {
+                    self.scene.wireframe().is_some()
+                };
+            }
+            let two_sided = batch.two_sided;
+            let keys = [
+                PipelineKey::two_sided(two_sided),
+                PipelineKey {
+                    two_sided,
+                    no_discard_eligible: hdr
+                        && !clipping_active
+                        && !self.force_po_discard
+                        && !batch.has_alpha_mask
+                        && !fat.has_attribute
+                        && !matches!(fat.draw, FatDraw::Range(..))
+                        && !self.deform.may_discard(batch.mesh_id, fat.deform_instance),
+                    ..PipelineKey::default()
+                },
+            ];
+            return match self.material_plugin_draw(batch.shading_plugin) {
+                Some((set, _)) => keys.iter().any(|&k| set.opaque_ready(hdr, k)),
+                None if batch.shading_plugin.is_some() => false,
+                None => keys.iter().any(|&k| self.scene.opaque_ready(hdr, k)),
+            };
+        }
         let key = PipelineKey {
             two_sided: batch.two_sided,
             no_discard_eligible: !clipping_active && !batch.has_alpha_mask,

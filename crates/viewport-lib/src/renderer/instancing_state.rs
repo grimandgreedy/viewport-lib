@@ -84,6 +84,13 @@ pub(crate) struct InstancingState {
     /// non-instanced items still hit the instanced batch cache on frames where the
     /// filtered set is unchanged.
     pub(crate) last_instancable_count: usize,
+    /// Visible item count at the last batch rebuild; a hide or unhide with no
+    /// generation bump changes it.
+    pub(crate) last_visible_count: usize,
+    /// `DeviceResources::mesh_sidecar_epoch` at the last batch rebuild.
+    pub(crate) last_sidecar_epoch: u64,
+    /// `DeformationState::epoch` at the last batch rebuild.
+    pub(crate) last_deform_epoch: u64,
     /// `DeviceResources::resource_free_epoch` at the last rebuild. Included in the
     /// cache key so freeing a mesh invalidates the cached batches, which reference
     /// mesh ids by slot: a scene rebuilt after a free with an unchanged item
@@ -184,6 +191,9 @@ impl InstancingState {
             last_selection_generation: u64::MAX,
             last_scene_items_count: usize::MAX,
             last_instancable_count: usize::MAX,
+            last_visible_count: usize::MAX,
+            last_sidecar_epoch: u64::MAX,
+            last_deform_epoch: u64::MAX,
             last_resource_free_epoch: u64::MAX,
             last_resource_view_epoch: u64::MAX,
             cached_instance_count: 0,

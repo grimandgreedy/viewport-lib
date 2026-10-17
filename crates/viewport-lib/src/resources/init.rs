@@ -2004,6 +2004,7 @@ impl DeviceResources {
             ),
             resource_free_epoch: 0,
             resource_view_epoch: 0,
+            mesh_sidecar_epoch: 0,
             retain_mesh_cpu_geometry: true,
             occlusion_culling_enabled: false,
             force_po_discard: false,

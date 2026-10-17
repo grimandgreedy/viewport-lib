@@ -720,13 +720,15 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
         it
     };
 
-    // One sphere: visible_count == 1, so it draws through the per-object path.
-    frame.scene.surfaces = SurfaceSubmission::Flat(vec![sphere()].into());
+    // One sphere pinned to the per-object pipelines.
+    let mut pinned = sphere();
+    pinned.settings.force_per_object = true;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![pinned].into());
     let per_object = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     let po_stats = renderer.last_frame_stats();
 
-    // Two spheres at the same transform: visible_count > 1, so they draw
-    // instanced; overlapping exactly, they cover the same pixels as the one
+    // Two spheres at the same transform draw through the instanced plugin
+    // pipeline; overlapping exactly, they cover the same pixels as the one
     // per-object sphere (the second instance fails the depth test behind the
     // first). Bump the generation so the batch list rebuilds for the new scene.
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![sphere(), sphere()].into());
@@ -736,12 +738,12 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 
     // Confirm the A/B actually took the two different paths.
     assert_eq!(
-        po_stats.instanced_batches, 0,
-        "one sphere should draw per-object (below the instancing threshold)"
+        po_stats.per_object_items, 1,
+        "the pinned sphere should draw through the per-object pipelines"
     );
-    assert!(
-        inst_stats.instanced_batches >= 1,
-        "two spheres should form an instanced batch"
+    assert_eq!(
+        inst_stats.per_object_items, 0,
+        "two spheres should draw through the instanced plugin pipeline"
     );
     // The sphere must be visible, not an empty frame.
     let bg = &per_object[0..4];
@@ -833,7 +835,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
     let two_stats = renderer.last_frame_stats();
 
     assert_eq!(
-        two_stats.instanced_batches, 0,
+        two_stats.per_object_items, 2,
         "a vertex-attribute plugin must not instance (it would lose surf.attr)"
     );
     // The attribute reached the hook: the box is tinted green (G > R on the box).
@@ -893,9 +895,13 @@ fn a_plugin_draws_the_same_built_on_demand_as_built_up_front() {
         ("hdr, one transparent item", 1, |_, item| {
             item.settings.opacity = 0.5;
         }),
-        ("hdr, a two-sided cutout batch", 3, |_, item| {
+        ("hdr, a two-sided cutout batch", 3, |frame, item| {
             item.material.alpha_mode = viewport_lib::material::AlphaMode::Mask(0.5);
             item.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+            // The test box is wound inside out, so two-sided every visible
+            // face is a back face of a closed solid and sits in its own
+            // shadow; the hook's light term then has nothing to change.
+            frame.effects.lighting.shadows.enabled = false;
         }),
     ];
 

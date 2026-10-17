@@ -690,6 +690,11 @@ pub struct DeviceResources {
     /// ids did not change. `resource_free_epoch` moves for these too, so a
     /// consumer that checks only the free epoch keeps its old behaviour.
     pub(crate) resource_view_epoch: u64,
+    /// Bumped whenever a mesh's position or normal override, lightmap
+    /// registration, or deform slot data changes. The instanced batch cache
+    /// keys on it: those changes alter the instance records and the fat
+    /// bind groups without a scene generation bump.
+    pub(crate) mesh_sidecar_epoch: u64,
     /// Whether a mesh upload keeps a CPU-side copy of its positions, normals,
     /// and indices. Default `true`. See
     /// `DeviceResources::set_retain_mesh_cpu_geometry`.

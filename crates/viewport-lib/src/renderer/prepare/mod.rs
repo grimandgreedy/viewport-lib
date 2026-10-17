@@ -20,8 +20,7 @@ mod viewport_overlays;
 use math::*;
 use mesh_material::*;
 pub(crate) use mesh_material::{
-    FallbackReason, active_submesh_materials, has_opaque_draws, has_transparent_draws,
-    is_instanceable,
+    FallbackReason, active_submesh_materials, has_transparent_draws, is_instanceable,
 };
 use overlay_geometry::*;
 use projection::*;
@@ -167,13 +166,6 @@ impl ViewportRenderer {
             self.resources.content.glyph_atlas.evict_if_full();
         }
 
-        // Reset the per-material transform interner for this frame. The per-object
-        // and instanced passes below intern each item's material into it; the
-        // buffer is uploaded at the end of this function (and again after
-        // per-viewport foreground objects intern).
-        self.resources.material_gpu_builder.reset();
-        self.resources.custom_data_builder.reset();
-
         // Drain the upload-job runner. Worker results received since the last
         // frame are observed, GPU submissions are polled for completion, and
         // any registered completion callbacks fire on this thread.
@@ -276,27 +268,8 @@ impl ViewportRenderer {
         );
         let lighting_ms = lighting_start.elapsed().as_secs_f32() * 1000.0;
 
-        // -- Instancing preparation --
-        // Determine instancing mode BEFORE per-object uniforms so we can skip them.
-        let visible_count = scene_items.iter().filter(|i| !i.settings.hidden).count();
-        let prev_use_instancing = self.instancing.use_instancing;
-        self.instancing.use_instancing = visible_count > INSTANCING_THRESHOLD;
-
-        // If instancing mode changed (e.g. objects added/removed crossing the threshold),
-        // clear batches so the generation check below forces a rebuild.
-        if self.instancing.use_instancing != prev_use_instancing {
-            self.instancing.batches.clear();
-            self.instancing.last_scene_generation = u64::MAX;
-            self.instancing.last_scene_items_count = usize::MAX;
-        }
-        if self.instancing.use_instancing != prev_use_instancing {
-            tracing::debug!(
-                visible_objects = visible_count,
-                threshold = INSTANCING_THRESHOLD,
-                instanced = self.instancing.use_instancing,
-                "instancing mode changed"
-            );
-        }
+        // Every mesh draw is an instanced draw; a one-item scene is one batch.
+        self.instancing.use_instancing = true;
 
         let per_object_start = web_time::Instant::now();
         // Set up the pipeline sets of the material plugins the frame references
@@ -350,36 +323,35 @@ impl ViewportRenderer {
         // the per-object and instanced paths that draw those items index the
         // same block. No probes uploaded -> all None and nothing written.
         let probe_indices = per_object::prepare_light_probe_sh(resources, scene_items, queue);
-        let per_object_bind_groups_built = Self::prepare_per_object(
-            resources,
-            &mut self.mesh_uniforms,
-            self.instancing.use_instancing,
-            scene_items,
-            &instanceable,
-            &probe_indices,
-            self.frame_counter,
-            device,
-            queue,
-            frame,
-        );
+
+        // The material and custom-data tables persist across frames while the
+        // instanced batch cache holds: cached records keep their ids, and the
+        // per-object and foreground items that intern every frame dedup to
+        // the existing entries. A miss re-interns everything, so the tables
+        // reset there, before any packer runs.
+        let instanced_cache_valid =
+            Self::instanced_cache_valid(resources, &self.instancing, scene_items, frame);
+        if !instanced_cache_valid {
+            resources.material_gpu_builder.reset();
+            resources.custom_data_builder.reset();
+        }
         let uniforms_ms = per_object_start.elapsed().as_secs_f32() * 1000.0;
 
         let instanced_start = web_time::Instant::now();
-        let (batches_reuploaded, batches_skipped) = if self.instancing.use_instancing {
+        let (batches_reuploaded, batches_skipped, per_object_bind_groups_built) =
             Self::prepare_instanced(
                 resources,
                 &mut self.instancing,
-                &instanceable,
+                &mut self.mesh_uniforms,
+                instanced_cache_valid,
                 scene_items,
                 &probe_indices,
                 device,
                 queue,
                 frame,
                 hdr_family,
-            )
-        } else {
-            (0, 0)
-        };
+                self.frame_counter,
+            );
         settle_gpu_culling(&mut self.instancing, &resources.pipeline_compiler, device);
         let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0;
 
@@ -414,7 +386,7 @@ impl ViewportRenderer {
         // gather boundary edges for items rendering through the projected-tet
         // path so they still get a wireframe overlay.
         self.mesh_uniforms.tvm_wireframe_draws.clear();
-        let mut tvm_wireframe_records: Vec<crate::resources::ObjectUniform> = Vec::new();
+        let mut tvm_wireframe_records: Vec<crate::resources::InstanceData> = Vec::new();
         for item in &frame.scene.volume_meshes {
             if item.settings.hidden || item.transparency.is_none() {
                 continue;
@@ -430,10 +402,10 @@ impl ViewportRenderer {
             self.mesh_uniforms
                 .tvm_wireframe_draws
                 .push(item.boundary_mesh_id);
-            let mut record: crate::resources::ObjectUniform = bytemuck::Zeroable::zeroed();
+            let mut record: crate::resources::InstanceData = bytemuck::Zeroable::zeroed();
             record.model = item.model;
             record.colour = [0.75, 0.75, 0.75, 1.0];
-            record.wireframe = 1;
+            record.flags = crate::resources::mesh::instancing::instance_flags::WIREFRAME;
             tvm_wireframe_records.push(record);
         }
         // One record per draw, selected by instance index. The buffer and its
@@ -443,7 +415,7 @@ impl ViewportRenderer {
             let capacity = tvm_wireframe_records.len().next_power_of_two();
             let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("tvm_wireframe_uniform"),
-                size: (capacity * std::mem::size_of::<crate::resources::ObjectUniform>()) as u64,
+                size: (capacity * std::mem::size_of::<crate::resources::InstanceData>()) as u64,
                 usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -464,7 +436,9 @@ impl ViewportRenderer {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&resources.material.mesh_sampler),
+                        resource: crate::gpu::BindingResource::Sampler(
+                            &resources.material.mesh_sampler,
+                        ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 3,
@@ -584,44 +558,22 @@ impl ViewportRenderer {
             let visible = scene_items.iter().filter(|i| !i.settings.hidden).count() as u32;
             let mut draw_calls = 0u32;
             let mut triangles = 0u64;
-            let instanced_batch_count = if self.instancing.use_instancing {
-                self.instancing.batches.len() as u32
-            } else {
-                0
-            };
-
-            if self.instancing.use_instancing {
-                for batch in &self.instancing.batches {
-                    if let Some(mesh) = resources.mesh_store.get(batch.mesh_id) {
-                        draw_calls += 1;
-                        triangles += (mesh.index_count / 3) as u64 * batch.instance_count as u64;
-                    }
-                }
-                // Items outside the batches still issue one draw each through
-                // the per-object path (one per range for per-submesh-material
-                // items); count them so `draw_calls` and `triangles_submitted`
-                // cover both paths.
-                for (item, inst) in scene_items.iter().zip(instanceable.iter()) {
-                    if item.settings.hidden || *inst {
-                        continue;
-                    }
-                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                        draw_calls += active_submesh_materials(item, mesh)
-                            .map_or(1, |mats| mats.len() as u32);
-                        triangles += (mesh.index_count / 3) as u64;
-                    }
-                }
-            } else {
-                for item in scene_items {
-                    if item.settings.hidden {
-                        continue;
-                    }
-                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                        draw_calls += active_submesh_materials(item, mesh)
-                            .map_or(1, |mats| mats.len() as u32);
-                        triangles += (mesh.index_count / 3) as u64;
-                    }
-                }
+            // Every batch is one draw. A lean batch draws the whole mesh; a fat
+            // one draws what its `FatDraw` names. A wireframe draw submits its
+            // mesh's triangles as edge lines, so it counts them; normal lines
+            // submit no triangles.
+            let instanced_batch_count = self.instancing.batches.len() as u32;
+            for batch in &self.instancing.batches {
+                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                    continue;
+                };
+                draw_calls += 1;
+                let indices = match batch.fat.as_ref().map(|f| f.draw) {
+                    Some(crate::renderer::types::FatDraw::Range(_, count)) => count,
+                    Some(crate::renderer::types::FatDraw::NormalLines) => 0,
+                    _ => mesh.index_count,
+                };
+                triangles += (indices / 3) as u64 * batch.instance_count as u64;
             }
 
             // Visible items that miss the instanced fast path. Reuses the
@@ -644,19 +596,15 @@ impl ViewportRenderer {
             // below the threshold every item draws per-object whatever
             // `is_instanceable` says about it, and the per-object path binds
             // the mesh's real deform group.
-            let deform_slots_ignored = if self.instancing.use_instancing {
-                scene_items
-                    .iter()
-                    .zip(instanceable.iter())
-                    .filter(|(item, inst)| {
-                        **inst
-                            && !item.settings.hidden
-                            && resources.deform.has_mesh_slot_data(item.mesh_id)
-                    })
-                    .count() as u32
-            } else {
-                0
-            };
+            let deform_slots_ignored = scene_items
+                .iter()
+                .zip(instanceable.iter())
+                .filter(|(item, inst)| {
+                    **inst
+                        && !item.settings.hidden
+                        && resources.deform.has_mesh_slot_data(item.mesh_id)
+                })
+                .count() as u32;
 
             let deform = resources.deform.take_counters();
             let plugin_draw_calls = self
@@ -728,7 +676,6 @@ impl ViewportRenderer {
             plugin_frame_index,
             lighting,
             scene_items,
-            &instanceable,
             &self.mesh_uniforms,
             &lighting_frame,
             self.degradation_shadows_skipped,
@@ -1028,10 +975,6 @@ impl ViewportRenderer {
         }
         self.prepare_breakdown.plugin_cull_ms = cull_start.elapsed().as_secs_f32() * 1000.0;
 
-        // Rebuild or drop the cached per-object render bundle now that the
-        // prepared item list, LOD resolve, and per-item bind groups are final.
-        self.update_per_object_bundle(device, frame);
-
         // Read back GPU timestamps without blocking. The staging buffer is
         // mapped on one frame and read on a later one; a non-blocking poll
         // pumps the map callback, and the value is consumed once the map
@@ -1296,6 +1239,9 @@ impl ViewportRenderer {
 
         let (scene_fx, viewport_fx) = frame.effects.split();
         self.prepare_scene_internal(device, queue, frame, &scene_fx, sink);
+        // Rebuild or drop the cached batch render bundle now that this
+        // frame's batch list and its bind groups are final.
+        self.update_per_object_bundle(device, frame);
 
         let viewport_start = web_time::Instant::now();
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx, sink);

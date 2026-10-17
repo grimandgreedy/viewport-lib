@@ -65,6 +65,10 @@ struct ShadowAtlas {
 
 // Per-object uniform. Layout mirrors the renderer's `ObjectUniform`
 // (320 bytes); keep the field offsets in sync with its doc table.
+// #include "helpers/instance_data.wgsl"
+
+// The per-draw view the shader body reads: assembled by `load_object` from
+// the instance record and its material block. Not a GPU layout.
 struct Object {
     model: mat4x4<f32>,
     colour: vec4<f32>,
@@ -139,7 +143,7 @@ struct TexTransform {
 }
 // The per-object mesh path only reads the UV transforms (`xf`); the scalar and
 // flag blocks are consumed by the instanced path. They are declared here so the
-// WGSL array stride matches the Rust MaterialGpu (272 bytes): omitting them
+// WGSL array stride matches the Rust MaterialGpu (368 bytes): omitting them
 // shrinks the stride and misreads every entry past material_id 0.
 struct MaterialGpu {
     xf: array<TexTransform, 5>,
@@ -152,8 +156,19 @@ struct MaterialGpu {
     mr_range: vec4<f32>,
     tex_index0: vec4<u32>,   // bindless array indices: albedo, normal, ao, metallic-roughness
     tex_index1: vec4<u32>,   // emissive bindless index, sampler code (not read), unused, unused
+    item0: vec4<f32>,        // (scalar_min, scalar_max, 0, 0)
+    nan_colour: vec4<f32>,   // colour for NaN scalar attribute samples
+    lightmap_scale_bias: vec4<f32>, // lm_uv = uv1 * .xy + .zw
+    item_flags: vec4<u32>,   // (MAT_* bits, lightmap_mode, lightmap_index, 0)
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
+
+// `item_flags.x` bits of MaterialGpu (mirrors the Rust `item_flags` module).
+const MAT_USE_NAN_COLOUR: u32 = 1u;
+const MAT_USE_MATCAP: u32 = 2u;
+const MAT_MATCAP_BLENDABLE: u32 = 4u;
+const MAT_LIGHTMAP_DIRECTIONAL: u32 = 8u;
+const MAT_HAS_SHADOWMASK: u32 = 16u;
 
 // A transformed UV plus its screen-space derivatives, for textureSampleGrad.
 struct SlotUv {
@@ -245,7 +260,7 @@ struct ClipVolumeUB {
 // stops changing per draw. The selected element is copied into the `object`
 // private global at the top of each entry point so the shader body and every
 // plugin hook still read `object.FIELD` unchanged.
-@group(1) @binding(0) var<storage, read> objects: array<Object>;
+@group(1) @binding(0) var<storage, read> instances: array<InstanceData>;
 var<private> object: Object;
 @group(1) @binding(1) var obj_texture: texture_2d<f32>;
 @group(1) @binding(2) var obj_sampler: sampler;
@@ -300,6 +315,86 @@ fn lightmap_directional_factor(uv: vec2<f32>, page: i32, n_pix: vec3<f32>, n_geo
     return mix(1.0, ndl_pix / max(ndl_geo, 0.1), d.w);
 }
 
+// Assemble the `Object` view the shader body reads. The vertex stage needs
+// only the instance record (the material block is a fragment-stage
+// binding); the fragment stage adds the block's scalars. Called at the top
+// of each entry point so the body and every plugin hook read
+// `object.FIELD` unchanged.
+fn load_object_vertex(i: u32) -> Object {
+    var o: Object;
+    let inst = instances[i];
+    let bit = inst.flags;
+    o.model = inst.model;
+    o.colour = inst.colour;
+    o.selected = u32((bit & INST_SELECTED) != 0u);
+    o.wireframe = u32((bit & INST_WIREFRAME) != 0u);
+    o.has_texture = u32((bit & INST_HAS_TEXTURE) != 0u);
+    o.has_normal_map = u32((bit & INST_HAS_NORMAL_MAP) != 0u);
+    o.has_ao_map = u32((bit & INST_HAS_AO_MAP) != 0u);
+    o.has_attribute = u32((bit & INST_HAS_ATTRIBUTE) != 0u);
+    o.use_face_colour = u32((bit & INST_USE_FACE_COLOUR) != 0u);
+    o.receive_shadows = u32((bit & INST_RECEIVE_SHADOWS) != 0u);
+    o.unlit = u32((bit & INST_UNLIT) != 0u);
+    o.has_warp = u32((bit & INST_HAS_WARP) != 0u);
+    o.warp_scale = inst.warp_scale;
+    o.alpha_cutoff = inst.alpha_cutoff;
+    o.material_id = inst.material_id;
+    o.uv1_base = inst.uv1_base;
+    o.deform_flags = inst.deform_flags;
+    o.has_light_probe = u32((bit & INST_HAS_LIGHT_PROBE) != 0u);
+    o.light_probe_index = inst.light_probe_index;
+    o.ignore_clip = u32((bit & INST_IGNORE_CLIP) != 0u);
+    o.object_mask = inst.object_mask;
+    o.mesh_closed = u32((bit & INST_MESH_CLOSED) != 0u);
+    o.has_position_override = u32((bit & INST_HAS_POSITION_OVERRIDE) != 0u);
+    o.has_normal_override = u32((bit & INST_HAS_NORMAL_OVERRIDE) != 0u);
+    o.position_override_base = inst.position_override_base;
+    o.position_override_len = inst.position_override_len;
+    o.normal_override_base = inst.normal_override_base;
+    o.normal_override_len = inst.normal_override_len;
+    return o;
+}
+
+fn load_object(i: u32) -> Object {
+    var o = load_object_vertex(i);
+    let inst = instances[i];
+    let mat = material_gpu_buf[inst.material_id];
+    let mbit = mat.item_flags.x;
+    o.ambient = mat.scalars0.x;
+    o.diffuse = mat.scalars0.y;
+    o.specular = mat.scalars0.z;
+    o.shininess = mat.scalars0.w;
+    o.use_pbr = mat.flags.x;
+    o.metallic = mat.scalars1.x;
+    o.roughness = mat.scalars1.y;
+    o.scalar_min = mat.item0.x;
+    o.scalar_max = mat.item0.y;
+    o.nan_colour = mat.nan_colour;
+    o.use_nan_colour = u32((mbit & MAT_USE_NAN_COLOUR) != 0u);
+    o.use_matcap = u32((mbit & MAT_USE_MATCAP) != 0u);
+    o.matcap_blendable = u32((mbit & MAT_MATCAP_BLENDABLE) != 0u);
+    o.uv_vis_mode = mat.flags.w;
+    o.uv_vis_scale = mat.scalars3.y;
+    o.backface_policy = u32(mat.scalars3.z);
+    // The Pattern world scale is per instance; the block's .w is unused.
+    o.backface_colour = vec4<f32>(mat.backface_colour.xyz, inst.backface_pattern_scale);
+    o.emissive = mat.scalars2.xyz;
+    o.use_flat = mat.flags.y;
+    o.alpha_mode = mat.flags.z;
+    o.has_metallic_roughness_tex = u32(mat.scalars1.w);
+    o.has_emissive_tex = u32(mat.scalars3.w);
+    o.normal_strength = mat.scalars1.z;
+    o.ao_range = vec2<f32>(mat.scalars2.w, mat.scalars3.x);
+    o.metallic_range = mat.mr_range.xy;
+    o.roughness_range = mat.mr_range.zw;
+    o.lightmap_mode = mat.item_flags.y;
+    o.lightmap_directional = u32((mbit & MAT_LIGHTMAP_DIRECTIONAL) != 0u);
+    o.lightmap_scale_bias = mat.lightmap_scale_bias;
+    o.lightmap_index = mat.item_flags.z;
+    o.has_shadowmask = u32((mbit & MAT_HAS_SHADOWMASK) != 0u);
+    return o;
+}
+
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
@@ -326,7 +421,7 @@ struct VertexOut {
     // Atlas page (array layer) for a multi-page lightmap, carried in UV1.z. Flat:
     // every vertex of a chart shares one page, so no interpolation is wanted.
     @location(10) @interpolate(flat) lightmap_page: f32,
-    // Index of this draw's element in the group 1 binding 0 objects[] array,
+    // Index of this draw's element in the group 1 binding 0 instances[] array,
     // carried to the fragment stage so it re-selects the same object.
     @location(11) @interpolate(flat) obj_idx: u32,
     // Second UV set (glTF TEXCOORD_1), interpolated for texture slots whose
@@ -342,7 +437,7 @@ struct VertexOut {
 
 @vertex
 fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> VertexOut {
-    object = objects[instance_index];
+    object = load_object_vertex(instance_index);
     var out: VertexOut;
     out.obj_idx = instance_index;
     // Override > vertex attribute. When a plugin has bound a per-vertex position
@@ -559,6 +654,10 @@ struct Surface {
     d_uv1_dx: vec2<f32>,
     d_uv1_dy: vec2<f32>,
     alpha: f32,
+    // The material's alpha mode (0 opaque, 1 mask, 2 blend, 3 premultiplied)
+    // and mask cutoff, for the surface hook's alpha gate.
+    alpha_mode: u32,
+    alpha_cutoff: f32,
     front_facing: u32,
 };
 
@@ -639,6 +738,8 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     out.ao_factor = 1.0;
     out.mat_uv = in.uv;
     out.alpha = 1.0;
+    out.alpha_mode = object.alpha_mode;
+    out.alpha_cutoff = object.alpha_cutoff;
     out.front_facing = select(0u, 1u, is_front);
 
     // Screen-space derivatives of the interpolated inputs, taken here at the top
@@ -664,7 +765,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
 
     // Section view: discard fragment if it falls on the clipped side of any plane
     // or outside any clip volume. Items with ignore_clip stay fully visible.
-    if objects[in.obj_idx].ignore_clip == 0u {
+    if (instances[in.obj_idx].flags & INST_IGNORE_CLIP) == 0u {
         for (var i = 0u; i < clip_planes.count; i++) {
             let plane = clip_planes.planes[i];
             if dot(in.world_pos, plane.xyz) + plane.w < 0.0 {
@@ -881,6 +982,12 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
 // Lighting. Runs the standard PBR / Blinn-Phong light loops, shadow sampling,
 // and ambient/IBL on a resolved surface. Returns the pre-emissive colour plus
 // the debug accumulators the debug-vis overlay reads.
+// Which shading loop a material takes. Material-plugin hooks compose onto
+// the PBR loop, so the composer forces this to true in a hook module.
+fn shading_is_pbr(flag: u32) -> bool {
+    return flag != 0u;
+}
+
 fn compute_lit(
     surface: Surface,
     in: VertexOut,
@@ -934,7 +1041,7 @@ fn compute_lit(
         shadowmask = textureSampleLevel(lightmap_dir_tex, obj_sampler, sm_uv, sm_page, 0.0);
     }
 
-    if object.use_pbr != 0u {
+    if shading_is_pbr(object.use_pbr) {
         // Cook-Torrance PBR path
         var metallic  = clamp(object.metallic,  0.0, 1.0);
         var roughness = max(object.roughness, 0.04);
@@ -965,7 +1072,7 @@ fn compute_lit(
         for (var j: u32 = 0u; j < pbr_range.count; j = j + 1u) {
             let i = cluster_light_global(pbr_range, j);
             let l = lights_storage[i];
-            if !light_in_channel(l, objects[in.obj_idx].object_mask) { continue; }
+            if !light_in_channel(l, instances[in.obj_idx].object_mask) { continue; }
             let ev = eval_light(l, in.world_pos);
             if !ev.in_range { continue; }
             let L = ev.l;
@@ -1116,7 +1223,7 @@ fn compute_lit(
         for (var j: u32 = 0u; j < bp_range.count; j = j + 1u) {
             let i = cluster_light_global(bp_range, j);
             let l = lights_storage[i];
-            if !light_in_channel(l, objects[in.obj_idx].object_mask) { continue; }
+            if !light_in_channel(l, instances[in.obj_idx].object_mask) { continue; }
             let ev = eval_light(l, in.world_pos);
             if !ev.in_range { continue; }
             let light_dir = ev.l;
@@ -1205,7 +1312,7 @@ fn compute_lit(
 
 @fragment
 fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
-    object = objects[in.obj_idx];
+    object = load_object(in.obj_idx);
     let surface = compute_surface(in, is_front);
 
     // Derivative terms for the lighting stage, taken here while control flow is
