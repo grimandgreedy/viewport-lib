@@ -470,9 +470,11 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
 
     var tex_colour = vec4<f32>(1.0);
     if inst.has_texture == 1u { tex_colour = textureSampleGrad(obj_texture, obj_sampler, mat_uv, muv_ddx, muv_ddy); }
+    // An opaque material ignores texture and vertex alpha: below full opacity
+    // it fades by the opacity alone, as it draws solid at full opacity.
     let obj_colour = vec4<f32>(
         inst.colour.rgb * in.colour.rgb * tex_colour.rgb,
-        inst.colour.a   * in.colour.a   * tex_colour.a,
+        select(inst.colour.a * in.colour.a * tex_colour.a, inst.colour.a, mat.flags.z == 0u),
     );
     out.alpha = obj_colour.a;
 

@@ -212,6 +212,37 @@ fn blend_at_full_opacity_blends_on_both_paths() {
     assert_close("Blend at full opacity", alone, batched, 4);
 }
 
+/// An opaque material below full opacity fades by the opacity alone on both
+/// paths: its texture's alpha is ignored, as it is at full opacity.
+#[test]
+fn faded_opaque_material_ignores_texture_alpha_on_both_paths() {
+    let Some(mut scene) = Scene::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut textured = |alpha: u8| {
+        let tex = scene
+            .renderer
+            .resources_mut()
+            .upload_texture(
+                &scene.device,
+                &scene.queue,
+                viewport_lib::TextureData::srgb(1, 1, vec![220, 220, 220, alpha]),
+            )
+            .unwrap();
+        let mut m = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
+        m.texture_id = Some(tex);
+        m
+    };
+    let solid = textured(255);
+    let see_through = textured(51);
+    let (expected, _) = scene.both_paths(solid, 0.8);
+    let (alone, batched) = scene.both_paths(see_through, 0.8);
+    assert!(expected[0] > 10, "the surface should render: {expected:?}");
+    assert_close("faded Opaque, per-object", expected, alone, 2);
+    assert_close("faded Opaque, instanced", expected, batched, 2);
+}
+
 /// An opaque masked material with no albedo texture takes its alpha from the
 /// vertex colours; both paths cut it out.
 #[test]
