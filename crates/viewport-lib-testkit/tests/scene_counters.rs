@@ -46,6 +46,10 @@ fn expected(name: &str) -> Option<Expected> {
         "textured_checker" => e(1, 1, 1, 1, 0, 2208),
         "textured_normalmap" => e(1, 1, 1, 1, 0, 3968),
         "transparent" => e(3, 3, 1, 1, 0, 2880),
+        // The direct path has no OIT, so each blended item is its own batch
+        // and the pass sorts them by depth.
+        "ldr_blended_order_front" => e(5, 5, 5, 5, 0, 60),
+        "ldr_blended_order_back" => e(5, 5, 5, 5, 0, 60),
         // One opaque instanced batch and one OIT instanced batch, which is why
         // this is the only scene whose `main_buffer_binds` reaches four: both
         // instanced loops run, and each binds the slab's two chunks.

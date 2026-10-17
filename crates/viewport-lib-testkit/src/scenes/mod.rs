@@ -135,6 +135,9 @@ pub struct BuiltScene {
     /// Exposure override, for a scene that exercises an exposure mode. `None`
     /// leaves the default (passthrough) exposure.
     pub exposure: Option<viewport_lib::ExposureSettings>,
+    /// Pipeline mode override, for a scene that exercises the direct (LDR)
+    /// path. `None` leaves the default HDR pipeline.
+    pub pipeline_mode: Option<viewport_lib::PipelineMode>,
     /// Screen-space overlay items: shapes, labels, glyph runs, polylines, and
     /// retained groups compiled during `build`.
     pub overlays: viewport_lib::OverlayFrame,
@@ -261,6 +264,9 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     }
     if let Some(exposure) = scene.exposure {
         fd.effects.display.exposure = exposure;
+    }
+    if let Some(mode) = scene.pipeline_mode {
+        fd.effects.display.mode = mode;
     }
     if let Some((objects, cap_fill)) = scene.clip.clone() {
         fd.effects.clip.objects = objects;
@@ -546,6 +552,44 @@ fn build_transparent(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items,
         lighting: rigs::from_above(),
         background: None,
+        ..Default::default()
+    }
+}
+
+/// Blended draw order on the direct (LDR) path, which has no OIT and so relies
+/// on drawing blended surfaces back to front.
+///
+/// Five half-transparent plates staggered along Y, from two meshes so they form
+/// two batches, and interleaved in depth so that neither batch order nor
+/// instance order is right from both cameras: only a per-item sort by distance
+/// is. The catalogue views it from both ends, along +Y and along -Y.
+fn build_ldr_blended_order(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let large = upload(ctx, &primitives::cuboid(1.6, 0.04, 1.6));
+    let small = upload(ctx, &primitives::cuboid(1.1, 0.04, 1.1));
+    let plates = [
+        (large, Vec3::new(-0.7, -1.2, 0.0), [0.9, 0.2, 0.2]),
+        (large, Vec3::new(0.0, 0.0, 0.0), [0.2, 0.9, 0.2]),
+        (large, Vec3::new(0.7, 1.2, 0.0), [0.2, 0.3, 0.9]),
+        (small, Vec3::new(-0.35, -0.6, 0.35), [0.9, 0.9, 0.2]),
+        (small, Vec3::new(0.35, 0.6, -0.35), [0.9, 0.2, 0.9]),
+    ];
+    let items = plates
+        .into_iter()
+        .map(|(mesh, pos, c)| {
+            with_opacity(
+                item(
+                    mesh,
+                    pos,
+                    Material::pbr(Colour::from_linear_rgb_array(c), 0.0, 0.6),
+                ),
+                0.5,
+            )
+        })
+        .collect();
+    BuiltScene {
+        items,
+        lighting: rigs::from_above(),
+        pipeline_mode: Some(viewport_lib::PipelineMode::Direct),
         ..Default::default()
     }
 }
@@ -914,6 +958,24 @@ pub fn catalogue() -> Vec<NamedScene> {
             name: "transparent",
             cameras: standard_cameras(Vec3::ZERO, 7.0),
             build: build_transparent,
+        },
+        // The snapshot gate renders a scene's first camera, so the two views of
+        // the blended-order scene are two entries.
+        NamedScene {
+            name: "ldr_blended_order_front",
+            cameras: vec![NamedCamera {
+                name: "front",
+                camera: orbit_camera(Vec3::ZERO, 7.0, 0.3, 1.45),
+            }],
+            build: build_ldr_blended_order,
+        },
+        NamedScene {
+            name: "ldr_blended_order_back",
+            cameras: vec![NamedCamera {
+                name: "back",
+                camera: orbit_camera(Vec3::ZERO, 7.0, 0.3 + std::f32::consts::PI, 1.45),
+            }],
+            build: build_ldr_blended_order,
         },
         NamedScene {
             name: "transparent_background",

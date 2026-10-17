@@ -73,6 +73,9 @@ pub(crate) struct InstancingState {
     /// no other scene change must still force a rebuild or the cached
     /// instance buffer keeps shading with the old flag.
     pub(crate) last_wireframe_mode: bool,
+    /// Whether the cached batches were packed for the HDR family. LDR frames
+    /// give each blended item its own batch, so a family switch rebuilds.
+    pub(crate) last_hdr_family: bool,
     /// Last selection generation seen during prepare(). u64::MAX forces rebuild on first frame.
     pub(crate) last_selection_generation: u64,
     /// Last scene_items count seen during prepare(). usize::MAX forces rebuild on first frame.
@@ -188,6 +191,7 @@ impl InstancingState {
             cull_resources: crate::resources::pipeline_slot::PipelineSlot::new(),
             last_scene_generation: u64::MAX,
             last_wireframe_mode: false,
+            last_hdr_family: false,
             last_selection_generation: u64::MAX,
             last_scene_items_count: usize::MAX,
             last_instancable_count: usize::MAX,

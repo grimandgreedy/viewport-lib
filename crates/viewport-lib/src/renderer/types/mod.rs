@@ -78,6 +78,10 @@ pub(crate) struct InstancedBatch {
     /// range, edge or normal lines). A fat batch is still an instance range
     /// of the shared instance buffer; only its pipeline and bind group differ.
     pub fat: Option<FatBatch>,
+    /// World-space centre of the batch's instance bounds. The LDR pass sorts
+    /// blended batches back to front by it; on an LDR frame each blended item
+    /// is its own batch, so the sort is per item.
+    pub sort_centre: [f32; 3],
 }
 
 /// Which geometry a fat batch draws.
@@ -791,111 +795,9 @@ macro_rules! emit_draw_calls {
                 }
             }
 
-            // Draw transparent instanced batches.
-            if !transparent_batches.is_empty() && !frame.viewport.wireframe_mode {
-                if let Some(pipeline) = resources.instancing.ldr_transparent() {
-                    render_pass.set_pipeline(pipeline);
-                    bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
-                    let mut cur_chunks: Option<(u32, u32)> = None;
-                    for batch in &transparent_batches {
-                        // Plugin batches draw in the dedicated plugin
-                        // sub-loop below.
-                        if batch.shading_plugin.is_some() || batch.fat.is_some() {
-                            continue;
-                        }
-                        let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
-                            continue;
-                        };
-                        let mat_key =
-                            batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
-                        let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key)
-                        else {
-                            continue;
-                        };
-                        render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                        let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                        if cur_chunks != Some(chunks) {
-                            render_pass.set_vertex_buffer(
-                                0,
-                                resources.geometry.vertex_chunk_slice(chunks.0),
-                            );
-                            render_pass.set_index_buffer(
-                                resources.geometry.index_chunk_slice(chunks.1),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
-                            cur_chunks = Some(chunks);
-                        }
-                        let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                        let first_index = resources.geometry.first_index(mesh.index_span);
-                        render_pass.draw_indexed(
-                            first_index..first_index + mesh.index_count,
-                            base_vertex,
-                            batch.instance_offset..batch.instance_offset + batch.instance_count,
-                        );
-                    }
-                }
-            }
-
-            // Material-plugin transparent instanced batches (LDR): the
-            // alpha-blend plugin pipeline, drawn after the transparent
-            // built-in loop above (which skips them).
-            if !frame.viewport.wireframe_mode
-                && transparent_batches
-                    .iter()
-                    .any(|b| b.shading_plugin.is_some())
-            {
-                bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
-                let mut cur_chunks: Option<(u32, u32)> = None;
-                let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
-                for batch in &transparent_batches {
-                    if batch.shading_plugin.is_none() || batch.fat.is_some() {
-                        continue;
-                    }
-                    let Some((plug_pipes, mat_bg)) =
-                        resources.material_plugin_instanced_draw(batch.shading_plugin)
-                    else {
-                        continue;
-                    };
-                    let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
-                        continue;
-                    };
-                    let mat_key = batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
-                    let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else {
-                        continue;
-                    };
-                    let Some(pipeline) = plug_pipes.ldr_transparent() else {
-                        continue;
-                    };
-                    if cur_pipe != Some(pipeline as *const _) {
-                        render_pass.set_pipeline(pipeline);
-                        cur_pipe = Some(pipeline as *const _);
-                    }
-                    render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                    bind_material_group!(render_pass, mat_bg);
-                    let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                    if cur_chunks != Some(chunks) {
-                        render_pass
-                            .set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
-                        render_pass.set_index_buffer(
-                            resources.geometry.index_chunk_slice(chunks.1),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        cur_chunks = Some(chunks);
-                    }
-                    let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                    let first_index = resources.geometry.first_index(mesh.index_span);
-                    render_pass.draw_indexed(
-                        first_index..first_index + mesh.index_count,
-                        base_vertex,
-                        batch.instance_offset..batch.instance_offset + batch.instance_count,
-                    );
-                }
-            }
-
             // Fat batches: the per-object pipelines with the twenty-binding
             // group-1 layout, drawn by instance range. Opaque first (the
-            // bundle covers these too), then the LDR path draws blended fat
-            // batches inline with the alpha-blend pipeline, then normal lines.
+            // bundle covers these too), then normal lines.
             let ldr_family = resources.scene.ldr_family();
             let fat_pass = crate::renderer::types::FatPass::Colour {
                 family: &ldr_family,
@@ -924,24 +826,6 @@ macro_rules! emit_draw_calls {
                 }
             }
             for batch in batches {
-                let Some(fat) = batch.fat.as_ref() else {
-                    continue;
-                };
-                if !batch.is_transparent
-                    || matches!(fat.draw, crate::renderer::types::FatDraw::NormalLines)
-                {
-                    continue;
-                }
-                crate::renderer::types::draw_fat_batch(
-                    resources,
-                    fat_bind_groups,
-                    render_pass,
-                    batch,
-                    &fat_pass,
-                    &mut fat_bound,
-                );
-            }
-            for batch in batches {
                 if !batch
                     .fat
                     .as_ref()
@@ -957,6 +841,98 @@ macro_rules! emit_draw_calls {
                     &fat_pass,
                     &mut fat_bound,
                 );
+            }
+
+            // Blended batches, after every opaque draw. There is no OIT here,
+            // so they draw back to front by view depth. Prepare gives each
+            // blended item its own batch on this path, so the order is per
+            // item. Lean, plugin and fat batches share the one sorted loop,
+            // and each kind rebinds its state after a draw of another kind.
+            if !transparent_batches.is_empty() {
+                let view = frame.camera.render_camera.view;
+                let depth =
+                    |b: &InstancedBatch| -view.transform_point3(glam::Vec3::from(b.sort_centre)).z;
+                transparent_batches.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+                let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
+                let mut cur_chunks: Option<(u32, u32)> = None;
+                let mut lean_bound = false;
+                for batch in &transparent_batches {
+                    if batch.fat.is_some() {
+                        if crate::renderer::types::draw_fat_batch(
+                            resources,
+                            fat_bind_groups,
+                            render_pass,
+                            batch,
+                            &fat_pass,
+                            &mut fat_bound,
+                        ) {
+                            lean_bound = false;
+                        }
+                        continue;
+                    }
+                    if frame.viewport.wireframe_mode {
+                        continue;
+                    }
+                    let (pipeline, mat_bg) = if batch.shading_plugin.is_some() {
+                        let Some((plug_pipes, mat_bg)) =
+                            resources.material_plugin_instanced_draw(batch.shading_plugin)
+                        else {
+                            continue;
+                        };
+                        let Some(pipeline) = plug_pipes.ldr_transparent() else {
+                            continue;
+                        };
+                        (pipeline, Some(mat_bg))
+                    } else {
+                        let Some(pipeline) = resources.instancing.ldr_transparent() else {
+                            continue;
+                        };
+                        (pipeline, None)
+                    };
+                    let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                        continue;
+                    };
+                    let mat_key = batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
+                    let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else {
+                        continue;
+                    };
+                    if !lean_bound {
+                        bind_deform_group!(
+                            render_pass,
+                            resources,
+                            &resources.deform.dummy_bind_group
+                        );
+                        cur_pipe = None;
+                        cur_chunks = None;
+                        fat_bound = crate::renderer::types::FatBound::default();
+                        lean_bound = true;
+                    }
+                    if cur_pipe != Some(pipeline as *const _) {
+                        render_pass.set_pipeline(pipeline);
+                        cur_pipe = Some(pipeline as *const _);
+                    }
+                    render_pass.set_bind_group(1, inst_tex_bg, &[]);
+                    if let Some(mat_bg) = mat_bg {
+                        bind_material_group!(render_pass, mat_bg);
+                    }
+                    let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                    if cur_chunks != Some(chunks) {
+                        render_pass
+                            .set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
+                        render_pass.set_index_buffer(
+                            resources.geometry.index_chunk_slice(chunks.1),
+                            crate::gpu::IndexFormat::Uint32,
+                        );
+                        cur_chunks = Some(chunks);
+                    }
+                    let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                    let first_index = resources.geometry.first_index(mesh.index_span);
+                    render_pass.draw_indexed(
+                        first_index..first_index + mesh.index_count,
+                        base_vertex,
+                        batch.instance_offset..batch.instance_offset + batch.instance_count,
+                    );
+                }
             }
         }
 

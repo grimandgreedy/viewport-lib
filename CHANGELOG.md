@@ -159,6 +159,7 @@
 
 ### Fixed
 
+- **Blended meshes on the direct path drew in batch order** - with `PipelineMode::Direct` there is no order-independent transparency, and blended mesh items drew in the order the batcher grouped them, so overlapping translucent surfaces stacked wrongly from most viewpoints. Each blended item now draws as its own batch on that path, sorted back to front from the camera every frame, after all opaque meshes. The HDR path is unchanged.
 - **Items sharing a mesh drew their normal lines at one transform** - `show_normals` wrote one normal-line uniform per mesh, so several items on the same mesh stacked their lines at the last item's transform. Each item's lines now draw at its own instance record.
 - **A material plugin shaded only PBR materials on the instanced path** - the composer forced the PBR shading loop in the per-object shaders but not the instanced ones, so a plugin on a Lambert or flat material drew without its hook once the item joined a batch. Every mesh shader now routes the choice through one `shading_is_pbr` select the composer rewrites, and the instanced shaders carry the surface hook's emissive and alpha slots, so a plugin composes the same on both.
 - **A translucent wireframe item drew as a blended fill** - an item with `wireframe` and an opacity below one routed into the transparent pass; its edge lines now draw opaque whatever its opacity, as they did per-object.

@@ -89,18 +89,19 @@ fn material_sampler_wrap_mode_changes_tiling() {
             if let Some(key) = sampler {
                 item.material = item.material.with_sampler(TextureSlot::Albedo, key);
             }
+            // The single copy draws per-object, so the two paths compare.
+            item.settings.force_per_object = copies == 1;
             frame.scene.surfaces = SurfaceSubmission::Flat(vec![item; copies].into());
-        // Each render is a different scene; a repeated generation would reuse
-        // the previous render's batches.
-        frame.scene.generation = sampler.map_or(1, |_| 2) + copies as u64 * 10;
+            // Each render is a different scene; a repeated generation would reuse
+            // the previous render's batches.
+            frame.scene.generation = sampler.map_or(1, |_| 2) + copies as u64 * 10;
             let px = renderer.render_offscreen(&device, &queue, &frame, 96, 96);
             let stats = renderer.last_frame_stats();
             if copies > 1 {
                 assert_eq!(stats.per_object_items, 0, "copies must batch");
                 assert_eq!(stats.instanced_batches, 1, "copies must share a batch");
             } else {
-                // Below the instancing threshold every item draws per-object.
-                assert_eq!(stats.instanced_batches, 0, "one item draws per-object");
+                assert_eq!(stats.per_object_items, 1, "one item draws per-object");
             }
             px
         };

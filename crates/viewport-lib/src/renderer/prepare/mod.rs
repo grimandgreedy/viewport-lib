@@ -329,8 +329,13 @@ impl ViewportRenderer {
         // per-object and foreground items that intern every frame dedup to
         // the existing entries. A miss re-interns everything, so the tables
         // reset there, before any packer runs.
-        let instanced_cache_valid =
-            Self::instanced_cache_valid(resources, &self.instancing, scene_items, frame);
+        let instanced_cache_valid = Self::instanced_cache_valid(
+            resources,
+            &self.instancing,
+            scene_items,
+            frame,
+            hdr_family,
+        );
         if !instanced_cache_valid {
             resources.material_gpu_builder.reset();
             resources.custom_data_builder.reset();

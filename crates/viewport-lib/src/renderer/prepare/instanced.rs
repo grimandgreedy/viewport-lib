@@ -284,6 +284,9 @@ struct Entry<'a> {
     kind: RecordKind,
     key: BatchGroupKey,
     fat: Option<FatKey>,
+    /// The scene index of a blended record on an LDR frame, which draws as its
+    /// own batch so the pass can sort it by distance. `None` otherwise.
+    solo: Option<usize>,
 }
 
 impl Entry<'_> {
@@ -354,6 +357,18 @@ fn fat_key(
             .shading_plugin
             .is_some_and(|p| !resources.material_plugin_instanced_ready(p)),
     ))
+}
+
+/// Whether a record draws blended. Edge and normal lines always draw opaque,
+/// whatever the item's opacity: a translucent wireframe item draws its lines,
+/// not a blended surface.
+fn record_blends(key: &BatchGroupKey, fat: Option<&FatKey>) -> bool {
+    key.7
+        && !matches!(
+            fat.map(|f| f.0),
+            Some(crate::renderer::types::FatDraw::Edges)
+                | Some(crate::renderer::types::FatDraw::NormalLines)
+        )
 }
 
 /// The group-1 bind-group key of a fat batch, from the facts that pick its
@@ -462,6 +477,7 @@ impl ViewportRenderer {
         instancing: &InstancingState,
         scene_items: &[SceneRenderItem],
         frame: &FrameData,
+        hdr_family: bool,
     ) -> bool {
         // Generation-based cache: skip batch rebuild and GPU upload when nothing changed.
         // wireframe_mode removed from cache key : wireframe rendering
@@ -526,6 +542,7 @@ impl ViewportRenderer {
             // per-instance wireframe flag (see the `InstanceData` push below), so
             // flipping it with no other scene change must still force a rebuild.
             && frame.viewport.wireframe_mode == instancing.last_wireframe_mode
+            && hdr_family == instancing.last_hdr_family
     }
 
     /// Build instanced batches for the current frame: filter eligible items,
@@ -579,17 +596,20 @@ impl ViewportRenderer {
                     continue;
                 };
                 let mut push = |kind: RecordKind, material: &crate::scene::material::Material| {
+                    let key =
+                        material_group_key(item.mesh_id, material, item.settings.opacity, binding);
+                    let fat = fat_key(item, material, kind, resources, wireframe_mode);
+                    // HDR resolves blended batches through OIT, which needs no
+                    // order. The LDR pass blends in draw order, so there each
+                    // blended record is its own batch and the pass sorts them.
+                    let solo = (!hdr_family && record_blends(&key, fat.as_ref())).then_some(idx);
                     entries.push(Entry {
                         idx,
                         item,
                         kind,
-                        key: material_group_key(
-                            item.mesh_id,
-                            material,
-                            item.settings.opacity,
-                            binding,
-                        ),
-                        fat: fat_key(item, material, kind, resources, wireframe_mode),
+                        key,
+                        fat,
+                        solo,
                     });
                 };
                 match super::mesh_material::active_submesh_materials(item, mesh) {
@@ -609,7 +629,11 @@ impl ViewportRenderer {
                 // Batch grouping key, then the fat key. two_sided is part of the
                 // key because the two pipelines differ in cull mode, so a batch
                 // must not mix one- and two-sided items.
-                let ord = a.key.cmp(&b.key).then_with(|| a.fat.cmp(&b.fat));
+                let ord = a
+                    .key
+                    .cmp(&b.key)
+                    .then_with(|| a.fat.cmp(&b.fat))
+                    .then_with(|| a.solo.cmp(&b.solo));
                 if ord != std::cmp::Ordering::Equal {
                     return ord;
                 }
@@ -654,7 +678,7 @@ impl ViewportRenderer {
                     let key_changed = !at_end && {
                         let a = &entries[batch_start];
                         let b = &entries[i];
-                        a.key != b.key || a.fat != b.fat
+                        a.key != b.key || a.fat != b.fat || a.solo != b.solo
                     };
 
                     if at_end || key_changed {
@@ -662,15 +686,7 @@ impl ViewportRenderer {
                         let rep = &batch_entries[0];
                         let rep_material = rep.material();
                         let instance_offset = all_instances.len() as u32;
-                        // Edge and normal lines always draw opaque, whatever
-                        // the item's opacity: a translucent wireframe item
-                        // draws its lines, not a blended surface.
-                        let is_transparent = rep.key.7
-                            && !matches!(
-                                rep.fat.map(|f| f.0),
-                                Some(crate::renderer::types::FatDraw::Edges)
-                                    | Some(crate::renderer::types::FatDraw::NormalLines)
-                            );
+                        let is_transparent = record_blends(&rep.key, rep.fat.as_ref());
 
                         // All records in a batch share the same mesh_id (batch key).
                         // Look up the mesh once and reuse it for both index_count and
@@ -692,6 +708,8 @@ impl ViewportRenderer {
                             })
                             .unwrap_or((0, 0));
 
+                        let mut bounds_min = glam::Vec3::splat(f32::MAX);
+                        let mut bounds_max = glam::Vec3::splat(f32::MIN);
                         for entry in batch_entries {
                             let item = entry.item;
                             // Recover this item's light-probe SH block (assigned
@@ -765,6 +783,8 @@ impl ViewportRenderer {
                             if let Some(mesh) = batch_mesh {
                                 let model = glam::Mat4::from_cols_array_2d(&item.model);
                                 let world_aabb = mesh.aabb.transformed(&model);
+                                bounds_min = bounds_min.min(world_aabb.min);
+                                bounds_max = bounds_max.max(world_aabb.max);
                                 all_aabbs.push(InstanceAabb {
                                     min: world_aabb.min.into(),
                                     batch_index: batch_idx,
@@ -837,6 +857,11 @@ impl ViewportRenderer {
                             // Batch-uniform: the sampler is part of the batch key.
                             sampler: rep_material.selected_sampler().unwrap_or_default(),
                             fat,
+                            sort_centre: if bounds_min.x <= bounds_max.x {
+                                ((bounds_min + bounds_max) * 0.5).into()
+                            } else {
+                                [0.0; 3]
+                            },
                         });
 
                         batch_start = i;
@@ -944,6 +969,7 @@ impl ViewportRenderer {
 
             instancing.last_scene_generation = frame.scene.generation;
             instancing.last_wireframe_mode = frame.viewport.wireframe_mode;
+            instancing.last_hdr_family = hdr_family;
             instancing.last_selection_generation = frame.interaction.selection_generation;
             instancing.last_scene_items_count = scene_items.len();
             instancing.last_instancable_count = fat_count;
