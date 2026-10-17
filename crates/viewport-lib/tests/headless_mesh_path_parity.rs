@@ -179,3 +179,28 @@ fn transparent_alpha_mask_discards_on_both_paths() {
     );
     assert_close("transparent Mask", alone, batched, 2);
 }
+
+/// An opaque masked material with no albedo texture takes its alpha from the
+/// vertex colours; both paths cut it out.
+#[test]
+fn untextured_alpha_mask_discards_on_both_paths() {
+    let Some(mut scene) = Scene::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut mesh = quad_mesh(1.0);
+    mesh.vertex_colours = Some(vec![[1.0, 1.0, 1.0, 0.2]; 4]);
+    scene.mesh = scene
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(&scene.device, &mesh)
+        .unwrap();
+    let mut material = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
+    material.alpha_mode = AlphaMode::Mask(0.5);
+    let (alone, batched) = scene.both_paths(material, 1.0);
+    assert!(
+        alone[0] < 4,
+        "per-object should cut the quad out: {alone:?}"
+    );
+    assert_close("untextured Mask", alone, batched, 2);
+}

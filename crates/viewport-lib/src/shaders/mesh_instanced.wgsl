@@ -525,8 +525,9 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
                                inst.colour.a   * in.colour.a   * tex_colour.a);
     out.alpha = obj_colour.a;
 
-    // Alpha MASK: discard fragments whose albedo alpha is below the cutoff.
-    if inst.alpha_flag == 1u && inst.has_texture == 1u && obj_colour.a < inst.alpha_cutoff {
+    // Alpha MASK: discard fragments whose alpha is below the cutoff, whichever
+    // of opacity, vertex colour or albedo it comes from.
+    if inst.alpha_flag == 1u && obj_colour.a < inst.alpha_cutoff {
         discard;
     }
 

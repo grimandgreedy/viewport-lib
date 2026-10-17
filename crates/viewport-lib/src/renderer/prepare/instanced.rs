@@ -567,16 +567,15 @@ impl ViewportRenderer {
                                 rep.material.alpha_mode,
                                 crate::scene::material::AlphaMode::Mask(_)
                             ),
-                            // Texture presence is batch-uniform (texture_id is
-                            // in the batch key); the mask discard only fires on
-                            // textured instances.
-                            has_alpha_mask: rep.material.texture_id.is_some()
-                                && batch_items.iter().any(|(_, it)| {
-                                    matches!(
-                                        it.material.alpha_mode,
-                                        crate::scene::material::AlphaMode::Mask(_)
-                                    )
-                                }),
+                            // Any masked instance needs the discard-capable
+                            // pipeline: its alpha can come from the opacity,
+                            // the vertex colours or the albedo texture.
+                            has_alpha_mask: batch_items.iter().any(|(_, it)| {
+                                matches!(
+                                    it.material.alpha_mode,
+                                    crate::scene::material::AlphaMode::Mask(_)
+                                )
+                            }),
                             // Batch-uniform: `shading_plugin` is part of the
                             // batch key, so every item in the batch selects the
                             // same plugin (or built-in shading).
