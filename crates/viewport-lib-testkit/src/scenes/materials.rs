@@ -62,7 +62,7 @@ fn both_paths(
 
 /// An upright card in the XZ plane, facing -Y, standing on z = 0. Vertex
 /// alpha ramps from 0 on the left edge to 1 on the right.
-fn card(half_width: f32, height: f32) -> MeshData {
+pub(super) fn card(half_width: f32, height: f32) -> MeshData {
     let mut mesh = MeshData::default();
     mesh.positions = vec![
         [-half_width, 0.0, 0.0],
@@ -82,7 +82,7 @@ fn card(half_width: f32, height: f32) -> MeshData {
     mesh
 }
 
-fn upload_texture(
+pub(super) fn upload_texture(
     ctx: &mut BuildCtx<'_>,
     data: viewport_lib::TextureData,
 ) -> viewport_lib::TextureId {
@@ -170,7 +170,7 @@ fn build_materials_alpha_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
 /// Push one item at `pos`, kept on the per-object path when `per_object` is
 /// set and left to batch onto the instanced path otherwise.
-fn place(
+pub(super) fn place(
     items: &mut Vec<SceneRenderItem>,
     mesh: viewport_lib::MeshId,
     model: Mat4,
@@ -190,7 +190,7 @@ fn place(
 
 /// Grid placement: column `c` of `columns`, row `r` counted from the top. Rows
 /// come in per-object/instanced pairs, with a wider gap between pairs.
-fn grid_pos(c: usize, columns: usize, r: usize, col_step: f32, row_step: f32) -> Vec3 {
+pub(super) fn grid_pos(c: usize, columns: usize, r: usize, col_step: f32, row_step: f32) -> Vec3 {
     let x = (c as f32 - (columns as f32 - 1.0) * 0.5) * col_step;
     let z = -(r as f32 * row_step + (r / 2) as f32 * row_step * 0.3);
     Vec3::new(x, 0.0, z)
@@ -456,7 +456,7 @@ fn build_materials_alpha(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// Straight on from -Y, looking at the middle of a grid that hangs below z = 0.
 /// Orthographic, so under directional light every cell shades the same
 /// wherever it sits and the per-object and instanced rows compare exactly.
-fn grid_camera(centre_z: f32, distance: f32) -> Vec<NamedCamera> {
+pub(super) fn grid_camera(centre_z: f32, distance: f32) -> Vec<NamedCamera> {
     let mut camera = orbit_camera(Vec3::new(0.0, 0.0, centre_z), distance, 0.0, 1.5708);
     camera.projection = Projection::Orthographic;
     camera.aspect = 4.0 / 3.0;

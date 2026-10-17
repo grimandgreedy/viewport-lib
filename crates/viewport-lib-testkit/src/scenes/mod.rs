@@ -14,6 +14,7 @@ use viewport_lib::Colour;
 // textures, and (optionally) real model files. All behind the `scenes` feature
 // with this module.
 pub mod exposure;
+pub mod fallbacks;
 pub mod item_types;
 pub mod materials;
 pub mod meshes;
@@ -959,6 +960,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(overlays::scenes());
     scenes.extend(shadows::scenes());
     scenes.extend(materials::scenes());
+    scenes.extend(fallbacks::scenes());
     scenes.extend(exposure::scenes());
     scenes
 }
