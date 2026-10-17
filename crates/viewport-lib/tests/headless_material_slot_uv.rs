@@ -1,18 +1,19 @@
-//! Per-slot texture transforms on the per-object mesh path.
+//! Per-slot texture transforms on the per-object mesh paths, opaque and OIT.
 //!
 //! The metallic-roughness and emissive maps take their own `UvTransform` (and
 //! `uv_set`) rather than the albedo slot's, on every mesh path.
 
 use viewport_lib::wgpu;
-use viewport_lib::{Colour, TextureSlot, UvTransform};
+use viewport_lib::{AlphaMode, Colour, TextureSlot, UvTransform};
 
 mod common;
 use common::*;
 
 /// Render one emissive box whose emissive slot reads a single texel of a
-/// half-black, half-white strip, chosen by the slot's own offset. Returns the
-/// mean brightness over the centre of the frame.
-fn emissive_slot_brightness(offset_u: f32) -> Option<f64> {
+/// half-black, half-white strip, chosen by the slot's own offset. `Blend`
+/// draws it through the OIT shader instead of the opaque one. Returns the mean
+/// brightness over the centre of the frame.
+fn emissive_slot_brightness(offset_u: f32, alpha_mode: AlphaMode) -> Option<f64> {
     let (device, queue) = headless_device()?;
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let mesh_id = renderer
@@ -58,6 +59,10 @@ fn emissive_slot_brightness(offset_u: f32) -> Option<f64> {
     item.material.base_colour = Colour::linear_rgb(0.0, 0.0, 0.0);
     item.material.emissive = Colour::linear_rgb(1.0, 1.0, 1.0);
     item.material.emissive_texture_id = Some(emissive_tex);
+    item.material.alpha_mode = alpha_mode;
+    if alpha_mode == AlphaMode::Blend {
+        item.material.base_colour = Colour::linear(0.0, 0.0, 0.0, 0.8);
+    }
     // Collapse the emissive slot's UVs onto one texel; the shared (albedo)
     // transform stays identity, so only a per-slot read can pick the texel.
     item.material = item.material.with_texture_transform(
@@ -87,13 +92,27 @@ fn emissive_slot_brightness(offset_u: f32) -> Option<f64> {
 /// offset onto the white texel glows, an offset onto the black one does not.
 #[test]
 fn per_object_emissive_uses_its_own_slot_transform() {
-    let Some(white) = emissive_slot_brightness(0.875) else {
+    let Some(white) = emissive_slot_brightness(0.875, AlphaMode::Opaque) else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let black = emissive_slot_brightness(0.125).unwrap();
+    let black = emissive_slot_brightness(0.125, AlphaMode::Opaque).unwrap();
     assert!(
         white > black + 150.0,
         "emissive slot transform ignored: white texel {white:.1}, black texel {black:.1}"
+    );
+}
+
+/// The same on the per-object OIT path, which has its own copy of the shader.
+#[test]
+fn per_object_oit_emissive_uses_its_own_slot_transform() {
+    let Some(white) = emissive_slot_brightness(0.875, AlphaMode::Blend) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let black = emissive_slot_brightness(0.125, AlphaMode::Blend).unwrap();
+    assert!(
+        white > black + 100.0,
+        "OIT emissive slot transform ignored: white texel {white:.1}, black texel {black:.1}"
     );
 }
