@@ -475,6 +475,11 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         inst.colour.a   * in.colour.a   * tex_colour.a,
     );
     out.alpha = obj_colour.a;
+
+    // Alpha MASK: discard fragments whose alpha is below the cutoff.
+    if inst.alpha_flag == 1u && obj_colour.a < inst.alpha_cutoff {
+        discard;
+    }
     var base_colour = obj_colour.rgb;
 
     // Unlit: skip all lighting, return raw colour directly through OIT.

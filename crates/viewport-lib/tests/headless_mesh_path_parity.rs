@@ -148,3 +148,34 @@ fn premultiplied_blend_matches_on_both_paths() {
     assert!(alone[0] > 10, "the surface should render: {alone:?}");
     assert_close("BlendPremultiplied", alone, batched, 4);
 }
+
+/// A masked material faded below full opacity draws through the transparent
+/// path; fragments under the cutoff are discarded there on both paths rather
+/// than composited as a faint quad.
+#[test]
+fn transparent_alpha_mask_discards_on_both_paths() {
+    let Some(mut scene) = Scene::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    // Albedo alpha 0.2: with opacity 0.8 the combined alpha (0.16) is under
+    // the 0.5 cutoff, so the whole quad is cut out.
+    let tex = scene
+        .renderer
+        .resources_mut()
+        .upload_texture(
+            &scene.device,
+            &scene.queue,
+            viewport_lib::TextureData::srgb(1, 1, vec![220, 220, 220, 51]),
+        )
+        .unwrap();
+    let mut material = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
+    material.texture_id = Some(tex);
+    material.alpha_mode = AlphaMode::Mask(0.5);
+    let (alone, batched) = scene.both_paths(material, 0.8);
+    assert!(
+        alone[0] < 4,
+        "per-object should cut the quad out: {alone:?}"
+    );
+    assert_close("transparent Mask", alone, batched, 2);
+}
