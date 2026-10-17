@@ -5,10 +5,7 @@
 //! frames the bundle replay; their images must match.
 
 use viewport_lib::Colour;
-use viewport_lib::{
-    CameraFrame, FrameData, Material, SamplerKey, SceneFrame, SceneRenderItem, TextureSlot,
-    WrapMode,
-};
+use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
 use viewport_lib_testkit::{Harness, orbit_camera};
 
 #[test]
@@ -25,9 +22,7 @@ fn bundle_replay_matches_immediate_draws() {
         .expect("upload");
 
     // 100 unbatchable items in a grid, some overlapping in depth so wrong draw
-    // content would show. A per-material sampler is what keeps them off the
-    // instanced path: the instanced and bindless paths share one sampler per
-    // batch, so a material picking its own wrap mode draws per object.
+    // content would show. The test setting keeps them off the instanced path.
     let items: Vec<SceneRenderItem> = (0..100)
         .map(|i| {
             let mut it = SceneRenderItem::default();
@@ -39,15 +34,8 @@ fn bundle_replay_matches_immediate_draws() {
                 0.3 + (i % 7) as f32 * 0.1,
                 0.4,
                 0.8 - (i % 5) as f32 * 0.1,
-            ))
-            .with_sampler(
-                TextureSlot::Albedo,
-                SamplerKey {
-                    wrap_u: WrapMode::ClampToEdge,
-                    wrap_v: WrapMode::ClampToEdge,
-                    ..Default::default()
-                },
-            );
+            ));
+            it.settings.force_per_object = true;
             it
         })
         .collect();

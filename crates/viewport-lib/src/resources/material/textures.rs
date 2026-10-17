@@ -835,7 +835,7 @@ impl DeviceResources {
             .retain(|&(a, n, ao), _| a != raw && n != raw && ao != raw);
         self.instancing
             .bind_groups
-            .retain(|&(a, n, ao, mr, em, _uv1), _| {
+            .retain(|&(a, n, ao, mr, em, _uv1, _sampler), _| {
                 a != raw && n != raw && ao != raw && mr != raw && em != raw
             });
 
@@ -1287,7 +1287,7 @@ impl DeviceResources {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 1,
-                        resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&self.material.mesh_sampler),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
@@ -1558,7 +1558,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.material.mesh_sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,
@@ -1695,24 +1695,10 @@ impl DeviceResources {
         mesh.extension_attr_buffer.is_some().hash(&mut h);
         mesh.lightmap_gen.hash(&mut h);
         // Per-material sampler: two items sharing every texture but differing in
-        // wrap/filter/aniso must get distinct bind groups. Hash the parts that
-        // change the sampler (not `lod_bias`, which is not applied), matching
-        // `MaterialFallbacks::resolve_sampler`'s dedup key.
-        match sampler {
-            Some(k) => {
-                use crate::scene::material::TextureFilter;
-                1u8.hash(&mut h);
-                k.wrap_u.hash(&mut h);
-                k.wrap_v.hash(&mut h);
-                k.filter.hash(&mut h);
-                let aniso = match k.filter {
-                    TextureFilter::Linear => k.anisotropy.clamp(1, 16),
-                    TextureFilter::Nearest => 1,
-                };
-                aniso.hash(&mut h);
-            }
-            None => 0u8.hash(&mut h),
-        }
+        // wrap/filter/aniso must get distinct bind groups. No key and the default
+        // key bind the same sampler, so they hash the same.
+        crate::resources::material::fallbacks::sampler_code(sampler.unwrap_or_default())
+            .hash(&mut h);
         Some(h.finish())
     }
 
@@ -1757,10 +1743,12 @@ impl DeviceResources {
         let mesh = self.mesh_store.get(mesh_id)?;
 
         // The material's sampler (wrap/filter/aniso), deduped through the
-        // palette, or the shared repeat/linear default when the material set no
-        // `SamplerKey`. Bound at binding 2 below.
-        let keyed_sampler = sampler.map(|k| self.material.resolve_sampler(device, k));
-        let bound_sampler = keyed_sampler.as_ref().unwrap_or(&self.material.sampler);
+        // palette; a material that set no `SamplerKey` binds the default key's.
+        // Bound at binding 2 below.
+        let keyed_sampler = self
+            .material
+            .resolve_sampler(device, sampler.unwrap_or_default());
+        let bound_sampler = &keyed_sampler;
 
         // Cache hit: the previously built bind group is still valid, so skip the
         // create_bind_group below. The caller keeps its existing bind group. The

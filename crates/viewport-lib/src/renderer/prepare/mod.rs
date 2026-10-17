@@ -20,7 +20,8 @@ mod viewport_overlays;
 use math::*;
 use mesh_material::*;
 pub(crate) use mesh_material::{
-    active_submesh_materials, has_opaque_draws, has_transparent_draws, is_instanceable,
+    FallbackReason, active_submesh_materials, has_opaque_draws, has_transparent_draws,
+    is_instanceable,
 };
 use overlay_geometry::*;
 use projection::*;
@@ -333,10 +334,17 @@ impl ViewportRenderer {
         // test and the instanced batch filter keeps this O(items) rather than running the
         // same per-item work three times over. At city scale (tens of thousands
         // of resident meshes) that is the difference between a few milliseconds
-        // and a few hundred.
+        // and a few hundred. The fallback reasons are counted in the same walk.
+        let mut per_object_by_reason = crate::renderer::stats::PerObjectReasons::default();
         let instanceable: Vec<bool> = scene_items
             .iter()
-            .map(|item| is_instanceable(item, resources))
+            .map(|item| match fallback_reason(item, resources) {
+                None => true,
+                Some(reason) => {
+                    per_object_by_reason.count(reason);
+                    false
+                }
+            })
             .collect();
         // Blend each light-probe-lit item's SH into the shared buffer once, so
         // the per-object and instanced paths that draw those items index the
@@ -456,7 +464,7 @@ impl ViewportRenderer {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&resources.material.sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&resources.material.mesh_sampler),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 3,
@@ -623,6 +631,7 @@ impl ViewportRenderer {
                 .zip(instanceable.iter())
                 .filter(|(item, inst)| !item.settings.hidden && !**inst)
                 .count() as u32;
+            debug_assert_eq!(per_object_by_reason.total(), per_object_items);
 
             // Items drawn instanced whose mesh carries per-mesh deform slot
             // data. The instanced draws bind the empty deform group and the
@@ -667,6 +676,7 @@ impl ViewportRenderer {
                 draw_calls,
                 instanced_batches: instanced_batch_count,
                 per_object_items,
+                per_object_by_reason,
                 per_object_bind_groups_built,
                 batches_reuploaded,
                 batches_skipped,

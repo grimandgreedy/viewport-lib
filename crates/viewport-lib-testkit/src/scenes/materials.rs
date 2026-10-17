@@ -1,14 +1,13 @@
 //! Material scenes that draw each material on both mesh paths.
 //!
-//! Every material appears twice: one copy carries a per-material sampler,
-//! which keeps it on the per-object path, and the other is batched onto the
-//! instanced path. The two should look the same, so a parity break shows up as
+//! Every material appears twice: one copy sets `force_per_object`, which keeps
+//! it on the per-object path, and the other is batched onto the instanced path. The two should look the same, so a parity break shows up as
 //! a difference inside one reference image as well as against the reference.
 
 use glam::{Mat4, Vec3};
 use viewport_lib::{
     AlphaMode, BackfacePolicy, Colour, LightKind, LightSource, LightingSettings, Material,
-    MeshData, Projection, SamplerKey, SceneRenderItem, ShadingModel, TextureSlot, UvTransform,
+    MeshData, Projection, SceneRenderItem, ShadingModel, TextureSlot, UvTransform,
     primitives,
 };
 
@@ -29,13 +28,6 @@ fn pair_x(i: usize) -> f32 {
     (i as f32 - 1.5) * PAIR_SPACING
 }
 
-/// Keep an item on the per-object path. A per-material sampler does that
-/// without changing how the default sampler would draw it.
-fn per_object(mut material: Material) -> Material {
-    material = material.with_sampler(TextureSlot::Albedo, SamplerKey::default());
-    material
-}
-
 /// Push one copy of `material` per path, at `x`, with `model` placing the mesh
 /// relative to that spot.
 fn both_paths(
@@ -46,16 +38,14 @@ fn both_paths(
     material: Material,
     opacity: f32,
 ) {
-    for (dx, mat) in [
-        (-HALF_PAIR, per_object(material.clone())),
-        (HALF_PAIR, material),
-    ] {
+    for (dx, per_object) in [(-HALF_PAIR, true), (HALF_PAIR, false)] {
         let mut it = item_model(
             mesh,
             Mat4::from_translation(Vec3::new(x + dx, 0.0, 0.0)) * model,
-            mat,
+            material.clone(),
         );
         it.settings.opacity = opacity;
+        it.settings.force_per_object = per_object;
         items.push(it);
     }
 }
@@ -178,13 +168,9 @@ pub(super) fn place(
     opacity: f32,
     per_object_path: bool,
 ) {
-    let material = if per_object_path {
-        per_object(material)
-    } else {
-        material
-    };
     let mut it = item_model(mesh, model, material);
     it.settings.opacity = opacity;
+    it.settings.force_per_object = per_object_path;
     items.push(it);
 }
 

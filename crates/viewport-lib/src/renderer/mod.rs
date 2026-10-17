@@ -129,6 +129,7 @@ impl ViewportId {
 }
 
 use self::shadows::{compute_cascade_matrix, compute_cascade_splits};
+pub(crate) use self::types::BatchBindKey;
 use self::types::{INSTANCING_THRESHOLD, InstancedBatch};
 use crate::resources::{
     BatchMeta, CLIP_VOLUME_MAX, CameraUniform, ClipPlanesUniform, ClipVolumeEntry,

@@ -18,6 +18,9 @@ use viewport_lib_types::ids::TextureId;
 /// against. Opaque materials cast shadows through the discard-free pipeline that
 /// samples no texture, so they collapse fully.
 ///
+/// The material's sampler is in the key under both bindings: it binds at
+/// group-1 binding 2 for the whole draw, so a batch has one sampler.
+///
 /// A material plugin also splits the key: plugin items select a per-plugin
 /// pipeline set and a per-variant group-3 bind group that apply to the whole
 /// draw, so two items batch together only when their plugin selection matches
@@ -35,6 +38,7 @@ type BatchGroupKey = (
     bool,
     bool,
     Option<(u32, u32)>,
+    u32,
 );
 
 /// Form the opaque and OIT draw groups for GPU-driven submission and size + upload
@@ -109,7 +113,7 @@ fn build_and_upload_draw_groups(
         // is the global slot each group takes in `draw_counts` (its `count_index`).
         let mut next_group = 0u32;
         // (run key, index within the group vec the key's transparency bit selects).
-        let mut cur: Option<((bool, bool, bool, u32, u32), usize)> = None;
+        let mut cur: Option<((bool, bool, bool, u32, u32, u32), usize)> = None;
         for (b, batch) in instancing.batches.iter().enumerate() {
             let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                 cur = None;
@@ -133,12 +137,16 @@ fn build_and_upload_draw_groups(
             let no_discard = !transparent && !clipping_active && !batch.has_alpha_mask;
             let vertex_chunk = mesh.vertex_span.chunk;
             let index_chunk = mesh.index_span.chunk;
+            // The sampler is bound in the group-1 bind group, so a group cannot
+            // span two samplers.
+            let sampler_code = crate::resources::material::fallbacks::sampler_code(batch.sampler);
             let key = (
                 transparent,
                 batch.two_sided,
                 no_discard,
                 vertex_chunk,
                 index_chunk,
+                sampler_code,
             );
             let vec_ref = if transparent {
                 &mut oit_groups
@@ -161,6 +169,7 @@ fn build_and_upload_draw_groups(
                         vertex_chunk,
                         index_chunk,
                         count_index,
+                        sampler_code,
                     });
                     let gv = vec_ref.len() - 1;
                     cur = Some((key, gv));
@@ -264,6 +273,11 @@ fn batch_group_key(item: &SceneRenderItem, binding: MaterialTextureBinding) -> B
         item.settings.opacity < 1.0 || m.is_blend(),
         m.shading_plugin
             .map(|p| (p.plugin_index(), p.variant_index())),
+        // The sampler binds at group-1 binding 2 for the whole batch, on both
+        // texture bindings. No key and the default key share a code.
+        crate::resources::material::fallbacks::sampler_code(
+            m.selected_sampler().unwrap_or_default(),
+        ),
     )
 }
 
@@ -580,6 +594,8 @@ impl ViewportRenderer {
                             // batch key, so every item in the batch selects the
                             // same plugin (or built-in shading).
                             shading_plugin: rep.material.shading_plugin,
+                            // Batch-uniform: the sampler is part of the batch key.
+                            sampler: rep.material.selected_sampler().unwrap_or_default(),
                         });
 
                         batch_start = i;
@@ -706,14 +722,16 @@ impl ViewportRenderer {
                     batch.metallic_roughness_id,
                     batch.emissive_id,
                     uv1_chunk,
+                    batch.sampler,
                 );
                 // Under bindless, the direct colour draws bind one texture-array
-                // group per vertex-slab chunk (the chunk supplies the uv1 buffer);
-                // a no-op on the per-batch binding.
+                // group per vertex-slab chunk and sampler (the chunk supplies the
+                // uv1 buffer); a no-op on the per-batch binding.
                 resources.ensure_bindless_colour_bind_group(
                     device,
                     instancing.instance_gen,
                     uv1_chunk,
+                    batch.sampler,
                 );
             }
         } else {
@@ -731,14 +749,16 @@ impl ViewportRenderer {
                     batch.metallic_roughness_id,
                     batch.emissive_id,
                     uv1_chunk,
+                    batch.sampler,
                 );
                 // Under bindless, the direct colour draws bind one texture-array
-                // group per vertex-slab chunk (the chunk supplies the uv1 buffer);
-                // a no-op on the per-batch binding.
+                // group per vertex-slab chunk and sampler (the chunk supplies the
+                // uv1 buffer); a no-op on the per-batch binding.
                 resources.ensure_bindless_colour_bind_group(
                     device,
                     instancing.instance_gen,
                     uv1_chunk,
+                    batch.sampler,
                 );
             }
         }
@@ -819,11 +839,13 @@ impl ViewportRenderer {
                 batch.metallic_roughness_id,
                 batch.emissive_id,
                 uv1_chunk,
+                batch.sampler,
             );
             // Under bindless the culled colour draws bind one texture-array group
-            // per viewport per vertex-slab chunk (the per-batch groups above still
-            // serve the shadow-cutout cull path); a no-op on the per-batch binding.
-            resources.get_bindless_cull_bind_group(cull_state, device, uv1_chunk);
+            // per viewport per vertex-slab chunk and sampler (the per-batch groups
+            // above still serve the shadow-cutout cull path); a no-op on the
+            // per-batch binding.
+            resources.get_bindless_cull_bind_group(cull_state, device, uv1_chunk, batch.sampler);
         }
 
         // GPU-driven submission: form the opaque draw groups and size the

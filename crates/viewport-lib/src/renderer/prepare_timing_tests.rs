@@ -20,7 +20,7 @@ fn per_object_prepare_timing() {
         .resources_mut()
         .upload_mesh_data(&device, &crate::geometry::primitives::cube(0.4))
         .unwrap();
-    // A per-material sampler keeps every item off the instanced path.
+    // The test setting keeps every item off the instanced path.
     let items: Vec<SceneRenderItem> = (0..10_000)
         .map(|i| {
             let mut item = SceneRenderItem::default();
@@ -29,8 +29,8 @@ fn per_object_prepare_timing() {
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x - 50.0, y - 50.0, 0.0))
                 .to_cols_array_2d();
             item.material =
-                Material::from_colour(Colour::linear_rgb((i % 7) as f32 / 7.0, 0.5, 0.5))
-                    .with_sampler(crate::TextureSlot::Albedo, crate::SamplerKey::default());
+                Material::from_colour(Colour::linear_rgb((i % 7) as f32 / 7.0, 0.5, 0.5));
+            item.settings.force_per_object = true;
             item
         })
         .collect();

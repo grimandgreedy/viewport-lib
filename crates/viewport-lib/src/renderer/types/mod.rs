@@ -75,6 +75,43 @@ pub(crate) struct InstancedBatch {
     /// count-multi-draw run-forming, so the field also flags "skip me" in those
     /// loops.
     pub shading_plugin: Option<crate::scene::material::MaterialPluginId>,
+    /// The sampler bound at group-1 binding 2 for the whole batch: the
+    /// material's selected sampler, or the default key. Part of the batch key.
+    pub sampler: crate::scene::material::SamplerKey,
+}
+
+/// Group-1 bind-group cache key for an instanced batch: the five material
+/// texture ids (`u64::MAX` for a fallback slot), the uv1 chunk discriminator
+/// (`uv1_chunk_key`) and the sampler code (`sampler_code`).
+pub(crate) type BatchBindKey = (u64, u64, u64, u64, u64, u32, u32);
+
+impl InstancedBatch {
+    /// This batch's [`BatchBindKey`] for the uv1 chunk discriminator `uv1_key`.
+    pub(crate) fn bind_key(&self, uv1_key: u32) -> BatchBindKey {
+        let raw = |id: Option<crate::resources::TextureId>| id.map(|t| t.raw()).unwrap_or(u64::MAX);
+        (
+            raw(self.texture_id),
+            raw(self.normal_map_id),
+            raw(self.ao_map_id),
+            raw(self.metallic_roughness_id),
+            raw(self.emissive_id),
+            uv1_key,
+            crate::resources::material::fallbacks::sampler_code(self.sampler),
+        )
+    }
+
+    /// The alpha-cutout shadow bind-group cache key for this batch in `cascade`:
+    /// the albedo, normal and AO texture ids and the sampler code.
+    pub(crate) fn cutout_key(&self, cascade: usize) -> (usize, u64, u64, u64, u32) {
+        let raw = |id: Option<crate::resources::TextureId>| id.map(|t| t.raw()).unwrap_or(u64::MAX);
+        (
+            cascade,
+            raw(self.texture_id),
+            raw(self.normal_map_id),
+            raw(self.ao_map_id),
+            crate::resources::material::fallbacks::sampler_code(self.sampler),
+        )
+    }
 }
 
 mod clip;
@@ -351,14 +388,7 @@ macro_rules! emit_draw_calls {
                                 // them without the plugin hook.
                                 if batch.shading_plugin.is_some() { continue; }
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
-                                let mat_key = (
-                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                                );
+                                let mat_key = batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
                                 // Combined (instance storage + texture) bind group, primed in prepare().
                                 let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
                                 let no_discard = !clipping_active && !batch.has_alpha_mask;
@@ -406,14 +436,7 @@ macro_rules! emit_draw_calls {
                             let Some((plug_pipes, mat_bg)) =
                                 resources.material_plugin_instanced_draw(batch.shading_plugin) else { continue };
                             let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
-                            let mat_key = (
-                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                            );
+                            let mat_key = batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
                             let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
                             let Some(pipeline) = plug_pipes.ldr_opaque(
                                 crate::renderer::pipeline_key::PipelineKey::two_sided(batch.two_sided),
@@ -451,14 +474,7 @@ macro_rules! emit_draw_calls {
                                 // sub-loop below.
                                 if batch.shading_plugin.is_some() { continue; }
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
-                                let mat_key = (
-                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                                );
+                                let mat_key = batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
                                 let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
                                 let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
@@ -492,14 +508,7 @@ macro_rules! emit_draw_calls {
                             let Some((plug_pipes, mat_bg)) =
                                 resources.material_plugin_instanced_draw(batch.shading_plugin) else { continue };
                             let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
-                            let mat_key = (
-                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                            );
+                            let mat_key = batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
                             let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
                             let Some(pipeline) = plug_pipes.ldr_transparent() else { continue };
                             if cur_pipe != Some(pipeline as *const _) {

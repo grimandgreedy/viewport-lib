@@ -59,7 +59,9 @@ fn expected(name: &str) -> Option<Expected> {
         // grid's backdrop wall is the extra item.
         "materials_textures" => e(42, 42, 28, 7, 21, 22176),
         "materials_alpha" => e(65, 65, 43, 11, 32, 130),
-        "materials_fallbacks" => e(44, 44, 40, 4, 36, 21128),
+        // The clamped-sampler column's lower copies batch; every other lower
+        // copy still draws per-object.
+        "materials_fallbacks" => e(44, 44, 40, 6, 34, 21128),
         "mesh_sidecars" => e(18, 18, 22, 0, 18, 9504),
         // Exposure charts: the ground and the twelve cards, two instanced
         // batches (the ground mesh and the shared card mesh).

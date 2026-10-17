@@ -849,7 +849,7 @@ impl ViewportRenderer {
                                         cull0.draw_counts_buf.as_ref(),
                                     ) {
                                         let mut cur_pipe: Option<(bool, bool)> = None;
-                                        let mut cur_chunks: Option<(u32, u32)> = None;
+                                        let mut cur_chunks: Option<(u32, u32, u32)> = None;
                                         for group in self.instancing.draw_groups.iter() {
                                             // The group carries its pipeline
                                             // selectors and geometry chunk, so no
@@ -873,14 +873,14 @@ impl ViewportRenderer {
                                                 render_pass.set_pipeline(pl);
                                                 cur_pipe = Some(pipe_key);
                                             }
-                                            let chunks = (group.vertex_chunk, group.index_chunk);
+                                            let chunks = (group.vertex_chunk, group.index_chunk, group.sampler_code);
                                             if cur_chunks != Some(chunks) {
                                                 // The colour bind group carries this
-                                                // chunk's uv1 buffer, so rebind group 1
-                                                // whenever the slab chunk changes.
+                                                // chunk's uv1 buffer and the group's sampler,
+                                                // so rebind group 1 whenever either changes.
                                                 let Some(bg) = cull0
                                                     .bindless_cull_bind_groups
-                                                    .get(&resources.uv1_chunk_key(chunks.0))
+                                                    .get(&(resources.uv1_chunk_key(chunks.0), chunks.2))
                                                 else {
                                                     continue;
                                                 };
@@ -927,17 +927,7 @@ impl ViewportRenderer {
                                     let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                         continue;
                                     };
-                                    let mat_key = (
-                                        batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        batch
-                                            .metallic_roughness_id
-                                            .map(|t| t.raw())
-                                            .unwrap_or(u64::MAX),
-                                        batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                                    );
+                                    let mat_key = batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
                                     let Some(inst_tex_bg) =
                                         resources.instanced_cull_colour_bind_group(cull0, mat_key)
                                     else {
@@ -1031,17 +1021,7 @@ impl ViewportRenderer {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
-                                let mat_key = (
-                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch
-                                        .metallic_roughness_id
-                                        .map(|t| t.raw())
-                                        .unwrap_or(u64::MAX),
-                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                                );
+                                let mat_key = batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
                                 let Some(inst_tex_bg) =
                                     resources.instanced_colour_bind_group(mat_key)
                                 else {
@@ -1128,17 +1108,7 @@ impl ViewportRenderer {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
-                                let mat_key = (
-                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch
-                                        .metallic_roughness_id
-                                        .map(|t| t.raw())
-                                        .unwrap_or(u64::MAX),
-                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                                );
+                                let mat_key = batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
                                 let no_discard = !clipping_active && !batch.has_alpha_mask;
                                 let key = PipelineKey {
                                     two_sided: batch.two_sided,
@@ -2045,7 +2015,7 @@ impl ViewportRenderer {
                                     cull0.draw_counts_buf.as_ref(),
                                 ) {
                                     let mut cur_two_sided: Option<bool> = None;
-                                    let mut cur_chunks: Option<(u32, u32)> = None;
+                                    let mut cur_chunks: Option<(u32, u32, u32)> = None;
                                     for group in self.instancing.oit_draw_groups.iter() {
                                         // Pipeline selector and geometry chunk come
                                         // from the group itself; the per-batch args
@@ -2064,14 +2034,14 @@ impl ViewportRenderer {
                                             oit_pass.set_pipeline(pl);
                                             cur_two_sided = Some(group.two_sided);
                                         }
-                                        let chunks = (group.vertex_chunk, group.index_chunk);
+                                        let chunks = (group.vertex_chunk, group.index_chunk, group.sampler_code);
                                         if cur_chunks != Some(chunks) {
                                             // The colour bind group carries this
-                                            // chunk's uv1 buffer, so rebind group 1
-                                            // whenever the slab chunk changes.
+                                            // chunk's uv1 buffer and the group's sampler,
+                                            // so rebind group 1 whenever either changes.
                                             let Some(bg) = cull0
                                                 .bindless_cull_bind_groups
-                                                .get(&resources.uv1_chunk_key(chunks.0))
+                                                .get(&(resources.uv1_chunk_key(chunks.0), chunks.2))
                                             else {
                                                 continue;
                                             };
@@ -2130,17 +2100,7 @@ impl ViewportRenderer {
                                 else {
                                     continue;
                                 };
-                                let mat_key = (
-                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch
-                                        .metallic_roughness_id
-                                        .map(|t| t.raw())
-                                        .unwrap_or(u64::MAX),
-                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    self.resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                                );
+                                let mat_key = batch.bind_key(self.resources.uv1_chunk_key(mesh.vertex_span.chunk));
                                 let Some(inst_tex_bg) = self
                                     .resources
                                     .instanced_cull_colour_bind_group(cull0, mat_key)
@@ -2233,17 +2193,7 @@ impl ViewportRenderer {
                             let Some(mesh) = self.resources.mesh_store.get(batch.mesh_id) else {
                                 continue;
                             };
-                            let mat_key = (
-                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch
-                                    .metallic_roughness_id
-                                    .map(|t| t.raw())
-                                    .unwrap_or(u64::MAX),
-                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                self.resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                            );
+                            let mat_key = batch.bind_key(self.resources.uv1_chunk_key(mesh.vertex_span.chunk));
                             let Some(inst_tex_bg) =
                                 self.resources.instanced_colour_bind_group(mat_key)
                             else {
@@ -2323,17 +2273,7 @@ impl ViewportRenderer {
                             let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                 continue;
                             };
-                            let mat_key = (
-                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch
-                                    .metallic_roughness_id
-                                    .map(|t| t.raw())
-                                    .unwrap_or(u64::MAX),
-                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                            );
+                            let mat_key = batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
                             let key = PipelineKey {
                                 two_sided: batch.two_sided,
                                 ..PipelineKey::default()

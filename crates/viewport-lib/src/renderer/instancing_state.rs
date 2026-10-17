@@ -27,6 +27,9 @@ pub(crate) struct DrawGroup {
     pub(crate) vertex_chunk: u32,
     pub(crate) index_chunk: u32,
     pub(crate) count_index: u32,
+    /// The group's sampler code (`sampler_code`): with the vertex chunk, it
+    /// selects the bindless colour bind group.
+    pub(crate) sampler_code: u32,
 }
 
 pub(crate) struct InstancingState {

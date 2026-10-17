@@ -1,13 +1,14 @@
 //! Scenes for every feature that keeps a mesh off the instanced path.
 //!
-//! Each column is one reason an item draws per-object today: a matcap, a
+//! Each column is one feature the per-object path handles: a matcap, a
 //! scalar or face-colour attribute, a warp, a per-material sampler, UV
 //! visualisation, a styled back face, custom data, a wireframe item, normal
 //! lines, a lightmap, a vertex override, or submesh material ranges. Every
-//! column is drawn twice in the layout the material grids use (per-object
-//! above, instanced below), so the lower copy records what the batched path
-//! does with the feature: today it draws per-object too, so the rows match;
-//! once the feature batches, the rows must still match.
+//! column is drawn twice in the layout the material grids use (pinned
+//! per-object above with `force_per_object`, left to batch below), so the
+//! lower copy records what the batched path does with the feature. Most still
+//! draw per-object there too; the sampler column batches, and for every
+//! column the rows must match.
 
 use glam::{Mat4, Vec2, Vec3};
 use viewport_lib::wgpu;
@@ -99,9 +100,6 @@ fn grey() -> Material {
 struct Column {
     mesh: viewport_lib::MeshId,
     material: Material,
-    /// Items with a per-material sampler of their own must not have it
-    /// replaced by the one `place` uses to pin the per-object path.
-    own_sampler: bool,
     set: fn(&mut SceneRenderItem),
     /// Model offset applied before the grid translation.
     model: Mat4,
@@ -121,7 +119,7 @@ fn lay_out(items: &mut Vec<SceneRenderItem>, columns: &[Column], row_pairs: &[f3
                     Mat4::from_translation(pos) * column.model,
                     column.material,
                     *opacity,
-                    path == 0 && !column.own_sampler,
+                    path == 0,
                 );
                 (column.set)(&mut items[before]);
             }
@@ -191,7 +189,6 @@ fn build_materials_fallbacks(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let plain_col = |material: Material, set: fn(&mut SceneRenderItem)| Column {
         mesh: plain,
         material,
-        own_sampler: false,
         set,
         model: Mat4::IDENTITY,
     };
@@ -201,7 +198,6 @@ fn build_materials_fallbacks(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         Column {
             mesh: scalar,
             material: grey(),
-            own_sampler: false,
             set: |it| {
                 it.active_attribute = Some(AttributeRef {
                     name: "height".into(),
@@ -216,7 +212,6 @@ fn build_materials_fallbacks(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         Column {
             mesh: faces,
             material: grey(),
-            own_sampler: false,
             set: |it| {
                 it.active_attribute = Some(AttributeRef {
                     name: "faces".into(),
@@ -228,7 +223,6 @@ fn build_materials_fallbacks(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         Column {
             mesh: warp,
             material: grey(),
-            own_sampler: false,
             set: |it| {
                 it.warp_attribute = Some("ripple".into());
                 it.warp_scale = 0.06;
@@ -238,7 +232,6 @@ fn build_materials_fallbacks(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         Column {
             mesh: plain,
             material: clamped,
-            own_sampler: true,
             set: no_op,
             model: Mat4::IDENTITY,
         },
@@ -248,7 +241,6 @@ fn build_materials_fallbacks(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         Column {
             mesh: back_card,
             material: hatched,
-            own_sampler: false,
             set: no_op,
             model: Mat4::from_translation(Vec3::new(0.0, 0.0, -0.42))
                 * Mat4::from_rotation_z(std::f32::consts::PI),
@@ -404,7 +396,6 @@ fn build_mesh_sidecars(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let lm_col = |mesh| Column {
         mesh,
         material: white,
-        own_sampler: false,
         set: no_op,
         model: Mat4::IDENTITY,
     };
@@ -417,21 +408,18 @@ fn build_mesh_sidecars(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         Column {
             mesh: flattened,
             material: grey(),
-            own_sampler: false,
             set: no_op,
             model: Mat4::IDENTITY,
         },
         Column {
             mesh: upright,
             material: grey(),
-            own_sampler: false,
             set: no_op,
             model: Mat4::IDENTITY,
         },
         Column {
             mesh: ranges,
             material: grey(),
-            own_sampler: false,
             set: |it| {
                 it.submesh_materials = Some(vec![
                     Material::pbr(Colour::linear_rgb(0.9, 0.3, 0.2), 0.0, 0.5),
@@ -443,7 +431,6 @@ fn build_mesh_sidecars(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         Column {
             mesh: ranges,
             material: grey(),
-            own_sampler: false,
             set: |it| {
                 let mut glass = Material::pbr(Colour::linear_rgb(0.2, 0.8, 0.4), 0.0, 0.3);
                 glass.alpha_mode = viewport_lib::AlphaMode::Blend;

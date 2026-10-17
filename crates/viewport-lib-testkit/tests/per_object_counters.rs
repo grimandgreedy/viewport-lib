@@ -4,10 +4,7 @@
 //! draw per item.
 
 use viewport_lib::Colour;
-use viewport_lib::{
-    CameraFrame, FrameData, Material, SamplerKey, SceneFrame, SceneRenderItem, TextureSlot,
-    WrapMode,
-};
+use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
 #[test]
@@ -31,18 +28,8 @@ fn per_object_draws_are_counted() {
             item.mesh_id = id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 5.0, 0.0, 0.0))
                 .to_cols_array_2d();
-            // A per-material sampler keeps the item off the instanced path: the
-            // instanced and bindless paths share one sampler across a batch, so
-            // a material that picks its own wrap mode draws per object rather
-            // than having it silently dropped.
-            item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.7)).with_sampler(
-                TextureSlot::Albedo,
-                SamplerKey {
-                    wrap_u: WrapMode::ClampToEdge,
-                    wrap_v: WrapMode::ClampToEdge,
-                    ..Default::default()
-                },
-            );
+            item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.7));
+            item.settings.force_per_object = true;
             item
         })
         .collect();

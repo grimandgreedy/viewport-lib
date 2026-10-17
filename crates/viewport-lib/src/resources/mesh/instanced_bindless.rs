@@ -245,12 +245,12 @@ impl DeviceResources {
             .collect()
     }
 
-    /// Ensure the bindless colour bind group for one vertex-slab chunk (instances
-    /// + texture array + sampler + the chunk's uv1 buffer) exists. A no-op unless
-    /// the mode is `Bindless` and the layout and instance buffer exist. The
-    /// instances, texture array, and sampler are frame-constant; only the uv1
-    /// buffer varies per chunk, so the groups are keyed by `uv1_chunk_key` and the
-    /// whole map is cleared when the change signature `(instance_gen, texture
+    /// Ensure the bindless colour bind group for one vertex-slab chunk and sampler
+    /// (instances + texture array + sampler + the chunk's uv1 buffer) exists. A
+    /// no-op unless the mode is `Bindless` and the layout and instance buffer
+    /// exist. The instances and texture array are frame-constant; the uv1 buffer
+    /// varies per chunk and the sampler per batch, so the groups are keyed by
+    /// `(uv1_chunk_key, sampler_code)` and the whole map is cleared when the change signature `(instance_gen, texture
     /// slot_count, free_epoch)` moves. `instance_gen` is
     /// `InstancingState::instance_gen`, bumped when the instance buffer is rebuilt.
     pub(crate) fn ensure_bindless_colour_bind_group(
@@ -258,6 +258,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         instance_gen: u64,
         uv1_chunk: u32,
+        sampler: crate::scene::material::SamplerKey,
     ) {
         if self.instancing.material_texture_binding != MaterialTextureBinding::Bindless {
             return;
@@ -276,10 +277,14 @@ impl DeviceResources {
         {
             return;
         }
-        let key = self.uv1_chunk_key(uv1_chunk);
+        let key = (
+            self.uv1_chunk_key(uv1_chunk),
+            crate::resources::material::fallbacks::sampler_code(sampler),
+        );
         if self.instancing.bindless_bind_groups.contains_key(&key) {
             return;
         }
+        let sampler = self.material.resolve_sampler(device, sampler);
         let bg = {
             let layout = self.instancing.bindless_bind_group_layout.as_ref().unwrap();
             let inst_buf = self.instancing.storage_buf.as_ref().unwrap();
@@ -299,7 +304,7 @@ impl DeviceResources {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&sampler),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 8,
@@ -312,15 +317,18 @@ impl DeviceResources {
     }
 
     /// The group-1 bind group for a direct instanced colour draw: the per-chunk
-    /// texture-array group under `Bindless` (keyed by the uv1 chunk discriminator,
-    /// `mat_key.5`), or the batch's per-texture bind group (keyed by the full
-    /// `mat_key`) under `PerBatch`. `None` skips the batch.
+    /// texture-array group under `Bindless` (keyed by the uv1 chunk discriminator
+    /// and sampler code, `mat_key.5` and `mat_key.6`), or the batch's per-texture
+    /// bind group (keyed by the full `mat_key`) under `PerBatch`. `None` skips the
+    /// batch.
     pub(crate) fn instanced_colour_bind_group(
         &self,
-        mat_key: (u64, u64, u64, u64, u64, u32),
+        mat_key: crate::renderer::BatchBindKey,
     ) -> Option<&crate::gpu::BindGroup> {
         if self.instancing.material_texture_binding == MaterialTextureBinding::Bindless {
-            self.instancing.bindless_bind_groups.get(&mat_key.5)
+            self.instancing
+                .bindless_bind_groups
+                .get(&(mat_key.5, mat_key.6))
         } else {
             self.instancing.bind_groups.get(&mat_key)
         }
@@ -328,15 +336,17 @@ impl DeviceResources {
 
     /// The group-1 bind group for a culled (indirect) instanced colour draw: the
     /// per-viewport, per-chunk texture-array group under `Bindless` (keyed by the
-    /// uv1 chunk discriminator, `mat_key.5`), or the batch's per-texture cull bind
-    /// group under `PerBatch`.
+    /// uv1 chunk discriminator and sampler code, `mat_key.5` and `mat_key.6`), or
+    /// the batch's per-texture cull bind group under `PerBatch`.
     pub(crate) fn instanced_cull_colour_bind_group<'a>(
         &'a self,
         cull_state: &'a crate::resources::ViewportCullState,
-        mat_key: (u64, u64, u64, u64, u64, u32),
+        mat_key: crate::renderer::BatchBindKey,
     ) -> Option<&'a crate::gpu::BindGroup> {
         if self.instancing.material_texture_binding == MaterialTextureBinding::Bindless {
-            cull_state.bindless_cull_bind_groups.get(&mat_key.5)
+            cull_state
+                .bindless_cull_bind_groups
+                .get(&(mat_key.5, mat_key.6))
         } else {
             cull_state.instance_cull_bind_groups.get(&mat_key)
         }
@@ -344,17 +354,22 @@ impl DeviceResources {
 
     /// The per-viewport bindless cull bind group for one vertex-slab chunk (colour
     /// array + this viewport's visibility buffer + the chunk's uv1 buffer), built
-    /// on demand and keyed by the uv1 chunk discriminator (`uv1_chunk_key`). The
-    /// map is cleared with the per-batch cull bind groups when the instance buffer
+    /// on demand and keyed by the uv1 chunk discriminator (`uv1_chunk_key`) and the
+    /// sampler code (`sampler_code`). The map is cleared with the per-batch cull bind groups when the instance buffer
     /// or a texture changes.
     pub(crate) fn get_bindless_cull_bind_group<'a>(
         &self,
         cull_state: &'a mut crate::resources::ViewportCullState,
         device: &crate::gpu::Device,
         uv1_chunk: u32,
+        sampler: crate::scene::material::SamplerKey,
     ) -> Option<&'a crate::gpu::BindGroup> {
-        let key = self.uv1_chunk_key(uv1_chunk);
+        let key = (
+            self.uv1_chunk_key(uv1_chunk),
+            crate::resources::material::fallbacks::sampler_code(sampler),
+        );
         if !cull_state.bindless_cull_bind_groups.contains_key(&key) {
+            let sampler = self.material.resolve_sampler(device, sampler);
             let layout = self.instancing.bindless_cull_bind_group_layout.as_ref()?;
             let inst_buf = self.instancing.storage_buf.as_ref()?;
             let bg = {
@@ -375,7 +390,7 @@ impl DeviceResources {
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 2,
-                            resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
+                            resource: crate::gpu::BindingResource::Sampler(&sampler),
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 5,

@@ -774,7 +774,7 @@ impl ViewportRenderer {
                         crate::gpu::BindGroupEntry {
                             binding: 2,
                             resource: crate::gpu::BindingResource::Sampler(
-                                &resources.material.sampler,
+                                &resources.material.mesh_sampler,
                             ),
                         },
                         crate::gpu::BindGroupEntry {

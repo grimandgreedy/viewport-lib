@@ -4,83 +4,138 @@
 
 use super::*;
 
+/// Why an item cannot be drawn through the instanced path.
+///
+/// [`fallback_reason`] returns the first test an item fails, so each
+/// non-instanceable item has exactly one reason. `Hidden` is not a fallback:
+/// a hidden item draws on neither path, so [`PerObjectReasons`] does not count
+/// it.
+///
+/// [`PerObjectReasons`]: crate::renderer::stats::PerObjectReasons
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FallbackReason {
+    Hidden,
+    Wireframe,
+    ScalarAttribute,
+    MaterialPluginNotReady,
+    MaterialPluginVertexAttribute,
+    Warp,
+    Matcap,
+    SubmeshMaterials,
+    MissingMesh,
+    PerInstanceDeform,
+    MeshDeformSlots,
+    VertexOverride,
+    Lightmap,
+    ForcePerObject,
+}
+
 /// Whether an item can be drawn through the instanced path.
 ///
 /// The instanced shader (`mesh_instanced.wgsl`) handles only the common case: a
 /// plain mesh with a simple material. Anything that needs per-item state the
 /// instanced shader does not read falls back to the per-object path. This is the
 /// single source of truth for that decision, used both when building the batches
-/// and when deciding the instanced-batch cache key. An item is excluded when it
-/// is hidden, carries a scalar attribute, carries a GPU vertex warp (the
-/// instanced shader has no warp support), uses a matcap (a texture bind the
-/// instanced path does not yet carry), carries per-submesh materials, has per-instance deform data, or its mesh has a
-/// position/normal override or baked lightmap. All four back-face policies now
-/// instance: `Cull` and `Identical` use the one- and two-sided pipelines, and the
-/// styled policies (`DifferentColour`/`Tint`/`Pattern`) run on the two-sided
-/// pipeline, where the instanced shaders read the per-material policy/colour from
-/// `material_gpu_buf`, flip the normal on back faces, and read the Pattern world
-/// scale from `InstanceData`. Param-vis and premultiplied blend also instance
-/// (their `param_vis` mode/scale and `alpha_mode` ride `material_gpu_buf`).
+/// and when deciding the instanced-batch cache key. [`fallback_reason`] holds
+/// the tests and names the one an item fails.
 pub(crate) fn is_instanceable(item: &SceneRenderItem, resources: &DeviceResources) -> bool {
-    !item.settings.hidden
-        // A wireframe item draws its edge lines, which only the per-object path
-        // issues; an instanced batch would draw its filled triangles.
-        && !item.settings.wireframe
-        && item.active_attribute.is_none()
-        // Material-plugin items instance once the plugin's instanced pipeline set
-        // is built (the plugin's shading composed onto the instanced modules, on
-        // the group-3 layout, for the active per-batch or bindless binding). Until
-        // then, or on an unknown id where no instanced set exists, they draw through
-        // the per-object path. A plugin that reads the per-vertex extension
-        // attribute stays per-object regardless: the instanced path has no
-        // per-vertex extension-attribute binding (its `surf.attr` is the
-        // per-instance custom-data channel), so instancing such a plugin would feed
-        // it the wrong data. This mirrors the per-object-only `active_attribute`
-        // exclusion above.
-        && match item.material.shading_plugin {
-            None => true,
-            Some(pid) => {
-                resources.material_plugin_instanced_ready(pid)
-                    && !resources.material_plugin_reads_vertex_attribute(pid)
-            }
+    fallback_reason(item, resources).is_none()
+}
+
+/// The first reason `item` cannot be instanced, or `None` when it can.
+///
+/// All four back-face policies instance: `Cull` and `Identical` use the one-
+/// and two-sided pipelines, and the styled policies (`DifferentColour`/`Tint`/
+/// `Pattern`) run on the two-sided pipeline, where the instanced shaders read
+/// the per-material policy/colour from `material_gpu_buf`, flip the normal on
+/// back faces, and read the Pattern world scale from `InstanceData`. Param-vis
+/// and premultiplied blend also instance (their `param_vis` mode/scale and
+/// `alpha_mode` ride `material_gpu_buf`).
+pub(crate) fn fallback_reason(
+    item: &SceneRenderItem,
+    resources: &DeviceResources,
+) -> Option<FallbackReason> {
+    use FallbackReason as R;
+    if item.settings.hidden {
+        return Some(R::Hidden);
+    }
+    // A wireframe item draws its edge lines, which only the per-object path
+    // issues; an instanced batch would draw its filled triangles.
+    if item.settings.wireframe {
+        return Some(R::Wireframe);
+    }
+    if item.active_attribute.is_some() {
+        return Some(R::ScalarAttribute);
+    }
+    // Material-plugin items instance once the plugin's instanced pipeline set
+    // is built (the plugin's shading composed onto the instanced modules, on
+    // the group-3 layout, for the active per-batch or bindless binding). Until
+    // then, or on an unknown id where no instanced set exists, they draw through
+    // the per-object path. A plugin that reads the per-vertex extension
+    // attribute stays per-object regardless: the instanced path has no
+    // per-vertex extension-attribute binding (its `surf.attr` is the
+    // per-instance custom-data channel), so instancing such a plugin would feed
+    // it the wrong data. This mirrors the per-object-only `active_attribute`
+    // exclusion above.
+    if let Some(pid) = item.material.shading_plugin {
+        if !resources.material_plugin_instanced_ready(pid) {
+            return Some(R::MaterialPluginNotReady);
         }
-        // A GPU vertex warp is a per-object-only feature: the instanced pipeline
-        // has no warp support and would draw the mesh undeformed, ignoring
-        // `warp_scale`. Keep warp items on the per-object path (matching the
-        // per-object writer's own warp exception and the comment there).
-        && item.warp_attribute.is_none()
-        && item.material.matcap_id().is_none()
-        // A per-material sampler (wrap/filter/aniso) is bound at group-1 binding 2
-        // on the per-object path. The instanced/bindless path shares one sampler
-        // across a batch (and, under bindless, across the whole texture array), so
-        // it cannot honour a per-material sampler until a bindless sampler heap
-        // carries one per slot. Until then, a material that sets a sampler draws
-        // per-object so its wrap mode is not silently dropped.
-        && item.material.selected_sampler().is_none()
-        // Per-submesh materials mean one draw per index range, each with its
-        // own object bind group; the instanced path draws the whole mesh in
-        // one call with batch-level textures, so range items stay per-object.
-        && item.submesh_materials.is_none()
-        && resources.mesh_store.get(item.mesh_id).is_some()
-        && !resources
-            .deform
-            .has_per_instance_deform_data(item.mesh_id, item.deform_instance)
-        // Per-mesh deform slot data is per-object only, for the same reason as
-        // warp above: the instanced draws bind the empty deform group and the
-        // instanced shader passes no slot flags, so an instanced item reads no
-        // slot data and renders undeformed. Keeping it per-object costs a
-        // uniform write and a bind-group build per item and draws the shape the
-        // consumer asked for. `FrameStats::deform_slots_ignored` counts any that
-        // still reach an instanced batch, and should stay at zero because of
-        // this line.
-        && !resources.deform.has_mesh_slot_data(item.mesh_id)
-        && resources.mesh_store.get(item.mesh_id).map_or(true, |m| {
-            m.position_override_buffer.is_none() && m.normal_override_buffer.is_none()
-            // A baked lightmap is sampled only on the per-object path; the
-            // instanced shader has no lightmap binding, so a lightmapped mesh must
-            // stay per-object or its lightmap silently does not render.
-                && m.lightmap.is_none()
-        })
+        if resources.material_plugin_reads_vertex_attribute(pid) {
+            return Some(R::MaterialPluginVertexAttribute);
+        }
+    }
+    // A GPU vertex warp is a per-object-only feature: the instanced pipeline
+    // has no warp support and would draw the mesh undeformed, ignoring
+    // `warp_scale`. Keep warp items on the per-object path (matching the
+    // per-object writer's own warp exception and the comment there).
+    if item.warp_attribute.is_some() {
+        return Some(R::Warp);
+    }
+    // A matcap is a texture bind the instanced path does not carry.
+    if item.material.matcap_id().is_some() {
+        return Some(R::Matcap);
+    }
+    // Per-submesh materials mean one draw per index range, each with its
+    // own object bind group; the instanced path draws the whole mesh in
+    // one call with batch-level textures, so range items stay per-object.
+    if item.submesh_materials.is_some() {
+        return Some(R::SubmeshMaterials);
+    }
+    let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
+        return Some(R::MissingMesh);
+    };
+    if resources
+        .deform
+        .has_per_instance_deform_data(item.mesh_id, item.deform_instance)
+    {
+        return Some(R::PerInstanceDeform);
+    }
+    // Per-mesh deform slot data is per-object only, for the same reason as
+    // warp above: the instanced draws bind the empty deform group and the
+    // instanced shader passes no slot flags, so an instanced item reads no
+    // slot data and renders undeformed. Keeping it per-object costs a
+    // uniform write and a bind-group build per item and draws the shape the
+    // consumer asked for. `FrameStats::deform_slots_ignored` counts any that
+    // still reach an instanced batch, and should stay at zero because of
+    // this line.
+    if resources.deform.has_mesh_slot_data(item.mesh_id) {
+        return Some(R::MeshDeformSlots);
+    }
+    if mesh.position_override_buffer.is_some() || mesh.normal_override_buffer.is_some() {
+        return Some(R::VertexOverride);
+    }
+    // A baked lightmap is sampled only on the per-object path; the instanced
+    // shader has no lightmap binding, so a lightmapped mesh must stay
+    // per-object or its lightmap silently does not render.
+    if mesh.lightmap.is_some() {
+        return Some(R::Lightmap);
+    }
+    // Last, so an item with a real reason is counted under it.
+    if item.settings.force_per_object {
+        return Some(R::ForcePerObject);
+    }
+    None
 }
 
 /// The per-range materials to draw `item` with, when it requests them and

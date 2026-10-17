@@ -5,10 +5,7 @@
 //! stabilises again must get the bundle back.
 
 use viewport_lib::Colour;
-use viewport_lib::{
-    CameraFrame, FrameData, Material, PickId, SamplerKey, SceneFrame, SceneRenderItem, TextureSlot,
-    WrapMode,
-};
+use viewport_lib::{CameraFrame, FrameData, Material, PickId, SceneFrame, SceneRenderItem};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
 fn items(mesh_id: viewport_lib::MeshId, count: u32, id_base: u64) -> Vec<SceneRenderItem> {
@@ -16,17 +13,8 @@ fn items(mesh_id: viewport_lib::MeshId, count: u32, id_base: u64) -> Vec<SceneRe
         .map(|i| {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            // A per-material sampler forces the per-object path: the instanced
-            // and bindless paths share one sampler per batch, so a material
-            // picking its own wrap mode draws per object.
-            item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.65, 0.7)).with_sampler(
-                TextureSlot::Albedo,
-                SamplerKey {
-                    wrap_u: WrapMode::ClampToEdge,
-                    wrap_v: WrapMode::ClampToEdge,
-                    ..Default::default()
-                },
-            );
+            item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.65, 0.7));
+            item.settings.force_per_object = true;
             let x = (i % 16) as f32 * 2.0;
             let y = (i / 16) as f32 * 2.0;
             item.model =

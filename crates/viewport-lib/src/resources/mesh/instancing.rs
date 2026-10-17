@@ -23,12 +23,14 @@ pub(crate) struct InstancingResources {
     pub(crate) bindless_cull_bind_group_layout: Option<crate::gpu::BindGroupLayout>,
     /// Bindless colour bind groups (instances + texture array + sampler + the
     /// chunk's uv1 buffer), used by the direct colour draws under `Bindless`. The
-    /// instances, texture array, and sampler are frame-constant; only the uv1
-    /// buffer varies per vertex-slab chunk, so these are keyed by the uv1 chunk
-    /// discriminator (`uv1_chunk_key`): the chunk index when the chunk carries a
-    /// uv1 stream, else `u32::MAX` (all no-uv1 chunks share one group binding the
-    /// zero fallback). Cleared and rebuilt when the signature below changes.
-    pub(crate) bindless_bind_groups: std::collections::HashMap<u32, crate::gpu::BindGroup>,
+    /// instances and texture array are frame-constant; the uv1 buffer varies per
+    /// vertex-slab chunk and the sampler per batch, so these are keyed by the uv1
+    /// chunk discriminator (`uv1_chunk_key`: the chunk index when the chunk
+    /// carries a uv1 stream, else `u32::MAX`, so all no-uv1 chunks share one group
+    /// binding the zero fallback) and the sampler code (`sampler_code`). Cleared
+    /// and rebuilt when the signature below changes.
+    pub(crate) bindless_bind_groups:
+        std::collections::HashMap<(u32, u32), crate::gpu::BindGroup>,
     /// Change signature `(instance_gen, texture slot_count, free_epoch)` the
     /// `bindless_bind_groups` were built for; a mismatch clears and rebuilds them.
     pub(crate) bindless_signature: Option<(u64, usize, u64)>,
@@ -44,14 +46,12 @@ pub(crate) struct InstancingResources {
     /// one specific texture combination (bindings 1-4). Keyed by
     /// (albedo_id, normal_map_id, ao_map_id) using u64::MAX for fallback slots.
     /// Invalidated when the storage buffer is resized.
-    /// Keyed by `(albedo, normal, ao, metallic_roughness, emissive, uv1_chunk)`.
-    /// The first five components are texture ids (`u64::MAX` for fallback slots);
-    /// the last is the vertex-slab chunk index when that chunk has a uv1 buffer,
-    /// else `u32::MAX` (all no-uv1 chunks share one bind group that binds the zero
-    /// fallback), so batches differing only by which chunk's uv1 stream they sample
-    /// get distinct bind groups.
+    /// Keyed by [`BatchBindKey`](crate::renderer::BatchBindKey): the five texture
+    /// ids (`u64::MAX` for fallback slots), then the vertex-slab chunk index when
+    /// that chunk has a uv1 buffer, else `u32::MAX` (all no-uv1 chunks share one
+    /// bind group that binds the zero fallback), then the batch's sampler code.
     pub(crate) bind_groups:
-        std::collections::HashMap<(u64, u64, u64, u64, u64, u32), crate::gpu::BindGroup>,
+        std::collections::HashMap<crate::renderer::BatchBindKey, crate::gpu::BindGroup>,
     /// The LDR colour family: four solids keyed by facedness and discard-free
     /// early-Z eligibility, and the alpha-blended transparent pipeline.
     /// Composed by `ensure_ldr_instanced_pipelines`; each member is built by
@@ -1367,14 +1367,17 @@ impl DeviceResources {
         albedo_id: Option<crate::resources::TextureId>,
         normal_map_id: Option<crate::resources::TextureId>,
         ao_map_id: Option<crate::resources::TextureId>,
+        sampler: crate::scene::material::SamplerKey,
     ) -> Option<&'a crate::gpu::BindGroup> {
         let key = (
             cascade_idx,
             albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            crate::resources::material::fallbacks::sampler_code(sampler),
         );
         if !shadow_cull.shadow_cutout_cull_bgs.contains_key(&key) {
+            let sampler = self.material.resolve_sampler(device, sampler);
             let bgl = self.cull.bind_group_layout.as_ref()?;
             let inst_buf = self.instancing.storage_buf.as_ref()?;
             let vis_buf = shadow_cull.shadow_vis_bufs[cascade_idx].as_ref()?;
@@ -1409,7 +1412,7 @@ impl DeviceResources {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&sampler),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 3,
@@ -1483,6 +1486,7 @@ impl DeviceResources {
         mr_id: Option<crate::resources::TextureId>,
         emissive_id: Option<crate::resources::TextureId>,
         uv1_chunk: u32,
+        sampler: crate::scene::material::SamplerKey,
     ) -> Option<&'a crate::gpu::BindGroup> {
         let key = (
             albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
@@ -1491,9 +1495,11 @@ impl DeviceResources {
             mr_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             self.uv1_chunk_key(uv1_chunk),
+            crate::resources::material::fallbacks::sampler_code(sampler),
         );
 
         if !cull_state.instance_cull_bind_groups.contains_key(&key) {
+            let sampler = self.material.resolve_sampler(device, sampler);
             let bgl = self.cull.bind_group_layout.as_ref()?;
             let inst_buf = self.instancing.storage_buf.as_ref()?;
             let vis_buf = cull_state.visibility_index_buf.as_ref()?;
@@ -1539,7 +1545,7 @@ impl DeviceResources {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&sampler),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 3,
@@ -1588,6 +1594,7 @@ impl DeviceResources {
         mr_id: Option<crate::resources::TextureId>,
         emissive_id: Option<crate::resources::TextureId>,
         uv1_chunk: u32,
+        sampler: crate::scene::material::SamplerKey,
     ) -> Option<&crate::gpu::BindGroup> {
         self.check_texture_slot(albedo_id, MaterialSlot::Albedo.requirement());
         self.check_texture_slot(normal_map_id, MaterialSlot::Normal.requirement());
@@ -1603,9 +1610,11 @@ impl DeviceResources {
             mr_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             uv1_key,
+            crate::resources::material::fallbacks::sampler_code(sampler),
         );
 
         if !self.instancing.bind_groups.contains_key(&key) {
+            let sampler = self.material.resolve_sampler(device, sampler);
             let bgl = self.instancing.bind_group_layout.as_ref()?;
             let buf = self.instancing.storage_buf.as_ref()?;
             let uv1_buf = self
@@ -1653,7 +1662,7 @@ impl DeviceResources {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&sampler),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 3,
@@ -1837,7 +1846,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.material.mesh_sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,

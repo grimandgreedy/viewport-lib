@@ -408,17 +408,17 @@ impl ViewportRenderer {
                                 .batches
                                 .iter()
                                 .filter(|b| b.is_cutout && !b.is_transparent)
-                                .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id))
+                                .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id, b.sampler))
                                 .collect();
                             for cascade in 0..light.effective_cascade_count {
-                                for &(t, n, a) in &cutout_keys {
+                                for &(t, n, a, smp) in &cutout_keys {
                                     resources.get_shadow_cutout_cull_bind_group(
                                         &mut instancing.shadow_cull,
                                         device,
                                         cascade,
                                         t,
                                         n,
-                                        a,
+                                        a, smp,
                                     );
                                 }
                             }
@@ -493,15 +493,7 @@ impl ViewportRenderer {
                                     // Resolve the cutout bind group; fall back to the opaque
                                     // path if the cutout pipeline or bind group is missing.
                                     let cutout_bg = if batch.is_cutout {
-                                        let key = (
-                                            cascade,
-                                            batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                            batch
-                                                .normal_map_id
-                                                .map(|t| t.raw())
-                                                .unwrap_or(u64::MAX),
-                                            batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        );
+                                        let key = batch.cutout_key(cascade);
                                         instancing.shadow_cull.shadow_cutout_cull_bgs.get(&key)
                                     } else {
                                         None
@@ -651,16 +643,16 @@ impl ViewportRenderer {
                                 .batches
                                 .iter()
                                 .filter(|b| b.is_cutout && !b.is_transparent)
-                                .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id))
+                                .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id, b.sampler))
                                 .collect();
-                            for (t, n, a) in cutout_keys {
+                            for (t, n, a, smp) in cutout_keys {
                                 resources.get_shadow_cutout_cull_bind_group(
                                     &mut instancing.shadow_cull,
                                     device,
                                     cascade,
                                     t,
                                     n,
-                                    a,
+                                    a, smp,
                                 );
                             }
                             let Some(cascade_bg) =
@@ -700,12 +692,7 @@ impl ViewportRenderer {
                                 // See the per-item pipeline key: closed meshes cast cull-front.
                                 let two_sided = batch.two_sided && !mesh.closed;
                                 let cutout_bg = if batch.is_cutout {
-                                    let key = (
-                                        cascade,
-                                        batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    );
+                                    let key = batch.cutout_key(cascade);
                                     instancing.shadow_cull.shadow_cutout_cull_bgs.get(&key)
                                 } else {
                                     None
@@ -765,14 +752,7 @@ impl ViewportRenderer {
                                 .get(b.mesh_id)
                                 .map(|m| resources.uv1_chunk_key(m.vertex_span.chunk))
                                 .unwrap_or(u32::MAX);
-                            resources.instancing.bind_groups.get(&(
-                                b.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                b.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                b.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                b.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                b.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                uv1_key,
-                            ))
+                            resources.instancing.bind_groups.get(&b.bind_key(uv1_key))
                         }),
                     ) {
                         // Direct draw shadow path (fallback when GPU culling is off).
@@ -831,17 +811,7 @@ impl ViewportRenderer {
                                 // batch's own texture bind group (not the shared first-batch
                                 // one) at group 1.
                                 let cutout_bg = if batch.is_cutout {
-                                    resources.instancing.bind_groups.get(&(
-                                        batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        batch
-                                            .metallic_roughness_id
-                                            .map(|t| t.raw())
-                                            .unwrap_or(u64::MAX),
-                                        batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                                    ))
+                                    resources.instancing.bind_groups.get(&batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk)))
                                 } else {
                                     None
                                 };
@@ -1284,14 +1254,7 @@ impl ViewportRenderer {
                         let mesh = resources.mesh_store.get(b.mesh_id)?;
                         // The batch's own group: its instance range and, for a
                         // cutout, its albedo.
-                        let group1 = resources.instancing.bind_groups.get(&(
-                            b.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                            b.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                            b.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                            b.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                            b.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                            resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                        ))?;
+                        let group1 = resources.instancing.bind_groups.get(&b.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk)))?;
                         let start = b.instance_offset;
                         let end = b.instance_offset + b.instance_count;
                         let mut runs = Vec::new();
@@ -1624,16 +1587,16 @@ fn draw_shadow_cascades_multi_draw(
             .batches
             .iter()
             .filter(|b| b.is_cutout && !b.is_transparent)
-            .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id))
+            .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id, b.sampler))
             .collect();
-        for (t, n, a) in cutout_keys {
+        for (t, n, a, smp) in cutout_keys {
             resources.get_shadow_cutout_cull_bind_group(
                 &mut instancing.shadow_cull,
                 device,
                 cascade,
                 t,
                 n,
-                a,
+                a, smp,
             );
         }
 
@@ -1669,12 +1632,7 @@ fn draw_shadow_cascades_multi_draw(
             // See the per-item pipeline key: closed meshes cast cull-front.
             let two_sided = batch.two_sided && !mesh.closed;
             let cutout_bg = if batch.is_cutout {
-                let key = (
-                    cascade,
-                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                );
+                let key = batch.cutout_key(cascade);
                 instancing.shadow_cull.shadow_cutout_cull_bgs.get(&key)
             } else {
                 None

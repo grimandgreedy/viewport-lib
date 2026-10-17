@@ -1375,6 +1375,12 @@ impl DeviceResources {
             crate::gpu::FilterMode::Nearest,
         );
 
+        let mesh_sampler = crate::resources::builders::sampler_from_key(
+            device,
+            "mesh_material_sampler",
+            &crate::scene::material::SamplerKey::default(),
+        );
+
         // Clamp-to-edge sampler for colourmap LUT lookups (prevents wrap artifact at scalar extremes).
         let lut_sampler = crate::resources::builders::clamp_linear_sampler(device, "lut_sampler");
 
@@ -1886,7 +1892,13 @@ impl DeviceResources {
                 emissive: fallback_emissive_texture,
                 emissive_view: fallback_emissive_texture_view,
                 sampler: material_sampler,
-                sampler_palette: std::sync::Mutex::new(std::collections::HashMap::new()),
+                mesh_sampler: mesh_sampler.clone(),
+                sampler_palette: std::sync::Mutex::new(std::collections::HashMap::from([(
+                    crate::resources::material::fallbacks::sampler_palette_key(
+                        crate::scene::material::SamplerKey::default(),
+                    ),
+                    mesh_sampler,
+                )])),
                 lut_sampler,
                 depth_read_sampler,
                 depth_read_bgl,

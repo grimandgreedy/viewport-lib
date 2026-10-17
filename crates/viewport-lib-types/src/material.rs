@@ -97,6 +97,12 @@ pub struct ItemSettings {
     /// stamp it takes every decal whatever its mask; one that writes no depth
     /// takes none.
     pub visibility_mask: u32,
+    /// Draw this item through the per-object mesh path even when it could be
+    /// instanced. Exists to compare the two mesh paths in tests, and goes when
+    /// the per-object path does. Default `false`.
+    #[doc(hidden)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub force_per_object: bool,
 }
 
 impl Default for ItemSettings {
@@ -113,6 +119,7 @@ impl Default for ItemSettings {
             ignore_clip: false,
             custom_data: [0.0; 8],
             visibility_mask: !0,
+            force_per_object: false,
         }
     }
 }

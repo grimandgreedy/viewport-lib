@@ -741,19 +741,19 @@ pub(crate) struct ViewportCullState {
     /// Per-texture-key bind groups for the main cull pipelines. These also serve
     /// as the group-1 bind for the indirect draw, so they sample the albedo,
     /// normal, and ao views (bindings 1/3/4). Keyed by
-    /// (albedo_id, normal_map_id, ao_map_id, mr_id, emissive_id, uv1_chunk);
-    /// invalidated when `visibility_index_buf` is resized, when the instance buffer
+    /// [`BatchBindKey`](crate::renderer::BatchBindKey); invalidated when `visibility_index_buf` is resized, when the instance buffer
     /// is rebuilt, or when a texture behind a key is replaced or freed (see
     /// `built_free_epoch`).
     pub(crate) instance_cull_bind_groups:
-        std::collections::HashMap<(u64, u64, u64, u64, u64, u32), crate::gpu::BindGroup>,
+        std::collections::HashMap<crate::renderer::BatchBindKey, crate::gpu::BindGroup>,
     /// The bindless cull bind groups for this viewport (instances + texture array +
     /// sampler + this viewport's visibility buffer + a vertex-slab chunk's uv1
     /// buffer). Used by the culled colour draws under `Bindless` instead of
     /// `instance_cull_bind_groups`. Keyed by the uv1 chunk discriminator
-    /// (`uv1_chunk_key`); rebuilt with the same `built_gen` / `built_free_epoch`
+    /// (`uv1_chunk_key`) and the batch's sampler code (`sampler_code`); rebuilt with the same `built_gen` / `built_free_epoch`
     /// staleness checks as that map.
-    pub(crate) bindless_cull_bind_groups: std::collections::HashMap<u32, crate::gpu::BindGroup>,
+    pub(crate) bindless_cull_bind_groups:
+        std::collections::HashMap<(u32, u32), crate::gpu::BindGroup>,
     /// GPU-driven submission (bindless + native multi-draw only): this viewport's
     /// compacted draw args, holding each pipeline group's visible batches packed to
     /// the front of its range. Written by the compaction pass from this viewport's
@@ -889,12 +889,12 @@ pub(crate) struct ShadowCullState {
     /// Per-cascade instance+visibility bind groups. Invalidated when
     /// `shadow_vis_bufs` are reallocated.
     pub(crate) shadow_cull_instance_bgs: [Option<crate::gpu::BindGroup>; 4],
-    /// Per-(cascade, albedo, normal, ao) bind groups for the alpha-cutout shadow
+    /// Per-(cascade, albedo, normal, ao, sampler code) bind groups for the alpha-cutout shadow
     /// cull pipeline: like `shadow_cull_instance_bgs` but also carries the batch's
     /// albedo texture (from the full cull BGL) so the fragment can discard leaf
     /// gaps. Invalidated with `shadow_cull_instance_bgs`.
     pub(crate) shadow_cutout_cull_bgs:
-        std::collections::HashMap<(usize, u64, u64, u64), crate::gpu::BindGroup>,
+        std::collections::HashMap<(usize, u64, u64, u64, u32), crate::gpu::BindGroup>,
     /// Capacity (in instances) of `shadow_vis_bufs`.
     pub(crate) vis_capacity: usize,
     /// Capacity (in batches) of the counter and indirect-args buffers.

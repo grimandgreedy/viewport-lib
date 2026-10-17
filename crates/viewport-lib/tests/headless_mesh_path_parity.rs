@@ -334,14 +334,7 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
         // A lone quad casts only when two-sided: the shadow pass culls front
         // faces, and this one faces the light.
         it.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
-        if per_object {
-            // A per-material sampler keeps an item per-object without changing
-            // what its shadow pass does.
-            it.material = it.material.with_sampler(
-                viewport_lib::TextureSlot::Albedo,
-                viewport_lib::SamplerKey::default(),
-            );
-        }
+        it.settings.force_per_object = per_object;
         it
     };
 
@@ -449,12 +442,7 @@ fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
         it.mesh_id = caster_mesh;
         it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).to_cols_array_2d();
         it.material = Material::from_colour(Colour::linear_rgb(0.2, 0.2, 0.8));
-        if per_object {
-            it.material = it.material.with_sampler(
-                viewport_lib::TextureSlot::Albedo,
-                viewport_lib::SamplerKey::default(),
-            );
-        }
+        it.settings.force_per_object = per_object;
         // A lone quad casts only when two-sided: the shadow pass culls front
         // faces, and this one faces the light.
         it.material.backface_policy = viewport_lib::BackfacePolicy::Identical;

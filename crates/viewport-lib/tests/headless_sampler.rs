@@ -2,7 +2,8 @@
 //! sampled outside `[0, 1]`. A quad whose UVs run 0..2 tiles the texture under
 //! the default `Repeat` sampler; a `ClampToEdge` sampler stretches the edge
 //! texel instead, so the clamped render has visibly more of the right-edge
-//! colour. Proves the per-object path binds the material's own sampler.
+//! colour. Proves both mesh paths bind the material's own sampler: one item
+//! draws per-object, two copies of it batch onto the instanced path.
 
 use viewport_lib::Colour;
 mod common;
@@ -65,41 +66,66 @@ fn material_sampler_wrap_mode_changes_tiling() {
         )
         .unwrap();
 
-    let render_with = |renderer: &mut ViewportRenderer, sampler: Option<SamplerKey>| -> Vec<u8> {
-        let mut frame = FrameData::default();
-        frame.viewport.show_grid = false;
-        frame.viewport.show_axes_indicator = false;
-        frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
-        let cam = Camera::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
-        frame.camera.viewport_size = [96.0, 96.0];
+    let render_with =
+        |renderer: &mut ViewportRenderer, sampler: Option<SamplerKey>, copies: usize| -> Vec<u8> {
+            let mut frame = FrameData::default();
+            frame.viewport.show_grid = false;
+            frame.viewport.show_axes_indicator = false;
+            frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
+            let cam = Camera::default();
+            frame.camera.render_camera = {
+                let mut rc = RenderCamera::from_camera(&cam);
+                rc.aspect = 1.0;
+                rc
+            };
+            frame.camera.viewport_size = [96.0, 96.0];
 
-        let mut item = SceneRenderItem::default();
-        item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-        item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
-        item.material.texture_id = Some(tex);
-        item.settings.unlit = true;
-        if let Some(key) = sampler {
-            item.material = item.material.with_sampler(TextureSlot::Albedo, key);
-        }
-        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        renderer.render_offscreen(&device, &queue, &frame, 96, 96)
-    };
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = mesh;
+            item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+            item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            item.material.texture_id = Some(tex);
+            item.settings.unlit = true;
+            if let Some(key) = sampler {
+                item.material = item.material.with_sampler(TextureSlot::Albedo, key);
+            }
+            frame.scene.surfaces = SurfaceSubmission::Flat(vec![item; copies].into());
+        // Each render is a different scene; a repeated generation would reuse
+        // the previous render's batches.
+        frame.scene.generation = sampler.map_or(1, |_| 2) + copies as u64 * 10;
+            let px = renderer.render_offscreen(&device, &queue, &frame, 96, 96);
+            let stats = renderer.last_frame_stats();
+            if copies > 1 {
+                assert_eq!(stats.per_object_items, 0, "copies must batch");
+                assert_eq!(stats.instanced_batches, 1, "copies must share a batch");
+            } else {
+                // Below the instancing threshold every item draws per-object.
+                assert_eq!(stats.instanced_batches, 0, "one item draws per-object");
+            }
+            px
+        };
 
     // Default (Repeat): the texture tiles twice across the quad, so red and blue
     // each cover roughly half.
-    let repeat_px = render_with(&mut renderer, None);
+    let repeat_px = render_with(&mut renderer, None, 1);
     let repeat_blue = blue_pixels(&repeat_px);
 
     // ClampToEdge: everything past U=1 stretches the blue edge texel, so the
     // right half of the quad is solid blue on top of the tiled left half.
-    let clamp_px = render_with(&mut renderer, Some(SamplerKey::clamp()));
+    let clamp_px = render_with(&mut renderer, Some(SamplerKey::clamp()), 1);
     let clamp_blue = blue_pixels(&clamp_px);
+
+    // The same two renders on the instanced path must match the per-object ones.
+    let repeat_inst = blue_pixels(&render_with(&mut renderer, None, 2));
+    let clamp_inst = blue_pixels(&render_with(&mut renderer, Some(SamplerKey::clamp()), 2));
+    assert_eq!(
+        repeat_inst, repeat_blue,
+        "instanced repeat differs from per-object"
+    );
+    assert_eq!(
+        clamp_inst, clamp_blue,
+        "instanced clamp differs from per-object"
+    );
 
     assert!(
         repeat_blue > 0,

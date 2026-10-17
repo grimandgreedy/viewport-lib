@@ -309,6 +309,89 @@ pub struct GpuBreakdown {
     pub overlay_ms: f32,
 }
 
+/// Why the per-object items of a frame missed the instanced path.
+///
+/// One counter per test that keeps an item off the instanced path. Each item
+/// is counted once, under the first test it fails in the order the fields are
+/// listed, so the fields sum to [`FrameStats::per_object_items`]. An item that
+/// fails two tests shows up only under the earlier one: clearing that reason
+/// may move it to a later counter rather than onto the instanced path.
+///
+/// Items forced per-object by viewport wireframe mode or `show_normals` are
+/// not in [`FrameStats::per_object_items`] and are not counted here.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct PerObjectReasons {
+    /// The item sets `settings.wireframe`.
+    pub wireframe: u32,
+    /// The item has an active scalar attribute.
+    pub scalar_attribute: u32,
+    /// The item's material plugin has no instanced pipeline set yet, or the id
+    /// is unknown.
+    pub material_plugin_not_ready: u32,
+    /// The item's material plugin reads the per-vertex extension attribute.
+    pub material_plugin_vertex_attribute: u32,
+    /// The item has a GPU vertex warp.
+    pub warp: u32,
+    /// The material uses a matcap.
+    pub matcap: u32,
+    /// The item sets per-submesh materials.
+    pub submesh_materials: u32,
+    /// The item's mesh id is not resident.
+    pub missing_mesh: u32,
+    /// The item carries per-instance deform data.
+    pub per_instance_deform: u32,
+    /// The item's mesh carries per-mesh deform slot data.
+    pub mesh_deform_slots: u32,
+    /// The item's mesh has a position or normal override buffer.
+    pub vertex_override: u32,
+    /// The item's mesh has a baked lightmap.
+    pub lightmap: u32,
+    /// The item sets the hidden `force_per_object` test setting.
+    #[doc(hidden)]
+    pub force_per_object: u32,
+}
+
+impl PerObjectReasons {
+    /// The sum of every counter.
+    pub fn total(&self) -> u32 {
+        self.wireframe
+            + self.scalar_attribute
+            + self.material_plugin_not_ready
+            + self.material_plugin_vertex_attribute
+            + self.warp
+            + self.matcap
+            + self.submesh_materials
+            + self.missing_mesh
+            + self.per_instance_deform
+            + self.mesh_deform_slots
+            + self.vertex_override
+            + self.lightmap
+            + self.force_per_object
+    }
+
+    pub(crate) fn count(&mut self, reason: crate::renderer::prepare::FallbackReason) {
+        use crate::renderer::prepare::FallbackReason as R;
+        let slot = match reason {
+            R::Hidden => return,
+            R::Wireframe => &mut self.wireframe,
+            R::ScalarAttribute => &mut self.scalar_attribute,
+            R::MaterialPluginNotReady => &mut self.material_plugin_not_ready,
+            R::MaterialPluginVertexAttribute => &mut self.material_plugin_vertex_attribute,
+            R::Warp => &mut self.warp,
+            R::Matcap => &mut self.matcap,
+            R::SubmeshMaterials => &mut self.submesh_materials,
+            R::MissingMesh => &mut self.missing_mesh,
+            R::PerInstanceDeform => &mut self.per_instance_deform,
+            R::MeshDeformSlots => &mut self.mesh_deform_slots,
+            R::VertexOverride => &mut self.vertex_override,
+            R::Lightmap => &mut self.lightmap,
+            R::ForcePerObject => &mut self.force_per_object,
+        };
+        *slot += 1;
+    }
+}
+
 /// Per-frame rendering statistics returned by [`crate::ViewportRenderer::prepare`].
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -347,15 +430,14 @@ pub struct FrameStats {
     /// Visible items that miss the instanced fast path and are drawn one at a
     /// time through the per-object path.
     ///
-    /// An item is non-instanceable when it uses a styled back-face policy
-    /// (different-colour/tint/pattern) or is two-sided and transparent, uses a
-    /// matcap, has a scalar attribute or parameter visualization, carries a
-    /// position/normal override, carries deform slot data (per-mesh or
-    /// per-instance, so skinning and displacement both land here). Each such
-    /// item costs a uniform write and a bind-group
-    /// build in `prepare`, so a large count here means `prepare` is paying
-    /// per-object cost across much of the scene rather than batching it.
+    /// Each such item costs a uniform write and a bind-group build in
+    /// `prepare`, so a large count here means `prepare` is paying per-object
+    /// cost across much of the scene rather than batching it.
+    /// [`Self::per_object_by_reason`] says why.
     pub per_object_items: u32,
+    /// [`Self::per_object_items`] split by the reason each item missed the
+    /// instanced path. Its fields sum to `per_object_items`.
+    pub per_object_by_reason: PerObjectReasons,
     /// Per-object bind groups actually (re)built this frame.
     ///
     /// The per-object path caches bind groups and skips the rebuild when the

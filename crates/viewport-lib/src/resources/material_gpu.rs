@@ -68,7 +68,7 @@ impl TexTransformGpu {
 /// - `backface_colour` = the styled-backface colour (see below)
 /// - `mr_range`  = (metallic_min, metallic_max, roughness_min, roughness_max)
 /// - `tex_index0` = bindless array indices (albedo, normal, ao, metallic-roughness)
-/// - `tex_index1` = bindless array indices (emissive, unused, unused, unused)
+/// - `tex_index1` = (emissive bindless index, sampler code, unused, unused)
 ///
 /// `tex_index0` / `tex_index1` hold each material texture's index into the
 /// bindless texture array, or `NO_TEXTURE` (`u32::MAX`) when the material has no
@@ -78,6 +78,11 @@ impl TexTransformGpu {
 /// before (textures are keyed by the batch, not the material buffer). The
 /// bindless shader reads the index and samples the array; the per-batch shaders
 /// ignore these fields.
+///
+/// The sampler code (`sampler_code` of the material's selected sampler, or the
+/// default key) is not read by any shader. It is in the block so that two
+/// materials differing only in sampler intern to different ids, the same way
+/// they land in different batches.
 ///
 /// `has_mr_tex` / `has_emissive_tex` (0 or 1) gate the instanced metallic-roughness
 /// and emissive texture samples; `mr_range` remaps the raw MR sample before the
@@ -304,7 +309,14 @@ impl MaterialGpu {
                 m.roughness_range[1],
             ],
             tex_index0: [idx(Albedo), idx(Normal), idx(Ao), idx(MetallicRoughness)],
-            tex_index1: [idx(Emissive), NO_TEXTURE, NO_TEXTURE, NO_TEXTURE],
+            tex_index1: [
+                idx(Emissive),
+                crate::resources::material::fallbacks::sampler_code(
+                    m.selected_sampler().unwrap_or_default(),
+                ),
+                NO_TEXTURE,
+                NO_TEXTURE,
+            ],
         }
     }
 }
@@ -522,9 +534,26 @@ mod tests {
         assert_eq!(b.scalars1[3], 1.0, "has_mr_tex set");
         assert_eq!(b.scalars3[3], 1.0, "has_emissive_tex set");
         assert_eq!(b.mr_range, [0.1, 0.9, 0.2, 0.8]);
-        // Per-batch binding (tex_indices = false) leaves every array index unset.
+        // Per-batch binding (tex_indices = false) leaves every array index unset;
+        // `tex_index1.y` is the sampler code, zero for the default key.
         assert_eq!(b.tex_index0, [NO_TEXTURE; 4]);
-        assert_eq!(b.tex_index1, [NO_TEXTURE; 4]);
+        assert_eq!(b.tex_index1, [NO_TEXTURE, 0, NO_TEXTURE, NO_TEXTURE]);
+    }
+
+    #[test]
+    fn sampler_key_splits_blocks_and_default_key_does_not() {
+        use crate::scene::material::{SamplerKey, TextureSlot};
+        let plain = Material::default();
+        let default_key = plain
+            .clone()
+            .with_sampler(TextureSlot::Albedo, SamplerKey::default());
+        let clamp = plain
+            .clone()
+            .with_sampler(TextureSlot::Albedo, SamplerKey::clamp());
+        let mut b = MaterialGpuBuilder::default();
+        let a = b.intern(&plain, all_live(&plain));
+        assert_eq!(b.intern(&default_key, all_live(&default_key)), a);
+        assert_ne!(b.intern(&clamp, all_live(&clamp)), a);
     }
 
     #[test]
