@@ -107,10 +107,9 @@ fn holes(size: u32, cells: u32) -> viewport_lib::TextureData {
 /// Alpha handling on both paths: a texture mask, a vertex-colour mask, a
 /// masked card faded below full opacity, and a premultiplied pane, all casting
 /// onto a ground slab under an angled sun so the shadow cutouts show too.
-// Not in the catalogue: a per-object caster loses its shadow when a textured
-// masked per-object caster shares the frame, so its reference would record
-// that as correct. Register it (camera: `orbit_camera(Vec3::new(0.0, 1.0,
-// 0.4), 12.5, 0.0, 0.95)`) once both copies cast.
+// Not in the catalogue: one row of cards adds little beside the grids. Kept as
+// a starting point for an alpha shadow grid (camera: `orbit_camera(Vec3::new(
+// 0.0, 1.0, 0.4), 12.5, 0.0, 0.95)`).
 #[allow(dead_code)]
 fn build_materials_alpha_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let g = ground(ctx, 0.0);
@@ -312,13 +311,10 @@ fn build_materials_textures(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
     BuiltScene {
         items,
-        lighting: {
-            let mut l = rigs::three_point();
-            for light in &mut l.lights {
-                light.cast_shadows = false;
-            }
-            l
-        },
+        // Shadows on: the rows stack down the frame under the key light, so
+        // each sphere shadows the row below, and a caster's shadow must not
+        // depend on whether its neighbours are per-object or instanced.
+        lighting: rigs::three_point(),
         background: None,
         ..Default::default()
     }
