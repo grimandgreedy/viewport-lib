@@ -7,8 +7,9 @@
 //   words 3, 4 normal override window
 //   word 5     extension attribute stream index
 //   word 6     lightmap UV1 stream index
-//   word 7     stream table offset, in words from the record base
-//   table      (offset, len) per stream: words from the record base, elements
+//   word 7     stream count
+//   word 8..   the stream table, (offset, len) per stream: words from the
+//              record base, elements; then the streams
 //
 // A mesh without a record reads the empty header bound in its place (record
 // base 0, empty windows, no streams). Every read is clamped to the bound
@@ -21,7 +22,7 @@ const SC_NRM_BASE: u32 = 3u;
 const SC_NRM_LEN: u32 = 4u;
 const SC_EXTENSION: u32 = 5u;
 const SC_LIGHTMAP_UV: u32 = 6u;
-const SC_TABLE: u32 = 7u;
+const SC_TABLE: u32 = 8u;
 const SC_NO_STREAM: u32 = 0xffffffffu;
 // Bits per stream index in the instance selection word; all ones is none.
 const SC_SELECT_BITS: u32 = 10u;
@@ -49,7 +50,7 @@ fn sc_stream(rec: u32, index: u32) -> vec2<u32> {
     if index == SC_NO_STREAM {
         return vec2<u32>(0u, 0u);
     }
-    let entry = rec + sc_word(rec + SC_TABLE) + 2u * index;
+    let entry = rec + SC_TABLE + 2u * index;
     return vec2<u32>(rec + sc_word(entry), sc_word(entry + 1u));
 }
 

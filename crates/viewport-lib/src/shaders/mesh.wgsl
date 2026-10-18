@@ -428,14 +428,22 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     var out: VertexOut;
     out.obj_idx = instance_index;
     // The per-mesh words and the item's stream selection, from the mesh's
-    // sidecar record.
+    // sidecar record. A mesh without one reads nothing; each read below is
+    // behind the flag that needs it.
     let rec = instances[instance_index].sidecar_record;
     let sel = instances[instance_index].sidecar_select;
-    object.uv1_base = sc_word(rec + SC_UV1_BASE);
-    object.position_override_base = sc_word(rec + SC_POS_BASE);
-    object.position_override_len = sc_word(rec + SC_POS_LEN);
-    object.normal_override_base = sc_word(rec + SC_NRM_BASE);
-    object.normal_override_len = sc_word(rec + SC_NRM_LEN);
+    let has_sidecar = (instances[instance_index].flags & INST_HAS_SIDECAR) != 0u;
+    if has_sidecar {
+        object.uv1_base = sc_word(rec + SC_UV1_BASE);
+    }
+    if object.has_position_override != 0u {
+        object.position_override_base = sc_word(rec + SC_POS_BASE);
+        object.position_override_len = sc_word(rec + SC_POS_LEN);
+    }
+    if object.has_normal_override != 0u {
+        object.normal_override_base = sc_word(rec + SC_NRM_BASE);
+        object.normal_override_len = sc_word(rec + SC_NRM_LEN);
+    }
     // Override > vertex attribute. When a plugin has bound a per-vertex position
     // storage buffer, replace `in.position` outright; warp is then layered on top
     // additively. Same idea for normals further down.
@@ -500,30 +508,38 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     out.uv1 = uv1_buf[uv1_idx];
     // Read scalar attribute value for this vertex, guarded by has_attribute and stream length.
     let idx = in.vertex_index;
-    let scalar = sc_stream(rec, sc_selected(sel, 0u));
-    let has_attr = object.has_attribute != 0u && scalar.y > 0u;
-    let raw_scalar = select(0.0, sc_f32(scalar.x + min(idx, max(scalar.y, 1u) - 1u)), scalar.y > 0u);
-    out.scalar_val = select(0.0, raw_scalar, has_attr);
+    var has_attr = false;
+    var raw_scalar = 0.0;
+    if object.has_attribute != 0u {
+        let scalar = sc_stream(rec, sc_selected(sel, 0u));
+        if scalar.y > 0u {
+            has_attr = true;
+            raw_scalar = sc_f32(scalar.x + min(idx, scalar.y - 1u));
+        }
+    }
+    out.scalar_val = raw_scalar;
     // Detect NaN before interpolation can corrupt the bit pattern.
     let sv_bits = bitcast<u32>(raw_scalar);
     let sv_is_nan = has_attr && (sv_bits & 0x7F800000u) == 0x7F800000u && (sv_bits & 0x007FFFFFu) != 0u;
     out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
     // Per-face RGBA colour (FaceColour attribute kind). Indexed by vertex_index which
     // equals the sequential draw invocation counter for non-indexed face draws.
-    let fc = sc_stream(rec, sc_selected(sel, 1u));
-    out.face_colour = select(
-        vec4<f32>(1.0),
-        sc_vec4(fc.x + 4u * min(idx, max(fc.y, 1u) - 1u)),
-        object.use_face_colour != 0u && fc.y > 0u,
-    );
+    out.face_colour = vec4<f32>(1.0);
+    if object.use_face_colour != 0u {
+        let fc = sc_stream(rec, sc_selected(sel, 1u));
+        if fc.y > 0u {
+            out.face_colour = sc_vec4(fc.x + 4u * min(idx, fc.y - 1u));
+        }
+    }
     // Lightmap UV1 in .xy (zero for non-lightmapped meshes); .z carries the
     // atlas page for a multi-page lightmap (0 otherwise).
-    let lm = sc_stream(rec, sc_word(rec + SC_LIGHTMAP_UV));
-    let lm_sidecar = select(
-        vec4<f32>(0.0),
-        sc_vec4(lm.x + 4u * min(idx, max(lm.y, 1u) - 1u)),
-        lm.y > 0u,
-    );
+    var lm_sidecar = vec4<f32>(0.0);
+    if has_sidecar {
+        let lm = sc_stream(rec, sc_word(rec + SC_LIGHTMAP_UV));
+        if lm.y > 0u {
+            lm_sidecar = sc_vec4(lm.x + 4u * min(idx, lm.y - 1u));
+        }
+    }
     // The draw's placement maps the unwrap onto its rect and page of the
     // atlas; both are affine or flat, so they apply here exactly.
     let placement = instances[instance_index].lightmap_scale_bias;

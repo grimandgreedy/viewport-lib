@@ -2148,6 +2148,9 @@ pub(crate) mod instance_flags {
     pub(crate) const USE_FACE_COLOUR: u32 = 1 << 15;
     /// The item has a GPU vertex warp (per-vertex warp buffer).
     pub(crate) const HAS_WARP: u32 = 1 << 16;
+    /// The mesh has a sidecar record at `sidecar_record`; without it the
+    /// vertex stage reads no sidecar words.
+    pub(crate) const HAS_SIDECAR: u32 = 1 << 17;
 
     /// `bit` when `on`, else 0.
     #[inline]

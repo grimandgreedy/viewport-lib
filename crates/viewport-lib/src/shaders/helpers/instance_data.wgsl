@@ -52,3 +52,5 @@ const INST_HAS_ATTRIBUTE: u32 = 16384u;
 const INST_USE_FACE_COLOUR: u32 = 32768u;
 // The item has a GPU vertex warp (the per-vertex warp buffer).
 const INST_HAS_WARP: u32 = 65536u;
+// The mesh has a sidecar record at `sidecar_record` (base 0 is a valid record).
+const INST_HAS_SIDECAR: u32 = 131072u;

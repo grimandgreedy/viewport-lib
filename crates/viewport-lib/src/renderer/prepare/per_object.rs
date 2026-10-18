@@ -87,7 +87,8 @@ pub(crate) fn build_instance_record(
                 .is_some_and(|a| a.kind == crate::resources::AttributeKind::FaceColour),
             f::USE_FACE_COLOUR,
         )
-        | f::when(item.warp_attribute.is_some(), f::HAS_WARP);
+        | f::when(item.warp_attribute.is_some(), f::HAS_WARP)
+        | f::when(record.is_some(), f::HAS_SIDECAR);
     InstanceData {
         model: cm.model,
         colour: cm.colour,

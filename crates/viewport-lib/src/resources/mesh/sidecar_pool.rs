@@ -16,8 +16,11 @@
 //! | 3, 4 | normal override window |
 //! | 5 | extension attribute stream index, [`NO_STREAM`] when absent |
 //! | 6 | lightmap UV1 stream index, [`NO_STREAM`] when absent |
-//! | 7 | stream table offset, in words from the record base |
-//! | 8.. | the streams, then the table: `(offset, len)` per stream, offset in words from the record base and len in elements |
+//! | 7 | stream count |
+//! | 8.. | the stream table, `(offset, len)` per stream (offset in words from the record base, len in elements), then the streams |
+//!
+//! The table sits at a fixed offset so a shader reaches a stream in one
+//! dependent load. It never grows in place: adding a stream moves the record.
 //!
 //! Chunks are added and never reallocated, so a bind group keyed on a chunk
 //! stays valid. Writes, record moves and frees are queued and run in order at
@@ -30,7 +33,7 @@ use crate::resources::mesh::geometry_slab::{ByteSlab, SlabSpan};
 /// Stream index meaning "no stream", in the header and the selection word.
 pub(crate) const NO_STREAM: u32 = u32::MAX;
 
-/// Words before the first stream.
+/// Words before the stream table.
 pub(crate) const HEADER_WORDS: u32 = 8;
 
 /// Bits per stream index in [`InstanceData::sidecar_select`]; the all-ones
@@ -193,13 +196,6 @@ impl SidecarRecord {
 
     fn header_words(&self) -> [u32; HEADER_WORDS as usize] {
         let index_of = |kind| self.first_of(kind).map_or(NO_STREAM, |s| s.index);
-        // The table follows the last stream's words.
-        let table = self
-            .streams
-            .iter()
-            .map(|s| s.offset + s.len * s.kind.words())
-            .max()
-            .unwrap_or(HEADER_WORDS);
         [
             self.header.uv1_base,
             self.header.position_override.0,
@@ -208,7 +204,7 @@ impl SidecarRecord {
             self.header.normal_override.1,
             index_of(StreamKind::Extension),
             index_of(StreamKind::LightmapUv),
-            table,
+            self.streams.len() as u32,
         ]
     }
 
@@ -261,7 +257,6 @@ impl SidecarPool {
         let mut words = [0u32; HEADER_WORDS as usize];
         words[5] = NO_STREAM;
         words[6] = NO_STREAM;
-        words[7] = HEADER_WORDS;
         let fallback = device.create_buffer(&gpu::BufferDescriptor {
             label: Some("sidecar_fallback"),
             size: (HEADER_WORDS * 4) as u64,
@@ -307,10 +302,10 @@ impl SidecarPool {
         };
         let mut words = Vec::with_capacity(total as usize);
         words.extend_from_slice(&record.header_words());
+        words.extend(record.table_words());
         for s in &streams {
             words.extend_from_slice(&s.words);
         }
-        words.extend(record.table_words());
         self.ops.push(Op::Write {
             chunk: span.chunk,
             offset: span.offset,
@@ -373,20 +368,13 @@ impl SidecarPool {
     /// Queue a rewrite of the record's header and stream table (after a
     /// header change, such as an override window).
     pub(crate) fn write_header(&mut self, record: &SidecarRecord) {
+        let mut words = record.header_words().to_vec();
+        words.extend(record.table_words());
         self.ops.push(Op::Write {
             chunk: record.span.chunk,
             offset: record.span.offset,
-            words: record.header_words().to_vec(),
+            words,
         });
-        let table = record.table_words();
-        if !table.is_empty() {
-            let table_offset = record.header_words()[7];
-            self.ops.push(Op::Write {
-                chunk: record.span.chunk,
-                offset: record.span.offset + table_offset as u64 * 4,
-                words: table,
-            });
-        }
     }
 
     /// Queue a rewrite of one stream's contents in place. `words` must be the
@@ -526,9 +514,10 @@ impl SidecarPool {
     fn layout(
         entries: impl Iterator<Item = (StreamKind, String, u32)>,
     ) -> (Vec<SidecarStream>, u32) {
-        let mut offset = HEADER_WORDS;
-        let mut out = Vec::new();
-        for (index, (kind, name, words)) in entries.enumerate() {
+        let entries: Vec<_> = entries.collect();
+        let mut offset = HEADER_WORDS + 2 * entries.len() as u32;
+        let mut out = Vec::with_capacity(entries.len());
+        for (index, (kind, name, words)) in entries.into_iter().enumerate() {
             out.push(SidecarStream {
                 kind,
                 name,
@@ -538,7 +527,6 @@ impl SidecarPool {
             });
             offset += words;
         }
-        let total = offset + 2 * out.len() as u32;
-        (out, total)
+        (out, offset)
     }
 }
