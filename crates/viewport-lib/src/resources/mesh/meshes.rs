@@ -2640,13 +2640,15 @@ impl DeviceResources {
             lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
             warp_stream: 0,
             lightmap_stream: 0,
-            uv1_base: 0,
+            vertex_base: 0,
             _pad: 0,
         };
         let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
             size: std::mem::size_of::<InstanceData>() as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE
+                | crate::gpu::BufferUsages::VERTEX
+                | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -2736,6 +2738,10 @@ impl DeviceResources {
                     binding: 19,
                     resource: fallback_uv1_buf.as_entire_binding(),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 15,
+                    resource: fallback_uv1_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -2759,13 +2765,15 @@ impl DeviceResources {
             lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
             warp_stream: 0,
             lightmap_stream: 0,
-            uv1_base: 0,
+            vertex_base: 0,
             _pad: 0,
         };
         let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),
             size: std::mem::size_of::<InstanceData>() as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE
+                | crate::gpu::BufferUsages::VERTEX
+                | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -2848,6 +2856,10 @@ impl DeviceResources {
                 // texture, so the zero fallback is always correct here.
                 crate::gpu::BindGroupEntry {
                     binding: 19,
+                    resource: fallback_uv1_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 15,
                     resource: fallback_uv1_buf.as_entire_binding(),
                 },
             ],

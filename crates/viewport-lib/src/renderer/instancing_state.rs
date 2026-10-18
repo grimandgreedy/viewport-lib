@@ -27,9 +27,12 @@ pub(crate) struct DrawGroup {
     pub(crate) vertex_chunk: u32,
     pub(crate) index_chunk: u32,
     pub(crate) count_index: u32,
-    /// The group's sampler code (`sampler_code`): with the vertex chunk, it
-    /// selects the bindless colour bind group.
-    pub(crate) sampler_code: u32,
+    /// The group-1 bind key its batches share: with this viewport, it selects
+    /// the culled bind group.
+    pub(crate) bind_key: u64,
+    /// The feature set and group-1 member its batches draw with.
+    pub(crate) features: crate::renderer::pipeline_key::FeatureSet,
+    pub(crate) bindless: bool,
 }
 
 pub(crate) struct InstancingState {
@@ -69,7 +72,7 @@ pub(crate) struct InstancingState {
     pub(crate) last_scene_generation: u64,
     /// Global wireframe toggle (`frame.viewport.wireframe_mode`) at the last
     /// rebuild. Baked into each instance's per-instance `wireframe` shading
-    /// flag (see `mesh_instanced.wgsl`'s `inst.wireframe`), so a toggle with
+    /// flag (`INST_WIREFRAME`), so a toggle with
     /// no other scene change must still force a rebuild or the cached
     /// instance buffer keeps shading with the old flag.
     pub(crate) last_wireframe_mode: bool,
@@ -172,7 +175,7 @@ pub(crate) struct InstancingState {
     /// not re-walk the batch list to re-form the groups or re-upload the per-batch
     /// group metadata (only the per-viewport compaction runs each frame, on the
     /// GPU). `None` when the groups are cold or the GPU-driven path is inactive.
-    pub(crate) draw_group_cache_key: Option<(u64, bool)>,
+    pub(crate) draw_group_cache_key: Option<(u64, bool, u64)>,
 }
 
 impl InstancingState {

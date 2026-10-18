@@ -747,9 +747,9 @@ impl ViewportRenderer {
     pub const MIN_STORAGE_BUFFERS_PER_STAGE: u32 = 8;
 
     /// The per-stage storage-buffer count per-vertex deformers need: the base
-    /// vertex stage (five: the instance records, the sidecar record chunk, the
-    /// two overrides and the uv1 stream) plus the two the deform sidecar adds.
-    /// That sits under the floor the fragment stage already needs, so any
+    /// vertex stage (six: the instance records, the sidecar record chunk, the
+    /// two overrides, the uv1 stream and the GPU cull's visible list) plus the
+    /// two the deform sidecar adds. That is the floor exactly, so any
     /// device the renderer accepts with three bind groups runs deformers. The
     /// gate stays so a later vertex-stage binding cannot quietly push the
     /// deform layouts past a device's limit.
@@ -760,7 +760,7 @@ impl ViewportRenderer {
     /// group, which renders nothing at all. `ViewportGpuResources::new` counts
     /// the layouts it builds and `debug_assert!`s against this, so adding a
     /// vertex-stage storage buffer without updating it fails a debug build.
-    pub const DEFORM_STORAGE_BUFFERS_PER_STAGE: u32 = 7;
+    pub const DEFORM_STORAGE_BUFFERS_PER_STAGE: u32 = 8;
 
     /// The device limits viewport-lib runs best with, above wgpu's defaults.
     ///
@@ -1546,10 +1546,7 @@ impl ViewportRenderer {
         &mut self.resources
     }
 
-    /// Returns true when the current frame is rendered via the instanced draw path.
-    ///
-    /// When true, edits to mesh.wgsl shadow sampling code have no effect - the active
-    /// shader is mesh_instanced.wgsl. Check this before testing shader changes.
+    /// Returns true when the current frame draws its meshes in batches.
     pub fn is_using_instanced_path(&self) -> bool {
         self.instancing.use_instancing
     }
@@ -3546,6 +3543,9 @@ impl ViewportRenderer {
                             &self.resources.deform.dummy_bind_group
                         );
                         render_pass.set_bind_group(1, tvm_bg, &[]);
+                        if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
+                            render_pass.set_vertex_buffer(1, records.slice(..));
+                        }
                         render_pass.set_vertex_buffer(
                             0,
                             self.resources.geometry.vertex_slice(mesh.vertex_span),

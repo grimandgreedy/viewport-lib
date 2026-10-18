@@ -15,6 +15,12 @@ pub(crate) struct SceneBindings {
     pub(crate) camera_bgl: crate::gpu::BindGroupLayout,
     /// Bind group layout for group 1 (per-object uniform: model, material, selection).
     pub(crate) object_bgl: crate::gpu::BindGroupLayout,
+    /// `object_bgl`'s entries, from which its bindless member is derived.
+    pub(crate) object_bgl_entries: Vec<crate::gpu::BindGroupLayoutEntry>,
+    /// The bindless member of group 1: `object_bgl` with the five material
+    /// texture slots replaced by one texture array at binding 1. Built with
+    /// the first bindless mesh family.
+    pub(crate) object_bindless_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Uniform buffer for clip planes (binding 4 of camera bind group).
     pub(crate) clip_planes_buf: crate::gpu::Buffer,
     /// Uniform buffer for the extended clip volume (binding 6 of camera bind group, 128 bytes).

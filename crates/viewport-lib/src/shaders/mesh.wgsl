@@ -302,11 +302,14 @@ override FEAT_DEFORM: bool = true;
 // the 1x1 fallback is bound (and ignored) for flat lightmaps.
 @group(1) @binding(18) var lightmap_dir_tex: texture_2d_array<f32>;
 // Second UV set (glTF TEXCOORD_1), one vec2 per vertex, parallel to the vertex
-// buffer in the shared slab. Indexed by `object.uv1_base + vertex_index` (the
-// per-object draw binds a mesh sub-slice, so the base recovers the global index
-// into this whole-chunk buffer). The one-entry zero fallback is bound for meshes
-// without a second UV set; the index is clamped so every read stays in range.
+// buffer in the shared slab. Every mesh draw binds the whole slab chunk with a
+// per-mesh base vertex, so `vertex_index` indexes this whole-chunk buffer
+// directly. Read only for a mesh with a second set (`INST_HAS_UV1`); the index
+// is clamped so the one-entry zero fallback stays in range.
 @group(1) @binding(19) var<storage, read> uv1_buf: array<vec2<f32>>;
+// The visible list a GPU-culled draw reads: its instance index is a slot in
+// this list, which names the record. Direct draws bind a one-word fallback.
+@group(1) @binding(15) var<storage, read> visibility_indices: array<u32>;
 
 // Directional-lightmap response: scale the baked radiance by how the shading
 // normal (post normal-map) faces the baked dominant light, relative to the
@@ -400,6 +403,15 @@ struct VertexIn {
     @location(3) uv:       vec2<f32>,
     @location(4) tangent:  vec4<f32>,
     @builtin(vertex_index) vertex_index: u32,
+    // The record words the vertex stage uses as addresses, fetched per
+    // instance from vertex buffer slot 1 so a stream read never waits on a
+    // load of the record: the sidecar record base, the colour, warp and
+    // lightmap streams, and the mesh's first vertex in its slab chunk.
+    @location(5) w_record: u32,
+    @location(6) w_colour: u32,
+    @location(7) w_warp: u32,
+    @location(8) w_lightmap: u32,
+    @location(9) w_vertex_base: u32,
 };
 
 struct VertexOut {
@@ -433,19 +445,33 @@ struct VertexOut {
     // </viewport-shade-slot:vertex-out>
 };
 
+// A direct draw: the instance index is the record.
 @vertex
 fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> VertexOut {
-    object = load_object_vertex(instance_index);
+    return vs_body(in, instance_index);
+}
+
+// A GPU-culled draw: the instance index is a slot in the visible list, which
+// names the record. Slot 1 holds the cull's copy of the survivor's words.
+@vertex
+fn vs_main_cull(in: VertexIn, @builtin(instance_index) slot: u32) -> VertexOut {
+    return vs_body(in, visibility_indices[slot]);
+}
+
+fn vs_body(in: VertexIn, record: u32) -> VertexOut {
+    object = load_object_vertex(record);
     var out: VertexOut;
-    out.obj_idx = instance_index;
+    out.obj_idx = record;
+    // The vertex index within the mesh: the draw binds the whole slab chunk,
+    // so `vertex_index` counts from the chunk's first vertex.
+    let vi = in.vertex_index - in.w_vertex_base;
+    let flags = instances[record].flags;
     // The mesh's sidecar record and the streams this item reads, as first
     // words in the bound chunk (0 for none). A mesh without a record reads
     // nothing; each read below is behind the flag that needs it.
-    let rec = instances[instance_index].sidecar_record;
-    let has_sidecar = FEAT_RECORD && (instances[instance_index].flags & INST_HAS_SIDECAR) != 0u;
-    if has_sidecar {
-        object.uv1_base = instances[instance_index].uv1_base;
-    }
+    let rec = in.w_record;
+    let has_sidecar = FEAT_RECORD && (flags & INST_HAS_SIDECAR) != 0u;
+    object.uv1_base = in.w_vertex_base;
     if FEAT_OVERRIDES && has_sidecar && object.has_position_override != 0u {
         object.position_override_base = sc_word(rec + SC_POS_BASE);
         object.position_override_len = sc_word(rec + SC_POS_LEN);
@@ -458,10 +484,10 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     // storage buffer, replace `in.position` outright; warp is then layered on top
     // additively. Same idea for normals further down.
     var local_pos = in.position;
-    if FEAT_OVERRIDES && object.has_position_override != 0u && in.vertex_index < object.position_override_len {
+    if FEAT_OVERRIDES && object.has_position_override != 0u && vi < object.position_override_len {
         // base/len slice a window out of a pooled buffer; base = 0 and
         // len = 0xffffffff reproduce the whole-buffer behaviour.
-        let pi = (object.position_override_base + in.vertex_index) * 3u;
+        let pi = (object.position_override_base + vi) * 3u;
         let plen = arrayLength(&position_override_buffer);
         if pi + 2u < plen {
             local_pos = vec3<f32>(
@@ -472,14 +498,14 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
         }
     }
     if FEAT_WARP && has_sidecar && object.has_warp != 0u {
-        let warp = instances[instance_index].warp_stream;
+        let warp = in.w_warp;
         if warp != 0u {
-            local_pos += sc_vec3(warp + in.vertex_index * 3u) * object.warp_scale;
+            local_pos += sc_vec3(warp + vi * 3u) * object.warp_scale;
         }
     }
     var local_normal = in.normal;
-    if FEAT_OVERRIDES && object.has_normal_override != 0u && in.vertex_index < object.normal_override_len {
-        let ni = (object.normal_override_base + in.vertex_index) * 3u;
+    if FEAT_OVERRIDES && object.has_normal_override != 0u && vi < object.normal_override_len {
+        let ni = (object.normal_override_base + vi) * 3u;
         let nlen = arrayLength(&normal_override_buffer);
         if ni + 2u < nlen {
             local_normal = vec3<f32>(
@@ -489,7 +515,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
             );
         }
     }
-    var dv = DeformVertex(local_pos, local_normal, in.vertex_index);
+    var dv = DeformVertex(local_pos, local_normal, vi);
     let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, object.deform_flags, 0u);
     if FEAT_DEFORM {
         dv = viewport_deform_object_space(dv, dctx);
@@ -513,33 +539,33 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
-    // Second UV set: read from the parallel uv1 stream. The per-object draw binds
-    // a mesh sub-slice, so the vertex index is mesh-local; add the mesh base to
-    // index the whole-chunk buffer. The index is clamped so the zero fallback
-    // (one entry, bound for meshes without a second set) stays in range.
-    let uv1_len = arrayLength(&uv1_buf);
-    let uv1_idx = min(object.uv1_base + in.vertex_index, max(uv1_len, 1u) - 1u);
-    out.uv1 = uv1_buf[uv1_idx];
+    // Second UV set: the parallel uv1 stream, indexed by the chunk vertex
+    // index. Zero for a mesh without one, whose chunk may bind another mesh's
+    // stream or the one-entry fallback.
+    out.uv1 = vec2<f32>(0.0);
+    if (flags & INST_HAS_UV1) != 0u {
+        let uv1_len = arrayLength(&uv1_buf);
+        out.uv1 = uv1_buf[min(in.vertex_index, max(uv1_len, 1u) - 1u)];
+    }
     // The scalar or face-colour stream the item is coloured by. Streams are
     // padded to every index the draw reaches, so they are read unclamped.
-    let idx = in.vertex_index;
-    let colour_stream = instances[instance_index].colour_stream;
+    let colour_stream = in.w_colour;
     var has_attr = false;
     var raw_scalar = 0.0;
     if FEAT_COLOUR_STREAM && has_sidecar && object.has_attribute != 0u && object.use_face_colour == 0u && colour_stream != 0u {
         has_attr = true;
-        raw_scalar = sc_f32(colour_stream + idx);
+        raw_scalar = sc_f32(colour_stream + vi);
     }
     out.scalar_val = raw_scalar;
     // Detect NaN before interpolation can corrupt the bit pattern.
     let sv_bits = bitcast<u32>(raw_scalar);
     let sv_is_nan = has_attr && (sv_bits & 0x7F800000u) == 0x7F800000u && (sv_bits & 0x007FFFFFu) != 0u;
     out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
-    // Per-face RGBA colour (FaceColour attribute kind). Indexed by vertex_index which
-    // equals the sequential draw invocation counter for non-indexed face draws.
+    // Per-face RGBA colour (FaceColour attribute kind). Indexed by the vertex
+    // index, which is the sequential corner counter for unindexed face draws.
     out.face_colour = vec4<f32>(1.0);
     if FEAT_COLOUR_STREAM && has_sidecar && object.use_face_colour != 0u && colour_stream != 0u {
-        out.face_colour = sc_vec4(colour_stream + 4u * idx);
+        out.face_colour = sc_vec4(colour_stream + 4u * vi);
     }
     // Lightmap UV1 in .xy and the atlas page in .z, mapped through the draw's
     // placement onto its rect and page of the atlas (both affine or flat, so
@@ -547,12 +573,12 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     // never samples one.
     out.lightmap_uv = vec2<f32>(0.0);
     out.lightmap_page = 0.0;
-    let lm = instances[instance_index].lightmap_stream;
+    let lm = in.w_lightmap;
     if FEAT_LIGHTMAP && has_sidecar && lm != 0u {
-        let lm_sidecar = sc_vec4(lm + 4u * idx);
-        let placement = instances[instance_index].lightmap_scale_bias;
+        let lm_sidecar = sc_vec4(lm + 4u * vi);
+        let placement = instances[record].lightmap_scale_bias;
         out.lightmap_uv = lm_sidecar.xy * placement.xy + placement.zw;
-        out.lightmap_page = lm_sidecar.z + f32(instances[instance_index].lightmap_layer);
+        out.lightmap_page = lm_sidecar.z + f32(instances[record].lightmap_layer);
     }
     // <viewport-shade-slot:vertex-fetch>
     // </viewport-shade-slot:vertex-fetch>
@@ -732,9 +758,11 @@ fn build_shading_surface(
     surf.uv_ddx = dpdx(surface.mat_uv);
     surf.uv_ddy = dpdy(surface.mat_uv);
     surf.front_facing = surface.front_facing;
-    // Filled from the injected varying in modules whose hook reads the
-    // per-vertex extension attribute; zero everywhere else.
-    surf.attr = vec4<f32>(0.0);
+    // The instance's raw material channel: custom data slots 4..8 (`data1`),
+    // the block reserved for material plugins. A module whose hook reads the
+    // per-vertex extension attribute replaces it with that attribute.
+    // `custom_data_id` 0 is the shared all-zero block.
+    surf.attr = custom_data1(lights_uniform.custom_data_base, instances[in.obj_idx].custom_data_id);
     return surf;
 }
 
@@ -1385,6 +1413,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         );
         emissive = emissive * textureSampleGrad(emissive_tex, obj_sampler, s_em.uv, s_em.ddx, s_em.ddy).rgb;
     }
+    // Per-instance custom data slots 0..3 add to emissive (nits); zero is a
+    // no-op.
+    emissive += custom_data0(lights_uniform.custom_data_base, instances[in.obj_idx].custom_data_id).xyz;
     final_rgb += emissive;
     var dbg_emissive_lum = dot(emissive, lum_weights);
     // Surface-hook emissive: the composer adds the hook's emissive term here

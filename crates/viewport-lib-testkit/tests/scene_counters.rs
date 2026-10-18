@@ -58,14 +58,15 @@ fn expected(name: &str) -> Option<Expected> {
         // and draw their edges per-object.
         "surface_wireframe" => e(3, 3, 3, 3, 2, 1116),
         "materials_pbr" => e(25, 25, 1, 1, 0, 55200),
-        // Material grids: half the items are pinned per-object, the other
-        // half share instanced batches by mesh and texture set. The alpha
-        // grid's backdrop wall is the extra item.
-        "materials_textures" => e(42, 42, 14, 14, 21, 22176),
-        "materials_alpha" => e(65, 65, 21, 21, 32, 130),
-        // The clamped-sampler column's lower copies batch; every other lower
-        // copy still draws per-object.
-        "materials_fallbacks" => e(44, 44, 26, 26, 34, 21128),
+        // Material grids: half the items are pinned per-object, which no
+        // longer splits a batch, so each pinned copy shares its batch with
+        // its twin by mesh and texture set. The alpha grid's backdrop wall
+        // is the extra item.
+        "materials_textures" => e(42, 42, 7, 7, 21, 22176),
+        "materials_alpha" => e(65, 65, 11, 11, 32, 130),
+        // Each column's pinned and batched copies share a batch where the
+        // copies match.
+        "materials_fallbacks" => e(44, 44, 20, 20, 34, 21128),
         "mesh_sidecars" => e(18, 18, 10, 10, 18, 9504),
         // Exposure charts: the ground and the twelve cards, two instanced
         // batches (the ground mesh and the shared card mesh).

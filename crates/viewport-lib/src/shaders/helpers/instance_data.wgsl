@@ -4,9 +4,9 @@
 // (160 bytes); keep the offsets in step with its doc table.
 //
 // Material scalars live in `material_gpu_buf`, read via `material_id`, and the
-// override windows in the mesh's sidecar record. The sidecar and stream words
-// are read by the draws that bind a mesh sub-slice and its record chunk; the
-// chunk-bound instanced draws ignore them.
+// override windows in the mesh's sidecar record. The mesh shaders take the
+// record and stream words and `vertex_base` from vertex buffer slot 1 rather
+// than from this buffer, so their stream reads do not wait on a load of it.
 struct InstanceData {
     model: mat4x4<f32>,                   // offset 0
     colour: vec4<f32>,                    // offset 64 : base colour, opacity in .a
@@ -25,7 +25,7 @@ struct InstanceData {
     lightmap_scale_bias: vec4<f32>,       // offset 128 : lm_uv = uv1 * .xy + .zw
     warp_stream: u32,                     // offset 144 : first chunk word of the warp stream, 0 none
     lightmap_stream: u32,                 // offset 148 : first chunk word of the lightmap UV1 stream, 0 none
-    uv1_base: u32,                        // offset 152 : first vertex of the mesh in its slab chunk
+    vertex_base: u32,                     // offset 152 : first vertex of the mesh in its slab chunk
     _pad: u32,                            // offset 156
 };
 
@@ -58,3 +58,5 @@ const INST_USE_FACE_COLOUR: u32 = 32768u;
 const INST_HAS_WARP: u32 = 65536u;
 // The mesh has a sidecar record at `sidecar_record` (base 0 is a valid record).
 const INST_HAS_SIDECAR: u32 = 131072u;
+// The mesh has a second UV set in the chunk's uv1 stream.
+const INST_HAS_UV1: u32 = 262144u;

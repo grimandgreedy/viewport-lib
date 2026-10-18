@@ -339,6 +339,9 @@ impl ViewportRenderer {
                                 &self.resources.deform.dummy_bind_group
                             );
                             render_pass.set_bind_group(1, tvm_bg, &[]);
+                            if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
+                                render_pass.set_vertex_buffer(1, records.slice(..));
+                            }
                             render_pass.set_vertex_buffer(
                                 0,
                                 self.resources.geometry.vertex_slice(mesh.vertex_span),
@@ -877,9 +880,6 @@ impl ViewportRenderer {
             // built it; this covers a frame prepared for the other family.
             if !scene_items.is_empty() || Self::has_mesh_content(frame) {
                 self.resources.ensure_ldr_mesh_pipelines(device);
-            }
-            if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
-                self.resources.ensure_ldr_instanced_pipelines(device);
             }
             self.render_frame_ldr(
                 device,
@@ -1517,7 +1517,7 @@ impl crate::renderer::ViewportRenderer {
         }
 
         // Mesh-instance pass: one draw call per host-built batch, routed by
-        // blend mode. Reuses the scene-graph instanced mesh pipeline family.
+        // blend mode, through the HDR mesh family's blended members.
         if !self.mesh_instance_gpu_data.is_empty() {
             use crate::renderer::SpriteBlend;
             for blend in [
@@ -1539,12 +1539,7 @@ impl crate::renderer::ViewportRenderer {
                         continue;
                     }
                     if pipeline.is_none() {
-                        let instancing = &self.resources.instancing;
-                        let Some(pl) = (match blend {
-                            SpriteBlend::AlphaBlend => instancing.hdr_transparent(),
-                            SpriteBlend::Additive => instancing.hdr_additive(),
-                            SpriteBlend::Premultiplied => instancing.hdr_premultiplied(),
-                        }) else {
+                        let Some(pl) = self.resources.scene.hdr_blend(blend) else {
                             // Still compiling: this blend mode waits a frame.
                             break;
                         };
@@ -1553,8 +1548,9 @@ impl crate::renderer::ViewportRenderer {
                         pipeline = Some(pl);
                     }
                     render_pass.set_bind_group(1, &batch.bind_group, &[]);
-                    // mesh_instanced.wgsl's pipeline layout includes the deform
-                    // bind group at index 2. MeshInstanceItem does not expose
+                    render_pass.set_vertex_buffer(1, batch.instance_buf.slice(..));
+                    // The mesh pipeline layout includes the deform bind group
+                    // at index 2. MeshInstanceItem does not expose
                     // per-instance deform handles, so bind the per-mesh
                     // fallback (or the dummy group when the mesh has no
                     // attached deform data).

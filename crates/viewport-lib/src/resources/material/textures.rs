@@ -1576,6 +1576,10 @@ impl DeviceResources {
                     binding: 19,
                     resource: uv1_buf.as_entire_binding(),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 15,
+                    resource: self.content.fallback_uv1_buf.as_entire_binding(),
+                },
             ],
         });
         mesh.last_tex_key = key;
@@ -1585,9 +1589,14 @@ impl DeviceResources {
     /// (every binding except the object-data buffer at binding 0, which is now a
     /// shared storage array). Two items with the same fingerprint can share one
     /// bind group and differ only by their object-data index, which is what lets
-    /// the per-object path stop rebinding group 1 per draw. Returns `None` when
+    /// the mesh draws stop rebinding group 1 per draw. Returns `None` when
     /// the mesh is gone. Kept in sync with the key built in
     /// [`Self::build_per_item_object_bind_group`], which calls this.
+    ///
+    /// The mesh itself is part of the key only when it binds something of its
+    /// own, an override buffer or a lightmap. Every other mesh binds its record
+    /// chunk and its slab chunk's uv1 stream, so meshes in one chunk share a
+    /// bind group.
     pub(crate) fn per_item_object_bg_key(
         &self,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
@@ -1599,20 +1608,38 @@ impl DeviceResources {
         metallic_roughness_id: Option<crate::resources::TextureId>,
         emissive_texture_id: Option<crate::resources::TextureId>,
         sampler: Option<crate::scene::material::SamplerKey>,
+        bindless: bool,
     ) -> Option<u64> {
         use std::hash::{Hash, Hasher};
         let mesh = self.mesh_store.get(mesh_id)?;
         let mut h = crate::resources::fast_hash::FastHasher::default();
-        // Index and generation both: cached entries can outlive a mesh slot's
-        // occupant, so a freed-and-reused slot must not alias the old bind group.
-        mesh_id.index().hash(&mut h);
-        mesh_id.generation().hash(&mut h);
-        albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX).hash(&mut h);
-        normal_map_id
-            .map(|t| t.raw())
-            .unwrap_or(u64::MAX)
-            .hash(&mut h);
-        ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX).hash(&mut h);
+        if bindless {
+            // The bindless member binds the whole texture store instead of
+            // the five slots, so it is rebuilt when the store changes.
+            (
+                u64::MAX,
+                self.content.textures.slot_count(),
+                self.resource_free_epoch,
+            )
+                .hash(&mut h);
+        }
+        if Self::mesh_binds_own(mesh) {
+            // Index and generation both: cached entries can outlive a mesh
+            // slot's occupant, so a freed-and-reused slot must not alias the
+            // old bind group.
+            mesh_id.index().hash(&mut h);
+            mesh_id.generation().hash(&mut h);
+            mesh.position_override_gen.hash(&mut h);
+            mesh.normal_override_gen.hash(&mut h);
+            mesh.lightmap_gen.hash(&mut h);
+        }
+        let raw = |t: Option<crate::resources::TextureId>| match t {
+            Some(t) if !bindless => t.raw(),
+            _ => u64::MAX,
+        };
+        raw(albedo_id).hash(&mut h);
+        raw(normal_map_id).hash(&mut h);
+        raw(ao_map_id).hash(&mut h);
         lut_id
             .map(|id| id.0 as u64)
             .unwrap_or(u64::MAX)
@@ -1621,25 +1648,27 @@ impl DeviceResources {
             .map(|id| id.index() as u64)
             .unwrap_or(u64::MAX)
             .hash(&mut h);
-        metallic_roughness_id
-            .map(|t| t.raw())
-            .unwrap_or(u64::MAX)
-            .hash(&mut h);
-        emissive_texture_id
-            .map(|t| t.raw())
-            .unwrap_or(u64::MAX)
-            .hash(&mut h);
-        mesh.position_override_gen.hash(&mut h);
-        mesh.normal_override_gen.hash(&mut h);
+        raw(metallic_roughness_id).hash(&mut h);
+        raw(emissive_texture_id).hash(&mut h);
         // The chunk holding the mesh's sidecar record; a record move changes it.
         mesh.sidecar.as_ref().map(|r| r.chunk()).hash(&mut h);
-        mesh.lightmap_gen.hash(&mut h);
+        // The slab chunk's uv1 stream, or the fallback for a chunk without one.
+        self.uv1_chunk_key(mesh.vertex_span.chunk).hash(&mut h);
         // Per-material sampler: two items sharing every texture but differing in
         // wrap/filter/aniso must get distinct bind groups. No key and the default
         // key bind the same sampler, so they hash the same.
         crate::resources::material::fallbacks::sampler_code(sampler.unwrap_or_default())
             .hash(&mut h);
         Some(h.finish())
+    }
+
+    /// Whether `mesh` binds a buffer or texture of its own in group 1: a
+    /// position or normal override, or a lightmap. Such a mesh's bind group is
+    /// its own; every other mesh shares one per record chunk and uv1 stream.
+    pub(crate) fn mesh_binds_own(mesh: &crate::resources::GpuMesh) -> bool {
+        mesh.position_override_buffer.is_some()
+            || mesh.normal_override_buffer.is_some()
+            || mesh.lightmap.is_some()
     }
 
     /// Build an object bind group that pairs an external object-data buffer
@@ -1664,6 +1693,10 @@ impl DeviceResources {
         emissive_texture_id: Option<crate::resources::TextureId>,
         sampler: Option<crate::scene::material::SamplerKey>,
         prev_key: Option<u64>,
+        bindless: bool,
+        // A GPU-culled draw's visible list, bound at binding 15; `None` binds
+        // the fallback a direct draw never reads.
+        visibility: Option<&crate::gpu::Buffer>,
     ) -> Option<(crate::gpu::BindGroup, u64)> {
         let cache_key = self.per_item_object_bg_key(
             mesh_id,
@@ -1675,6 +1708,7 @@ impl DeviceResources {
             metallic_roughness_id,
             emissive_texture_id,
             sampler,
+            bindless,
         )?;
         let mesh = self.mesh_store.get(mesh_id)?;
 
@@ -1787,85 +1821,98 @@ impl DeviceResources {
             .resolve_slot(&self.material, MaterialSlot::Emissive, emissive_texture_id)
             .view;
 
-        // Second UV set (binding 19): the mesh's per-chunk uv1 buffer, or the zero
-        // fallback when it has none. See `update_mesh_texture_bind_group`.
-        let uv1_buf: &crate::gpu::Buffer = if mesh.has_uv1 {
-            self.geometry
-                .uv1_chunk_buffer(mesh.vertex_span.chunk)
-                .unwrap_or(&self.content.fallback_uv1_buf)
-        } else {
-            &self.content.fallback_uv1_buf
-        };
+        // Second UV set (binding 19): the slab chunk's uv1 stream, or the zero
+        // fallback when the chunk has none. The shader reads it only for a
+        // mesh with a second set (`INST_HAS_UV1`).
+        let uv1_buf = self.uv1_chunk_or_fallback(mesh.vertex_span.chunk);
 
+        // The bindless member binds the texture store as one array at binding
+        // 1 in place of the five slot textures.
+        let views = if bindless {
+            self.bindless_texture_views()
+        } else {
+            Vec::new()
+        };
+        let mut entries = vec![
+            crate::gpu::BindGroupEntry {
+                binding: 0,
+                resource: item_uniform_buf.as_entire_binding(),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 2,
+                resource: crate::gpu::BindingResource::Sampler(bound_sampler),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 5,
+                resource: crate::gpu::BindingResource::TextureView(lut_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 6,
+                resource: sidecar_buf.as_entire_binding(),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 7,
+                resource: crate::gpu::BindingResource::TextureView(matcap_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 10,
+                resource: crate::gpu::BindingResource::Sampler(&self.material.lut_sampler),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 13,
+                resource: position_override_buf.as_entire_binding(),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 14,
+                resource: normal_override_buf.as_entire_binding(),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 15,
+                resource: visibility
+                    .unwrap_or(&self.content.fallback_uv1_buf)
+                    .as_entire_binding(),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 17,
+                resource: crate::gpu::BindingResource::TextureView(lightmap_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 18,
+                resource: crate::gpu::BindingResource::TextureView(lightmap_dir_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 19,
+                resource: uv1_buf.as_entire_binding(),
+            },
+        ];
+        if bindless {
+            entries.push(crate::gpu::BindGroupEntry {
+                binding: 1,
+                resource: crate::gpu::BindingResource::TextureViewArray(&views),
+            });
+        } else {
+            for (binding, view) in [
+                (1, albedo_view),
+                (3, normal_view),
+                (4, ao_view),
+                (11, metallic_roughness_view),
+                (12, emissive_view),
+            ] {
+                entries.push(crate::gpu::BindGroupEntry {
+                    binding,
+                    resource: crate::gpu::BindingResource::TextureView(view),
+                });
+            }
+        }
+        let layout = if bindless {
+            self.binds.object_bindless_bgl.as_ref()?
+        } else {
+            &self.binds.object_bgl
+        };
         let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("per_item_object_bind_group"),
-            layout: &self.binds.object_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: item_uniform_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::TextureView(albedo_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(bound_sampler),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 3,
-                    resource: crate::gpu::BindingResource::TextureView(normal_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 4,
-                    resource: crate::gpu::BindingResource::TextureView(ao_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 5,
-                    resource: crate::gpu::BindingResource::TextureView(lut_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 6,
-                    resource: sidecar_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 7,
-                    resource: crate::gpu::BindingResource::TextureView(matcap_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 10,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material.lut_sampler),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 11,
-                    resource: crate::gpu::BindingResource::TextureView(metallic_roughness_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 12,
-                    resource: crate::gpu::BindingResource::TextureView(emissive_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 13,
-                    resource: position_override_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 14,
-                    resource: normal_override_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 17,
-                    resource: crate::gpu::BindingResource::TextureView(lightmap_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 18,
-                    resource: crate::gpu::BindingResource::TextureView(lightmap_dir_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 19,
-                    resource: uv1_buf.as_entire_binding(),
-                },
-            ],
+            layout,
+            entries: &entries,
         });
         Some((bg, cache_key))
     }

@@ -55,9 +55,6 @@ fn build_everything(
     res.ensure_hdr_pipelines(device, queue, FORMAT);
     res.ensure_ldr_mesh_pipelines(device);
     res.ensure_instanced_pipelines(device);
-    res.ensure_ldr_instanced_pipelines(device);
-    res.ensure_hdr_instanced_pipelines(device);
-    res.ensure_oit_instanced_pipeline(device);
     res.ensure_cull_instance_pipelines(device);
     res.ensure_hdr_cull_pipelines(device);
     res.ensure_oit_cull_pipelines(device);

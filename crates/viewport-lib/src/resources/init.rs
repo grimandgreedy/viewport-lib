@@ -561,6 +561,19 @@ impl DeviceResources {
                 },
                 count: None,
             },
+            // binding 15: the visible list of a GPU-culled draw (VERTEX,
+            // read-only): its instance index is a slot here, which names the
+            // record. Direct draws bind a zero fallback.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 15,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
             // binding 19: second UV set (uv1) storage stream (VERTEX). The
             // per-chunk parallel buffer for meshes with `MeshData::uvs1`, or
             // the one-entry zero fallback otherwise. A material texture slot
@@ -1711,6 +1724,8 @@ impl DeviceResources {
                 camera_bg: camera_bind_group,
                 camera_bgl,
                 object_bgl,
+                object_bgl_entries: object_bgl_entries.to_vec(),
+                object_bindless_bgl: None,
                 clip_planes_buf: clip_planes_uniform_buf,
                 clip_volume_buf: clip_volume_uniform_buf,
             },

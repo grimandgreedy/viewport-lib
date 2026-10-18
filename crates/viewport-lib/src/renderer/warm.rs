@@ -205,51 +205,29 @@ impl ViewportRenderer {
         }
         if set.direct {
             r.ensure_ldr_mesh_pipelines(device);
-            r.ensure_ldr_instanced_pipelines(device);
-            if let Some(f) = &r.scene.ldr {
-                f.request_all();
-            }
-            if let Some(f) = &r.instancing.ldr {
-                f.request_all();
-            }
+            r.scene.request_plain_ldr();
         }
         if set.hdr {
             r.ensure_hdr_infra(device, queue);
             r.ensure_tone_map_pipeline(device, format);
             r.ensure_hdr_mesh_pipelines(device);
-            r.ensure_hdr_instanced_pipelines(device);
-            if let Some(f) = &r.scene.hdr {
-                f.request_all();
-            }
             r.scene.request_plain_hdr();
-            if let Some(f) = &r.instancing.hdr {
-                f.request_all();
-            }
             if cull {
                 r.ensure_hdr_cull_pipelines(device);
-                if let Some(f) = &r.cull.hdr {
-                    f.request_all();
-                }
             }
             if set.transparency {
                 r.ensure_oit_composite_pipeline(device);
                 r.ensure_oit_mesh_pipelines(device);
-                r.ensure_oit_instanced_pipeline(device);
                 if let Some(f) = &r.oit.composite_pipeline {
                     f.request_all();
                 }
-                if let Some(f) = &r.oit.pipeline {
-                    f.request_all();
-                }
-                if let Some(f) = &r.oit.instanced {
-                    f.request_all();
-                }
+                r.oit.request_plain();
                 if cull {
                     r.ensure_oit_cull_pipelines(device);
-                    if let Some(f) = &r.cull.oit {
-                        f.request_all();
-                    }
                 }
+            }
+            if cull {
+                r.cull.request_plain();
             }
             // The effects need the HDR infrastructure above.
             if set.bloom {

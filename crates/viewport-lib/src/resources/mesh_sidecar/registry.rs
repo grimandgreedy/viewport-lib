@@ -375,14 +375,6 @@ pub(crate) fn lookup_lit_source(name: &str, deform_enabled: bool) -> Option<&'st
             env!("OUT_DIR"),
             "/mesh_oit_noop.wgsl"
         ))),
-        "mesh_instanced.wgsl" => Some(include_str!(concat!(
-            env!("OUT_DIR"),
-            "/mesh_instanced_noop.wgsl"
-        ))),
-        "mesh_instanced_oit.wgsl" => Some(include_str!(concat!(
-            env!("OUT_DIR"),
-            "/mesh_instanced_oit_noop.wgsl"
-        ))),
         _ => shader_source(name),
     }
 }

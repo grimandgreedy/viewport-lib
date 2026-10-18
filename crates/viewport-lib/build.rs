@@ -98,8 +98,6 @@ fn main() {
     // All of them live in src/shaders/.
     let deform_shaders = [
         "mesh.wgsl",
-        "mesh_instanced.wgsl",
-        "mesh_instanced_oit.wgsl",
         "mesh_oit.wgsl",
         "outline_mask.wgsl",
         "pick_id.wgsl",

@@ -56,9 +56,10 @@ struct FrustumUniform {
     // exactly as large as this dispatch needs and no scene is too big for them.
     plan_cap:        u32,
     chunk_cap:       u32,
-    // Pad to a 16-byte multiple. A scalar, not a vec3: a vec3 aligns to 16 and
-    // would push the struct to 224 bytes.
-    _pad0:           u32,
+    // Where, in u32s, the visibility buffer's words region starts. The cull
+    // copies each survivor's record words there (see `write_words`); 0 means
+    // no region, and the instance records at binding 8 are a fallback.
+    words_base:      u32,
 }
 
 struct InstanceAabb {
@@ -305,7 +306,25 @@ fn cull_instances(@builtin(global_invocation_id) id: vec3<u32>) {
     let slot = atomicAdd(&batch_counters[aabb.batch_index], 1u);
     if slot < slot_meta.instance_count {
         visibility_indices[slot_meta.vis_offset + slot] = i;
+        write_words(slot_meta.vis_offset + slot, i);
     }
+}
+
+// Copy the record words the culled mesh draws fetch per instance (record base,
+// colour, warp and lightmap streams, base vertex) into the visibility buffer's
+// words region, at the survivor's visible slot. A culled draw's instance index
+// is that slot, so a vertex buffer over the region steps through them.
+fn write_words(slot: u32, record: u32) {
+    if frustum.words_base == 0u {
+        return;
+    }
+    let inst = instance_data[record];
+    let w = frustum.words_base + slot * 6u;
+    visibility_indices[w] = inst.sidecar_record;
+    visibility_indices[w + 1u] = inst.colour_stream;
+    visibility_indices[w + 2u] = inst.warp_stream;
+    visibility_indices[w + 3u] = inst.lightmap_stream;
+    visibility_indices[w + 4u] = inst.vertex_base;
 }
 
 // Workgroup scratch shared by the planning, counting and scattering phases.
@@ -489,6 +508,7 @@ fn scatter_visible(
     if chunk_in_range && survives == 1u {
         let rank = scan[lid.x] - 1u;
         visibility_indices[bmeta.vis_offset + base + rank] = entry;
+        write_words(bmeta.vis_offset + base + rank, entry);
     }
 
     // Last chunk of the batch: publish the batch's visible count. Batches with

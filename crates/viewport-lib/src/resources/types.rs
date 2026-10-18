@@ -387,7 +387,11 @@ pub(crate) struct FrustumUniform {
     pub(crate) plan_cap: u32,
     /// Size of the per-chunk totals region of the compaction scratch, in u32s.
     pub(crate) chunk_cap: u32,
-    pub(crate) _pad: [u32; 1],
+    /// Where, in u32s, the visibility buffer's words region starts: the cull
+    /// copies each survivor's record words there, six to a visible slot, for
+    /// the culled mesh draws to fetch per instance. 0 = no words region (the
+    /// shadow and plugin culls).
+    pub(crate) words_base: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 208);
@@ -523,18 +527,19 @@ pub struct ClipVolumesUniform {
 
 /// Per-frame GPU data for one mesh-instance batch, created in `prepare()`.
 ///
-/// Mesh instances reuse the scene-graph `mesh_instanced` pipeline family but
-/// run through a host-built per-batch instance buffer rather than the global
-/// scene instance array. Each batch is one draw call.
+/// Mesh instances draw through the HDR mesh family's blended members, from a
+/// host-built per-batch instance buffer rather than the global scene
+/// instance array. Each batch is one draw call.
 pub struct MeshInstanceGpuData {
     /// Mesh handle used to look up the vertex / index buffers at draw time.
     pub(crate) mesh_id: crate::resources::mesh::mesh_store::MeshId,
     /// Number of instances in this batch (= draw instance count).
     pub(crate) instance_count: u32,
-    /// Bind group (group 1): instance storage buf + albedo / sampler / normal / AO.
+    /// Bind group (group 1): the mesh group around `instance_buf`.
     pub(crate) bind_group: crate::gpu::BindGroup,
     /// Blend mode selected by the host. Drives pipeline selection at draw time.
     pub(crate) blend: crate::renderer::SpriteBlend,
-    // Keep buffers alive for the lifetime of this struct.
-    pub(crate) _instance_buf: crate::gpu::Buffer,
+    /// The batch's instance records, bound at group 1 binding 0 and as
+    /// vertex buffer slot 1.
+    pub(crate) instance_buf: crate::gpu::Buffer,
 }

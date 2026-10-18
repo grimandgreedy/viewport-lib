@@ -407,7 +407,8 @@ pub struct ContentResources {
     /// Fallback 8-byte zero storage buffer (bound at the mesh bind group's
     /// second-UV-set slot when the mesh has no `uvs1`). Single `vec2<f32>(0)`
     /// entry; the mesh shaders clamp the vertex index so every read resolves to
-    /// `vec2(0.0)`.
+    /// `vec2(0.0)`. Also bound as the visible list (binding 15) of a direct
+    /// draw, which never reads it.
     pub(crate) fallback_uv1_buf: crate::gpu::Buffer,
     /// IDs of built-in preset colourmaps, in BuiltinColourmap discriminant order.
     /// Assigned at construction, so resolving a preset never depends on a frame
@@ -458,8 +459,8 @@ pub struct DeviceResources {
     pub(crate) pipeline_cache_lease: crate::resources::builders::device_pipeline_cache::Lease,
     /// Shader modules shared between the pipeline families compiled from the
     /// same source, keyed by the source text. The LDR and HDR mesh families
-    /// compile one `mesh.wgsl`, and the LDR, HDR and culled instanced families
-    /// one `mesh_instanced.wgsl`; a module this size takes milliseconds to
+    /// and the culled family compile one `mesh.wgsl`; a module this size
+    /// takes milliseconds to
     /// parse, so each is built once. See [`shared_module`](Self::shared_module).
     pub(crate) shader_modules: std::sync::Mutex<
         std::collections::HashMap<(usize, u64), crate::resources::pipeline_slot::ModuleCell>,
@@ -748,9 +749,17 @@ pub struct DeviceResources {
 pub(crate) struct ViewportCullState {
     /// Per-batch atomic counter buffer. Zeroed at the start of each cull dispatch.
     pub(crate) batch_counter_buf: Option<crate::gpu::Buffer>,
-    /// Compact list of visible instance indices. Written by the compute cull pass.
+    /// Compact list of visible instance indices, then the words region: each
+    /// survivor's record words, six u32s per visible slot, starting at
+    /// `visibility_index_capacity` u32s. Written by the compute cull pass; the
+    /// culled mesh draws bind the words region as vertex buffer slot 1.
     pub(crate) visibility_index_buf: Option<crate::gpu::Buffer>,
     pub(crate) visibility_index_capacity: usize,
+    /// The mesh group-1 bind groups of this viewport's culled draws: a
+    /// batch's group with this viewport's visible list at binding 15. Keyed by
+    /// the batch's group-1 bind key; cleared with the other cull groups.
+    pub(crate) object_cull_bind_groups:
+        crate::resources::fast_hash::FastMap<u64, crate::gpu::BindGroup>,
     /// Indirect draw args buffer for the main pass (one DrawIndexedIndirect per batch).
     pub(crate) indirect_args_buf: Option<crate::gpu::Buffer>,
     /// Capacity (in batches) of the counter and indirect-args buffers.
@@ -810,6 +819,7 @@ impl ViewportCullState {
             batch_counter_buf: None,
             visibility_index_buf: None,
             visibility_index_capacity: 0,
+            object_cull_bind_groups: Default::default(),
             indirect_args_buf: None,
             batch_output_capacity: 0,
             instance_cull_bind_groups: std::collections::HashMap::new(),
@@ -822,6 +832,15 @@ impl ViewportCullState {
             built_view_epoch: u64::MAX,
             hiz: None,
         }
+    }
+
+    /// The words region of the visibility buffer, as the culled mesh draws
+    /// bind it in vertex buffer slot 1.
+    pub(crate) fn words_slice(&self) -> Option<crate::gpu::BufferSlice<'_>> {
+        let offset = (self.visibility_index_capacity * std::mem::size_of::<u32>()) as u64;
+        self.visibility_index_buf
+            .as_ref()
+            .map(|b| b.slice(offset..))
     }
 
     /// Allocate or grow this viewport's cull output buffers to fit the current
@@ -841,17 +860,21 @@ impl ViewportCullState {
         let instance_count = (instance_count as usize).min(max_instances);
         if instance_count > self.visibility_index_capacity {
             let new_cap = (instance_count * 2).max(64).min(max_instances);
-            let vis_size = (new_cap * std::mem::size_of::<u32>()) as u64;
+            // The index list, then six words per slot.
+            let vis_size = (new_cap * 7 * std::mem::size_of::<u32>()) as u64;
             self.visibility_index_buf = Some(device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("visibility_index_buf"),
                 size: vis_size,
-                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE
+                    | crate::gpu::BufferUsages::VERTEX
+                    | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
             self.visibility_index_capacity = new_cap;
             // The cull bind groups bind the vis buffer at binding 5.
             self.instance_cull_bind_groups.clear();
             self.bindless_cull_bind_groups.clear();
+            self.object_cull_bind_groups.clear();
         }
 
         // Counter and indirect-args buffers, sized like the shared batch-meta buffer.

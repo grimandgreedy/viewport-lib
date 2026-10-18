@@ -58,6 +58,9 @@ impl ViewportRenderer {
                             &self.resources.deform.dummy_bind_group
                         );
                         render_pass.set_bind_group(1, tvm_bg, &[]);
+                        if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
+                            render_pass.set_vertex_buffer(1, records.slice(..));
+                        }
                         render_pass.set_vertex_buffer(
                             0,
                             self.resources.geometry.vertex_slice(mesh.vertex_span),

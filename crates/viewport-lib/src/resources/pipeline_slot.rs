@@ -460,6 +460,26 @@ impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, 
         }
     }
 
+    /// Whether a draw of member `i` with `feats` has a pipeline to bind: the
+    /// feature-set member or the universal one standing in. Starts nothing.
+    pub(crate) fn features_ready(
+        &self,
+        i: usize,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+    ) -> bool {
+        if self.is_ready(i) {
+            return true;
+        }
+        let Some(f) = self.features.as_deref() else {
+            return false;
+        };
+        let key = ((i as u32) << 8 | feats.bits() as u32) + 1;
+        f.keys[..f.len.load(Ordering::Acquire)]
+            .iter()
+            .position(|k| k.load(Ordering::Acquire) == key)
+            .is_some_and(|slot| f.slots[slot].is_ready())
+    }
+
     /// Feature sets this family has been asked for.
     pub(crate) fn feature_sets(&self) -> usize {
         self.features

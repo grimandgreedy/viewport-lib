@@ -1162,6 +1162,23 @@ impl DeviceResources {
         ));
     }
 
+    /// The `mesh_oit.wgsl` source the OIT families compile, composed with the
+    /// registered deformers and the debug-vis state. Shared by the direct and
+    /// GPU-culled families.
+    pub(crate) fn oit_mesh_source(&self) -> String {
+        let base = if self.deform.enabled {
+            include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl"))
+        } else {
+            include_str!(concat!(env!("OUT_DIR"), "/mesh_oit_noop.wgsl"))
+        };
+        let source =
+            crate::resources::mesh_sidecar::registry::compose_shader(base, &self.deform.registrations);
+        crate::resources::builders::builtin_hook_env(
+            crate::resources::builders::strip_debug_vis(source, self.debug_vis_shaders),
+        )
+        .into_owned()
+    }
+
     /// The per-object OIT mesh pipelines: two colour targets (`Rgba16Float`
     /// accumulation and `R8Unorm` reveal), depth-test only. Composed with the
     /// registered deformers. The instanced twin is built separately by
@@ -1171,25 +1188,8 @@ impl DeviceResources {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let source = {
-            let base = if self.deform.enabled {
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl"))
-            } else {
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_oit_noop.wgsl"))
-            };
-            crate::resources::mesh_sidecar::registry::compose_shader(
-                base,
-                &self.deform.registrations,
-            )
-        };
-        let shader = self.shared_module(
-            device,
-            "mesh_oit_shader",
-            crate::resources::builders::builtin_hook_env(
-                crate::resources::builders::strip_debug_vis(source, self.debug_vis_shaders),
-            )
-            .as_ref(),
-        );
+        let source = self.oit_mesh_source();
+        let shader = self.shared_module(device, "mesh_oit_shader", &source);
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "oit_pipeline_layout",
@@ -1199,18 +1199,34 @@ impl DeviceResources {
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
-        self.oit.pipeline = Some(
+        let bindless = if self.bindless_textures() {
+            let shader = self.shared_module(
+                device,
+                "mesh_oit_bindless_shader",
+                &crate::resources::mesh::instanced_bindless::bindlessify_mesh(&source),
+            );
+            Some((
+                shader,
+                self.object_bindless_layout(device, "oit_bindless_pipeline_layout"),
+            ))
+        } else {
+            None
+        };
+        let compiler = &self.pipeline_compiler;
+        let family = |layout, shader| {
             crate::resources::pipeline_slot::LazyFamily::new(
                 oit::OitContext {
                     device: device.clone(),
                     layout,
                     shader,
                 },
-                std::sync::Arc::clone(&self.pipeline_compiler),
+                std::sync::Arc::clone(compiler),
                 oit::build_per_object,
             )
-            .with_features(oit::build_per_object_features),
-        );
+            .with_features(oit::build_per_object_features)
+        };
+        self.oit.pipeline = Some(family(layout, shader));
+        self.oit.pipeline_bindless = bindless.map(|(shader, layout)| family(layout, shader));
     }
 
     /// The SSAA colour resolve and its depth half, which downsamples the

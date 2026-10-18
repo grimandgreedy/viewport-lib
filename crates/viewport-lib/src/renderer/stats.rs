@@ -376,7 +376,6 @@ impl PerObjectReasons {
             R::Hidden => return,
             R::Wireframe => &mut self.wireframe,
             R::ScalarAttribute => &mut self.scalar_attribute,
-            R::MaterialPluginNotReady => &mut self.material_plugin_not_ready,
             R::MaterialPluginVertexAttribute => &mut self.material_plugin_vertex_attribute,
             R::Warp => &mut self.warp,
             R::Matcap => &mut self.matcap,

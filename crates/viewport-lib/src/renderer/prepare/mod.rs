@@ -302,19 +302,8 @@ impl ViewportRenderer {
                     continue;
                 }
                 seen.push(pid.plugin_index());
-                // The per-object set draws the items that cannot join a batch;
-                // the instanced set lets the rest draw one call per batch (see
-                // `is_instanceable`).
                 if resources.material_plugin_needs_build(pid) {
                     resources.ensure_material_plugin_pipelines(device, pid);
-                }
-                if !resources.material_plugin_instanced_ready(pid) {
-                    // The instanced set sits on the built-in instanced group-1
-                    // layout, and its GPU-culled twins on the cull layout, so
-                    // both come first. Both calls are idempotent.
-                    resources.ensure_instanced_pipelines(device);
-                    resources.ensure_cull_instance_pipelines(device);
-                    resources.ensure_material_plugin_instanced_pipelines(device, pid);
                 }
             }
         }
@@ -450,7 +439,9 @@ impl ViewportRenderer {
             let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("tvm_wireframe_uniform"),
                 size: (capacity * std::mem::size_of::<crate::resources::InstanceData>()) as u64,
-                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE
+                    | crate::gpu::BufferUsages::VERTEX
+                    | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             self.mesh_uniforms.tvm_wireframe_capacity = capacity;
@@ -554,6 +545,10 @@ impl ViewportRenderer {
                         binding: 19,
                         resource: resources.content.fallback_uv1_buf.as_entire_binding(),
                     },
+                    crate::gpu::BindGroupEntry {
+                        binding: 15,
+                        resource: resources.content.fallback_uv1_buf.as_entire_binding(),
+                    },
                 ],
             });
             self.mesh_uniforms.tvm_wireframe_buf = Some(buf);
@@ -575,7 +570,7 @@ impl ViewportRenderer {
             let mut draw_calls = 0u32;
             let mut triangles = 0u64;
             // Every batch is one draw. A lean batch draws the whole mesh; a fat
-            // one draws what its `FatDraw` names. A wireframe draw submits its
+            // one draws what its `DrawKind` names. A wireframe draw submits its
             // mesh's triangles as edge lines, so it counts them; normal lines
             // submit no triangles.
             let instanced_batch_count = self.instancing.batches.len() as u32;
@@ -585,8 +580,8 @@ impl ViewportRenderer {
                 };
                 draw_calls += 1;
                 let indices = match batch.fat.as_ref().map(|f| f.draw) {
-                    Some(crate::renderer::types::FatDraw::Range(_, count)) => count,
-                    Some(crate::renderer::types::FatDraw::NormalLines) => 0,
+                    Some(crate::renderer::types::DrawKind::Range(_, count)) => count,
+                    Some(crate::renderer::types::DrawKind::NormalLines) => 0,
                     _ => mesh.index_count,
                 };
                 triangles += (indices / 3) as u64 * batch.instance_count as u64;

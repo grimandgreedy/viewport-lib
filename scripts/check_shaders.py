@@ -121,22 +121,36 @@ async function checkFeaturePipelines(device, module, name, code) {
       { shaderLocation: 4, offset: 48, format: "float32x4" },
     ],
   };
-  for (const on of [true, false]) {
-    const constants = Object.fromEntries(feats.map((f) => [f, on ? 1 : 0]));
-    const label = name + (on ? " (every feature)" : " (no features)");
-    device.pushErrorScope("validation");
-    try {
-      await device.createRenderPipelineAsync({
-        label,
-        layout: "auto",
-        vertex: { module, entryPoint: "vs_main", buffers: [vertex], constants },
-        fragment: { module, entryPoint: oit ? "fs_oit_main" : "fs_main", targets, constants },
-      });
-      const err = await device.popErrorScope();
-      add(!err, label + (err ? ": " + err.message : ""));
-    } catch (err) {
-      await device.popErrorScope();
-      add(false, label + ": " + err);
+  // Slot 1: the record words, stepped per instance. A direct draw reads them
+  // from the instance records (160-byte stride), a GPU-culled one from the
+  // cull's packed copy (24 bytes a survivor).
+  const words = (stride, offsets) => ({
+    arrayStride: stride,
+    stepMode: "instance",
+    attributes: offsets.map((offset, i) => ({ shaderLocation: 5 + i, offset, format: "uint32" })),
+  });
+  const entries = [["vs_main", words(160, [108, 116, 144, 148, 152])]];
+  if (code.includes("fn vs_main_cull")) {
+    entries.push(["vs_main_cull", words(24, [0, 4, 8, 12, 16])]);
+  }
+  for (const [entryPoint, slot1] of entries) {
+    for (const on of [true, false]) {
+      const constants = Object.fromEntries(feats.map((f) => [f, on ? 1 : 0]));
+      const label = name + " " + entryPoint + (on ? " (every feature)" : " (no features)");
+      device.pushErrorScope("validation");
+      try {
+        await device.createRenderPipelineAsync({
+          label,
+          layout: "auto",
+          vertex: { module, entryPoint, buffers: [vertex, slot1], constants },
+          fragment: { module, entryPoint: oit ? "fs_oit_main" : "fs_main", targets, constants },
+        });
+        const err = await device.popErrorScope();
+        add(!err, label + (err ? ": " + err.message : ""));
+      } catch (err) {
+        await device.popErrorScope();
+        add(false, label + ": " + err);
+      }
     }
   }
 }

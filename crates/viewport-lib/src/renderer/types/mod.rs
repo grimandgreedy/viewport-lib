@@ -95,9 +95,9 @@ pub(crate) struct InstancedBatch {
     pub sort_centre: [f32; 3],
 }
 
-/// Which geometry a fat batch draws.
+/// Which geometry a batch draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum FatDraw {
+pub(crate) enum DrawKind {
     /// The whole mesh, indexed.
     Triangles,
     /// One submesh index range: `(first_index, index_count)`.
@@ -114,7 +114,7 @@ pub(crate) enum FatDraw {
 /// The per-object-pipeline facts of a fat batch.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FatBatch {
-    pub draw: FatDraw,
+    pub draw: DrawKind,
     /// Key of this batch's group-1 bind group in
     /// `PerObjectState::material_bind_groups`.
     pub bind_key: u64,
@@ -126,12 +126,38 @@ pub(crate) struct FatBatch {
     /// The shader features the batch's records use: the union over them.
     /// The batch draws through the pipeline built with exactly these.
     pub features: crate::renderer::pipeline_key::FeatureSet,
+    /// The batch binds the bindless member of group 1: its material
+    /// textures come from the texture array by each record's material index,
+    /// so it draws through the bindless pipeline families.
+    pub bindless: bool,
+    /// The batch casts through the instanced shadow pipelines: it draws its
+    /// whole mesh and nothing in it moves vertices (no deform, override or
+    /// warp). Other batches cast through the per-object shadow pipelines.
+    pub instanced_shadow: bool,
+    /// Key of the per-batch group-1 bind group the per-object shadow
+    /// casters bind: `bind_key`, or for a bindless batch its per-batch
+    /// member twin.
+    pub shadow_bind_key: u64,
+    /// What the batch's group-1 bind group binds beyond its mesh, so a
+    /// viewport's culled twin of it can be built without the scene items.
+    pub group: GroupInputs,
     /// Scene index of the item the batch's first record came from, and the
     /// submesh range it draws when it is a range record. Every record in the
     /// batch shares the facts its bind group hashes, so the first stands for
     /// all; the bind group is rebuilt from it each frame.
     pub rep_idx: usize,
     pub rep_range: Option<u32>,
+}
+
+/// What a batch's group-1 bind group binds beyond its mesh: its
+/// representative material's slot textures (albedo, normal, AO,
+/// metallic-roughness, emissive), colourmap, matcap and sampler.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(crate) struct GroupInputs {
+    pub textures: [Option<crate::resources::TextureId>; 5],
+    pub lut: Option<crate::resources::ColourmapId>,
+    pub matcap: Option<crate::resources::MatcapId>,
+    pub sampler: Option<crate::scene::material::SamplerKey>,
 }
 
 /// Bound state the fat-batch draw loops carry between batches so a
@@ -142,11 +168,25 @@ pub(crate) struct FatBound {
     pipeline: Option<*const crate::gpu::RenderPipeline>,
     group1: Option<*const crate::gpu::BindGroup>,
     deform: Option<*const crate::gpu::BindGroup>,
-    geometry: Option<(crate::resources::mesh::mesh_store::MeshId, FatDraw)>,
+    geometry: Option<BoundGeometry>,
+    records: Option<*const crate::gpu::Buffer>,
     /// A batch drew through a stand-in pipeline while its own compiles. A
     /// render bundle must not keep that draw, since nothing re-records it
     /// when the compile finishes.
     pub(crate) stand_in: bool,
+    /// Vertex and index buffer binds issued, for the frame stats.
+    pub(crate) buffer_binds: u32,
+}
+
+/// The vertex and index buffers a batch draw left bound.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BoundGeometry {
+    /// A slab chunk's vertex and index buffers.
+    Chunk((u32, u32)),
+    /// A slab chunk's vertex buffer and this mesh's edge indices.
+    Edges(crate::resources::mesh::mesh_store::MeshId),
+    FaceVertices(crate::resources::mesh::mesh_store::MeshId),
+    NormalLines(crate::resources::mesh::mesh_store::MeshId),
 }
 
 /// The render-pass methods a mesh draw needs, so one draw helper serves both
@@ -252,6 +292,9 @@ pub(crate) enum FatPass<'a> {
     /// twin where the batch cannot discard.
     Colour {
         family: &'a dyn crate::resources::scene_pipelines::MeshColourFamily,
+        /// The same family on the bindless member of group 1, for batches
+        /// that bind it.
+        bindless_family: &'a dyn crate::resources::scene_pipelines::MeshColourFamily,
         hdr: bool,
         clipping_active: bool,
     },
@@ -260,7 +303,7 @@ pub(crate) enum FatPass<'a> {
 }
 
 /// Draw one fat batch: bind its group-1 bind group, deform group and the
-/// geometry its `FatDraw` names, select the per-object pipeline for `pass`,
+/// geometry its `DrawKind` names, select the per-object pipeline for `pass`,
 /// and draw its instance range. Returns false when something it needs (a
 /// pipeline still compiling, a missing bind group or buffer) kept it from
 /// drawing. `bound` carries the state set by the previous batch.
@@ -285,13 +328,9 @@ pub(crate) fn draw_fat_batch<'a, E: MeshDrawEncoder<'a>>(
     let Some(group1) = fat_bind_groups.get(&fat.bind_key).map(|m| &m.bind_group) else {
         return false;
     };
-    let lines = matches!(fat.draw, FatDraw::Edges | FatDraw::NormalLines);
+    let lines = matches!(fat.draw, DrawKind::Edges | DrawKind::NormalLines);
     let two_sided = PipelineKey::two_sided(batch.two_sided);
-    let feats = if resources.mesh_universal {
-        crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
-    } else {
-        fat.features
-    };
+    let feats = draw_features(resources, fat);
     // A feature-set pipeline, or the universal one while it compiles: both
     // draw the same image.
     let mut take = |got: crate::resources::pipeline_slot::FeatureGet<'a, _>| {
@@ -303,16 +342,23 @@ pub(crate) fn draw_fat_batch<'a, E: MeshDrawEncoder<'a>>(
         }
         got.pipeline
     };
-    let plug = resources.material_plugin_draw(batch.shading_plugin, &batch.plugin_textures);
+    let plug =
+        resources.material_plugin_draw(batch.shading_plugin, &batch.plugin_textures, fat.bindless);
     let (pipeline, mat_bg): (
         Option<&crate::gpu::RenderPipeline>,
         Option<&crate::gpu::BindGroup>,
     ) = match pass {
         FatPass::Colour {
             family,
+            bindless_family,
             hdr,
             clipping_active,
         } => {
+            let family = if fat.bindless {
+                *bindless_family
+            } else {
+                *family
+            };
             if lines {
                 (family.wireframe(), None)
             } else if let Some((pp, mat_bg)) = plug {
@@ -334,21 +380,7 @@ pub(crate) fn draw_fat_batch<'a, E: MeshDrawEncoder<'a>>(
             } else if batch.is_transparent {
                 (take(family.transparent_features(feats)), None)
             } else {
-                // Early-Z: a batch that can never discard draws through
-                // the discard-free twin.
-                let key = PipelineKey {
-                    two_sided: batch.two_sided,
-                    no_discard_eligible: *hdr
-                        && !clipping_active
-                        && !resources.force_po_discard
-                        && !batch.has_alpha_mask
-                        && !fat.has_attribute
-                        && !matches!(fat.draw, FatDraw::Range(..))
-                        && !resources
-                            .deform
-                            .may_discard(batch.mesh_id, fat.deform_instance),
-                    ..PipelineKey::default()
-                };
+                let key = opaque_key(resources, batch, fat, *hdr, *clipping_active);
                 (take(family.opaque_features(key, feats)), None)
             }
         }
@@ -361,7 +393,11 @@ pub(crate) fn draw_fat_batch<'a, E: MeshDrawEncoder<'a>>(
                 (None, None)
             } else {
                 (
-                    take(resources.oit.per_object_features(two_sided, feats)),
+                    take(
+                        resources
+                            .oit
+                            .per_object_features(two_sided, feats, fat.bindless),
+                    ),
                     None,
                 )
             }
@@ -381,7 +417,7 @@ pub(crate) fn draw_fat_batch<'a, E: MeshDrawEncoder<'a>>(
     if let Some(mat_bg) = mat_bg {
         bind_material_group!(encoder, resources, mat_bg);
     }
-    let deform_bg = if matches!(fat.draw, FatDraw::NormalLines) {
+    let deform_bg = if matches!(fat.draw, DrawKind::NormalLines) {
         &resources.deform.dummy_bind_group
     } else {
         resources
@@ -392,58 +428,247 @@ pub(crate) fn draw_fat_batch<'a, E: MeshDrawEncoder<'a>>(
         bind_deform_group!(encoder, resources, deform_bg);
         bound.deform = Some(deform_bg as *const _);
     }
+    // The record words reach the vertex stage through slot 1, read from the
+    // instance buffer the group-1 bind group holds at binding 0.
+    let Some(records) = resources.instancing.storage_buf.as_ref() else {
+        return false;
+    };
+    if bound.records != Some(records as *const _) {
+        encoder.set_vertex_buffer(1, records.slice(..));
+        bound.records = Some(records as *const _);
+    }
     let instances = batch.instance_offset..batch.instance_offset + batch.instance_count;
-    let geometry = (batch.mesh_id, fat.draw);
-    let rebind = bound.geometry != Some(geometry);
+    // Indexed draws bind the whole slab chunk and offset into it per mesh, so
+    // consecutive batches in one chunk keep their geometry bound. A record's
+    // `vertex_base` is the base vertex drawn with here.
+    let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+    let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
     match fat.draw {
-        FatDraw::Triangles | FatDraw::Range(..) => {
-            if rebind {
-                encoder.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
+        DrawKind::Triangles | DrawKind::Range(..) => {
+            if bound.geometry != Some(BoundGeometry::Chunk(chunks)) {
+                encoder.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
                 encoder.set_index_buffer(
-                    resources.geometry.index_slice(mesh.index_span),
+                    resources.geometry.index_chunk_slice(chunks.1),
                     crate::gpu::IndexFormat::Uint32,
                 );
+                bound.geometry = Some(BoundGeometry::Chunk(chunks));
+                bound.buffer_binds += 2;
             }
+            let first = resources.geometry.first_index(mesh.index_span);
             let range = match fat.draw {
-                FatDraw::Range(first, count) => first..first + count,
-                _ => 0..mesh.index_count,
+                DrawKind::Range(start, count) => first + start..first + start + count,
+                _ => first..first + mesh.index_count,
             };
-            encoder.draw_indexed(range, 0, instances);
+            encoder.draw_indexed(range, base_vertex, instances);
         }
-        FatDraw::Edges => {
+        DrawKind::Edges => {
             let Some(edge_buf) = &mesh.edge_index_buffer else {
                 return false;
             };
-            if rebind {
-                encoder.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
+            if bound.geometry != Some(BoundGeometry::Edges(batch.mesh_id)) {
+                encoder.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
                 encoder.set_index_buffer(edge_buf.slice(..), crate::gpu::IndexFormat::Uint32);
+                bound.geometry = Some(BoundGeometry::Edges(batch.mesh_id));
             }
-            encoder.draw_indexed(0..mesh.edge_index_count, 0, instances);
+            encoder.draw_indexed(0..mesh.edge_index_count, base_vertex, instances);
         }
-        FatDraw::FaceVertices => {
+        DrawKind::FaceVertices => {
             let Some(fvb) = &mesh.face_vertex_buffer else {
                 return false;
             };
-            if rebind {
+            if bound.geometry != Some(BoundGeometry::FaceVertices(batch.mesh_id)) {
                 encoder.set_vertex_buffer(0, fvb.slice(..));
+                bound.geometry = Some(BoundGeometry::FaceVertices(batch.mesh_id));
             }
             encoder.draw(0..mesh.index_count, instances);
         }
-        FatDraw::NormalLines => {
+        DrawKind::NormalLines => {
             let Some(nl_buf) = &mesh.normal_line_buffer else {
                 return false;
             };
             if mesh.normal_line_count == 0 {
                 return false;
             }
-            if rebind {
+            if bound.geometry != Some(BoundGeometry::NormalLines(batch.mesh_id)) {
                 encoder.set_vertex_buffer(0, nl_buf.slice(..));
+                bound.geometry = Some(BoundGeometry::NormalLines(batch.mesh_id));
             }
             encoder.draw(0..mesh.normal_line_count, instances);
         }
     }
-    bound.geometry = Some(geometry);
     true
+}
+
+/// The opaque pipeline key of a batch. Early-Z: on the HDR path a batch that
+/// can never discard draws through the discard-free twin.
+pub(crate) fn opaque_key(
+    resources: &crate::resources::DeviceResources,
+    batch: &InstancedBatch,
+    fat: &FatBatch,
+    hdr: bool,
+    clipping_active: bool,
+) -> crate::renderer::pipeline_key::PipelineKey {
+    crate::renderer::pipeline_key::PipelineKey {
+        two_sided: batch.two_sided,
+        no_discard_eligible: hdr
+            && !clipping_active
+            && !resources.force_po_discard
+            && !batch.has_alpha_mask
+            && !fat.has_attribute
+            && !matches!(fat.draw, DrawKind::Range(..))
+            && !resources
+                .deform
+                .may_discard(batch.mesh_id, fat.deform_instance),
+        ..Default::default()
+    }
+}
+
+/// The feature set a batch draws with: its own, or every feature under the
+/// `mesh_universal` knob.
+pub(crate) fn draw_features(
+    resources: &crate::resources::DeviceResources,
+    fat: &FatBatch,
+) -> crate::renderer::pipeline_key::FeatureSet {
+    if resources.mesh_universal {
+        crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
+    } else {
+        fat.features
+    }
+}
+
+/// Which pass a run of GPU-culled batches is drawn into.
+pub(crate) enum CulledPass {
+    /// The HDR opaque scene pass.
+    Opaque { clipping_active: bool },
+    /// The weighted-blended OIT pass.
+    Oit,
+}
+
+/// Draw the GPU-culled batches of `pass` from this viewport's cull-written
+/// indirect args, skipping any `skip` names. Consecutive batches that share
+/// the pipeline, the group-1 and deform bind groups and the slab chunk form a
+/// run drawn with one multi-draw where the backend has it; a run breaks on a
+/// batch-index gap, so a multi-draw never sweeps in a batch this skipped.
+/// Returns the draw commands and buffer binds it issued.
+pub(crate) fn draw_culled_batches(
+    resources: &crate::resources::DeviceResources,
+    cull: &crate::resources::ViewportCullState,
+    render_pass: &mut crate::gpu::RenderPass<'_>,
+    batches: &[InstancedBatch],
+    pass: CulledPass,
+    multi_draw: bool,
+    skip: impl Fn(&InstancedBatch) -> bool,
+) -> (u32, u32) {
+    let (Some(indirect), Some(words)) = (cull.indirect_args_buf.as_ref(), cull.words_slice())
+    else {
+        return (0, 0);
+    };
+    let mut commands = 0u32;
+    let mut binds = 0u32;
+    let mut words_bound = false;
+    let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
+    let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
+    let mut cur_deform: Option<*const crate::gpu::BindGroup> = None;
+    let mut cur_chunks: Option<(u32, u32)> = None;
+    let (mut run_start, mut run_len) = (0u64, 0u32);
+    let oit = matches!(pass, CulledPass::Oit);
+    for (g, batch) in batches.iter().enumerate() {
+        if batch.is_transparent != oit || !batch.draws_culled() || skip(batch) {
+            continue;
+        }
+        let Some(fat) = batch.fat.as_ref() else {
+            continue;
+        };
+        let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+            continue;
+        };
+        let Some(group1) = cull.object_cull_bind_groups.get(&fat.bind_key) else {
+            continue;
+        };
+        let feats = draw_features(resources, fat);
+        let got = match &pass {
+            CulledPass::Opaque { clipping_active } => resources.cull.hdr_opaque_features(
+                opaque_key(resources, batch, fat, true, *clipping_active),
+                feats,
+                fat.bindless,
+            ),
+            CulledPass::Oit => resources.cull.oit_features(
+                crate::renderer::pipeline_key::PipelineKey::two_sided(batch.two_sided),
+                feats,
+                fat.bindless,
+            ),
+        };
+        if got.capped {
+            resources
+                .frame_feature_sets_capped
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        // Still compiling: the batch waits a frame.
+        let Some(pipeline) = got.pipeline else {
+            continue;
+        };
+        let deform = resources
+            .deform
+            .instance_bind_group_for(batch.mesh_id, fat.deform_instance);
+        let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+        let g = g as u64;
+        if run_len > 0
+            && g == run_start + u64::from(run_len)
+            && cur_pipe == Some(pipeline as *const _)
+            && cur_bg == Some(group1 as *const _)
+            && cur_deform == Some(deform as *const _)
+            && cur_chunks == Some(chunks)
+        {
+            run_len += 1;
+            continue;
+        }
+        if run_len > 0 {
+            commands += crate::renderer::render::emit_indirect_run(
+                render_pass,
+                indirect,
+                run_start,
+                run_len,
+                multi_draw,
+            );
+        }
+        if cur_pipe != Some(pipeline as *const _) {
+            render_pass.set_pipeline(pipeline);
+            cur_pipe = Some(pipeline as *const _);
+        }
+        if cur_bg != Some(group1 as *const _) {
+            render_pass.set_bind_group(1, group1, &[]);
+            cur_bg = Some(group1 as *const _);
+        }
+        if cur_deform != Some(deform as *const _) {
+            bind_deform_group!(render_pass, resources, deform);
+            cur_deform = Some(deform as *const _);
+        }
+        if !words_bound {
+            render_pass.set_vertex_buffer(1, words);
+            words_bound = true;
+        }
+        if cur_chunks != Some(chunks) {
+            render_pass.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
+            render_pass.set_index_buffer(
+                resources.geometry.index_chunk_slice(chunks.1),
+                crate::gpu::IndexFormat::Uint32,
+            );
+            binds += 2;
+            cur_chunks = Some(chunks);
+        }
+        run_start = g;
+        run_len = 1;
+    }
+    if run_len > 0 {
+        commands += crate::renderer::render::emit_indirect_run(
+            render_pass,
+            indirect,
+            run_start,
+            run_len,
+            multi_draw,
+        );
+    }
+    (commands, binds)
 }
 
 /// Group-1 bind-group cache key for an instanced batch: the five material
@@ -452,6 +677,35 @@ pub(crate) fn draw_fat_batch<'a, E: MeshDrawEncoder<'a>>(
 pub(crate) type BatchBindKey = (u64, u64, u64, u64, u64, u32, u32);
 
 impl InstancedBatch {
+    /// Whether the batch draws from the GPU cull's indirect args when the
+    /// cull runs: an indexed draw of its mesh or a submesh range, with
+    /// built-in shading (a material plugin's set has no culled members).
+    pub(crate) fn draws_culled(&self) -> bool {
+        self.shading_plugin.is_none()
+            && self
+                .fat
+                .as_ref()
+                .is_some_and(|f| matches!(f.draw, DrawKind::Triangles | DrawKind::Range(..)))
+    }
+
+    /// Whether the batch can join a GPU-driven draw group: a culled draw
+    /// with no deformer, whose deform group is the empty one every group
+    /// binds.
+    pub(crate) fn draws_grouped(&self) -> bool {
+        self.draws_culled()
+            && self.fat.as_ref().is_some_and(|f| {
+                f.deform_instance.is_none()
+                    && !f
+                        .features
+                        .has(crate::renderer::pipeline_key::FeatureSet::DEFORM)
+            })
+    }
+
+    /// Whether the batch casts through the instanced shadow pipelines.
+    pub(crate) fn casts_instanced(&self) -> bool {
+        self.fat.as_ref().is_some_and(|f| f.instanced_shadow)
+    }
+
     /// This batch's [`BatchBindKey`] for the uv1 chunk discriminator `uv1_key`.
     pub(crate) fn bind_key(&self, uv1_key: u32) -> BatchBindKey {
         let raw = |id: Option<crate::resources::TextureId>| id.map(|t| t.raw()).unwrap_or(u64::MAX);
@@ -685,172 +939,33 @@ macro_rules! emit_draw_calls {
                 // the camera bind group for the draws and passes below.
                 render_pass.set_bind_group(0, camera_bg, &[]);
             }
-            // --- Instanced draw path ---
-            // Separate opaque and transparent batches.
-            let mut opaque_batches: Vec<&InstancedBatch> = Vec::new();
-            let mut transparent_batches: Vec<&InstancedBatch> = Vec::new();
-            for batch in batches {
-                if batch.is_transparent {
-                    transparent_batches.push(batch);
-                } else {
-                    opaque_batches.push(batch);
-                }
-            }
+            let mut transparent_batches: Vec<&InstancedBatch> =
+                batches.iter().filter(|b| b.is_transparent).collect();
 
-            // Draw opaque instanced batches (the bundle replay covers them).
-            if bundle_hit.is_none() && !opaque_batches.is_empty() && !frame.viewport.wireframe_mode
-            {
-                if resources.instancing.ldr.is_some() {
-                    // Early-Z fast path: discard-free pipeline twin for
-                    // opaque batches when no clip object or alpha-mask
-                    // instance can discard this frame.
-                    let clipping_active = frame
-                        .effects
-                        .clip
-                        .objects
-                        .iter()
-                        .any(|o| o.enabled && o.clip_geometry);
-                    bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
-                    // Batches are sorted with two_sided in the key, so one- and
-                    // two-sided runs are contiguous; switch pipeline on change.
-                    // Geometry is in the shared slab, so the chunk buffers bind
-                    // once and each draw carries the mesh's base_vertex /
-                    // first_index instead of re-binding a sub-slice per batch.
-                    let mut cur_pipe: Option<(bool, bool)> = None;
-                    let mut cur_chunks: Option<(u32, u32)> = None;
-                    for batch in &opaque_batches {
-                        // Plugin batches draw in the dedicated plugin
-                        // sub-loop below (their own pipeline + group-3
-                        // params bind); the built-in pipeline would shade
-                        // them without the plugin hook.
-                        if batch.shading_plugin.is_some() || batch.fat.is_some() {
-                            continue;
-                        }
-                        let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
-                            continue;
-                        };
-                        let mat_key =
-                            batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
-                        // Combined (instance storage + texture) bind group, primed in prepare().
-                        let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key)
-                        else {
-                            continue;
-                        };
-                        let no_discard = !clipping_active && !batch.has_alpha_mask;
-                        if cur_pipe != Some((batch.two_sided, no_discard)) {
-                            // A pipeline still compiling skips the batch this frame.
-                            let Some(pipeline) = resources.instancing.ldr_opaque(PipelineKey {
-                                two_sided: batch.two_sided,
-                                no_discard_eligible: no_discard,
-                                ..PipelineKey::default()
-                            }) else {
-                                cur_pipe = None;
-                                continue;
-                            };
-                            render_pass.set_pipeline(pipeline);
-                            cur_pipe = Some((batch.two_sided, no_discard));
-                        }
-                        render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                        let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                        if cur_chunks != Some(chunks) {
-                            render_pass.set_vertex_buffer(
-                                0,
-                                resources.geometry.vertex_chunk_slice(chunks.0),
-                            );
-                            render_pass.set_index_buffer(
-                                resources.geometry.index_chunk_slice(chunks.1),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
-                            cur_chunks = Some(chunks);
-                        }
-                        let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                        let first_index = resources.geometry.first_index(mesh.index_span);
-                        render_pass.draw_indexed(
-                            first_index..first_index + mesh.index_count,
-                            base_vertex,
-                            batch.instance_offset..batch.instance_offset + batch.instance_count,
-                        );
-                    }
-                }
-            }
-
-            // Material-plugin opaque instanced batches (LDR): one call
-            // each through the plugin's composed instanced pipeline plus
-            // its group-3 params bind. The built-in opaque loop above
-            // skips these. Mirrors the HDR plugin sub-loop; drawn before
-            // the transparent batches so depth ordering matches built-in.
-            if !frame.viewport.wireframe_mode
-                && opaque_batches.iter().any(|b| b.shading_plugin.is_some())
-            {
-                bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
-                let mut cur_chunks: Option<(u32, u32)> = None;
-                let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
-                for batch in &opaque_batches {
-                    if batch.shading_plugin.is_none() || batch.fat.is_some() {
-                        continue;
-                    }
-                    let Some((plug_pipes, mat_bg)) = resources.material_plugin_instanced_draw(
-                        batch.shading_plugin,
-                        &batch.plugin_textures,
-                    ) else {
-                        continue;
-                    };
-                    let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
-                        continue;
-                    };
-                    let mat_key = batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
-                    let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else {
-                        continue;
-                    };
-                    let Some(pipeline) = plug_pipes.ldr_opaque(
-                        crate::renderer::pipeline_key::PipelineKey::two_sided(batch.two_sided),
-                    ) else {
-                        continue;
-                    };
-                    if cur_pipe != Some(pipeline as *const _) {
-                        render_pass.set_pipeline(pipeline);
-                        cur_pipe = Some(pipeline as *const _);
-                    }
-                    render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                    bind_material_group!(render_pass, resources, mat_bg);
-                    let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                    if cur_chunks != Some(chunks) {
-                        render_pass
-                            .set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
-                        render_pass.set_index_buffer(
-                            resources.geometry.index_chunk_slice(chunks.1),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        cur_chunks = Some(chunks);
-                    }
-                    let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                    let first_index = resources.geometry.first_index(mesh.index_span);
-                    render_pass.draw_indexed(
-                        first_index..first_index + mesh.index_count,
-                        base_vertex,
-                        batch.instance_offset..batch.instance_offset + batch.instance_count,
-                    );
-                }
-            }
-
-            // Fat batches: the per-object pipelines with the twenty-binding
-            // group-1 layout, drawn by instance range. Opaque first (the
-            // bundle covers these too), then normal lines.
+            // Every batch by instance range: opaque first (the bundle covers
+            // these too), then normal lines, then the blended ones.
             let ldr_family = resources.scene.ldr_family();
+            let ldr_bindless_family = resources.scene.ldr_bindless_family();
             let fat_pass = crate::renderer::types::FatPass::Colour {
                 family: &ldr_family,
+                bindless_family: &ldr_bindless_family,
                 hdr: false,
                 clipping_active: false,
             };
             let mut fat_bound = crate::renderer::types::FatBound::default();
-            if bundle_hit.is_none() {
+            {
                 for batch in batches {
                     let Some(fat) = batch.fat.as_ref() else {
                         continue;
                     };
                     if batch.is_transparent
-                        || matches!(fat.draw, crate::renderer::types::FatDraw::NormalLines)
+                        || matches!(fat.draw, crate::renderer::types::DrawKind::NormalLines)
                     {
+                        continue;
+                    }
+                    // The bundle holds every opaque batch except a material
+                    // plugin's.
+                    if bundle_hit.is_some() && batch.shading_plugin.is_none() {
                         continue;
                     }
                     crate::renderer::types::draw_fat_batch(
@@ -867,7 +982,7 @@ macro_rules! emit_draw_calls {
                 if !batch
                     .fat
                     .as_ref()
-                    .is_some_and(|f| matches!(f.draw, crate::renderer::types::FatDraw::NormalLines))
+                    .is_some_and(|f| matches!(f.draw, crate::renderer::types::DrawKind::NormalLines))
                 {
                     continue;
                 }
@@ -884,92 +999,20 @@ macro_rules! emit_draw_calls {
             // Blended batches, after every opaque draw. There is no OIT here,
             // so they draw back to front by view depth. Prepare gives each
             // blended item its own batch on this path, so the order is per
-            // item. Lean, plugin and fat batches share the one sorted loop,
-            // and each kind rebinds its state after a draw of another kind.
+            // item.
             if !transparent_batches.is_empty() {
                 let view = frame.camera.render_camera.view;
                 let depth =
                     |b: &InstancedBatch| -view.transform_point3(glam::Vec3::from(b.sort_centre)).z;
                 transparent_batches.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
-                let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
-                let mut cur_chunks: Option<(u32, u32)> = None;
-                let mut lean_bound = false;
                 for batch in &transparent_batches {
-                    if batch.fat.is_some() {
-                        if crate::renderer::types::draw_fat_batch(
-                            resources,
-                            fat_bind_groups,
-                            render_pass,
-                            batch,
-                            &fat_pass,
-                            &mut fat_bound,
-                        ) {
-                            lean_bound = false;
-                        }
-                        continue;
-                    }
-                    if frame.viewport.wireframe_mode {
-                        continue;
-                    }
-                    let (pipeline, mat_bg) = if batch.shading_plugin.is_some() {
-                        let Some((plug_pipes, mat_bg)) = resources.material_plugin_instanced_draw(
-                            batch.shading_plugin,
-                            &batch.plugin_textures,
-                        ) else {
-                            continue;
-                        };
-                        let Some(pipeline) = plug_pipes.ldr_transparent() else {
-                            continue;
-                        };
-                        (pipeline, Some(mat_bg))
-                    } else {
-                        let Some(pipeline) = resources.instancing.ldr_transparent() else {
-                            continue;
-                        };
-                        (pipeline, None)
-                    };
-                    let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
-                        continue;
-                    };
-                    let mat_key = batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
-                    let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else {
-                        continue;
-                    };
-                    if !lean_bound {
-                        bind_deform_group!(
-                            render_pass,
-                            resources,
-                            &resources.deform.dummy_bind_group
-                        );
-                        cur_pipe = None;
-                        cur_chunks = None;
-                        fat_bound = crate::renderer::types::FatBound::default();
-                        lean_bound = true;
-                    }
-                    if cur_pipe != Some(pipeline as *const _) {
-                        render_pass.set_pipeline(pipeline);
-                        cur_pipe = Some(pipeline as *const _);
-                    }
-                    render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                    if let Some(mat_bg) = mat_bg {
-                        bind_material_group!(render_pass, resources, mat_bg);
-                    }
-                    let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                    if cur_chunks != Some(chunks) {
-                        render_pass
-                            .set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
-                        render_pass.set_index_buffer(
-                            resources.geometry.index_chunk_slice(chunks.1),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        cur_chunks = Some(chunks);
-                    }
-                    let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                    let first_index = resources.geometry.first_index(mesh.index_span);
-                    render_pass.draw_indexed(
-                        first_index..first_index + mesh.index_count,
-                        base_vertex,
-                        batch.instance_offset..batch.instance_offset + batch.instance_count,
+                    crate::renderer::types::draw_fat_batch(
+                        resources,
+                        fat_bind_groups,
+                        render_pass,
+                        batch,
+                        &fat_pass,
+                        &mut fat_bound,
                     );
                 }
             }

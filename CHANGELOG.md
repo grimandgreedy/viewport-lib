@@ -86,6 +86,9 @@
 
 ### Changed
 
+- **Every mesh batch draws through one shader** - the instanced and per-object mesh shaders are one, so an item draws the same whichever way it batches, and items with a scalar attribute, matcap, warp, lightmap, override or deformer batch and cull on the GPU like any other. Scenes that used custom-data emissive on per-object items now see it.
+- **Group 1 binding 15 is the GPU cull's visible list** - a pipeline that declares the mesh group-1 layout by hand adds it (read-only storage, vertex stage). Deformers now need eight storage buffers per stage, the default limit.
+- **Material plugins build one pipeline set** - the instanced set is gone, so `MaterialPluginStats::pipelines_built` tops out at 10 (20 on a device with bindless material textures, which builds a bindless twin).
 - **Mesh batches draw through pipelines built for the features they use** - a batch with no scalar colouring, lightmap, matcap, warp, overrides or deformer runs a shader with those compiled out, built in the background the first time a combination is seen; the full pipeline draws in the meantime. Images can differ from the full pipeline by a few pixels at mip boundaries.
 - **Fewer group-0 storage buffers** - the cluster cells and light index list share one buffer at binding 15, and the adaptive probe volume and the per-instance custom data are regions of the indirect-light buffer at binding 18, so the lit fragment stage binds five storage buffers instead of eight. Group 0 bindings 16, 20 and 22 are free. `LightsUniform::_pad_dbg` is now `custom_data_base`. A pipeline that declared the camera layout's bindings by hand drops 16, 20 and 22.
 - **`raytrace` builds run on default limits** - `MIN_STORAGE_BUFFERS_PER_STAGE` is 8 with the `raytrace` feature too: the path tracer binds eight storage buffers per stage, not ten. `REQUIRED_STORAGE_BUFFERS_PER_STAGE` stays 10 as headroom for item-type plugins. `ViewportInstance` no longer warns that features are off on a default-limits device.
@@ -174,6 +177,8 @@
 
 ### Fixed
 
+- **Material plugin items vanished under the opaque bundle** - once 64 or more opaque batches engaged the cached render bundle, batches drawn with a material plugin were left out of both the bundle and the immediate draws. They now draw after the bundle replays.
+- **Shadows under background compilation** - an item drawn through a reduced or GPU-culled pipeline never cast a shadow while pipelines compiled in the background, because the shadow pass waited on a pipeline the draw never asked for.
 - **Material plugins draw on a device without deformers** - a material plugin's pipeline layouts carried the full deform group even where deformers are off, so on such a device every plugin draw failed validation, and on wgpu 29 and 30 the per-object layout went over the storage-buffer limit. Group 2 of a plugin layout is now empty there and plugins compose on the deform-free shaders.
 - **Transparent meshes follow their position and normal overrides** - the OIT mesh shader ignored `set_position_override_buffer` and `set_normal_override_buffer`, so a transparent mesh driven by a compute pass drew its rest pose. It now reads both, windows included.
 - **A plugin's extension attribute survives a lightmap** - a mesh carrying both `MeshData::extension_attributes` and a lightmap fed the lightmap's UV1 to the plugin's `surf.attr`, since the two shared one binding. Each is now its own stream.

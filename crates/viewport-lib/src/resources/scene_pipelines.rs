@@ -43,7 +43,12 @@ pub(crate) struct SceneCorePipelines {
     /// opaque fragment shader branches on a per-object uniform),
     /// transparent, wireframe, and the cap-fill overlay. The opaque and
     /// transparent members also come in feature sets, built as draws ask.
-    pub(crate) hdr: Option<LazyFamily<HdrMeshContext, 7>>,
+    pub(crate) hdr: Option<LazyFamily<HdrMeshContext, 9>>,
+    /// The LDR and HDR families on the bindless member of group 1, built
+    /// alongside the two above when material textures bind bindlessly. The
+    /// batch draws whose bind groups are bindless draw through these.
+    pub(crate) ldr_bindless: Option<LazyFamily<LdrMeshContext, 4>>,
+    pub(crate) hdr_bindless: Option<LazyFamily<HdrMeshContext, 9>>,
 }
 
 const LDR_SOLID: usize = 0;
@@ -56,6 +61,10 @@ const HDR_OPAQUE: usize = 0;
 const HDR_TRANSPARENT: usize = 4;
 const HDR_WIREFRAME: usize = 5;
 const HDR_OVERLAY: usize = 6;
+/// The additive and premultiplied blends an explicit mesh-instance item can
+/// ask for, beside the alpha-blended `HDR_TRANSPARENT`.
+const HDR_ADDITIVE: usize = 7;
+const HDR_PREMULTIPLIED: usize = 8;
 
 fn hdr_opaque_slot(key: PipelineKey) -> usize {
     HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize
@@ -200,6 +209,22 @@ fn build_hdr_features(
             PrimitiveTopology::LineList,
             true,
         ),
+        HDR_ADDITIVE => make(
+            ctx.shader.get(),
+            "hdr_additive_pipeline",
+            None,
+            Some(crate::resources::mesh::mesh_pipelines::ADDITIVE_BLEND),
+            PrimitiveTopology::TriangleList,
+            false,
+        ),
+        HDR_PREMULTIPLIED => make(
+            ctx.shader.get(),
+            "hdr_premultiplied_pipeline",
+            None,
+            Some(crate::resources::mesh::mesh_pipelines::PREMULTIPLIED_BLEND),
+            PrimitiveTopology::TriangleList,
+            false,
+        ),
         _ => crate::resources::builders::render_pipeline(
             &ctx.device,
             crate::resources::builders::RenderPipelineDesc {
@@ -238,41 +263,17 @@ fn build_hdr_features(
 }
 
 impl SceneCorePipelines {
-    pub(crate) fn solid(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.ldr.as_ref()?.get(LDR_SOLID)
-    }
-
-    pub(crate) fn solid_two_sided(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.ldr.as_ref()?.get(LDR_SOLID_TWO_SIDED)
-    }
-
-    /// The LDR solid pipeline for `key`'s facedness.
-    pub(crate) fn ldr_opaque(&self, key: PipelineKey) -> Option<&crate::gpu::RenderPipeline> {
-        if key.two_sided {
-            self.solid_two_sided()
-        } else {
-            self.solid()
-        }
-    }
-
-    pub(crate) fn transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.ldr.as_ref()?.get(LDR_TRANSPARENT)
-    }
 
     pub(crate) fn wireframe(&self) -> Option<&crate::gpu::RenderPipeline> {
         self.ldr.as_ref()?.get(LDR_WIREFRAME)
     }
 
-    /// The HDR opaque pipeline for `key`: facedness and discard-free
-    /// eligibility.
-    pub(crate) fn hdr_opaque(&self, key: PipelineKey) -> Option<&crate::gpu::RenderPipeline> {
-        self.hdr.as_ref()?.get(hdr_opaque_slot(key))
-    }
-
-    /// Ask the HDR family for the plain feature set of every opaque member,
-    /// so a plain lit scene draws no stand-in after warm-up.
+    /// Ask the HDR families for every member and the plain feature set of
+    /// every opaque and transparent member, so a plain lit scene draws no
+    /// stand-in after warm-up.
     pub(crate) fn request_plain_hdr(&self) {
-        if let Some(f) = &self.hdr {
+        for f in [&self.hdr, &self.hdr_bindless].into_iter().flatten() {
+            f.request_all();
             for key in [false, true].into_iter().flat_map(|two_sided| {
                 [false, true].map(|no_discard_eligible| PipelineKey {
                     two_sided,
@@ -282,6 +283,17 @@ impl SceneCorePipelines {
             }) {
                 f.get_features(hdr_opaque_slot(key), FeatureSet::NONE);
             }
+            f.get_features(HDR_TRANSPARENT, FeatureSet::NONE);
+        }
+    }
+
+    /// [`request_plain_hdr`](Self::request_plain_hdr) for the LDR families.
+    pub(crate) fn request_plain_ldr(&self) {
+        for f in [&self.ldr, &self.ldr_bindless].into_iter().flatten() {
+            f.request_all();
+            for slot in [LDR_SOLID, LDR_SOLID_TWO_SIDED, LDR_TRANSPARENT] {
+                f.get_features(slot, FeatureSet::NONE);
+            }
         }
     }
 
@@ -289,10 +301,8 @@ impl SceneCorePipelines {
     pub(crate) fn feature_sets(&self) -> usize {
         self.ldr.as_ref().map_or(0, |f| f.feature_sets())
             + self.hdr.as_ref().map_or(0, |f| f.feature_sets())
-    }
-
-    pub(crate) fn hdr_transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.hdr.as_ref()?.get(HDR_TRANSPARENT)
+            + self.ldr_bindless.as_ref().map_or(0, |f| f.feature_sets())
+            + self.hdr_bindless.as_ref().map_or(0, |f| f.feature_sets())
     }
 
     pub(crate) fn hdr_wireframe(&self) -> Option<&crate::gpu::RenderPipeline> {
@@ -301,6 +311,19 @@ impl SceneCorePipelines {
 
     pub(crate) fn hdr_overlay(&self) -> Option<&crate::gpu::RenderPipeline> {
         self.hdr.as_ref()?.get(HDR_OVERLAY)
+    }
+
+    /// The HDR blended pipeline an explicit mesh-instance item draws with.
+    pub(crate) fn hdr_blend(
+        &self,
+        blend: crate::renderer::SpriteBlend,
+    ) -> Option<&crate::gpu::RenderPipeline> {
+        use crate::renderer::SpriteBlend;
+        self.hdr.as_ref()?.get(match blend {
+            SpriteBlend::AlphaBlend => HDR_TRANSPARENT,
+            SpriteBlend::Additive => HDR_ADDITIVE,
+            SpriteBlend::Premultiplied => HDR_PREMULTIPLIED,
+        })
     }
 
     /// Whether the opaque pipeline for `key` in the `hdr` or LDR family is
@@ -323,12 +346,22 @@ impl SceneCorePipelines {
 
     /// The LDR family seen through [`MeshColourFamily`].
     pub(crate) fn ldr_family(&self) -> LdrScene<'_> {
-        LdrScene(self)
+        LdrScene(self.ldr.as_ref())
     }
 
     /// The HDR family seen through [`MeshColourFamily`].
     pub(crate) fn hdr_family(&self) -> HdrScene<'_> {
-        HdrScene(self)
+        HdrScene(self.hdr.as_ref())
+    }
+
+    /// The LDR family on the bindless member of group 1.
+    pub(crate) fn ldr_bindless_family(&self) -> LdrScene<'_> {
+        LdrScene(self.ldr_bindless.as_ref())
+    }
+
+    /// The HDR family on the bindless member of group 1.
+    pub(crate) fn hdr_bindless_family(&self) -> HdrScene<'_> {
+        HdrScene(self.hdr_bindless.as_ref())
     }
 }
 
@@ -348,6 +381,9 @@ pub(crate) trait MeshColourFamily {
     /// [`transparent`](Self::transparent) built with `feats`.
     fn transparent_features(&self, feats: FeatureSet)
     -> FeatureGet<'_, crate::gpu::RenderPipeline>;
+    /// Whether an opaque draw for `key` with `feats` has a pipeline to
+    /// bind, without starting one.
+    fn opaque_ready(&self, key: PipelineKey, feats: FeatureSet) -> bool;
 }
 
 fn feature_get<'a, C: Send + Sync + 'static, const N: usize>(
@@ -365,55 +401,27 @@ fn feature_get<'a, C: Send + Sync + 'static, const N: usize>(
     }
 }
 
-pub(crate) struct LdrScene<'a>(&'a SceneCorePipelines);
+pub(crate) struct LdrScene<'a>(Option<&'a LazyFamily<LdrMeshContext, 4>>);
 
-impl MeshColourFamily for LdrScene<'_> {
-    fn opaque(&self, key: PipelineKey) -> Option<&crate::gpu::RenderPipeline> {
-        self.0.ldr_opaque(key)
-    }
-
-    fn transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.0.transparent()
-    }
-
-    fn wireframe(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.0.wireframe()
-    }
-
-    fn opaque_features(
-        &self,
-        key: PipelineKey,
-        feats: FeatureSet,
-    ) -> FeatureGet<'_, crate::gpu::RenderPipeline> {
-        let slot = if key.two_sided {
-            LDR_SOLID_TWO_SIDED
-        } else {
-            LDR_SOLID
-        };
-        feature_get(self.0.ldr.as_ref(), slot, feats)
-    }
-
-    fn transparent_features(
-        &self,
-        feats: FeatureSet,
-    ) -> FeatureGet<'_, crate::gpu::RenderPipeline> {
-        feature_get(self.0.ldr.as_ref(), LDR_TRANSPARENT, feats)
+fn ldr_solid_slot(key: PipelineKey) -> usize {
+    if key.two_sided {
+        LDR_SOLID_TWO_SIDED
+    } else {
+        LDR_SOLID
     }
 }
 
-pub(crate) struct HdrScene<'a>(&'a SceneCorePipelines);
-
-impl MeshColourFamily for HdrScene<'_> {
+impl MeshColourFamily for LdrScene<'_> {
     fn opaque(&self, key: PipelineKey) -> Option<&crate::gpu::RenderPipeline> {
-        self.0.hdr_opaque(key)
+        self.0?.get(ldr_solid_slot(key))
     }
 
     fn transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.0.hdr_transparent()
+        self.0?.get(LDR_TRANSPARENT)
     }
 
     fn wireframe(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.0.hdr_wireframe()
+        self.0?.get(LDR_WIREFRAME)
     }
 
     fn opaque_features(
@@ -421,21 +429,69 @@ impl MeshColourFamily for HdrScene<'_> {
         key: PipelineKey,
         feats: FeatureSet,
     ) -> FeatureGet<'_, crate::gpu::RenderPipeline> {
-        feature_get(self.0.hdr.as_ref(), hdr_opaque_slot(key), feats)
+        feature_get(self.0, ldr_solid_slot(key), feats)
     }
 
     fn transparent_features(
         &self,
         feats: FeatureSet,
     ) -> FeatureGet<'_, crate::gpu::RenderPipeline> {
-        feature_get(self.0.hdr.as_ref(), HDR_TRANSPARENT, feats)
+        feature_get(self.0, LDR_TRANSPARENT, feats)
+    }
+
+    fn opaque_ready(&self, key: PipelineKey, feats: FeatureSet) -> bool {
+        self.0
+            .is_some_and(|f| f.features_ready(ldr_solid_slot(key), feats))
+    }
+}
+
+pub(crate) struct HdrScene<'a>(Option<&'a LazyFamily<HdrMeshContext, 9>>);
+
+impl MeshColourFamily for HdrScene<'_> {
+    fn opaque(&self, key: PipelineKey) -> Option<&crate::gpu::RenderPipeline> {
+        self.0?.get(hdr_opaque_slot(key))
+    }
+
+    fn transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
+        self.0?.get(HDR_TRANSPARENT)
+    }
+
+    fn wireframe(&self) -> Option<&crate::gpu::RenderPipeline> {
+        self.0?.get(HDR_WIREFRAME)
+    }
+
+    fn opaque_features(
+        &self,
+        key: PipelineKey,
+        feats: FeatureSet,
+    ) -> FeatureGet<'_, crate::gpu::RenderPipeline> {
+        feature_get(self.0, hdr_opaque_slot(key), feats)
+    }
+
+    fn transparent_features(
+        &self,
+        feats: FeatureSet,
+    ) -> FeatureGet<'_, crate::gpu::RenderPipeline> {
+        feature_get(self.0, HDR_TRANSPARENT, feats)
+    }
+
+    fn opaque_ready(&self, key: PipelineKey, feats: FeatureSet) -> bool {
+        self.0
+            .is_some_and(|f| f.features_ready(hdr_opaque_slot(key), feats))
     }
 }
 
 impl crate::resources::DeviceResources {
     /// Feature-set pipelines asked of the per-object mesh families.
     pub(crate) fn feature_sets(&self) -> usize {
-        self.scene.feature_sets() + self.oit.pipeline.as_ref().map_or(0, |f| f.feature_sets())
+        self.scene.feature_sets()
+            + self.cull.feature_sets()
+            + self.oit.pipeline.as_ref().map_or(0, |f| f.feature_sets())
+            + self
+                .oit
+                .pipeline_bindless
+                .as_ref()
+                .map_or(0, |f| f.feature_sets())
     }
 
     /// Compose the base LDR mesh family: the module it shares with the HDR
@@ -480,7 +536,20 @@ impl crate::resources::DeviceResources {
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
-        self.scene.ldr = Some(
+        let bindless = if self.bindless_textures() {
+            let shader = self.shared_module(
+                device,
+                "mesh_bindless_shader",
+                &crate::resources::mesh::instanced_bindless::bindlessify_mesh(&source),
+            );
+            Some((
+                shader,
+                self.object_bindless_layout(device, "mesh_bindless_pipeline_layout"),
+            ))
+        } else {
+            None
+        };
+        let family = |layout, shader| {
             LazyFamily::new(
                 LdrMeshContext {
                     device: device.clone(),
@@ -492,8 +561,30 @@ impl crate::resources::DeviceResources {
                 std::sync::Arc::clone(&self.pipeline_compiler),
                 build_ldr,
             )
-            .with_features(build_ldr_features),
-        );
+            .with_features(build_ldr_features)
+        };
+        let ldr = family(layout, shader);
+        let ldr_bindless = bindless.map(|(shader, layout)| family(layout, shader));
+        self.scene.ldr = Some(ldr);
+        self.scene.ldr_bindless = ldr_bindless;
+    }
+
+    /// The `mesh.wgsl` source the HDR families compile: composed with the
+    /// registered deformers and the debug-vis state. Materialised so the
+    /// discard-free twin is stripped from the exact source the discarding
+    /// module compiles, and shared by the scene and GPU-culled families.
+    pub(crate) fn hdr_mesh_source(&self) -> String {
+        let base = if self.deform.enabled {
+            include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"))
+        } else {
+            include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))
+        };
+        let source =
+            crate::resources::mesh_sidecar::registry::compose_shader(base, &self.deform.registrations);
+        crate::resources::builders::builtin_hook_env(
+            crate::resources::builders::strip_debug_vis(source, self.debug_vis_shaders),
+        )
+        .into_owned()
     }
 
     /// Compose the HDR mesh family: the lit module (shared with the LDR
@@ -505,23 +596,7 @@ impl crate::resources::DeviceResources {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let source = {
-            let base = if self.deform.enabled {
-                include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"))
-            } else {
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))
-            };
-            crate::resources::mesh_sidecar::registry::compose_shader(
-                base,
-                &self.deform.registrations,
-            )
-        };
-        // Materialised so the discard-free twin is stripped from the exact
-        // source the discarding module compiles.
-        let final_src = crate::resources::builders::builtin_hook_env(
-            crate::resources::builders::strip_debug_vis(source, self.debug_vis_shaders),
-        )
-        .into_owned();
+        let final_src = self.hdr_mesh_source();
         let shader = self.shared_module(device, "mesh_shader_hdr", &final_src);
         let shader_nodiscard = self.shared_module(
             device,
@@ -547,21 +622,41 @@ impl crate::resources::DeviceResources {
             "hdr_overlay_pipeline_layout",
             &[&self.binds.camera_bgl, &self.guides.overlay_bgl],
         );
-        self.scene.hdr = Some(
+        let bindless = if self.bindless_textures() {
+            let source = crate::resources::mesh::instanced_bindless::bindlessify_mesh(&final_src);
+            let shader = self.shared_module(device, "mesh_bindless_shader_hdr", &source);
+            let shader_nodiscard = self.shared_module(
+                device,
+                "mesh_bindless_shader_hdr_nodiscard",
+                &crate::resources::builders::strip_discards(&source),
+            );
+            Some((
+                shader,
+                shader_nodiscard,
+                self.object_bindless_layout(device, "hdr_mesh_bindless_pipeline_layout"),
+            ))
+        } else {
+            None
+        };
+        let family = |layout, shader, shader_nodiscard| {
             LazyFamily::new(
                 HdrMeshContext {
                     device: device.clone(),
                     layout,
                     shader,
                     shader_nodiscard,
-                    overlay_layout,
-                    overlay_shader,
+                    overlay_layout: overlay_layout.clone(),
+                    overlay_shader: overlay_shader.clone(),
                 },
                 std::sync::Arc::clone(&self.pipeline_compiler),
                 build_hdr,
             )
-            .with_features(build_hdr_features),
-        );
+            .with_features(build_hdr_features)
+        };
+        let hdr = family(layout, shader, shader_nodiscard);
+        let hdr_bindless = bindless.map(|(s, n, l)| family(l, s, n));
+        self.scene.hdr = Some(hdr);
+        self.scene.hdr_bindless = hdr_bindless;
     }
 }
 
@@ -594,13 +689,14 @@ mod tests {
             .set_policy(crate::resources::PipelineCompilation::Blocking);
         res.ensure_hdr_pipelines(&device, &queue, crate::gpu::TextureFormat::Rgba8UnormSrgb);
         for key in crate::renderer::pipeline_key::PipelineKey::all() {
-            assert!(res.scene.hdr_opaque(key).is_some());
+            use super::MeshColourFamily as _;
+            assert!(res.scene.hdr_family().opaque(key).is_some());
         }
     }
 
-    /// Families compiled from one source share one module. The LDR and HDR
-    /// mesh families use the same `mesh.wgsl`, and the LDR, HDR and culled
-    /// instanced families the same `mesh_instanced.wgsl`, so composing a
+    /// Families compiled from one source share one module. The HDR and
+    /// culled mesh families use the same composed `mesh.wgsl`, and the OIT
+    /// family and its culled twin the same `mesh_oit.wgsl`, so composing a
     /// second family adds only the modules the first did not need. Composing
     /// compiles none of them: the first pipeline build that reads a module
     /// does.
@@ -621,40 +717,34 @@ mod tests {
                 .count()
         };
 
+        // A bindless device composes every mesh family on both group-1
+        // members, so each module has a bindless twin.
+        let b = usize::from(res.bindless_textures());
         res.ensure_ldr_mesh_pipelines(&device);
-        assert_eq!(modules(&res), 1, "the LDR mesh family is one module");
+        assert_eq!(modules(&res), 1 + b, "the LDR mesh family is one module");
         res.ensure_hdr_mesh_pipelines(&device);
         assert_eq!(
             modules(&res),
-            2,
+            2 + 2 * b,
             "the HDR mesh family adds its discard-free twin and nothing else"
         );
 
         res.ensure_instanced_pipelines(&device);
-        res.ensure_ldr_instanced_pipelines(&device);
-        assert_eq!(
-            modules(&res),
-            5,
-            "the instanced module, its twin and the instanced shadow module"
-        );
-        // Under bindless the blended HDR pipelines stay on the per-batch
-        // source, which is one more module; the solids share the pair above.
-        let per_batch = usize::from(res.bindless_textures());
-        res.ensure_hdr_instanced_pipelines(&device);
+        assert_eq!(modules(&res), 3 + 2 * b, "the instanced shadow module");
         res.ensure_cull_instance_pipelines(&device);
         res.ensure_hdr_cull_pipelines(&device);
         assert_eq!(
             modules(&res),
-            5 + per_batch,
-            "the HDR and culled instanced families, and the culled shadows, reuse the modules above"
+            3 + 2 * b,
+            "the culled HDR family and the culled shadows reuse the modules above"
         );
 
-        res.ensure_oit_instanced_pipeline(&device);
         res.ensure_oit_cull_pipelines(&device);
+        res.ensure_oit_mesh_pipelines(&device);
         assert_eq!(
             modules(&res),
-            6 + per_batch,
-            "the OIT instanced pipelines and their culled twins share one module"
+            4 + 3 * b,
+            "the OIT family and its culled twin share one module"
         );
         assert_eq!(compiled(&res), 0, "composing a family compiled a module");
 

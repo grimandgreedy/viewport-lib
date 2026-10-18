@@ -405,7 +405,7 @@ impl ViewportRenderer {
                             let cutout_keys: Vec<_> = instancing
                                 .batches
                                 .iter()
-                                .filter(|b| b.is_cutout && !b.is_transparent && b.fat.is_none())
+                                .filter(|b| b.is_cutout && !b.is_transparent && b.casts_instanced())
                                 .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id, b.sampler))
                                 .collect();
                             for cascade in 0..light.effective_cascade_count {
@@ -476,7 +476,7 @@ impl ViewportRenderer {
                                 let mut binds = 0u32;
                                 for (bi, batch) in instancing.batches.iter().enumerate() {
                                     if batch.is_transparent
-                                        || batch.fat.is_some()
+                                        || !batch.casts_instanced()
                                         || !resources.batch_colour_ready(
                                             batch,
                                             colour_hdr,
@@ -642,7 +642,7 @@ impl ViewportRenderer {
                             let cutout_keys: Vec<_> = instancing
                                 .batches
                                 .iter()
-                                .filter(|b| b.is_cutout && !b.is_transparent && b.fat.is_none())
+                                .filter(|b| b.is_cutout && !b.is_transparent && b.casts_instanced())
                                 .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id, b.sampler))
                                 .collect();
                             for (t, n, a, smp) in cutout_keys {
@@ -673,7 +673,7 @@ impl ViewportRenderer {
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for (bi, batch) in instancing.batches.iter().enumerate() {
                                 if batch.is_transparent
-                                    || batch.fat.is_some()
+                                    || !batch.casts_instanced()
                                     || !resources.batch_colour_ready(
                                         batch,
                                         colour_hdr,
@@ -796,7 +796,7 @@ impl ViewportRenderer {
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for batch in &instancing.batches {
                                 if batch.is_transparent
-                                    || batch.fat.is_some()
+                                    || !batch.casts_instanced()
                                     || !resources.batch_colour_ready(
                                         batch,
                                         colour_hdr,
@@ -905,7 +905,8 @@ impl ViewportRenderer {
                                 continue;
                             };
                             if batch.is_transparent
-                                || matches!(fat.draw, crate::renderer::types::FatDraw::NormalLines)
+                                || batch.casts_instanced()
+                                || matches!(fat.draw, crate::renderer::types::DrawKind::NormalLines)
                                 || !resources.batch_colour_ready(batch, colour_hdr, clipping_active)
                             {
                                 continue;
@@ -915,7 +916,7 @@ impl ViewportRenderer {
                             };
                             let Some(group1) = per_object
                                 .material_bind_groups
-                                .get(&fat.bind_key)
+                                .get(&fat.shadow_bind_key)
                                 .map(|m| &m.bind_group)
                             else {
                                 continue;
@@ -980,7 +981,7 @@ impl ViewportRenderer {
                                 bound.mesh = Some(batch.mesh_id);
                             }
                             let indices = match fat.draw {
-                                crate::renderer::types::FatDraw::Range(first, count) => {
+                                crate::renderer::types::DrawKind::Range(first, count) => {
                                     first..first + count
                                 }
                                 _ => 0..mesh.index_count,
@@ -1082,18 +1083,18 @@ impl ViewportRenderer {
                 .iter()
                 .filter(|b| {
                     !b.is_transparent
-                        && b.fat.is_some()
+                        && !b.casts_instanced()
                         && resources.batch_colour_ready(b, colour_hdr, clipping_active)
                 })
                 .filter_map(|b| {
                     let fat = b.fat.as_ref()?;
-                    if matches!(fat.draw, crate::renderer::types::FatDraw::NormalLines) {
+                    if matches!(fat.draw, crate::renderer::types::DrawKind::NormalLines) {
                         return None;
                     }
                     let mesh = resources.mesh_store.get(b.mesh_id)?;
                     let group1 = per_object
                         .material_bind_groups
-                        .get(&fat.bind_key)
+                        .get(&fat.shadow_bind_key)
                         .map(|m| &m.bind_group)?;
                     Some(PointCaster {
                         batch: b,
@@ -1121,7 +1122,7 @@ impl ViewportRenderer {
                     .iter()
                     .filter(|b| {
                         !b.is_transparent
-                            && b.fat.is_none()
+                            && b.casts_instanced()
                             && resources.batch_colour_ready(b, colour_hdr, clipping_active)
                     })
                     .filter_map(|b| {
@@ -1367,7 +1368,7 @@ impl ViewportRenderer {
                             crate::gpu::IndexFormat::Uint32,
                         );
                         let indices = match c.fat.draw {
-                            crate::renderer::types::FatDraw::Range(first, count) => {
+                            crate::renderer::types::DrawKind::Range(first, count) => {
                                 first..first + count
                             }
                             _ => 0..c.mesh.index_count,
@@ -1491,7 +1492,7 @@ fn draw_shadow_cascades_multi_draw(
         let cutout_keys: Vec<_> = instancing
             .batches
             .iter()
-            .filter(|b| b.is_cutout && !b.is_transparent && b.fat.is_none())
+            .filter(|b| b.is_cutout && !b.is_transparent && b.casts_instanced())
             .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id, b.sampler))
             .collect();
         for (t, n, a, smp) in cutout_keys {
@@ -1528,7 +1529,7 @@ fn draw_shadow_cascades_multi_draw(
 
         for (bi, batch) in instancing.batches.iter().enumerate() {
             if batch.is_transparent
-                || batch.fat.is_some()
+                || !batch.casts_instanced()
                 || !resources.batch_colour_ready(batch, colour_hdr, clipping_active)
             {
                 continue;

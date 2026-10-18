@@ -8,10 +8,8 @@ use viewport_lib::Colour;
 use viewport_lib::{CameraFrame, FrameData, Material, PickId, SceneFrame, SceneRenderItem};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
-/// One item per mesh (so one batch each), every item pinned to the
-/// per-object pipelines: under GPU-driven submission the bundle covers the
-/// fat batches only, and the HDR harness turns that on from its second
-/// frame. `hidden` names the item left out, which changes the batch list.
+/// One item per mesh, so one batch each. `hidden` names the item left out,
+/// which changes the batch list.
 fn items(
     mesh_ids: &[viewport_lib::MeshId],
     material: viewport_lib::MaterialId,
@@ -25,7 +23,6 @@ fn items(
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
             item.material = material;
-            item.settings.force_per_object = true;
             let x = (i % 16) as f32 * 2.0;
             let y = (i / 16) as f32 * 2.0;
             item.model =
@@ -43,6 +40,10 @@ fn bundle_backs_off_under_churn_and_rearms() {
         eprintln!("skipping: no GPU adapter");
         return;
     };
+    // Under GPU-driven culling the batches draw from the cull's indirect
+    // args and the bundle holds none of them; without it, the bundle draws
+    // every opaque batch.
+    h.renderer.disable_gpu_driven_culling();
     let count = 100u32; // above the bundle's 64-draw minimum
     let data: viewport_lib::MeshData = meshes::stress_sphere(0.8, 2).into();
     let mesh_ids: Vec<_> = (0..count)

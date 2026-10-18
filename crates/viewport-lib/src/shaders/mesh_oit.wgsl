@@ -259,6 +259,8 @@ override FEAT_DEFORM: bool = true;
 @group(1) @binding(18) var lightmap_dir_tex: texture_2d_array<f32>;
 // Second UV set (glTF TEXCOORD_1), parallel to the vertex buffer. See mesh.wgsl.
 @group(1) @binding(19) var<storage, read> uv1_buf: array<vec2<f32>>;
+// The GPU-culled draw's visible list (see mesh.wgsl).
+@group(1) @binding(15) var<storage, read> visibility_indices: array<u32>;
 
 fn lightmap_directional_factor(uv: vec2<f32>, page: i32, n_pix: vec3<f32>, n_geo: vec3<f32>) -> f32 {
     let d = textureSampleLevel(lightmap_dir_tex, obj_sampler, uv, page, 0.0);
@@ -344,6 +346,12 @@ struct VertexIn {
     @location(3) uv:       vec2<f32>,
     @location(4) tangent:  vec4<f32>,
     @builtin(vertex_index) vertex_index: u32,
+    // Per-instance record words from vertex buffer slot 1 (see mesh.wgsl).
+    @location(5) w_record: u32,
+    @location(6) w_colour: u32,
+    @location(7) w_warp: u32,
+    @location(8) w_lightmap: u32,
+    @location(9) w_vertex_base: u32,
 };
 
 struct VertexOut {
@@ -378,23 +386,35 @@ struct OitOut {
     @location(1) reveal: f32,
 };
 
+// A direct draw: the instance index is the record.
 @vertex
 fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> VertexOut {
-    object = load_object_vertex(instance_index);
+    return vs_body(in, instance_index);
+}
+
+// A GPU-culled draw: the instance index is a slot in the visible list, which
+// names the record. See mesh.wgsl.
+@vertex
+fn vs_main_cull(in: VertexIn, @builtin(instance_index) slot: u32) -> VertexOut {
+    return vs_body(in, visibility_indices[slot]);
+}
+
+fn vs_body(in: VertexIn, record: u32) -> VertexOut {
+    object = load_object_vertex(record);
     var out: VertexOut;
-    out.obj_idx = instance_index;
+    out.obj_idx = record;
+    // The vertex index within the mesh, as in mesh.wgsl.
+    let vi = in.vertex_index - in.w_vertex_base;
     // The mesh's sidecar record and the streams this item reads, as in
     // mesh.wgsl; each read is behind the flag that needs it.
-    let rec = instances[instance_index].sidecar_record;
-    let inst_flags = instances[instance_index].flags;
+    let rec = in.w_record;
+    let inst_flags = instances[record].flags;
     let has_sidecar = FEAT_RECORD && (inst_flags & INST_HAS_SIDECAR) != 0u;
-    if has_sidecar {
-        object.uv1_base = instances[instance_index].uv1_base;
-    }
+    object.uv1_base = in.w_vertex_base;
     // Override > vertex attribute, as in mesh.wgsl; warp layers on top.
     var local_pos = in.position;
-    if FEAT_OVERRIDES && (inst_flags & INST_HAS_POSITION_OVERRIDE) != 0u && in.vertex_index < sc_word(rec + SC_POS_LEN) {
-        let pi = (sc_word(rec + SC_POS_BASE) + in.vertex_index) * 3u;
+    if FEAT_OVERRIDES && (inst_flags & INST_HAS_POSITION_OVERRIDE) != 0u && vi < sc_word(rec + SC_POS_LEN) {
+        let pi = (sc_word(rec + SC_POS_BASE) + vi) * 3u;
         if pi + 2u < arrayLength(&position_override_buffer) {
             local_pos = vec3<f32>(
                 position_override_buffer[pi],
@@ -404,14 +424,14 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
         }
     }
     if FEAT_WARP && has_sidecar && object.has_warp != 0u {
-        let warp = instances[instance_index].warp_stream;
+        let warp = in.w_warp;
         if warp != 0u {
-            local_pos += sc_vec3(warp + in.vertex_index * 3u) * object.warp_scale;
+            local_pos += sc_vec3(warp + vi * 3u) * object.warp_scale;
         }
     }
     var local_normal = in.normal;
-    if FEAT_OVERRIDES && (inst_flags & INST_HAS_NORMAL_OVERRIDE) != 0u && in.vertex_index < sc_word(rec + SC_NRM_LEN) {
-        let ni = (sc_word(rec + SC_NRM_BASE) + in.vertex_index) * 3u;
+    if FEAT_OVERRIDES && (inst_flags & INST_HAS_NORMAL_OVERRIDE) != 0u && vi < sc_word(rec + SC_NRM_LEN) {
+        let ni = (sc_word(rec + SC_NRM_BASE) + vi) * 3u;
         if ni + 2u < arrayLength(&normal_override_buffer) {
             local_normal = vec3<f32>(
                 normal_override_buffer[ni],
@@ -420,7 +440,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
             );
         }
     }
-    var dv = DeformVertex(local_pos, local_normal, in.vertex_index);
+    var dv = DeformVertex(local_pos, local_normal, vi);
     let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, object.deform_flags, 0u);
     if FEAT_DEFORM {
         dv = viewport_deform_object_space(dv, dctx);
@@ -444,18 +464,18 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
-    // Second UV set from the parallel uv1 stream (mesh-local index + base). See
-    // mesh.wgsl:vs_main.
-    let uv1_len = arrayLength(&uv1_buf);
-    let uv1_idx = min(object.uv1_base + in.vertex_index, max(uv1_len, 1u) - 1u);
-    out.uv1 = uv1_buf[uv1_idx];
-    let idx = in.vertex_index;
-    let colour_stream = instances[instance_index].colour_stream;
+    // Second UV set from the parallel uv1 stream. See mesh.wgsl:vs_body.
+    out.uv1 = vec2<f32>(0.0);
+    if (inst_flags & INST_HAS_UV1) != 0u {
+        let uv1_len = arrayLength(&uv1_buf);
+        out.uv1 = uv1_buf[min(in.vertex_index, max(uv1_len, 1u) - 1u)];
+    }
+    let colour_stream = in.w_colour;
     var has_attr = false;
     var raw_scalar = 0.0;
     if FEAT_COLOUR_STREAM && has_sidecar && object.has_attribute != 0u && object.use_face_colour == 0u && colour_stream != 0u {
         has_attr = true;
-        raw_scalar = sc_f32(colour_stream + idx);
+        raw_scalar = sc_f32(colour_stream + vi);
     }
     out.scalar_val = raw_scalar;
     let sv_bits = bitcast<u32>(raw_scalar);
@@ -463,17 +483,17 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
     out.face_colour = vec4<f32>(1.0);
     if FEAT_COLOUR_STREAM && has_sidecar && object.use_face_colour != 0u && colour_stream != 0u {
-        out.face_colour = sc_vec4(colour_stream + 4u * idx);
+        out.face_colour = sc_vec4(colour_stream + 4u * vi);
     }
     // Lightmap UV1 through the draw's placement, as in mesh.wgsl.
     out.lightmap_uv = vec2<f32>(0.0);
     out.lightmap_page = 0.0;
-    let lm = instances[instance_index].lightmap_stream;
+    let lm = in.w_lightmap;
     if FEAT_LIGHTMAP && has_sidecar && lm != 0u {
-        let lm_sidecar = sc_vec4(lm + 4u * idx);
-        let placement = instances[instance_index].lightmap_scale_bias;
+        let lm_sidecar = sc_vec4(lm + 4u * vi);
+        let placement = instances[record].lightmap_scale_bias;
         out.lightmap_uv = lm_sidecar.xy * placement.xy + placement.zw;
-        out.lightmap_page = lm_sidecar.z + f32(instances[instance_index].lightmap_layer);
+        out.lightmap_page = lm_sidecar.z + f32(instances[record].lightmap_layer);
     }
     // <viewport-shade-slot:vertex-fetch>
     // </viewport-shade-slot:vertex-fetch>
@@ -596,9 +616,11 @@ fn build_shading_surface(
     surf.uv_ddx = dpdx(surface.mat_uv);
     surf.uv_ddy = dpdy(surface.mat_uv);
     surf.front_facing = surface.front_facing;
-    // Filled from the injected varying in modules whose hook reads the
-    // per-vertex extension attribute; zero everywhere else.
-    surf.attr = vec4<f32>(0.0);
+    // The instance's raw material channel: custom data slots 4..8 (`data1`),
+    // the block reserved for material plugins. A module whose hook reads the
+    // per-vertex extension attribute replaces it with that attribute.
+    // `custom_data_id` 0 is the shared all-zero block.
+    surf.attr = custom_data1(lights_uniform.custom_data_base, instances[in.obj_idx].custom_data_id);
     return surf;
 }
 
@@ -1094,6 +1116,9 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         );
         emissive = emissive * textureSampleGrad(emissive_tex, obj_sampler, s_em.uv, s_em.ddx, s_em.ddy).rgb;
     }
+    // Per-instance custom data slots 0..3 add to emissive (nits); zero is a
+    // no-op.
+    emissive += custom_data0(lights_uniform.custom_data_base, instances[in.obj_idx].custom_data_id).xyz;
     final_rgb += emissive;
     var dbg_emissive_lum = dot(emissive, lum_weights);
     // Surface-hook emissive: the composer adds the hook's emissive term here

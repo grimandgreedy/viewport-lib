@@ -12,9 +12,9 @@ pub(crate) struct OitContext {
 
 /// Weighted-blended OIT pipelines and composite layout.
 ///
-/// Device-shared and lazily built: the mesh and instanced families are
-/// composed by `ensure_oit_mesh_pipelines` and `ensure_oit_instanced_pipeline`
-/// and their members built by the first draw that selects each; the composite
+/// Device-shared and lazily built: the mesh family is composed by
+/// `ensure_oit_mesh_pipelines` and its members built by the first draw that
+/// selects each; the composite
 /// pipeline / BGL / sampler by the post-process setup. The viewport-sized
 /// accumulation and reveal textures live on `ViewportHdrState`, not here.
 #[derive(Default)]
@@ -24,8 +24,9 @@ pub(crate) struct OitResources {
     /// two-sided variant a two-sided transparent surface loses its back faces
     /// on the OIT path.
     pub(crate) pipeline: Option<LazyFamily<OitContext, 2>>,
-    /// The instanced twins (mesh_instanced_oit.wgsl through `vs_main`).
-    pub(crate) instanced: Option<LazyFamily<OitContext, 2>>,
+    /// The same family on the bindless member of group 1, built alongside
+    /// it when material textures bind bindlessly.
+    pub(crate) pipeline_bindless: Option<LazyFamily<OitContext, 2>>,
     /// OIT composite pipeline (oit_composite.wgsl, fullscreen tri, no depth).
     pub(crate) composite_pipeline: Option<super::LazyFullscreen>,
     /// Bind group layout for the OIT composite pass (group 0: accum + reveal + sampler).
@@ -59,22 +60,6 @@ pub(crate) fn build_per_object_features(
     )
 }
 
-pub(crate) fn build_instanced(ctx: &OitContext, i: usize) -> crate::gpu::RenderPipeline {
-    let two_sided = i & 1 != 0;
-    crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-        &ctx.device,
-        &ctx.layout,
-        ctx.shader.get(),
-        if two_sided {
-            "oit_instanced_pipeline_two_sided"
-        } else {
-            "oit_instanced_pipeline"
-        },
-        "vs_main",
-        two_sided,
-    )
-}
-
 impl OitResources {
     /// The per-object accumulate pipeline for `key`'s facedness, or `None`
     /// while a worker has it (or before the family is composed).
@@ -84,13 +69,20 @@ impl OitResources {
     }
 
     /// The per-object accumulate pipeline for `key` built with `feats`, with
-    /// the universal one standing in while it compiles.
+    /// the universal one standing in while it compiles. `bindless` selects
+    /// the family on the bindless member of group 1.
     pub(crate) fn per_object_features(
         &self,
         key: PipelineKey,
         feats: crate::renderer::pipeline_key::FeatureSet,
+        bindless: bool,
     ) -> crate::resources::pipeline_slot::FeatureGet<'_, crate::gpu::RenderPipeline> {
-        match self.pipeline.as_ref() {
+        let family = if bindless {
+            self.pipeline_bindless.as_ref()
+        } else {
+            self.pipeline.as_ref()
+        };
+        match family {
             Some(f) => f.get_features(key.two_sided as usize, feats),
             None => crate::resources::pipeline_slot::FeatureGet {
                 pipeline: None,
@@ -100,10 +92,17 @@ impl OitResources {
         }
     }
 
-    /// The instanced accumulate pipeline for `key`'s facedness.
-    pub(crate) fn instanced(&self, key: PipelineKey) -> Option<&crate::gpu::RenderPipeline> {
-        self.instanced.as_ref()?.get(key.two_sided as usize)
+    /// Ask for every per-object member, on both group-1 members, and its
+    /// plain feature set.
+    pub(crate) fn request_plain(&self) {
+        for f in [&self.pipeline, &self.pipeline_bindless].into_iter().flatten() {
+            f.request_all();
+            for i in 0..2 {
+                f.get_features(i, crate::renderer::pipeline_key::FeatureSet::NONE);
+            }
+        }
     }
+
 }
 
 #[cfg(test)]

@@ -17,7 +17,6 @@ pub(crate) enum FallbackReason {
     Hidden,
     Wireframe,
     ScalarAttribute,
-    MaterialPluginNotReady,
     MaterialPluginVertexAttribute,
     Warp,
     Matcap,
@@ -32,11 +31,8 @@ pub(crate) enum FallbackReason {
 
 /// Whether an item can be drawn through the instanced path.
 ///
-/// The instanced shader (`mesh_instanced.wgsl`) handles only the common case: a
-/// plain mesh with a simple material. Anything that needs per-item state the
-/// instanced shader does not read falls back to the per-object path. This is the
-/// single source of truth for that decision, used both when building the batches
-/// and when deciding the instanced-batch cache key. [`fallback_reason`] holds
+/// Every item draws in a batch; this names the per-item state the per-object
+/// counters report, and the batch cache keys on it. [`fallback_reason`] holds
 /// the tests and names the one an item fails.
 pub(crate) fn is_instanceable(item: &SceneRenderItem, resources: &DeviceResources) -> bool {
     fallback_reason(item, resources).is_none()
@@ -67,21 +63,10 @@ pub(crate) fn fallback_reason(
     if item.active_attribute.is_some() {
         return Some(R::ScalarAttribute);
     }
-    // Material-plugin items instance once the plugin's instanced pipeline set
-    // is built (the plugin's shading composed onto the instanced modules, on
-    // the group-3 layout, for the active per-batch or bindless binding). Until
-    // then, or on an unknown id where no instanced set exists, they draw through
-    // the per-object path. A plugin that reads the per-vertex extension
-    // attribute stays per-object regardless: the instanced path has no
-    // per-vertex extension-attribute binding (its `surf.attr` is the
-    // per-instance custom-data channel), so instancing such a plugin would feed
-    // it the wrong data. This mirrors the per-object-only `active_attribute`
-    // exclusion above.
+    // A plugin that reads the per-vertex extension attribute reads its
+    // mesh's sidecar record.
     let material = resources.material_or_default(item.material);
     if let Some(pid) = material.shading_plugin {
-        if !resources.material_plugin_instanced_ready(pid) {
-            return Some(R::MaterialPluginNotReady);
-        }
         if resources.material_plugin_reads_vertex_attribute(pid) {
             return Some(R::MaterialPluginVertexAttribute);
         }
@@ -314,16 +299,8 @@ mod tests {
         item.material = resources.upload_material(m).unwrap();
 
         assert!(
-            !is_instanceable(&item, &resources),
-            "a plugin item stays per-object until its instanced set is built",
-        );
-
-        resources.ensure_instanced_pipelines(&device);
-        resources.ensure_material_plugin_instanced_pipelines(&device, id);
-
-        assert!(
             is_instanceable(&item, &resources),
-            "a plugin item instances once its instanced set is ready",
+            "a plugin item batches whether or not its set is built",
         );
     }
 

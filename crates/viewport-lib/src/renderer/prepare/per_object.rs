@@ -37,6 +37,13 @@ pub(crate) fn build_instance_record(
     // chunk (0 for none). The shader reads them without a length, so a stream
     // is only taken when it covers every vertex index the draw reaches: the
     // vertex count for an indexed draw, the corner count for a per-face one.
+    // A face, corner or half-edge attribute draws the mesh's per-face
+    // expanded vertex buffer, unless the item draws its edges instead.
+    let per_face_draw = !(wireframe_mode || item.settings.wireframe)
+        && item.active_attribute.as_ref().is_some_and(|a| {
+            use crate::resources::AttributeKind as K;
+            matches!(a.kind, K::Face | K::FaceColour | K::Halfedge | K::Corner)
+        });
     let (colour_stream, warp_stream, lightmap_stream) = {
         use crate::resources::AttributeKind as K;
         use crate::resources::mesh::sidecar_pool::StreamKind;
@@ -123,7 +130,8 @@ pub(crate) fn build_instance_record(
             f::USE_FACE_COLOUR,
         )
         | f::when(item.warp_attribute.is_some(), f::HAS_WARP)
-        | f::when(record.is_some(), f::HAS_SIDECAR);
+        | f::when(record.is_some(), f::HAS_SIDECAR)
+        | f::when(mesh.is_some_and(|m| m.has_uv1) && !per_face_draw, f::HAS_UV1);
     InstanceData {
         model: cm.model,
         colour: cm.colour,
@@ -147,7 +155,13 @@ pub(crate) fn build_instance_record(
         lightmap_scale_bias: placement.scale_bias,
         warp_stream,
         lightmap_stream,
-        uv1_base: record.map_or(0, |r| r.header.uv1_base),
+        // A per-face draw reads its own expanded vertex buffer from vertex 0;
+        // every other draw binds the whole slab chunk at the mesh's base.
+        vertex_base: if per_face_draw {
+            0
+        } else {
+            mesh.map_or(0, |m| resources.geometry.base_vertex(m.vertex_span) as u32)
+        },
         _pad: 0,
     }
 }
@@ -227,7 +241,9 @@ impl ViewportRenderer {
                 let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("foreground_object_uniform"),
                     size: uniform_size,
-                    usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::STORAGE
+                        | crate::gpu::BufferUsages::VERTEX
+                        | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 entries.push(crate::renderer::per_object_state::ForegroundObjectEntry {
@@ -292,6 +308,8 @@ impl ViewportRenderer {
                 m.emissive_texture_id,
                 m.selected_sampler(),
                 prev_key,
+                false,
+                None,
             );
             if let Some((bg, key)) = built {
                 entry.bind_group = Some(bg);
@@ -334,8 +352,8 @@ impl ViewportRenderer {
         // nothing and the bundle starts on frame two.
         let hdr = frame.effects.display.is_hdr();
         let clipping_active = DeviceResources::clipping_active(frame);
-        // GPU-driven submission draws the lean batches from cull-written
-        // indirect args, so under it the bundle records the fat batches only.
+        // GPU-driven submission draws the culled batches from cull-written
+        // indirect args, so under it the bundle records the rest only.
         let fat_only =
             hdr && self.instancing.gpu_culling_enabled && self.resources.cull.hdr.is_some();
         let plan = 'plan: {
@@ -355,9 +373,9 @@ impl ViewportRenderer {
                 .filter(|b| {
                     !b.is_transparent
                         && b.shading_plugin.is_none()
-                        && (!fat_only || b.fat.is_some())
+                        && (!fat_only || !b.draws_culled())
                         && !b.fat.as_ref().is_some_and(|f| {
-                            matches!(f.draw, crate::renderer::types::FatDraw::NormalLines)
+                            matches!(f.draw, crate::renderer::types::DrawKind::NormalLines)
                         })
                 })
                 .count();
@@ -458,10 +476,9 @@ impl ViewportRenderer {
         self.last_stats.per_object_bundle_cached = true;
     }
 
-    /// Record the opaque batch draws into a render bundle. Mirrors the direct
-    /// opaque loops of the colour pass: lean batches through the instanced
-    /// pipelines, fat batches through the per-object ones. `None` when a
-    /// pipeline is still compiling.
+    /// Record the opaque batch draws into a render bundle, as the direct
+    /// opaque loop of the colour pass draws them. `None` when a pipeline is
+    /// still compiling.
     fn record_batch_bundle(
         &self,
         device: &crate::gpu::Device,
@@ -471,7 +488,7 @@ impl ViewportRenderer {
         fat_only: bool,
         clipping_active: bool,
     ) -> Option<crate::renderer::per_object_state::PerObjectBundle> {
-        use crate::renderer::types::{FatBound, FatDraw, FatPass, MeshDrawEncoder, draw_fat_batch};
+        use crate::renderer::types::{FatBound, DrawKind, FatPass, MeshDrawEncoder, draw_fat_batch};
         let resources = &self.resources;
         // The HDR scene pass renders Rgba16Float at sample count 1 with a
         // writable stencil aspect; the LDR passes render the surface format
@@ -497,69 +514,22 @@ impl ViewportRenderer {
         MeshDrawEncoder::set_bind_group(&mut enc, 0, &camera_bg, &[]);
         bind_deform_group!(enc, resources, &resources.deform.dummy_bind_group);
 
-        // Lean batches: the instanced pipelines, bound as the direct loop binds
-        // them.
-        let mut cur_key: Option<PipelineKey> = None;
-        let mut cur_chunks: Option<(u32, u32)> = None;
-        for batch in &self.instancing.batches {
-            if fat_only
-                || batch.is_transparent
-                || batch.shading_plugin.is_some()
-                || batch.fat.is_some()
-            {
-                continue;
-            }
-            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
-                continue;
-            };
-            let key = PipelineKey {
-                two_sided: batch.two_sided,
-                no_discard_eligible: hdr && !clipping_active && !batch.has_alpha_mask,
-                ..PipelineKey::default()
-            };
-            if cur_key != Some(key) {
-                let pl = if hdr {
-                    resources.instancing.hdr_opaque(key)
-                } else {
-                    resources.instancing.ldr_opaque(key)
-                }?;
-                MeshDrawEncoder::set_pipeline(&mut enc, pl);
-                cur_key = Some(key);
-            }
-            let mat_key = batch.bind_key(resources.uv1_chunk_key(mesh.vertex_span.chunk));
-            let inst_bg = resources.instanced_colour_bind_group(mat_key)?;
-            MeshDrawEncoder::set_bind_group(&mut enc, 1, inst_bg, &[]);
-            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-            if cur_chunks != Some(chunks) {
-                MeshDrawEncoder::set_vertex_buffer(
-                    &mut enc,
-                    0,
-                    resources.geometry.vertex_chunk_slice(chunks.0),
-                );
-                MeshDrawEncoder::set_index_buffer(
-                    &mut enc,
-                    resources.geometry.index_chunk_slice(chunks.1),
-                    crate::gpu::IndexFormat::Uint32,
-                );
-                cur_chunks = Some(chunks);
-            }
-            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-            let first_index = resources.geometry.first_index(mesh.index_span);
-            MeshDrawEncoder::draw_indexed(
-                &mut enc,
-                first_index..first_index + mesh.index_count,
-                base_vertex,
-                batch.instance_offset..batch.instance_offset + batch.instance_count,
-            );
-        }
-
-        // Fat batches through the per-object pipelines.
+        // Every opaque batch the pass draws directly.
         let ldr_family = resources.scene.ldr_family();
         let hdr_family = resources.scene.hdr_family();
-        let family: &dyn crate::resources::scene_pipelines::MeshColourFamily =
-            if hdr { &hdr_family } else { &ldr_family };
+        let ldr_bindless_family = resources.scene.ldr_bindless_family();
+        let hdr_bindless_family = resources.scene.hdr_bindless_family();
+        let (family, bindless_family): (
+            &dyn crate::resources::scene_pipelines::MeshColourFamily,
+            &dyn crate::resources::scene_pipelines::MeshColourFamily,
+        ) = if hdr {
+            (&hdr_family, &hdr_bindless_family)
+        } else {
+            (&ldr_family, &ldr_bindless_family)
+        };
         let fat_pass = FatPass::Colour {
             family,
+            bindless_family,
             hdr,
             clipping_active,
         };
@@ -570,7 +540,8 @@ impl ViewportRenderer {
             };
             if batch.is_transparent
                 || batch.shading_plugin.is_some()
-                || matches!(fat.draw, FatDraw::NormalLines)
+                || matches!(fat.draw, DrawKind::NormalLines)
+                || (fat_only && batch.draws_culled())
             {
                 continue;
             }

@@ -1948,7 +1948,7 @@ impl DeviceResources {
         // plugin id rebuilds its set from the fresh composition.
         for plugin in self.material_plugins.values_mut() {
             plugin.pipelines = None;
-            plugin.instanced_pipelines = None;
+            plugin.pipelines_bindless = None;
         }
         // Every family is rebuilt through its own `ensure_*`, which composes
         // the registered deformers in, so there is one copy of each build. A
@@ -1997,18 +1997,6 @@ impl DeviceResources {
         if self.instancing.bind_group_layout.is_some() {
             self.instancing.bind_group_layout = None;
             self.ensure_instanced_pipelines(device);
-        }
-        if self.instancing.ldr.is_some() {
-            self.instancing.ldr = None;
-            self.ensure_ldr_instanced_pipelines(device);
-        }
-        if self.instancing.hdr.is_some() {
-            self.instancing.hdr = None;
-            self.ensure_hdr_instanced_pipelines(device);
-        }
-        if self.oit.instanced.is_some() {
-            self.oit.instanced = None;
-            self.ensure_oit_instanced_pipeline(device);
         }
         if self.cull.bind_group_layout.is_some() {
             self.cull.bind_group_layout = None;
@@ -2221,7 +2209,15 @@ mod tests {
         renderer.set_pipeline_compilation(crate::PipelineCompilation::Blocking);
         renderer.resources_mut().ensure_ldr_mesh_pipelines(&device);
         assert!(renderer.resources().scene.ldr.is_some());
-        assert!(renderer.resources().scene.solid().is_some());
+        use crate::resources::scene_pipelines::MeshColourFamily as _;
+        assert!(
+            renderer
+                .resources()
+                .scene
+                .ldr_family()
+                .opaque(crate::renderer::pipeline_key::PipelineKey::default())
+                .is_some()
+        );
         assert!(renderer.resources().scene.wireframe().is_some());
     }
 

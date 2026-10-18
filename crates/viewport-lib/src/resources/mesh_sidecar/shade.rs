@@ -41,12 +41,7 @@ pub(crate) type PluginTextures =
 
 /// Lit shaders that carry the shade-slot marker regions. Depth-only passes
 /// (shadow, outline mask, picking) produce no colour and are not composed.
-pub(crate) const SHADE_FAMILY_SHADERS: &[&str] = &[
-    "mesh.wgsl",
-    "mesh_oit.wgsl",
-    "mesh_instanced.wgsl",
-    "mesh_instanced_oit.wgsl",
-];
+pub(crate) const SHADE_FAMILY_SHADERS: &[&str] = &["mesh.wgsl", "mesh_oit.wgsl"];
 
 /// Description of a fragment shading hook to register against the lit mesh
 /// shader family.
@@ -382,7 +377,7 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
             "vertex-fetch",
             // The extension attribute is a stream of the mesh's sidecar record
             // (`rec`, read at the top of vs_main); zero when the mesh has none.
-            "    let ext = sc_stream(rec, sc_word(rec + SC_EXTENSION));\n    out.ext_attr = select(vec4<f32>(0.0), sc_vec4(ext.x + 4u * min(in.vertex_index, max(ext.y, 1u) - 1u)), ext.y > 0u);\n",
+            "    let ext = sc_stream(rec, sc_word(rec + SC_EXTENSION));\n    out.ext_attr = select(vec4<f32>(0.0), sc_vec4(ext.x + 4u * min(vi, max(ext.y, 1u) - 1u)), ext.y > 0u);\n",
         )?;
     }
 
@@ -686,9 +681,6 @@ struct PluginSetContext {
     device: crate::gpu::Device,
     name: &'static str,
     layout: crate::gpu::PipelineLayout,
-    /// The instanced set's layout for its GPU-culled twins; unused by the
-    /// per-object set.
-    cull_layout: Option<crate::gpu::PipelineLayout>,
     target_format: crate::gpu::TextureFormat,
     sample_count: u32,
     mesh: LazyModule,
@@ -896,214 +888,6 @@ pub struct MaterialPluginStats {
     pub pipelines_built: u32,
 }
 
-/// The instanced twin of [`MaterialPluginPipelines`]: the plugin's shading
-/// composed onto `mesh_instanced.wgsl` / `mesh_instanced_oit.wgsl` and built on
-/// the instanced 4-group layout (camera, instance storage + material textures,
-/// deform, plugin params). Group 1 carries either the per-batch five textures or,
-/// under bindless, the one material-texture array (the composed shader is rewritten
-/// to match, like the built-in instanced shader). Lets a plugin material draw one
-/// instanced call per batch instead of one call per object, on both the LDR
-/// (`emit_draw_calls`) and HDR scene / OIT passes.
-///
-/// As with the per-object set, each pipeline and module is built by the first
-/// draw that selects it, and an accessor returns `None` while a worker has it.
-pub(crate) struct MaterialPluginInstancedPipelines {
-    family: LazyFamily<PluginSetContext, { Self::COUNT as usize }>,
-}
-
-impl MaterialPluginInstancedPipelines {
-    /// Members: 3 LDR, 4 HDR opaque, 2 OIT, 2 cull, 2 OIT cull.
-    pub(crate) const COUNT: u32 = 13;
-    /// LDR pipelines drawn into the swapchain by the `emit_draw_calls` path,
-    /// built with the renderer's target format and sample count.
-    const LDR_SOLID: usize = 0;
-    const LDR_SOLID_TWO_SIDED: usize = 1;
-    const LDR_TRANSPARENT: usize = 2;
-    /// Four slots: bit 0 is two-sided, bit 1 is discard-free.
-    const HDR_OPAQUE: usize = 3;
-    /// Two slots each, bit 0 two-sided. The cull pipelines use the discarding
-    /// shader, so they have no discard-free axis.
-    const OIT: usize = 7;
-    const CULL: usize = 9;
-    const OIT_CULL: usize = 11;
-
-    fn new(ctx: PluginSetContext, compiler: std::sync::Arc<PipelineCompiler>) -> Self {
-        Self {
-            family: LazyFamily::new(ctx, compiler, Self::build_slot),
-        }
-    }
-
-    fn build_slot(ctx: &PluginSetContext, i: usize) -> crate::gpu::RenderPipeline {
-        use crate::gpu::{BlendState, Face, TextureFormat};
-        use crate::resources::mesh::mesh_pipelines as mp;
-        let device = &ctx.device;
-        let name = ctx.name;
-        let ldr = |label: &str, cull, blend, depth_write| {
-            mp::instanced_mesh_pipeline(
-                device,
-                &ctx.layout,
-                ctx.mesh.get(device),
-                ctx.target_format,
-                ctx.sample_count,
-                &format!("material_plugin_{name}_{label}"),
-                cull,
-                blend,
-                depth_write,
-            )
-        };
-        let cull_layout = || {
-            ctx.cull_layout
-                .as_ref()
-                .expect("the cull pipelines are only selected when the cull layout exists")
-        };
-        match i {
-            Self::LDR_SOLID => ldr("instanced_solid", Some(Face::Back), None, true),
-            Self::LDR_SOLID_TWO_SIDED => ldr("instanced_solid_two_sided", None, None, true),
-            Self::LDR_TRANSPARENT => ldr(
-                "instanced_transparent",
-                None,
-                Some(BlendState::ALPHA_BLENDING),
-                false,
-            ),
-            3..=6 => {
-                let two_sided = (i - Self::HDR_OPAQUE) & 1 != 0;
-                let nodiscard = (i - Self::HDR_OPAQUE) & 2 != 0;
-                let module = if nodiscard {
-                    ctx.mesh.nodiscard(device)
-                } else {
-                    ctx.mesh.get(device)
-                };
-                mp::instanced_mesh_pipeline(
-                    device,
-                    &ctx.layout,
-                    module,
-                    TextureFormat::Rgba16Float,
-                    1,
-                    &format!(
-                        "material_plugin_{name}_instanced_hdr_solid{}{}",
-                        if two_sided { "_two_sided" } else { "" },
-                        if nodiscard { "_nodiscard" } else { "" },
-                    ),
-                    (!two_sided).then_some(Face::Back),
-                    None,
-                    true,
-                )
-            }
-            7 | 8 => mp::build_oit_instanced_pipeline(
-                device,
-                &ctx.layout,
-                ctx.oit_module.get(device),
-                &format!("material_plugin_{name}_oit_instanced"),
-                "vs_main",
-                (i - Self::OIT) & 1 != 0,
-            ),
-            9 | 10 => mp::build_hdr_instanced_cull_pipeline_with(
-                device,
-                cull_layout(),
-                ctx.mesh.get(device),
-                &format!("material_plugin_{name}_instanced_cull"),
-                ((i - Self::CULL) & 1 == 0).then_some(Face::Back),
-            ),
-            _ => mp::build_oit_instanced_pipeline(
-                device,
-                cull_layout(),
-                ctx.oit_module.get(device),
-                &format!("material_plugin_{name}_oit_instanced_cull"),
-                "vs_main_cull",
-                (i - Self::OIT_CULL) & 1 != 0,
-            ),
-        }
-    }
-
-    pub(crate) fn ldr_transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.family.get(Self::LDR_TRANSPARENT)
-    }
-
-    /// The LDR solid pipeline for `key`'s facedness.
-    pub(crate) fn ldr_opaque(
-        &self,
-        key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> Option<&crate::gpu::RenderPipeline> {
-        self.family.get(if key.two_sided {
-            Self::LDR_SOLID_TWO_SIDED
-        } else {
-            Self::LDR_SOLID
-        })
-    }
-
-    /// The HDR opaque instanced pipeline for `key`: facedness and
-    /// discard-free eligibility.
-    pub(crate) fn hdr_opaque(
-        &self,
-        key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> Option<&crate::gpu::RenderPipeline> {
-        self.family
-            .get(Self::HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize)
-    }
-
-    /// The OIT accumulate instanced pipeline for `key` (facedness only).
-    pub(crate) fn oit(
-        &self,
-        key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> Option<&crate::gpu::RenderPipeline> {
-        self.family.get(Self::OIT + key.two_sided as usize)
-    }
-
-    /// Whether the GPU-culled twins can be built. Check before [`cull`](Self::cull)
-    /// or [`oit_cull`](Self::oit_cull).
-    pub(crate) fn has_cull(&self) -> bool {
-        self.family.context().cull_layout.is_some()
-    }
-
-    /// The GPU-culled twin of [`hdr_opaque`](Self::hdr_opaque) (facedness only).
-    pub(crate) fn cull(
-        &self,
-        key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> Option<&crate::gpu::RenderPipeline> {
-        self.family.get(Self::CULL + key.two_sided as usize)
-    }
-
-    /// The GPU-culled twin of [`oit`](Self::oit).
-    pub(crate) fn oit_cull(
-        &self,
-        key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> Option<&crate::gpu::RenderPipeline> {
-        self.family.get(Self::OIT_CULL + key.two_sided as usize)
-    }
-
-    /// Whether an opaque batch's pipeline for `key` is built, without starting
-    /// it: the HDR solid or its GPU-culled twin (either serves the colour
-    /// pass), or the LDR solid.
-    pub(crate) fn opaque_ready(
-        &self,
-        hdr: bool,
-        key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> bool {
-        if hdr {
-            self.family.is_ready(
-                Self::HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize,
-            ) || (self.has_cull() && self.family.is_ready(Self::CULL + key.two_sided as usize))
-        } else {
-            self.family.is_ready(if key.two_sided {
-                Self::LDR_SOLID_TWO_SIDED
-            } else {
-                Self::LDR_SOLID
-            })
-        }
-    }
-
-    /// Ask for every pipeline in the set: built now under `Blocking`, handed
-    /// to the workers under `Background`.
-    fn request_all(&self) {
-        let end = if self.has_cull() {
-            Self::OIT_CULL + 2
-        } else {
-            Self::CULL
-        };
-        self.family.request(end);
-    }
-}
-
 /// GPU state per registered material plugin: its declared parameters, the
 /// group-3 layout and sampler, one group-3 bind group per texture set its
 /// materials name, and the lazily built pipeline sets (invalidated by deformer
@@ -1127,10 +911,9 @@ pub(crate) struct MaterialPluginGpu {
     /// its group holds the old view.
     pub texture_groups: std::collections::HashMap<PluginTextures, crate::gpu::BindGroup>,
     pub pipelines: Option<MaterialPluginPipelines>,
-    /// The instanced pipeline set, built lazily alongside `pipelines` when the
-    /// frame references the plugin. `None` before the first referencing build;
-    /// invalidated with `pipelines`.
-    pub instanced_pipelines: Option<MaterialPluginInstancedPipelines>,
+    /// The same set on the bindless member of group 1, built alongside
+    /// `pipelines` when material textures bind bindlessly.
+    pub pipelines_bindless: Option<MaterialPluginPipelines>,
 }
 
 impl crate::resources::DeviceResources {
@@ -1269,7 +1052,7 @@ impl crate::resources::DeviceResources {
                 default_group,
                 texture_groups: std::collections::HashMap::new(),
                 pipelines: None,
-                instanced_pipelines: None,
+                pipelines_bindless: None,
             },
         );
         // Materials naming the plugin before it existed were built with no
@@ -1377,9 +1160,9 @@ impl crate::resources::DeviceResources {
                         .as_ref()
                         .map_or(0, MaterialPluginPipelines::built_count)
                         + gpu
-                            .instanced_pipelines
+                            .pipelines_bindless
                             .as_ref()
-                            .map_or(0, |set| set.family.ready_count() as u32),
+                            .map_or(0, MaterialPluginPipelines::built_count),
                 }
             })
             .collect()
@@ -1415,20 +1198,12 @@ impl crate::resources::DeviceResources {
         }
     }
 
-    /// Build everything a frame can bind for one plugin: the per-object set,
-    /// and the instanced set that plugin items in a batch draw with.
+    /// Build everything a frame can bind for one plugin: its set, and its
+    /// bindless twin when material textures bind bindlessly.
     fn warm_material_plugin(&mut self, device: &crate::gpu::Device, id: MaterialPluginId) {
         self.ensure_material_plugin_pipelines(device, id);
-        // The instanced set is composed on the built-in instanced and cull
-        // layouts, so those come first.
-        self.ensure_instanced_pipelines(device);
-        self.ensure_cull_instance_pipelines(device);
-        self.ensure_material_plugin_instanced_pipelines(device, id);
         if let Some(gpu) = self.material_plugins.get(&id.plugin_index()) {
-            if let Some(set) = &gpu.pipelines {
-                set.request_all();
-            }
-            if let Some(set) = &gpu.instanced_pipelines {
+            for set in [&gpu.pipelines, &gpu.pipelines_bindless].into_iter().flatten() {
                 set.request_all();
             }
         }
@@ -1528,163 +1303,57 @@ impl crate::resources::DeviceResources {
                 &gpu.bind_group_layout,
             ],
         );
-        let pipelines = MaterialPluginPipelines::new(
-            PluginSetContext {
-                device: device.clone(),
-                name,
-                layout,
-                cull_layout: None,
-                target_format: self.target_format,
-                sample_count: self.sample_count,
-                mesh: LazyModule::new(format!("material_plugin_{name}_mesh"), mesh_final_src),
-                oit_module: LazyModule::new(format!("material_plugin_{name}_oit"), oit_final_src),
-            },
-            std::sync::Arc::clone(&self.pipeline_compiler),
-        );
-        self.material_plugins
-            .get_mut(&id.plugin_index())
-            .expect("checked above")
-            .pipelines = Some(pipelines);
-    }
-
-    /// Build the plugin's instanced pipeline set (its shading composed onto
-    /// `mesh_instanced.wgsl` / `mesh_instanced_oit.wgsl`), so plugin materials
-    /// draw one instanced call per batch instead of per object. Idempotent;
-    /// no-op until the built-in instanced pipelines exist (it reuses their
-    /// group-1 layout) and only on the per-batch texture path. Under bindless
-    /// the plugin's group-1 bindings would differ, so it stays unbuilt there and
-    /// plugin items keep drawing through the per-object path.
-    pub(crate) fn ensure_material_plugin_instanced_pipelines(
-        &mut self,
-        device: &crate::gpu::Device,
-        id: MaterialPluginId,
-    ) {
-        let Some(gpu) = self.material_plugins.get(&id.plugin_index()) else {
-            return;
-        };
-        if gpu.instanced_pipelines.is_some() {
-            return;
-        }
-        // Reuse the built-in instanced group-1 layout: per-batch (five textures)
-        // or bindless (one texture array). Whichever the mode selects must already
-        // exist; if not, the instanced pipelines have not been ensured this run, so
-        // defer.
-        let bindless = self.bindless_textures();
-        let have_layout = if bindless {
-            self.instancing.bindless_bind_group_layout.is_some()
-        } else {
-            self.instancing.bind_group_layout.is_some()
-        };
-        if !have_layout {
-            return;
-        }
-        let hook_id = ShadingHookId(id.plugin_index() as usize);
-        let Some(mesh_src) = self.composed_shading_hook_source(hook_id, "mesh_instanced.wgsl")
-        else {
-            return;
-        };
-        let Some(oit_src) = self.composed_shading_hook_source(hook_id, "mesh_instanced_oit.wgsl")
-        else {
-            return;
-        };
-        let name = self.shade_hooks[id.plugin_index() as usize].desc.name;
-
-        // Under bindless the group-1 material textures collapse to one array, so
-        // the composed shader is rewritten to index it per material, exactly as the
-        // built-in bindless instanced shader is (`instanced_bindless::bindlessify`).
-        // Per-batch keeps the shipped five-texture form.
-        let (mesh_src, oit_src) = if bindless {
-            (
-                crate::resources::mesh::instanced_bindless::bindlessify(&mesh_src),
-                crate::resources::mesh::instanced_bindless::bindlessify(&oit_src),
-            )
-        } else {
-            (mesh_src, oit_src)
-        };
-
-        let mesh_final_src =
-            crate::resources::builders::strip_debug_vis(mesh_src, self.debug_vis_shaders)
-                .into_owned();
-        let oit_final_src =
-            crate::resources::builders::strip_debug_vis(oit_src, self.debug_vis_shaders)
-                .into_owned();
-
-        let gpu = self
-            .material_plugins
-            .get(&id.plugin_index())
-            .expect("checked above");
-        let instance_bgl = if bindless {
-            self.instancing
-                .bindless_bind_group_layout
-                .as_ref()
-                .expect("checked above")
-        } else {
-            self.instancing
-                .bind_group_layout
-                .as_ref()
-                .expect("checked above")
-        };
-        // Camera (0), instance storage + material textures (1: five per-batch
-        // textures, or one bindless array), deform (2), plugin params (3). Group
-        // 2 is an empty layout when deform is off, so the plugin params still
-        // sit at the composer's `@group(3)` while the deform buffers stay out
-        // of the stage limits. Mirrors the per-object plugin layout.
-        let layout_label = format!("material_plugin_{name}_instanced_layout");
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            layout_label.as_str(),
-            &[
-                &self.binds.camera_bgl,
-                instance_bgl,
-                self.deform.slot_layout(),
-                &gpu.bind_group_layout,
-            ],
-        );
-        // The GPU-culled twins sit on the cull group-1 layout (per-batch
-        // `cull_bgl` or the bindless cull array) when it exists. The mesh / OIT
-        // modules already carry the `vs_main_cull` entry (composed from the
-        // instanced shaders), so they are reused with that entry.
-        let cull_group1 = if bindless {
-            self.instancing.bindless_cull_bind_group_layout.as_ref()
-        } else {
-            self.cull.bind_group_layout.as_ref()
-        };
-        let cull_layout = cull_group1.map(|cull_bgl| {
-            let cull_layout_label = format!("material_plugin_{name}_instanced_cull_layout");
-            crate::resources::builders::pipeline_layout(
+        let bindless_layout = if self.bindless_textures() {
+            self.ensure_object_bindless_bgl(device);
+            let gpu = self
+                .material_plugins
+                .get(&id.plugin_index())
+                .expect("checked above");
+            Some(crate::resources::builders::pipeline_layout(
                 device,
-                cull_layout_label.as_str(),
+                format!("material_plugin_{name}_bindless_layout").as_str(),
                 &[
                     &self.binds.camera_bgl,
-                    cull_bgl,
+                    self.binds.object_bindless_bgl.as_ref().unwrap(),
                     self.deform.slot_layout(),
                     &gpu.bind_group_layout,
                 ],
+            ))
+        } else {
+            None
+        };
+        let set = |layout, mesh: String, oit: String, suffix: &str| {
+            MaterialPluginPipelines::new(
+                PluginSetContext {
+                    device: device.clone(),
+                    name,
+                    layout,
+                    target_format: self.target_format,
+                    sample_count: self.sample_count,
+                    mesh: LazyModule::new(format!("material_plugin_{name}_mesh{suffix}"), mesh),
+                    oit_module: LazyModule::new(
+                        format!("material_plugin_{name}_oit{suffix}"),
+                        oit,
+                    ),
+                },
+                std::sync::Arc::clone(&self.pipeline_compiler),
+            )
+        };
+        let pipelines_bindless = bindless_layout.map(|layout| {
+            set(
+                layout,
+                crate::resources::mesh::instanced_bindless::bindlessify_mesh(&mesh_final_src),
+                crate::resources::mesh::instanced_bindless::bindlessify_mesh(&oit_final_src),
+                "_bindless",
             )
         });
-        let pipelines = MaterialPluginInstancedPipelines::new(
-            PluginSetContext {
-                device: device.clone(),
-                name,
-                layout,
-                cull_layout,
-                target_format: self.target_format,
-                sample_count: self.sample_count,
-                mesh: LazyModule::new(
-                    format!("material_plugin_{name}_mesh_instanced"),
-                    mesh_final_src,
-                ),
-                oit_module: LazyModule::new(
-                    format!("material_plugin_{name}_oit_instanced"),
-                    oit_final_src,
-                ),
-            },
-            std::sync::Arc::clone(&self.pipeline_compiler),
-        );
-        self.material_plugins
+        let pipelines = set(layout, mesh_final_src, oit_final_src, "");
+        let gpu = self
+            .material_plugins
             .get_mut(&id.plugin_index())
-            .expect("checked above")
-            .instanced_pipelines = Some(pipelines);
+            .expect("checked above");
+        gpu.pipelines = Some(pipelines);
+        gpu.pipelines_bindless = pipelines_bindless;
     }
 
     /// Resolve a plugin and texture set to the plugin's pipeline set and the
@@ -1695,33 +1364,15 @@ impl crate::resources::DeviceResources {
         &self,
         plugin: Option<MaterialPluginId>,
         textures: &PluginTextures,
+        bindless: bool,
     ) -> Option<(&MaterialPluginPipelines, &crate::gpu::BindGroup)> {
         let gpu = self.material_plugins.get(&plugin?.plugin_index())?;
-        let pipes = gpu.pipelines.as_ref()?;
+        let pipes = if bindless {
+            gpu.pipelines_bindless.as_ref()
+        } else {
+            gpu.pipelines.as_ref()
+        }?;
         Some((pipes, Self::plugin_texture_group(gpu, textures)))
-    }
-
-    /// The instanced twin of [`Self::material_plugin_draw`]. `None` when the
-    /// plugin has no instanced set (never referenced or invalidated), so the
-    /// batch builder keeps those items on the per-object path.
-    pub(crate) fn material_plugin_instanced_draw(
-        &self,
-        plugin: Option<MaterialPluginId>,
-        textures: &PluginTextures,
-    ) -> Option<(&MaterialPluginInstancedPipelines, &crate::gpu::BindGroup)> {
-        let gpu = self.material_plugins.get(&plugin?.plugin_index())?;
-        let pipes = gpu.instanced_pipelines.as_ref()?;
-        Some((pipes, Self::plugin_texture_group(gpu, textures)))
-    }
-
-    /// True once the plugin's instanced pipeline set is built: plugin materials
-    /// selecting it can join instanced batches rather than drawing per-object.
-    /// `false` for an unknown id or a cold or invalidated set. Built for both the
-    /// per-batch and bindless binding modes.
-    pub(crate) fn material_plugin_instanced_ready(&self, id: MaterialPluginId) -> bool {
-        self.material_plugins
-            .get(&id.plugin_index())
-            .is_some_and(|gpu| gpu.instanced_pipelines.is_some())
     }
 
     /// Whether the plugin's shading body reads the per-vertex extension attribute
@@ -1832,10 +1483,8 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         assert!(!resources.material_plugin_needs_build(id));
         let stats = resources.material_plugin_stats();
         let row = stats.iter().find(|s| s.id == id).expect("stats row");
-        assert_eq!(
-            row.pipelines_built,
-            MaterialPluginPipelines::COUNT + MaterialPluginInstancedPipelines::COUNT
-        );
+        let sets = if resources.bindless_textures() { 2 } else { 1 };
+        assert_eq!(row.pipelines_built, MaterialPluginPipelines::COUNT * sets);
 
         let unknown = MaterialPluginId::from_index(9999);
         assert!(!resources.material_plugin_pipelines_ready(unknown));
@@ -1873,61 +1522,8 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
             .expect("register");
         resources.warm_material_plugin_pipelines(&device, &[id]);
         let (pp, _) = resources
-            .material_plugin_draw(Some(id), &[None; MATERIAL_PLUGIN_MAX_TEXTURES])
+            .material_plugin_draw(Some(id), &[None; MATERIAL_PLUGIN_MAX_TEXTURES], false)
             .expect("pipelines built");
-        for key in crate::renderer::pipeline_key::PipelineKey::all() {
-            let _ = pp.hdr_opaque(key);
-            let _ = pp.oit(key);
-        }
-    }
-
-    /// The instanced pipeline set: composing a plugin onto `mesh_instanced.wgsl`
-    /// / `mesh_instanced_oit.wgsl` and building the pipelines against the device
-    /// succeeds, readiness flips accordingly, and every pipeline-key variant
-    /// resolves through the instanced resolver without panic. (The
-    /// `is_instanceable` gating on this readiness is covered in
-    /// `mesh_material::tests`.)
-    #[test]
-    fn material_plugin_instanced_set_builds_on_device() {
-        use crate::renderer::ViewportRenderer;
-        let Some((device, _queue)) = headless() else {
-            return;
-        };
-        let mut renderer =
-            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
-        let resources = renderer.resources_mut();
-        // The instanced plugin set is built only on the per-batch texture path;
-        // force it so the test is meaningful on a device that defaults to
-        // bindless (where plugin items stay per-object by design).
-        resources.instancing.material_texture_binding =
-            crate::resources::mesh::instanced_bindless::MaterialTextureBinding::PerBatch;
-
-        struct Toon;
-        impl MaterialPlugin for Toon {
-            fn name(&self) -> &'static str {
-                "toon_instanced_probe"
-            }
-            fn wgsl_body(&self) -> String {
-                TOON_BODY.to_string()
-            }
-        }
-        let id = resources
-            .register_material_plugin(&device, &Toon)
-            .expect("register");
-
-        assert!(!resources.material_plugin_instanced_ready(id));
-
-        resources.ensure_instanced_pipelines(&device);
-        resources.ensure_material_plugin_instanced_pipelines(&device, id);
-
-        assert!(
-            resources.material_plugin_instanced_ready(id),
-            "the composed instanced modules must build valid pipelines on the device",
-        );
-
-        let (pp, _bg) = resources
-            .material_plugin_instanced_draw(Some(id), &[None; MATERIAL_PLUGIN_MAX_TEXTURES])
-            .expect("instanced set built");
         for key in crate::renderer::pipeline_key::PipelineKey::all() {
             let _ = pp.hdr_opaque(key);
             let _ = pp.oit(key);
@@ -1995,14 +1591,6 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         for (shader, expect) in [
             ("mesh.wgsl", "shadow_factor, lights_storage[i].light_type"),
             ("mesh_oit.wgsl", "1.0, lights_storage[i].light_type"),
-            (
-                "mesh_instanced.wgsl",
-                "shadow_factor, lights_storage[i].light_type",
-            ),
-            (
-                "mesh_instanced_oit.wgsl",
-                "1.0, lights_storage[i].light_type",
-            ),
         ] {
             let Some(base) = registry::lookup_source(shader) else {
                 return;
@@ -2153,11 +1741,6 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
                 "{shader}: missing surface wire"
             );
         }
-        // Instanced shaders have no vertex markers: composition still succeeds
-        // (validation-only) with no attribute plumbing and surf.attr = 0.
-        let base = registry::lookup_source("mesh_instanced.wgsl").expect("lit shader");
-        let composed = compose_shade_shader(base, &hook).expect("compose");
-        assert!(!composed.contains("ext_attr"));
         // A hook that does not opt in gets none of the vertex-attribute
         // plumbing: no ext_attr varying and no surface wire.
         let plain = stored("calm", TOON_BODY, false);

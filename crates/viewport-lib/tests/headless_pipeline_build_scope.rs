@@ -103,7 +103,8 @@ fn a_frame_builds_only_what_it_binds() {
     );
 
     // An HDR frame with one mesh: the HDR family and not the LDR one. One
-    // opaque item is a batch of one, drawn through the instanced set.
+    // opaque item is a batch of one, drawn through the pipeline built with
+    // the features it uses: none.
     let labels = built_by(&device, &queue, |renderer| {
         let mesh_id = renderer
             .resources_mut()
@@ -116,7 +117,7 @@ fn a_frame_builds_only_what_it_binds() {
     assert_has(
         &labels,
         "an HDR mesh frame",
-        "hdr_solid_instanced_nodiscard_pipeline",
+        "hdr_solid_nodiscard_pipeline_feat00",
     );
     let ldr: Vec<&String> = labels
         .iter()
