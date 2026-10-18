@@ -20,9 +20,7 @@ mod viewport_overlays;
 
 use math::*;
 use mesh_material::*;
-pub(crate) use mesh_material::{
-    FallbackReason, active_submesh_materials, has_transparent_draws, is_instanceable,
-};
+pub(crate) use mesh_material::{active_submesh_materials, has_transparent_draws};
 use overlay_geometry::*;
 use projection::*;
 
@@ -310,24 +308,6 @@ impl ViewportRenderer {
         for (pid, textures) in &texture_sets {
             resources.ensure_plugin_texture_group(device, *pid, textures);
         }
-        // Evaluate instanceability once per frame and share the result. Each
-        // `is_instanceable` call does several mesh-store and deform lookups, so
-        // computing it once here instead of separately in the per-object skip
-        // test and the instanced batch filter keeps this O(items) rather than running the
-        // same per-item work three times over. At city scale (tens of thousands
-        // of resident meshes) that is the difference between a few milliseconds
-        // and a few hundred. The fallback reasons are counted in the same walk.
-        let mut per_object_by_reason = crate::renderer::stats::PerObjectReasons::default();
-        let instanceable: Vec<bool> = scene_items
-            .iter()
-            .map(|item| match fallback_reason(item, resources) {
-                None => true,
-                Some(reason) => {
-                    per_object_by_reason.count(reason);
-                    false
-                }
-            })
-            .collect();
         // Blend each light-probe-lit item's SH into the shared buffer once, so
         // the per-object and instanced paths that draw those items index the
         // same block. No probes uploaded -> all None and nothing written.
@@ -586,36 +566,6 @@ impl ViewportRenderer {
                 triangles += (indices / 3) as u64 * batch.instance_count as u64;
             }
 
-            // Visible items that miss the instanced fast path. Reuses the
-            // instanceable bitset computed above, so this is just a count.
-            let per_object_items = scene_items
-                .iter()
-                .zip(instanceable.iter())
-                .filter(|(item, inst)| !item.settings.hidden && !**inst)
-                .count() as u32;
-            debug_assert_eq!(per_object_by_reason.total(), per_object_items);
-
-            // Items drawn instanced whose mesh carries per-mesh deform slot
-            // data. The instanced draws bind the empty deform group and the
-            // instanced shader passes no flags, so that data does not reach the
-            // draw and the item renders undeformed. Per-instance data is
-            // excluded from instancing by `is_instanceable`, so it is not at
-            // risk and is not counted here.
-            //
-            // Gated on `use_instancing` as well as the per-item predicate:
-            // below the threshold every item draws per-object whatever
-            // `is_instanceable` says about it, and the per-object path binds
-            // the mesh's real deform group.
-            let deform_slots_ignored = scene_items
-                .iter()
-                .zip(instanceable.iter())
-                .filter(|(item, inst)| {
-                    **inst
-                        && !item.settings.hidden
-                        && resources.deform.has_mesh_slot_data(item.mesh_id)
-                })
-                .count() as u32;
-
             let deform = resources.deform.take_counters();
             let plugin_draw_calls = self
                 .item_type_plugins
@@ -633,14 +583,11 @@ impl ViewportRenderer {
                 culled_objects: total.saturating_sub(visible),
                 draw_calls,
                 instanced_batches: instanced_batch_count,
-                per_object_items,
-                per_object_by_reason,
                 per_object_bind_groups_built,
                 batches_reuploaded,
                 batches_skipped,
                 plugin_draw_calls,
                 plugin_upload_bytes,
-                deform_slots_ignored,
                 deform_buffer_reallocations: deform.buffer_reallocations,
                 deform_mesh_bind_groups_rebuilt: deform.mesh_bind_groups_rebuilt,
                 deform_instance_bind_groups_rebuilt: deform.instance_bind_groups_rebuilt,

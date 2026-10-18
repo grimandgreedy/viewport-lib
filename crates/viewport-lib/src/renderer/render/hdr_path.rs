@@ -151,15 +151,15 @@ pub(super) fn draw_mesh_item(
         if let Some(ref fvb) = mesh.face_vertex_buffer {
             let pl = if let Some((pp, _)) = plug {
                 if item.settings.opacity < 1.0 {
-                    if hdr {
-                        pp.hdr_transparent()
-                    } else {
-                        pp.ldr_transparent()
-                    }
-                } else if hdr {
-                    pp.hdr_opaque(item_key)
+                    pp.transparent(hdr, crate::renderer::pipeline_key::FeatureSet::UNIVERSAL)
+                        .pipeline
                 } else {
-                    pp.ldr_opaque(item_key)
+                    pp.opaque(
+                        hdr,
+                        item_key,
+                        crate::renderer::pipeline_key::FeatureSet::UNIVERSAL,
+                    )
+                    .pipeline
                 }
             } else if item.settings.opacity < 1.0 {
                 family.transparent()
@@ -198,15 +198,15 @@ pub(super) fn draw_mesh_item(
                 let builtin_key = PipelineKey::two_sided(item_key.two_sided || range_key.two_sided);
                 let pl = if let Some((pp, _)) = plug_r {
                     if is_trans {
-                        if hdr {
-                            pp.hdr_transparent()
-                        } else {
-                            pp.ldr_transparent()
-                        }
-                    } else if hdr {
-                        pp.hdr_opaque(range_key)
+                        pp.transparent(hdr, crate::renderer::pipeline_key::FeatureSet::UNIVERSAL)
+                            .pipeline
                     } else {
-                        pp.ldr_opaque(range_key)
+                        pp.opaque(
+                            hdr,
+                            range_key,
+                            crate::renderer::pipeline_key::FeatureSet::UNIVERSAL,
+                        )
+                        .pipeline
                     }
                 } else if is_trans {
                     family.transparent()
@@ -241,15 +241,15 @@ pub(super) fn draw_mesh_item(
         } else {
             let pl = if let Some((pp, _)) = plug {
                 if item.settings.opacity < 1.0 {
-                    if hdr {
-                        pp.hdr_transparent()
-                    } else {
-                        pp.ldr_transparent()
-                    }
-                } else if hdr {
-                    pp.hdr_opaque(item_key)
+                    pp.transparent(hdr, crate::renderer::pipeline_key::FeatureSet::UNIVERSAL)
+                        .pipeline
                 } else {
-                    pp.ldr_opaque(item_key)
+                    pp.opaque(
+                        hdr,
+                        item_key,
+                        crate::renderer::pipeline_key::FeatureSet::UNIVERSAL,
+                    )
+                    .pipeline
                 }
             } else if item.settings.opacity < 1.0 {
                 family.transparent()
@@ -1343,21 +1343,8 @@ impl ViewportRenderer {
         // Completely skipped when no transparent items exist (zero overhead).
         // -----------------------------------------------------------------------
         let has_transparent = if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
-                // Transparent instanced batches go through OIT. Transparent excluded items
-                // (two-sided, active-attribute, matcap) are not in any instanced batch, so
-                // they must also be checked here -- otherwise the OIT pass is skipped and
-                // those items are invisible.
+                // Every transparent item is in a blended batch, which goes through OIT.
                 self.instancing.batches.iter().any(|b| b.is_transparent)
-                    || scene_items.iter().any(|i| {
-                        // A transparent item that is not instanceable is drawn per-object
-                        // in the OIT pass below; if any exists the pass must run.
-                        !i.settings.hidden
-                            && crate::renderer::prepare::has_transparent_draws(i, &self.resources)
-                            && !crate::renderer::prepare::is_instanceable(
-                                i,
-                                &self.resources
-                            )
-                    })
             } else {
                 scene_items.iter().any(|i| {
                     !i.settings.hidden

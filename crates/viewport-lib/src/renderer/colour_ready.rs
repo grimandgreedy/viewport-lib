@@ -62,7 +62,14 @@ impl DeviceResources {
             },
         ];
         match self.material_plugin_draw(material.shading_plugin, &material.plugin_textures, false) {
-            Some((set, _)) => keys.iter().any(|&k| set.opaque_ready(hdr, k)),
+            Some((set, _)) => keys.iter().any(|&k| {
+                set.opaque_ready(
+                    hdr,
+                    k,
+                    crate::renderer::pipeline_key::FeatureSet::UNIVERSAL,
+                    false,
+                )
+            }),
             // A plugin item whose set is not composed yet draws nothing.
             None if material.shading_plugin.is_some() => false,
             None => keys.iter().any(|&k| self.scene.opaque_ready(hdr, k)),
@@ -117,27 +124,27 @@ impl DeviceResources {
                 ..PipelineKey::default()
             },
         ];
+        let feats = if self.mesh_universal {
+            crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
+        } else {
+            batch.features
+        };
+        // A batch the GPU cull draws binds the culled family instead, so
+        // either counts.
+        let culled = hdr && batch.draws_culled();
         match self.material_plugin_draw(
             batch.shading_plugin,
             &batch.plugin_textures,
             batch.bindless,
         ) {
-            Some((set, _)) => keys.iter().any(|&k| set.opaque_ready(hdr, k)),
+            Some((set, _)) => keys
+                .iter()
+                .any(|&k| set.opaque_ready(hdr, k, feats, culled)),
             None if batch.shading_plugin.is_some() => false,
-            None => {
-                let feats = if self.mesh_universal {
-                    crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
-                } else {
-                    batch.features
-                };
-                // A batch the GPU cull draws binds the culled family
-                // instead, so either counts.
-                let culled = hdr && batch.draws_culled();
-                keys.iter().any(|&k| {
-                    family.opaque_ready(k, feats)
-                        || (culled && self.cull.opaque_features_ready(k, feats, batch.bindless))
-                })
-            }
+            None => keys.iter().any(|&k| {
+                family.opaque_ready(k, feats)
+                    || (culled && self.cull.opaque_features_ready(k, feats, batch.bindless))
+            }),
         }
     }
 }

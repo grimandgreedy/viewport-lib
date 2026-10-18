@@ -309,88 +309,6 @@ pub struct GpuBreakdown {
     pub overlay_ms: f32,
 }
 
-/// Why the per-object items of a frame missed the instanced path.
-///
-/// One counter per test that keeps an item off the instanced path. Each item
-/// is counted once, under the first test it fails in the order the fields are
-/// listed, so the fields sum to [`FrameStats::per_object_items`]. An item that
-/// fails two tests shows up only under the earlier one: clearing that reason
-/// may move it to a later counter rather than onto the instanced path.
-///
-/// Items forced per-object by viewport wireframe mode or `show_normals` are
-/// not in [`FrameStats::per_object_items`] and are not counted here.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct PerObjectReasons {
-    /// The item sets `settings.wireframe`.
-    pub wireframe: u32,
-    /// The item has an active scalar attribute.
-    pub scalar_attribute: u32,
-    /// The item's material plugin has no instanced pipeline set yet, or the id
-    /// is unknown.
-    pub material_plugin_not_ready: u32,
-    /// The item's material plugin reads the per-vertex extension attribute.
-    pub material_plugin_vertex_attribute: u32,
-    /// The item has a GPU vertex warp.
-    pub warp: u32,
-    /// The material uses a matcap.
-    pub matcap: u32,
-    /// The item sets per-submesh materials.
-    pub submesh_materials: u32,
-    /// The item's mesh id is not resident.
-    pub missing_mesh: u32,
-    /// The item carries per-instance deform data.
-    pub per_instance_deform: u32,
-    /// The item's mesh carries per-mesh deform slot data.
-    pub mesh_deform_slots: u32,
-    /// The item's mesh has a position or normal override buffer.
-    pub vertex_override: u32,
-    /// The item's mesh has a baked lightmap.
-    pub lightmap: u32,
-    /// The item sets the hidden `force_per_object` test setting.
-    #[doc(hidden)]
-    pub force_per_object: u32,
-}
-
-impl PerObjectReasons {
-    /// The sum of every counter.
-    pub fn total(&self) -> u32 {
-        self.wireframe
-            + self.scalar_attribute
-            + self.material_plugin_not_ready
-            + self.material_plugin_vertex_attribute
-            + self.warp
-            + self.matcap
-            + self.submesh_materials
-            + self.missing_mesh
-            + self.per_instance_deform
-            + self.mesh_deform_slots
-            + self.vertex_override
-            + self.lightmap
-            + self.force_per_object
-    }
-
-    pub(crate) fn count(&mut self, reason: crate::renderer::prepare::FallbackReason) {
-        use crate::renderer::prepare::FallbackReason as R;
-        let slot = match reason {
-            R::Hidden => return,
-            R::Wireframe => &mut self.wireframe,
-            R::ScalarAttribute => &mut self.scalar_attribute,
-            R::MaterialPluginVertexAttribute => &mut self.material_plugin_vertex_attribute,
-            R::Warp => &mut self.warp,
-            R::Matcap => &mut self.matcap,
-            R::SubmeshMaterials => &mut self.submesh_materials,
-            R::MissingMesh => &mut self.missing_mesh,
-            R::PerInstanceDeform => &mut self.per_instance_deform,
-            R::MeshDeformSlots => &mut self.mesh_deform_slots,
-            R::VertexOverride => &mut self.vertex_override,
-            R::Lightmap => &mut self.lightmap,
-            R::ForcePerObject => &mut self.force_per_object,
-        };
-        *slot += 1;
-    }
-}
-
 /// Per-frame rendering statistics returned by [`crate::ViewportRenderer::prepare`].
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -421,33 +339,19 @@ pub struct FrameStats {
     /// than broken.
     pub draw_calls: u32,
     /// Number of mesh batches this frame. Every visible mesh item is packed
-    /// into a batch, so a one-item scene reads 1; items that miss the lean
-    /// instanced path form batches that draw through the per-object
-    /// pipelines instead, counted in [`Self::per_object_items`].
+    /// into a batch, so a one-item scene reads 1.
     pub instanced_batches: u32,
     /// True when `prepare()` holds a cached render bundle for the opaque
     /// batch draws this frame (a stable batch list with enough opaque
     /// draws). The paint pass replays the bundle instead of recording one
     /// draw per batch.
     pub per_object_bundle_cached: bool,
-    /// Visible items that miss the lean instanced path and draw through the
-    /// per-object pipelines, batched by the facts those pipelines bind.
+    /// Batch group-1 bind groups actually (re)built this frame.
     ///
-    /// Each such batch binds the full per-object bind group and binds its
-    /// mesh on its own, so a large count here means the scene is paying
-    /// per-object cost rather than batching across meshes.
-    /// [`Self::per_object_by_reason`] says why.
-    pub per_object_items: u32,
-    /// [`Self::per_object_items`] split by the reason each item missed the
-    /// instanced path. Its fields sum to `per_object_items`.
-    pub per_object_by_reason: PerObjectReasons,
-    /// Per-object bind groups actually (re)built this frame.
-    ///
-    /// The per-object path caches bind groups and skips the rebuild when the
-    /// item's textures, attributes, and overrides are unchanged. A value near
-    /// `per_object_items` means the cache is missing most frames (for example
-    /// because items move between slots); a value near zero means the remaining
-    /// per-object cost is the uniform writes, not the bind-group builds.
+    /// Batches cache their bind groups and skip the rebuild while the
+    /// textures, overrides and lightmap they bind are unchanged, so a steady
+    /// scene reads zero. A value that stays high means the cache is missing
+    /// most frames.
     pub per_object_bind_groups_built: u32,
     /// Instanced batches whose GPU sub-range was re-uploaded this frame.
     ///
@@ -480,20 +384,6 @@ pub struct FrameStats {
     /// [`Self::plugin_draw_calls`]: it is what plugins report, not what the
     /// renderer observed.
     pub plugin_upload_bytes: u64,
-    /// Items drawn this frame that carried deform-slot data the chosen draw
-    /// path did not apply, so they drew undeformed.
-    ///
-    /// Reads zero in a correct frame. A non-zero value is a wrong picture, not
-    /// a slow one: the deformation the consumer attached is silently absent. It
-    /// happens when an item with per-mesh slot data is admitted to an instanced
-    /// batch, because the instanced draws bind the empty deform group. Assert on
-    /// it in a test rather than watching it.
-    ///
-    /// Covers mesh-family items only. A plugin that binds the deform group in
-    /// its own pipeline reads the slot buffers itself, and deformer bodies are
-    /// composed into mesh-family shaders only, so plugin geometry is not
-    /// counted here and never deforms from a registered deformer.
-    pub deform_slots_ignored: u32,
     /// Deform slot-storage buffers reallocated since the previous `prepare()`.
     ///
     /// A slot write that fits its existing buffer is a `write_buffer` and reads
@@ -779,7 +669,6 @@ mod tests {
         assert_eq!(stats.upload_bytes, 0);
         assert_eq!(stats.plugin_draw_calls, 0);
         assert_eq!(stats.plugin_upload_bytes, 0);
-        assert_eq!(stats.deform_slots_ignored, 0);
         assert_eq!(stats.deform_buffer_reallocations, 0);
         assert_eq!(stats.deform_mesh_bind_groups_rebuilt, 0);
         assert_eq!(stats.deform_instance_bind_groups_rebuilt, 0);

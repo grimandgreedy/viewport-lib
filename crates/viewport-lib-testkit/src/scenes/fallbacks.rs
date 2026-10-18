@@ -1,14 +1,10 @@
-//! Scenes for every feature that keeps a mesh off the instanced path.
+//! Scenes for every per-item mesh feature.
 //!
-//! Each column is one feature the per-object path handles: a matcap, a
-//! scalar or face-colour attribute, a warp, a per-material sampler, UV
-//! visualisation, a styled back face, custom data, a wireframe item, normal
-//! lines, a lightmap, a vertex override, or submesh material ranges. Every
-//! column is drawn twice in the layout the material grids use (pinned
-//! per-object above with `force_per_object`, left to batch below), so the
-//! lower copy records what the batched path does with the feature. Most still
-//! draw per-object there too; the sampler column batches, and for every
-//! column the rows must match.
+//! Each column is one feature: a matcap, a scalar or face-colour attribute, a
+//! warp, a per-material sampler, UV visualisation, a styled back face, custom
+//! data, a wireframe item, normal lines, a lightmap, a vertex override, or
+//! submesh material ranges. Every column is drawn twice in the layout the
+//! material grids use, and the two rows must match.
 
 use glam::{Mat4, Vec2, Vec3};
 use viewport_lib::wgpu;
@@ -126,7 +122,6 @@ fn lay_out(
                     Mat4::from_translation(pos) * column.model,
                     column.material,
                     *opacity,
-                    path == 0,
                 );
                 (column.set)(ctx, &mut items[before]);
             }

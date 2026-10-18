@@ -348,18 +348,12 @@ pub(crate) fn draw_batch<'a, E: MeshDrawEncoder<'a>>(
             if lines {
                 (family.wireframe(), None)
             } else if let Some((pp, mat_bg)) = plug {
-                let pl = if batch.is_transparent {
-                    if *hdr {
-                        pp.hdr_transparent()
-                    } else {
-                        pp.ldr_transparent()
-                    }
-                } else if *hdr {
-                    pp.hdr_opaque(two_sided)
+                let got = if batch.is_transparent {
+                    pp.transparent(*hdr, feats)
                 } else {
-                    pp.ldr_opaque(two_sided)
+                    pp.opaque(*hdr, two_sided, feats)
                 };
-                (pl, Some(mat_bg))
+                (take(got), Some(mat_bg))
             } else if batch.shading_plugin.is_some() {
                 // The plugin's per-object set is not composed yet.
                 (None, None)
@@ -374,7 +368,7 @@ pub(crate) fn draw_batch<'a, E: MeshDrawEncoder<'a>>(
             if lines {
                 (None, None)
             } else if let Some((pp, mat_bg)) = plug {
-                (pp.oit(two_sided), Some(mat_bg))
+                (take(pp.oit(two_sided, feats)), Some(mat_bg))
             } else if batch.shading_plugin.is_some() {
                 (None, None)
             } else {
@@ -554,6 +548,7 @@ pub(crate) fn draw_culled_batches(
     let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
     let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
     let mut cur_deform: Option<*const crate::gpu::BindGroup> = None;
+    let mut cur_mat: Option<*const crate::gpu::BindGroup> = None;
     let mut cur_chunks: Option<(u32, u32)> = None;
     let (mut run_start, mut run_len) = (0u64, 0u32);
     let oit = matches!(pass, CulledPass::Oit);
@@ -568,17 +563,28 @@ pub(crate) fn draw_culled_batches(
             continue;
         };
         let feats = draw_features(resources, batch);
-        let got = match &pass {
-            CulledPass::Opaque { clipping_active } => resources.cull.hdr_opaque_features(
+        let two_sided = crate::renderer::pipeline_key::PipelineKey::two_sided(batch.two_sided);
+        let plug = resources.material_plugin_draw(
+            batch.shading_plugin,
+            &batch.plugin_textures,
+            batch.bindless,
+        );
+        let mat_bg = plug.map(|(_, bg)| bg);
+        let got = match (&pass, plug) {
+            // The plugin's set is not composed yet.
+            (_, None) if batch.shading_plugin.is_some() => continue,
+            (CulledPass::Opaque { .. }, Some((pp, _))) => pp.hdr_culled(two_sided, feats),
+            (CulledPass::Oit, Some((pp, _))) => pp.oit_culled(two_sided, feats),
+            (CulledPass::Opaque { clipping_active }, None) => resources.cull.hdr_opaque_features(
                 opaque_key(resources, batch, true, *clipping_active),
                 feats,
                 batch.bindless,
             ),
-            CulledPass::Oit => resources.cull.oit_features(
-                crate::renderer::pipeline_key::PipelineKey::two_sided(batch.two_sided),
-                feats,
-                batch.bindless,
-            ),
+            (CulledPass::Oit, None) => {
+                resources
+                    .cull
+                    .oit_features(two_sided, feats, batch.bindless)
+            }
         };
         if got.capped {
             resources
@@ -599,6 +605,7 @@ pub(crate) fn draw_culled_batches(
             && cur_pipe == Some(pipeline as *const _)
             && cur_bg == Some(group1 as *const _)
             && cur_deform == Some(deform as *const _)
+            && cur_mat == mat_bg.map(|b| b as *const _)
             && cur_chunks == Some(chunks)
         {
             run_len += 1;
@@ -625,6 +632,10 @@ pub(crate) fn draw_culled_batches(
             bind_deform_group!(render_pass, resources, deform);
             cur_deform = Some(deform as *const _);
         }
+        if let Some(bg) = mat_bg.filter(|bg| cur_mat != Some(*bg as *const _)) {
+            bind_material_group!(render_pass, resources, bg);
+        }
+        cur_mat = mat_bg.map(|b| b as *const _);
         if !words_bound {
             render_pass.set_vertex_buffer(1, words);
             words_bound = true;
@@ -655,18 +666,17 @@ pub(crate) fn draw_culled_batches(
 
 impl InstancedBatch {
     /// Whether the batch draws from the GPU cull's indirect args when the
-    /// cull runs: an indexed draw of its mesh or a submesh range, with
-    /// built-in shading (a material plugin's set has no culled members).
+    /// cull runs: an indexed draw of its mesh or a submesh range.
     pub(crate) fn draws_culled(&self) -> bool {
-        self.shading_plugin.is_none()
-            && matches!(self.draw, DrawKind::Triangles | DrawKind::Range(..))
+        matches!(self.draw, DrawKind::Triangles | DrawKind::Range(..))
     }
 
     /// Whether the batch can join a GPU-driven draw group: a culled draw
-    /// with no deformer, whose deform group is the empty one every group
-    /// binds.
+    /// with built-in shading (a group binds no plugin group 3) and no
+    /// deformer, whose deform group is the empty one every group binds.
     pub(crate) fn draws_grouped(&self) -> bool {
         self.draws_culled()
+            && self.shading_plugin.is_none()
             && self.deform_instance.is_none()
             && !self
                 .features

@@ -485,6 +485,13 @@ impl crate::resources::DeviceResources {
     pub(crate) fn feature_sets(&self) -> usize {
         self.scene.feature_sets()
             + self.cull.feature_sets()
+            + self
+                .material_plugins
+                .values()
+                .flat_map(|p| [&p.pipelines, &p.pipelines_bindless])
+                .flatten()
+                .map(|set| set.feature_sets())
+                .sum::<usize>()
             + self.oit.pipeline.as_ref().map_or(0, |f| f.feature_sets())
             + self
                 .oit

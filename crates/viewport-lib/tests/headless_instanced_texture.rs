@@ -857,16 +857,6 @@ fn bindless_plugin_instances_and_matches_per_batch() {
     let bindless_img = bindless.render_offscreen(&bd, &bq, &bindless_frame, W, H);
     let bindless_stats = bindless.last_frame_stats();
 
-    // Both paths instanced every plugin item.
-    assert_eq!(
-        per_stats.per_object_items, 0,
-        "per-batch plugin items should instance, not fall per-object",
-    );
-    assert_eq!(
-        bindless_stats.per_object_items, 0,
-        "bindless plugin items should instance, not fall per-object",
-    );
-
     // Bindless drops the texture ids: four distinct-albedo plugin planes on one
     // mesh collapse to a single batch, where per-batch keeps four.
     assert!(

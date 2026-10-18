@@ -430,10 +430,12 @@ pub(crate) fn feature_set_violations(
     }
 }
 
-/// Visible items with a per-item feature (an attribute, warp, matcap, submesh
-/// materials, wireframe, normals and the rest `fallback_reason` names): the
-/// count the batch cache keys on, so a per-frame change that turns one on or
-/// off rebuilds without a generation bump.
+/// Visible items with a per-item feature: an attribute, warp, matcap,
+/// submesh materials, a deform instance, wireframe or normals. The batch
+/// cache keys on the count, so a per-frame change that turns one on or off
+/// rebuilds without a generation bump. Mesh-level features (overrides,
+/// lightmaps, deform slot data) move `mesh_sidecar_epoch` or the deform
+/// epoch instead.
 fn featured_item_count(
     scene_items: &[SceneRenderItem],
     resources: &DeviceResources,
@@ -443,7 +445,17 @@ fn featured_item_count(
         .iter()
         .filter(|i| {
             !i.settings.hidden
-                && (wireframe_mode || i.show_normals || fallback_reason(i, resources).is_some())
+                && (wireframe_mode
+                    || i.show_normals
+                    || i.settings.wireframe
+                    || i.active_attribute.is_some()
+                    || i.warp_attribute.is_some()
+                    || i.submesh_materials.is_some()
+                    || i.deform_instance.is_some()
+                    || resources
+                        .material_or_default(i.material)
+                        .matcap_id()
+                        .is_some())
         })
         .count()
 }
@@ -641,19 +653,13 @@ impl ViewportRenderer {
         hdr_family: bool,
     ) -> bool {
         // Generation-based cache: skip batch rebuild and GPU upload when nothing changed.
-        // wireframe_mode removed from cache key : wireframe rendering
-        // uses the per-object wireframe_pipeline, not the instanced path, so
-        // instance data is now viewport-agnostic.
         //
-        // Items with active_attribute, matcap, warp, deform slot data (per-mesh
-        // or per-instance), submesh materials, or overrides are excluded from
-        // the instanced batch filter (see `is_instanceable`).
-        // These flags are set on render items AFTER collect_render_items() (per-frame
-        // mutations), so they do NOT bump the scene generation. Use last_instancable_count
-        // as a cache key instead of a blanket has_per_frame_mutations flag; this allows
-        // scenes that mix instanced and non-instanced items (e.g. one two-sided mesh +
-        // many static boxes) to still hit the instanced batch cache on frames where the
-        // filtered set is unchanged.
+        // An item's attribute, warp, submesh materials and the like are set on
+        // render items after `collect_render_items()` (per-frame mutations),
+        // so they do not bump the scene generation. The count of items with
+        // one (`featured_item_count`) is in the key instead of a blanket
+        // per-frame-mutation flag, so a scene that mixes plain and featured
+        // items still hits the cache on frames where that set is unchanged.
         //
         // Material identity is NOT in this cache key. An edit through
         // `replace_material` that moves batching bumps `resource_view_epoch`;

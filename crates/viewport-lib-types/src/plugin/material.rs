@@ -212,9 +212,11 @@ pub trait MaterialPlugin {
     fn texture_count(&self) -> u32 {
         0
     }
-    /// Whether hook bodies read the per-vertex extension attribute
-    /// (`surf.attr`, fed from `MeshData::extension_attributes`). Default
-    /// false, which skips the attribute fetch and varying entirely.
+    /// Whether hook bodies read the per-vertex extension attribute as
+    /// `surf.attr` (fed from `MeshData::extension_attributes`; zero on a mesh
+    /// without it). Default false, which skips the attribute fetch and
+    /// varying entirely and leaves `surf.attr` holding the item's custom
+    /// data, slots 4 to 7.
     fn reads_vertex_attribute(&self) -> bool {
         false
     }

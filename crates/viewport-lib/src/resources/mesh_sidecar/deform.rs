@@ -406,16 +406,6 @@ impl DeformationState {
         std::mem::take(&mut self.counters)
     }
 
-    /// Whether `mesh_id` has any *per-mesh* slot data attached, CPU or
-    /// external-buffer-backed.
-    ///
-    /// Deliberately excludes per-instance data, which
-    /// [`Self::has_per_instance_deform_data`] covers: the two route differently
-    /// at draw time, so a caller deciding a draw path needs them apart.
-    pub(crate) fn has_mesh_slot_data(&self, mesh_id: MeshId) -> bool {
-        self.meshes.get(&mesh_id).is_some_and(|m| m.flag_bits != 0)
-    }
-
     /// `deform_flags` value to write into the instance record for `mesh_id`.
     /// Folds per-mesh and per-instance slot activity together: any slot
     /// with data on either side is reported as live so the registered
@@ -441,24 +431,6 @@ impl DeformationState {
             .and_then(|id| m.instances.get(&id))
             .map_or(0, |i| i.flag_bits);
         (m.flag_bits | instance_bits) & self.keep_slots != 0
-    }
-
-    /// Whether `(mesh_id, instance_id)` has any per-instance deformer data
-    /// attached. Used by the renderer to filter items out of GPU-driven
-    /// instanced batching: items with per-instance deform data need their
-    /// own bind group at draw time and cannot share an instance batch.
-    pub(crate) fn has_per_instance_deform_data(
-        &self,
-        mesh_id: MeshId,
-        instance_id: Option<u32>,
-    ) -> bool {
-        let Some(id) = instance_id else {
-            return false;
-        };
-        self.meshes
-            .get(&mesh_id)
-            .and_then(|m| m.instances.get(&id))
-            .is_some_and(|i| i.flag_bits != 0)
     }
 
     /// Bind group to use for a draw of `(mesh_id, instance_id)`. Falls back

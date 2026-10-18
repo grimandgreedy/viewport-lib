@@ -480,6 +480,16 @@ impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, 
             .is_some_and(|slot| f.slots[slot].is_ready())
     }
 
+    /// How many feature-set pipelines are built.
+    pub(crate) fn feature_ready_count(&self) -> usize {
+        self.features.as_deref().map_or(0, |f| {
+            f.slots[..f.len.load(Ordering::Acquire)]
+                .iter()
+                .filter(|s| s.is_ready())
+                .count()
+        })
+    }
+
     /// Feature sets this family has been asked for.
     pub(crate) fn feature_sets(&self) -> usize {
         self.features

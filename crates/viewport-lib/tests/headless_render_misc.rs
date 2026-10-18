@@ -118,16 +118,13 @@ fn two_bind_group_device_renders_without_validation_errors() {
     assert_eq!(wireframe_pixels.len(), 64 * 64 * 4);
 }
 
-/// Two non-instanced items that share one mesh but differ in transform and
-/// colour must each draw with their own data. The per-object path writes each
-/// item's `ObjectUniform` to a distinct slot in the shared object-data buffer
-/// and draws it with that slot as `@builtin(instance_index)`; if the indexing
-/// collapsed (every draw at instance 0) both boxes would render with the first
-/// item's red colour and the second item's green would never appear. A styled
-/// back-face policy forces the non-instanced path so this exercises the indexed
-/// object-data buffer rather than the instanced path.
+/// Two items that share one mesh but differ in transform and colour each draw
+/// with their own record, selected by `@builtin(instance_index)`; if the
+/// indexing collapsed (every draw at instance 0) both boxes would render with
+/// the first item's red colour and the second item's green would never appear.
+/// The styled back-face policy draws through the two-sided pipeline.
 #[test]
-fn per_object_items_select_distinct_object_data() {
+fn items_select_distinct_records() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;

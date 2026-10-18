@@ -1,8 +1,8 @@
-//! Material scenes that draw each material on both mesh paths.
+//! Material scenes that draw each material twice.
 //!
-//! Every material appears twice: one copy sets `force_per_object`, which keeps
-//! it on the per-object path, and the other is batched onto the instanced path. The two should look the same, so a parity break shows up as
-//! a difference inside one reference image as well as against the reference.
+//! Every material appears as a pair of copies in one batch. The two should
+//! look the same, so a break shows up as a difference inside one reference
+//! image as well as against the reference.
 
 use glam::{Mat4, Vec3};
 use viewport_lib::{
@@ -15,8 +15,7 @@ use super::{
     textures, upload,
 };
 
-/// Distance from a pair's centre to each copy: per-object on the left,
-/// instanced on the right.
+/// Distance from a pair's centre to each copy.
 const HALF_PAIR: f32 = 0.85;
 
 /// Spacing between one material's pair and the next.
@@ -27,8 +26,8 @@ fn pair_x(i: usize) -> f32 {
     (i as f32 - 1.5) * PAIR_SPACING
 }
 
-/// Push one copy of `material` per path, at `x`, with `model` placing the mesh
-/// relative to that spot.
+/// Push the pair of copies of `material` at `x`, with `model` placing the
+/// mesh relative to that spot.
 fn both_paths(
     ctx: &mut BuildCtx<'_>,
     items: &mut Vec<SceneRenderItem>,
@@ -38,7 +37,7 @@ fn both_paths(
     material: Material,
     opacity: f32,
 ) {
-    for (dx, per_object) in [(-HALF_PAIR, true), (HALF_PAIR, false)] {
+    for dx in [-HALF_PAIR, HALF_PAIR] {
         let mut it = item_model(
             ctx,
             mesh,
@@ -46,7 +45,6 @@ fn both_paths(
             material.clone(),
         );
         it.settings.opacity = opacity;
-        it.settings.force_per_object = per_object;
         items.push(it);
     }
 }
@@ -176,8 +174,7 @@ fn build_materials_alpha_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
 }
 
-/// Push one item at `pos`, kept on the per-object path when `per_object` is
-/// set and left to batch onto the instanced path otherwise.
+/// Push one item placed by `model`.
 pub(super) fn place(
     ctx: &mut BuildCtx<'_>,
     items: &mut Vec<SceneRenderItem>,
@@ -185,16 +182,14 @@ pub(super) fn place(
     model: Mat4,
     material: Material,
     opacity: f32,
-    per_object_path: bool,
 ) {
     let mut it = item_model(ctx, mesh, model, material);
     it.settings.opacity = opacity;
-    it.settings.force_per_object = per_object_path;
     items.push(it);
 }
 
 /// Grid placement: column `c` of `columns`, row `r` counted from the top. Rows
-/// come in per-object/instanced pairs, with a wider gap between pairs.
+/// come in pairs, with a wider gap between pairs.
 pub(super) fn grid_pos(c: usize, columns: usize, r: usize, col_step: f32, row_step: f32) -> Vec3 {
     let x = (c as f32 - (columns as f32 - 1.0) * 0.5) * col_step;
     let z = -(r as f32 * row_step + (r / 2) as f32 * row_step * 0.3);
@@ -215,8 +210,7 @@ fn tinted(mut mesh: MeshData) -> MeshData {
 
 /// Texture slots crossed with shading models. Columns: untextured, albedo,
 /// normal with AO, metallic-roughness, emissive, all five slots, and vertex
-/// colours. Rows: Phong, PBR and flat, each drawn once per path (per-object
-/// above, instanced below). Every slot carries its own `UvTransform`, so a slot
+/// colours. Rows: Phong, PBR and flat, each drawn twice. Every slot carries its own `UvTransform`, so a slot
 /// that read another slot's UV draws a visibly different pattern.
 fn build_materials_textures(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let sphere_data = primitives::sphere(0.42, 24, 12);
@@ -309,7 +303,6 @@ fn build_materials_textures(ctx: &mut BuildCtx<'_>) -> BuiltScene {
                     Mat4::from_translation(pos),
                     column(model.clone()),
                     1.0,
-                    path == 0,
                 );
             }
         }
@@ -319,7 +312,7 @@ fn build_materials_textures(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items,
         // Shadows on: the rows stack down the frame under the key light, so
         // each sphere shadows the row below, and a caster's shadow must not
-        // depend on whether its neighbours are per-object or instanced.
+        // depend on which batch its neighbours are in.
         lighting: rigs::three_point(),
         background: None,
         ..Default::default()
@@ -331,8 +324,7 @@ fn build_materials_textures(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// texture with transparent cells, the texture and the ramp together, the
 /// texture at opacity 0.6, then the back face of the textured ramp card under
 /// `Identical` and under `Cull` (which draws nothing). Rows: opaque, mask,
-/// blend and premultiplied blend, each drawn once per path (per-object above,
-/// instanced below).
+/// blend and premultiplied blend, each drawn twice.
 fn build_materials_alpha(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     const COL_STEP: f32 = 1.05;
     let ramp_card = upload(ctx, &card(0.42, 0.6));
@@ -436,7 +428,6 @@ fn build_materials_alpha(ctx: &mut BuildCtx<'_>) -> BuiltScene {
                     Mat4::from_translation(pos) * *turn,
                     material.clone(),
                     *opacity,
-                    path == 0,
                 );
             }
         }
@@ -463,7 +454,7 @@ fn build_materials_alpha(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
 /// Straight on from -Y, looking at the middle of a grid that hangs below z = 0.
 /// Orthographic, so under directional light every cell shades the same
-/// wherever it sits and the per-object and instanced rows compare exactly.
+/// wherever it sits and the paired rows compare exactly.
 pub(super) fn grid_camera(centre_z: f32, distance: f32) -> Vec<NamedCamera> {
     let mut camera = orbit_camera(Vec3::new(0.0, 0.0, centre_z), distance, 0.0, 1.5708);
     camera.projection = Projection::Orthographic;

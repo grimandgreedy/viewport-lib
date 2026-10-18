@@ -103,7 +103,6 @@ fn a_per_object_draw_reads_its_own_second_uv_set() {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         item.material = upload_material(&mut renderer, m);
-        item.settings.force_per_object = true;
         let frame = frame_of(vec![item]);
         let lit = centre_brightness(&renderer.render_offscreen(&device, &queue, &frame, W, H));
         assert!(
@@ -186,7 +185,6 @@ fn a_lightmap_set_after_upload_keeps_the_mesh_attributes() {
     item.mesh_id = mesh_id;
     item.material = upload_material(&mut renderer, Material::default());
     item.settings.unlit = true;
-    item.settings.force_per_object = true;
     item.active_attribute = Some(AttributeRef {
         name: "heat".to_string(),
         kind: AttributeKind::Vertex,
@@ -472,7 +470,6 @@ fn a_mesh_without_a_record_draws_through_the_lean_pipeline() {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         item.material = material;
-        item.settings.force_per_object = true;
         let frame = frame_of(vec![item]);
         let _ = viewport_lib::resources::build_log::drain();
         let lit = centre_brightness(&renderer.render_offscreen(&device, &queue, &frame, W, H));
@@ -530,7 +527,6 @@ fn a_short_vertex_scalar_draws_like_its_last_value() {
         item.mesh_id = mesh_id;
         item.material = material;
         item.settings.unlit = true;
-        item.settings.force_per_object = true;
         item.active_attribute = Some(AttributeRef {
             name: "heat".to_string(),
             kind: AttributeKind::Vertex,

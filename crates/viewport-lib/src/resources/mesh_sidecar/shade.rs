@@ -111,12 +111,12 @@ pub struct ShadingHookDesc {
     /// `textureSampleLevel`. Texture views bind per material; unset slots
     /// fall back to 1x1 white.
     pub texture_count: u32,
-    /// When true, the composed per-object modules read the mesh's per-vertex
-    /// extension attribute (`MeshData::extension_attributes`, a stream of the
-    /// mesh's sidecar record), interpolate it, and deliver it as `surf.attr`.
-    /// Meshes without the
-    /// channel read `vec4(0.0)`. When false (the default), no attribute
-    /// fetch or varying is added and `surf.attr` is always zero.
+    /// When true, the composed modules read the mesh's per-vertex extension
+    /// attribute (`MeshData::extension_attributes`, a stream of the mesh's
+    /// sidecar record), interpolate it, and deliver it as `surf.attr`.
+    /// Meshes without the channel read `vec4(0.0)`. When false (the
+    /// default), no attribute fetch or varying is added and `surf.attr` is
+    /// the item's custom data, slots 4 to 7.
     pub reads_vertex_attribute: bool,
     /// Per-material parameters, read in bodies as `params.<name>`. Each takes
     /// one word of the material block, at most [`MATERIAL_PLUGIN_MAX_PARAMS`].
@@ -490,7 +490,7 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
             &s,
             "recolor",
             &format!(
-                "        final_rgb = clamp({name}__recolor(surf, Lo, ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));\n"
+                "        final_rgb = clamp({name}__recolor(surf, Lo, ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));\n"
             ),
         )?;
     }
@@ -697,17 +697,27 @@ struct PluginSetContext {
 /// policy. A frame that draws opaque plugin materials on the HDR path
 /// compiles one or two pipelines, not the set. Every accessor returns `None`
 /// while its pipeline compiles on a worker; the draw is skipped until then.
+///
+/// Members are built with every shader feature compiled in; a batch asks for
+/// the one built with its feature set, and the universal member draws while
+/// that compiles, as the built-in families do.
 pub(crate) struct MaterialPluginPipelines {
     family: LazyFamily<PluginSetContext, { Self::COUNT as usize }>,
 }
 
+/// What a plugin set lookup for one batch draw found: the pipeline, and
+/// whether the universal member is standing in or the family was full.
+pub(crate) type PluginGet<'a> =
+    crate::resources::pipeline_slot::FeatureGet<'a, crate::gpu::RenderPipeline>;
+
 impl MaterialPluginPipelines {
     /// Pipelines in one plugin's set: 3 LDR (solid, two-sided, transparent),
     /// 4 HDR opaque (discarding and discard-free, each facedness), 1 HDR
-    /// transparent, and 2 OIT accumulate (culled and two-sided). Shadow,
-    /// outline and pick passes reuse the shared depth-only pipelines, and
-    /// nothing draws a plugin material in wireframe.
-    pub(crate) const COUNT: u32 = 10;
+    /// transparent, 2 OIT accumulate (each facedness), and the GPU-culled
+    /// twins of the discarding HDR opaque and OIT pairs. Shadow, outline and
+    /// pick passes reuse the shared depth-only pipelines, and nothing draws a
+    /// plugin material in wireframe.
+    pub(crate) const COUNT: u32 = 14;
 
     const LDR_SOLID: usize = 0;
     const LDR_SOLID_TWO_SIDED: usize = 1;
@@ -717,31 +727,92 @@ impl MaterialPluginPipelines {
     const HDR_OPAQUE: usize = 4;
     /// Two slots: bit 0 is two-sided.
     const OIT: usize = 8;
+    /// Two slots: bit 0 is two-sided.
+    const HDR_CULLED: usize = 10;
+    /// Two slots: bit 0 is two-sided.
+    const OIT_CULLED: usize = 12;
 
     fn new(ctx: PluginSetContext, compiler: std::sync::Arc<PipelineCompiler>) -> Self {
         Self {
-            family: LazyFamily::new(ctx, compiler, Self::build_slot),
+            family: LazyFamily::new(ctx, compiler, Self::build_slot)
+                .with_features(Self::build_slot_with),
         }
     }
 
     fn build_slot(ctx: &PluginSetContext, i: usize) -> crate::gpu::RenderPipeline {
+        Self::build_slot_with(ctx, i, crate::renderer::pipeline_key::FeatureSet::UNIVERSAL)
+    }
+
+    fn build_slot_with(
+        ctx: &PluginSetContext,
+        i: usize,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+    ) -> crate::gpu::RenderPipeline {
         use crate::gpu::{BlendState, Face, PrimitiveTopology::TriangleList};
         use crate::resources::mesh::mesh_pipelines as mp;
         let device = &ctx.device;
         let name = ctx.name;
+        let constants = feats.constants();
+        let suffix = if feats == crate::renderer::pipeline_key::FeatureSet::UNIVERSAL {
+            String::new()
+        } else {
+            feats.label("")
+        };
         let ldr = |label: &str, cull, blend, depth_write| {
-            mp::ldr_mesh_pipeline(
+            mp::ldr_mesh_pipeline_with(
                 device,
                 &ctx.layout,
                 ctx.mesh.get(device),
                 ctx.target_format,
                 ctx.sample_count,
                 None,
-                &format!("material_plugin_{name}_{label}"),
+                &format!("material_plugin_{name}_{label}{suffix}"),
                 cull,
                 blend,
                 TriangleList,
                 depth_write,
+                &constants,
+            )
+        };
+        let hdr_solid = |slot: usize, culled: bool| {
+            let two_sided = slot & 1 != 0;
+            let nodiscard = slot & 2 != 0;
+            let module = if nodiscard {
+                ctx.mesh.nodiscard(device)
+            } else {
+                ctx.mesh.get(device)
+            };
+            mp::hdr_mesh_pipeline_entry(
+                device,
+                &ctx.layout,
+                module,
+                &format!(
+                    "material_plugin_{name}_hdr_solid{}{}{}{suffix}",
+                    if two_sided { "_two_sided" } else { "" },
+                    if nodiscard { "_nodiscard" } else { "" },
+                    if culled { "_cull" } else { "" },
+                ),
+                (!two_sided).then_some(Face::Back),
+                None,
+                TriangleList,
+                true,
+                &constants,
+                culled,
+            )
+        };
+        let oit = |two_sided: bool, culled: bool| {
+            mp::build_oit_pipeline_entry(
+                device,
+                &ctx.layout,
+                ctx.oit_module.get(device),
+                two_sided,
+                &format!(
+                    "material_plugin_{name}_oit{}{}{suffix}",
+                    if two_sided { "_two_sided" } else { "" },
+                    if culled { "_cull" } else { "" },
+                ),
+                &constants,
+                culled,
             )
         };
         match i {
@@ -754,108 +825,125 @@ impl MaterialPluginPipelines {
                 device,
                 &ctx.layout,
                 ctx.mesh.get(device),
-                &format!("material_plugin_{name}_hdr_transparent"),
+                &format!("material_plugin_{name}_hdr_transparent{suffix}"),
                 None,
                 Some(BlendState::ALPHA_BLENDING),
                 TriangleList,
                 false,
-                &[],
+                &constants,
             ),
-            4..=7 => {
-                let two_sided = (i - Self::HDR_OPAQUE) & 1 != 0;
-                let nodiscard = (i - Self::HDR_OPAQUE) & 2 != 0;
-                let module = if nodiscard {
-                    ctx.mesh.nodiscard(device)
-                } else {
-                    ctx.mesh.get(device)
-                };
-                mp::hdr_mesh_pipeline(
-                    device,
-                    &ctx.layout,
-                    module,
-                    &format!(
-                        "material_plugin_{name}_hdr_solid{}{}",
-                        if two_sided { "_two_sided" } else { "" },
-                        if nodiscard { "_nodiscard" } else { "" },
-                    ),
-                    (!two_sided).then_some(Face::Back),
-                    None,
-                    TriangleList,
-                    true,
-                    &[],
-                )
-            }
-            _ => mp::build_oit_pipeline(
-                device,
-                &ctx.layout,
-                ctx.oit_module.get(device),
-                (i - Self::OIT) & 1 != 0,
-            ),
+            4..=7 => hdr_solid(i - Self::HDR_OPAQUE, false),
+            8..=9 => oit((i - Self::OIT) & 1 != 0, false),
+            10..=11 => hdr_solid(i - Self::HDR_CULLED, true),
+            _ => oit((i - Self::OIT_CULLED) & 1 != 0, true),
         }
     }
 
-    pub(crate) fn ldr_transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.family.get(Self::LDR_TRANSPARENT)
-    }
-
-    /// The LDR solid pipeline for `key`'s facedness.
-    pub(crate) fn ldr_opaque(
-        &self,
-        key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> Option<&crate::gpu::RenderPipeline> {
-        self.family.get(if key.two_sided {
-            Self::LDR_SOLID_TWO_SIDED
-        } else {
-            Self::LDR_SOLID
-        })
-    }
-
-    pub(crate) fn hdr_transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.family.get(Self::HDR_TRANSPARENT)
-    }
-
-    /// The HDR opaque pipeline for `key`: facedness and discard-free
-    /// eligibility. `cutout` is not a real axis here, as in the main family.
-    pub(crate) fn hdr_opaque(
-        &self,
-        key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> Option<&crate::gpu::RenderPipeline> {
-        self.family
-            .get(Self::HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize)
-    }
-
-    /// The OIT accumulate pipeline for `key`, which varies on facedness only.
-    pub(crate) fn oit(
-        &self,
-        key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> Option<&crate::gpu::RenderPipeline> {
-        self.family.get(Self::OIT + key.two_sided as usize)
-    }
-
-    /// Whether the opaque pipeline for `key` in the `hdr` or LDR family is
-    /// built, without starting it.
-    pub(crate) fn opaque_ready(
-        &self,
-        hdr: bool,
-        key: crate::renderer::pipeline_key::PipelineKey,
-    ) -> bool {
-        self.family.is_ready(if hdr {
+    fn opaque_slot(hdr: bool, key: crate::renderer::pipeline_key::PipelineKey) -> usize {
+        if hdr {
             Self::HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize
         } else if key.two_sided {
             Self::LDR_SOLID_TWO_SIDED
         } else {
             Self::LDR_SOLID
-        })
+        }
     }
 
-    /// Ask for every pipeline in the set: built now under `Blocking`, handed
-    /// to the workers under `Background`.
+    /// The LDR or HDR blended pipeline built with `feats`.
+    pub(crate) fn transparent(
+        &self,
+        hdr: bool,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+    ) -> PluginGet<'_> {
+        let slot = if hdr {
+            Self::HDR_TRANSPARENT
+        } else {
+            Self::LDR_TRANSPARENT
+        };
+        self.family.get_features(slot, feats)
+    }
+
+    /// The LDR or HDR opaque pipeline for `key` built with `feats`: facedness
+    /// and, on HDR, discard-free eligibility. `cutout` is not a real axis
+    /// here, as in the main family.
+    pub(crate) fn opaque(
+        &self,
+        hdr: bool,
+        key: crate::renderer::pipeline_key::PipelineKey,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+    ) -> PluginGet<'_> {
+        self.family.get_features(Self::opaque_slot(hdr, key), feats)
+    }
+
+    /// The OIT accumulate pipeline for `key` built with `feats`, which varies
+    /// on facedness only.
+    pub(crate) fn oit(
+        &self,
+        key: crate::renderer::pipeline_key::PipelineKey,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+    ) -> PluginGet<'_> {
+        self.family
+            .get_features(Self::OIT + key.two_sided as usize, feats)
+    }
+
+    /// The GPU-culled HDR opaque pipeline for `key`'s facedness.
+    pub(crate) fn hdr_culled(
+        &self,
+        key: crate::renderer::pipeline_key::PipelineKey,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+    ) -> PluginGet<'_> {
+        self.family
+            .get_features(Self::HDR_CULLED + key.two_sided as usize, feats)
+    }
+
+    /// The GPU-culled OIT accumulate pipeline for `key`'s facedness.
+    pub(crate) fn oit_culled(
+        &self,
+        key: crate::renderer::pipeline_key::PipelineKey,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+    ) -> PluginGet<'_> {
+        self.family
+            .get_features(Self::OIT_CULLED + key.two_sided as usize, feats)
+    }
+
+    /// Whether a draw of the opaque pipeline for `key` with `feats` in the
+    /// `hdr` or LDR family has a pipeline to bind, without starting one.
+    /// `culled` also counts the GPU-culled twin.
+    pub(crate) fn opaque_ready(
+        &self,
+        hdr: bool,
+        key: crate::renderer::pipeline_key::PipelineKey,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+        culled: bool,
+    ) -> bool {
+        self.family
+            .features_ready(Self::opaque_slot(hdr, key), feats)
+            || (culled
+                && self
+                    .family
+                    .features_ready(Self::HDR_CULLED + key.two_sided as usize, feats))
+    }
+
+    /// Feature-set pipelines asked of the set.
+    pub(crate) fn feature_sets(&self) -> usize {
+        self.family.feature_sets()
+    }
+
+    /// Ask for every pipeline in the set and its plain feature set (what a
+    /// batch with no scalar colouring, lightmap, matcap, warp, override or
+    /// deformer draws with): built now under `Blocking`, handed to the
+    /// workers under `Background`.
     fn request_all(&self) {
         self.family.request_all();
+        for i in 0..Self::COUNT as usize {
+            self.family
+                .get_features(i, crate::renderer::pipeline_key::FeatureSet::NONE);
+        }
     }
 
+    /// Pipelines built: members and feature-set pipelines alike.
     fn built_count(&self) -> u32 {
-        self.family.ready_count() as u32
+        (self.family.ready_count() + self.family.feature_ready_count()) as u32
     }
 }
 
@@ -877,14 +965,16 @@ pub struct MaterialPluginStats {
     /// Distinct texture sets with a group-3 bind group built, across the
     /// materials drawn so far. Each draws as its own batch.
     pub texture_sets: u32,
-    /// Render pipelines built for this plugin so far, across its instanced
-    /// set (what a batch of plugin items draws with) and its per-object set
-    /// (items that fall off the batch path). Each is built by the first draw
-    /// that selects it, so this counts what the frames so far have used:
-    /// `0` before the plugin is drawn, up to 23 once
-    /// `warm_material_plugin_pipelines` has finished. One compiling on a
-    /// worker is not counted until a draw picks it up. Drops back to `0`
-    /// when a deformer registration or debug-vis toggle invalidates the sets.
+    /// Render pipelines built for this plugin so far. Each is built by the
+    /// first draw that selects it, so this counts what the frames so far have
+    /// used: `0` before the plugin is drawn, and 28 once
+    /// `warm_material_plugin_pipelines` has finished: the 14 pipelines of the
+    /// set, each with every shader feature and with none (twice that on a
+    /// device with bindless material textures, which builds a bindless twin
+    /// of the set). A batch draws with a pipeline built for the shader
+    /// features its items use, so a scene can add more. One compiling on a worker is not counted
+    /// until a draw picks it up. Drops back to `0` when a deformer
+    /// registration or debug-vis toggle invalidates the sets.
     pub pipelines_built: u32,
 }
 
@@ -1376,18 +1466,6 @@ impl crate::resources::DeviceResources {
         }?;
         Some((pipes, Self::plugin_texture_group(gpu, textures)))
     }
-
-    /// Whether the plugin's shading body reads the per-vertex extension attribute
-    /// (`surf.attr` sourced from `MeshData::extension_attributes`). The instanced
-    /// mesh path has no per-vertex extension-attribute binding: its `surf.attr`
-    /// carries the per-instance custom-data channel instead, so a plugin that
-    /// reads the vertex attribute would read the wrong data if instanced, and must
-    /// draw per-object to see it. `false` for an unknown id.
-    pub(crate) fn material_plugin_reads_vertex_attribute(&self, id: MaterialPluginId) -> bool {
-        self.shade_hooks
-            .get(id.plugin_index() as usize)
-            .is_some_and(|h| h.desc.reads_vertex_attribute)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1486,7 +1564,8 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         let stats = resources.material_plugin_stats();
         let row = stats.iter().find(|s| s.id == id).expect("stats row");
         let sets = if resources.bindless_textures() { 2 } else { 1 };
-        assert_eq!(row.pipelines_built, MaterialPluginPipelines::COUNT * sets);
+        // Every member, with every feature and with none.
+        assert_eq!(row.pipelines_built, 2 * MaterialPluginPipelines::COUNT * sets);
 
         let unknown = MaterialPluginId::from_index(9999);
         assert!(!resources.material_plugin_pipelines_ready(unknown));
@@ -1526,9 +1605,15 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         let (pp, _) = resources
             .material_plugin_draw(Some(id), &[None; MATERIAL_PLUGIN_MAX_TEXTURES], false)
             .expect("pipelines built");
+        let all = crate::renderer::pipeline_key::FeatureSet::UNIVERSAL;
         for key in crate::renderer::pipeline_key::PipelineKey::all() {
-            let _ = pp.hdr_opaque(key);
-            let _ = pp.oit(key);
+            for hdr in [false, true] {
+                let _ = pp.opaque(hdr, key, all);
+                let _ = pp.transparent(hdr, all);
+            }
+            let _ = pp.oit(key, all);
+            let _ = pp.hdr_culled(key, all);
+            let _ = pp.oit_culled(key, all);
         }
     }
 
@@ -1882,7 +1967,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
             Some(&resources.deform.bind_group_layout),
         );
         let (_pipeline, captured) = crate::resources::builders::capture_validation(&device, || {
-            crate::resources::mesh::mesh_pipelines::ldr_mesh_pipeline(
+            crate::resources::mesh::mesh_pipelines::ldr_mesh_pipeline_with(
                 &device,
                 &layout,
                 &module,
@@ -1894,6 +1979,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
                 None,
                 crate::gpu::PrimitiveTopology::TriangleList,
                 true,
+                &[],
             )
         });
         assert!(captured.is_none(), "pipeline validation: {captured:?}");
@@ -2022,7 +2108,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
             Some(&resources.deform.bind_group_layout),
         );
         let (_pipeline, captured) = crate::resources::builders::capture_validation(&device, || {
-            crate::resources::mesh::mesh_pipelines::ldr_mesh_pipeline(
+            crate::resources::mesh::mesh_pipelines::ldr_mesh_pipeline_with(
                 &device,
                 &layout,
                 &module,
@@ -2034,6 +2120,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
                 None,
                 crate::gpu::PrimitiveTopology::TriangleList,
                 true,
+                &[],
             )
         });
         assert!(captured.is_none(), "pipeline validation: {captured:?}");

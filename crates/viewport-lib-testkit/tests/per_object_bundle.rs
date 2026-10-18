@@ -1,5 +1,5 @@
 //! The cached batch render bundle must draw exactly what the immediate batch
-//! loops draw, for lean and fat batches alike. The first frame after renderer
+//! loops draw. The first frame after renderer
 //! creation misses the bundle (it was recorded against the fallback camera
 //! bind group before the viewport slot existed), so frame 1 exercises the
 //! immediate path and later frames the bundle replay; their images must match.
@@ -16,7 +16,7 @@ fn bundle_replay_matches_immediate_draws() {
     };
     let data = viewport_lib::primitives::icosphere(4.0, 2);
     // One mesh per item, so every item is its own batch and the list is
-    // long enough to be bundled. Every other item takes the fat path.
+    // long enough to be bundled.
     let ids: Vec<_> = (0..100)
         .map(|_| {
             h.renderer
@@ -44,7 +44,6 @@ fn bundle_replay_matches_immediate_draws() {
                     0.8 - (i % 5) as f32 * 0.1,
                 )))
                 .expect("material upload");
-            it.settings.force_per_object = i % 2 == 0;
             it
         })
         .collect();

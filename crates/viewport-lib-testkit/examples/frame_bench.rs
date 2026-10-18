@@ -309,7 +309,7 @@ fn main() {
         "gpu,cell,family,mesh_class,tris,count,material,camera,hdr,frames,\
          gpu_ms_p50,gpu_ms_p95,gpu_ms_p99,scene_ms_p50,shadow_ms_p50,oit_ms_p50,post_ms_p50,\
          cull_ms_p50,prepare_ms_p50,paint_ms_p50,total_ms_p50,total_ms_p95,\
-         draw_calls,instanced_batches,triangles,visible,per_object_items\n",
+         draw_calls,instanced_batches,triangles,visible\n",
     );
 
     for (i, cell) in cells.iter().enumerate() {
@@ -332,7 +332,7 @@ fn main() {
         let mut prepare = Vec::new();
         let mut paint = Vec::new();
         let mut total = Vec::new();
-        let mut counters = (0u32, 0u32, 0u64, 0u32, 0u32);
+        let mut counters = (0u32, 0u32, 0u64, 0u32);
 
         for f in 0..(args.warmup + args.frames) {
             let cam = camera_for(cell, f, args.frames);
@@ -372,14 +372,13 @@ fn main() {
                 s.instanced_batches,
                 s.triangles_submitted,
                 s.visible_objects,
-                s.per_object_items,
             );
         }
 
         csv.push_str(&format!(
             "{},{},{},{},{},{},{},{},{},{},\
              {:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},\
-             {},{},{},{},{}\n",
+             {},{},{},{}\n",
             gpu_name,
             cell.id,
             cell.family,
@@ -410,7 +409,6 @@ fn main() {
             counters.1,
             counters.2,
             counters.3,
-            counters.4,
         ));
         println!("[{}/{}] {}", i + 1, cells.len(), cell.id);
     }

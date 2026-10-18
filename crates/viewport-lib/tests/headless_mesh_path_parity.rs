@@ -1,9 +1,9 @@
-//! The per-object and instanced mesh paths render the same material the same
-//! way.
+//! A material renders the same in a batch of one as in a batch of two, and
+//! shadows cast the same from the GPU cull and the CPU one.
 //!
-//! Each case draws one material twice: alone, which takes the per-object path,
-//! and beside a second copy, which batches it onto the instanced path. The
-//! centre pixel, covered only by the first copy, must match.
+//! Each colour case draws one material twice: alone, and beside a second copy
+//! that joins its batch. The centre pixel, covered only by the first copy,
+//! must match.
 
 use viewport_lib::wgpu;
 use viewport_lib::{
@@ -92,8 +92,6 @@ impl Scene {
                 glam::Mat4::from_translation(glam::Vec3::new(x, x, 0.0)).to_cols_array_2d();
             item.material = material;
             item.settings.opacity = opacity;
-            // The per-object render pins its item to the per-object pipelines.
-            item.settings.force_per_object = !instanced;
             item
         };
         let mut items = vec![item_at(0.0)];
@@ -112,19 +110,15 @@ impl Scene {
         )
     }
 
-    /// Render `material` on both paths, check each took the path it was meant
-    /// to, and return the two centre pixels (per-object, instanced).
+    /// Render `material` alone and beside a second copy, and return the two
+    /// centre pixels (alone, batched).
     fn both_paths(&mut self, material: Material, opacity: f32) -> ([u8; 4], [u8; 4]) {
         let material = upload_material(&mut self.renderer, material);
-        let (alone, alone_stats) = self.render(material, opacity, false);
-        assert!(
-            alone_stats.per_object_items == 1,
-            "the single item should draw through the per-object pipelines"
-        );
+        let (alone, _) = self.render(material, opacity, false);
         let (batched, batched_stats) = self.render(material, opacity, true);
         assert!(
             batched_stats.instanced_batches > 0,
-            "two copies of one material should batch onto the instanced path"
+            "two copies of one material should batch"
         );
         (alone, batched)
     }
@@ -301,7 +295,7 @@ fn freed_emissive_texture_falls_back_on_both_paths() {
 }
 
 /// A caster masked by vertex-colour alpha casts no shadow where it is cut out,
-/// under directional and point lights, on both paths. The same caster with a
+/// under directional and point lights, from the GPU cull and the CPU one. The same caster with a
 /// cutoff its alpha passes does cast one, so the check is not passing for want
 /// of a shadow at all.
 #[test]
@@ -340,18 +334,23 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
         upload_material(&mut scene.renderer, m)
     };
     let (keep, cut) = (masked(0.1), masked(0.5));
-    let caster_at = |y: f32, material: MaterialId, per_object: bool| {
+    let caster_at = |y: f32, material: MaterialId| {
         let mut it = SceneRenderItem::default();
         it.mesh_id = caster_mesh;
         it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).to_cols_array_2d();
         it.material = material;
-        it.settings.force_per_object = per_object;
         it
     };
 
     // Pixels dark enough to be floor in shadow.
+    let gpu_cull = std::cell::Cell::new(false);
     let mut shadowed = |light: &LightSource, items: Vec<SceneRenderItem>| -> usize {
         const SIZE: u32 = 64;
+        if gpu_cull.get() {
+            scene.renderer.enable_gpu_driven_culling();
+        } else {
+            scene.renderer.disable_gpu_driven_culling();
+        }
         scene.generation += 1;
         let mut frame = FrameData::default();
         frame.scene.generation = scene.generation;
@@ -392,25 +391,19 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
     bulb.intensity = 40.0;
     bulb.cast_shadows = true;
     for (light_label, light) in [("directional", &sun), ("point", &bulb)] {
-        for (path, per_object) in [("per-object", true), ("instanced", false)] {
+        for (path, on) in [("CPU cull", false), ("GPU cull", true)] {
+            gpu_cull.set(on);
             let label = format!("{light_label}, {path}");
-            // A second caster far off to one side keeps the instanced case
-            // batched; it never shadows the counted area, which it leaves
-            // the same in both renders.
-            let other = caster_at(-1.5, keep, per_object);
+            // A second caster far off to one side shares the masked caster's
+            // batch; it never shadows the counted area, which it leaves the
+            // same in both renders.
+            let other = caster_at(-1.5, keep);
             let kept = shadowed(
                 light,
-                vec![
-                    floor.clone(),
-                    caster_at(1.0, keep, per_object),
-                    other.clone(),
-                ],
+                vec![floor.clone(), caster_at(1.0, keep), other.clone()],
             );
             let alone = shadowed(light, vec![floor.clone(), other.clone()]);
-            let cut = shadowed(
-                light,
-                vec![floor.clone(), caster_at(1.0, cut, per_object), other],
-            );
+            let cut = shadowed(light, vec![floor.clone(), caster_at(1.0, cut), other]);
             assert!(
                 kept > alone + 10,
                 "{label}: a caster its mask keeps should cast a shadow: {kept} vs {alone} without it"
@@ -424,9 +417,8 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
 }
 
 /// Casters that share a mesh each cast their own shadow, under directional and
-/// point lights, on both paths: per-object casters draw from their own element
-/// of the frame's object data, instanced ones from the instance buffer, never
-/// from the mesh's single shared slot.
+/// point lights, from the GPU cull and the CPU one: each draws from its own
+/// record, never from the mesh's single shared slot.
 #[test]
 fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
     let Some(mut scene) = Scene::new() else {
@@ -456,19 +448,24 @@ fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
     // faces, and this one faces the light.
     caster.backface_policy = viewport_lib::BackfacePolicy::Identical;
     let caster = upload_material(&mut scene.renderer, caster);
-    let caster_at = |y: f32, per_object: bool| {
+    let caster_at = |y: f32| {
         let mut it = SceneRenderItem::default();
         it.mesh_id = caster_mesh;
         it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).to_cols_array_2d();
         it.material = caster;
-        it.settings.force_per_object = per_object;
         it
     };
 
     // Pixels dark enough to be floor in shadow (lit floor and the casters
     // are both far brighter).
+    let gpu_cull = std::cell::Cell::new(false);
     let mut shadowed = |light: &LightSource, items: Vec<SceneRenderItem>| -> usize {
         const SIZE: u32 = 64;
+        if gpu_cull.get() {
+            scene.renderer.enable_gpu_driven_culling();
+        } else {
+            scene.renderer.disable_gpu_driven_culling();
+        }
         scene.generation += 1;
         let mut frame = FrameData::default();
         frame.scene.generation = scene.generation;
@@ -509,21 +506,13 @@ fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
     bulb.intensity = 40.0;
     bulb.cast_shadows = true;
     for (light_label, light) in [("directional", &sun), ("point", &bulb)] {
-        for (path, per_object) in [("per-object", true), ("instanced", false)] {
+        for (path, on) in [("CPU cull", false), ("GPU cull", true)] {
+            gpu_cull.set(on);
             let label = format!("{light_label}, {path}");
             let none = shadowed(light, vec![floor.clone()]);
-            // A single caster still has the floor beside it, so the instanced
-            // case batches with one instance.
-            let a = shadowed(light, vec![floor.clone(), caster_at(1.0, per_object)]);
-            let b = shadowed(light, vec![floor.clone(), caster_at(-1.0, per_object)]);
-            let both = shadowed(
-                light,
-                vec![
-                    floor.clone(),
-                    caster_at(1.0, per_object),
-                    caster_at(-1.0, per_object),
-                ],
-            );
+            let a = shadowed(light, vec![floor.clone(), caster_at(1.0)]);
+            let b = shadowed(light, vec![floor.clone(), caster_at(-1.0)]);
+            let both = shadowed(light, vec![floor.clone(), caster_at(1.0), caster_at(-1.0)]);
             assert!(
                 none == 0 && a > 20 && b > 20,
                 "{label}: each caster alone should shadow the floor: none {none}, a {a}, b {b}"

@@ -256,8 +256,8 @@ fn main() -> eframe::Result {
                 let scalar_t = res.upload_mesh_data(device, &arrow_mesh).expect("scalar_t");
 
                 // Position-override sphere: bind a per-vertex position buffer (a radial
-                // bump of the rest sphere). A bound override buffer forces the per-object
-                // path via the `is_instanceable` override-buffer exclusion.
+                // bump of the rest sphere), which the mesh draws in place of its own
+                // positions.
                 let sphere_o = primitives::sphere(0.85, 40, 20);
                 let mut flat: Vec<f32> = Vec::with_capacity(sphere_o.positions.len() * 3);
                 for p in &sphere_o.positions {

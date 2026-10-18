@@ -479,12 +479,10 @@ fn example_reference_plugins_register() {
         .expect("parallax plugin registers");
 }
 
-/// A plugin material on several instances of one mesh must draw through the
-/// instanced plugin path on the LDR (`Direct`) frame, not fall back to one
-/// draw per object. Proves the LDR `emit_draw_calls` plugin sub-loop: the
-/// batch stats show the plugin items instanced (`per_object_items == 0`), the
-/// render completes without a validation error (wgpu's uncaptured-error
-/// handler panics on failure), and the plugin shading changes the output.
+/// A plugin material on several instances of one mesh draws as a batch on the
+/// LDR (`Direct`) frame: the batch stats show at least one batch, the render
+/// completes without a validation error (wgpu's uncaptured-error handler
+/// panics on failure), and the plugin shading changes the output.
 #[test]
 fn material_plugin_instances_on_ldr_path() {
     struct ToonPlugin;
@@ -563,10 +561,6 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     let toon = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
     let stats = renderer.last_frame_stats();
-    assert_eq!(
-        stats.per_object_items, 0,
-        "plugin instances must not fall back to the per-object path on LDR"
-    );
     assert!(
         stats.instanced_batches >= 1,
         "the four plugin instances must form at least one instanced batch"
@@ -652,16 +646,11 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     // Culled: plugin batches draw from the cull-written indirect args.
     renderer.enable_gpu_driven_culling();
     let culled = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
-    let culled_stats = renderer.last_frame_stats();
 
     // Unculled reference: same instances drawn directly.
     renderer.disable_gpu_driven_culling();
     let unculled = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    assert_eq!(
-        culled_stats.per_object_items, 0,
-        "plugin instances must instance, not fall to the per-object path"
-    );
     // Guard against a false pass where nothing drew (two blank frames also
     // compare equal): the box must actually be visible.
     let bg = &culled[0..4];
@@ -677,18 +666,11 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     );
 }
 
-/// Instanced plugin shading matches per-object plugin shading pixel-for-pixel.
-/// The plugin's body is composed onto two different base shaders: `mesh.wgsl`
-/// (per-object, reads `ObjectUniform`) and `mesh_instanced.wgsl` (reads
-/// `InstanceData`); this is the proof they agree. The instancing threshold is
-/// `visible_count > 1`, so one sphere draws per-object and two spheres at the
-/// same transform draw instanced (overlapping into the same pixels). Same plugin,
-/// same look -> the two renders must be identical. Closes the instanced-vs-
-/// per-object plugin parity gate on the M4 (no desktop needed: both paths run
-/// here; only the count-multi-draw submission is Metal-dormant, and that draws
-/// the same pixels as the per-batch indirect path it collapses).
+/// A plugin batch of one sphere and a batch of two spheres at the same
+/// transform (the second fails the depth test behind the first) draw the
+/// same pixels.
 #[test]
-fn material_plugin_instanced_matches_per_object() {
+fn material_plugin_draws_the_same_at_one_or_two_items() {
     struct ToonPlugin;
     impl viewport_lib::MaterialPlugin for ToonPlugin {
         fn name(&self) -> &'static str {
@@ -746,53 +728,31 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
         it
     };
 
-    // One sphere pinned to the per-object pipelines.
-    let mut pinned = sphere();
-    pinned.settings.force_per_object = true;
-    frame.scene.surfaces = SurfaceSubmission::Flat(vec![pinned].into());
-    let per_object = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
-    let po_stats = renderer.last_frame_stats();
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![sphere()].into());
+    let one = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    // Two spheres at the same transform draw through the instanced plugin
-    // pipeline; overlapping exactly, they cover the same pixels as the one
-    // per-object sphere (the second instance fails the depth test behind the
-    // first). Bump the generation so the batch list rebuilds for the new scene.
+    // Bump the generation so the batch list rebuilds for the new scene.
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![sphere(), sphere()].into());
     frame.scene.generation += 1;
-    let instanced = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
-    let inst_stats = renderer.last_frame_stats();
+    let two = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    // Confirm the A/B actually took the two different paths.
-    assert_eq!(
-        po_stats.per_object_items, 1,
-        "the pinned sphere should draw through the per-object pipelines"
-    );
-    assert_eq!(
-        inst_stats.per_object_items, 0,
-        "two spheres should draw through the instanced plugin pipeline"
-    );
     // The sphere must be visible, not an empty frame.
-    let bg = &per_object[0..4];
+    let bg = &one[0..4];
     assert!(
-        per_object.chunks_exact(4).any(|p| p != bg),
+        one.chunks_exact(4).any(|p| p != bg),
         "the plugin sphere must be visible"
     );
     assert_eq!(
-        per_object, instanced,
-        "instanced plugin shading must match per-object plugin shading pixel-for-pixel"
+        one, two,
+        "the plugin must shade the same at one or two items"
     );
 }
 
-/// A plugin that reads the per-vertex extension attribute (`surf.attr`) must
-/// render the same whatever the item count, i.e. it must stay on the per-object
-/// path rather than instance. The instanced mesh path has no per-vertex
-/// extension-attribute binding (its `surf.attr` is the per-instance custom-data
-/// channel), so instancing such a plugin would feed it zero instead of the vertex
-/// data. Two overlapping items cross the instancing threshold, so without the
-/// per-object guard they would instance and lose the attribute; with it they stay
-/// per-object and match the single-item render.
+/// A plugin that reads the per-vertex extension attribute (`surf.attr`) sees
+/// it whatever the item count: one item and a batch of two overlapping items
+/// render the same, tinted by the attribute.
 #[test]
-fn material_plugin_reading_vertex_attribute_stays_per_object() {
+fn material_plugin_reading_vertex_attribute_sees_it_in_a_batch() {
     struct AttrPlugin;
     impl viewport_lib::MaterialPlugin for AttrPlugin {
         fn name(&self) -> &'static str {
@@ -852,21 +812,13 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         it
     };
 
-    // One item: per-object.
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item()].into());
     let one = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    // Two overlapping items: crosses the instancing threshold. The guard keeps a
-    // vertex-attribute plugin per-object anyway.
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item(), item()].into());
     frame.scene.generation += 1;
     let two = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
-    let two_stats = renderer.last_frame_stats();
 
-    assert_eq!(
-        two_stats.per_object_items, 2,
-        "a vertex-attribute plugin must not instance (it would lose surf.attr)"
-    );
     // The attribute reached the hook: the box is tinted green (G > R on the box).
     let bias = |img: &[u8]| -> i64 { img.chunks_exact(4).map(|p| p[1] as i64 - p[0] as i64).sum() };
     assert!(
@@ -1241,8 +1193,7 @@ fn dominant(img: &[u8], c: usize) -> usize {
 }
 
 /// Two materials on one plugin with different parameters share one batch and
-/// each draws its own values, on the instanced path and the per-object path,
-/// and the two paths agree.
+/// each draws its own values, on both colour paths.
 #[test]
 fn materials_on_one_plugin_draw_their_own_params_in_one_batch() {
     let Some((device, queue)) = headless_device() else {
@@ -1277,28 +1228,12 @@ fn materials_on_one_plugin_draw_their_own_params_in_one_batch() {
     let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     let instanced = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     let stats = renderer.last_frame_stats();
-    assert_eq!(stats.per_object_items, 0);
     assert_eq!(
         stats.instanced_batches, 1,
         "materials differing only in parameters must share a batch"
     );
     assert!(dominant(&instanced, 0) > 20, "the red material's box");
     assert!(dominant(&instanced, 2) > 20, "the blue material's box");
-
-    if let SurfaceSubmission::Flat(items) = &mut frame.scene.surfaces {
-        let mut v = items.to_vec();
-        for it in &mut v {
-            it.settings.force_per_object = true;
-        }
-        *items = v.into();
-    }
-    frame.scene.generation += 1;
-    let per_object = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
-    assert_eq!(renderer.last_frame_stats().per_object_items, 2);
-    assert!(
-        per_object == instanced,
-        "the per-object path must read the same parameters"
-    );
 
     // HDR, for the scene pass's own plugin draws.
     frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
@@ -1411,7 +1346,6 @@ fn plugin_texture_sets_split_and_share_batches() {
         let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
         let img = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
         let stats = renderer.last_frame_stats();
-        assert_eq!(stats.per_object_items, 0, "{binding}");
         assert_eq!(
             stats.instanced_batches, 2,
             "{binding}: one batch for the shared red set, one for green"
@@ -1537,8 +1471,8 @@ fn an_over_budget_texture_layout_is_refused_at_registration() {
 }
 
 /// On a device with wgpu's default limits deformers are off, and a plugin
-/// draw still binds every group its layout carries: batched and per-object,
-/// LDR and HDR.
+/// draw still binds every group its layout carries: LDR and HDR, drawn
+/// directly and from the GPU cull.
 #[test]
 fn a_plugin_draws_on_a_default_limits_device() {
     let Some((device, queue)) = headless_device_with(&DeviceProfile::harness()) else {
@@ -1566,19 +1500,17 @@ fn a_plugin_draws_on_a_default_limits_device() {
         viewport_lib::PipelineMode::Direct,
         viewport_lib::PipelineMode::Hdr,
     ] {
-        for per_object in [false, true] {
+        for culled in [false, true] {
             frame.effects.display.mode = mode;
-            if let SurfaceSubmission::Flat(items) = &mut frame.scene.surfaces {
-                let mut v = items.to_vec();
-                for it in &mut v {
-                    it.settings.force_per_object = per_object;
-                }
-                *items = v.into();
+            if culled {
+                renderer.enable_gpu_driven_culling();
+            } else {
+                renderer.disable_gpu_driven_culling();
             }
             frame.scene.generation += 1;
             let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
             let img = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
-            assert!(dominant(&img, 0) > 20, "{mode:?}, per_object {per_object}");
+            assert!(dominant(&img, 0) > 20, "{mode:?}, culled {culled}");
         }
     }
 }

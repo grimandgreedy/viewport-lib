@@ -65,38 +65,8 @@ pub(crate) fn mesh_vertex_buffers(culled: bool) -> [crate::gpu::VertexBufferLayo
     ]
 }
 
-/// One LDR `mesh.wgsl` pipeline, drawing into the swapchain format.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn ldr_mesh_pipeline(
-    device: &crate::gpu::Device,
-    layout: &crate::gpu::PipelineLayout,
-    shader: &crate::gpu::ShaderModule,
-    target_format: crate::gpu::TextureFormat,
-    sample_count: u32,
-    cache: Option<&crate::gpu::PipelineCache>,
-    label: &str,
-    cull: Option<crate::gpu::Face>,
-    blend: Option<crate::gpu::BlendState>,
-    topo: crate::gpu::PrimitiveTopology,
-    depth_write: bool,
-) -> crate::gpu::RenderPipeline {
-    ldr_mesh_pipeline_with(
-        device,
-        layout,
-        shader,
-        target_format,
-        sample_count,
-        cache,
-        label,
-        cull,
-        blend,
-        topo,
-        depth_write,
-        &[],
-    )
-}
-
-/// [`ldr_mesh_pipeline`] with values for the module's `override` constants.
+/// One LDR `mesh.wgsl` pipeline drawing into the surface format. `constants`
+/// sets the module's `override` constants (empty for the defaults).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn ldr_mesh_pipeline_with(
     device: &crate::gpu::Device,
@@ -237,25 +207,8 @@ pub(crate) fn hdr_mesh_pipeline_entry(
     )
 }
 
-/// `mesh_oit.wgsl`: weighted-blended OIT pipeline. Draws into the
-/// `Rgba16Float` accumulation target and the `R8Unorm` reveal target.
-///
-/// `two_sided` selects `cull_mode: None` so a two-sided transparent material
-/// (`BackfacePolicy::Identical` and the styled policies) draws its back faces;
-/// the OIT fragment shader flips the normal and applies the back-face colour via
-/// `@builtin(front_facing)`. Single-sided transparents keep back-face culling so
-/// the near sheet is not double-blended with the far one.
-pub(crate) fn build_oit_pipeline(
-    device: &crate::gpu::Device,
-    layout: &crate::gpu::PipelineLayout,
-    shader: &crate::gpu::ShaderModule,
-    two_sided: bool,
-) -> crate::gpu::RenderPipeline {
-    build_oit_pipeline_with(device, layout, shader, two_sided, "oit_pipeline", &[])
-}
-
-/// [`build_oit_pipeline`] with a label and values for the module's
-/// `override` constants.
+/// One OIT accumulate pipeline from `mesh_oit.wgsl`, with a label and values
+/// for the module's `override` constants.
 pub(crate) fn build_oit_pipeline_with(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
