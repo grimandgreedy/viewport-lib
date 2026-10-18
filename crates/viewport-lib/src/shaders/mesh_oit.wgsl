@@ -1015,9 +1015,11 @@ fn compute_lit(
         // </viewport-shade-slot:surface>
         var Lo = vec3<f32>(0.0);
         let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
+        // The item's light-channel mask, read once rather than per light.
+        let light_mask = object.object_mask;
         for (var j = 0u; j < pbr_range.count; j++) {
             let i = cluster_light_global(pbr_range, j);
-            if !light_in_channel(lights_storage[i], instances[in.obj_idx].object_mask) { continue; }
+            if !light_in_channel(lights_storage[i], light_mask) { continue; }
             let ev = eval_light(lights_storage[i], in.world_pos);
             if !ev.in_range { continue; }
             let L = ev.l;
@@ -1116,9 +1118,11 @@ fn compute_lit(
     } else {
         var total_colour_contrib = vec3<f32>(0.0);
         let bp_range = cluster_light_range(in.world_pos, lights_uniform.count);
+        // The item's light-channel mask, read once rather than per light.
+        let light_mask = object.object_mask;
         for (var j = 0u; j < bp_range.count; j++) {
             let i = cluster_light_global(bp_range, j);
-            if !light_in_channel(lights_storage[i], instances[in.obj_idx].object_mask) { continue; }
+            if !light_in_channel(lights_storage[i], light_mask) { continue; }
             let ev = eval_light(lights_storage[i], in.world_pos);
             if !ev.in_range { continue; }
             // Transparent surfaces do not participate in shadow evaluation.

@@ -1226,10 +1226,12 @@ fn compute_lit(
 
         var Lo = vec3<f32>(0.0);
         let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
+        // The item's light-channel mask, read once rather than per light.
+        let light_mask = object.object_mask;
         for (var j: u32 = 0u; j < pbr_range.count; j = j + 1u) {
             let i = cluster_light_global(pbr_range, j);
             let l = lights_storage[i];
-            if !light_in_channel(l, instances[in.obj_idx].object_mask) { continue; }
+            if !light_in_channel(l, light_mask) { continue; }
             let ev = eval_light(l, in.world_pos);
             if !ev.in_range { continue; }
             let L = ev.l;
@@ -1377,10 +1379,12 @@ fn compute_lit(
         var total_colour_contrib = vec3<f32>(0.0);
 
         let bp_range = cluster_light_range(in.world_pos, lights_uniform.count);
+        // The item's light-channel mask, read once rather than per light.
+        let light_mask = object.object_mask;
         for (var j: u32 = 0u; j < bp_range.count; j = j + 1u) {
             let i = cluster_light_global(bp_range, j);
             let l = lights_storage[i];
-            if !light_in_channel(l, instances[in.obj_idx].object_mask) { continue; }
+            if !light_in_channel(l, light_mask) { continue; }
             let ev = eval_light(l, in.world_pos);
             if !ev.in_range { continue; }
             let light_dir = ev.l;
