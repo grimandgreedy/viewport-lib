@@ -140,6 +140,10 @@ pub(crate) struct FatBound {
     group1: Option<*const crate::gpu::BindGroup>,
     deform: Option<*const crate::gpu::BindGroup>,
     geometry: Option<(crate::resources::mesh::mesh_store::MeshId, FatDraw)>,
+    /// A batch drew through a stand-in pipeline while its own compiles. A
+    /// render bundle must not keep that draw, since nothing re-records it
+    /// when the compile finishes.
+    pub(crate) stand_in: bool,
 }
 
 /// The render-pass methods a mesh draw needs, so one draw helper serves both
@@ -326,7 +330,22 @@ pub(crate) fn draw_fat_batch<'a, E: MeshDrawEncoder<'a>>(
                             .may_discard(batch.mesh_id, fat.deform_instance),
                     ..PipelineKey::default()
                 };
-                (family.opaque(key), None)
+                // A mesh with no sidecar record takes the pipeline with the
+                // sidecar reads compiled out, or the full one while that
+                // compiles: both draw the same image.
+                let lean = PipelineKey {
+                    no_sidecar: mesh.sidecar.is_none(),
+                    ..key
+                };
+                let pl = if lean.no_sidecar && *hdr {
+                    family.opaque(lean).or_else(|| {
+                        bound.stand_in = true;
+                        family.opaque(key)
+                    })
+                } else {
+                    family.opaque(key)
+                };
+                (pl, None)
             }
         }
         FatPass::Oit => {

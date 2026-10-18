@@ -1797,6 +1797,7 @@ impl DeviceResources {
             geometry,
             sidecar,
             sidecar_dirty: Vec::new(),
+            frame_lightmap_placements: Vec::new(),
             lod_groups: crate::resources::mesh::lod::LodGroupStore::new(),
             shadow: crate::resources::shadow::ShadowResources {
                 map_texture: shadow_map_texture,

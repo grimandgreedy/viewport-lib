@@ -66,7 +66,7 @@ pub use self::light_probes::{
     LightProbe, LightProbeSet, LightProbeVolume, SHCoefficients, evaluate_sh,
     project_equirect_to_sh,
 };
-pub use self::lightmap::{LightmapData, LightmapMode, LightmapPlacement};
+pub use self::lightmap::{LightmapData, LightmapMode, LightmapPlacement, LightmapPlacementId};
 pub use self::material::environment::{EnvironmentMapId, EnvironmentOptions, EnvironmentZone};
 pub use self::material::material_store::MaterialId;
 pub use self::material::texture_store::TextureId;

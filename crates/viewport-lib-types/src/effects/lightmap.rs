@@ -83,8 +83,10 @@ pub enum LightmapMode {
 /// (`lm_uv = uv1 * scale_bias.xy + scale_bias.zw`).
 ///
 /// A mesh's lightmap registration carries a placement for every draw of it;
-/// an item that sets its own draws its copy at that placement instead, so
+/// an item that names its own draws its copy at that placement instead, so
 /// repeated props share one upload and one unwrap, each copy in its own rect.
+/// A frame's placements live in one list, which items index with a
+/// [`LightmapPlacementId`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LightmapPlacement {
@@ -104,6 +106,32 @@ impl LightmapPlacement {
     /// A placement on `layer` with `scale_bias`.
     pub fn new(layer: u32, scale_bias: [f32; 4]) -> Self {
         Self { layer, scale_bias }
+    }
+}
+
+/// An index into a frame's list of [`LightmapPlacement`]s. Four bytes, and
+/// `Option<LightmapPlacementId>` is too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LightmapPlacementId(std::num::NonZeroU32);
+
+impl LightmapPlacementId {
+    /// The placement at `index` in the frame's list.
+    ///
+    /// # Panics
+    ///
+    /// If `index` is `u32::MAX` or larger.
+    pub fn from_index(index: usize) -> Self {
+        let n = u32::try_from(index)
+            .ok()
+            .and_then(|i| i.checked_add(1))
+            .expect("lightmap placement index out of range");
+        Self(std::num::NonZeroU32::new(n).expect("nonzero by construction"))
+    }
+
+    /// Position in the frame's list.
+    pub fn index(self) -> usize {
+        self.0.get() as usize - 1
     }
 }
 

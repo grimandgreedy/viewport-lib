@@ -14,7 +14,9 @@
 
 use crate::resources::TextureId;
 
-pub use viewport_lib_types::effects::lightmap::{LightmapData, LightmapMode, LightmapPlacement};
+pub use viewport_lib_types::effects::lightmap::{
+    LightmapData, LightmapMode, LightmapPlacement, LightmapPlacementId,
+};
 
 /// The primary (radiance / occlusion) texture bound at binding 17.
 pub(crate) fn primary_texture(data: LightmapData) -> TextureId {

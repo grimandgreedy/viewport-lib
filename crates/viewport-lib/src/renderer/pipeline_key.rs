@@ -53,6 +53,12 @@ pub(crate) struct PipelineKey {
     /// into this by the caller before the key is built, since they are not a
     /// property of the item itself.
     pub no_discard_eligible: bool,
+    /// The mesh has no sidecar record, so the pipeline may compile the
+    /// vertex stage's sidecar reads out. Only the HDR opaque per-object
+    /// family has these variants; every other family ignores the field and
+    /// draws with the full shader, which handles a record-less mesh at
+    /// runtime.
+    pub no_sidecar: bool,
 }
 
 impl PipelineKey {
@@ -70,10 +76,11 @@ impl PipelineKey {
     /// family offers.
     #[cfg(test)]
     pub fn all() -> impl Iterator<Item = PipelineKey> {
-        (0u8..8).map(|bits| PipelineKey {
+        (0u8..16).map(|bits| PipelineKey {
             two_sided: bits & 1 != 0,
             cutout: bits & 2 != 0,
             no_discard_eligible: bits & 4 != 0,
+            no_sidecar: bits & 8 != 0,
         })
     }
 }

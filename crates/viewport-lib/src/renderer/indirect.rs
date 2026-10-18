@@ -121,7 +121,7 @@ pub(super) struct CullResources {
     /// pyramid (shadow, single-mesh, or occlusion disabled). Keeps the bind
     /// group layout satisfied; never sampled because `do_occlusion` is 0.
     fallback_hiz_view: crate::gpu::TextureView,
-    /// One 144-byte `InstanceData` slot bound at binding 8 when a dispatch does
+    /// One `InstanceData` slot bound at binding 8 when a dispatch does
     /// not run the layer-mask reject (shadow, single-mesh, plugin submissions).
     /// Keeps the bind group layout satisfied; never read because `do_mask_cull`
     /// is 0.

@@ -24,27 +24,62 @@ pub(crate) fn build_instance_record(
     let record = mesh.and_then(|m| m.sidecar.as_ref());
     // The item's own lightmap placement, else the one its mesh's lightmap was
     // registered with.
-    let placement = item.lightmap_placement.unwrap_or_else(|| {
-        mesh.and_then(|m| m.lightmap.as_ref())
-            .map_or(crate::resources::LightmapPlacement::WHOLE, |lm| {
-                crate::resources::LightmapPlacement::new(lm.layer, lm.scale_bias)
-            })
-    });
-    let sidecar_select = {
-        use crate::resources::mesh::sidecar_pool::{StreamKind, select_word};
-        let index = |kind, name: &str| record.and_then(|r| r.find(kind, name)).map(|s| s.index);
-        let attr = item.active_attribute.as_ref().map(|a| a.name.as_str());
-        // A scalar attribute name resolves against the vertex streams first,
-        // then the per-corner ones.
-        let scalar = attr.and_then(|n| {
-            index(StreamKind::Scalar, n).or_else(|| index(StreamKind::FaceScalar, n))
+    let placement = item
+        .lightmap_placement
+        .and_then(|id| resources.frame_lightmap_placements.get(id.index()).copied())
+        .unwrap_or_else(|| {
+            mesh.and_then(|m| m.lightmap.as_ref())
+                .map_or(crate::resources::LightmapPlacement::WHOLE, |lm| {
+                    crate::resources::LightmapPlacement::new(lm.layer, lm.scale_bias)
+                })
         });
-        let face_colour = attr.and_then(|n| index(StreamKind::FaceColour, n));
+    // The streams the vertex stage reads, as first words in the record's
+    // chunk (0 for none). The shader reads them without a length, so a stream
+    // is only taken when it covers every vertex index the draw reaches: the
+    // vertex count for an indexed draw, the corner count for a per-face one.
+    let (colour_stream, warp_stream, lightmap_stream) = {
+        use crate::resources::AttributeKind as K;
+        use crate::resources::mesh::sidecar_pool::StreamKind;
+        let attr = item.active_attribute.as_ref();
+        let per_face = attr
+            .is_some_and(|a| matches!(a.kind, K::Face | K::FaceColour | K::Halfedge | K::Corner));
+        let reach = mesh.map_or(0, |m| {
+            if per_face {
+                m.index_count
+            } else {
+                m.vertex_count() as u32
+            }
+        });
+        let word = |s: Option<&crate::resources::mesh::sidecar_pool::SidecarStream>| {
+            record
+                .zip(s)
+                .filter(|(_, s)| s.len >= reach)
+                .map_or(0, |(r, s)| r.stream_word(s))
+        };
+        let find = |kind, name: &str| record.and_then(|r| r.find(kind, name));
+        let colour = attr.map_or(0, |a| {
+            if a.kind == K::FaceColour {
+                word(find(StreamKind::FaceColour, &a.name))
+            } else {
+                // A scalar name resolves against the streams of its own
+                // shape first, then the other shape when that covers the draw.
+                let (first, second) = if per_face {
+                    (StreamKind::FaceScalar, StreamKind::Scalar)
+                } else {
+                    (StreamKind::Scalar, StreamKind::FaceScalar)
+                };
+                match word(find(first, &a.name)) {
+                    0 => word(find(second, &a.name)),
+                    w => w,
+                }
+            }
+        });
         let warp = item
             .warp_attribute
             .as_deref()
-            .and_then(|n| index(StreamKind::Vector, n));
-        select_word(scalar, face_colour, warp)
+            .map_or(0, |n| word(find(StreamKind::Vector, n)));
+        let lightmap = word(record.and_then(|r| r.first_of(StreamKind::LightmapUv)));
+        (colour, warp, lightmap)
     };
     // Styled back-face `Pattern` world scale: transform the mesh AABB by this
     // instance's model to get its world extent, then divide the pattern scale
@@ -102,14 +137,18 @@ pub(crate) fn build_instance_record(
         custom_data_id: 0,
         backface_pattern_scale,
         object_mask: item.settings.visibility_mask,
-        // The per-mesh words (uv1 base, override windows) and the streams live
-        // in the mesh's sidecar record; the item picks its streams by index.
+        // The override windows stay in the mesh's sidecar record, read only
+        // under their flags; the streams the item reads are resolved here.
         sidecar_record: record.map_or(0, |r| r.base_word()),
         deform_flags: resources.deform.flag_bits(item.mesh_id),
-        sidecar_select,
+        colour_stream,
         warp_scale: item.warp_scale,
         lightmap_layer: placement.layer,
         lightmap_scale_bias: placement.scale_bias,
+        warp_stream,
+        lightmap_stream,
+        uv1_base: record.map_or(0, |r| r.header.uv1_base),
+        _pad: 0,
     }
 }
 
@@ -541,7 +580,8 @@ impl ViewportRenderer {
                 batch,
                 &fat_pass,
                 &mut bound,
-            ) {
+            ) || bound.stand_in
+            {
                 return None;
             }
         }

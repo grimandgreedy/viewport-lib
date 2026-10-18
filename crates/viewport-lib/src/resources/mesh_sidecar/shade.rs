@@ -767,6 +767,7 @@ impl MaterialPluginPipelines {
                 Some(BlendState::ALPHA_BLENDING),
                 TriangleList,
                 false,
+                &[],
             ),
             4..=7 => {
                 let two_sided = (i - Self::HDR_OPAQUE) & 1 != 0;
@@ -789,6 +790,7 @@ impl MaterialPluginPipelines {
                     None,
                     TriangleList,
                     true,
+                    &[],
                 )
             }
             _ => mp::build_oit_pipeline(

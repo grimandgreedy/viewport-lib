@@ -270,6 +270,9 @@ var<private> object: Object;
 // draw words, reached through the record at `sidecar_record`.
 @group(1) @binding(6) var<storage, read> sidecar_pool: array<u32>;
 // #include "helpers/sidecar.wgsl"
+// False in the pipelines built for meshes with no sidecar record, which
+// compiles every sidecar read out of the vertex stage.
+override SIDECAR_READS: bool = true;
 @group(1) @binding(7) var matcap_texture: texture_2d<f32>;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
@@ -427,20 +430,19 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     object = load_object_vertex(instance_index);
     var out: VertexOut;
     out.obj_idx = instance_index;
-    // The per-mesh words and the item's stream selection, from the mesh's
-    // sidecar record. A mesh without one reads nothing; each read below is
-    // behind the flag that needs it.
+    // The mesh's sidecar record and the streams this item reads, as first
+    // words in the bound chunk (0 for none). A mesh without a record reads
+    // nothing; each read below is behind the flag that needs it.
     let rec = instances[instance_index].sidecar_record;
-    let sel = instances[instance_index].sidecar_select;
-    let has_sidecar = (instances[instance_index].flags & INST_HAS_SIDECAR) != 0u;
+    let has_sidecar = SIDECAR_READS && (instances[instance_index].flags & INST_HAS_SIDECAR) != 0u;
     if has_sidecar {
-        object.uv1_base = sc_word(rec + SC_UV1_BASE);
+        object.uv1_base = instances[instance_index].uv1_base;
     }
-    if object.has_position_override != 0u {
+    if has_sidecar && object.has_position_override != 0u {
         object.position_override_base = sc_word(rec + SC_POS_BASE);
         object.position_override_len = sc_word(rec + SC_POS_LEN);
     }
-    if object.has_normal_override != 0u {
+    if has_sidecar && object.has_normal_override != 0u {
         object.normal_override_base = sc_word(rec + SC_NRM_BASE);
         object.normal_override_len = sc_word(rec + SC_NRM_LEN);
     }
@@ -461,10 +463,10 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
             );
         }
     }
-    if object.has_warp != 0u {
-        let warp = sc_stream(rec, sc_selected(sel, 2u));
-        if in.vertex_index < warp.y {
-            local_pos += sc_vec3(warp.x + in.vertex_index * 3u) * object.warp_scale;
+    if has_sidecar && object.has_warp != 0u {
+        let warp = instances[instance_index].warp_stream;
+        if warp != 0u {
+            local_pos += sc_vec3(warp + in.vertex_index * 3u) * object.warp_scale;
         }
     }
     var local_normal = in.normal;
@@ -506,16 +508,15 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     let uv1_len = arrayLength(&uv1_buf);
     let uv1_idx = min(object.uv1_base + in.vertex_index, max(uv1_len, 1u) - 1u);
     out.uv1 = uv1_buf[uv1_idx];
-    // Read scalar attribute value for this vertex, guarded by has_attribute and stream length.
+    // The scalar or face-colour stream the item is coloured by. Streams are
+    // padded to every index the draw reaches, so they are read unclamped.
     let idx = in.vertex_index;
+    let colour_stream = instances[instance_index].colour_stream;
     var has_attr = false;
     var raw_scalar = 0.0;
-    if object.has_attribute != 0u {
-        let scalar = sc_stream(rec, sc_selected(sel, 0u));
-        if scalar.y > 0u {
-            has_attr = true;
-            raw_scalar = sc_f32(scalar.x + min(idx, scalar.y - 1u));
-        }
+    if has_sidecar && object.has_attribute != 0u && object.use_face_colour == 0u && colour_stream != 0u {
+        has_attr = true;
+        raw_scalar = sc_f32(colour_stream + idx);
     }
     out.scalar_val = raw_scalar;
     // Detect NaN before interpolation can corrupt the bit pattern.
@@ -525,26 +526,22 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     // Per-face RGBA colour (FaceColour attribute kind). Indexed by vertex_index which
     // equals the sequential draw invocation counter for non-indexed face draws.
     out.face_colour = vec4<f32>(1.0);
-    if object.use_face_colour != 0u {
-        let fc = sc_stream(rec, sc_selected(sel, 1u));
-        if fc.y > 0u {
-            out.face_colour = sc_vec4(fc.x + 4u * min(idx, fc.y - 1u));
-        }
+    if has_sidecar && object.use_face_colour != 0u && colour_stream != 0u {
+        out.face_colour = sc_vec4(colour_stream + 4u * idx);
     }
-    // Lightmap UV1 in .xy (zero for non-lightmapped meshes); .z carries the
-    // atlas page for a multi-page lightmap (0 otherwise).
-    var lm_sidecar = vec4<f32>(0.0);
-    if has_sidecar {
-        let lm = sc_stream(rec, sc_word(rec + SC_LIGHTMAP_UV));
-        if lm.y > 0u {
-            lm_sidecar = sc_vec4(lm.x + 4u * min(idx, lm.y - 1u));
-        }
+    // Lightmap UV1 in .xy and the atlas page in .z, mapped through the draw's
+    // placement onto its rect and page of the atlas (both affine or flat, so
+    // they apply here exactly). Zero for a mesh without a lightmap, which
+    // never samples one.
+    out.lightmap_uv = vec2<f32>(0.0);
+    out.lightmap_page = 0.0;
+    let lm = instances[instance_index].lightmap_stream;
+    if has_sidecar && lm != 0u {
+        let lm_sidecar = sc_vec4(lm + 4u * idx);
+        let placement = instances[instance_index].lightmap_scale_bias;
+        out.lightmap_uv = lm_sidecar.xy * placement.xy + placement.zw;
+        out.lightmap_page = lm_sidecar.z + f32(instances[instance_index].lightmap_layer);
     }
-    // The draw's placement maps the unwrap onto its rect and page of the
-    // atlas; both are affine or flat, so they apply here exactly.
-    let placement = instances[instance_index].lightmap_scale_bias;
-    out.lightmap_uv = lm_sidecar.xy * placement.xy + placement.zw;
-    out.lightmap_page = lm_sidecar.z + f32(instances[instance_index].lightmap_layer);
     // <viewport-shade-slot:vertex-fetch>
     // </viewport-shade-slot:vertex-fetch>
     return out;

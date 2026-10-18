@@ -760,11 +760,14 @@ impl ViewportRenderer {
                                     object_mask: item.settings.visibility_mask,
                                     sidecar_record: 0,
                                     deform_flags: 0,
-                                    sidecar_select:
-                                        crate::resources::mesh::sidecar_pool::SELECT_NOTHING,
+                                    colour_stream: 0,
                                     warp_scale: 1.0,
                                     lightmap_layer: 0,
                                     lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
+                                    warp_stream: 0,
+                                    lightmap_stream: 0,
+                                    uv1_base: 0,
+                                    _pad: 0,
                                 }
                             } else {
                                 // A range record draws with its range's material.

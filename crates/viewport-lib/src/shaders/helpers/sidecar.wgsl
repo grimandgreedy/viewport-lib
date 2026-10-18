@@ -24,9 +24,6 @@ const SC_EXTENSION: u32 = 5u;
 const SC_LIGHTMAP_UV: u32 = 6u;
 const SC_TABLE: u32 = 8u;
 const SC_NO_STREAM: u32 = 0xffffffffu;
-// Bits per stream index in the instance selection word; all ones is none.
-const SC_SELECT_BITS: u32 = 10u;
-const SC_SELECT_NONE: u32 = 0x3ffu;
 
 fn sc_word(i: u32) -> u32 {
     return sidecar_pool[min(i, arrayLength(&sidecar_pool) - 1u)];
@@ -52,11 +49,4 @@ fn sc_stream(rec: u32, index: u32) -> vec2<u32> {
     }
     let entry = rec + SC_TABLE + 2u * index;
     return vec2<u32>(rec + sc_word(entry), sc_word(entry + 1u));
-}
-
-// The stream index in field `field` (0 scalar, 1 face colour, 2 warp) of an
-// instance selection word.
-fn sc_selected(word: u32, field: u32) -> u32 {
-    let i = (word >> (field * SC_SELECT_BITS)) & SC_SELECT_NONE;
-    return select(i, SC_NO_STREAM, i == SC_SELECT_NONE);
 }

@@ -375,15 +375,13 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     object = load_object_vertex(instance_index);
     var out: VertexOut;
     out.obj_idx = instance_index;
-    // The per-mesh words and the item's stream selection, from the mesh's
-    // sidecar record; each read is behind the flag that needs it, as in
-    // mesh.wgsl.
+    // The mesh's sidecar record and the streams this item reads, as in
+    // mesh.wgsl; each read is behind the flag that needs it.
     let rec = instances[instance_index].sidecar_record;
-    let sel = instances[instance_index].sidecar_select;
     let inst_flags = instances[instance_index].flags;
     let has_sidecar = (inst_flags & INST_HAS_SIDECAR) != 0u;
     if has_sidecar {
-        object.uv1_base = sc_word(rec + SC_UV1_BASE);
+        object.uv1_base = instances[instance_index].uv1_base;
     }
     // Override > vertex attribute, as in mesh.wgsl; warp layers on top.
     var local_pos = in.position;
@@ -397,10 +395,10 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
             );
         }
     }
-    if object.has_warp != 0u {
-        let warp = sc_stream(rec, sc_selected(sel, 2u));
-        if in.vertex_index < warp.y {
-            local_pos += sc_vec3(warp.x + in.vertex_index * 3u) * object.warp_scale;
+    if has_sidecar && object.has_warp != 0u {
+        let warp = instances[instance_index].warp_stream;
+        if warp != 0u {
+            local_pos += sc_vec3(warp + in.vertex_index * 3u) * object.warp_scale;
         }
     }
     var local_normal = in.normal;
@@ -440,40 +438,31 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     let uv1_idx = min(object.uv1_base + in.vertex_index, max(uv1_len, 1u) - 1u);
     out.uv1 = uv1_buf[uv1_idx];
     let idx = in.vertex_index;
+    let colour_stream = instances[instance_index].colour_stream;
     var has_attr = false;
     var raw_scalar = 0.0;
-    if object.has_attribute != 0u {
-        let scalar = sc_stream(rec, sc_selected(sel, 0u));
-        if scalar.y > 0u {
-            has_attr = true;
-            raw_scalar = sc_f32(scalar.x + min(idx, scalar.y - 1u));
-        }
+    if has_sidecar && object.has_attribute != 0u && object.use_face_colour == 0u && colour_stream != 0u {
+        has_attr = true;
+        raw_scalar = sc_f32(colour_stream + idx);
     }
     out.scalar_val = raw_scalar;
     let sv_bits = bitcast<u32>(raw_scalar);
     let sv_is_nan = has_attr && (sv_bits & 0x7F800000u) == 0x7F800000u && (sv_bits & 0x007FFFFFu) != 0u;
     out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
     out.face_colour = vec4<f32>(1.0);
-    if object.use_face_colour != 0u {
-        let fc = sc_stream(rec, sc_selected(sel, 1u));
-        if fc.y > 0u {
-            out.face_colour = sc_vec4(fc.x + 4u * min(idx, fc.y - 1u));
-        }
+    if has_sidecar && object.use_face_colour != 0u && colour_stream != 0u {
+        out.face_colour = sc_vec4(colour_stream + 4u * idx);
     }
-    // Lightmap UV1 in .xy (zero for non-lightmapped meshes); .z carries the
-    // atlas page for a multi-page lightmap (0 otherwise).
-    var lm_sidecar = vec4<f32>(0.0);
-    if has_sidecar {
-        let lm = sc_stream(rec, sc_word(rec + SC_LIGHTMAP_UV));
-        if lm.y > 0u {
-            lm_sidecar = sc_vec4(lm.x + 4u * min(idx, lm.y - 1u));
-        }
+    // Lightmap UV1 through the draw's placement, as in mesh.wgsl.
+    out.lightmap_uv = vec2<f32>(0.0);
+    out.lightmap_page = 0.0;
+    let lm = instances[instance_index].lightmap_stream;
+    if has_sidecar && lm != 0u {
+        let lm_sidecar = sc_vec4(lm + 4u * idx);
+        let placement = instances[instance_index].lightmap_scale_bias;
+        out.lightmap_uv = lm_sidecar.xy * placement.xy + placement.zw;
+        out.lightmap_page = lm_sidecar.z + f32(instances[instance_index].lightmap_layer);
     }
-    // The draw's placement maps the unwrap onto its rect and page of the
-    // atlas; both are affine or flat, so they apply here exactly.
-    let placement = instances[instance_index].lightmap_scale_bias;
-    out.lightmap_uv = lm_sidecar.xy * placement.xy + placement.zw;
-    out.lightmap_page = lm_sidecar.z + f32(instances[instance_index].lightmap_layer);
     // <viewport-shade-slot:vertex-fetch>
     // </viewport-shade-slot:vertex-fetch>
     return out;

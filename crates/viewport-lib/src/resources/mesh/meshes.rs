@@ -1113,9 +1113,10 @@ impl DeviceResources {
     /// per-instance lightmap-index + `LightmapScaleBias` model.
     ///
     /// The placement given here is the mesh's default. A
-    /// [`SceneRenderItem`](crate::SceneRenderItem) that sets `lightmap_placement`
-    /// draws its copy at its own placement instead, so repeated props upload
-    /// one mesh and one unwrap, each copy in its own rect of the atlas.
+    /// [`SceneRenderItem`](crate::SceneRenderItem) that names one of the
+    /// frame's `lightmap_placements` draws its copy at that placement instead,
+    /// so repeated props upload one mesh and one unwrap, each copy in its own
+    /// rect of the atlas.
     ///
     /// `uv1` is the object's own unique unwrap in `[0, 1]`, exactly as for
     /// [`set_lightmap`](Self::set_lightmap); the sub-rect transform is applied in
@@ -2078,7 +2079,10 @@ impl DeviceResources {
                         continue;
                     }
                     ranges.insert(name.clone(), range_of(v));
-                    streams.push(StreamData::from_f32(StreamKind::Scalar, name.as_str(), v));
+                    streams.push(
+                        StreamData::from_f32(StreamKind::Scalar, name.as_str(), v)
+                            .padded(vertex_count, false),
+                    );
                 }
                 AttributeData::Cell(c) => {
                     let scalars = expand_cell_to_vertex(c, positions, indices);
@@ -2126,11 +2130,10 @@ impl DeviceResources {
                         continue;
                     }
                     ranges.insert(name.clone(), range_of(h));
-                    streams.push(StreamData::from_f32(
-                        StreamKind::FaceScalar,
-                        name.as_str(),
-                        h,
-                    ));
+                    streams.push(
+                        StreamData::from_f32(StreamKind::FaceScalar, name.as_str(), h)
+                            .padded(3 * n_tris, false),
+                    );
                 }
                 AttributeData::FaceColour(colours) => {
                     face_vertices(&mut face_vbuf);
@@ -2149,11 +2152,11 @@ impl DeviceResources {
                         continue;
                     }
                     let flat: Vec<f32> = v.iter().flat_map(|&[x, y, z]| [x, y, z]).collect();
-                    streams.push(StreamData::from_f32(
-                        StreamKind::Vector,
-                        name.as_str(),
-                        &flat,
-                    ));
+                    // A vertex past the end of a short warp draws unwarped.
+                    streams.push(
+                        StreamData::from_f32(StreamKind::Vector, name.as_str(), &flat)
+                            .padded(vertex_count, true),
+                    );
                 }
             }
         }
@@ -2631,10 +2634,14 @@ impl DeviceResources {
             object_mask: !0,
             sidecar_record: 0,
             deform_flags: 0,
-            sidecar_select: crate::resources::mesh::sidecar_pool::SELECT_NOTHING,
+            colour_stream: 0,
             warp_scale: 1.0,
             lightmap_layer: 0,
             lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
+            warp_stream: 0,
+            lightmap_stream: 0,
+            uv1_base: 0,
+            _pad: 0,
         };
         let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -2746,10 +2753,14 @@ impl DeviceResources {
             object_mask: !0,
             sidecar_record: 0,
             deform_flags: 0,
-            sidecar_select: crate::resources::mesh::sidecar_pool::SELECT_NOTHING,
+            colour_stream: 0,
             warp_scale: 1.0,
             lightmap_layer: 0,
             lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
+            warp_stream: 0,
+            lightmap_stream: 0,
+            uv1_base: 0,
+            _pad: 0,
         };
         let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),
@@ -4830,8 +4841,8 @@ impl crate::resources::DeviceResources {
                 name: name.to_string(),
             })?;
 
-        // Validate same topology (stream length must match).
-        let expected_elems = stream.len as usize;
+        // Validate same topology (the length uploaded must match).
+        let expected_elems = stream.given as usize;
         if data.len() != expected_elems {
             return Err(crate::error::ViewportError::AttributeLengthMismatch {
                 expected: expected_elems,
@@ -4839,13 +4850,17 @@ impl crate::resources::DeviceResources {
             });
         }
 
-        // In-place write into the mesh's sidecar record.
-        self.sidecar.write_stream_with(
-            queue,
-            &record,
-            &stream,
-            bytemuck::cast_slice(data).to_vec(),
-        );
+        // In-place write into the mesh's sidecar record, padded as the upload
+        // was.
+        let words = crate::resources::mesh::sidecar_pool::StreamData::from_f32(
+            StreamKind::Scalar,
+            name,
+            data,
+        )
+        .padded(stream.len as usize, false)
+        .words;
+        self.sidecar
+            .write_stream_with(queue, &record, &stream, words);
         let gpu_mesh = self.mesh_store.get_mut(mesh_id).expect("checked above");
 
         // Recompute scalar range so LUT mapping stays accurate.

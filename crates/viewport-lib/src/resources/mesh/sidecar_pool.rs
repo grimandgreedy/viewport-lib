@@ -36,17 +36,6 @@ pub(crate) const NO_STREAM: u32 = u32::MAX;
 /// Words before the stream table.
 pub(crate) const HEADER_WORDS: u32 = 8;
 
-/// Bits per stream index in [`InstanceData::sidecar_select`]; the all-ones
-/// value of a field means none.
-///
-/// [`InstanceData::sidecar_select`]: crate::resources::mesh::instancing::InstanceData
-pub(crate) const SELECT_BITS: u32 = 10;
-const SELECT_NONE: u32 = (1 << SELECT_BITS) - 1;
-
-/// A selection word that reads no stream.
-pub(crate) const SELECT_NOTHING: u32 =
-    SELECT_NONE | (SELECT_NONE << SELECT_BITS) | (SELECT_NONE << (2 * SELECT_BITS));
-
 const RECORD_ALIGN: u64 = 16;
 const INITIAL_CHUNK_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -88,8 +77,11 @@ pub(crate) struct SidecarStream {
     pub index: u32,
     /// Offset in words from the record base.
     pub offset: u32,
-    /// Element count.
+    /// Element count, after padding to the mesh's vertex or corner count.
     pub len: u32,
+    /// Element count the caller supplied (`len` or fewer), which an in-place
+    /// replacement must match.
+    pub given: u32,
 }
 
 /// Stream contents handed to [`SidecarPool::build`] or [`SidecarPool::rebuild`].
@@ -97,6 +89,8 @@ pub(crate) struct StreamData {
     pub kind: StreamKind,
     pub name: String,
     pub words: Vec<u32>,
+    /// Elements the caller supplied, before [`StreamData::padded`].
+    pub given: u32,
 }
 
 impl StreamData {
@@ -105,6 +99,7 @@ impl StreamData {
             kind,
             name: name.into(),
             words: bytemuck::cast_slice(values).to_vec(),
+            given: values.len() as u32 / kind.words(),
         }
     }
 
@@ -117,7 +112,27 @@ impl StreamData {
             kind,
             name: name.into(),
             words: bytemuck::cast_slice(values).to_vec(),
+            given: values.len() as u32,
         }
+    }
+
+    /// Extend a short stream to `elements` by repeating its last element, or
+    /// with zeros when `zero` is set. The vertex stage reads a stream without
+    /// a length, so every element a draw can index must exist; repeating the
+    /// last element gives the image a clamped read used to.
+    pub(crate) fn padded(mut self, elements: usize, zero: bool) -> Self {
+        let w = self.kind.words() as usize;
+        let want = elements * w;
+        if self.words.len() < want {
+            let fill: Vec<u32> = match self.words.len().checked_sub(w) {
+                Some(last) if !zero => self.words[last..].to_vec(),
+                _ => vec![0; w],
+            };
+            while self.words.len() < want {
+                self.words.extend_from_slice(&fill);
+            }
+        }
+        self
     }
 }
 
@@ -175,6 +190,12 @@ impl SidecarRecord {
             .map(|s| s.name.as_str())
     }
 
+    /// First word of a stream in its chunk. Never 0: word 0 of a chunk is a
+    /// record header, so 0 can stand for "no stream".
+    pub(crate) fn stream_word(&self, s: &SidecarStream) -> u32 {
+        self.base_word() + s.offset
+    }
+
     /// Byte range of a stream within its chunk.
     pub(crate) fn byte_range(&self, s: &SidecarStream) -> std::ops::Range<u64> {
         let start = self.span.offset + s.offset as u64 * 4;
@@ -214,13 +235,6 @@ impl SidecarRecord {
             .flat_map(|s| [s.offset, s.len])
             .collect()
     }
-}
-
-/// The selection word of an instance: which scalar, face-colour and warp
-/// streams of its mesh's record it reads.
-pub(crate) fn select_word(scalar: Option<u32>, face_colour: Option<u32>, warp: Option<u32>) -> u32 {
-    let field = |i: Option<u32>| i.filter(|&i| i < SELECT_NONE).unwrap_or(SELECT_NONE);
-    field(scalar) | (field(face_colour) << SELECT_BITS) | (field(warp) << (2 * SELECT_BITS))
 }
 
 enum Op {
@@ -292,7 +306,7 @@ impl SidecarPool {
         let (layout, total) = Self::layout(
             streams
                 .iter()
-                .map(|s| (s.kind, s.name.clone(), s.words.len() as u32)),
+                .map(|s| (s.kind, s.name.clone(), s.words.len() as u32, s.given)),
         );
         let span = self.slab.alloc(device, total as u64 * 4);
         let record = SidecarRecord {
@@ -326,10 +340,10 @@ impl SidecarPool {
         let kept: Vec<&SidecarStream> = old.streams.iter().filter(|s| keep(s)).collect();
         let (layout, total) = Self::layout(
             kept.iter()
-                .map(|s| (s.kind, s.name.clone(), s.len * s.kind.words()))
+                .map(|s| (s.kind, s.name.clone(), s.len * s.kind.words(), s.given))
                 .chain(
                     add.iter()
-                        .map(|s| (s.kind, s.name.clone(), s.words.len() as u32)),
+                        .map(|s| (s.kind, s.name.clone(), s.words.len() as u32, s.given)),
                 ),
         );
         let span = self.slab.alloc(device, total as u64 * 4);
@@ -509,24 +523,58 @@ impl SidecarPool {
         !self.ops.is_empty()
     }
 
-    /// Stream layout for `(kind, name, words)` entries: offsets from the
-    /// record base, and the record's total word count including the table.
+    /// Stream layout for `(kind, name, words, given)` entries: offsets from
+    /// the record base, and the record's total word count including the table.
     fn layout(
-        entries: impl Iterator<Item = (StreamKind, String, u32)>,
+        entries: impl Iterator<Item = (StreamKind, String, u32, u32)>,
     ) -> (Vec<SidecarStream>, u32) {
         let entries: Vec<_> = entries.collect();
         let mut offset = HEADER_WORDS + 2 * entries.len() as u32;
         let mut out = Vec::with_capacity(entries.len());
-        for (index, (kind, name, words)) in entries.into_iter().enumerate() {
+        for (index, (kind, name, words, given)) in entries.into_iter().enumerate() {
             out.push(SidecarStream {
                 kind,
                 name,
                 index: index as u32,
                 offset,
                 len: words / kind.words(),
+                given,
             });
             offset += words;
         }
         (out, offset)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn padding_repeats_the_last_element() {
+        let s = StreamData::from_vec4(StreamKind::FaceColour, "c", &[[1.0, 2.0, 3.0, 4.0]])
+            .padded(3, false);
+        let v: &[f32] = bytemuck::cast_slice(&s.words);
+        assert_eq!(
+            v,
+            &[1.0, 2.0, 3.0, 4.0, 1.0, 2.0, 3.0, 4.0, 1.0, 2.0, 3.0, 4.0]
+        );
+        assert_eq!(s.given, 1);
+    }
+
+    #[test]
+    fn padding_with_zeros_and_from_empty() {
+        let s = StreamData::from_f32(StreamKind::Vector, "w", &[1.0, 2.0, 3.0]).padded(2, true);
+        let v: &[f32] = bytemuck::cast_slice(&s.words);
+        assert_eq!(v, &[1.0, 2.0, 3.0, 0.0, 0.0, 0.0]);
+        let e = StreamData::from_f32(StreamKind::Scalar, "e", &[]).padded(2, false);
+        assert_eq!(e.words, vec![0, 0]);
+    }
+
+    #[test]
+    fn a_long_stream_is_left_alone() {
+        let s = StreamData::from_f32(StreamKind::Scalar, "s", &[1.0, 2.0, 3.0]).padded(2, false);
+        assert_eq!(s.words.len(), 3);
+        assert_eq!(s.given, 3);
     }
 }

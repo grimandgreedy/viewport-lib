@@ -868,6 +868,16 @@ pub fn render_pipeline(
     device: &crate::gpu::Device,
     desc: RenderPipelineDesc,
 ) -> crate::gpu::RenderPipeline {
+    render_pipeline_with_constants(device, desc, &[])
+}
+
+/// [`render_pipeline`] with values for the vertex module's `override`
+/// constants.
+pub(crate) fn render_pipeline_with_constants(
+    device: &crate::gpu::Device,
+    desc: RenderPipelineDesc,
+    vertex_constants: &[(&str, f64)],
+) -> crate::gpu::RenderPipeline {
     // wgpu 30 changed `VertexState::buffers` to `&[Option<VertexBufferLayout>]`;
     // 27 and 29 take `&[VertexBufferLayout]`. The wrapped Vec is a local here so
     // it outlives the `VertexState` it is borrowed into.
@@ -881,7 +891,10 @@ pub fn render_pipeline(
         buffers: desc.vertex_buffers,
         #[cfg(wgpu30)]
         buffers: &vbufs,
-        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+        compilation_options: crate::gpu::PipelineCompilationOptions {
+            constants: vertex_constants,
+            ..Default::default()
+        },
     };
     let build_start = web_time::Instant::now();
     let build_label = desc.label;

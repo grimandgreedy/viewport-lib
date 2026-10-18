@@ -1763,10 +1763,14 @@ impl DeviceResources {
                 object_mask: item.settings.visibility_mask,
                 sidecar_record: 0,
                 deform_flags: 0,
-                sidecar_select: crate::resources::mesh::sidecar_pool::SELECT_NOTHING,
+                colour_stream: 0,
                 warp_scale: 1.0,
                 lightmap_layer: 0,
                 lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
+                warp_stream: 0,
+                lightmap_stream: 0,
+                uv1_base: 0,
+                _pad: 0,
             }
         };
         let instances: Vec<InstanceData> = match indices {
@@ -2066,10 +2070,14 @@ const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 368);
 /// - object_mask:            u32      =  4 bytes  offset 104
 /// - sidecar_record:         u32      =  4 bytes  offset 108
 /// - deform_flags:           u32      =  4 bytes  offset 112
-/// - sidecar_select:         u32      =  4 bytes  offset 116
+/// - colour_stream:          u32      =  4 bytes  offset 116
 /// - warp_scale:             f32      =  4 bytes  offset 120
 /// - lightmap_layer:         u32      =  4 bytes  offset 124
 /// - lightmap_scale_bias:    [f32;4]  = 16 bytes  offset 128
+/// - warp_stream:            u32      =  4 bytes  offset 144
+/// - lightmap_stream:        u32      =  4 bytes  offset 148
+/// - uv1_base:               u32      =  4 bytes  offset 152
+/// - _pad:                   u32      =  4 bytes  offset 156
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct InstanceData {
@@ -2102,19 +2110,29 @@ pub(crate) struct InstanceData {
     pub(crate) sidecar_record: u32,
     /// Bit `i` set when deformer slot `i` is active for this draw.
     pub(crate) deform_flags: u32,
-    /// The record streams this item reads: scalar, face colour and warp
-    /// stream indices in 10-bit fields, all ones for none
-    /// ([`sidecar_pool::select_word`](crate::resources::mesh::sidecar_pool::select_word)).
-    pub(crate) sidecar_select: u32,
+    /// First word, in the bound sidecar chunk, of the stream the item is
+    /// coloured by: its scalar (vertex or per-corner) or face-colour stream. 0
+    /// for none. Streams are padded to the elements a draw can index, so the
+    /// vertex stage reads them without a length.
+    pub(crate) colour_stream: u32,
     /// Vertex warp scale, read when [`instance_flags::HAS_WARP`] is set.
     pub(crate) warp_scale: f32,
     /// Base lightmap atlas page of this draw, added to the per-vertex page.
     pub(crate) lightmap_layer: u32,
     /// This draw's lightmap sub-rect: `lm_uv = uv1 * .xy + .zw`.
     pub(crate) lightmap_scale_bias: [f32; 4],
+    /// First word of the warp vector stream, 0 for none.
+    pub(crate) warp_stream: u32,
+    /// First word of the mesh's lightmap UV1 stream, 0 for none.
+    pub(crate) lightmap_stream: u32,
+    /// First vertex of the mesh in its slab chunk, indexing the uv1 stream
+    /// (0 without a second UV set). Draws that bind a mesh sub-slice see a
+    /// mesh-local vertex index.
+    pub(crate) uv1_base: u32,
+    pub(crate) _pad: u32,
 }
 
-const _: () = assert!(std::mem::size_of::<InstanceData>() == 144);
+const _: () = assert!(std::mem::size_of::<InstanceData>() == 160);
 
 /// Bit lanes of [`InstanceData::flags`]. The WGSL `INST_*` constants in
 /// `shaders/helpers/instance_data.wgsl` mirror these.

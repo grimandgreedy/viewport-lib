@@ -276,6 +276,10 @@ pub struct SceneFrame {
     ///
     /// Empty by default; an empty list adds no pass and no allocations.
     pub foreground_items: Vec<SceneRenderItem>,
+    /// Lightmap placements the frame's items name through
+    /// [`SceneRenderItem::lightmap_placement`]. Kept here rather than on each
+    /// item so an item stays small; empty by default.
+    pub lightmap_placements: Vec<crate::resources::LightmapPlacement>,
     /// Plugin item collections, keyed by
     /// [`ItemTypePlugin::type_name`](crate::plugin_api::ItemTypePlugin::type_name).
     ///
@@ -298,6 +302,7 @@ impl Default for SceneFrame {
             mesh_instances: Vec::new(),
             lights: Vec::new(),
             foreground_items: Vec::new(),
+            lightmap_placements: Vec::new(),
             plugin_items: std::collections::HashMap::new(),
         }
     }
@@ -348,6 +353,16 @@ impl SceneFrame {
     /// the natural choice when items are derived from scene writeback.
     pub fn with_generation(mut self, generation: u64) -> Self {
         self.generation = generation;
+        self
+    }
+
+    /// Set the lightmap placements the items index (see
+    /// [`SceneRenderItem::lightmap_placement`]).
+    pub fn with_lightmap_placements(
+        mut self,
+        placements: Vec<crate::resources::LightmapPlacement>,
+    ) -> Self {
+        self.lightmap_placements = placements;
         self
     }
 

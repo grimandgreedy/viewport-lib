@@ -66,6 +66,8 @@ pub(crate) fn ldr_mesh_pipeline(
 }
 
 /// One HDR `mesh.wgsl` pipeline, drawing into the Rgba16Float intermediate.
+/// `vertex_constants` sets the vertex stage's `override` constants (empty for
+/// the defaults).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn hdr_mesh_pipeline(
     device: &crate::gpu::Device,
@@ -76,8 +78,9 @@ pub(crate) fn hdr_mesh_pipeline(
     blend: Option<crate::gpu::BlendState>,
     topo: crate::gpu::PrimitiveTopology,
     depth_write: bool,
+    vertex_constants: &[(&str, f64)],
 ) -> crate::gpu::RenderPipeline {
-    crate::resources::builders::render_pipeline(
+    crate::resources::builders::render_pipeline_with_constants(
         device,
         crate::resources::builders::RenderPipelineDesc {
             label,
@@ -110,6 +113,7 @@ pub(crate) fn hdr_mesh_pipeline(
             },
             cache: None,
         },
+        vertex_constants,
     )
 }
 

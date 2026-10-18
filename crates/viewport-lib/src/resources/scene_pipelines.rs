@@ -37,11 +37,11 @@ pub(crate) struct SceneCorePipelines {
     /// The four LDR pipelines (solid, two-sided, transparent, wireframe),
     /// drawing into the swapchain format.
     pub(crate) ldr: Option<LazyFamily<LdrMeshContext, 4>>,
-    /// The HDR family: four opaque pipelines keyed by facedness and
-    /// discard-free early-Z eligibility (`cutout` is not a real axis: the
-    /// opaque fragment shader branches on a per-object uniform), transparent,
-    /// wireframe, and the cap-fill overlay.
-    pub(crate) hdr: Option<LazyFamily<HdrMeshContext, 7>>,
+    /// The HDR family: eight opaque pipelines keyed by facedness, discard-free
+    /// early-Z eligibility and whether the mesh has a sidecar record (`cutout`
+    /// is not a real axis: the opaque fragment shader branches on a
+    /// per-object uniform), transparent, wireframe, and the cap-fill overlay.
+    pub(crate) hdr: Option<LazyFamily<HdrMeshContext, 11>>,
 }
 
 const LDR_SOLID: usize = 0;
@@ -49,11 +49,19 @@ const LDR_SOLID_TWO_SIDED: usize = 1;
 const LDR_TRANSPARENT: usize = 2;
 const LDR_WIREFRAME: usize = 3;
 
-/// Four slots: bit 0 is two-sided, bit 1 is discard-free.
+/// Eight slots: bit 0 is two-sided, bit 1 is discard-free, bit 2 is a mesh
+/// with no sidecar record (the vertex stage's sidecar reads compiled out).
 const HDR_OPAQUE: usize = 0;
-const HDR_TRANSPARENT: usize = 4;
-const HDR_WIREFRAME: usize = 5;
-const HDR_OVERLAY: usize = 6;
+const HDR_TRANSPARENT: usize = 8;
+const HDR_WIREFRAME: usize = 9;
+const HDR_OVERLAY: usize = 10;
+
+fn hdr_opaque_slot(key: PipelineKey) -> usize {
+    HDR_OPAQUE
+        + key.two_sided as usize
+        + 2 * key.no_discard_eligible as usize
+        + 4 * key.no_sidecar as usize
+}
 
 fn build_ldr(ctx: &LdrMeshContext, i: usize) -> crate::gpu::RenderPipeline {
     use crate::gpu::{BlendState, Face, PrimitiveTopology};
@@ -109,7 +117,7 @@ fn build_ldr(ctx: &LdrMeshContext, i: usize) -> crate::gpu::RenderPipeline {
 
 fn build_hdr(ctx: &HdrMeshContext, i: usize) -> crate::gpu::RenderPipeline {
     use crate::gpu::{BlendState, Face, PrimitiveTopology};
-    let make = |shader, label, cull, blend, topo, depth_write| {
+    let make = |shader, label, cull, blend, topo, depth_write, constants: &[(&str, f64)]| {
         crate::resources::mesh::mesh_pipelines::hdr_mesh_pipeline(
             &ctx.device,
             &ctx.layout,
@@ -119,12 +127,14 @@ fn build_hdr(ctx: &HdrMeshContext, i: usize) -> crate::gpu::RenderPipeline {
             blend,
             topo,
             depth_write,
+            constants,
         )
     };
     match i {
-        0..=3 => {
+        0..=7 => {
             let two_sided = (i - HDR_OPAQUE) & 1 != 0;
             let nodiscard = (i - HDR_OPAQUE) & 2 != 0;
+            let no_sidecar = (i - HDR_OPAQUE) & 4 != 0;
             // Early-Z twin: identical shading with every `discard;` removed,
             // valid only for draws that would not have discarded (see the
             // per-object gate in hdr_path.rs).
@@ -133,11 +143,22 @@ fn build_hdr(ctx: &HdrMeshContext, i: usize) -> crate::gpu::RenderPipeline {
             } else {
                 ctx.shader.get()
             };
-            let label = match (two_sided, nodiscard) {
-                (false, false) => "hdr_solid_pipeline",
-                (true, false) => "hdr_solid_two_sided_pipeline",
-                (false, true) => "hdr_solid_nodiscard_pipeline",
-                (true, true) => "hdr_solid_two_sided_nodiscard_pipeline",
+            let label = match (two_sided, nodiscard, no_sidecar) {
+                (false, false, false) => "hdr_solid_pipeline",
+                (true, false, false) => "hdr_solid_two_sided_pipeline",
+                (false, true, false) => "hdr_solid_nodiscard_pipeline",
+                (true, true, false) => "hdr_solid_two_sided_nodiscard_pipeline",
+                (false, false, true) => "hdr_solid_nosidecar_pipeline",
+                (true, false, true) => "hdr_solid_two_sided_nosidecar_pipeline",
+                (false, true, true) => "hdr_solid_nodiscard_nosidecar_pipeline",
+                (true, true, true) => "hdr_solid_two_sided_nodiscard_nosidecar_pipeline",
+            };
+            // A mesh with no record reads no sidecar words, so its pipelines
+            // compile them out.
+            let constants: &[(&str, f64)] = if no_sidecar {
+                &[("SIDECAR_READS", 0.0)]
+            } else {
+                &[]
             };
             make(
                 shader,
@@ -146,6 +167,7 @@ fn build_hdr(ctx: &HdrMeshContext, i: usize) -> crate::gpu::RenderPipeline {
                 None,
                 PrimitiveTopology::TriangleList,
                 true,
+                constants,
             )
         }
         HDR_TRANSPARENT => make(
@@ -155,6 +177,7 @@ fn build_hdr(ctx: &HdrMeshContext, i: usize) -> crate::gpu::RenderPipeline {
             Some(BlendState::ALPHA_BLENDING),
             PrimitiveTopology::TriangleList,
             false,
+            &[],
         ),
         HDR_WIREFRAME => make(
             ctx.shader.get(),
@@ -163,6 +186,7 @@ fn build_hdr(ctx: &HdrMeshContext, i: usize) -> crate::gpu::RenderPipeline {
             None,
             PrimitiveTopology::LineList,
             true,
+            &[],
         ),
         _ => crate::resources::builders::render_pipeline(
             &ctx.device,
@@ -227,12 +251,10 @@ impl SceneCorePipelines {
         self.ldr.as_ref()?.get(LDR_WIREFRAME)
     }
 
-    /// The HDR opaque pipeline for `key`: facedness and discard-free
-    /// eligibility.
+    /// The HDR opaque pipeline for `key`: facedness, discard-free
+    /// eligibility and whether the mesh has a sidecar record.
     pub(crate) fn hdr_opaque(&self, key: PipelineKey) -> Option<&crate::gpu::RenderPipeline> {
-        self.hdr
-            .as_ref()?
-            .get(HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize)
+        self.hdr.as_ref()?.get(hdr_opaque_slot(key))
     }
 
     pub(crate) fn hdr_transparent(&self) -> Option<&crate::gpu::RenderPipeline> {
@@ -251,11 +273,9 @@ impl SceneCorePipelines {
     /// built, without starting it.
     pub(crate) fn opaque_ready(&self, hdr: bool, key: PipelineKey) -> bool {
         if hdr {
-            self.hdr.as_ref().is_some_and(|f| {
-                f.is_ready(
-                    HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize,
-                )
-            })
+            self.hdr
+                .as_ref()
+                .is_some_and(|f| f.is_ready(hdr_opaque_slot(key)))
         } else {
             self.ldr.as_ref().is_some_and(|f| {
                 f.is_ready(if key.two_sided {

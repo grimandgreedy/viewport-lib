@@ -1,12 +1,12 @@
 // One record per mesh draw instance, in the instance storage buffer every
 // mesh draw binds at group 1 binding 0 and selects with
 // @builtin(instance_index). Layout matches the renderer's `InstanceData`
-// (144 bytes); keep the offsets in step with its doc table.
+// (160 bytes); keep the offsets in step with its doc table.
 //
-// Material scalars live in `material_gpu_buf`, read via `material_id`, and
-// per-mesh words (uv1 base, override windows) in the mesh's sidecar record.
-// The sidecar words are read by the draws that bind a mesh sub-slice and its
-// record chunk; the chunk-bound instanced draws ignore them.
+// Material scalars live in `material_gpu_buf`, read via `material_id`, and the
+// override windows in the mesh's sidecar record. The sidecar and stream words
+// are read by the draws that bind a mesh sub-slice and its record chunk; the
+// chunk-bound instanced draws ignore them.
 struct InstanceData {
     model: mat4x4<f32>,                   // offset 0
     colour: vec4<f32>,                    // offset 64 : base colour, opacity in .a
@@ -19,10 +19,14 @@ struct InstanceData {
     object_mask: u32,                     // offset 104 : layer mask, AND-tested per light
     sidecar_record: u32,                  // offset 108 : record base word in the bound sidecar chunk
     deform_flags: u32,                    // offset 112 : bit i set when deformer slot i is active
-    sidecar_select: u32,                  // offset 116 : scalar, face colour, warp stream indices (10 bits each)
+    colour_stream: u32,                   // offset 116 : first chunk word of the scalar or face-colour stream, 0 none
     warp_scale: f32,                      // offset 120 : vertex warp scale (INST_HAS_WARP)
     lightmap_layer: u32,                  // offset 124 : base lightmap atlas page
     lightmap_scale_bias: vec4<f32>,       // offset 128 : lm_uv = uv1 * .xy + .zw
+    warp_stream: u32,                     // offset 144 : first chunk word of the warp stream, 0 none
+    lightmap_stream: u32,                 // offset 148 : first chunk word of the lightmap UV1 stream, 0 none
+    uv1_base: u32,                        // offset 152 : first vertex of the mesh in its slab chunk
+    _pad: u32,                            // offset 156
 };
 
 const INST_SELECTED: u32 = 1u;

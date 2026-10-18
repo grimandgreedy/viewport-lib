@@ -397,18 +397,21 @@ fn copies_of_a_lightmapped_mesh_sample_their_own_rects() {
         &mut renderer,
         Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0)),
     );
-    let copy_at = |x: f32, bias_u: f32| {
+    let copy_at = |x: f32, placement: usize| {
         let mut it = SceneRenderItem::default();
         it.mesh_id = quad;
         it.material = white;
         it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
-        it.lightmap_placement = Some(viewport_lib::resources::LightmapPlacement::new(
-            0,
-            [0.5, 1.0, bias_u, 0.0],
+        it.lightmap_placement = Some(viewport_lib::resources::LightmapPlacementId::from_index(
+            placement,
         ));
         it
     };
-    let mut frame = frame_of(vec![copy_at(-0.6, 0.0), copy_at(0.6, 0.5)]);
+    let mut frame = frame_of(vec![copy_at(-0.6, 0), copy_at(0.6, 1)]);
+    frame.scene.lightmap_placements = vec![
+        viewport_lib::resources::LightmapPlacement::new(0, [0.5, 1.0, 0.0, 0.0]),
+        viewport_lib::resources::LightmapPlacement::new(0, [0.5, 1.0, 0.5, 0.0]),
+    ];
     frame.camera.render_camera = {
         let mut cam = Camera::default();
         cam.orientation = glam::Quat::IDENTITY;
@@ -436,5 +439,124 @@ fn copies_of_a_lightmapped_mesh_sample_their_own_rects() {
     assert!(
         right[1] > right[0] + 60,
         "the right copy samples the green rect, got {right:?}"
+    );
+}
+
+/// A per-object draw of a mesh with no sidecar record takes the pipeline with
+/// the sidecar reads compiled out; a mesh with a record keeps the full one.
+#[test]
+fn a_mesh_without_a_record_draws_through_the_lean_pipeline() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    viewport_lib::resources::build_log::enable();
+    let plain = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let mut data = box_mesh();
+    data.attributes.insert(
+        "heat".to_string(),
+        AttributeData::Vertex(vec![0.5; data.positions.len()]),
+    );
+    let with_record = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &data)
+        .unwrap();
+    let material = upload_material(&mut renderer, Material::default());
+    let built = |renderer: &mut ViewportRenderer, mesh_id| {
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_id;
+        item.material = material;
+        item.settings.force_per_object = true;
+        let frame = frame_of(vec![item]);
+        let _ = viewport_lib::resources::build_log::drain();
+        let lit = centre_brightness(&renderer.render_offscreen(&device, &queue, &frame, W, H));
+        assert!(lit > 30.0, "the box draws ({lit:.1})");
+        viewport_lib::resources::build_log::drain()
+            .into_iter()
+            .map(|(label, _)| label)
+            .filter(|l| l.starts_with("hdr_solid"))
+            .collect::<Vec<_>>()
+    };
+    let lean = built(&mut renderer, plain);
+    assert!(
+        lean.iter().any(|l| l.contains("nosidecar")),
+        "a mesh without a record built {lean:?}"
+    );
+    let full = built(&mut renderer, with_record);
+    assert!(
+        full.iter().any(|l| !l.contains("nosidecar")),
+        "a mesh with a record built {full:?}"
+    );
+}
+
+/// A vertex scalar shorter than the mesh is padded with its last value at
+/// upload, which draws what clamping the read to the last element did, and an
+/// in-place replace still takes the length that was uploaded.
+#[test]
+fn a_short_vertex_scalar_draws_like_its_last_value() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let upload = |renderer: &mut ViewportRenderer, values: Vec<f32>| {
+        let mut data = box_mesh();
+        data.attributes
+            .insert("heat".to_string(), AttributeData::Vertex(values));
+        renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &data)
+            .unwrap()
+    };
+    let n = box_mesh().positions.len();
+    let short = upload(&mut renderer, vec![0.2, 0.9]);
+    let full = upload(&mut renderer, {
+        let mut v = vec![0.9; n];
+        v[0] = 0.2;
+        v
+    });
+    let material = upload_material(&mut renderer, Material::default());
+    let viridis = renderer
+        .resources()
+        .builtin_colourmap_id(viewport_lib::BuiltinColourmap::Viridis);
+    let draw = |renderer: &mut ViewportRenderer, mesh_id| {
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_id;
+        item.material = material;
+        item.settings.unlit = true;
+        item.settings.force_per_object = true;
+        item.active_attribute = Some(AttributeRef {
+            name: "heat".to_string(),
+            kind: AttributeKind::Vertex,
+        });
+        item.scalar_range = Some((0.0, 1.0));
+        item.colourmap_id = Some(viridis);
+        renderer.render_offscreen(&device, &queue, &frame_of(vec![item]), W, H)
+    };
+    let a = draw(&mut renderer, short);
+    let b = draw(&mut renderer, full);
+    assert_eq!(
+        a, b,
+        "the short scalar drew differently from its padded form"
+    );
+
+    assert!(
+        renderer
+            .resources_mut()
+            .replace_attribute(&queue, short, "heat", &[0.9, 0.2])
+            .is_ok(),
+        "a replace with the uploaded length is accepted"
+    );
+    assert!(
+        renderer
+            .resources_mut()
+            .replace_attribute(&queue, short, "heat", &vec![0.5; n])
+            .is_err(),
+        "a replace with a different length is rejected"
     );
 }

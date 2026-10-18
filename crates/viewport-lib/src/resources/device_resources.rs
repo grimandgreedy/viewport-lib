@@ -497,6 +497,9 @@ pub struct DeviceResources {
     /// Meshes whose record head (override windows) must be rewritten at the
     /// next `process_uploads`.
     pub(crate) sidecar_dirty: Vec<crate::resources::mesh::mesh_store::MeshId>,
+    /// This frame's `SceneFrame::lightmap_placements`, copied at the start of
+    /// prepare so the instance packer can resolve an item's placement id.
+    pub(crate) frame_lightmap_placements: Vec<crate::resources::LightmapPlacement>,
     /// Registered LOD groups. Each groups several meshes that are detail
     /// variants of one object; the renderer picks a level per frame.
     pub(crate) lod_groups: crate::resources::mesh::lod::LodGroupStore,

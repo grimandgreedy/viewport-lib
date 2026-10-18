@@ -204,6 +204,10 @@ impl ViewportRenderer {
         let hdr_family = self.draws_hdr(frame);
         let resources = &mut self.resources;
         let lighting = scene_fx.lighting;
+        resources.frame_lightmap_placements.clear();
+        resources
+            .frame_lightmap_placements
+            .extend_from_slice(&frame.scene.lightmap_placements);
 
         // Read scene items from the surface submission, then extend with the
         // boundary draws contributed by opaque volume meshes (items in

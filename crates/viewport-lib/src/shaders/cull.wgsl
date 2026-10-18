@@ -105,7 +105,7 @@ struct DrawIndirect {
 // opt-out), [1] = instances surviving the frustum test (before occlusion).
 // The drawn count comes from the indirect args. Cleared each main dispatch.
 @group(0) @binding(7) var<storage, read_write> cull_stats:         array<atomic<u32>, 2>;
-// Per-instance records (144-byte stride), read only for `object_mask` in the
+// Per-instance records (160-byte stride), read only for `object_mask` in the
 // layer-mask reject. Bound with a 1-element fallback when do_mask_cull is off
 // (shadow / single-mesh / plugin dispatches) so the layout is always satisfied.
 @group(0) @binding(8) var<storage, read>       instance_data:      array<InstanceData>;
