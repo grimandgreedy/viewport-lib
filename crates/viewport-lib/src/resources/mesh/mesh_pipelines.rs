@@ -76,13 +76,38 @@ fn plain_entries(constants: &[(&str, f64)]) -> bool {
     off("FEAT_COLOUR_STREAM") && off("FEAT_LIGHTMAP")
 }
 
-/// The vertex entry of a mesh pipeline: GPU-culled or direct, plain or full.
-fn mesh_vertex_entry(culled: bool, plain: bool) -> &'static str {
-    match (culled, plain) {
-        (false, false) => "vs_main",
-        (true, false) => "vs_main_cull",
-        (false, true) => "vs_main_plain",
-        (true, true) => "vs_main_cull_plain",
+/// Whether a mesh pipeline built with `constants` draws through the `_lean`
+/// vertex entries: on top of [`plain_entries`], its feature set reads no
+/// record word (no record, warp, override or deform), so it declares vertex
+/// buffer slot 0 alone.
+fn lean_entries(constants: &[(&str, f64)]) -> bool {
+    let off = |name: &str| constants.iter().any(|&(n, v)| n == name && v == 0.0);
+    plain_entries(constants)
+        && ["FEAT_RECORD", "FEAT_WARP", "FEAT_OVERRIDES", "FEAT_DEFORM"]
+            .into_iter()
+            .all(off)
+}
+
+/// The vertex buffers a mesh pipeline declares: both slots, or for a lean
+/// pipeline slot 0 alone. The draw binds slot 1 either way; a bound slot the
+/// pipeline does not declare is ignored.
+fn mesh_vertex_state<'a>(
+    buffers: &'a [crate::gpu::VertexBufferLayout<'static>; 2],
+    lean: bool,
+) -> &'a [crate::gpu::VertexBufferLayout<'static>] {
+    if lean { &buffers[..1] } else { &buffers[..] }
+}
+
+/// The vertex entry of a mesh pipeline: GPU-culled or direct; full, plain or
+/// lean.
+fn mesh_vertex_entry(culled: bool, plain: bool, lean: bool) -> &'static str {
+    match (culled, plain, lean) {
+        (false, _, true) => "vs_main_lean",
+        (true, _, true) => "vs_main_cull_lean",
+        (false, true, false) => "vs_main_plain",
+        (true, true, false) => "vs_main_cull_plain",
+        (false, false, false) => "vs_main",
+        (true, false, false) => "vs_main_cull",
     }
 }
 
@@ -106,14 +131,15 @@ pub(crate) fn ldr_mesh_pipeline_with(
     let depth_stencil =
         crate::resources::builders::scene_depth_stencil(true, crate::gpu::CompareFunction::Less);
     let plain = plain_entries(constants);
+    let lean = lean_entries(constants);
     crate::resources::builders::render_pipeline_with_constants(
         device,
         crate::resources::builders::RenderPipelineDesc {
             label,
             layout,
             vertex_module: shader,
-            vertex_entry: mesh_vertex_entry(false, plain),
-            vertex_buffers: &mesh_vertex_buffers(false),
+            vertex_entry: mesh_vertex_entry(false, plain, lean),
+            vertex_buffers: mesh_vertex_state(&mesh_vertex_buffers(false), lean),
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
                 entry_point: Some(if plain { "fs_main_plain" } else { "fs_main" }),
@@ -193,14 +219,15 @@ pub(crate) fn hdr_mesh_pipeline_entry(
     culled: bool,
 ) -> crate::gpu::RenderPipeline {
     let plain = plain_entries(constants);
+    let lean = lean_entries(constants);
     crate::resources::builders::render_pipeline_with_constants(
         device,
         crate::resources::builders::RenderPipelineDesc {
             label,
             layout,
             vertex_module: shader,
-            vertex_entry: mesh_vertex_entry(culled, plain),
-            vertex_buffers: &mesh_vertex_buffers(culled),
+            vertex_entry: mesh_vertex_entry(culled, plain, lean),
+            vertex_buffers: mesh_vertex_state(&mesh_vertex_buffers(culled), lean),
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
                 entry_point: Some(if plain { "fs_main_plain" } else { "fs_main" }),
@@ -255,6 +282,7 @@ pub(crate) fn build_oit_pipeline_entry(
     culled: bool,
 ) -> crate::gpu::RenderPipeline {
     let plain = plain_entries(constants);
+    let lean = lean_entries(constants);
     let accum_blend = crate::gpu::BlendState {
         color: crate::gpu::BlendComponent {
             src_factor: crate::gpu::BlendFactor::One,
@@ -289,8 +317,8 @@ pub(crate) fn build_oit_pipeline_entry(
             label,
             layout,
             vertex_module: shader,
-            vertex_entry: mesh_vertex_entry(culled, plain),
-            vertex_buffers: &mesh_vertex_buffers(culled),
+            vertex_entry: mesh_vertex_entry(culled, plain, lean),
+            vertex_buffers: mesh_vertex_state(&mesh_vertex_buffers(culled), lean),
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
                 entry_point: Some(if plain {

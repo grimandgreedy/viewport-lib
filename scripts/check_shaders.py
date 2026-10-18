@@ -133,14 +133,15 @@ async function checkFeaturePipelines(device, module, name, code) {
   if (code.includes("fn vs_main_cull")) {
     entries.push(["vs_main_cull", words(24, [0, 4, 8, 12, 16, 20])]);
   }
-  // With every feature off the renderer draws through the `_plain` entries,
-  // which leave out the varyings only colour streams and lightmaps read.
-  const plain = code.includes("fn vs_main_plain");
+  // With every feature off the renderer draws through the `_lean` vertex
+  // entries (no record words, so slot 0 alone) and the `_plain` fragment
+  // entries (no colour-stream or lightmap varyings).
+  const plain = code.includes("fn vs_main_lean");
   for (const [vsEntry, slot1] of entries) {
     for (const on of [true, false]) {
       const constants = Object.fromEntries(feats.map((f) => [f, on ? 1 : 0]));
       const suffix = !on && plain ? "_plain" : "";
-      const entryPoint = vsEntry + suffix;
+      const entryPoint = vsEntry + (suffix ? "_lean" : "");
       const fsEntry = (oit ? "fs_oit_main" : "fs_main") + suffix;
       const label = name + " " + entryPoint + (on ? " (every feature)" : " (no features)");
       device.pushErrorScope("validation");
@@ -148,7 +149,8 @@ async function checkFeaturePipelines(device, module, name, code) {
         await device.createRenderPipelineAsync({
           label,
           layout: "auto",
-          vertex: { module, entryPoint, buffers: [vertex, slot1], constants },
+          // A lean pipeline declares slot 0 alone: it reads no record word.
+          vertex: { module, entryPoint, buffers: suffix ? [vertex] : [vertex, slot1], constants },
           fragment: { module, entryPoint: fsEntry, targets, constants },
         });
         const err = await device.popErrorScope();

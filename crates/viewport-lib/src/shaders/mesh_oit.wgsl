@@ -352,6 +352,31 @@ struct VertexIn {
     @location(10) w_deform: u32,
 };
 
+// The vertex inputs of a pipeline whose feature set reads no record word
+// (no record, colour stream, warp, override, lightmap or deform): `VertexIn`
+// without slot 1. Such a pipeline declares slot 0 alone, so no instance-rate
+// attribute is fetched for it.
+struct VertexInLean {
+    @location(0) position: vec3<f32>,
+    @location(1) normal:   vec3<f32>,
+    @location(2) colour:    vec4<f32>,
+    @location(3) uv:       vec2<f32>,
+    @location(4) tangent:  vec4<f32>,
+    @builtin(vertex_index) vertex_index: u32,
+};
+
+// `VertexIn` for the shared vertex body, every record word zero.
+fn from_lean_in(p: VertexInLean) -> VertexIn {
+    var v: VertexIn;
+    v.position = p.position;
+    v.normal = p.normal;
+    v.colour = p.colour;
+    v.uv = p.uv;
+    v.tangent = p.tangent;
+    v.vertex_index = p.vertex_index;
+    return v;
+}
+
 struct VertexOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) colour:          vec4<f32>,
@@ -459,6 +484,18 @@ fn vs_main_plain(in: VertexIn, @builtin(instance_index) instance_index: u32) -> 
 @vertex
 fn vs_main_cull_plain(in: VertexIn, @builtin(instance_index) slot: u32) -> VertexOutPlain {
     return to_plain(vs_body(in, visibility_indices[slot]));
+}
+
+// The plain entries for a pipeline that also reads no record word, through
+// `VertexInLean`.
+@vertex
+fn vs_main_lean(in: VertexInLean, @builtin(instance_index) instance_index: u32) -> VertexOutPlain {
+    return to_plain(vs_body(from_lean_in(in), instance_index));
+}
+
+@vertex
+fn vs_main_cull_lean(in: VertexInLean, @builtin(instance_index) slot: u32) -> VertexOutPlain {
+    return to_plain(vs_body(from_lean_in(in), visibility_indices[slot]));
 }
 
 fn vs_body(in: VertexIn, record: u32) -> VertexOut {
