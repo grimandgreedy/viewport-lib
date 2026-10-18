@@ -323,11 +323,11 @@ fn lightmap_directional_factor(uv: vec2<f32>, page: i32, n_pix: vec3<f32>, n_geo
     return mix(1.0, ndl_pix / max(ndl_geo, 0.1), d.w);
 }
 
-// Assemble the `Object` view the shader body reads. The vertex stage needs
-// only the instance record (the material block is a fragment-stage
-// binding); the fragment stage adds the block's scalars. Called at the top
-// of each entry point so the body and every plugin hook read
-// `object.FIELD` unchanged.
+// Assemble the `Object` view the fragment body reads from the instance
+// record; `load_object` adds the material block's scalars. Called at the top
+// of the fragment entry so the body and every plugin hook read
+// `object.FIELD` unchanged. The vertex stage reads the record fields it needs
+// directly.
 fn load_object_vertex(i: u32) -> Object {
     var o: Object;
     let inst = instances[i];
@@ -461,38 +461,31 @@ fn vs_main_cull(in: VertexIn, @builtin(instance_index) slot: u32) -> VertexOut {
 }
 
 fn vs_body(in: VertexIn, record: u32) -> VertexOut {
-    object = load_object_vertex(record);
     var out: VertexOut;
     out.obj_idx = record;
     // The vertex index within the mesh: the draw binds the whole slab chunk,
     // so `vertex_index` counts from the chunk's first vertex.
     let vi = in.vertex_index - in.w_vertex_base;
+    // The record fields every draw reads. The rest are read only inside the
+    // feature that needs them, so a plain draw loads what a lean one would.
+    let model = instances[record].model;
     let flags = instances[record].flags;
+    let deform_flags = instances[record].deform_flags;
     // The mesh's sidecar record and the streams this item reads, as first
     // words in the bound chunk (0 for none). A mesh without a record reads
     // nothing; each read below is behind the flag that needs it.
     let rec = in.w_record;
     let has_sidecar = FEAT_RECORD && (flags & INST_HAS_SIDECAR) != 0u;
-    object.uv1_base = in.w_vertex_base;
     deform_table = in.w_deform;
-    if FEAT_OVERRIDES && has_sidecar && object.has_position_override != 0u {
-        object.position_override_base = sc_word(rec + SC_POS_BASE);
-        object.position_override_len = sc_word(rec + SC_POS_LEN);
-    }
-    if FEAT_OVERRIDES && has_sidecar && object.has_normal_override != 0u {
-        object.normal_override_base = sc_word(rec + SC_NRM_BASE);
-        object.normal_override_len = sc_word(rec + SC_NRM_LEN);
-    }
     // Override > vertex attribute. When a plugin has bound a per-vertex position
     // storage buffer, replace `in.position` outright; warp is then layered on top
-    // additively. Same idea for normals further down.
+    // additively. Same idea for normals further down. The record's base and
+    // len slice a window out of a pooled buffer; base 0 and len 0xffffffff
+    // reproduce the whole-buffer behaviour.
     var local_pos = in.position;
-    if FEAT_OVERRIDES && object.has_position_override != 0u && vi < object.position_override_len {
-        // base/len slice a window out of a pooled buffer; base = 0 and
-        // len = 0xffffffff reproduce the whole-buffer behaviour.
-        let pi = (object.position_override_base + vi) * 3u;
-        let plen = arrayLength(&position_override_buffer);
-        if pi + 2u < plen {
+    if FEAT_OVERRIDES && has_sidecar && (flags & INST_HAS_POSITION_OVERRIDE) != 0u && vi < sc_word(rec + SC_POS_LEN) {
+        let pi = (sc_word(rec + SC_POS_BASE) + vi) * 3u;
+        if pi + 2u < arrayLength(&position_override_buffer) {
             local_pos = vec3<f32>(
                 position_override_buffer[pi],
                 position_override_buffer[pi + 1u],
@@ -500,17 +493,16 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
             );
         }
     }
-    if FEAT_WARP && has_sidecar && object.has_warp != 0u {
+    if FEAT_WARP && has_sidecar && (flags & INST_HAS_WARP) != 0u {
         let warp = in.w_warp;
         if warp != 0u {
-            local_pos += sc_vec3(warp + vi * 3u) * object.warp_scale;
+            local_pos += sc_vec3(warp + vi * 3u) * instances[record].warp_scale;
         }
     }
     var local_normal = in.normal;
-    if FEAT_OVERRIDES && object.has_normal_override != 0u && vi < object.normal_override_len {
-        let ni = (object.normal_override_base + vi) * 3u;
-        let nlen = arrayLength(&normal_override_buffer);
-        if ni + 2u < nlen {
+    if FEAT_OVERRIDES && has_sidecar && (flags & INST_HAS_NORMAL_OVERRIDE) != 0u && vi < sc_word(rec + SC_NRM_LEN) {
+        let ni = (sc_word(rec + SC_NRM_BASE) + vi) * 3u;
+        if ni + 2u < arrayLength(&normal_override_buffer) {
             local_normal = vec3<f32>(
                 normal_override_buffer[ni],
                 normal_override_buffer[ni + 1u],
@@ -519,16 +511,16 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
         }
     }
     var dv = DeformVertex(local_pos, local_normal, vi);
-    let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, object.deform_flags, 0u);
+    let dctx = DeformContext(model, model[3].xyz, 0.0, deform_flags, 0u);
     if FEAT_DEFORM {
         dv = viewport_deform_object_space(dv, dctx);
     }
     let model3 = mat3x3<f32>(
-        object.model[0].xyz,
-        object.model[1].xyz,
-        object.model[2].xyz,
+        model[0].xyz,
+        model[1].xyz,
+        model[2].xyz,
     );
-    let world_pos4 = object.model * vec4<f32>(dv.position, 1.0);
+    let world_pos4 = model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;
     dv.normal = normalize(model3 * dv.normal);
     if FEAT_DEFORM {
@@ -550,32 +542,37 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
         let uv1_len = arrayLength(&uv1_buf);
         out.uv1 = uv1_buf[min(in.vertex_index, max(uv1_len, 1u) - 1u)];
     }
-    // The scalar or face-colour stream the item is coloured by. Streams are
-    // padded to every index the draw reaches, so they are read unclamped.
-    let colour_stream = in.w_colour;
-    var has_attr = false;
-    var raw_scalar = 0.0;
-    if FEAT_COLOUR_STREAM && has_sidecar && object.has_attribute != 0u && object.use_face_colour == 0u && colour_stream != 0u {
-        has_attr = true;
-        raw_scalar = sc_f32(colour_stream + vi);
-    }
-    out.scalar_val = raw_scalar;
-    // Detect NaN before interpolation can corrupt the bit pattern.
-    let sv_bits = bitcast<u32>(raw_scalar);
-    let sv_is_nan = has_attr && (sv_bits & 0x7F800000u) == 0x7F800000u && (sv_bits & 0x007FFFFFu) != 0u;
-    out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
-    // Per-face RGBA colour (FaceColour attribute kind). Indexed by the vertex
-    // index, which is the sequential corner counter for unindexed face draws.
-    out.face_colour = vec4<f32>(1.0);
-    if FEAT_COLOUR_STREAM && has_sidecar && object.use_face_colour != 0u && colour_stream != 0u {
-        out.face_colour = sc_vec4(colour_stream + 4u * vi);
+    // The outputs below are read only by fragment code behind the same
+    // feature, so a pipeline without it leaves them at zero.
+    if FEAT_COLOUR_STREAM {
+        // The scalar or face-colour stream the item is coloured by. Streams
+        // are padded to every index the draw reaches, so they are read
+        // unclamped.
+        let colour_stream = in.w_colour;
+        let face = (flags & INST_USE_FACE_COLOUR) != 0u;
+        var has_attr = false;
+        var raw_scalar = 0.0;
+        if has_sidecar && (flags & INST_HAS_ATTRIBUTE) != 0u && !face && colour_stream != 0u {
+            has_attr = true;
+            raw_scalar = sc_f32(colour_stream + vi);
+        }
+        out.scalar_val = raw_scalar;
+        // Detect NaN before interpolation can corrupt the bit pattern.
+        let sv_bits = bitcast<u32>(raw_scalar);
+        let sv_is_nan = has_attr && (sv_bits & 0x7F800000u) == 0x7F800000u && (sv_bits & 0x007FFFFFu) != 0u;
+        out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
+        // Per-face RGBA colour (FaceColour attribute kind). Indexed by the
+        // vertex index, which is the sequential corner counter for unindexed
+        // face draws.
+        out.face_colour = vec4<f32>(1.0);
+        if has_sidecar && face && colour_stream != 0u {
+            out.face_colour = sc_vec4(colour_stream + 4u * vi);
+        }
     }
     // Lightmap UV1 in .xy and the atlas page in .z, mapped through the draw's
     // placement onto its rect and page of the atlas (both affine or flat, so
     // they apply here exactly). Zero for a mesh without a lightmap, which
     // never samples one.
-    out.lightmap_uv = vec2<f32>(0.0);
-    out.lightmap_page = 0.0;
     let lm = in.w_lightmap;
     if FEAT_LIGHTMAP && has_sidecar && lm != 0u {
         let lm_sidecar = sc_vec4(lm + 4u * vi);

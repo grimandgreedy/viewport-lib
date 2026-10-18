@@ -292,7 +292,9 @@ pub(crate) fn draw_batch<'a, E: MeshDrawEncoder<'a>>(
     // draw the same image.
     let mut take = |got: crate::resources::pipeline_slot::FeatureGet<'a, _>| {
         bound.stand_in |= got.stand_in;
-        if got.stand_in {
+        // Counted only when the universal member was there to draw: a draw
+        // with neither pipeline built is skipped, not stood in for.
+        if got.stand_in && got.pipeline.is_some() {
             resources
                 .frame_stand_in_draws
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -551,7 +553,7 @@ pub(crate) fn draw_culled_batches(
                     .oit_features(two_sided, feats, batch.bindless)
             }
         };
-        if got.stand_in {
+        if got.stand_in && got.pipeline.is_some() {
             resources
                 .frame_stand_in_draws
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

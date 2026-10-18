@@ -269,11 +269,8 @@ fn lightmap_directional_factor(uv: vec2<f32>, page: i32, n_pix: vec3<f32>, n_geo
     return mix(1.0, ndl_pix / max(ndl_geo, 0.1), d.w);
 }
 
-// Assemble the `Object` view the shader body reads. The vertex stage needs
-// only the instance record (the material block is a fragment-stage
-// binding); the fragment stage adds the block's scalars. Called at the top
-// of each entry point so the body and every plugin hook read
-// `object.FIELD` unchanged.
+// Assemble the `Object` view the fragment body reads, as in mesh.wgsl. The
+// vertex stage reads the record fields it needs directly.
 fn load_object_vertex(i: u32) -> Object {
     var o: Object;
     let inst = instances[i];
@@ -401,17 +398,19 @@ fn vs_main_cull(in: VertexIn, @builtin(instance_index) slot: u32) -> VertexOut {
 }
 
 fn vs_body(in: VertexIn, record: u32) -> VertexOut {
-    object = load_object_vertex(record);
     var out: VertexOut;
     out.obj_idx = record;
     // The vertex index within the mesh, as in mesh.wgsl.
     let vi = in.vertex_index - in.w_vertex_base;
+    // The record fields every draw reads; the rest only inside the feature
+    // that needs them, as in mesh.wgsl.
+    let model = instances[record].model;
+    let inst_flags = instances[record].flags;
+    let deform_flags = instances[record].deform_flags;
     // The mesh's sidecar record and the streams this item reads, as in
     // mesh.wgsl; each read is behind the flag that needs it.
     let rec = in.w_record;
-    let inst_flags = instances[record].flags;
     let has_sidecar = FEAT_RECORD && (inst_flags & INST_HAS_SIDECAR) != 0u;
-    object.uv1_base = in.w_vertex_base;
     deform_table = in.w_deform;
     // Override > vertex attribute, as in mesh.wgsl; warp layers on top.
     var local_pos = in.position;
@@ -425,10 +424,10 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
             );
         }
     }
-    if FEAT_WARP && has_sidecar && object.has_warp != 0u {
+    if FEAT_WARP && has_sidecar && (inst_flags & INST_HAS_WARP) != 0u {
         let warp = in.w_warp;
         if warp != 0u {
-            local_pos += sc_vec3(warp + vi * 3u) * object.warp_scale;
+            local_pos += sc_vec3(warp + vi * 3u) * instances[record].warp_scale;
         }
     }
     var local_normal = in.normal;
@@ -443,16 +442,16 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
         }
     }
     var dv = DeformVertex(local_pos, local_normal, vi);
-    let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, object.deform_flags, 0u);
+    let dctx = DeformContext(model, model[3].xyz, 0.0, deform_flags, 0u);
     if FEAT_DEFORM {
         dv = viewport_deform_object_space(dv, dctx);
     }
     let model3 = mat3x3<f32>(
-        object.model[0].xyz,
-        object.model[1].xyz,
-        object.model[2].xyz,
+        model[0].xyz,
+        model[1].xyz,
+        model[2].xyz,
     );
-    let world_pos4 = object.model * vec4<f32>(dv.position, 1.0);
+    let world_pos4 = model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;
     dv.normal = normalize(model3 * dv.normal);
     if FEAT_DEFORM {
@@ -472,24 +471,26 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
         let uv1_len = arrayLength(&uv1_buf);
         out.uv1 = uv1_buf[min(in.vertex_index, max(uv1_len, 1u) - 1u)];
     }
-    let colour_stream = in.w_colour;
-    var has_attr = false;
-    var raw_scalar = 0.0;
-    if FEAT_COLOUR_STREAM && has_sidecar && object.has_attribute != 0u && object.use_face_colour == 0u && colour_stream != 0u {
-        has_attr = true;
-        raw_scalar = sc_f32(colour_stream + vi);
-    }
-    out.scalar_val = raw_scalar;
-    let sv_bits = bitcast<u32>(raw_scalar);
-    let sv_is_nan = has_attr && (sv_bits & 0x7F800000u) == 0x7F800000u && (sv_bits & 0x007FFFFFu) != 0u;
-    out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
-    out.face_colour = vec4<f32>(1.0);
-    if FEAT_COLOUR_STREAM && has_sidecar && object.use_face_colour != 0u && colour_stream != 0u {
-        out.face_colour = sc_vec4(colour_stream + 4u * vi);
+    // Read only by fragment code behind the same feature, as in mesh.wgsl.
+    if FEAT_COLOUR_STREAM {
+        let colour_stream = in.w_colour;
+        let face = (inst_flags & INST_USE_FACE_COLOUR) != 0u;
+        var has_attr = false;
+        var raw_scalar = 0.0;
+        if has_sidecar && (inst_flags & INST_HAS_ATTRIBUTE) != 0u && !face && colour_stream != 0u {
+            has_attr = true;
+            raw_scalar = sc_f32(colour_stream + vi);
+        }
+        out.scalar_val = raw_scalar;
+        let sv_bits = bitcast<u32>(raw_scalar);
+        let sv_is_nan = has_attr && (sv_bits & 0x7F800000u) == 0x7F800000u && (sv_bits & 0x007FFFFFu) != 0u;
+        out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
+        out.face_colour = vec4<f32>(1.0);
+        if has_sidecar && face && colour_stream != 0u {
+            out.face_colour = sc_vec4(colour_stream + 4u * vi);
+        }
     }
     // Lightmap UV1 through the draw's placement, as in mesh.wgsl.
-    out.lightmap_uv = vec2<f32>(0.0);
-    out.lightmap_page = 0.0;
     let lm = in.w_lightmap;
     if FEAT_LIGHTMAP && has_sidecar && lm != 0u {
         let lm_sidecar = sc_vec4(lm + 4u * vi);
