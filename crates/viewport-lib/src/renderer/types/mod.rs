@@ -24,15 +24,23 @@ macro_rules! bind_deform_group {
     };
 }
 
-/// Bind a material plugin's group-3 params bind group for a plugin draw.
+/// Bind a material plugin's group-3 texture bind group for a plugin draw.
 ///
 /// Only called with a bind group resolved by `material_plugin_draw`, which
 /// only exists on devices that passed the `max_bind_groups >= 4` registration
 /// gate, so no runtime capability check is needed here. Route every group-3
 /// material bind through this macro (the same choke-point rule as
 /// `bind_deform_group!` above).
+///
+/// Plugin pipeline layouts always carry the deform group at index 2, so that
+/// group 3 lands at 3. Where deformers are off (a device short of storage
+/// buffers), `bind_deform_group!` binds nothing, and this binds the deform
+/// dummy group in its place.
 macro_rules! bind_material_group {
-    ($pass:expr, $bg:expr) => {
+    ($pass:expr, $resources:expr, $bg:expr) => {
+        if !$resources.deform.enabled {
+            $pass.set_bind_group(2, &$resources.deform.dummy_bind_group, &[]);
+        }
         $pass.set_bind_group(3, $bg, &[]);
     };
 }
@@ -64,10 +72,13 @@ pub(crate) struct InstancedBatch {
     /// The material plugin whose composed instanced shading this batch draws
     /// with, or `None` for built-in shading. All items in the batch share it
     /// (it is part of the batch key). A plugin batch draws through the plugin's
-    /// instanced pipeline plus its group-3 params bind, outside the GPU-cull /
+    /// instanced pipeline plus its group-3 texture bind, outside the GPU-cull /
     /// count-multi-draw run-forming, so the field also flags "skip me" in those
     /// loops.
     pub shading_plugin: Option<crate::scene::material::MaterialPluginId>,
+    /// The plugin textures every item in the batch names (part of the batch
+    /// key): which group-3 bind group the batch draws with.
+    pub plugin_textures: crate::resources::mesh_sidecar::shade::PluginTextures,
     /// The sampler bound at group-1 binding 2 for the whole batch: the
     /// material's selected sampler, or the default key. Part of the batch key.
     pub sampler: crate::scene::material::SamplerKey,
@@ -269,7 +280,7 @@ pub(crate) fn draw_fat_batch<'a, E: MeshDrawEncoder<'a>>(
     };
     let lines = matches!(fat.draw, FatDraw::Edges | FatDraw::NormalLines);
     let two_sided = PipelineKey::two_sided(batch.two_sided);
-    let plug = resources.material_plugin_draw(batch.shading_plugin);
+    let plug = resources.material_plugin_draw(batch.shading_plugin, &batch.plugin_textures);
     let (pipeline, mat_bg): (
         Option<&crate::gpu::RenderPipeline>,
         Option<&crate::gpu::BindGroup>,
@@ -342,7 +353,7 @@ pub(crate) fn draw_fat_batch<'a, E: MeshDrawEncoder<'a>>(
         bound.group1 = Some(group1 as *const _);
     }
     if let Some(mat_bg) = mat_bg {
-        bind_material_group!(encoder, mat_bg);
+        bind_material_group!(encoder, resources, mat_bg);
     }
     let deform_bg = if matches!(fat.draw, FatDraw::NormalLines) {
         &resources.deform.dummy_bind_group
@@ -752,9 +763,10 @@ macro_rules! emit_draw_calls {
                     if batch.shading_plugin.is_none() || batch.fat.is_some() {
                         continue;
                     }
-                    let Some((plug_pipes, mat_bg)) =
-                        resources.material_plugin_instanced_draw(batch.shading_plugin)
-                    else {
+                    let Some((plug_pipes, mat_bg)) = resources.material_plugin_instanced_draw(
+                        batch.shading_plugin,
+                        &batch.plugin_textures,
+                    ) else {
                         continue;
                     };
                     let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
@@ -774,7 +786,7 @@ macro_rules! emit_draw_calls {
                         cur_pipe = Some(pipeline as *const _);
                     }
                     render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                    bind_material_group!(render_pass, mat_bg);
+                    bind_material_group!(render_pass, resources, mat_bg);
                     let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
                     if cur_chunks != Some(chunks) {
                         render_pass
@@ -874,9 +886,10 @@ macro_rules! emit_draw_calls {
                         continue;
                     }
                     let (pipeline, mat_bg) = if batch.shading_plugin.is_some() {
-                        let Some((plug_pipes, mat_bg)) =
-                            resources.material_plugin_instanced_draw(batch.shading_plugin)
-                        else {
+                        let Some((plug_pipes, mat_bg)) = resources.material_plugin_instanced_draw(
+                            batch.shading_plugin,
+                            &batch.plugin_textures,
+                        ) else {
                             continue;
                         };
                         let Some(pipeline) = plug_pipes.ldr_transparent() else {
@@ -913,7 +926,7 @@ macro_rules! emit_draw_calls {
                     }
                     render_pass.set_bind_group(1, inst_tex_bg, &[]);
                     if let Some(mat_bg) = mat_bg {
-                        bind_material_group!(render_pass, mat_bg);
+                        bind_material_group!(render_pass, resources, mat_bg);
                     }
                     let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
                     if cur_chunks != Some(chunks) {

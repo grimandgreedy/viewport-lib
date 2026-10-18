@@ -22,9 +22,10 @@ use viewport_lib_types::ids::TextureId;
 /// group-1 binding 2 for the whole draw, so a batch has one sampler.
 ///
 /// A material plugin also splits the key: plugin items select a per-plugin
-/// pipeline set and a per-variant group-3 bind group that apply to the whole
-/// draw, so two items batch together only when their plugin selection matches
-/// (`None` for built-in shading). Carried as `(plugin_index, variant_index)`.
+/// pipeline set and a group-3 bind group per texture set that apply to the
+/// whole draw, so two items batch together only when their plugin and plugin
+/// textures match (`None` for built-in shading). Plugin parameters ride each
+/// material's block and do not split. Carried as `(plugin_index, textures)`.
 ///
 /// Used by both the sort comparator and the batch-split predicate below, so the
 /// two cannot drift out of sync.
@@ -37,7 +38,7 @@ type BatchGroupKey = (
     Option<TextureId>,
     bool,
     bool,
-    Option<(u32, u32)>,
+    Option<(u32, crate::resources::mesh_sidecar::shade::PluginTextures)>,
     u32,
 );
 
@@ -120,7 +121,7 @@ fn build_and_upload_draw_groups(
                 continue;
             };
             // Material-plugin batches draw through their own composed pipeline plus
-            // a per-variant group-3 bind, which the built-in count-multi-draw path
+            // a group-3 texture bind, which the built-in count-multi-draw path
             // cannot supply, so they are left out of the groups (their `group_id`
             // stays `NO_GROUP`, so the compaction skips them and the count draw
             // never emits them). They draw in the dedicated plugin sub-loop instead.
@@ -442,8 +443,10 @@ fn material_group_key(
         // The batch draws opaque or through OIT as a whole, so opaque and
         // translucent copies of a mesh must not share one.
         opacity < 1.0 || m.is_blend(),
+        // Materials on one plugin share a batch when they name the same
+        // textures; their parameters ride their own blocks.
         m.shading_plugin
-            .map(|p| (p.plugin_index(), p.variant_index())),
+            .map(|p| (p.plugin_index(), m.plugin_textures)),
         // The sampler binds at group-1 binding 2 for the whole batch, on both
         // texture bindings. No key and the default key share a code.
         crate::resources::material::fallbacks::sampler_code(
@@ -869,6 +872,7 @@ impl ViewportRenderer {
                             // batch key, so every item in the batch selects the
                             // same plugin (or built-in shading).
                             shading_plugin: rep_material.shading_plugin,
+                            plugin_textures: rep_material.plugin_textures,
                             // Batch-uniform: the sampler is part of the batch key.
                             sampler: rep_material.selected_sampler().unwrap_or_default(),
                             fat,
@@ -1506,29 +1510,31 @@ mod batch_key_tests {
         ] {
             let plain = item_with(0, None, false);
             let mut plug_a = item_with(0, None, false);
-            plug_a.material.shading_plugin = Some(MaterialPluginId::from_parts(3, 0));
-            let mut plug_a2 = item_with(0, None, false);
-            plug_a2.material.shading_plugin = Some(MaterialPluginId::from_parts(3, 0));
-            let mut plug_b_variant = item_with(0, None, false);
-            plug_b_variant.material.shading_plugin = Some(MaterialPluginId::from_parts(3, 1));
+            plug_a.material.shading_plugin = Some(MaterialPluginId::from_index(3));
+            let mut plug_a_params = item_with(0, None, false);
+            plug_a_params.material.shading_plugin = Some(MaterialPluginId::from_index(3));
+            plug_a_params.material.set_param("power", 4.0);
+            let mut plug_a_textured = item_with(0, None, false);
+            plug_a_textured.material.shading_plugin = Some(MaterialPluginId::from_index(3));
+            plug_a_textured.material.plugin_textures[0] = Some(TextureId::from_raw(7));
             let mut plug_c = item_with(0, None, false);
-            plug_c.material.shading_plugin = Some(MaterialPluginId::from_parts(4, 0));
+            plug_c.material.shading_plugin = Some(MaterialPluginId::from_index(4));
 
             // Built-in shading never batches with a plugin.
             assert_ne!(
                 batch_group_key(&plain, binding),
                 batch_group_key(&plug_a, binding),
             );
-            // Same plugin and variant batch together.
+            // Parameters ride each material's block, so they do not split.
             assert_eq!(
                 batch_group_key(&plug_a, binding),
-                batch_group_key(&plug_a2, binding),
+                batch_group_key(&plug_a_params, binding),
             );
-            // A different variant of the same plugin splits (its group-3 params
-            // and textures differ), as does a different plugin.
+            // A different texture set binds a different group 3, and a
+            // different plugin a different pipeline.
             assert_ne!(
                 batch_group_key(&plug_a, binding),
-                batch_group_key(&plug_b_variant, binding),
+                batch_group_key(&plug_a_textured, binding),
             );
             assert_ne!(
                 batch_group_key(&plug_a, binding),

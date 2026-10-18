@@ -2,12 +2,12 @@
 //!
 //! Two fragment-shading plugins registered through
 //! `register_material_plugin` and selected per material via
-//! `Material::shading_plugin`:
+//! `Material::with_plugin`:
 //!
 //! - [`ToonPlugin`]: banded diffuse (`shade_light`) plus flat ambient
-//!   (`shade_ambient`), tinted and banded through the group-3 params window,
+//!   (`shade_ambient`), tinted and banded through its declared parameters,
 //!   with one texture slot modulating the albedo (1x1 white fallback when a
-//!   variant binds none).
+//!   material names none).
 //! - [`RimPlugin`]: a `recolor` hook that adds a view-dependent rim on top of
 //!   the untouched built-in lighting.
 //!
@@ -15,20 +15,23 @@
 //! `MaterialPlugin` implementation rather than a shipping toon shader; the
 //! built-in toon shading model is a separate, library-side concern.
 
-/// Params window layout for [`ToonPlugin`]:
-/// `[0] = (bands, ambient, uv_tiling, 0)`, `[1] = (tint rgb, 0)`.
 use viewport_lib as vpl;
 
-pub fn toon_params(
+/// A [`ToonPlugin`] material: `bands` diffuse steps, an `ambient` factor, the
+/// texture's UV `tiling` and a linear `tint`.
+pub fn toon_material(
+    plugin: vpl::MaterialPluginId,
     bands: f32,
     ambient: f32,
     tiling: f32,
     tint: [f32; 3],
-) -> [[f32; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S] {
-    let mut p = [[0.0; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S];
-    p[0] = [bands, ambient, tiling, 0.0];
-    p[1] = [tint[0], tint[1], tint[2], 0.0];
-    p
+) -> vpl::Material {
+    vpl::Material::default()
+        .with_plugin(plugin)
+        .with_param("bands", bands)
+        .with_param("ambient", ambient)
+        .with_param("tiling", tiling)
+        .with_param("tint", tint)
 }
 
 /// Banded-diffuse toon shading with a tint and an albedo texture slot.
@@ -42,39 +45,40 @@ impl vpl::MaterialPlugin for ToonPlugin {
         1
     }
     fn wgsl_body(&self) -> String {
-        // See `toon_params` for the params window layout. material_texture_0
-        // is the 1x1 white fallback unless a variant binds one, so untextured
-        // variants pay a neutral multiply.
+        // material_texture_0 is the 1x1 white fallback unless the material
+        // names one, so untextured materials pay a neutral multiply.
         r#"
 fn toon_tex(surf: ShadingSurface) -> vec3<f32> {
-    let tile = max(material_params[0].z, 1.0);
+    let tile = max(params.tiling, 1.0);
     return textureSampleGrad(
         material_texture_0, material_sampler,
         surf.uv * tile, surf.uv_ddx * tile, surf.uv_ddy * tile,
     ).rgb;
 }
 fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
-    let bands = max(material_params[0].x, 1.0);
+    let bands = max(params.bands, 1.0);
     let ndl = max(dot(surf.normal, light.l), 0.0);
     let stepped = ceil(ndl * bands) / bands;
-    let tint = material_params[1].xyz;
-    return surf.base_colour * tint * toon_tex(surf) * stepped * light.radiance * light.shadow;
+    return surf.base_colour * params.tint * toon_tex(surf) * stepped * light.radiance * light.shadow;
 }
 fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
-    let tint = material_params[1].xyz;
-    return surf.base_colour * tint * toon_tex(surf) * material_params[0].y * surf.ao;
+    return surf.base_colour * params.tint * toon_tex(surf) * params.ambient * surf.ao;
 }
 "#
         .to_string()
     }
-    fn initial_params(&self) -> [[f32; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S] {
-        toon_params(3.0, 0.25, 1.0, [1.0, 1.0, 1.0])
+    fn param_layout(&self) -> Vec<vpl::ParamDesc> {
+        vec![
+            vpl::ParamDesc::f32("bands", 3.0),
+            vpl::ParamDesc::f32("ambient", 0.25),
+            vpl::ParamDesc::f32("tiling", 1.0),
+            vpl::ParamDesc::vec3("tint", [1.0, 1.0, 1.0]),
+        ]
     }
 }
 
-/// View-dependent rim light added over the built-in lighting.
-///
-/// Params window: `[0] = (rim rgb, rim power)`.
+/// View-dependent rim light added over the built-in lighting: a `colour` and
+/// a falloff `power`.
 pub struct RimPlugin;
 
 impl vpl::MaterialPlugin for RimPlugin {
@@ -87,15 +91,16 @@ impl vpl::MaterialPlugin for RimPlugin {
         r#"
 fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
     let facing = max(dot(surf.normal, surf.view_dir), 0.0);
-    let rim = pow(1.0 - facing, max(material_params[0].w, 0.5));
-    return direct + ambient + material_params[0].xyz * rim;
+    let rim = pow(1.0 - facing, max(params.power, 0.5));
+    return direct + ambient + params.colour * rim;
 }
 "#
         .to_string()
     }
-    fn initial_params(&self) -> [[f32; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S] {
-        let mut p = [[0.0; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S];
-        p[0] = [0.2, 0.5, 1.0, 3.0];
-        p
+    fn param_layout(&self) -> Vec<vpl::ParamDesc> {
+        vec![
+            vpl::ParamDesc::vec3("colour", [0.2, 0.5, 1.0]),
+            vpl::ParamDesc::f32("power", 3.0),
+        ]
     }
 }

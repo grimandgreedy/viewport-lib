@@ -1,6 +1,22 @@
 use super::*;
 use crate::resources::builders::LoggedAlloc;
 
+/// Plain (non-array) sampled textures `entries` make visible to `stage`.
+/// Binding arrays count against a limit of their own.
+fn stage_sampled_textures(
+    entries: &[crate::gpu::BindGroupLayoutEntry],
+    stage: crate::gpu::ShaderStages,
+) -> u32 {
+    entries
+        .iter()
+        .filter(|e| {
+            e.visibility.contains(stage)
+                && e.count.is_none()
+                && matches!(e.ty, crate::gpu::BindingType::Texture { .. })
+        })
+        .count() as u32
+}
+
 /// Count the storage buffers a set of bind group layout entries costs in one
 /// shader stage. Used to check the layouts built here against the constants
 /// that describe them.
@@ -754,6 +770,23 @@ impl DeviceResources {
                 crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE,
             );
         }
+
+        // A material plugin's group 3 adds its textures to the fragment stage of
+        // the mesh pipelines. The per-object layouts bind the most of the mesh
+        // paths, so what they leave is what a plugin may declare.
+        let plugin_texture_budget = {
+            let fragment = crate::gpu::ShaderStages::FRAGMENT;
+            let used = stage_sampled_textures(&camera_bgl_entries, fragment)
+                + stage_sampled_textures(&object_bgl_entries, fragment)
+                + stage_sampled_textures(
+                    &crate::resources::mesh_sidecar::deform::BGL_ENTRIES,
+                    fragment,
+                );
+            device
+                .limits()
+                .max_sampled_textures_per_shader_stage
+                .saturating_sub(used)
+        };
 
         // The LDR mesh.wgsl pipelines (solid, two-sided, transparent, wireframe)
         // and the module they share are built by `ensure_ldr_mesh_pipelines` on
@@ -1814,6 +1847,7 @@ impl DeviceResources {
             deform,
             shade_hooks: Vec::new(),
             material_plugins: std::collections::HashMap::new(),
+            plugin_texture_budget,
             binds: crate::resources::scene_bindings::SceneBindings {
                 camera_uniform_buf,
                 camera_bg: camera_bind_group,

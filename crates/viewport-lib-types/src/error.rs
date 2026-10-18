@@ -330,6 +330,30 @@ pub enum ViewportError {
         max: usize,
     },
 
+    /// A material's plugin parameters or textures do not match what its plugin
+    /// declares: an unknown parameter name, a value of the wrong kind, more
+    /// values than fit, a texture past the plugin's `texture_count`, or
+    /// parameters on a material whose plugin is not registered.
+    #[error("invalid material plugin values: {reason}")]
+    InvalidMaterialParams {
+        /// What did not match.
+        reason: String,
+    },
+
+    /// A material plugin declares more textures than the device can bind in
+    /// the fragment stage alongside the renderer's own.
+    #[error(
+        "material plugin '{name}' declares {requested} textures; the device has room for {available}"
+    )]
+    MaterialPluginTextureBudget {
+        /// The plugin's name.
+        name: String,
+        /// The plugin's `texture_count`.
+        requested: u32,
+        /// Textures left in the device's fragment-stage budget.
+        available: u32,
+    },
+
     /// A compressed-texture upload requested a format the device cannot sample,
     /// or a format that is not block-compressed.
     ///

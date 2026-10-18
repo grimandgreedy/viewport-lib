@@ -160,6 +160,7 @@ struct MaterialGpu {
     nan_colour: vec4<f32>,   // colour for NaN scalar attribute samples
     lightmap_scale_bias: vec4<f32>, // lm_uv = uv1 * .xy + .zw
     item_flags: vec4<u32>,   // (MAT_* bits, lightmap_mode, lightmap_index, 0)
+    params: array<vec4<f32>, 16>, // material plugin parameters, declaration order
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
@@ -730,6 +731,9 @@ struct LitResult {
 // and `out_colour` holds the final colour; otherwise the surface fields feed
 // `compute_lit`. Clip and alpha-mask fragments discard here.
 fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
+    let shade_material = object.material_id;
+    // <viewport-shade-slot:params>
+    // </viewport-shade-slot:params>
     var out: Surface;
     out.resolved = false;
     out.out_colour = vec4<f32>(0.0);

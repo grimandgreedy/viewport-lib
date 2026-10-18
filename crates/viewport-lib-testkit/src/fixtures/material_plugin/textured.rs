@@ -1,18 +1,18 @@
 //! A material plugin that authors the PBR surface from a texture.
 
-use viewport_lib::{MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin};
+use viewport_lib::{MaterialPlugin, ParamDesc};
 
 /// Authors the surface through `shade_surface`, taking base colour from the
-/// plugin's first texture slot multiplied by a tint in `material_params[0]`,
+/// plugin's first texture slot multiplied by the material's `tint` parameter,
 /// and leaving stock lighting to run on the result.
 ///
 /// Where [`FlatColourMaterialPlugin`](super::FlatColourMaterialPlugin) covers
 /// the two lighting hooks, this one covers the parts a real material plugin
 /// leans on and that fixture does not touch: the `shade_surface` hook and its
 /// `SurfaceOverride` return, the group-3 texture bindings
-/// (`material_sampler`, `material_texture_0`), and a params window a test
-/// rewrites between frames through
-/// [`material_plugin_params_handle`](viewport_lib::resources::DeviceResources::material_plugin_params_handle).
+/// (`material_sampler`, `material_texture_0`) filled from the material's
+/// `plugin_textures`, and a parameter a test edits between frames with
+/// `replace_material`.
 ///
 /// `shade_surface` runs before the light loop in uniform control flow, so the
 /// body samples with plain `textureSample`, which the lighting hooks are not
@@ -23,8 +23,8 @@ pub struct TexturedMaterialPlugin {
 }
 
 impl TexturedMaterialPlugin {
-    /// A plugin registered under `name` whose default params hold `tint`
-    /// (linear), the multiplier applied to the sampled texture.
+    /// A plugin registered under `name` whose `tint` parameter defaults to
+    /// `tint` (linear), the multiplier applied to the sampled texture.
     pub fn new(name: &'static str, tint: [f32; 3]) -> Self {
         Self { name, tint }
     }
@@ -40,7 +40,7 @@ impl MaterialPlugin for TexturedMaterialPlugin {
 fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     var ov: SurfaceOverride;
     let sampled = textureSample(material_texture_0, material_sampler, surf.uv);
-    ov.base_colour = sampled.rgb * material_params[0].rgb;
+    ov.base_colour = sampled.rgb * params.tint;
     ov.normal = surf.normal;
     ov.metallic = surf.metallic;
     ov.roughness = surf.roughness;
@@ -56,9 +56,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
         1
     }
 
-    fn initial_params(&self) -> [[f32; 4]; MATERIAL_PLUGIN_PARAM_VEC4S] {
-        let mut params = [[0.0; 4]; MATERIAL_PLUGIN_PARAM_VEC4S];
-        params[0] = [self.tint[0], self.tint[1], self.tint[2], 1.0];
-        params
+    fn param_layout(&self) -> Vec<ParamDesc> {
+        vec![ParamDesc::vec3("tint", self.tint)]
     }
 }

@@ -236,8 +236,8 @@ pub use camera::view_preset::ViewPreset;
 pub use scene::aabb::Aabb;
 pub use scene::material::{
     AlphaMode, BackfacePattern, BackfacePolicy, ItemSettings, Material, MaterialPluginId, ParamVis,
-    ParamVisMode, PatternConfig, SamplerKey, ShadingModel, TextureFilter, TextureSlot, UvTransform,
-    WrapMode,
+    ParamVisMode, PatternConfig, PluginParams, SamplerKey, ShadingModel, TextureFilter,
+    TextureSlot, UvTransform, WrapMode,
 };
 pub use scene::scene::{Group, GroupId, Layer, LayerId, Scene, SceneNode, SceneStats};
 pub use scene::traits::{RenderMode, ViewportObject};
@@ -380,8 +380,8 @@ pub use resources::{
     DeformSourceSlice, DeformStage, DeformerDesc, DeformerId, deform_slot_params_byte_offset,
 };
 pub use resources::{
-    MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, MaterialPluginStats,
-    ShadingHookDesc, ShadingHookId,
+    MATERIAL_PLUGIN_MAX_PARAMS, MATERIAL_PLUGIN_MAX_TEXTURES, MaterialPlugin, MaterialPluginStats,
+    ParamDesc, ParamKind, ParamValue, ShadingHookDesc, ShadingHookId,
 };
 
 pub use runtime::{

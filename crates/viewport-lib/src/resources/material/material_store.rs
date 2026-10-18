@@ -108,6 +108,7 @@ pub(crate) fn differs_only_in_block(a: &Material, b: &Material) -> bool {
     probe.ao_range = b.ao_range;
     probe.metallic_range = b.metallic_range;
     probe.roughness_range = b.roughness_range;
+    probe.plugin_params = b.plugin_params;
     probe == *b
 }
 

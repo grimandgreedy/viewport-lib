@@ -8,11 +8,12 @@ use viewport_lib::wgpu;
 
 mod common;
 use common::*;
+use viewport_lib_testkit::{DeviceProfile, headless_device_with};
 
 /// End-to-end proof of the material-plugin path: a registered plugin with a
 /// toon `shade_light` + `shade_ambient` body, selected per material via
-/// `Material::shading_plugin`, must change the rendered output on the LDR
-/// path, respond to live params writes, and run the HDR and OIT paths
+/// `Material::with_plugin`, must change the rendered output on the LDR
+/// path, respond to parameter edits, and run the HDR and OIT paths
 /// without validation errors (wgpu's uncaptured-error handler panics the
 /// thread on any validation failure, so completing the renders is itself the
 /// assertion).
@@ -26,21 +27,22 @@ fn material_plugin_changes_rendered_output() {
         fn wgsl_body(&self) -> String {
             "\
 fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
-    let bands = max(material_params[0].x, 1.0);
+    let bands = max(params.bands, 1.0);
     let ndl = max(dot(surf.normal, light.l), 0.0);
     let stepped = ceil(ndl * bands) / bands;
     return surf.base_colour * stepped * light.radiance * light.shadow;
 }
 fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
-    return surf.base_colour * material_params[0].y * surf.ao;
+    return surf.base_colour * params.ambient * surf.ao;
 }
 "
             .to_string()
         }
-        fn initial_params(&self) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
-            let mut p = [[0.0; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S];
-            p[0] = [2.0, 0.25, 0.0, 0.0];
-            p
+        fn param_layout(&self) -> Vec<viewport_lib::ParamDesc> {
+            vec![
+                viewport_lib::ParamDesc::f32("bands", 2.0),
+                viewport_lib::ParamDesc::f32("ambient", 0.25),
+            ]
         }
     }
 
@@ -71,7 +73,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     let stats = renderer.resources().material_plugin_stats();
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].name, "toon_test");
-    assert_eq!(stats[0].variants, 1);
+    assert_eq!(stats[0].params, 2);
     assert_eq!(stats[0].texture_count, 0);
     assert_eq!(stats[0].pipelines_built, 0);
 
@@ -105,40 +107,37 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     let stats = renderer.resources().material_plugin_stats();
     assert_eq!(stats[0].pipelines_built, 1);
 
-    // Live params: raising the band count and ambient changes the image.
-    let params = renderer
-        .resources_mut()
-        .material_plugin_params_handle(plugin_id)
-        .expect("params handle");
-    params.write(&queue, &[[16.0, 0.9, 0.0, 0.0]]);
+    // Parameter edits: raising the band count and ambient changes the image,
+    // through the material's own block with no new pipeline.
+    m.set_param("bands", 16.0);
+    m.set_param("ambient", 0.9);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     let toon_reparam = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_ne!(
         toon, toon_reparam,
-        "params writes must be live in the next render"
+        "a parameter edit must be live in the next render"
     );
 
-    // Per-material params: a second variant with different params renders
-    // differently from the default variant in the same frame's plugin.
-    let variant_b = renderer
-        .resources_mut()
-        .create_material_plugin_variant(&device, plugin_id, &[[2.0, 0.05, 0.0, 0.0]], &[])
-        .expect("variant");
-    assert_eq!(variant_b.plugin_index(), plugin_id.plugin_index());
-    assert_ne!(variant_b.variant_index(), plugin_id.variant_index());
-    // Variants share the plugin's pipeline set; only the variant count grows.
-    let stats = renderer.resources().material_plugin_stats();
-    assert_eq!(stats[0].variants, 2);
-    assert_eq!(stats[0].pipelines_built, 1);
-    m.shading_plugin = Some(variant_b);
-    renderer.resources_mut().replace_material(mat, m).unwrap();
-    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
-    let toon_variant_b = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
-    assert_ne!(
-        toon_reparam, toon_variant_b,
-        "a second variant must carry its own params window"
+    // Per-material values: a second material on the plugin with its own
+    // parameters renders differently, on the same pipeline set.
+    let mat_b = upload_material(
+        &mut renderer,
+        Material::default()
+            .with_plugin(plugin_id)
+            .with_param("bands", 2.0)
+            .with_param("ambient", 0.05),
     );
-    m.shading_plugin = Some(plugin_id);
-    renderer.resources_mut().replace_material(mat, m).unwrap();
+    let mut item_b = item.clone();
+    item_b.material = mat_b;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item_b].into());
+    frame.scene.generation += 1;
+    let toon_b = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_ne!(
+        toon_reparam, toon_b,
+        "a second material must carry its own parameters"
+    );
+    let stats = renderer.resources().material_plugin_stats();
+    assert_eq!(stats[0].pipelines_built, 1);
 
     // HDR path (and, with a transparent second item, the OIT path).
     let mut transparent = item.clone();
@@ -151,11 +150,11 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     assert_eq!(hdr.len(), 64 * 64 * 4);
 }
 
-/// A plugin declaring a texture slot samples the per-variant texture: a
-/// variant bound to a red texture must render differently from the default
-/// variant's 1x1 white fallback.
+/// A plugin declaring a texture slot samples the material's texture: a
+/// material naming a red texture must render differently from one leaving the
+/// slot on the 1x1 white fallback.
 #[test]
-fn material_plugin_texture_variant_renders() {
+fn material_plugin_texture_renders() {
     struct StripePlugin;
     impl viewport_lib::MaterialPlugin for StripePlugin {
         fn name(&self) -> &'static str {
@@ -204,10 +203,6 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
             viewport_lib::TextureData::srgb(4, 4, red.to_vec()),
         )
         .expect("upload texture");
-    let red_variant = renderer
-        .resources_mut()
-        .create_material_plugin_variant(&device, plugin_id, &[], &[red_tex])
-        .expect("variant");
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
@@ -226,13 +221,13 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let white_fallback = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    m.shading_plugin = Some(red_variant);
+    m.plugin_textures[0] = Some(red_tex);
     renderer.resources_mut().replace_material(mat, m).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     let red_textured = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_ne!(
         white_fallback, red_textured,
-        "a variant's texture must reach the hook"
+        "a material's plugin texture must reach the hook"
     );
 }
 
@@ -327,7 +322,6 @@ fn material_plugin_surface_hook_authors_surface_and_gated_alpha() {
             "paint_test"
         }
         fn wgsl_body(&self) -> String {
-            // params[0] = (alpha, emissive_green, 0, 0)
             "\
 fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     var ov: SurfaceOverride;
@@ -335,17 +329,18 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     ov.normal = surf.normal;
     ov.metallic = surf.metallic;
     ov.roughness = surf.roughness;
-    ov.emissive = vec3<f32>(0.0, material_params[0].y, 0.0);
-    ov.alpha = material_params[0].x;
+    ov.emissive = vec3<f32>(0.0, params.glow, 0.0);
+    ov.alpha = params.alpha;
     return ov;
 }
 "
             .to_string()
         }
-        fn initial_params(&self) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
-            let mut p = [[0.0; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S];
-            p[0] = [1.0, 0.0, 0.0, 0.0];
-            p
+        fn param_layout(&self) -> Vec<viewport_lib::ParamDesc> {
+            vec![
+                viewport_lib::ParamDesc::f32("alpha", 1.0),
+                viewport_lib::ParamDesc::f32("glow", 0.0),
+            ]
         }
     }
 
@@ -363,11 +358,6 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
         .resources_mut()
         .register_material_plugin(&device, &PaintPlugin)
         .expect("register");
-    let params = renderer
-        .resources_mut()
-        .material_plugin_params_handle(plugin_id)
-        .expect("params handle");
-
     let cam = Camera::default();
     let mut frame = FrameData::default();
     frame.camera.render_camera = RenderCamera::from_camera(&cam);
@@ -401,7 +391,9 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     );
 
     // Hook emissive reaches the image.
-    params.write(&queue, &[[1.0, 0.8, 0.0, 0.0]]);
+    m.set_param("alpha", 1.0);
+    m.set_param("glow", 0.8);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     let emissive = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     let green = |img: &[u8]| -> i64 { img.chunks(4).map(|p| p[1] as i64).sum::<i64>() };
     assert!(
@@ -410,7 +402,9 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     );
 
     // Opaque materials ignore the hook's alpha entirely.
-    params.write(&queue, &[[0.05, 0.0, 0.0, 0.0]]);
+    m.set_param("alpha", 0.05);
+    m.set_param("glow", 0.0);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     let opaque_low_alpha = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_eq!(
         painted, opaque_low_alpha,
@@ -421,9 +415,13 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     m.alpha_mode = viewport_lib::material::AlphaMode::Blend;
     renderer.resources_mut().replace_material(mat, m).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
-    params.write(&queue, &[[0.9, 0.0, 0.0, 0.0]]);
+    m.set_param("alpha", 0.9);
+    m.set_param("glow", 0.0);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     let blend_high = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
-    params.write(&queue, &[[0.1, 0.0, 0.0, 0.0]]);
+    m.set_param("alpha", 0.1);
+    m.set_param("glow", 0.0);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     let blend_low = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_ne!(blend_high, blend_low, "blend draws must honour hook alpha");
 
@@ -432,7 +430,9 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     m.alpha_mode = viewport_lib::material::AlphaMode::Mask(0.5);
     renderer.resources_mut().replace_material(mat, m).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
-    params.write(&queue, &[[0.1, 0.0, 0.0, 0.0]]);
+    m.set_param("alpha", 0.1);
+    m.set_param("glow", 0.0);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     let mask_discarded = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
     let empty = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
@@ -1157,4 +1157,428 @@ fn a_background_warm_up_is_counted_then_waited_for() {
     );
     assert_eq!(renderer.last_frame_stats().pipelines_pending, 0);
     assert!(renderer.resources().material_plugin_stats()[0].pipelines_built >= 1);
+}
+
+/// Shades to the material's `colour` parameter through the ambient hook, with
+/// lights adding nothing, so each material reads as one known colour.
+struct FlatParamPlugin;
+impl viewport_lib::MaterialPlugin for FlatParamPlugin {
+    fn name(&self) -> &'static str {
+        "flat_param"
+    }
+    fn wgsl_body(&self) -> String {
+        "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
+    return params.colour;
+}
+"
+        .to_string()
+    }
+    fn param_layout(&self) -> Vec<viewport_lib::ParamDesc> {
+        vec![viewport_lib::ParamDesc::colour("colour", Colour::WHITE)]
+    }
+}
+
+/// Shades to the material's first plugin texture through the ambient hook.
+struct FlatTexturePlugin;
+impl viewport_lib::MaterialPlugin for FlatTexturePlugin {
+    fn name(&self) -> &'static str {
+        "flat_texture"
+    }
+    fn texture_count(&self) -> u32 {
+        1
+    }
+    fn wgsl_body(&self) -> String {
+        "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
+    return textureSampleLevel(material_texture_0, material_sampler, surf.uv, 0.0).rgb;
+}
+"
+        .to_string()
+    }
+}
+
+fn two_box_frame(mesh_id: MeshId, materials: &[MaterialId]) -> FrameData {
+    let mut frame = sub_object_pick_frame();
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+    let n = materials.len() as f32;
+    let items: Vec<_> = materials
+        .iter()
+        .enumerate()
+        .map(|(i, &material)| {
+            let mut it = SceneRenderItem::default();
+            it.mesh_id = mesh_id;
+            it.material = material;
+            let x = (i as f32 - (n - 1.0) * 0.5) * 0.9;
+            it.model = glam::Mat4::from_scale_rotation_translation(
+                glam::Vec3::splat(0.4),
+                glam::Quat::IDENTITY,
+                glam::Vec3::new(x, x, 0.0),
+            )
+            .to_cols_array_2d();
+            it
+        })
+        .collect();
+    frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+    frame.scene.generation = 1;
+    frame
+}
+
+/// Pixels whose channel `c` clearly dominates the other two.
+fn dominant(img: &[u8], c: usize) -> usize {
+    img.chunks(4)
+        .filter(|p| {
+            let v = p[c] as i32;
+            (0..3).filter(|&o| o != c).all(|o| v > p[o] as i32 + 60)
+        })
+        .count()
+}
+
+/// Two materials on one plugin with different parameters share one batch and
+/// each draws its own values, on the instanced path and the per-object path,
+/// and the two paths agree.
+#[test]
+fn materials_on_one_plugin_draw_their_own_params_in_one_batch() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let plugin = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &FlatParamPlugin)
+        .expect("register");
+    let red = upload_material(
+        &mut renderer,
+        Material::default()
+            .with_plugin(plugin)
+            .with_param("colour", Colour::linear_rgb(0.9, 0.0, 0.0)),
+    );
+    let blue = upload_material(
+        &mut renderer,
+        Material::default()
+            .with_plugin(plugin)
+            .with_param("colour", Colour::linear_rgb(0.0, 0.0, 0.9)),
+    );
+
+    let mut frame = two_box_frame(mesh_id, &[red, blue]);
+    // The first frame sets up the plugin's sets; the second draws through them.
+    let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    let instanced = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    let stats = renderer.last_frame_stats();
+    assert_eq!(stats.per_object_items, 0);
+    assert_eq!(
+        stats.instanced_batches, 1,
+        "materials differing only in parameters must share a batch"
+    );
+    assert!(dominant(&instanced, 0) > 20, "the red material's box");
+    assert!(dominant(&instanced, 2) > 20, "the blue material's box");
+
+    if let SurfaceSubmission::Flat(items) = &mut frame.scene.surfaces {
+        let mut v = items.to_vec();
+        for it in &mut v {
+            it.settings.force_per_object = true;
+        }
+        *items = v.into();
+    }
+    frame.scene.generation += 1;
+    let per_object = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_eq!(renderer.last_frame_stats().per_object_items, 2);
+    assert!(
+        per_object == instanced,
+        "the per-object path must read the same parameters"
+    );
+
+    // HDR, for the scene pass's own plugin draws.
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
+    let hdr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert!(dominant(&hdr, 0) > 20 && dominant(&hdr, 2) > 20);
+}
+
+/// A parameter a material leaves unset draws with the declared default, and
+/// a material uploaded before its plugin was registered picks the defaults up
+/// at registration.
+#[test]
+fn unset_parameters_draw_the_declared_default() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    // The plugin's id is the next hook index, so a material can name it first.
+    let early = upload_material(
+        &mut renderer,
+        Material::default().with_plugin(viewport_lib::MaterialPluginId::from_index(0)),
+    );
+    let plugin = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &FlatParamPlugin)
+        .expect("register");
+    assert_eq!(plugin.plugin_index(), 0);
+    let explicit = upload_material(
+        &mut renderer,
+        Material::default()
+            .with_plugin(plugin)
+            .with_param("colour", Colour::WHITE),
+    );
+    let black = upload_material(
+        &mut renderer,
+        Material::default()
+            .with_plugin(plugin)
+            .with_param("colour", Colour::BLACK),
+    );
+    let frame_of = |m, generation| {
+        let mut f = two_box_frame(mesh_id, &[m]);
+        f.scene.generation = generation;
+        f
+    };
+    let _ = renderer.render_offscreen(&device, &queue, &frame_of(explicit, 1), 64, 64);
+    let white = renderer.render_offscreen(&device, &queue, &frame_of(explicit, 1), 64, 64);
+    let dark = renderer.render_offscreen(&device, &queue, &frame_of(black, 2), 64, 64);
+    let defaulted = renderer.render_offscreen(&device, &queue, &frame_of(early, 3), 64, 64);
+    assert!(white != dark, "the parameter reaches the shader");
+    assert!(white == defaulted, "the default is white");
+}
+
+/// Materials naming the same plugin textures share a batch, different sets
+/// split, each samples its own, and freeing a texture drops it to the white
+/// fallback. On both texture bindings.
+#[test]
+fn plugin_texture_sets_split_and_share_batches() {
+    let Some((device, queue)) = headless_device_with(
+        &DeviceProfile::low_power("plugin-textures").with_recommended_features(),
+    ) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    for per_batch in [false, true] {
+        let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+        if per_batch {
+            renderer.use_per_batch_material_textures();
+        } else if renderer.material_texture_binding() != "bindless" {
+            continue;
+        }
+        let binding = renderer.material_texture_binding();
+        renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+        let mesh_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &box_mesh())
+            .unwrap();
+        let plugin = renderer
+            .resources_mut()
+            .register_material_plugin(&device, &FlatTexturePlugin)
+            .expect("register");
+        let solid = |r: &mut ViewportRenderer, rgba: [u8; 4]| {
+            r.resources_mut()
+                .upload_texture(
+                    &device,
+                    &queue,
+                    viewport_lib::TextureData::srgb(2, 2, rgba.repeat(4)),
+                )
+                .unwrap()
+        };
+        let red_tex = solid(&mut renderer, [230, 0, 0, 255]);
+        let green_tex = solid(&mut renderer, [0, 230, 0, 255]);
+        let textured = |r: &mut ViewportRenderer, t| {
+            upload_material(
+                r,
+                Material::default()
+                    .with_plugin(plugin)
+                    .with_plugin_texture(0, t),
+            )
+        };
+        let red_a = textured(&mut renderer, red_tex);
+        let red_b = textured(&mut renderer, red_tex);
+        let green = textured(&mut renderer, green_tex);
+
+        let mut frame = two_box_frame(mesh_id, &[red_a, red_b, green]);
+        let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        let img = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        let stats = renderer.last_frame_stats();
+        assert_eq!(stats.per_object_items, 0, "{binding}");
+        assert_eq!(
+            stats.instanced_batches, 2,
+            "{binding}: one batch for the shared red set, one for green"
+        );
+        assert!(dominant(&img, 0) > 20, "{binding}: red boxes");
+        assert!(dominant(&img, 1) > 10, "{binding}: green box");
+        assert_eq!(
+            renderer.resources().material_plugin_stats()[0].texture_sets,
+            2,
+            "{binding}"
+        );
+
+        // A freed texture samples the white fallback from the next frame.
+        assert!(renderer.resources_mut().free_texture(green_tex));
+        frame.scene.generation += 1;
+        let freed = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        assert_eq!(
+            dominant(&freed, 1),
+            0,
+            "{binding}: the green texture is gone"
+        );
+        assert!(dominant(&freed, 0) > 20, "{binding}: red is untouched");
+    }
+}
+
+/// Plugin values that do not match the declaration are refused at upload and
+/// replace.
+#[test]
+fn mismatched_plugin_values_are_refused() {
+    let Some((device, _queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let res = renderer.resources_mut();
+    let plugin = res
+        .register_material_plugin(&device, &FlatParamPlugin)
+        .unwrap();
+    let base = Material::default().with_plugin(plugin);
+    let refused = |r: viewport_lib::error::ViewportResult<MaterialId>| {
+        matches!(r, Err(ViewportError::InvalidMaterialParams { .. }))
+    };
+    assert!(refused(
+        res.upload_material(base.with_param("colour_typo", Colour::WHITE))
+    ));
+    assert!(refused(res.upload_material(base.with_param("colour", 1.0))));
+    assert!(
+        refused(
+            res.upload_material(base.with_plugin_texture(0, viewport_lib::TextureId::from_raw(1)))
+        ),
+        "the plugin declares no textures"
+    );
+    let orphan = Material::default()
+        .with_plugin(viewport_lib::MaterialPluginId::from_index(77))
+        .with_param("x", 1.0);
+    assert!(
+        refused(res.upload_material(orphan)),
+        "an unregistered plugin"
+    );
+    // Values fit their kinds; a colour fills a vec3.
+    assert!(
+        res.upload_material(base.with_param("colour", [0.1, 0.2, 0.3]))
+            .is_ok()
+    );
+    let id = res.upload_material(base).unwrap();
+    assert!(matches!(
+        res.replace_material(id, base.with_param("nope", 1.0)),
+        Err(ViewportError::InvalidMaterialParams { .. })
+    ));
+    // Without a plugin the values are ignored.
+    assert!(
+        res.upload_material(Material::default().with_param("x", 1.0))
+            .is_ok()
+    );
+}
+
+/// A plugin declaring more textures than the device can bind alongside the
+/// renderer's own is refused at registration, not at draw time.
+#[test]
+fn an_over_budget_texture_layout_is_refused_at_registration() {
+    struct Many(u32);
+    impl viewport_lib::MaterialPlugin for Many {
+        fn name(&self) -> &'static str {
+            if self.0 > 8 {
+                "many_over_cap"
+            } else {
+                "many_over_budget"
+            }
+        }
+        fn texture_count(&self) -> u32 {
+            self.0
+        }
+        fn wgsl_body(&self) -> String {
+            "fn shade_ambient(surf: ShadingSurface) -> vec3<f32> { return vec3<f32>(1.0); }"
+                .to_string()
+        }
+    }
+    // wgpu's default limits give the fragment stage 16 sampled textures, most
+    // of which the mesh layouts already bind.
+    let Some((device, _queue)) = headless_device_with(&DeviceProfile::harness()) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    assert_eq!(device.limits().max_sampled_textures_per_shader_stage, 16);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let res = renderer.resources_mut();
+    match res.register_material_plugin(&device, &Many(4)) {
+        Err(ViewportError::MaterialPluginTextureBudget {
+            requested,
+            available,
+            ..
+        }) => {
+            assert_eq!(requested, 4);
+            // The per-object mesh layouts bind 15 of the 16.
+            assert_eq!(available, 1);
+        }
+        other => panic!("expected a budget refusal, got {other:?}"),
+    }
+    assert!(matches!(
+        res.register_material_plugin(&device, &Many(9)),
+        Err(ViewportError::ShadeShaderInvalid { .. })
+    ));
+}
+
+/// On a device with wgpu's default limits deformers are off, and a plugin
+/// draw still binds every group its layout carries: batched and per-object,
+/// LDR and HDR.
+#[test]
+fn a_plugin_draws_on_a_default_limits_device() {
+    let Some((device, queue)) = headless_device_with(&DeviceProfile::harness()) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let plugin = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &FlatParamPlugin)
+        .expect("register");
+    let red = upload_material(
+        &mut renderer,
+        Material::default()
+            .with_plugin(plugin)
+            .with_param("colour", Colour::linear_rgb(0.9, 0.0, 0.0)),
+    );
+    let mut frame = two_box_frame(mesh_id, &[red, red]);
+    for mode in [
+        viewport_lib::PipelineMode::Direct,
+        viewport_lib::PipelineMode::Hdr,
+    ] {
+        for per_object in [false, true] {
+            frame.effects.display.mode = mode;
+            if let SurfaceSubmission::Flat(items) = &mut frame.scene.surfaces {
+                let mut v = items.to_vec();
+                for it in &mut v {
+                    it.settings.force_per_object = per_object;
+                }
+                *items = v.into();
+            }
+            frame.scene.generation += 1;
+            let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+            let img = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+            assert!(dominant(&img, 0) > 20, "{mode:?}, per_object {per_object}");
+        }
+    }
 }

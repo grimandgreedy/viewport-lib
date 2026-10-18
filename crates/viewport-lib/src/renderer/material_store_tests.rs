@@ -231,3 +231,86 @@ fn foreground_items_on_cache_hit_frames_keep_the_scene_materials() {
         assert!(next == first, "a cache-hit frame drew differently");
     }
 }
+
+struct Flat;
+impl crate::MaterialPlugin for Flat {
+    fn name(&self) -> &'static str {
+        "store_flat"
+    }
+    fn texture_count(&self) -> u32 {
+        1
+    }
+    fn wgsl_body(&self) -> String {
+        "fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> { return vec3<f32>(0.0); }\n\
+         fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {\n\
+         \x20   return params.colour * textureSampleLevel(material_texture_0, material_sampler, surf.uv, 0.0).rgb;\n\
+         }\n"
+            .to_string()
+    }
+    fn param_layout(&self) -> Vec<crate::ParamDesc> {
+        vec![crate::ParamDesc::colour("colour", Colour::WHITE)]
+    }
+}
+
+/// A plugin parameter edit is one block write and draws what a fresh upload
+/// of the edited material draws; a plugin texture edit rebuilds.
+#[test]
+fn a_plugin_parameter_replace_is_a_block_write() {
+    let Some((device, queue)) = device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let draw = |edit: Option<Colour>| {
+        let mut renderer = ViewportRenderer::new(&device, FORMAT);
+        let mesh = cube(&mut renderer, &device);
+        let plugin = renderer
+            .resources_mut()
+            .register_material_plugin(&device, &Flat)
+            .unwrap();
+        let m = |c| {
+            Material::default()
+                .with_plugin(plugin)
+                .with_param("colour", c)
+        };
+        let first = edit.map_or(Colour::linear_rgb(0.9, 0.2, 0.1), |_| {
+            Colour::linear_rgb(0.1, 0.2, 0.9)
+        });
+        let id = renderer.resources_mut().upload_material(m(first)).unwrap();
+        let f = frame(mesh, id, None);
+        let _ = renderer.render_offscreen(&device, &queue, &f, SIZE, SIZE);
+        if let Some(c) = edit {
+            let epoch = renderer.resources.resource_view_epoch;
+            renderer.resources_mut().replace_material(id, m(c)).unwrap();
+            assert_eq!(
+                renderer.resources.resource_view_epoch, epoch,
+                "a parameter edit must not force a rebuild"
+            );
+            let tex = renderer
+                .resources_mut()
+                .upload_texture(
+                    &device,
+                    &queue,
+                    crate::TextureData::srgb(1, 1, vec![255; 4]),
+                )
+                .unwrap();
+            let mut textured = m(c);
+            textured.plugin_textures[0] = Some(tex);
+            let epoch = renderer.resources.resource_view_epoch;
+            renderer
+                .resources_mut()
+                .replace_material(id, textured)
+                .unwrap();
+            assert_ne!(
+                renderer.resources.resource_view_epoch, epoch,
+                "a plugin texture edit changes the batch key"
+            );
+        }
+        renderer.render_offscreen(&device, &queue, &f, SIZE, SIZE)
+    };
+    let fresh = draw(None);
+    let edited = draw(Some(Colour::linear_rgb(0.9, 0.2, 0.1)));
+    assert!(
+        edited == fresh,
+        "the edited block draws what a fresh upload does"
+    );
+}

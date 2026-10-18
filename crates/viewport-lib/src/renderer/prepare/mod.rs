@@ -272,34 +272,49 @@ impl ViewportRenderer {
         self.instancing.use_instancing = true;
 
         let per_object_start = web_time::Instant::now();
-        // Set up the pipeline sets of the material plugins the frame references
-        // before draw time (paint has no mutable access). This compiles
-        // nothing: each pipeline is built by the first draw that selects it.
-        // Unknown ids are ignored and those items fall back to built-in
-        // shading.
+        // Set up the pipeline sets of the material plugins the frame references,
+        // and the group-3 bind groups of the texture sets it draws, before draw
+        // time (paint has no mutable access). This compiles nothing: each
+        // pipeline is built by the first draw that selects it. Unknown ids are
+        // ignored and those items fall back to built-in shading.
         let mut seen: Vec<u32> = Vec::new();
+        let mut texture_sets: Vec<(
+            crate::scene::material::MaterialPluginId,
+            crate::resources::mesh_sidecar::shade::PluginTextures,
+        )> = Vec::new();
         for item in scene_items.iter() {
-            let Some(pid) = resources.material_or_default(item.material).shading_plugin else {
-                continue;
-            };
-            if seen.contains(&pid.plugin_index()) {
-                continue;
+            let submeshes = item.submesh_materials.as_deref().unwrap_or(&[]);
+            for &id in std::iter::once(&item.material).chain(submeshes) {
+                let material = resources.material_or_default(id);
+                let Some(pid) = material.shading_plugin else {
+                    continue;
+                };
+                let set = (pid, material.plugin_textures);
+                if set.1.iter().any(Option::is_some) && !texture_sets.contains(&set) {
+                    texture_sets.push(set);
+                }
+                if seen.contains(&pid.plugin_index()) {
+                    continue;
+                }
+                seen.push(pid.plugin_index());
+                // The per-object set draws the items that cannot join a batch;
+                // the instanced set lets the rest draw one call per batch (see
+                // `is_instanceable`).
+                if resources.material_plugin_needs_build(pid) {
+                    resources.ensure_material_plugin_pipelines(device, pid);
+                }
+                if !resources.material_plugin_instanced_ready(pid) {
+                    // The instanced set sits on the built-in instanced group-1
+                    // layout, and its GPU-culled twins on the cull layout, so
+                    // both come first. Both calls are idempotent.
+                    resources.ensure_instanced_pipelines(device);
+                    resources.ensure_cull_instance_pipelines(device);
+                    resources.ensure_material_plugin_instanced_pipelines(device, pid);
+                }
             }
-            seen.push(pid.plugin_index());
-            // The per-object set draws the items that cannot join a batch; the
-            // instanced set lets the rest draw one call per batch (see
-            // `is_instanceable`).
-            if resources.material_plugin_needs_build(pid) {
-                resources.ensure_material_plugin_pipelines(device, pid);
-            }
-            if !resources.material_plugin_instanced_ready(pid) {
-                // The instanced set sits on the built-in instanced group-1
-                // layout, and its GPU-culled twins on the cull layout, so both
-                // come first. Both calls are idempotent.
-                resources.ensure_instanced_pipelines(device);
-                resources.ensure_cull_instance_pipelines(device);
-                resources.ensure_material_plugin_instanced_pipelines(device, pid);
-            }
+        }
+        for (pid, textures) in &texture_sets {
+            resources.ensure_plugin_texture_group(device, *pid, textures);
         }
         // Evaluate instanceability once per frame and share the result. Each
         // `is_instanceable` call does several mesh-store and deform lookups, so

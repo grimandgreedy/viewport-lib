@@ -1,16 +1,16 @@
 //! Showcase 54: Custom Shading Plugins.
 //!
 //! Demonstrates the `MaterialPlugin` API: WGSL shading hooks registered at
-//! runtime and selected per material via `Material::shading_plugin`. Eight
+//! runtime and selected per material via `Material::with_plugin`. Eight
 //! spheres share one light rig:
 //!
 //!   1. Built-in PBR (the reference look).
-//!   2. Toon plugin, variant A: banded diffuse, sliders drive the group-3
-//!      params window live.
-//!   3. Toon plugin, variant B: same plugin and pipelines, its own params
-//!      window (independent band count and tint), proving per-material params.
-//!   4. Toon plugin, textured variant: a procedural stripe texture bound to
-//!      the plugin's `material_texture_0` slot.
+//!   2. Toon plugin, material A: banded diffuse, sliders edit the material's
+//!      parameters live.
+//!   3. Toon plugin, material B: same plugin and pipelines, its own
+//!      parameters (independent band count and tint).
+//!   4. Toon plugin, textured material: a procedural stripe texture in the
+//!      plugin's `material_texture_0` slot.
 //!   5. Rim plugin: a `recolor` hook that adds a view-dependent rim on top of
 //!      the built-in lighting.
 //!   6. Detail-layer plugin: a tiled detail albedo blended over the base,
@@ -27,11 +27,12 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::edit_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
-    LightKind, LightSource, LightingSettings, Material, MaterialId, MaterialPluginId,
-    MaterialPluginParamsHandle, MeshId, SceneRenderItem, ViewportRenderer,
+    LightKind, LightSource, LightingSettings, Material, MaterialId, MaterialPluginId, MeshId,
+    SceneRenderItem, TextureId, ViewportRenderer,
 };
 
 // The plugin definitions live in `examples/plugins/toon_plugin.rs` so other
@@ -42,10 +43,10 @@ mod surface_detail_plugin;
 mod toon_plugin;
 
 use surface_detail_plugin::{
-    DetailLayerPlugin, DissolvePlugin, ParallaxPlugin, detail_params, dissolve_params,
-    parallax_params,
+    DetailLayerPlugin, DissolvePlugin, ParallaxPlugin, detail_material, dissolve_material,
+    parallax_material,
 };
-use toon_plugin::{RimPlugin, ToonPlugin, toon_params};
+use toon_plugin::{RimPlugin, ToonPlugin, toon_material};
 
 // ---------------------------------------------------------------------------
 // State
@@ -54,23 +55,12 @@ use toon_plugin::{RimPlugin, ToonPlugin, toon_params};
 pub(crate) struct CustomShadingState {
     pub built: bool,
     pub mesh_id: Option<MeshId>,
-    pub toon_a: Option<MaterialPluginId>,
-    pub toon_b: Option<MaterialPluginId>,
-    pub toon_tex: Option<MaterialPluginId>,
-    pub rim: Option<MaterialPluginId>,
-    pub detail: Option<MaterialPluginId>,
-    pub parallax: Option<MaterialPluginId>,
-    pub dissolve: Option<MaterialPluginId>,
     pub detail_mesh_id: Option<MeshId>,
     /// One material per sphere, in `SPHERES` order.
     pub materials: Vec<MaterialId>,
-    pub toon_a_handle: Option<MaterialPluginParamsHandle>,
-    pub toon_b_handle: Option<MaterialPluginParamsHandle>,
-    pub rim_handle: Option<MaterialPluginParamsHandle>,
-    pub detail_handle: Option<MaterialPluginParamsHandle>,
-    pub parallax_handle: Option<MaterialPluginParamsHandle>,
-    pub dissolve_handle: Option<MaterialPluginParamsHandle>,
-    // UI-tunable; written into the params windows every frame.
+    /// Stripes, detail albedo, parallax height, parallax albedo.
+    pub textures: Option<[TextureId; 4]>,
+    // UI-tunable; edited into the sphere materials when they change.
     pub bands_a: f32,
     pub ambient_a: f32,
     pub tint_a: [f32; 3],
@@ -91,21 +81,9 @@ impl Default for CustomShadingState {
         Self {
             built: false,
             mesh_id: None,
-            toon_a: None,
-            toon_b: None,
-            toon_tex: None,
-            rim: None,
-            detail: None,
-            parallax: None,
-            dissolve: None,
             detail_mesh_id: None,
             materials: Vec::new(),
-            toon_a_handle: None,
-            toon_b_handle: None,
-            rim_handle: None,
-            detail_handle: None,
-            parallax_handle: None,
-            dissolve_handle: None,
+            textures: None,
             bands_a: 3.0,
             ambient_a: 0.25,
             tint_a: [1.0, 1.0, 1.0],
@@ -157,208 +135,42 @@ impl App {
 
         let resources = renderer.resources_mut();
         // Registration is idempotent per name, so re-entering the showcase
-        // reuses the existing plugins; only mint the extra variants once.
-        let toon_a = resources
-            .register_material_plugin(&self.device, &ToonPlugin)
-            .expect("register toon plugin");
-        let rim = resources
-            .register_material_plugin(&self.device, &RimPlugin)
-            .expect("register rim plugin");
-        let detail = resources
-            .register_material_plugin(&self.device, &DetailLayerPlugin)
-            .expect("register detail plugin");
-        let parallax_default = resources
-            .register_material_plugin(&self.device, &ParallaxPlugin)
-            .expect("register parallax plugin");
-        let dissolve = resources
-            .register_material_plugin(&self.device, &DissolvePlugin)
-            .expect("register dissolve plugin");
+        // reuses the existing plugins.
+        let plugins = Plugins {
+            toon: resources
+                .register_material_plugin(&self.device, &ToonPlugin)
+                .expect("register toon plugin"),
+            rim: resources
+                .register_material_plugin(&self.device, &RimPlugin)
+                .expect("register rim plugin"),
+            detail: resources
+                .register_material_plugin(&self.device, &DetailLayerPlugin)
+                .expect("register detail plugin"),
+            parallax: resources
+                .register_material_plugin(&self.device, &ParallaxPlugin)
+                .expect("register parallax plugin"),
+            dissolve: resources
+                .register_material_plugin(&self.device, &DissolvePlugin)
+                .expect("register dissolve plugin"),
+        };
 
         // No warm-up: each plugin's pipelines are built by the first draw that
-        // selects them, so opening this page compiles the one or two variants
+        // selects them, so opening this page compiles the one or two pipelines
         // each sphere uses and not the whole set.
 
-        if self.cs_state.toon_b.is_none() {
-            let s = &self.cs_state;
-            self.cs_state.toon_b = Some(
-                resources
-                    .create_material_plugin_variant(
-                        &self.device,
-                        toon_a,
-                        &toon_params(s.bands_b, 0.15, 1.0, s.tint_b),
-                        &[],
-                    )
-                    .expect("toon variant B"),
-            );
-
-            // Procedural stripe texture for the textured variant.
-            let tex_id = {
-                let size = 64usize;
-                let mut rgba = vec![0u8; size * size * 4];
-                for y in 0..size {
-                    for x in 0..size {
-                        let on = (x / 8) % 2 == 0;
-                        let v: [u8; 4] = if on {
-                            [250, 250, 250, 255]
-                        } else {
-                            [70, 70, 90, 255]
-                        };
-                        rgba[(y * size + x) * 4..(y * size + x) * 4 + 4].copy_from_slice(&v);
-                    }
-                }
-                resources
-                    .upload_texture(
-                        &self.device,
-                        &self.queue,
-                        vpl::TextureData::srgb(64, 64, rgba.to_vec()),
-                    )
-                    .expect("upload stripes")
-            };
-            self.cs_state.toon_tex = Some(
-                resources
-                    .create_material_plugin_variant(
-                        &self.device,
-                        toon_a,
-                        &toon_params(4.0, 0.25, 4.0, [1.0, 1.0, 1.0]),
-                        &[tex_id],
-                    )
-                    .expect("toon textured variant"),
-            );
+        if self.cs_state.textures.is_none() {
+            let textures = upload_textures(&self.device, &self.queue, resources);
+            self.cs_state.textures = Some(textures);
         }
-
-        if self.cs_state.parallax.is_none() {
-            // Detail albedo: a diagonal crosshatch.
-            let detail_tex = {
-                let size = 64usize;
-                let mut rgba = vec![0u8; size * size * 4];
-                for y in 0..size {
-                    for x in 0..size {
-                        let d = ((x + y) / 6) % 2 == 0;
-                        let v: [u8; 4] = if d {
-                            [235, 235, 235, 255]
-                        } else {
-                            [120, 110, 100, 255]
-                        };
-                        rgba[(y * size + x) * 4..(y * size + x) * 4 + 4].copy_from_slice(&v);
-                    }
-                }
-                resources
-                    .upload_texture(
-                        &self.device,
-                        &self.queue,
-                        vpl::TextureData::srgb(64, 64, rgba.to_vec()),
-                    )
-                    .expect("upload detail albedo")
-            };
-            self.cs_state.detail = Some(
-                resources
-                    .create_material_plugin_variant(
-                        &self.device,
-                        detail,
-                        &detail_params(
-                            self.cs_state.detail_tiling,
-                            self.cs_state.detail_strength,
-                            self.cs_state.detail_attr_mask,
-                        ),
-                        &[detail_tex],
-                    )
-                    .expect("detail variant"),
-            );
-
-            // Parallax height + albedo: a brick-like grid. Mortar grooves are
-            // low (dark height) and each brick face is high.
-            let (height_tex, albedo_tex) = {
-                let size = 64usize;
-                let mut height = vec![0u8; size * size * 4];
-                let mut albedo = vec![0u8; size * size * 4];
-                for y in 0..size {
-                    for x in 0..size {
-                        let row = y / 16;
-                        let xo = if row % 2 == 0 { x } else { x + 8 };
-                        let in_mortar = (xo % 32) < 3 || (y % 16) < 3;
-                        let h: u8 = if in_mortar { 30 } else { 230 };
-                        let a: [u8; 4] = if in_mortar {
-                            [140, 135, 130, 255]
-                        } else {
-                            [180, 85, 60, 255]
-                        };
-                        let i = (y * size + x) * 4;
-                        height[i..i + 4].copy_from_slice(&[h, h, h, 255]);
-                        albedo[i..i + 4].copy_from_slice(&a);
-                    }
-                }
-                (
-                    resources
-                        // Height is linear data, not colour: no sRGB decode.
-                        .upload_texture(
-                            &self.device,
-                            &self.queue,
-                            vpl::TextureData::linear(64, 64, height.to_vec()),
-                        )
-                        .expect("upload parallax height"),
-                    resources
-                        .upload_texture(
-                            &self.device,
-                            &self.queue,
-                            vpl::TextureData::srgb(64, 64, albedo.to_vec()),
-                        )
-                        .expect("upload parallax albedo"),
-                )
-            };
-            self.cs_state.parallax = Some(
-                resources
-                    .create_material_plugin_variant(
-                        &self.device,
-                        parallax_default,
-                        &parallax_params(
-                            self.cs_state.parallax_height,
-                            self.cs_state.parallax_tiling,
-                        ),
-                        &[height_tex, albedo_tex],
-                    )
-                    .expect("parallax variant"),
-            );
-        }
-
-        self.cs_state.toon_a_handle = resources.material_plugin_params_handle(toon_a);
-        self.cs_state.toon_b_handle = self
-            .cs_state
-            .toon_b
-            .and_then(|id| resources.material_plugin_params_handle(id));
-        self.cs_state.rim_handle = resources.material_plugin_params_handle(rim);
-        self.cs_state.detail_handle = self
-            .cs_state
-            .detail
-            .and_then(|id| resources.material_plugin_params_handle(id));
-        self.cs_state.parallax_handle = self
-            .cs_state
-            .parallax
-            .and_then(|id| resources.material_plugin_params_handle(id));
-        self.cs_state.dissolve = Some(dissolve);
-        self.cs_state.dissolve_handle = resources.material_plugin_params_handle(dissolve);
+        let textures = self.cs_state.textures.expect("uploaded above");
 
         self.cs_state.mesh_id = Some(mesh_id);
         self.cs_state.detail_mesh_id = Some(detail_mesh_id);
-        self.cs_state.toon_a = Some(toon_a);
-        self.cs_state.rim = Some(rim);
 
         let s = &self.cs_state;
-        let plugins = [
-            None, // built-in PBR reference
-            s.toon_a, s.toon_b, s.toon_tex, s.rim, s.detail, s.parallax, s.dissolve,
-        ];
-        let resources = renderer.resources_mut();
-        let materials = SPHERES
-            .iter()
-            .zip(plugins)
-            .map(|(sphere, plugin)| {
-                let mut m = Material::pbr(Colour::from_linear_rgb_array(sphere.1), 0.1, 0.55);
-                m.shading_plugin = plugin;
-                // The dissolve sphere runs on a Mask material so the hook's
-                // alpha output discards fragments below the cutoff.
-                if plugin.is_some() && plugin == s.dissolve {
-                    m.alpha_mode = vpl::material::AlphaMode::Mask(0.5);
-                }
+        let materials = (0..SPHERES.len())
+            .map(|i| {
+                let m = sphere_material(i, s, &plugins, textures);
                 resources.upload_material(m).expect("material upload")
             })
             .collect();
@@ -367,8 +179,135 @@ impl App {
     }
 }
 
+struct Plugins {
+    toon: MaterialPluginId,
+    rim: MaterialPluginId,
+    detail: MaterialPluginId,
+    parallax: MaterialPluginId,
+    dissolve: MaterialPluginId,
+}
+
+impl Plugins {
+    fn all(id: MaterialPluginId) -> Self {
+        Self {
+            toon: id,
+            rim: id,
+            detail: id,
+            parallax: id,
+            dissolve: id,
+        }
+    }
+}
+
+/// The stripes for the textured toon sphere, the detail albedo, and the
+/// parallax height and albedo.
+fn upload_textures(
+    device: &vpl::wgpu::Device,
+    queue: &vpl::wgpu::Queue,
+    resources: &mut vpl::resources::DeviceResources,
+) -> [TextureId; 4] {
+    let size = 64usize;
+    let paint = |f: &dyn Fn(usize, usize) -> [u8; 4]| {
+        let mut rgba = vec![0u8; size * size * 4];
+        for y in 0..size {
+            for x in 0..size {
+                rgba[(y * size + x) * 4..(y * size + x) * 4 + 4].copy_from_slice(&f(x, y));
+            }
+        }
+        rgba
+    };
+    let stripes = paint(&|x, _| {
+        if (x / 8) % 2 == 0 {
+            [250, 250, 250, 255]
+        } else {
+            [70, 70, 90, 255]
+        }
+    });
+    // A diagonal crosshatch.
+    let crosshatch = paint(&|x, y| {
+        if ((x + y) / 6) % 2 == 0 {
+            [235, 235, 235, 255]
+        } else {
+            [120, 110, 100, 255]
+        }
+    });
+    // A brick-like grid: mortar grooves are low (dark height) and each brick
+    // face is high.
+    let mortar = |x: usize, y: usize| {
+        let xo = if (y / 16) % 2 == 0 { x } else { x + 8 };
+        (xo % 32) < 3 || (y % 16) < 3
+    };
+    let height = paint(&|x, y| {
+        let h = if mortar(x, y) { 30 } else { 230 };
+        [h, h, h, 255]
+    });
+    let bricks = paint(&|x, y| {
+        if mortar(x, y) {
+            [140, 135, 130, 255]
+        } else {
+            [180, 85, 60, 255]
+        }
+    });
+    let mut upload = |data| {
+        resources
+            .upload_texture(device, queue, data)
+            .expect("upload texture")
+    };
+    [
+        upload(vpl::TextureData::srgb(64, 64, stripes)),
+        upload(vpl::TextureData::srgb(64, 64, crosshatch)),
+        // Height is linear data, not colour: no sRGB decode.
+        upload(vpl::TextureData::linear(64, 64, height)),
+        upload(vpl::TextureData::srgb(64, 64, bricks)),
+    ]
+}
+
+/// Sphere `i`'s material from the current slider values.
+fn sphere_material(
+    i: usize,
+    s: &CustomShadingState,
+    p: &Plugins,
+    [stripes, crosshatch, height, bricks]: [TextureId; 4],
+) -> Material {
+    let mut m = match i {
+        1 => toon_material(p.toon, s.bands_a, s.ambient_a, 1.0, s.tint_a),
+        2 => toon_material(p.toon, s.bands_b, 0.15, 1.0, s.tint_b),
+        3 => toon_material(p.toon, 4.0, 0.25, 4.0, [1.0, 1.0, 1.0]).with_plugin_texture(0, stripes),
+        4 => Material::default()
+            .with_plugin(p.rim)
+            .with_param("colour", s.rim_colour)
+            .with_param("power", s.rim_power),
+        5 => detail_material(
+            p.detail,
+            s.detail_tiling,
+            s.detail_strength,
+            s.detail_attr_mask,
+        )
+        .with_plugin_texture(0, crosshatch),
+        6 => parallax_material(p.parallax, s.parallax_height, s.parallax_tiling)
+            .with_plugin_texture(0, height)
+            .with_plugin_texture(1, bricks),
+        // The dissolve sphere runs on a Mask material so the hook's alpha
+        // output discards fragments below the cutoff.
+        7 => {
+            let mut m =
+                dissolve_material(p.dissolve, s.dissolve_threshold, 0.15, 1.0, [2.5, 1.2, 0.3]);
+            m.alpha_mode = vpl::material::AlphaMode::Mask(0.5);
+            m
+        }
+        _ => Material::default(),
+    };
+    // Every sphere keeps the reference sphere's PBR base.
+    let base = Material::pbr(Colour::from_linear_rgb_array(SPHERES[i].1), 0.1, 0.55);
+    m.base_colour = base.base_colour;
+    m.metallic = base.metallic;
+    m.roughness = base.roughness;
+    m.shading_model = base.shading_model;
+    m
+}
+
 /// Each sphere's x position and base colour, and whether it uses the detail
-/// mesh. Its shading plugin is set on its material at build.
+/// mesh. Its shading plugin is set on its material at build (`sphere_material`).
 const SPHERES: [(f32, [f32; 3], bool); 8] = [
     (-9.0, [0.75, 0.3, 0.3], false),
     (-6.0, [0.75, 0.3, 0.3], false),
@@ -423,14 +362,18 @@ pub(crate) fn custom_shading_lighting() -> LightingSettings {
 // Controls
 // ---------------------------------------------------------------------------
 
-pub(crate) fn controls_custom_shading(app: &mut App, ui: &mut egui::Ui) {
+pub(crate) fn controls_custom_shading(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    frame: &crate::eframe::Frame,
+) {
     ui.label("Custom shading via MaterialPlugin");
     ui.separator();
     ui.label(
         "Four WGSL plugins registered at runtime. Each sphere's Material\n\
          selects a plugin (or none); the toon spheres share one plugin and\n\
-         its pipelines but carry independent params windows, and the striped\n\
-         sphere binds a texture to the plugin's texture slot. The detail\n\
+         its pipelines but carry their own parameters, and the striped\n\
+         sphere names a texture in the plugin's texture slot. The detail\n\
          sphere gates its layer with a per-vertex mask from\n\
          MeshData::extension_attributes; the parallax sphere marches its own\n\
          height texture. Shadows, AO, and transparency keep working through\n\
@@ -438,7 +381,7 @@ pub(crate) fn controls_custom_shading(app: &mut App, ui: &mut egui::Ui) {
     );
 
     ui.separator();
-    ui.label("Toon sphere A (default variant)");
+    ui.label("Toon sphere A");
     ui.add(egui::Slider::new(&mut app.cs_state.bands_a, 1.0..=12.0).text("bands"));
     ui.add(egui::Slider::new(&mut app.cs_state.ambient_a, 0.0..=1.0).text("ambient"));
     ui.horizontal(|ui| {
@@ -447,7 +390,7 @@ pub(crate) fn controls_custom_shading(app: &mut App, ui: &mut egui::Ui) {
     });
 
     ui.separator();
-    ui.label("Toon sphere B (second variant, same plugin)");
+    ui.label("Toon sphere B (second material, same plugin)");
     ui.add(egui::Slider::new(&mut app.cs_state.bands_b, 1.0..=12.0).text("bands"));
     ui.horizontal(|ui| {
         ui.label("tint:");
@@ -480,46 +423,21 @@ pub(crate) fn controls_custom_shading(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Dissolve sphere (gated alpha + emissive edge)");
     ui.add(egui::Slider::new(&mut app.cs_state.dissolve_threshold, 0.0..=1.0).text("threshold"));
 
-    // Push the UI values into the params windows. The writes are five small
-    // uniform uploads; doing them unconditionally keeps the sliders live.
+    // Edit the slider values into the sphere materials. `edit_material` only
+    // replaces a material whose values changed, and a parameter edit is one
+    // block write.
     let s = &app.cs_state;
-    if let Some(h) = &s.toon_a_handle {
-        h.write(
-            &app.queue,
-            &toon_params(s.bands_a, s.ambient_a, 1.0, s.tint_a),
-        );
-    }
-    if let Some(h) = &s.toon_b_handle {
-        h.write(&app.queue, &toon_params(s.bands_b, 0.15, 1.0, s.tint_b));
-    }
-    if let Some(h) = &s.rim_handle {
-        h.write(
-            &app.queue,
-            &[[
-                s.rim_colour[0],
-                s.rim_colour[1],
-                s.rim_colour[2],
-                s.rim_power,
-            ]],
-        );
-    }
-    if let Some(h) = &s.detail_handle {
-        h.write(
-            &app.queue,
-            &detail_params(s.detail_tiling, s.detail_strength, s.detail_attr_mask),
-        );
-    }
-    if let Some(h) = &s.parallax_handle {
-        h.write(
-            &app.queue,
-            &parallax_params(s.parallax_height, s.parallax_tiling),
-        );
-    }
-    if let Some(h) = &s.dissolve_handle {
-        h.write(
-            &app.queue,
-            &dissolve_params(s.dissolve_threshold, 0.15, 1.0, [2.5, 1.2, 0.3]),
-        );
+    let Some(textures) = s.textures else {
+        return;
+    };
+    for (i, &id) in s.materials.iter().enumerate().skip(1) {
+        edit_material(frame, id, |m| {
+            let Some(plugin) = m.shading_plugin else {
+                return;
+            };
+            // Sphere `i` reads only its own plugin's slot.
+            *m = sphere_material(i, s, &Plugins::all(plugin), textures);
+        });
     }
 }
 
@@ -665,8 +583,8 @@ impl crate::Showcase for ScCustomShading {
         &self,
         app: &mut crate::App,
         ui: &mut crate::eframe::egui::Ui,
-        _frame: &crate::eframe::Frame,
+        frame: &crate::eframe::Frame,
     ) {
-        controls_custom_shading(app, ui)
+        controls_custom_shading(app, ui, frame)
     }
 }

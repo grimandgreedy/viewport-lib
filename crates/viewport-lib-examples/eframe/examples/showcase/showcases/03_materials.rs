@@ -312,7 +312,7 @@ fn build_matcaps(ctx: &mut SetupCtx) -> Vec<(MatcapId, &'static str)> {
 }
 
 /// The custom-WGSL row. Registers each `MaterialPlugin`, uploads the textures
-/// the detail and parallax plugins sample, and returns one material per variant.
+/// the detail and parallax plugins sample, and returns one material per sphere.
 fn build_custom_materials(ctx: &mut SetupCtx) -> Vec<Material> {
     // Plugin-owned textures (uploaded before the long-lived resources borrow).
     let detail_tex = upload(ctx, detail_texture());
@@ -333,70 +333,41 @@ fn build_custom_materials(ctx: &mut SetupCtx) -> Vec<Material> {
         .register_material_plugin(device, &ParallaxPlugin)
         .unwrap();
 
-    let toon_a = res
-        .create_material_plugin_variant(
-            device,
-            toon,
-            &toon_plugin::toon_params(4.0, 0.2, 1.0, [0.9, 0.5, 0.3]),
-            &[],
-        )
-        .unwrap();
-    let toon_b = res
-        .create_material_plugin_variant(
-            device,
-            toon,
-            &toon_plugin::toon_params(3.0, 0.25, 1.0, [0.3, 0.6, 0.95]),
-            &[],
-        )
-        .unwrap();
-    // attr_mask = 0 applies the detail everywhere (no per-vertex mask needed);
-    // the bound texture is the detail albedo the shader multiplies in.
-    let detail_v = res
-        .create_material_plugin_variant(
-            device,
-            detail,
-            &surface_detail::detail_params(6.0, 0.7, 0.0),
-            &[detail_tex],
-        )
-        .unwrap();
-    let dissolve_v = res
-        .create_material_plugin_variant(
-            device,
-            dissolve,
-            &surface_detail::dissolve_params(0.5, 0.08, 6.0, [2.0, 1.0, 0.3]),
-            &[],
-        )
-        .unwrap();
-    // Parallax owns its textures: slot 0 = height (R), slot 1 = albedo.
-    let parallax_v = res
-        .create_material_plugin_variant(
-            device,
-            parallax,
-            &surface_detail::parallax_params(0.06, 3.0),
-            &[height_tex, brick_tex],
-        )
-        .unwrap();
-
     // Plugin hooks add on top of the built-in PBR direct + ambient terms, so
     // the base is a PBR material (matching the eframe_showcase reference).
-    let plugin_mat = |id, colour: [f32; 3]| {
-        let mut m = Material::pbr(Colour::from_linear_rgb_array(colour), 0.1, 0.55);
-        m.shading_plugin = Some(id);
+    let on_pbr = |m: Material, colour: [f32; 3]| {
+        let base = Material::pbr(Colour::from_linear_rgb_array(colour), 0.1, 0.55);
+        let mut m = m;
+        m.base_colour = base.base_colour;
+        m.metallic = base.metallic;
+        m.roughness = base.roughness;
+        m.shading_model = base.shading_model;
         m
     };
+    let toon_a = toon_plugin::toon_material(toon, 4.0, 0.2, 1.0, [0.9, 0.5, 0.3]);
+    let toon_b = toon_plugin::toon_material(toon, 3.0, 0.25, 1.0, [0.3, 0.6, 0.95]);
+    // attr_mask = 0 applies the detail everywhere (no per-vertex mask needed);
+    // the texture is the detail albedo the shader multiplies in.
+    let detail_m =
+        surface_detail::detail_material(detail, 6.0, 0.7, 0.0).with_plugin_texture(0, detail_tex);
     // Dissolve needs a Mask material to actually cut fragments (opaque only glows).
-    let mut dissolve_mat = plugin_mat(dissolve_v, [0.55, 0.35, 0.25]);
-    dissolve_mat.alpha_mode = AlphaMode::Mask(0.5);
+    let mut dissolve_m =
+        surface_detail::dissolve_material(dissolve, 0.5, 0.08, 6.0, [2.0, 1.0, 0.3]);
+    dissolve_m.alpha_mode = AlphaMode::Mask(0.5);
+    // Parallax owns its textures: slot 0 = height (R), slot 1 = albedo.
+    let parallax_m = surface_detail::parallax_material(parallax, 0.06, 3.0)
+        .with_plugin_texture(0, height_tex)
+        .with_plugin_texture(1, brick_tex);
 
     vec![
-        plugin_mat(toon_a, [0.75, 0.3, 0.3]),
-        plugin_mat(toon_b, [0.75, 0.3, 0.3]),
-        // Dark base so the blue rim glow reads (rim colour is the plugin's
-        // default params: [0.2, 0.5, 1.0], power 3).
-        plugin_mat(rim, [0.25, 0.25, 0.3]),
-        dissolve_mat,
-        plugin_mat(detail_v, [0.22, 0.45, 0.14]),
-        plugin_mat(parallax_v, [0.8, 0.8, 0.8]),
+        on_pbr(toon_a, [0.75, 0.3, 0.3]),
+        on_pbr(toon_b, [0.75, 0.3, 0.3]),
+        // Dark base so the blue rim glow reads (the rim plugin's default
+        // colour [0.2, 0.5, 1.0], power 3).
+        on_pbr(Material::default().with_plugin(rim), [0.25, 0.25, 0.3]),
+        on_pbr(dissolve_m, [0.55, 0.35, 0.25]),
+        on_pbr(detail_m, [0.22, 0.45, 0.14]),
+        on_pbr(parallax_m, [0.8, 0.8, 0.8]),
     ]
 }
 

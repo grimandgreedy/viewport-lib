@@ -84,8 +84,8 @@ pub use self::mesh_sidecar::registry::{
     DEFORM_PARAMS_PER_SLOT_PUB, DEFORM_SLOT_COUNT_PUB, DeformStage, DeformerDesc, DeformerId,
 };
 pub use self::mesh_sidecar::shade::{
-    MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, MaterialPluginStats,
-    ShadingHookDesc, ShadingHookId,
+    MATERIAL_PLUGIN_MAX_PARAMS, MATERIAL_PLUGIN_MAX_TEXTURES, MaterialPlugin, MaterialPluginStats,
+    ParamDesc, ParamKind, ParamValue, ShadingHookDesc, ShadingHookId,
 };
 pub use self::overlay::font::{FontError, FontHandle, TextMetrics};
 pub(crate) use self::overlay::geometry::{CompiledOverlay, CompiledSource, OverlayInstance};

@@ -61,7 +61,7 @@ impl DeviceResources {
                 ..PipelineKey::default()
             },
         ];
-        match self.material_plugin_draw(material.shading_plugin) {
+        match self.material_plugin_draw(material.shading_plugin, &material.plugin_textures) {
             Some((set, _)) => keys.iter().any(|&k| set.opaque_ready(hdr, k)),
             // A plugin item whose set is not composed yet draws nothing.
             None if material.shading_plugin.is_some() => false,
@@ -108,7 +108,7 @@ impl DeviceResources {
                     ..PipelineKey::default()
                 },
             ];
-            return match self.material_plugin_draw(batch.shading_plugin) {
+            return match self.material_plugin_draw(batch.shading_plugin, &batch.plugin_textures) {
                 Some((set, _)) => keys.iter().any(|&k| set.opaque_ready(hdr, k)),
                 None if batch.shading_plugin.is_some() => false,
                 None => keys.iter().any(|&k| self.scene.opaque_ready(hdr, k)),
@@ -119,7 +119,7 @@ impl DeviceResources {
             no_discard_eligible: !clipping_active && !batch.has_alpha_mask,
             ..PipelineKey::default()
         };
-        match self.material_plugin_instanced_draw(batch.shading_plugin) {
+        match self.material_plugin_instanced_draw(batch.shading_plugin, &batch.plugin_textures) {
             Some((set, _)) => set.opaque_ready(hdr, key),
             None if batch.shading_plugin.is_some() => false,
             None => self.instancing.opaque_ready(hdr, key) || (hdr && self.cull.opaque_ready(key)),

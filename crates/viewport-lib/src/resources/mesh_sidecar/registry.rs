@@ -191,6 +191,12 @@ pub(crate) fn identifier_prefix(name: &str, body: &str) -> String {
     out
 }
 
+/// Whether `needle` occurs in `haystack` as a whole identifier, by the same
+/// boundary rules [`identifier_prefix`] replaces with.
+pub(crate) fn contains_word(haystack: &str, needle: &str) -> bool {
+    replace_whole_word(haystack, needle, "") != haystack
+}
+
 fn replace_whole_word(haystack: &str, needle: &str, replacement: &str) -> String {
     if needle.is_empty() {
         return haystack.to_string();

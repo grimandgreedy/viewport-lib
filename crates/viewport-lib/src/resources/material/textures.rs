@@ -835,6 +835,11 @@ impl DeviceResources {
     /// against the current occupant (or the fallback). Shared by `free_texture`
     /// (slot now empty) and `replace_texture` (slot holds a new view).
     fn evict_texture_bind_group_caches(&mut self, raw: u64) {
+        for plugin in self.material_plugins.values_mut() {
+            plugin
+                .texture_groups
+                .retain(|set, _| !set.iter().flatten().any(|t| t.raw() == raw));
+        }
         self.content
             .material_bind_groups
             .retain(|&(a, n, ao), _| a != raw && n != raw && ao != raw);

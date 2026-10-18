@@ -90,9 +90,9 @@ pub(super) fn draw_mesh_item(
     let obj_bg = obj_bg_override.unwrap_or(&mesh.object_bind_group);
     render_pass.set_bind_group(1, obj_bg, &[]);
     let material = resources.material_or_default(item.material);
-    let plug = resources.material_plugin_draw(material.shading_plugin);
+    let plug = resources.material_plugin_draw(material.shading_plugin, &material.plugin_textures);
     if let Some((_, mat_bg)) = plug {
-        bind_material_group!(render_pass, mat_bg);
+        bind_material_group!(render_pass, resources, mat_bg);
     }
 
     let deform_bg = resources
@@ -165,7 +165,8 @@ pub(super) fn draw_mesh_item(
                         continue;
                     }
                 }
-                let plug_r = resources.material_plugin_draw(mat.shading_plugin);
+                let plug_r =
+                    resources.material_plugin_draw(mat.shading_plugin, &mat.plugin_textures);
                 let range_key = PipelineKey::two_sided(mat.is_two_sided());
                 // A range draws two-sided when its own material or the item's
                 // says so.
@@ -203,7 +204,7 @@ pub(super) fn draw_mesh_item(
                 };
                 render_pass.set_bind_group(1, bg, &[]);
                 if let Some((_, mat_bg)) = plug_r {
-                    bind_material_group!(render_pass, mat_bg);
+                    bind_material_group!(render_pass, resources, mat_bg);
                 }
                 render_pass.draw_indexed(
                     range.first_index..range.first_index + range.index_count,
@@ -1106,8 +1107,11 @@ impl ViewportRenderer {
                                 if batch.shading_plugin.is_none() || batch.fat.is_some() {
                                     continue;
                                 }
-                                let Some((plug_pipes, mat_bg)) =
-                                    resources.material_plugin_instanced_draw(batch.shading_plugin)
+                                let Some((plug_pipes, mat_bg)) = resources
+                                    .material_plugin_instanced_draw(
+                                        batch.shading_plugin,
+                                        &batch.plugin_textures,
+                                    )
                                 else {
                                     continue;
                                 };
@@ -1151,7 +1155,7 @@ impl ViewportRenderer {
                                     };
                                     render_pass.set_pipeline(pl);
                                     render_pass.set_bind_group(1, cull_bg, &[]);
-                                    bind_material_group!(render_pass, mat_bg);
+                                    bind_material_group!(render_pass, resources, mat_bg);
                                     render_pass.draw_indexed_indirect(
                                         indirect_buf,
                                         *batch_global_idx as u64 * 20,
@@ -1167,7 +1171,7 @@ impl ViewportRenderer {
                                     };
                                     render_pass.set_pipeline(pl);
                                     render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                    bind_material_group!(render_pass, mat_bg);
+                                    bind_material_group!(render_pass, resources, mat_bg);
                                     let base_vertex =
                                         resources.geometry.base_vertex(mesh.vertex_span);
                                     let first_index =
@@ -2015,8 +2019,11 @@ impl ViewportRenderer {
                             {
                                 continue;
                             }
-                            let Some((plug_pipes, mat_bg)) =
-                                resources.material_plugin_instanced_draw(batch.shading_plugin)
+                            let Some((plug_pipes, mat_bg)) = resources
+                                .material_plugin_instanced_draw(
+                                    batch.shading_plugin,
+                                    &batch.plugin_textures,
+                                )
                             else {
                                 continue;
                             };
@@ -2056,7 +2063,7 @@ impl ViewportRenderer {
                                 };
                                 oit_pass.set_pipeline(pl);
                                 oit_pass.set_bind_group(1, cull_bg, &[]);
-                                bind_material_group!(oit_pass, mat_bg);
+                                bind_material_group!(oit_pass, resources, mat_bg);
                                 oit_pass.draw_indexed_indirect(
                                     indirect_buf,
                                     batch_global_idx as u64 * 20,
@@ -2072,7 +2079,7 @@ impl ViewportRenderer {
                                 };
                                 oit_pass.set_pipeline(pl);
                                 oit_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                bind_material_group!(oit_pass, mat_bg);
+                                bind_material_group!(oit_pass, resources, mat_bg);
                                 let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
                                 let first_index = resources.geometry.first_index(mesh.index_span);
                                 oit_pass.draw_indexed(

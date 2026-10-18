@@ -513,9 +513,13 @@ pub struct DeviceResources {
     /// untouched by registrations.
     pub(crate) shade_hooks: Vec<crate::resources::mesh_sidecar::shade::StoredShadingHook>,
     /// Per-material-plugin GPU state (`register_material_plugin`), keyed by
-    /// hook index: group-3 params window + lazily built lit pipeline set.
+    /// hook index: declared parameters, group-3 texture sets and the lazily
+    /// built lit pipeline sets.
     pub(crate) material_plugins:
         std::collections::HashMap<u32, crate::resources::mesh_sidecar::shade::MaterialPluginGpu>,
+    /// Sampled textures a material plugin can add in the fragment stage: the
+    /// device's limit less what the per-object mesh layouts already bind there.
+    pub(crate) plugin_texture_budget: u32,
     // --- Shadow map resources ---
     /// Cascade shadow atlas, point-light shadow cube array, their depth passes,
     /// and the atlas debug viewer. See `resources::shadow::ShadowResources`.

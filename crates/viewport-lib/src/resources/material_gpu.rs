@@ -12,6 +12,7 @@
 //! group-1 layouts.
 
 use crate::scene::material::Material;
+use viewport_lib_types::plugin::material::MATERIAL_PLUGIN_MAX_PARAMS;
 
 /// Blocks the material buffer holds before its first growth. It doubles as
 /// materials are uploaded, up to what one storage binding can hold.
@@ -119,10 +120,13 @@ pub(crate) struct MaterialGpu {
     pub(crate) lightmap_scale_bias: [f32; 4],
     /// `(item_flags, lightmap_mode, lightmap_index, 0)`; see [`item_flags`].
     pub(crate) item_flags: [u32; 4],
+    /// The material plugin's declared parameters, one word each in
+    /// declaration order, defaults filled in. Zero without a plugin.
+    pub(crate) params: [[f32; 4]; MATERIAL_PLUGIN_MAX_PARAMS],
 }
 
-/// Size in bytes of one [`MaterialGpu`] block; the interner keys on these bytes.
-pub(crate) const MATERIAL_GPU_BYTES: usize = 368;
+/// Size in bytes of one [`MaterialGpu`] block.
+pub(crate) const MATERIAL_GPU_BYTES: usize = 624;
 const _: () = assert!(std::mem::size_of::<MaterialGpu>() == MATERIAL_GPU_BYTES);
 
 /// Bit lanes of `MaterialGpu::item_flags[0]`. The WGSL `MAT_*` constants in the
@@ -446,6 +450,7 @@ impl MaterialGpu {
                     0,
                 ]
             },
+            params: [[0.0; 4]; MATERIAL_PLUGIN_MAX_PARAMS],
         }
     }
 }
