@@ -379,6 +379,21 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
             // (`rec`, read at the top of vs_main); zero when the mesh has none.
             "    let ext = sc_stream(rec, sc_word(rec + SC_EXTENSION));\n    out.ext_attr = select(vec4<f32>(0.0), sc_vec4(ext.x + 4u * min(vi, max(ext.y, 1u) - 1u)), ext.y > 0u);\n",
         )?;
+        // The plain varyings carry it too, so a plain-set pipeline of the
+        // hook's module reads the same attribute.
+        if region_bounds(&s, "vertex-out-plain").is_some() {
+            s = rewrite_region(
+                &s,
+                "vertex-out-plain",
+                "    @location(8) ext_attr: vec4<f32>,\n",
+            )?;
+            s = rewrite_region(&s, "vertex-out-to-plain", "    p.ext_attr = o.ext_attr;\n")?;
+            s = rewrite_region(
+                &s,
+                "vertex-out-from-plain",
+                "    o.ext_attr = p.ext_attr;\n",
+            )?;
+        }
     }
 
     // Shadowless variants (OIT) carry no shadow region; the hook then sees a

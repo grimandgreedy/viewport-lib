@@ -68,6 +68,24 @@ pub(crate) fn mesh_vertex_buffers(culled: bool) -> [crate::gpu::VertexBufferLayo
     ]
 }
 
+/// Whether a mesh pipeline built with `constants` draws through the `_plain`
+/// entries: its feature set reads neither a colour stream nor a lightmap, so
+/// the five varyings only those read are left out of its interface.
+fn plain_entries(constants: &[(&str, f64)]) -> bool {
+    let off = |name: &str| constants.iter().any(|&(n, v)| n == name && v == 0.0);
+    off("FEAT_COLOUR_STREAM") && off("FEAT_LIGHTMAP")
+}
+
+/// The vertex entry of a mesh pipeline: GPU-culled or direct, plain or full.
+fn mesh_vertex_entry(culled: bool, plain: bool) -> &'static str {
+    match (culled, plain) {
+        (false, false) => "vs_main",
+        (true, false) => "vs_main_cull",
+        (false, true) => "vs_main_plain",
+        (true, true) => "vs_main_cull_plain",
+    }
+}
+
 /// One LDR `mesh.wgsl` pipeline drawing into the surface format. `constants`
 /// sets the module's `override` constants (empty for the defaults).
 #[allow(clippy::too_many_arguments)]
@@ -87,17 +105,18 @@ pub(crate) fn ldr_mesh_pipeline_with(
 ) -> crate::gpu::RenderPipeline {
     let depth_stencil =
         crate::resources::builders::scene_depth_stencil(true, crate::gpu::CompareFunction::Less);
+    let plain = plain_entries(constants);
     crate::resources::builders::render_pipeline_with_constants(
         device,
         crate::resources::builders::RenderPipelineDesc {
             label,
             layout,
             vertex_module: shader,
-            vertex_entry: "vs_main",
+            vertex_entry: mesh_vertex_entry(false, plain),
             vertex_buffers: &mesh_vertex_buffers(false),
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some(if plain { "fs_main_plain" } else { "fs_main" }),
                 targets: &[Some(crate::gpu::ColorTargetState {
                     format: target_format,
                     blend,
@@ -173,17 +192,18 @@ pub(crate) fn hdr_mesh_pipeline_entry(
     constants: &[(&str, f64)],
     culled: bool,
 ) -> crate::gpu::RenderPipeline {
+    let plain = plain_entries(constants);
     crate::resources::builders::render_pipeline_with_constants(
         device,
         crate::resources::builders::RenderPipelineDesc {
             label,
             layout,
             vertex_module: shader,
-            vertex_entry: if culled { "vs_main_cull" } else { "vs_main" },
+            vertex_entry: mesh_vertex_entry(culled, plain),
             vertex_buffers: &mesh_vertex_buffers(culled),
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some(if plain { "fs_main_plain" } else { "fs_main" }),
                 targets: &[Some(crate::gpu::ColorTargetState {
                     format: crate::gpu::TextureFormat::Rgba16Float,
                     blend,
@@ -234,6 +254,7 @@ pub(crate) fn build_oit_pipeline_entry(
     constants: &[(&str, f64)],
     culled: bool,
 ) -> crate::gpu::RenderPipeline {
+    let plain = plain_entries(constants);
     let accum_blend = crate::gpu::BlendState {
         color: crate::gpu::BlendComponent {
             src_factor: crate::gpu::BlendFactor::One,
@@ -268,11 +289,15 @@ pub(crate) fn build_oit_pipeline_entry(
             label,
             layout,
             vertex_module: shader,
-            vertex_entry: if culled { "vs_main_cull" } else { "vs_main" },
+            vertex_entry: mesh_vertex_entry(culled, plain),
             vertex_buffers: &mesh_vertex_buffers(culled),
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
-                entry_point: Some("fs_oit_main"),
+                entry_point: Some(if plain {
+                    "fs_oit_main_plain"
+                } else {
+                    "fs_oit_main"
+                }),
                 targets: &[
                     Some(crate::gpu::ColorTargetState {
                         format: crate::gpu::TextureFormat::Rgba16Float,

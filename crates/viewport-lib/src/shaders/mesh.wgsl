@@ -447,6 +447,59 @@ struct VertexOut {
     // </viewport-shade-slot:vertex-out>
 };
 
+// The varyings of a pipeline whose feature set reads neither a colour stream
+// nor a lightmap: `VertexOut` without the five only those features read. A
+// vertex entry returning `VertexOut` writes all of its members (WGSL
+// zero-initialises the unwritten ones), so such a pipeline draws through the
+// `_plain` entries below, whose interface is only these.
+struct VertexOutPlain {
+    @builtin(position) clip_pos: vec4<f32>,
+    @location(0) colour:          vec4<f32>,
+    @location(1) world_normal:   vec3<f32>,
+    @location(2) world_pos:      vec3<f32>,
+    @location(3) uv:             vec2<f32>,
+    @location(4) world_tangent:  vec4<f32>,
+    @location(11) @interpolate(flat) obj_idx: u32,
+    @location(12) uv1: vec2<f32>,
+    // <viewport-deform-keep> @location(13) deform_keep: f32,
+    // <viewport-shade-slot:vertex-out-plain>
+    // </viewport-shade-slot:vertex-out-plain>
+};
+
+fn to_plain(o: VertexOut) -> VertexOutPlain {
+    var p: VertexOutPlain;
+    p.clip_pos = o.clip_pos;
+    p.colour = o.colour;
+    p.world_normal = o.world_normal;
+    p.world_pos = o.world_pos;
+    p.uv = o.uv;
+    p.world_tangent = o.world_tangent;
+    p.obj_idx = o.obj_idx;
+    p.uv1 = o.uv1;
+    // <viewport-deform-keep> p.deform_keep = o.deform_keep;
+    // <viewport-shade-slot:vertex-out-to-plain>
+    // </viewport-shade-slot:vertex-out-to-plain>
+    return p;
+}
+
+// The full varyings for the shared fragment body, the five a plain pipeline
+// never reads left at zero.
+fn from_plain(p: VertexOutPlain) -> VertexOut {
+    var o: VertexOut;
+    o.clip_pos = p.clip_pos;
+    o.colour = p.colour;
+    o.world_normal = p.world_normal;
+    o.world_pos = p.world_pos;
+    o.uv = p.uv;
+    o.world_tangent = p.world_tangent;
+    o.obj_idx = p.obj_idx;
+    o.uv1 = p.uv1;
+    // <viewport-deform-keep> o.deform_keep = p.deform_keep;
+    // <viewport-shade-slot:vertex-out-from-plain>
+    // </viewport-shade-slot:vertex-out-from-plain>
+    return o;
+}
+
 // A direct draw: the instance index is the record.
 @vertex
 fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> VertexOut {
@@ -458,6 +511,17 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
 @vertex
 fn vs_main_cull(in: VertexIn, @builtin(instance_index) slot: u32) -> VertexOut {
     return vs_body(in, visibility_indices[slot]);
+}
+
+// `vs_main` and `vs_main_cull` for a pipeline drawing through `VertexOutPlain`.
+@vertex
+fn vs_main_plain(in: VertexIn, @builtin(instance_index) instance_index: u32) -> VertexOutPlain {
+    return to_plain(vs_body(in, instance_index));
+}
+
+@vertex
+fn vs_main_cull_plain(in: VertexIn, @builtin(instance_index) slot: u32) -> VertexOutPlain {
+    return to_plain(vs_body(in, visibility_indices[slot]));
 }
 
 fn vs_body(in: VertexIn, record: u32) -> VertexOut {
@@ -1368,6 +1432,16 @@ fn compute_lit(
 
 @fragment
 fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    return fs_body(in, is_front);
+}
+
+// `fs_main` for a pipeline drawing through `VertexOutPlain`.
+@fragment
+fn fs_main_plain(p: VertexOutPlain, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    return fs_body(from_plain(p), is_front);
+}
+
+fn fs_body(in: VertexOut, is_front: bool) -> vec4<f32> {
     object = load_object(in.obj_idx);
     let surface = compute_surface(in, is_front);
 
