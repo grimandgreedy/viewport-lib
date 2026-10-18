@@ -98,6 +98,23 @@ fn a_keep_hook_cuts_only_the_item_that_selects_it() {
         eprintln!("skipping: no GPU adapter");
         return;
     };
+    cuts_only_the_item_that_selects_it(&device, &queue);
+}
+
+/// Deformers fit wgpu's default limits: the deform group adds two vertex-stage
+/// storage buffers to the five the mesh path binds, under the default of eight.
+#[test]
+fn a_keep_hook_cuts_on_a_default_limits_device() {
+    let Some((device, queue)) = headless_device_default_limits() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    assert_eq!(device.limits().max_storage_buffers_per_shader_stage, 8);
+    cuts_only_the_item_that_selects_it(&device, &queue);
+}
+
+fn cuts_only_the_item_that_selects_it(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let (device, queue) = (device.clone(), queue.clone());
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let quad = renderer
         .resources_mut()

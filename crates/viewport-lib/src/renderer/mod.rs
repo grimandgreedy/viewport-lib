@@ -729,10 +729,9 @@ impl ViewportRenderer {
     /// [`recommended_device_limits`](Self::recommended_device_limits) requests:
     /// the most any single pipeline binds in one stage across all optional
     /// features. The `raytrace` path tracer's compute stage is the high-water
-    /// mark at ten; the base lit mesh path needs only
-    /// [`MIN_STORAGE_BUFFERS_PER_STAGE`](Self::MIN_STORAGE_BUFFERS_PER_STAGE),
-    /// and per-vertex deformers sit between at
-    /// [`DEFORM_STORAGE_BUFFERS_PER_STAGE`](Self::DEFORM_STORAGE_BUFFERS_PER_STAGE).
+    /// mark at ten; the base lit mesh path, per-vertex deformers included,
+    /// needs only
+    /// [`MIN_STORAGE_BUFFERS_PER_STAGE`](Self::MIN_STORAGE_BUFFERS_PER_STAGE).
     /// Requesting this much up front lets every optional feature run; it is
     /// clamped to what the adapter actually supports.
     pub const REQUIRED_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
@@ -755,10 +754,12 @@ impl ViewportRenderer {
     pub const MIN_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
 
     /// The per-stage storage-buffer count per-vertex deformers need: the base
-    /// vertex stage (eight) plus the two the deform sidecar adds. A device below
-    /// this still renders the base mesh path, but the deform group is left out
-    /// and `register_deformer` reports that deformers are unavailable, rather
-    /// than failing pipeline creation.
+    /// vertex stage (five: the instance records, the sidecar record chunk, the
+    /// two overrides and the uv1 stream) plus the two the deform sidecar adds.
+    /// That sits under the floor the fragment stage already needs, so any
+    /// device the renderer accepts with three bind groups runs deformers. The
+    /// gate stays so a later vertex-stage binding cannot quietly push the
+    /// deform layouts past a device's limit.
     ///
     /// This must equal what the deform-enabled mesh pipeline layout actually
     /// binds in the vertex stage. A device granted exactly one less passes the
@@ -766,14 +767,14 @@ impl ViewportRenderer {
     /// group, which renders nothing at all. `ViewportGpuResources::new` counts
     /// the layouts it builds and `debug_assert!`s against this, so adding a
     /// vertex-stage storage buffer without updating it fails a debug build.
-    pub const DEFORM_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
+    pub const DEFORM_STORAGE_BUFFERS_PER_STAGE: u32 = 7;
 
     /// The device limits viewport-lib runs best with, above wgpu's defaults.
     ///
     /// Raises `max_storage_buffers_per_shader_stage` to
     /// [`REQUIRED_STORAGE_BUFFERS_PER_STAGE`](Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE),
-    /// enough headroom for every optional feature (per-vertex deformers, the
-    /// `raytrace` path tracer). The base lit mesh path needs only
+    /// enough headroom for every optional feature (the `raytrace` path
+    /// tracer). The base lit mesh path needs only
     /// [`MIN_STORAGE_BUFFERS_PER_STAGE`](Self::MIN_STORAGE_BUFFERS_PER_STAGE) and
     /// renders on wgpu's default limits, so passing this is not required just to
     /// draw: it is what turns the optional features on. Features whose headroom

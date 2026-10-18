@@ -19,6 +19,7 @@ use viewport_lib as vpl;
 
 /// A [`ToonPlugin`] material: `bands` diffuse steps, an `ambient` factor, the
 /// texture's UV `tiling` and a linear `tint`.
+#[allow(dead_code)] // the plugin tests include this file and build their own materials
 pub fn toon_material(
     plugin: vpl::MaterialPluginId,
     bands: f32,

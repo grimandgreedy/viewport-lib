@@ -2,22 +2,19 @@
 //!
 //! A consumer that creates its own wgpu device with `Limits::default()` gets
 //! `max_storage_buffers_per_shader_stage = 8`. The renderer must build on that
-//! device (the base lit mesh path fits in 8) instead of panicking, and the
-//! per-vertex deform feature, which needs more headroom, must report that it is
-//! unavailable rather than fail pipeline creation.
-//!
-//! The same has to hold for every count between the base path's floor and the
-//! deform path's: a device one short of what the deform group binds must leave
-//! it out, not enable it and then fail every pipeline layout that includes it.
+//! device (the base lit mesh path fits in 8) instead of panicking, and per-vertex
+//! deformers, whose group adds two vertex-stage buffers to the five the mesh
+//! path binds, must work there too.
 //!
 //! Note what these tests can and cannot catch. Not every backend enforces
 //! `max_storage_buffers_per_shader_stage` as a sum across the groups in a
-//! pipeline layout: Metal does not, so the validation error scopes below stay
-//! empty there even when the layout is over the limit. Vulkan, DX12 and the
-//! browsers do enforce it. The backend-independent guard is the count
-//! `ViewportGpuResources::new` derives from the layouts it builds and checks
-//! against these constants, which fails any debug build. A green run of this
-//! file on Metal is necessary, not sufficient.
+//! pipeline layout: Metal does not, and wgpu 27 merges the groups by maximum,
+//! so the validation error scopes below stay empty there even when the layout
+//! is over the limit. wgpu 29 and 30 sum them, as Vulkan, DX12 and the browsers
+//! do. The backend-independent guard is the count `ViewportGpuResources::new`
+//! derives from the layouts it builds and checks against these constants,
+//! which fails any debug build. A green run of this file on Metal is
+//! necessary, not sufficient.
 
 use viewport_lib::renderer::ViewportRenderer;
 use viewport_lib::wgpu;
@@ -44,13 +41,6 @@ fn device_with_limits(
     .expect("request_device")
 }
 
-fn limits_with_storage_buffers(count: u32) -> wgpu::Limits {
-    wgpu::Limits {
-        max_storage_buffers_per_shader_stage: count,
-        ..wgpu::Limits::default()
-    }
-}
-
 /// The footgun: default limits (8 storage buffers) must build a renderer.
 /// Before the fix this panicked in `ViewportRenderer::new` (it asserted >= 10),
 /// and without the fix the mesh pipeline layout would fail wgpu validation on
@@ -74,14 +64,18 @@ fn renderer_builds_on_default_storage_limit() {
     drop(renderer);
 }
 
-/// On a default-limits device the deform group is left out, so registering a
-/// deformer returns a clear error rather than silently doing nothing.
+/// On a default-limits device the deform group fits, so registering a deformer
+/// succeeds and every pipeline layout it brings in validates.
 #[test]
-fn deformer_registration_reports_missing_headroom_on_default_limits() {
+fn deformers_register_on_default_limits() {
     let Some(adapter) = adapter() else {
         return;
     };
+    if adapter.limits().max_bind_groups < 3 {
+        return;
+    }
     let (device, _queue) = device_with_limits(&adapter, wgpu::Limits::default());
+    let scope = wgpu::push_error_scope(&device, wgpu::ErrorFilter::Validation);
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
 
     let desc = viewport_lib::resources::DeformerDesc {
@@ -93,9 +87,23 @@ fn deformer_registration_reports_missing_headroom_on_default_limits() {
         per_vertex_stride: 4,
     };
     let result = renderer.resources_mut().register_deformer(&device, desc);
+    let error = pollster::block_on(scope.pop());
     assert!(
-        result.is_err(),
-        "register_deformer must reject on a device without deform headroom"
+        result.is_ok(),
+        "register_deformer must succeed on default limits: {result:?}"
+    );
+    assert!(error.is_none(), "default limits must validate: {error:?}");
+}
+
+/// The deform gate must sit within the floor the renderer already requires, or
+/// a device the renderer accepts could leave deformers off for no reason. A
+/// vertex-stage binding added to the mesh path moves the gate (the debug-build
+/// count check ties the two), and this is where crossing the floor shows.
+#[test]
+fn the_deform_gate_is_within_the_base_floor() {
+    assert!(
+        ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE
+            <= ViewportRenderer::MIN_STORAGE_BUFFERS_PER_STAGE
     );
 }
 
@@ -134,97 +142,5 @@ fn deformer_registration_succeeds_with_recommended_limits() {
     assert!(
         result.is_ok(),
         "register_deformer must succeed with recommended limits: {result:?}"
-    );
-}
-
-/// One below the deform gate is the count that used to render nothing: the gate
-/// admitted it, the deform group went into every mesh-family pipeline layout,
-/// and wgpu rejected all of them. The renderer must build cleanly and leave
-/// deformers off instead.
-///
-/// The validation error this guards against arrives through the uncaptured
-/// error callback rather than as a `Result`, so the error scope is what makes
-/// the failure visible to the test.
-#[test]
-fn renderer_builds_one_below_the_deform_gate() {
-    let Some(adapter) = adapter() else {
-        return;
-    };
-    let gate = ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE;
-    let below_gate = gate - 1;
-    if adapter.limits().max_storage_buffers_per_shader_stage < below_gate {
-        return;
-    }
-    let (device, _queue) = device_with_limits(&adapter, limits_with_storage_buffers(below_gate));
-    assert_eq!(
-        device.limits().max_storage_buffers_per_shader_stage,
-        below_gate
-    );
-
-    let scope = wgpu::push_error_scope(&device, wgpu::ErrorFilter::Validation);
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
-    let error = pollster::block_on(scope.pop());
-    assert!(
-        error.is_none(),
-        "building the renderer with {below_gate} storage buffers per stage must not produce a          validation error: {error:?}"
-    );
-
-    // Deformers need the full count, so they must report as unavailable here
-    // rather than be silently enabled.
-    let desc = viewport_lib::resources::DeformerDesc {
-        name: "wave",
-        stage: viewport_lib::resources::DeformStage::ObjectSpace,
-        priority: 0,
-        wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex { return v; }\n"
-            .to_string(),
-        per_vertex_stride: 4,
-    };
-    let result = renderer.resources_mut().register_deformer(&device, desc);
-    assert!(
-        result.is_err(),
-        "register_deformer must reject one below the deform gate"
-    );
-}
-
-/// The gate must be enough on its own. A device granted exactly
-/// `DEFORM_STORAGE_BUFFERS_PER_STAGE` enables the deform group, so every
-/// mesh-family pipeline layout has to validate at that count and deformers have
-/// to work. This is the case that failed when the gate was one short: the
-/// renderer enabled deform at nine and wgpu rejected the mesh, shadow, OIT and
-/// HDR pipeline layouts, leaving a canvas that drew nothing.
-#[test]
-fn deformers_work_at_exactly_the_deform_gate() {
-    let Some(adapter) = adapter() else {
-        return;
-    };
-    let gate = ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE;
-    if adapter.limits().max_storage_buffers_per_shader_stage < gate
-        || adapter.limits().max_bind_groups < 3
-    {
-        return;
-    }
-    let (device, _queue) = device_with_limits(&adapter, limits_with_storage_buffers(gate));
-    assert_eq!(device.limits().max_storage_buffers_per_shader_stage, gate);
-
-    let scope = wgpu::push_error_scope(&device, wgpu::ErrorFilter::Validation);
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
-    let error = pollster::block_on(scope.pop());
-    assert!(
-        error.is_none(),
-        "the deform group is enabled at {gate} storage buffers per stage, so every pipeline          layout must validate there: {error:?}"
-    );
-
-    let desc = viewport_lib::resources::DeformerDesc {
-        name: "wave",
-        stage: viewport_lib::resources::DeformStage::ObjectSpace,
-        priority: 0,
-        wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex { return v; }\n"
-            .to_string(),
-        per_vertex_stride: 4,
-    };
-    let result = renderer.resources_mut().register_deformer(&device, desc);
-    assert!(
-        result.is_ok(),
-        "register_deformer must succeed at the deform gate: {result:?}"
     );
 }

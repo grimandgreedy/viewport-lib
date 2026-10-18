@@ -77,3 +77,38 @@ pub enum LightmapMode {
     /// Non-lightmapped (dynamic) meshes are lit fully in realtime as usual.
     Subtractive,
 }
+
+/// Where one draw of a mesh sits in a shared lightmap atlas: the atlas page and
+/// the sub-rect its `[0, 1]` unwrap maps onto
+/// (`lm_uv = uv1 * scale_bias.xy + scale_bias.zw`).
+///
+/// A mesh's lightmap registration carries a placement for every draw of it;
+/// an item that sets its own draws its copy at that placement instead, so
+/// repeated props share one upload and one unwrap, each copy in its own rect.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LightmapPlacement {
+    /// Base atlas page (array layer), added to the per-vertex page.
+    pub layer: u32,
+    /// `[scale_u, scale_v, bias_u, bias_v]` onto the page.
+    pub scale_bias: [f32; 4],
+}
+
+impl LightmapPlacement {
+    /// The whole of page 0: the mesh owns its atlas.
+    pub const WHOLE: LightmapPlacement = LightmapPlacement {
+        layer: 0,
+        scale_bias: [1.0, 1.0, 0.0, 0.0],
+    };
+
+    /// A placement on `layer` with `scale_bias`.
+    pub fn new(layer: u32, scale_bias: [f32; 4]) -> Self {
+        Self { layer, scale_bias }
+    }
+}
+
+impl Default for LightmapPlacement {
+    fn default() -> Self {
+        Self::WHOLE
+    }
+}

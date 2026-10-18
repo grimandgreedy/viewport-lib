@@ -133,15 +133,13 @@ impl DeviceResources {
         // Shader module
         // ------------------------------------------------------------------
         // The deform sidecar is group 2 and adds two vertex-stage storage
-        // buffers (nine total in the vertex stage). It needs both a third bind
-        // group and the storage-buffer headroom for those two buffers. iced_wgpu
-        // and other WebGL2-targeting backends cap max_bind_groups at 2, and a
-        // device created with wgpu's default max_storage_buffers_per_shader_stage
-        // of 8 has room for the base lit mesh path but not the deform buffers.
-        // On either shortfall we compile the _noop variants, which omit the
-        // deform group, and build 2-group pipeline layouts; the base mesh path
-        // then fits in the default limits. Per-vertex deformers are unavailable
-        // in that state, and register_deformer reports it.
+        // buffers (seven total in the vertex stage). It needs both a third bind
+        // group and the storage-buffer headroom for those two buffers, which
+        // wgpu's default limit of 8 has. iced_wgpu and other WebGL2-targeting
+        // backends cap max_bind_groups at 2; there we compile the _noop
+        // variants, which omit the deform group, and build 2-group pipeline
+        // layouts. Per-vertex deformers are unavailable in that state, and
+        // register_deformer reports it.
         let device_limits = device.limits();
         let deform_enabled = device_limits.max_bind_groups >= 3
             && device_limits.max_storage_buffers_per_shader_stage
@@ -293,8 +291,8 @@ impl DeviceResources {
             // Binding 14: clustered-shading grid uniform (dimensions,
             // near/far, screen size, fallback flag). FRAGMENT only: the
             // cluster helpers are fragment-stage, and the vertex-stage
-            // Metal buffer table is at capacity (the object group's
-            // binding 15 took the last slot).
+            // Metal buffer table runs out around fifteen buffers, so
+            // nothing fragment-only takes a vertex slot.
             crate::gpu::BindGroupLayoutEntry {
                 binding: 14,
                 visibility: crate::gpu::ShaderStages::FRAGMENT,
@@ -487,11 +485,11 @@ impl DeviceResources {
                 },
                 count: None,
             },
-            // binding 6: scalar attribute storage buffer (VERTEX, read-only).
-            // Read only in vs_main; the fragment stage receives the value as
-            // the interpolated `scalar_val` varying, so it does not need the
-            // buffer visible. Keeping it vertex-only also keeps this buffer off
-            // the fragment stage's storage-buffer count.
+            // binding 6: the mesh's sidecar record chunk (VERTEX, read-only):
+            // scalar and face attributes, face colours, vector attributes, the
+            // extension attribute, lightmap UV1 and the per-mesh draw words.
+            // Read only in vs_main; the fragment stage gets the values as
+            // varyings, so the chunk stays off the fragment storage count.
             crate::gpu::BindGroupLayoutEntry {
                 binding: 6,
                 visibility: crate::gpu::ShaderStages::VERTEX,
@@ -510,31 +508,6 @@ impl DeviceResources {
                     sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
                     view_dimension: crate::gpu::TextureViewDimension::D2,
                     multisampled: false,
-                },
-                count: None,
-            },
-            // binding 8: per-face colour storage buffer (VERTEX, read-only).
-            // Like binding 6, read only in vs_main; the fragment stage gets it
-            // as the interpolated `face_colour` varying, so it stays vertex-only
-            // and off the fragment stage's storage-buffer count.
-            crate::gpu::BindGroupLayoutEntry {
-                binding: 8,
-                visibility: crate::gpu::ShaderStages::VERTEX,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // binding 9: warp vector storage buffer (VERTEX, read-only)
-            crate::gpu::BindGroupLayoutEntry {
-                binding: 9,
-                visibility: crate::gpu::ShaderStages::VERTEX,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
                 },
                 count: None,
             },
@@ -582,21 +555,6 @@ impl DeviceResources {
             // binding 14: normal override storage buffer (VERTEX, read-only).
             crate::gpu::BindGroupLayoutEntry {
                 binding: 14,
-                visibility: crate::gpu::ShaderStages::VERTEX,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // binding 15: per-vertex extension attribute storage buffer
-            // (VERTEX, read-only). One vec4<f32> per vertex; declared and
-            // read only by material-plugin modules whose hook sets
-            // reads_vertex_attribute. Fallback sentinel (one zero vec4)
-            // is bound for meshes without the channel.
-            crate::gpu::BindGroupLayoutEntry {
-                binding: 15,
                 visibility: crate::gpu::ShaderStages::VERTEX,
                 ty: crate::gpu::BindingType::Buffer {
                     ty: crate::gpu::BufferBindingType::Storage { read_only: true },
@@ -1631,32 +1589,9 @@ impl DeviceResources {
             crate::resources::material::textures::create_builtin_colourmaps(device);
         mark("builtin_colourmaps");
 
-        let fallback_scalar_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("fallback_scalar_buf"),
-            size: 4,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(fallback_scalar_buf.slice(..), &[0u8; 4]);
-        fallback_scalar_buf.unmap();
-
-        let fallback_face_colour_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("fallback_face_colour_buf"),
-            size: 16, // one vec4<f32>
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(fallback_face_colour_buf.slice(..), &[0u8; 16]);
-        fallback_face_colour_buf.unmap();
-
-        let fallback_warp_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("fallback_warp_buf"),
-            size: 12, // one vec3<f32>
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(fallback_warp_buf.slice(..), &[0u8; 12]);
-        fallback_warp_buf.unmap();
+        // Sidecar record chunks for every mesh's per-vertex streams and per-mesh
+        // draw words, plus the empty header bound for meshes without a record.
+        let sidecar = crate::resources::mesh::sidecar_pool::SidecarPool::new(device);
 
         let fallback_position_override_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_position_override_buf"),
@@ -1681,15 +1616,6 @@ impl DeviceResources {
             &[0u8; 12],
         );
         fallback_normal_override_buf.unmap();
-
-        let fallback_extension_attr_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("fallback_extension_attr_buf"),
-            size: 16, // one vec4<f32>
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(fallback_extension_attr_buf.slice(..), &[0u8; 16]);
-        fallback_extension_attr_buf.unmap();
 
         // Zero uv1 stream bound at the mesh bind group's second-UV-set slot for
         // meshes without a second UV set (`MeshData::uvs1 == None`). A one-entry
@@ -1729,13 +1655,10 @@ impl DeviceResources {
             &fallback_texture.sampler,
             &lut_sampler,
             &fallback_lut_view,
-            &fallback_scalar_buf,
+            sidecar.fallback(),
             &fallback_texture.view,
-            &fallback_face_colour_buf,
-            &fallback_warp_buf,
             &fallback_position_override_buf,
             &fallback_normal_override_buf,
-            &fallback_extension_attr_buf,
             &fallback_metallic_roughness_texture_view,
             &fallback_emissive_texture_view,
             &fallback_uv1_buf,
@@ -1872,6 +1795,8 @@ impl DeviceResources {
                 store
             },
             geometry,
+            sidecar,
+            sidecar_dirty: Vec::new(),
             lod_groups: crate::resources::mesh::lod::LodGroupStore::new(),
             shadow: crate::resources::shadow::ShadowResources {
                 map_texture: shadow_map_texture,
@@ -1958,12 +1883,8 @@ impl DeviceResources {
                 colourmaps_cpu,
                 fallback_lut_texture,
                 fallback_lut_view,
-                fallback_scalar_buf,
-                fallback_face_colour_buf,
-                fallback_warp_buf,
                 fallback_position_override_buf,
                 fallback_normal_override_buf,
-                fallback_extension_attr_buf,
                 fallback_uv1_buf,
                 builtin_colourmap_ids,
                 colourmaps_initialized: false,

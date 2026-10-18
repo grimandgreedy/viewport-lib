@@ -116,9 +116,8 @@ pub(crate) struct MaterialGpu {
     pub(crate) item0: [f32; 4],
     /// Colour drawn where the item's scalar attribute is NaN.
     pub(crate) nan_colour: [f32; 4],
-    /// `lm_uv = uv1 * .xy + .zw`: the mesh's lightmap placement in its atlas.
-    pub(crate) lightmap_scale_bias: [f32; 4],
-    /// `(item_flags, lightmap_mode, lightmap_index, 0)`; see [`item_flags`].
+    /// `(item_flags, lightmap_mode, 0, 0)`; see [`item_flags`]. The lightmap
+    /// placement rides the instance record.
     pub(crate) item_flags: [u32; 4],
     /// The material plugin's declared parameters, one word each in
     /// declaration order, defaults filled in. Zero without a plugin.
@@ -126,7 +125,7 @@ pub(crate) struct MaterialGpu {
 }
 
 /// Size in bytes of one [`MaterialGpu`] block.
-pub(crate) const MATERIAL_GPU_BYTES: usize = 624;
+pub(crate) const MATERIAL_GPU_BYTES: usize = 608;
 const _: () = assert!(std::mem::size_of::<MaterialGpu>() == MATERIAL_GPU_BYTES);
 
 /// Bit lanes of `MaterialGpu::item_flags[0]`. The WGSL `MAT_*` constants in the
@@ -141,7 +140,7 @@ pub(crate) mod item_flags {
 
 /// The item-level and mesh-level shading facts that ride the material block
 /// next to the `Material` fields: a scalar attribute's range and NaN colour,
-/// a matcap's blend flag, and the mesh's baked lightmap placement. They are
+/// a matcap's blend flag, and the mesh's baked lightmap mode. They are
 /// not `Material` fields, but the fragment stage reads them like material
 /// scalars, and interning them into the block keeps the per-instance record
 /// free of them. A plain item has the default value and interns to the same
@@ -152,9 +151,10 @@ pub(crate) struct ItemShading {
     pub(crate) nan_colour: Option<[f32; 4]>,
     /// `Some(blendable)` when the material names a matcap.
     pub(crate) matcap: Option<bool>,
-    /// `(mode, directional, shadowmask, scale_bias, layer)` of the mesh's
-    /// lightmap registration.
-    pub(crate) lightmap: Option<(u32, bool, bool, [f32; 4], u32)>,
+    /// `(mode, directional, shadowmask)` of the mesh's lightmap registration.
+    /// The placement rides the instance record, so draws at different
+    /// placements share a block.
+    pub(crate) lightmap: Option<(u32, bool, bool)>,
 }
 
 impl Default for ItemShading {
@@ -180,9 +180,7 @@ impl ItemShading {
 
     /// The shading as hashable bits.
     pub(crate) fn key(&self) -> ShadingKey {
-        let (mode, directional, shadowmask, sb, layer) =
-            self.lightmap
-                .unwrap_or((u32::MAX, false, false, [0.0; 4], 0));
+        let (mode, directional, shadowmask) = self.lightmap.unwrap_or((u32::MAX, false, false));
         let nan = self.nan_colour.unwrap_or([0.0; 4]);
         [
             self.scalar_range.0.to_bits(),
@@ -197,10 +195,6 @@ impl ItemShading {
             nan[2].to_bits(),
             nan[3].to_bits(),
             mode,
-            sb[0].to_bits(),
-            sb[1].to_bits(),
-            sb[2].to_bits() ^ sb[3].to_bits().rotate_left(16),
-            layer,
         ]
     }
 
@@ -227,8 +221,6 @@ impl ItemShading {
                     lm.mode,
                     lm.direction_texture_id.is_some() && !lm.is_shadowmask,
                     lm.is_shadowmask,
-                    lm.scale_bias,
-                    lm.layer,
                 )
             }),
         }
@@ -433,12 +425,10 @@ impl MaterialGpu {
             ],
             item0: [item.scalar_range.0, item.scalar_range.1, 0.0, 0.0],
             nan_colour: item.nan_colour.unwrap_or([0.0; 4]),
-            lightmap_scale_bias: item.lightmap.map_or([1.0, 1.0, 0.0, 0.0], |lm| lm.3),
             item_flags: {
                 use item_flags as f;
                 let on = |c: bool, bit: u32| if c { bit } else { 0 };
-                let (mode, directional, shadowmask, _, layer) =
-                    item.lightmap.unwrap_or((0, false, false, [0.0; 4], 0));
+                let (mode, directional, shadowmask) = item.lightmap.unwrap_or((0, false, false));
                 [
                     on(item.nan_colour.is_some(), f::USE_NAN_COLOUR)
                         | on(item.matcap.is_some(), f::USE_MATCAP)
@@ -446,7 +436,7 @@ impl MaterialGpu {
                         | on(directional, f::LIGHTMAP_DIRECTIONAL)
                         | on(shadowmask, f::HAS_SHADOWMASK),
                     mode,
-                    layer,
+                    0,
                     0,
                 ]
             },
@@ -486,7 +476,7 @@ pub(crate) struct MaterialTable {
 pub(crate) const MATERIAL_VARIANT_LIMIT: usize = 4096;
 
 /// [`ItemShading`] as hashable bits.
-pub(crate) type ShadingKey = [u32; 12];
+pub(crate) type ShadingKey = [u32; 8];
 
 impl Default for MaterialTable {
     fn default() -> Self {

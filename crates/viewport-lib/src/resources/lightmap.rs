@@ -14,7 +14,7 @@
 
 use crate::resources::TextureId;
 
-pub use viewport_lib_types::effects::lightmap::{LightmapData, LightmapMode};
+pub use viewport_lib_types::effects::lightmap::{LightmapData, LightmapMode, LightmapPlacement};
 
 /// The primary (radiance / occlusion) texture bound at binding 17.
 pub(crate) fn primary_texture(data: LightmapData) -> TextureId {
@@ -49,11 +49,9 @@ pub(crate) fn mode_code(mode: LightmapMode) -> u32 {
 }
 
 /// Per-mesh lightmap registration, held on the mesh once `set_lightmap` runs.
+/// The per-vertex UV1 (UV in `.xy`, atlas page in `.z`) is a stream of the
+/// mesh's sidecar record.
 pub(crate) struct MeshLightmap {
-    /// Per-vertex UV1 storage buffer (`array<vec4<f32>>`, UV in `.xy`), bound at
-    /// group 1 binding 15. It reuses the plugin vertex-attribute slot: the Metal
-    /// vertex buffer table is full, so the lightmap cannot take a new binding.
-    pub(crate) uv1_buffer: crate::gpu::Buffer,
     /// The baked texture, bound at group 1 binding 17.
     pub(crate) texture_id: TextureId,
     /// The secondary atlas, bound at group 1 binding 18. `Some` for a directional

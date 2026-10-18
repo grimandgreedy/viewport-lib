@@ -202,6 +202,12 @@ pub(crate) struct DeformationState {
     /// every mesh-family draw at slot 2 to satisfy the pipeline layout
     /// without forcing per-mesh storage allocation.
     pub dummy_bind_group: crate::gpu::BindGroup,
+    /// Empty layout that holds group 2 open in a 4-group layout (material
+    /// plugins) when deform is disabled, so the plugin group stays at 3
+    /// without the deform buffers counting against the stage limits.
+    pub empty_bind_group_layout: crate::gpu::BindGroupLayout,
+    /// Bind group for `empty_bind_group_layout`.
+    pub empty_bind_group: crate::gpu::BindGroup,
     pub meshes: HashMap<MeshId, MeshDeform>,
     pub header_cpu: DeformHeader,
     /// Currently registered deformers, in registration order.
@@ -331,6 +337,17 @@ impl DeformationState {
             ],
         });
 
+        let empty_bind_group_layout =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("deform_empty_bgl"),
+                entries: &[],
+            });
+        let empty_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("deform_empty_bg"),
+            layout: &empty_bind_group_layout,
+            entries: &[],
+        });
+
         Self {
             epoch: 0,
             enabled: true,
@@ -339,6 +356,8 @@ impl DeformationState {
             dummy_data_buffer,
             dummy_instance_buffer,
             dummy_bind_group,
+            empty_bind_group_layout,
+            empty_bind_group,
             meshes: HashMap::new(),
             header_cpu,
             registrations: Vec::new(),
@@ -357,6 +376,16 @@ impl DeformationState {
         let mut s = Self::new(device);
         s.enabled = false;
         s
+    }
+
+    /// Group 2 of a layout that must reach group 3: the deform layout when
+    /// deform is enabled, otherwise an empty one.
+    pub fn slot_layout(&self) -> &crate::gpu::BindGroupLayout {
+        if self.enabled {
+            &self.bind_group_layout
+        } else {
+            &self.empty_bind_group_layout
+        }
     }
 
     /// Returns the bind group to use for a given mesh: the per-mesh group
@@ -1564,16 +1593,24 @@ impl DeviceResources {
         slot: usize,
         name: &str,
     ) -> ViewportResult<()> {
-        let buffer = self
+        use crate::resources::mesh::sidecar_pool::StreamKind;
+        // The attribute is a window of the mesh's sidecar record chunk.
+        let (chunk, range) = self
             .mesh_store
             .get(mesh_id)
-            .and_then(|mesh| mesh.attribute_buffers.get(name))
-            .cloned()
+            .and_then(|mesh| {
+                let record = mesh.sidecar.as_ref()?;
+                let stream = record.find(StreamKind::Scalar, name)?;
+                Some((record.chunk(), record.byte_range(stream)))
+            })
             .ok_or_else(|| crate::error::ViewportError::AttributeNotFound {
                 mesh_id: mesh_id.index(),
                 name: name.to_string(),
             })?;
-        self.set_deform_slot_source_buffer(device, mesh_id, slot, buffer, 4)
+        let buffer = self.sidecar.chunk_buffer(chunk).clone();
+        let src = build_external_source(&buffer, 4, range.start, range.end - range.start)?;
+        self.deform.set_slot_external(device, mesh_id, slot, src);
+        Ok(())
     }
 
     /// As [`set_deform_slot_source_buffer`](Self::set_deform_slot_source_buffer),

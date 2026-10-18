@@ -74,8 +74,7 @@ struct MaterialGpu {
     tex_index1: vec4<u32>,   // emissive bindless index, sampler code (not read), unused, unused
     item0: vec4<f32>,        // (scalar_min, scalar_max, 0, 0)
     nan_colour: vec4<f32>,   // colour for NaN scalar attribute samples
-    lightmap_scale_bias: vec4<f32>, // lm_uv = uv1 * .xy + .zw
-    item_flags: vec4<u32>,   // (MAT_* bits, lightmap_mode, lightmap_index, 0)
+    item_flags: vec4<u32>,   // (MAT_* bits, lightmap_mode, 0, 0)
     params: array<vec4<f32>, 16>, // material plugin parameters, declaration order
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;

@@ -1761,14 +1761,12 @@ impl DeviceResources {
                 // Particles use no styled back-face policy.
                 backface_pattern_scale: 0.0,
                 object_mask: item.settings.visibility_mask,
-                uv1_base: 0,
+                sidecar_record: 0,
                 deform_flags: 0,
-                position_override_base: 0,
-                position_override_len: u32::MAX,
-                normal_override_base: 0,
-                normal_override_len: u32::MAX,
+                sidecar_select: crate::resources::mesh::sidecar_pool::SELECT_NOTHING,
                 warp_scale: 1.0,
-                _spare: [0; 2],
+                lightmap_layer: 0,
+                lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
             }
         };
         let instances: Vec<InstanceData> = match indices {
@@ -2048,13 +2046,14 @@ const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 368);
 /// One record per mesh draw instance. Matches the WGSL `InstanceData` struct in
 /// `shaders/helpers/instance_data.wgsl`.
 ///
-/// Layout: 144 bytes. Only per-instance and per-mesh facts ride here; every
-/// material scalar lives in the per-material `material_gpu_buf`, read via
-/// `material_id`, so a shared material is stored once. `colour` stays per
-/// instance (per-instance tinting). The boolean lanes pack into `flags`
-/// ([`instance_flags`]). The per-mesh words at the tail (uv1 base, deform
-/// flags, override windows) are read by draws that bind a mesh sub-slice and
-/// its sidecar buffers; the chunk-bound instanced draws ignore them.
+/// Layout: 144 bytes. Only per-instance facts ride here; every material
+/// scalar lives in the per-material `material_gpu_buf`, read via
+/// `material_id`, so a shared material is stored once, and every per-mesh word
+/// (the uv1 base, the override windows) lives in the mesh's sidecar record.
+/// `colour` stays per instance (per-instance tinting). The boolean lanes pack
+/// into `flags` ([`instance_flags`]). The sidecar words are read by draws that
+/// bind a mesh sub-slice and its record chunk; the chunk-bound instanced draws
+/// ignore them.
 ///
 /// - model:                  mat4     = 64 bytes  offset   0
 /// - colour:                 [f32;4]  = 16 bytes  offset  64
@@ -2065,14 +2064,12 @@ const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 368);
 /// - custom_data_id:         u32      =  4 bytes  offset  96
 /// - backface_pattern_scale: f32      =  4 bytes  offset 100
 /// - object_mask:            u32      =  4 bytes  offset 104
-/// - uv1_base:               u32      =  4 bytes  offset 108
+/// - sidecar_record:         u32      =  4 bytes  offset 108
 /// - deform_flags:           u32      =  4 bytes  offset 112
-/// - position_override_base: u32      =  4 bytes  offset 116
-/// - position_override_len:  u32      =  4 bytes  offset 120
-/// - normal_override_base:   u32      =  4 bytes  offset 124
-/// - normal_override_len:    u32      =  4 bytes  offset 128
-/// - warp_scale:             f32      =  4 bytes  offset 132
-/// - spare:                  [u32;2]  =  8 bytes  offset 136
+/// - sidecar_select:         u32      =  4 bytes  offset 116
+/// - warp_scale:             f32      =  4 bytes  offset 120
+/// - lightmap_layer:         u32      =  4 bytes  offset 124
+/// - lightmap_scale_bias:    [f32;4]  = 16 bytes  offset 128
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct InstanceData {
@@ -2100,25 +2097,21 @@ pub(crate) struct InstanceData {
     /// `ItemSettings::visibility_mask`; `!0` takes every light. The per-camera
     /// cull half of the mask is applied CPU-side before an instance is packed.
     pub(crate) object_mask: u32,
-    /// First vertex of the mesh in its vertex-slab chunk, for draws that bind
-    /// a mesh sub-slice (their `vertex_index` is mesh-local) and index the
-    /// whole-chunk uv1 buffer. 0 when the mesh has no second UV set.
-    pub(crate) uv1_base: u32,
+    /// Base word of the mesh's sidecar record in the chunk bound at group 1
+    /// binding 6. 0 for a mesh without one, which binds the empty header.
+    pub(crate) sidecar_record: u32,
     /// Bit `i` set when deformer slot `i` is active for this draw.
     pub(crate) deform_flags: u32,
-    /// First vec3 element read from the position override buffer; slices one
-    /// mesh's window out of a shared pool buffer, 0 when unsliced.
-    pub(crate) position_override_base: u32,
-    /// Element count readable from `position_override_base`; `u32::MAX` means
-    /// the whole buffer.
-    pub(crate) position_override_len: u32,
-    /// Same as `position_override_base` for the normal override.
-    pub(crate) normal_override_base: u32,
-    /// Same as `position_override_len` for the normal override.
-    pub(crate) normal_override_len: u32,
+    /// The record streams this item reads: scalar, face colour and warp
+    /// stream indices in 10-bit fields, all ones for none
+    /// ([`sidecar_pool::select_word`](crate::resources::mesh::sidecar_pool::select_word)).
+    pub(crate) sidecar_select: u32,
     /// Vertex warp scale, read when [`instance_flags::HAS_WARP`] is set.
     pub(crate) warp_scale: f32,
-    pub(crate) _spare: [u32; 2],
+    /// Base lightmap atlas page of this draw, added to the per-vertex page.
+    pub(crate) lightmap_layer: u32,
+    /// This draw's lightmap sub-rect: `lm_uv = uv1 * .xy + .zw`.
+    pub(crate) lightmap_scale_bias: [f32; 4],
 }
 
 const _: () = assert!(std::mem::size_of::<InstanceData>() == 144);

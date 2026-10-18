@@ -480,7 +480,7 @@ impl ViewportRenderer {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 6,
-                        resource: resources.content.fallback_scalar_buf.as_entire_binding(),
+                        resource: resources.sidecar.fallback().as_entire_binding(),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 7,
@@ -491,17 +491,6 @@ impl ViewportRenderer {
                                 .as_ref()
                                 .unwrap_or(&resources.material.texture.view),
                         ),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 8,
-                        resource: resources
-                            .content
-                            .fallback_face_colour_buf
-                            .as_entire_binding(),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 9,
-                        resource: resources.content.fallback_warp_buf.as_entire_binding(),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 10,
@@ -533,13 +522,6 @@ impl ViewportRenderer {
                         resource: resources
                             .content
                             .fallback_normal_override_buf
-                            .as_entire_binding(),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 15,
-                        resource: resources
-                            .content
-                            .fallback_extension_attr_buf
                             .as_entire_binding(),
                     },
                     crate::gpu::BindGroupEntry {

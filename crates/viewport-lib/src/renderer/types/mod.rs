@@ -32,14 +32,14 @@ macro_rules! bind_deform_group {
 /// material bind through this macro (the same choke-point rule as
 /// `bind_deform_group!` above).
 ///
-/// Plugin pipeline layouts always carry the deform group at index 2, so that
-/// group 3 lands at 3. Where deformers are off (a device short of storage
-/// buffers), `bind_deform_group!` binds nothing, and this binds the deform
-/// dummy group in its place.
+/// Plugin pipeline layouts always carry a group 2 so that group 3 lands at 3.
+/// Where deformers are off (a device short of storage buffers) that group is
+/// empty, `bind_deform_group!` binds nothing, and this binds the empty group in
+/// its place.
 macro_rules! bind_material_group {
     ($pass:expr, $resources:expr, $bg:expr) => {
         if !$resources.deform.enabled {
-            $pass.set_bind_group(2, &$resources.deform.dummy_bind_group, &[]);
+            $pass.set_bind_group(2, &$resources.deform.empty_bind_group, &[]);
         }
         $pass.set_bind_group(3, $bg, &[]);
     };

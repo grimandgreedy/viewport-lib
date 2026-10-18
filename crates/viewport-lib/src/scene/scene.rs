@@ -1069,6 +1069,7 @@ impl Scene {
                 deform_instance: node.deform_instance,
                 lod_group: node.lod_group,
                 indirect_light: node.indirect_light,
+                lightmap_placement: None,
             });
         }
         // Nodes live in a `HashMap`, whose iteration order is randomised per
@@ -1157,6 +1158,7 @@ impl Scene {
                     deform_instance: node.deform_instance,
                     lod_group: node.lod_group,
                     indirect_light: node.indirect_light,
+                    lightmap_placement: None,
                 });
             }
 
@@ -1215,6 +1217,7 @@ impl Scene {
                     deform_instance: node.deform_instance,
                     lod_group: node.lod_group,
                     indirect_light: node.indirect_light,
+                    lightmap_placement: None,
                 });
             }
 

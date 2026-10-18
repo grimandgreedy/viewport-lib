@@ -125,8 +125,6 @@ struct Object {
     light_probe_index: u32,                // offset 324 : base block index into light_probe_sh
     lightmap_mode: u32,                    // offset 328 : 0 none, 1 Replace, 2 Add, 3 AmbientOcclusion
     lightmap_directional: u32,             // offset 332 : 1 = sample the binding-18 direction atlas
-    lightmap_scale_bias: vec4<f32>,        // offset 336 : lm_uv = uv1 * .xy + .zw (scene atlas sub-rect)
-    lightmap_index: u32,                   // offset 352 : base atlas layer, added to the per-vertex page
     has_shadowmask: u32,                   // offset 356 : 1 = the binding-18 atlas is a shadowmask
     ignore_clip: u32,                      // offset 360 : 1 = exempt from clip planes/volumes
     object_mask: u32,                      // offset 364 : layer mask, AND-tested per light
@@ -158,8 +156,7 @@ struct MaterialGpu {
     tex_index1: vec4<u32>,   // emissive bindless index, sampler code (not read), unused, unused
     item0: vec4<f32>,        // (scalar_min, scalar_max, 0, 0)
     nan_colour: vec4<f32>,   // colour for NaN scalar attribute samples
-    lightmap_scale_bias: vec4<f32>, // lm_uv = uv1 * .xy + .zw
-    item_flags: vec4<u32>,   // (MAT_* bits, lightmap_mode, lightmap_index, 0)
+    item_flags: vec4<u32>,   // (MAT_* bits, lightmap_mode, 0, 0)
     params: array<vec4<f32>, 16>, // material plugin parameters, declaration order
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
@@ -268,27 +265,23 @@ var<private> object: Object;
 @group(1) @binding(3) var normal_map: texture_2d<f32>;
 @group(1) @binding(4) var ao_map: texture_2d<f32>;
 @group(1) @binding(5) var lut_texture: texture_2d<f32>;
-@group(1) @binding(6) var<storage, read> scalar_buffer: array<f32>;
+// The mesh's sidecar record chunk: scalar and face attributes, face colours,
+// vector attributes, the extension attribute, lightmap UV1 and the per-mesh
+// draw words, reached through the record at `sidecar_record`.
+@group(1) @binding(6) var<storage, read> sidecar_pool: array<u32>;
+// #include "helpers/sidecar.wgsl"
 @group(1) @binding(7) var matcap_texture: texture_2d<f32>;
-@group(1) @binding(8) var<storage, read> face_colour_buffer: array<vec4<f32>>;
-@group(1) @binding(9) var<storage, read> warp_buffer: array<f32>;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
 @group(1) @binding(12) var emissive_tex: texture_2d<f32>;
 // Optional per-vertex override storage buffers a `GpuPlugin` may bind via
 // `DeviceResources::set_position_override_buffer` / `set_normal_override_buffer`.
 // Flat `array<f32>` with 3 values per vertex so consumer compute shaders can
-// write tight `vec3` data without WGSL's 16-byte vec3 stride padding (matches
-// the warp_buffer convention). When unbound, a 12-byte zero sentinel is bound
-// so the bind group layout is satisfied.
+// write tight `vec3` data without WGSL's 16-byte vec3 stride padding. When
+// unbound, a 12-byte zero sentinel is bound so the bind group layout is
+// satisfied. Their windows come from the sidecar record.
 @group(1) @binding(13) var<storage, read> position_override_buffer: array<f32>;
 @group(1) @binding(14) var<storage, read> normal_override_buffer:   array<f32>;
-// Per-vertex vec4 sidecar (binding 15). Material-plugin hooks read it as their
-// vertex attribute; a baked lightmap reuses the same slot to carry UV1 in .xy
-// (the two are mutually exclusive per mesh). The shared zero fallback is bound
-// when neither is set. The Metal vertex buffer table is full at this slot, so
-// the lightmap rides it rather than taking a new binding.
-@group(1) @binding(15) var<storage, read> extension_attr_buffer: array<vec4<f32>>;
 // Baked lightmap texture, sampled with the binding-2 material sampler and gated
 // on object.lightmap_mode. Textures use a separate Metal table, so this is a
 // fresh binding. The 1x1 fallback is bound when no lightmap is set.
@@ -340,7 +333,6 @@ fn load_object_vertex(i: u32) -> Object {
     o.warp_scale = inst.warp_scale;
     o.alpha_cutoff = inst.alpha_cutoff;
     o.material_id = inst.material_id;
-    o.uv1_base = inst.uv1_base;
     o.deform_flags = inst.deform_flags;
     o.has_light_probe = u32((bit & INST_HAS_LIGHT_PROBE) != 0u);
     o.light_probe_index = inst.light_probe_index;
@@ -349,10 +341,6 @@ fn load_object_vertex(i: u32) -> Object {
     o.mesh_closed = u32((bit & INST_MESH_CLOSED) != 0u);
     o.has_position_override = u32((bit & INST_HAS_POSITION_OVERRIDE) != 0u);
     o.has_normal_override = u32((bit & INST_HAS_NORMAL_OVERRIDE) != 0u);
-    o.position_override_base = inst.position_override_base;
-    o.position_override_len = inst.position_override_len;
-    o.normal_override_base = inst.normal_override_base;
-    o.normal_override_len = inst.normal_override_len;
     return o;
 }
 
@@ -390,8 +378,6 @@ fn load_object(i: u32) -> Object {
     o.roughness_range = mat.mr_range.zw;
     o.lightmap_mode = mat.item_flags.y;
     o.lightmap_directional = u32((mbit & MAT_LIGHTMAP_DIRECTIONAL) != 0u);
-    o.lightmap_scale_bias = mat.lightmap_scale_bias;
-    o.lightmap_index = mat.item_flags.z;
     o.has_shadowmask = u32((mbit & MAT_HAS_SHADOWMASK) != 0u);
     return o;
 }
@@ -441,6 +427,15 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     object = load_object_vertex(instance_index);
     var out: VertexOut;
     out.obj_idx = instance_index;
+    // The per-mesh words and the item's stream selection, from the mesh's
+    // sidecar record.
+    let rec = instances[instance_index].sidecar_record;
+    let sel = instances[instance_index].sidecar_select;
+    object.uv1_base = sc_word(rec + SC_UV1_BASE);
+    object.position_override_base = sc_word(rec + SC_POS_BASE);
+    object.position_override_len = sc_word(rec + SC_POS_LEN);
+    object.normal_override_base = sc_word(rec + SC_NRM_BASE);
+    object.normal_override_len = sc_word(rec + SC_NRM_LEN);
     // Override > vertex attribute. When a plugin has bound a per-vertex position
     // storage buffer, replace `in.position` outright; warp is then layered on top
     // additively. Same idea for normals further down.
@@ -459,10 +454,9 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
         }
     }
     if object.has_warp != 0u {
-        let wi = in.vertex_index * 3u;
-        let warp_len = arrayLength(&warp_buffer);
-        if wi + 2u < warp_len {
-            local_pos += vec3<f32>(warp_buffer[wi], warp_buffer[wi + 1u], warp_buffer[wi + 2u]) * object.warp_scale;
+        let warp = sc_stream(rec, sc_selected(sel, 2u));
+        if in.vertex_index < warp.y {
+            local_pos += sc_vec3(warp.x + in.vertex_index * 3u) * object.warp_scale;
         }
     }
     var local_normal = in.normal;
@@ -504,12 +498,11 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     let uv1_len = arrayLength(&uv1_buf);
     let uv1_idx = min(object.uv1_base + in.vertex_index, max(uv1_len, 1u) - 1u);
     out.uv1 = uv1_buf[uv1_idx];
-    // Read scalar attribute value for this vertex, guarded by has_attribute and buffer length.
-    let buf_len = arrayLength(&scalar_buffer);
+    // Read scalar attribute value for this vertex, guarded by has_attribute and stream length.
     let idx = in.vertex_index;
-    let has_attr = object.has_attribute != 0u && buf_len > 0u;
-    let safe_idx = min(idx, select(0u, buf_len - 1u, buf_len > 0u));
-    let raw_scalar = scalar_buffer[safe_idx];
+    let scalar = sc_stream(rec, sc_selected(sel, 0u));
+    let has_attr = object.has_attribute != 0u && scalar.y > 0u;
+    let raw_scalar = select(0.0, sc_f32(scalar.x + min(idx, max(scalar.y, 1u) - 1u)), scalar.y > 0u);
     out.scalar_val = select(0.0, raw_scalar, has_attr);
     // Detect NaN before interpolation can corrupt the bit pattern.
     let sv_bits = bitcast<u32>(raw_scalar);
@@ -517,19 +510,25 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
     // Per-face RGBA colour (FaceColour attribute kind). Indexed by vertex_index which
     // equals the sequential draw invocation counter for non-indexed face draws.
-    let fc_len = arrayLength(&face_colour_buffer);
-    let fc_idx = min(idx, select(0u, fc_len - 1u, fc_len > 0u));
+    let fc = sc_stream(rec, sc_selected(sel, 1u));
     out.face_colour = select(
         vec4<f32>(1.0),
-        face_colour_buffer[fc_idx],
-        object.use_face_colour != 0u && fc_len > 0u,
+        sc_vec4(fc.x + 4u * min(idx, max(fc.y, 1u) - 1u)),
+        object.use_face_colour != 0u && fc.y > 0u,
     );
-    // Lightmap UV1 rides the vec4 sidecar's xy (zero for non-lightmapped meshes).
-    // .z carries the atlas page for a multi-page lightmap (0 otherwise).
-    let lm_len = arrayLength(&extension_attr_buffer);
-    let lm_sidecar = extension_attr_buffer[min(idx, max(lm_len, 1u) - 1u)];
-    out.lightmap_uv = lm_sidecar.xy;
-    out.lightmap_page = lm_sidecar.z;
+    // Lightmap UV1 in .xy (zero for non-lightmapped meshes); .z carries the
+    // atlas page for a multi-page lightmap (0 otherwise).
+    let lm = sc_stream(rec, sc_word(rec + SC_LIGHTMAP_UV));
+    let lm_sidecar = select(
+        vec4<f32>(0.0),
+        sc_vec4(lm.x + 4u * min(idx, max(lm.y, 1u) - 1u)),
+        lm.y > 0u,
+    );
+    // The draw's placement maps the unwrap onto its rect and page of the
+    // atlas; both are affine or flat, so they apply here exactly.
+    let placement = instances[instance_index].lightmap_scale_bias;
+    out.lightmap_uv = lm_sidecar.xy * placement.xy + placement.zw;
+    out.lightmap_page = lm_sidecar.z + f32(instances[instance_index].lightmap_layer);
     // <viewport-shade-slot:vertex-fetch>
     // </viewport-shade-slot:vertex-fetch>
     return out;
@@ -1040,8 +1039,8 @@ fn compute_lit(
     // shadows come from the bake and dynamic ones from the shadow map.
     var shadowmask = vec4<f32>(1.0);
     if object.has_shadowmask != 0u {
-        let sm_uv = in.lightmap_uv * object.lightmap_scale_bias.xy + object.lightmap_scale_bias.zw;
-        let sm_page = i32(object.lightmap_index) + i32(round(in.lightmap_page));
+        let sm_uv = in.lightmap_uv;
+        let sm_page = i32(round(in.lightmap_page));
         shadowmask = textureSampleLevel(lightmap_dir_tex, obj_sampler, sm_uv, sm_page, 0.0);
     }
 
@@ -1197,8 +1196,8 @@ fn compute_lit(
             // Scene-atlas placement: map the object's [0,1] unwrap into its sub-rect
             // and add its base layer to the per-vertex page. Identity scale/bias and
             // layer 0 reproduce a per-mesh (single- or multi-page) lightmap exactly.
-            let lm_uv = in.lightmap_uv * object.lightmap_scale_bias.xy + object.lightmap_scale_bias.zw;
-            let lm_page = i32(object.lightmap_index) + i32(round(in.lightmap_page));
+            let lm_uv = in.lightmap_uv;
+            let lm_page = i32(round(in.lightmap_page));
             var lm = textureSampleLevel(lightmap_tex, obj_sampler, lm_uv, lm_page, 0.0);
             if object.lightmap_directional == 1u {
                 let f = lightmap_directional_factor(lm_uv, lm_page, N, in.world_normal);
@@ -1286,8 +1285,8 @@ fn compute_lit(
             // Scene-atlas placement: map the object's [0,1] unwrap into its sub-rect
             // and add its base layer to the per-vertex page. Identity scale/bias and
             // layer 0 reproduce a per-mesh (single- or multi-page) lightmap exactly.
-            let lm_uv = in.lightmap_uv * object.lightmap_scale_bias.xy + object.lightmap_scale_bias.zw;
-            let lm_page = i32(object.lightmap_index) + i32(round(in.lightmap_page));
+            let lm_uv = in.lightmap_uv;
+            let lm_page = i32(round(in.lightmap_page));
             var lm = textureSampleLevel(lightmap_tex, obj_sampler, lm_uv, lm_page, 0.0);
             if object.lightmap_directional == 1u {
                 let f = lightmap_directional_factor(lm_uv, lm_page, N, in.world_normal);

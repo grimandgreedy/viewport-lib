@@ -117,8 +117,9 @@ pub struct ShadingHookDesc {
     /// fall back to 1x1 white.
     pub texture_count: u32,
     /// When true, the composed per-object modules read the mesh's per-vertex
-    /// extension attribute (`MeshData::extension_attributes`, group 1 binding
-    /// 15), interpolate it, and deliver it as `surf.attr`. Meshes without the
+    /// extension attribute (`MeshData::extension_attributes`, a stream of the
+    /// mesh's sidecar record), interpolate it, and deliver it as `surf.attr`.
+    /// Meshes without the
     /// channel read `vec4(0.0)`. When false (the default), no attribute
     /// fetch or varying is added and `surf.attr` is always zero.
     pub reads_vertex_attribute: bool,
@@ -361,14 +362,6 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
     // draws are per-object), so gate on both the flag and the markers.
     let wire_vertex_attr =
         hook.desc.reads_vertex_attribute && region_bounds(&s, "vertex-fetch").is_some();
-    if wire_vertex_attr && !s.contains("@binding(15) var<storage, read> extension_attr_buffer") {
-        // The lit base shaders already declare this sidecar (they read a
-        // lightmap's UV1 from it); only add the declaration when composing a
-        // shader that lacks it, so the two never collide.
-        body.push_str(
-            "@group(1) @binding(15) var<storage, read> extension_attr_buffer: array<vec4<f32>>;\n",
-        );
-    }
     // Surface hooks carry their emissive and alpha outputs from the surface
     // slot (inside compute_lit) to the assembly-stage emissive/alpha slots
     // (inside fs_main) in module-private variables. hook_alpha < 0 means
@@ -387,7 +380,9 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
         s = rewrite_region(
             &s,
             "vertex-fetch",
-            "    let ext_len = arrayLength(&extension_attr_buffer);\n    out.ext_attr = extension_attr_buffer[min(in.vertex_index, ext_len - 1u)];\n",
+            // The extension attribute is a stream of the mesh's sidecar record
+            // (`rec`, read at the top of vs_main); zero when the mesh has none.
+            "    let ext = sc_stream(rec, sc_word(rec + SC_EXTENSION));\n    out.ext_attr = select(vec4<f32>(0.0), sc_vec4(ext.x + 4u * min(in.vertex_index, max(ext.y, 1u) - 1u)), ext.y > 0u);\n",
         )?;
     }
 
@@ -595,7 +590,7 @@ impl crate::resources::DeviceResources {
         let stored = StoredShadingHook::analyse(desc)?;
 
         for shader_name in SHADE_FAMILY_SHADERS {
-            let Some(base) = registry::lookup_source(shader_name) else {
+            let Some(base) = registry::lookup_lit_source(shader_name, self.deform.enabled) else {
                 return Err(ViewportError::ShadeShaderInvalid {
                     reason: format!("internal: shader '{shader_name}' missing from shader catalog"),
                 });
@@ -641,7 +636,7 @@ impl crate::resources::DeviceResources {
         shader_name: &str,
     ) -> Option<String> {
         let hook = self.shade_hooks.get(id.0)?;
-        let base = registry::lookup_source(shader_name)?;
+        let base = registry::lookup_lit_source(shader_name, self.deform.enabled)?;
         let with_deform = registry::compose_shader(base, &self.deform.registrations);
         compose_shade_shader(&with_deform, hook).ok()
     }
@@ -1527,7 +1522,7 @@ impl crate::resources::DeviceResources {
             &[
                 &self.binds.camera_bgl,
                 &self.binds.object_bgl,
-                &self.deform.bind_group_layout,
+                self.deform.slot_layout(),
                 &gpu.bind_group_layout,
             ],
         );
@@ -1628,11 +1623,10 @@ impl crate::resources::DeviceResources {
                 .expect("checked above")
         };
         // Camera (0), instance storage + material textures (1: five per-batch
-        // textures, or one bindless array), deform (2), plugin params (3). Deform
-        // is always present so the plugin params sit at group 3, matching the
-        // composer's `@group(3)` bindings (a material plugin requires
-        // max_bind_groups >= 4, which implies the deform group is available).
-        // Mirrors the per-object plugin layout.
+        // textures, or one bindless array), deform (2), plugin params (3). Group
+        // 2 is an empty layout when deform is off, so the plugin params still
+        // sit at the composer's `@group(3)` while the deform buffers stay out
+        // of the stage limits. Mirrors the per-object plugin layout.
         let layout_label = format!("material_plugin_{name}_instanced_layout");
         let layout = crate::resources::builders::pipeline_layout(
             device,
@@ -1640,7 +1634,7 @@ impl crate::resources::DeviceResources {
             &[
                 &self.binds.camera_bgl,
                 instance_bgl,
-                &self.deform.bind_group_layout,
+                self.deform.slot_layout(),
                 &gpu.bind_group_layout,
             ],
         );
@@ -1661,7 +1655,7 @@ impl crate::resources::DeviceResources {
                 &[
                     &self.binds.camera_bgl,
                     cull_bgl,
-                    &self.deform.bind_group_layout,
+                    self.deform.slot_layout(),
                     &gpu.bind_group_layout,
                 ],
             )
@@ -1808,6 +1802,8 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         };
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        // Count after the warm-up, not after a worker finishes it.
+        renderer.set_pipeline_compilation(crate::PipelineCompilation::Blocking);
         let resources = renderer.resources_mut();
 
         struct ReadyProbe;
@@ -2143,17 +2139,11 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
             let base = registry::lookup_source(shader).expect("lit shader");
             let composed = compose_shade_shader(base, &hook).expect("compose");
             assert!(
-                composed.contains(
-                    "@group(1) @binding(15) var<storage, read> extension_attr_buffer: array<vec4<f32>>;"
-                ),
-                "{shader}: missing buffer declaration"
-            );
-            assert!(
                 composed.contains("@location(8) ext_attr: vec4<f32>,"),
                 "{shader}: missing varying"
             );
             assert!(
-                composed.contains("out.ext_attr = extension_attr_buffer["),
+                composed.contains("let ext = sc_stream(rec, sc_word(rec + SC_EXTENSION));"),
                 "{shader}: missing vertex fetch"
             );
             assert!(
@@ -2165,13 +2155,9 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         // (validation-only) with no attribute plumbing and surf.attr = 0.
         let base = registry::lookup_source("mesh_instanced.wgsl").expect("lit shader");
         let composed = compose_shade_shader(base, &hook).expect("compose");
-        assert!(!composed.contains("extension_attr_buffer"));
         assert!(!composed.contains("ext_attr"));
         // A hook that does not opt in gets none of the vertex-attribute
-        // plumbing. The base lit shaders declare the vec4 sidecar buffer
-        // unconditionally (they read a lightmap's UV1 from it), so the check is
-        // for the absence of the ext_attr varying and surface wire, not the
-        // buffer declaration.
+        // plumbing: no ext_attr varying and no surface wire.
         let plain = stored("calm", TOON_BODY, false);
         let base = registry::lookup_source("mesh.wgsl").expect("lit shader");
         let composed = compose_shade_shader(base, &plain).expect("compose");

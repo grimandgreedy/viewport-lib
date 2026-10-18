@@ -3,10 +3,10 @@
 // @builtin(instance_index). Layout matches the renderer's `InstanceData`
 // (144 bytes); keep the offsets in step with its doc table.
 //
-// Material scalars live in `material_gpu_buf`, read via `material_id`. Only
-// per-instance and per-mesh facts ride here. The per-mesh words (uv1 base,
-// deform flags, override windows) are read by the draws that bind a mesh
-// sub-slice and its sidecars; the chunk-bound instanced draws ignore them.
+// Material scalars live in `material_gpu_buf`, read via `material_id`, and
+// per-mesh words (uv1 base, override windows) in the mesh's sidecar record.
+// The sidecar words are read by the draws that bind a mesh sub-slice and its
+// record chunk; the chunk-bound instanced draws ignore them.
 struct InstanceData {
     model: mat4x4<f32>,                   // offset 0
     colour: vec4<f32>,                    // offset 64 : base colour, opacity in .a
@@ -17,15 +17,12 @@ struct InstanceData {
     custom_data_id: u32,                  // offset 96 : index into instance_custom_data_buf
     backface_pattern_scale: f32,          // offset 100 : styled back-face Pattern world scale
     object_mask: u32,                     // offset 104 : layer mask, AND-tested per light
-    uv1_base: u32,                        // offset 108 : mesh base vertex for the uv1 buffer
+    sidecar_record: u32,                  // offset 108 : record base word in the bound sidecar chunk
     deform_flags: u32,                    // offset 112 : bit i set when deformer slot i is active
-    position_override_base: u32,          // offset 116 : first vec3 element read from the position override
-    position_override_len: u32,           // offset 120 : element count; 0xffffffff = whole buffer
-    normal_override_base: u32,            // offset 124 : same for the normal override
-    normal_override_len: u32,             // offset 128
-    warp_scale: f32,                      // offset 132 : vertex warp scale (INST_HAS_WARP)
-    _spare1: u32,                         // offset 136
-    _spare2: u32,                         // offset 140
+    sidecar_select: u32,                  // offset 116 : scalar, face colour, warp stream indices (10 bits each)
+    warp_scale: f32,                      // offset 120 : vertex warp scale (INST_HAS_WARP)
+    lightmap_layer: u32,                  // offset 124 : base lightmap atlas page
+    lightmap_scale_bias: vec4<f32>,       // offset 128 : lm_uv = uv1 * .xy + .zw
 };
 
 const INST_SELECTED: u32 = 1u;

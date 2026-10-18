@@ -169,10 +169,11 @@ impl ViewportRenderer {
         let dummy_view = dummy.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         // Derivative mode suppresses the upload pump, but sync mesh uploads defer
-        // their slab geometry write to `process_uploads`; a capture can run
-        // without an intervening presented frame, so flush geometry here or the
-        // scene renders from unwritten (degenerate) vertices.
+        // their slab geometry and sidecar writes to `process_uploads`; a capture
+        // can run without an intervening presented frame, so flush them here or
+        // the scene renders from unwritten (degenerate) vertices.
         self.resources.geometry.flush(queue);
+        self.resources.flush_sidecars(device, queue);
 
         // Render the full HDR frame; the pre-tonemap radiance lands in the
         // per-viewport hdr_texture.

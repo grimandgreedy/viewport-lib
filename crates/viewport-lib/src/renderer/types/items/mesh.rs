@@ -77,6 +77,10 @@ pub struct SceneRenderItem {
     /// behaviour). Set to [`IndirectLightSource::LightProbe`] to sample the
     /// uploaded SH light-probe field at the object's position instead.
     pub indirect_light: IndirectLightSource,
+    /// Where this draw sits in its mesh's lightmap atlas. `None` uses the
+    /// placement the mesh's lightmap was registered with. Lets copies of one
+    /// lightmapped mesh sample their own rects of a shared atlas.
+    pub lightmap_placement: Option<crate::resources::LightmapPlacement>,
 }
 
 /// Source of an object's indirect diffuse light.
@@ -126,6 +130,7 @@ impl Default for SceneRenderItem {
             deform_instance: None,
             lod_group: None,
             indirect_light: IndirectLightSource::default(),
+            lightmap_placement: None,
         }
     }
 }

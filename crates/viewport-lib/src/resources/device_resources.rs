@@ -397,12 +397,6 @@ pub struct ContentResources {
     pub(crate) fallback_lut_texture: crate::gpu::Texture,
     /// View of fallback_lut_texture.
     pub(crate) fallback_lut_view: crate::gpu::TextureView,
-    /// Fallback 4-byte zero storage buffer (bound when no scalar attribute is active).
-    pub(crate) fallback_scalar_buf: crate::gpu::Buffer,
-    /// Fallback 16-byte zero storage buffer (bound to binding 8 when no face colour attribute is active).
-    pub(crate) fallback_face_colour_buf: crate::gpu::Buffer,
-    /// Fallback 12-byte zero storage buffer (bound to binding 9 when no warp attribute is active).
-    pub(crate) fallback_warp_buf: crate::gpu::Buffer,
     /// Fallback 12-byte zero storage buffer (bound to binding 13 when no
     /// position override is active). Single `vec3<f32>(0,0,0)` entry; the
     /// shader bounds-checks `arrayLength` before reading.
@@ -410,10 +404,6 @@ pub struct ContentResources {
     /// Fallback 12-byte zero storage buffer (bound to binding 14 when no
     /// normal override is active).
     pub(crate) fallback_normal_override_buf: crate::gpu::Buffer,
-    /// Fallback 16-byte zero storage buffer (bound to binding 15 when the
-    /// mesh has no extension-attribute buffer). Single `vec4<f32>(0)` entry;
-    /// plugin modules clamp the vertex index so every read resolves to zero.
-    pub(crate) fallback_extension_attr_buf: crate::gpu::Buffer,
     /// Fallback 8-byte zero storage buffer (bound at the mesh bind group's
     /// second-UV-set slot when the mesh has no `uvs1`). Single `vec2<f32>(0)`
     /// entry; the mesh shaders clamp the vertex index so every read resolves to
@@ -500,6 +490,13 @@ pub struct DeviceResources {
     /// `index_span` is a window into these; geometry writes recorded at upload
     /// flush in `process_uploads`.
     pub(crate) geometry: crate::resources::mesh::geometry_slab::GeometrySlab,
+    /// Shared sidecar chunks: each mesh's per-vertex streams and per-mesh draw
+    /// words, bound at group 1 binding 6. Writes queue and flush in
+    /// `process_uploads`.
+    pub(crate) sidecar: crate::resources::mesh::sidecar_pool::SidecarPool,
+    /// Meshes whose record head (override windows) must be rewritten at the
+    /// next `process_uploads`.
+    pub(crate) sidecar_dirty: Vec<crate::resources::mesh::mesh_store::MeshId>,
     /// Registered LOD groups. Each groups several meshes that are detail
     /// variants of one object; the renderer picks a level per frame.
     pub(crate) lod_groups: crate::resources::mesh::lod::LodGroupStore,

@@ -32,6 +32,9 @@ var<private> object: InstanceData;
 // as the main pass. The normal override (binding 14) is not needed for a
 // depth-only pass.
 @group(1) @binding(13) var<storage, read> position_override_buffer: array<f32>;
+// The mesh's sidecar record chunk, for the override window.
+@group(1) @binding(6) var<storage, read> sidecar_pool: array<u32>;
+// #include "helpers/sidecar.wgsl"
 
 // Per-vertex deformation hook contract.
 // #include "helpers/deform.wgsl"
@@ -45,8 +48,9 @@ fn shadow_clip_position(position: vec3<f32>, vertex_index: u32, instance_index: 
     // Override replaces the vertex-buffer position outright, matching the main
     // mesh pass; deformers layer on top.
     var local_pos = position;
-    if (object.flags & INST_HAS_POSITION_OVERRIDE) != 0u && vertex_index < object.position_override_len {
-        let pi = (object.position_override_base + vertex_index) * 3u;
+    let rec = object.sidecar_record;
+    if (object.flags & INST_HAS_POSITION_OVERRIDE) != 0u && vertex_index < sc_word(rec + SC_POS_LEN) {
+        let pi = (sc_word(rec + SC_POS_BASE) + vertex_index) * 3u;
         let plen = arrayLength(&position_override_buffer);
         if pi + 2u < plen {
             local_pos = vec3<f32>(

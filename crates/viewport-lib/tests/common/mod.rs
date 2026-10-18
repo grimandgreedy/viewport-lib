@@ -110,6 +110,14 @@ pub fn headless_device_limited_bind_groups() -> Option<(wgpu::Device, wgpu::Queu
     headless_device_with(&DeviceProfile::low_power("test-2-bind-groups").max_bind_groups(2))
 }
 
+/// A headless device with wgpu's default limits (8 storage buffers per stage),
+/// what a consumer that builds its own device usually gets. `None` when no
+/// adapter is available.
+#[allow(dead_code)]
+pub fn headless_device_default_limits() -> Option<(wgpu::Device, wgpu::Queue)> {
+    headless_device_with(&DeviceProfile::harness())
+}
+
 /// A headless device requested with exactly `ViewportRenderer::recommended_device_limits`
 /// (not the adapter's full caps), so building a renderer here exercises the path
 /// a limits-following consumer takes. `ViewportRenderer::new` asserts the device

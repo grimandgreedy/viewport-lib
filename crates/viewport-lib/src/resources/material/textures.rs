@@ -1326,7 +1326,7 @@ impl DeviceResources {
     ///   binding 3 -> normal map view
     ///   binding 4 -> AO map view
     ///   binding 5 -> LUT (colourmap) texture view
-    ///   binding 6 -> scalar attribute storage buffer
+    ///   binding 6 -> the mesh's sidecar record chunk
     pub(crate) fn update_mesh_texture_bind_group(
         &mut self,
         device: &crate::gpu::Device,
@@ -1335,9 +1335,7 @@ impl DeviceResources {
         normal_map_id: Option<crate::resources::TextureId>,
         ao_map_id: Option<crate::resources::TextureId>,
         lut_id: Option<ColourmapId>,
-        active_attr: Option<&str>,
         matcap_id: Option<crate::resources::MatcapId>,
-        warp_attr: Option<&str>,
         metallic_roughness_id: Option<crate::resources::TextureId>,
         emissive_texture_id: Option<crate::resources::TextureId>,
     ) {
@@ -1352,22 +1350,12 @@ impl DeviceResources {
         );
         self.check_texture_slot(emissive_texture_id, MaterialSlot::Emissive.requirement());
 
-        let hash_str = |name: &str| -> u64 {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            name.hash(&mut h);
-            h.finish()
-        };
-        let attr_hash = active_attr.map(|n| hash_str(n)).unwrap_or(u64::MAX);
-        let warp_hash = warp_attr.map(|n| hash_str(n)).unwrap_or(u64::MAX);
-
-        // The last two slots track GPU position/normal override (re)bind events.
+        // The override slots track GPU position/normal override (re)bind events.
         // Bumped by `set_*_override_buffer` / `clear_*_override`, so a fresh
         // override forces a bind-group rebuild here.
         let (
             pos_override_gen,
             nrm_override_gen,
-            has_extension_attr,
             lightmap_gen,
             lightmap_tex_id,
             lightmap_dir_tex_id,
@@ -1378,7 +1366,6 @@ impl DeviceResources {
             (
                 mesh.position_override_gen,
                 mesh.normal_override_gen,
-                mesh.extension_attr_buffer.is_some() as u64,
                 mesh.lightmap_gen,
                 mesh.lightmap.as_ref().map(|lm| lm.texture_id),
                 mesh.lightmap
@@ -1392,17 +1379,15 @@ impl DeviceResources {
             normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             lut_id.map(|id| id.0 as u64).unwrap_or(u64::MAX),
-            attr_hash,
+            0,
             matcap_id.map(|id| id.index() as u64).unwrap_or(u64::MAX),
-            warp_hash,
+            0,
             metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             emissive_texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             pos_override_gen,
             nrm_override_gen,
-            // Pack the extension-attr presence bit with the lightmap gen so a
-            // lightmap set/clear invalidates the cached bind group. The tuple
-            // stays at 12 elements (its PartialEq arity limit).
-            has_extension_attr | (lightmap_gen << 1),
+            // A lightmap set/clear swaps the lightmap textures.
+            lightmap_gen,
         );
 
         {
@@ -1471,24 +1456,9 @@ impl DeviceResources {
             return;
         };
 
-        let scalar_buf: &crate::gpu::Buffer = match active_attr {
-            Some(name) => {
-                let found_vertex = mesh.attribute_buffers.get(name);
-                let found_face = mesh.face_attribute_buffers.get(name);
-                found_vertex
-                    .or(found_face)
-                    .unwrap_or(&self.content.fallback_scalar_buf)
-            }
-            None => &self.content.fallback_scalar_buf,
-        };
-
-        let face_colour_buf: &crate::gpu::Buffer = match active_attr {
-            Some(name) => mesh
-                .face_colour_buffers
-                .get(name)
-                .unwrap_or(&self.content.fallback_face_colour_buf),
-            None => &self.content.fallback_face_colour_buf,
-        };
+        // This group pairs with the mesh's template record, whose record base
+        // is 0 and selects no stream, so it binds the empty header.
+        let sidecar_buf = self.sidecar.fallback();
 
         // Resolve matcap texture view : fallback to 1x1 white when no matcap active.
         let matcap_view: &crate::gpu::TextureView = match matcap_id {
@@ -1502,14 +1472,6 @@ impl DeviceResources {
                 .unwrap_or(&self.material.texture.view),
         };
 
-        let warp_buf: &crate::gpu::Buffer = match warp_attr {
-            Some(name) => mesh
-                .vector_attribute_buffers
-                .get(name)
-                .unwrap_or(&self.content.fallback_warp_buf),
-            None => &self.content.fallback_warp_buf,
-        };
-
         let position_override_buf: &crate::gpu::Buffer = mesh
             .position_override_buffer
             .as_ref()
@@ -1518,14 +1480,6 @@ impl DeviceResources {
             .normal_override_buffer
             .as_ref()
             .unwrap_or(&self.content.fallback_normal_override_buf);
-        // The binding-15 vec4 sidecar carries the plugin vertex attribute or a
-        // baked lightmap's UV1; the lightmap wins the slot when both are set.
-        let sidecar_buf: &crate::gpu::Buffer = mesh
-            .lightmap
-            .as_ref()
-            .map(|lm| &lm.uv1_buffer)
-            .or(mesh.extension_attr_buffer.as_ref())
-            .unwrap_or(&self.content.fallback_extension_attr_buf);
 
         let metallic_roughness_view = self
             .content
@@ -1584,19 +1538,11 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 6,
-                    resource: scalar_buf.as_entire_binding(),
+                    resource: sidecar_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 7,
                     resource: crate::gpu::BindingResource::TextureView(matcap_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 8,
-                    resource: face_colour_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 9,
-                    resource: warp_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 10,
@@ -1617,10 +1563,6 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 14,
                     resource: normal_override_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 15,
-                    resource: sidecar_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 17,
@@ -1653,23 +1595,12 @@ impl DeviceResources {
         normal_map_id: Option<crate::resources::TextureId>,
         ao_map_id: Option<crate::resources::TextureId>,
         lut_id: Option<ColourmapId>,
-        active_attr: Option<&str>,
         matcap_id: Option<crate::resources::MatcapId>,
-        warp_attr: Option<&str>,
         metallic_roughness_id: Option<crate::resources::TextureId>,
         emissive_texture_id: Option<crate::resources::TextureId>,
         sampler: Option<crate::scene::material::SamplerKey>,
     ) -> Option<u64> {
         use std::hash::{Hash, Hasher};
-        // A fast hash, not SipHash: this runs for every per-object draw every
-        // frame, and the inputs are the renderer's own ids.
-        let hash_str = |name: &str| -> u64 {
-            let mut h = crate::resources::fast_hash::FastHasher::default();
-            name.hash(&mut h);
-            h.finish()
-        };
-        let attr_hash = active_attr.map(hash_str).unwrap_or(u64::MAX);
-        let warp_hash = warp_attr.map(hash_str).unwrap_or(u64::MAX);
         let mesh = self.mesh_store.get(mesh_id)?;
         let mut h = crate::resources::fast_hash::FastHasher::default();
         // Index and generation both: cached entries can outlive a mesh slot's
@@ -1686,12 +1617,10 @@ impl DeviceResources {
             .map(|id| id.0 as u64)
             .unwrap_or(u64::MAX)
             .hash(&mut h);
-        attr_hash.hash(&mut h);
         matcap_id
             .map(|id| id.index() as u64)
             .unwrap_or(u64::MAX)
             .hash(&mut h);
-        warp_hash.hash(&mut h);
         metallic_roughness_id
             .map(|t| t.raw())
             .unwrap_or(u64::MAX)
@@ -1702,7 +1631,8 @@ impl DeviceResources {
             .hash(&mut h);
         mesh.position_override_gen.hash(&mut h);
         mesh.normal_override_gen.hash(&mut h);
-        mesh.extension_attr_buffer.is_some().hash(&mut h);
+        // The chunk holding the mesh's sidecar record; a record move changes it.
+        mesh.sidecar.as_ref().map(|r| r.chunk()).hash(&mut h);
         mesh.lightmap_gen.hash(&mut h);
         // Per-material sampler: two items sharing every texture but differing in
         // wrap/filter/aniso must get distinct bind groups. No key and the default
@@ -1729,9 +1659,7 @@ impl DeviceResources {
         normal_map_id: Option<crate::resources::TextureId>,
         ao_map_id: Option<crate::resources::TextureId>,
         lut_id: Option<ColourmapId>,
-        active_attr: Option<&str>,
         matcap_id: Option<crate::resources::MatcapId>,
-        warp_attr: Option<&str>,
         metallic_roughness_id: Option<crate::resources::TextureId>,
         emissive_texture_id: Option<crate::resources::TextureId>,
         sampler: Option<crate::scene::material::SamplerKey>,
@@ -1743,9 +1671,7 @@ impl DeviceResources {
             normal_map_id,
             ao_map_id,
             lut_id,
-            active_attr,
             matcap_id,
-            warp_attr,
             metallic_roughness_id,
             emissive_texture_id,
             sampler,
@@ -1790,24 +1716,7 @@ impl DeviceResources {
             _ => &self.content.fallback_lut_view,
         };
 
-        let scalar_buf: &crate::gpu::Buffer = match active_attr {
-            Some(name) => {
-                let found_vertex = mesh.attribute_buffers.get(name);
-                let found_face = mesh.face_attribute_buffers.get(name);
-                found_vertex
-                    .or(found_face)
-                    .unwrap_or(&self.content.fallback_scalar_buf)
-            }
-            None => &self.content.fallback_scalar_buf,
-        };
-
-        let face_colour_buf: &crate::gpu::Buffer = match active_attr {
-            Some(name) => mesh
-                .face_colour_buffers
-                .get(name)
-                .unwrap_or(&self.content.fallback_face_colour_buf),
-            None => &self.content.fallback_face_colour_buf,
-        };
+        let sidecar_buf = self.sidecar.binding_buffer(mesh.sidecar.as_ref());
 
         let matcap_view: &crate::gpu::TextureView = match matcap_id {
             Some(id) if id.index() < self.content.matcap_views.len() => {
@@ -1820,14 +1729,6 @@ impl DeviceResources {
                 .unwrap_or(&self.material.texture.view),
         };
 
-        let warp_buf: &crate::gpu::Buffer = match warp_attr {
-            Some(name) => mesh
-                .vector_attribute_buffers
-                .get(name)
-                .unwrap_or(&self.content.fallback_warp_buf),
-            None => &self.content.fallback_warp_buf,
-        };
-
         let position_override_buf: &crate::gpu::Buffer = mesh
             .position_override_buffer
             .as_ref()
@@ -1836,14 +1737,6 @@ impl DeviceResources {
             .normal_override_buffer
             .as_ref()
             .unwrap_or(&self.content.fallback_normal_override_buf);
-        // Binding-15 vec4 sidecar: lightmap UV1 wins the slot, else the plugin
-        // vertex attribute, else the shared zero fallback.
-        let sidecar_buf: &crate::gpu::Buffer = mesh
-            .lightmap
-            .as_ref()
-            .map(|lm| &lm.uv1_buffer)
-            .or(mesh.extension_attr_buffer.as_ref())
-            .unwrap_or(&self.content.fallback_extension_attr_buf);
         // Bindings 17/18 are texture_2d_array; view the registered lightmap as a
         // D2Array (single-page = one layer) and select a page per vertex in the
         // shader. Meshes without a lightmap bind the shared 1x1 array fallback.
@@ -1934,19 +1827,11 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 6,
-                    resource: scalar_buf.as_entire_binding(),
+                    resource: sidecar_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 7,
                     resource: crate::gpu::BindingResource::TextureView(matcap_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 8,
-                    resource: face_colour_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 9,
-                    resource: warp_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 10,
@@ -1967,10 +1852,6 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 14,
                     resource: normal_override_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 15,
-                    resource: sidecar_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 17,

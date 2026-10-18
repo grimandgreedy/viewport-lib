@@ -112,7 +112,7 @@ fn render_deferred_centre(
     queue.submit(std::iter::once(encoder.finish()));
     staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
     let _ = device.poll(wgpu::PollType::wait_indefinitely());
-    let data = staging.slice(..).get_mapped_range();
+    let data = viewport_lib::gpu::mapped_range(staging.slice(..));
     let i = (((H / 2) * W + W / 2) * 4) as usize;
     [data[i], data[i + 1], data[i + 2], data[i + 3]]
 }

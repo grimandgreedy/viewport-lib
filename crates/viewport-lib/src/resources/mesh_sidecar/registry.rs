@@ -363,6 +363,30 @@ pub(crate) fn lookup_source(name: &str) -> Option<&'static str> {
     shader_source(name)
 }
 
+/// The lit shader `name` for a device with or without the deform group: the
+/// `_noop` variant, which declares no group-2 bindings, when deform is off.
+pub(crate) fn lookup_lit_source(name: &str, deform_enabled: bool) -> Option<&'static str> {
+    if deform_enabled {
+        return shader_source(name);
+    }
+    match name {
+        "mesh.wgsl" => Some(include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))),
+        "mesh_oit.wgsl" => Some(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/mesh_oit_noop.wgsl"
+        ))),
+        "mesh_instanced.wgsl" => Some(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/mesh_instanced_noop.wgsl"
+        ))),
+        "mesh_instanced_oit.wgsl" => Some(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/mesh_instanced_oit_noop.wgsl"
+        ))),
+        _ => shader_source(name),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

@@ -21,6 +21,31 @@ pub(crate) fn build_instance_record(
     let mesh_closed = mesh.is_some_and(|m| m.closed);
     let has_position_override = mesh.is_some_and(|m| m.position_override_buffer.is_some());
     let has_normal_override = mesh.is_some_and(|m| m.normal_override_buffer.is_some());
+    let record = mesh.and_then(|m| m.sidecar.as_ref());
+    // The item's own lightmap placement, else the one its mesh's lightmap was
+    // registered with.
+    let placement = item.lightmap_placement.unwrap_or_else(|| {
+        mesh.and_then(|m| m.lightmap.as_ref())
+            .map_or(crate::resources::LightmapPlacement::WHOLE, |lm| {
+                crate::resources::LightmapPlacement::new(lm.layer, lm.scale_bias)
+            })
+    });
+    let sidecar_select = {
+        use crate::resources::mesh::sidecar_pool::{StreamKind, select_word};
+        let index = |kind, name: &str| record.and_then(|r| r.find(kind, name)).map(|s| s.index);
+        let attr = item.active_attribute.as_ref().map(|a| a.name.as_str());
+        // A scalar attribute name resolves against the vertex streams first,
+        // then the per-corner ones.
+        let scalar = attr.and_then(|n| {
+            index(StreamKind::Scalar, n).or_else(|| index(StreamKind::FaceScalar, n))
+        });
+        let face_colour = attr.and_then(|n| index(StreamKind::FaceColour, n));
+        let warp = item
+            .warp_attribute
+            .as_deref()
+            .and_then(|n| index(StreamKind::Vector, n));
+        select_word(scalar, face_colour, warp)
+    };
     // Styled back-face `Pattern` world scale: transform the mesh AABB by this
     // instance's model to get its world extent, then divide the pattern scale
     // by it. Zero for every non-Pattern policy.
@@ -76,27 +101,14 @@ pub(crate) fn build_instance_record(
         custom_data_id: 0,
         backface_pattern_scale,
         object_mask: item.settings.visibility_mask,
-        // Draws that bind a mesh sub-slice see a mesh-local vertex index; the
-        // base recovers the whole-chunk index into the uv1 buffer. 0 when the
-        // mesh has no second UV set (the one-entry zero fallback is bound).
-        uv1_base: mesh
-            .filter(|m| m.has_uv1)
-            .map_or(0, |m| resources.geometry.base_vertex(m.vertex_span) as u32),
+        // The per-mesh words (uv1 base, override windows) and the streams live
+        // in the mesh's sidecar record; the item picks its streams by index.
+        sidecar_record: record.map_or(0, |r| r.base_word()),
         deform_flags: resources.deform.flag_bits(item.mesh_id),
-        position_override_base: mesh
-            .and_then(|m| m.position_override_slice)
-            .map_or(0, |s| s.base_element),
-        position_override_len: mesh
-            .and_then(|m| m.position_override_slice)
-            .map_or(u32::MAX, |s| s.element_count),
-        normal_override_base: mesh
-            .and_then(|m| m.normal_override_slice)
-            .map_or(0, |s| s.base_element),
-        normal_override_len: mesh
-            .and_then(|m| m.normal_override_slice)
-            .map_or(u32::MAX, |s| s.element_count),
+        sidecar_select,
         warp_scale: item.warp_scale,
-        _spare: [0; 2],
+        lightmap_layer: placement.layer,
+        lightmap_scale_bias: placement.scale_bias,
     }
 }
 
@@ -202,9 +214,7 @@ impl ViewportRenderer {
                 m.normal_map_id,
                 m.ao_map_id,
                 item.colourmap_id,
-                item.active_attribute.as_ref().map(|a| a.name.as_str()),
                 m.matcap_id(),
-                item.warp_attribute.as_deref(),
                 m.metallic_roughness_texture_id,
                 m.emissive_texture_id,
             );
@@ -237,9 +247,7 @@ impl ViewportRenderer {
                 m.normal_map_id,
                 m.ao_map_id,
                 item.colourmap_id,
-                item.active_attribute.as_ref().map(|a| a.name.as_str()),
                 m.matcap_id(),
-                item.warp_attribute.as_deref(),
                 m.metallic_roughness_texture_id,
                 m.emissive_texture_id,
                 m.selected_sampler(),

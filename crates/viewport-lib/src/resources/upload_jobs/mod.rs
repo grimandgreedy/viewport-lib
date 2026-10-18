@@ -1250,6 +1250,7 @@ impl super::DeviceResources {
         // uploads stream straight into the slab in their GPU step, so this only
         // drains the deferred sync writes.
         self.geometry.flush(queue);
+        self.flush_sidecars(device, queue);
     }
 
     /// Total wall-clock work duration for a completed job.
