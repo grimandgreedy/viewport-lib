@@ -444,3 +444,104 @@ fn instanced_frames_cull_on_the_cpu_until_the_gpu_cull_is_built() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
+
+/// `warm_pipelines` asks for every mesh family's plain feature sets before
+/// any universal member. The compile queue is first in, first out, and a
+/// universal member only stands in for a set that appears later, so asking
+/// for it first would hold up the pipelines a plain scene draws with. Under
+/// `Blocking` every request builds on the spot, so the build log holds the
+/// request order.
+#[test]
+fn warm_up_asks_for_plain_sets_before_universal_members() {
+    let _guard = LOG_LOCK.lock().unwrap();
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(PipelineCompilation::Blocking);
+    viewport_lib::resources::build_log::enable();
+    let _ = viewport_lib::resources::build_log::drain();
+    renderer.warm_pipelines(&device, &queue, &viewport_lib::PipelineSet::all());
+    let labels: Vec<String> = viewport_lib::resources::build_log::drain()
+        .into_iter()
+        .map(|(l, _)| l)
+        .collect();
+    viewport_lib::resources::build_log::disable();
+
+    let universal = [
+        "solid_pipeline",
+        "solid_two_sided_pipeline",
+        "solid_nodiscard_pipeline",
+        "hdr_solid_pipeline",
+        "hdr_solid_nodiscard_pipeline",
+        "transparent_pipeline",
+        "hdr_transparent_pipeline",
+    ];
+    let last_plain = labels
+        .iter()
+        .rposition(|l| l.ends_with("_feat00"))
+        .expect("warm-up built no plain feature set");
+    let first_universal = labels
+        .iter()
+        .position(|l| universal.contains(&l.as_str()))
+        .expect("warm-up built no universal mesh member");
+    assert!(
+        last_plain < first_universal,
+        "{} was built before {}: {labels:?}",
+        labels[first_universal],
+        labels[last_plain],
+    );
+}
+
+/// A feature set that first appears after warm-up draws through the universal
+/// pipeline while its own compiles, and `FrameStats::stand_in_draws` counts
+/// those draws; once it lands the count is back to zero.
+#[test]
+fn a_new_feature_set_draws_on_the_stand_in_and_is_counted() {
+    let _guard = LOG_LOCK.lock().unwrap();
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(PipelineCompilation::Background);
+    renderer.warm_pipelines(&device, &queue, &viewport_lib::PipelineSet::all());
+    renderer.wait_for_pipelines(&device);
+
+    let mut frame = scene(&mut renderer, &device, true);
+    let _ = render_presented(&mut renderer, &device, &queue, &frame, 64, 64);
+    renderer.wait_for_pipelines(&device);
+    let _ = render_presented(&mut renderer, &device, &queue, &frame, 64, 64);
+    assert_eq!(
+        renderer.last_frame_stats().stand_in_draws,
+        0,
+        "a warmed plain scene drew on a stand-in"
+    );
+
+    // A matcap material brings a feature set warm-up did not build.
+    let matcap = renderer
+        .resources_mut()
+        .builtin_matcap_id(viewport_lib::BuiltinMatcap::Clay);
+    let mut material = Material::from_colour(viewport_lib::Colour::linear_rgb(0.8, 0.5, 0.3));
+    material.shading_model = viewport_lib::ShadingModel::Matcap(matcap);
+    let material = upload_material(&mut renderer, material);
+    if let SurfaceSubmission::Flat(items) = &mut frame.scene.surfaces {
+        let mut items = items.to_vec();
+        items[0].material = material;
+        frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+    }
+    frame.scene.generation += 1;
+    let _ = render_presented(&mut renderer, &device, &queue, &frame, 64, 64);
+    assert!(
+        renderer.last_frame_stats().stand_in_draws > 0,
+        "the frame that brought the matcap set did not stand in"
+    );
+    renderer.wait_for_pipelines(&device);
+    let _ = render_presented(&mut renderer, &device, &queue, &frame, 64, 64);
+    assert_eq!(
+        renderer.last_frame_stats().stand_in_draws,
+        0,
+        "the matcap set landed but its draw still stood in"
+    );
+}

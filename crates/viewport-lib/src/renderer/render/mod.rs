@@ -794,6 +794,9 @@ impl ViewportRenderer {
         self.resources
             .frame_feature_sets_capped
             .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.resources
+            .frame_stand_in_draws
+            .store(0, std::sync::atomic::Ordering::Relaxed);
 
         let bg_colour = background_premultiplied(frame);
         let ppp = frame.camera.pixels_per_point;
@@ -925,6 +928,10 @@ impl ViewportRenderer {
         self.last_stats.feature_sets_capped = self
             .resources
             .frame_feature_sets_capped
+            .load(std::sync::atomic::Ordering::Relaxed);
+        self.last_stats.stand_in_draws = self
+            .resources
+            .frame_stand_in_draws
             .load(std::sync::atomic::Ordering::Relaxed);
         self.last_stats.feature_pipelines_built = self.resources.feature_sets() as u32;
         cmd_buf

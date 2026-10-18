@@ -420,12 +420,45 @@ impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, 
             stand_in,
             capped,
         };
-        let Some(f) = self.features.as_deref() else {
-            return universal(false, false);
-        };
-        if feats == crate::renderer::pipeline_key::FeatureSet::UNIVERSAL {
+        if self.features.is_none() || feats == crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
+        {
             return universal(false, false);
         }
+        match self.feature_member(i, feats) {
+            None => universal(false, true),
+            Some(Some(p)) => FeatureGet {
+                pipeline: Some(p),
+                stand_in: false,
+                capped: false,
+            },
+            Some(None) => universal(true, false),
+        }
+    }
+
+    /// Ask for member `i` built with `feats`, without asking for the
+    /// universal member that would stand in for it. Warm-up queues every
+    /// set it needs this way before the universal members, so the stand-in
+    /// compiles never sit ahead of a pipeline the scene keeps.
+    pub(crate) fn request_features(
+        &self,
+        i: usize,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+    ) {
+        if self.features.is_some() && feats != crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
+        {
+            self.feature_member(i, feats);
+        }
+    }
+
+    /// The feature-set pipeline for member `i` and `feats`, asked for under
+    /// the policy the first time the set is seen: `Some(None)` while it
+    /// compiles, `None` when the family is full and has no slot for it.
+    fn feature_member(
+        &self,
+        i: usize,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+    ) -> Option<Option<&P>> {
+        let f = self.features.as_deref()?;
         let key = ((i as u32) << 8 | feats.bits() as u32) + 1;
         let find = |len: usize| {
             f.keys[..len]
@@ -439,7 +472,7 @@ impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, 
                 let len = f.len.load(Ordering::Acquire);
                 match find(len) {
                     Some(s) => s,
-                    None if len == FEATURE_SETS_PER_FAMILY => return universal(false, true),
+                    None if len == FEATURE_SETS_PER_FAMILY => return None,
                     None => {
                         f.keys[len].store(key, Ordering::Release);
                         f.len.store(len + 1, Ordering::Release);
@@ -450,14 +483,7 @@ impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, 
         };
         let ctx = Arc::clone(&self.ctx);
         let build = f.build;
-        match f.slots[slot].get(&self.compiler, move || build(&ctx, i, feats)) {
-            Some(p) => FeatureGet {
-                pipeline: Some(p),
-                stand_in: false,
-                capped: false,
-            },
-            None => universal(true, false),
-        }
+        Some(f.slots[slot].get(&self.compiler, move || build(&ctx, i, feats)))
     }
 
     /// Whether a draw of member `i` with `feats` has a pipeline to bind: the

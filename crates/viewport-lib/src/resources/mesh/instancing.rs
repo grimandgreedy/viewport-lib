@@ -199,19 +199,29 @@ impl CullResources {
                 .sum::<usize>()
     }
 
-    /// Ask for every culled member and its plain feature set.
+    /// Ask for the plain feature set of every culled member. Asks for no
+    /// universal member: see [`request_members`](Self::request_members).
     pub(crate) fn request_plain(&self) {
         for f in [&self.hdr, &self.hdr_bindless].into_iter().flatten() {
-            f.request_all();
             for i in 0..4 {
-                f.get_features(i, crate::renderer::pipeline_key::FeatureSet::NONE);
+                f.request_features(i, crate::renderer::pipeline_key::FeatureSet::NONE);
             }
         }
         for f in [&self.oit, &self.oit_bindless].into_iter().flatten() {
-            f.request_all();
             for i in 0..2 {
-                f.get_features(i, crate::renderer::pipeline_key::FeatureSet::NONE);
+                f.request_features(i, crate::renderer::pipeline_key::FeatureSet::NONE);
             }
+        }
+    }
+
+    /// Ask for every member of the culled families, the universal pipelines
+    /// among them.
+    pub(crate) fn request_members(&self) {
+        for f in [&self.hdr, &self.hdr_bindless].into_iter().flatten() {
+            f.request_all();
+        }
+        for f in [&self.oit, &self.oit_bindless].into_iter().flatten() {
+            f.request_all();
         }
     }
 

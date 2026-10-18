@@ -69,9 +69,13 @@ pub(crate) struct InstancedBatch {
     /// textures come from the texture array by each record's material index,
     /// so it draws through the bindless pipeline families.
     pub bindless: bool,
-    /// Key of the per-batch group-1 bind group the shadow casters bind:
-    /// `bind_key`, or for a bindless batch its per-batch member twin.
+    /// Key of the per-batch group-1 bind group the shadow casters bind: for
+    /// a cutout caster `bind_key` (or for a bindless batch its per-batch
+    /// member twin), for any other caster the shared fallback group.
     pub shadow_bind_key: u64,
+    /// What the shadow casters' group binds beyond the mesh: `group` for a
+    /// cutout caster, the fallback textures for any other.
+    pub shadow_group: GroupInputs,
     /// What the batch's group-1 bind group binds beyond its mesh, so a
     /// viewport's culled twin of it can be built without the scene items.
     pub group: GroupInputs,
@@ -288,6 +292,11 @@ pub(crate) fn draw_batch<'a, E: MeshDrawEncoder<'a>>(
     // draw the same image.
     let mut take = |got: crate::resources::pipeline_slot::FeatureGet<'a, _>| {
         bound.stand_in |= got.stand_in;
+        if got.stand_in {
+            resources
+                .frame_stand_in_draws
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         if got.capped {
             resources
                 .frame_feature_sets_capped
@@ -330,7 +339,7 @@ pub(crate) fn draw_batch<'a, E: MeshDrawEncoder<'a>>(
             } else if batch.is_transparent {
                 (take(family.transparent_features(feats)), None)
             } else {
-                let key = opaque_key(resources, batch, *hdr, *clipping_active);
+                let key = opaque_key(resources, batch, *clipping_active);
                 (take(family.opaque_features(key, feats)), None)
             }
         }
@@ -438,18 +447,16 @@ pub(crate) fn draw_batch<'a, E: MeshDrawEncoder<'a>>(
     true
 }
 
-/// The opaque pipeline key of a batch. Early-Z: on the HDR path a batch that
-/// can never discard draws through the discard-free twin.
+/// The opaque pipeline key of a batch. Early-Z: a batch that can never
+/// discard draws through the discard-free twin.
 pub(crate) fn opaque_key(
     resources: &crate::resources::DeviceResources,
     batch: &InstancedBatch,
-    hdr: bool,
     clipping_active: bool,
 ) -> crate::renderer::pipeline_key::PipelineKey {
     crate::renderer::pipeline_key::PipelineKey {
         two_sided: batch.two_sided,
-        no_discard_eligible: hdr
-            && !clipping_active
+        no_discard_eligible: !clipping_active
             && !resources.force_po_discard
             && !batch.has_alpha_mask
             && !batch.has_attribute
@@ -534,7 +541,7 @@ pub(crate) fn draw_culled_batches(
             (CulledPass::Opaque { .. }, Some((pp, _))) => pp.hdr_culled(two_sided, feats),
             (CulledPass::Oit, Some((pp, _))) => pp.oit_culled(two_sided, feats),
             (CulledPass::Opaque { clipping_active }, None) => resources.cull.hdr_opaque_features(
-                opaque_key(resources, batch, true, *clipping_active),
+                opaque_key(resources, batch, *clipping_active),
                 feats,
                 batch.bindless,
             ),
@@ -544,6 +551,11 @@ pub(crate) fn draw_culled_batches(
                     .oit_features(two_sided, feats, batch.bindless)
             }
         };
+        if got.stand_in {
+            resources
+                .frame_stand_in_draws
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         if got.capped {
             resources
                 .frame_feature_sets_capped
@@ -855,7 +867,7 @@ macro_rules! emit_draw_calls {
                 family: &ldr_family,
                 bindless_family: &ldr_bindless_family,
                 hdr: false,
-                clipping_active: false,
+                clipping_active: crate::resources::DeviceResources::clipping_active(frame),
             };
             let mut batch_bound = crate::renderer::types::BatchBound::default();
             {

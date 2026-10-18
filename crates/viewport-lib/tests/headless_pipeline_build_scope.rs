@@ -60,11 +60,14 @@ fn assert_has(labels: &[String], what: &str, wanted: &str) {
     );
 }
 
-/// The LDR mesh family: the four pipelines and their module.
+/// The LDR mesh family: its pipelines and their modules.
 const LDR_MESH: &[&str] = &[
     "module mesh_shader",
+    "module mesh_shader_nodiscard",
     "solid_pipeline",
     "solid_two_sided_pipeline",
+    "solid_nodiscard_pipeline",
+    "solid_two_sided_nodiscard_pipeline",
     "transparent_pipeline",
     "wireframe_pipeline",
 ];
@@ -130,8 +133,9 @@ fn a_frame_builds_only_what_it_binds() {
         &["mesh_oit", "oit_pipeline", "bloom", "ssao"],
     );
 
-    // A Direct frame with instanced meshes: the LDR instanced set, and neither
-    // the HDR nor the OIT instanced set, nor any of the post chain.
+    // A Direct frame with instanced meshes: the LDR set, unclipped and opaque
+    // so through the discard-free pipeline, and neither the HDR nor the OIT
+    // set, nor any of the post chain.
     let labels = built_by(&device, &queue, |renderer| {
         let mesh_id = renderer
             .resources_mut()
@@ -142,6 +146,11 @@ fn a_frame_builds_only_what_it_binds() {
         frame.scene.surfaces = cubes(mesh_id, 3);
         frame
     });
+    assert_has(
+        &labels,
+        "a Direct instanced frame",
+        "solid_nodiscard_pipeline_feat00",
+    );
     assert_none(
         &labels,
         "a Direct instanced frame",

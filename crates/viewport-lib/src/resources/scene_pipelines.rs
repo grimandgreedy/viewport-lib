@@ -12,11 +12,13 @@ use crate::renderer::pipeline_key::{FeatureSet, PipelineKey};
 use crate::resources::pipeline_slot::FeatureGet;
 use crate::resources::pipeline_slot::LazyFamily;
 
-/// What every LDR mesh pipeline build reads.
+/// What every LDR mesh pipeline build reads: the lit module and its
+/// discard-free twin.
 pub(crate) struct LdrMeshContext {
     device: crate::gpu::Device,
     layout: crate::gpu::PipelineLayout,
     shader: crate::resources::pipeline_slot::LazyModule,
+    shader_nodiscard: crate::resources::pipeline_slot::LazyModule,
     target_format: crate::gpu::TextureFormat,
     sample_count: u32,
 }
@@ -35,9 +37,10 @@ pub(crate) struct HdrMeshContext {
 /// Base and HDR-variant pipelines for core scene surfaces.
 #[derive(Default)]
 pub(crate) struct SceneCorePipelines {
-    /// The four LDR pipelines (solid, two-sided, transparent, wireframe),
-    /// drawing into the swapchain format.
-    pub(crate) ldr: Option<LazyFamily<LdrMeshContext, 4>>,
+    /// The LDR pipelines (solid, two-sided, transparent, wireframe, and the
+    /// discard-free twins of the two solid ones), drawing into the swapchain
+    /// format.
+    pub(crate) ldr: Option<LazyFamily<LdrMeshContext, 6>>,
     /// The HDR family: four opaque pipelines keyed by facedness and
     /// discard-free early-Z eligibility (`cutout` is not a real axis: the
     /// opaque fragment shader branches on a per-object uniform),
@@ -47,7 +50,7 @@ pub(crate) struct SceneCorePipelines {
     /// The LDR and HDR families on the bindless member of group 1, built
     /// alongside the two above when material textures bind bindlessly. The
     /// batch draws whose bind groups are bindless draw through these.
-    pub(crate) ldr_bindless: Option<LazyFamily<LdrMeshContext, 4>>,
+    pub(crate) ldr_bindless: Option<LazyFamily<LdrMeshContext, 6>>,
     pub(crate) hdr_bindless: Option<LazyFamily<HdrMeshContext, 9>>,
 }
 
@@ -55,6 +58,9 @@ const LDR_SOLID: usize = 0;
 const LDR_SOLID_TWO_SIDED: usize = 1;
 const LDR_TRANSPARENT: usize = 2;
 const LDR_WIREFRAME: usize = 3;
+/// The early-Z twins of `LDR_SOLID` and `LDR_SOLID_TWO_SIDED`.
+const LDR_SOLID_NODISCARD: usize = 4;
+const LDR_SOLID_TWO_SIDED_NODISCARD: usize = 5;
 
 /// Four slots: bit 0 is two-sided, bit 1 is discard-free.
 const HDR_OPAQUE: usize = 0;
@@ -91,11 +97,18 @@ fn build_ldr_features(
 ) -> crate::gpu::RenderPipeline {
     use crate::gpu::{BlendState, Face, PrimitiveTopology};
     let constants = feats.constants();
+    // Early-Z twins: identical shading with every `discard;` removed, valid
+    // only for draws that would not have discarded.
+    let nodiscard = matches!(i, LDR_SOLID_NODISCARD | LDR_SOLID_TWO_SIDED_NODISCARD);
     let make = |label, cull, blend, topo, depth_write| {
         crate::resources::mesh::mesh_pipelines::ldr_mesh_pipeline_with(
             &ctx.device,
             &ctx.layout,
-            ctx.shader.get(),
+            if nodiscard {
+                ctx.shader_nodiscard.get()
+            } else {
+                ctx.shader.get()
+            },
             ctx.target_format,
             ctx.sample_count,
             None,
@@ -117,6 +130,20 @@ fn build_ldr_features(
         ),
         LDR_SOLID_TWO_SIDED => make(
             "solid_two_sided_pipeline",
+            None,
+            None,
+            PrimitiveTopology::TriangleList,
+            true,
+        ),
+        LDR_SOLID_NODISCARD => make(
+            "solid_nodiscard_pipeline",
+            Some(Face::Back),
+            None,
+            PrimitiveTopology::TriangleList,
+            true,
+        ),
+        LDR_SOLID_TWO_SIDED_NODISCARD => make(
+            "solid_two_sided_nodiscard_pipeline",
             None,
             None,
             PrimitiveTopology::TriangleList,
@@ -267,12 +294,12 @@ impl SceneCorePipelines {
         self.ldr.as_ref()?.get(LDR_WIREFRAME)
     }
 
-    /// Ask the HDR families for every member and the plain feature set of
-    /// every opaque and transparent member, so a plain lit scene draws no
-    /// stand-in after warm-up.
+    /// Ask the HDR families for the plain feature set of every opaque and
+    /// transparent member, so a plain lit scene draws no stand-in after
+    /// warm-up. Asks for no universal member: see
+    /// [`request_members_hdr`](Self::request_members_hdr).
     pub(crate) fn request_plain_hdr(&self) {
         for f in [&self.hdr, &self.hdr_bindless].into_iter().flatten() {
-            f.request_all();
             for key in [false, true].into_iter().flat_map(|two_sided| {
                 [false, true].map(|no_discard_eligible| PipelineKey {
                     two_sided,
@@ -280,19 +307,41 @@ impl SceneCorePipelines {
                     ..PipelineKey::default()
                 })
             }) {
-                f.get_features(hdr_opaque_slot(key), FeatureSet::NONE);
+                f.request_features(hdr_opaque_slot(key), FeatureSet::NONE);
             }
-            f.get_features(HDR_TRANSPARENT, FeatureSet::NONE);
+            f.request_features(HDR_TRANSPARENT, FeatureSet::NONE);
+        }
+    }
+
+    /// Ask the HDR families for every member: the universal pipelines that
+    /// stand in for a feature set appearing later, and the members with no
+    /// feature axis.
+    pub(crate) fn request_members_hdr(&self) {
+        for f in [&self.hdr, &self.hdr_bindless].into_iter().flatten() {
+            f.request_all();
         }
     }
 
     /// [`request_plain_hdr`](Self::request_plain_hdr) for the LDR families.
     pub(crate) fn request_plain_ldr(&self) {
         for f in [&self.ldr, &self.ldr_bindless].into_iter().flatten() {
-            f.request_all();
-            for slot in [LDR_SOLID, LDR_SOLID_TWO_SIDED, LDR_TRANSPARENT] {
-                f.get_features(slot, FeatureSet::NONE);
+            for slot in [
+                LDR_SOLID,
+                LDR_SOLID_TWO_SIDED,
+                LDR_SOLID_NODISCARD,
+                LDR_SOLID_TWO_SIDED_NODISCARD,
+                LDR_TRANSPARENT,
+            ] {
+                f.request_features(slot, FeatureSet::NONE);
             }
+        }
+    }
+
+    /// [`request_members_hdr`](Self::request_members_hdr) for the LDR
+    /// families.
+    pub(crate) fn request_members_ldr(&self) {
+        for f in [&self.ldr, &self.ldr_bindless].into_iter().flatten() {
+            f.request_all();
         }
     }
 
@@ -400,13 +449,14 @@ fn feature_get<'a, C: Send + Sync + 'static, const N: usize>(
     }
 }
 
-pub(crate) struct LdrScene<'a>(Option<&'a LazyFamily<LdrMeshContext, 4>>);
+pub(crate) struct LdrScene<'a>(Option<&'a LazyFamily<LdrMeshContext, 6>>);
 
 fn ldr_solid_slot(key: PipelineKey) -> usize {
-    if key.two_sided {
-        LDR_SOLID_TWO_SIDED
-    } else {
-        LDR_SOLID
+    match (key.two_sided, key.no_discard_eligible) {
+        (false, false) => LDR_SOLID,
+        (true, false) => LDR_SOLID_TWO_SIDED,
+        (false, true) => LDR_SOLID_NODISCARD,
+        (true, true) => LDR_SOLID_TWO_SIDED_NODISCARD,
     }
 }
 
@@ -527,8 +577,13 @@ impl crate::resources::DeviceResources {
                 ),
             ),
         );
-        // The HDR family compiles the same source, so the module is shared.
+        // The HDR family compiles the same source, so both modules are shared.
         let shader = self.shared_module(device, "mesh_shader", &source);
+        let shader_nodiscard = self.shared_module(
+            device,
+            "mesh_shader_nodiscard",
+            &crate::resources::builders::strip_discards(&source),
+        );
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "mesh_pipeline_layout",
@@ -536,24 +591,28 @@ impl crate::resources::DeviceResources {
             &self.binds.object_bgl,
         );
         let bindless = if self.bindless_textures() {
-            let shader = self.shared_module(
+            let source = crate::resources::mesh::instanced_bindless::bindlessify_mesh(&source);
+            let shader = self.shared_module(device, "mesh_bindless_shader", &source);
+            let shader_nodiscard = self.shared_module(
                 device,
-                "mesh_bindless_shader",
-                &crate::resources::mesh::instanced_bindless::bindlessify_mesh(&source),
+                "mesh_bindless_shader_nodiscard",
+                &crate::resources::builders::strip_discards(&source),
             );
             Some((
                 shader,
+                shader_nodiscard,
                 self.object_bindless_layout(device, "mesh_bindless_pipeline_layout"),
             ))
         } else {
             None
         };
-        let family = |layout, shader| {
+        let family = |layout, shader, shader_nodiscard| {
             LazyFamily::new(
                 LdrMeshContext {
                     device: device.clone(),
                     layout,
                     shader,
+                    shader_nodiscard,
                     target_format: self.target_format,
                     sample_count: self.sample_count,
                 },
@@ -562,8 +621,8 @@ impl crate::resources::DeviceResources {
             )
             .with_features(build_ldr_features)
         };
-        let ldr = family(layout, shader);
-        let ldr_bindless = bindless.map(|(shader, layout)| family(layout, shader));
+        let ldr = family(layout, shader, shader_nodiscard);
+        let ldr_bindless = bindless.map(|(s, n, l)| family(l, s, n));
         self.scene.ldr = Some(ldr);
         self.scene.ldr_bindless = ldr_bindless;
     }
@@ -715,13 +774,19 @@ mod tests {
         // A bindless device composes every mesh family on both group-1
         // members, so each module has a bindless twin.
         let b = usize::from(res.bindless_textures());
+        // The LDR family owns the lit module and its discard-free twin; the
+        // HDR family compiles the same two texts, so it shares both.
         res.ensure_ldr_mesh_pipelines(&device);
-        assert_eq!(modules(&res), 1 + b, "the LDR mesh family is one module");
+        assert_eq!(
+            modules(&res),
+            2 + 2 * b,
+            "the LDR mesh family is the lit module and its discard-free twin"
+        );
         res.ensure_hdr_mesh_pipelines(&device);
         assert_eq!(
             modules(&res),
             2 + 2 * b,
-            "the HDR mesh family adds its discard-free twin and nothing else"
+            "the HDR mesh family shares the LDR family's two modules"
         );
 
         res.ensure_hdr_cull_pipelines(&device);

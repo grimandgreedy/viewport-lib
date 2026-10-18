@@ -1058,7 +1058,7 @@ fn set_cascade_tile(
     );
 }
 
-/// Build each culled caster's group 1 for every cascade: its per-batch member
+/// Build each culled caster's group 1 for every cascade: its caster group
 /// with the cascade's visible list at binding 15, keyed by its
 /// `shadow_bind_key`. Groups no batch names any more are dropped.
 fn prime_caster_groups(
@@ -1085,7 +1085,7 @@ fn prime_caster_groups(
             let Some(visible) = state.shadow_vis_bufs[c].as_ref() else {
                 continue;
             };
-            let g = &batch.group;
+            let g = &batch.shadow_group;
             if let Some((bg, _)) = resources.build_per_item_object_bind_group(
                 device,
                 batch.mesh_id,

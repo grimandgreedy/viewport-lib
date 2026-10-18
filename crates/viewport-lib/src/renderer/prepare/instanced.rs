@@ -1,6 +1,7 @@
 //! Instanced (GPU-driven) mesh draw preparation.
 
 use super::*;
+use crate::renderer::types::GroupInputs;
 use crate::resources::mesh::instanced_bindless::MaterialTextureBinding;
 use viewport_lib_types::ids::TextureId;
 
@@ -184,7 +185,7 @@ fn build_and_upload_draw_groups(
             let transparent = batch.is_transparent;
             // OIT has no discard-free variant; only the opaque pass keys on it.
             let no_discard = !transparent
-                && crate::renderer::types::opaque_key(resources, batch, true, clipping_active)
+                && crate::renderer::types::opaque_key(resources, batch, clipping_active)
                     .no_discard_eligible;
             let vertex_chunk = mesh.vertex_span.chunk;
             let index_chunk = mesh.index_span.chunk;
@@ -466,20 +467,19 @@ fn featured_item_count(
 fn batch_bind_key(
     resources: &DeviceResources,
     mesh_id: crate::resources::mesh::mesh_store::MeshId,
-    item: &SceneRenderItem,
-    material: &crate::scene::material::Material,
+    g: &GroupInputs,
     bindless: bool,
 ) -> Option<u64> {
     resources.per_item_object_bg_key(
         mesh_id,
-        material.texture_id,
-        material.normal_map_id,
-        material.ao_map_id,
-        item.colourmap_id,
-        material.matcap_id(),
-        material.metallic_roughness_texture_id,
-        material.emissive_texture_id,
-        material.selected_sampler(),
+        g.textures[0],
+        g.textures[1],
+        g.textures[2],
+        g.lut,
+        g.matcap,
+        g.textures[3],
+        g.textures[4],
+        g.sampler,
         bindless,
     )
 }
@@ -577,8 +577,7 @@ fn prime_group(
     mesh_uniforms: &mut crate::renderer::per_object_state::PerObjectState,
     device: &crate::gpu::Device,
     mesh_id: crate::resources::mesh::mesh_store::MeshId,
-    item: &SceneRenderItem,
-    material: &crate::scene::material::Material,
+    g: &GroupInputs,
     bindless: bool,
     instance_gen: u64,
     frame_index: u64,
@@ -587,7 +586,7 @@ fn prime_group(
     if bindless {
         resources.ensure_object_bindless_bgl(device);
     }
-    let key = batch_bind_key(resources, mesh_id, item, material, bindless)?;
+    let key = batch_bind_key(resources, mesh_id, g, bindless)?;
     let fresh = mesh_uniforms
         .material_bind_groups
         .get(&key)
@@ -598,14 +597,14 @@ fn prime_group(
             device,
             mesh_id,
             buf,
-            material.texture_id,
-            material.normal_map_id,
-            material.ao_map_id,
-            item.colourmap_id,
-            material.matcap_id(),
-            material.metallic_roughness_texture_id,
-            material.emissive_texture_id,
-            material.selected_sampler(),
+            g.textures[0],
+            g.textures[1],
+            g.textures[2],
+            g.lut,
+            g.matcap,
+            g.textures[3],
+            g.textures[4],
+            g.sampler,
             None,
             bindless,
             None,
@@ -625,13 +624,7 @@ fn prime_group(
                         .get(mesh_id)
                         .is_some_and(DeviceResources::mesh_binds_own)
                         .then_some(mesh_id),
-                    texture_ids: [
-                        material.texture_id,
-                        material.normal_map_id,
-                        material.ao_map_id,
-                        material.metallic_roughness_texture_id,
-                        material.emissive_texture_id,
-                    ],
+                    texture_ids: g.textures,
                 },
             },
         );
@@ -999,6 +992,7 @@ impl ViewportRenderer {
                             // Filled by `prime_batch_bind_groups` each frame.
                             shadow_bind_key: 0,
                             group: Default::default(),
+                            shadow_group: Default::default(),
                             rep_idx: rep.idx,
                             rep_range: match rep.kind {
                                 RecordKind::Range(r) => Some(r),
@@ -1223,25 +1217,7 @@ impl ViewportRenderer {
                 }
                 _ => {}
             }
-            let mut prime = |bindless: bool| {
-                prime_group(
-                    resources,
-                    mesh_uniforms,
-                    device,
-                    mesh_id,
-                    item,
-                    &material,
-                    bindless,
-                    instance_gen,
-                    frame_index,
-                    &mut built,
-                )
-            };
-            let Some(key) = prime(batch.bindless) else {
-                continue;
-            };
-            batch.bind_key = key;
-            batch.group = crate::renderer::types::GroupInputs {
+            let group = GroupInputs {
                 textures: [
                     material.texture_id,
                     material.normal_map_id,
@@ -1253,9 +1229,41 @@ impl ViewportRenderer {
                 matcap: material.matcap_id(),
                 sampler: material.selected_sampler(),
             };
-            // The shadow casters bind the per-batch member.
-            batch.shadow_bind_key = if batch.bindless {
-                prime(false).unwrap_or(key)
+            // A caster that discards samples its albedo, so it binds the
+            // per-batch member with the material's textures. Every other
+            // caster reads no material binding and shares one group with the
+            // fallback textures, so consecutive casters merge into one
+            // multi-draw run.
+            let cutout = batch.has_alpha_mask
+                || resources
+                    .deform
+                    .may_discard(batch.mesh_id, batch.deform_instance);
+            let mut prime = |g: &GroupInputs, bindless: bool| {
+                prime_group(
+                    resources,
+                    mesh_uniforms,
+                    device,
+                    mesh_id,
+                    g,
+                    bindless,
+                    instance_gen,
+                    frame_index,
+                    &mut built,
+                )
+            };
+            let Some(key) = prime(&group, batch.bindless) else {
+                continue;
+            };
+            batch.bind_key = key;
+            batch.group = group;
+            batch.shadow_group = if cutout {
+                group
+            } else {
+                GroupInputs::default()
+            };
+            let shadow_group = batch.shadow_group;
+            batch.shadow_bind_key = if batch.bindless || !cutout {
+                prime(&shadow_group, false).unwrap_or(key)
             } else {
                 key
             };

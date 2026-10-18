@@ -92,17 +92,30 @@ impl OitResources {
         }
     }
 
-    /// Ask for every per-object member, on both group-1 members, and its
-    /// plain feature set.
+    /// Ask for the plain feature set of every member, on both group-1
+    /// members. Asks for no universal member: see
+    /// [`request_members`](Self::request_members).
     pub(crate) fn request_plain(&self) {
-        for f in [&self.pipeline, &self.pipeline_bindless].into_iter().flatten() {
-            f.request_all();
+        for f in [&self.pipeline, &self.pipeline_bindless]
+            .into_iter()
+            .flatten()
+        {
             for i in 0..2 {
-                f.get_features(i, crate::renderer::pipeline_key::FeatureSet::NONE);
+                f.request_features(i, crate::renderer::pipeline_key::FeatureSet::NONE);
             }
         }
     }
 
+    /// Ask for every member of the OIT mesh families, the universal
+    /// pipelines among them.
+    pub(crate) fn request_members(&self) {
+        for f in [&self.pipeline, &self.pipeline_bindless]
+            .into_iter()
+            .flatten()
+        {
+            f.request_all();
+        }
+    }
 }
 
 #[cfg(test)]

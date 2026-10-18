@@ -1919,6 +1919,7 @@ impl DeviceResources {
             force_po_discard: false,
             mesh_universal: dev_knob!("VIEWPORT_MESH_UNIVERSAL").is_some(),
             frame_feature_sets_capped: std::sync::atomic::AtomicU32::new(0),
+            frame_stand_in_draws: std::sync::atomic::AtomicU32::new(0),
             camera_bind_groups_dirty: false,
         };
         // Pipelines built during construction are load-time cost, not a frame

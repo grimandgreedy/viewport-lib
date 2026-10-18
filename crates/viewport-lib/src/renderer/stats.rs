@@ -534,6 +534,11 @@ pub struct FrameStats {
     /// compiled in because their pipeline family already held its limit of
     /// feature sets. Same image, more shading cost.
     pub feature_sets_capped: u32,
+    /// Mesh draws this frame that drew through the pipeline with every
+    /// feature compiled in because their own feature set was still
+    /// compiling. Same image, more shading cost; non-zero only on the frames
+    /// between a new feature set appearing and its pipeline landing.
+    pub stand_in_draws: u32,
     /// True when GPU-driven culling is active this frame.
     ///
     /// False when the device does not support `INDIRECT_FIRST_INSTANCE` or

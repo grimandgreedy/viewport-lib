@@ -317,6 +317,22 @@ impl ViewportRenderer {
         if set.material_plugins {
             r.warm_all_material_plugin_pipelines(device);
         }
+        // The mesh families' universal members last. Each stands in for a
+        // feature set that appears after warm-up; the compile queue is first
+        // in, first out, so asking for them earlier would put them ahead of
+        // the plain sets and every other pipeline a plain scene draws with.
+        if set.direct {
+            r.scene.request_members_ldr();
+        }
+        if set.hdr {
+            r.scene.request_members_hdr();
+            if set.transparency {
+                r.oit.request_members();
+            }
+            if cull {
+                r.cull.request_members();
+            }
+        }
         if set.all_item_types || !set.item_types.is_empty() {
             for plugin in self.item_type_plugins.values_mut() {
                 let id = plugin.as_any_plugin().type_id();

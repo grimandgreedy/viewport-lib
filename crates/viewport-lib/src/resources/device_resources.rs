@@ -730,6 +730,10 @@ pub struct DeviceResources {
     /// family already held its limit of feature sets. Bumped during encode
     /// through `&self` and latched into `FrameStats` after paint.
     pub(crate) frame_feature_sets_capped: std::sync::atomic::AtomicU32,
+    /// Draws this frame that stood in on the universal pipeline while their
+    /// feature set compiled. Bumped and latched like
+    /// `frame_feature_sets_capped`.
+    pub(crate) frame_stand_in_draws: std::sync::atomic::AtomicU32,
 
     // --- Shadow texture promotion ---
     /// Set when a shadow texture was promoted from its placeholder and the

@@ -43,8 +43,7 @@ impl DeviceResources {
         // given draw site picks differs, so either counts as ready.
         let material = self.material_or_default(item.material);
         let two_sided = material.is_two_sided();
-        let may_skip_discard = hdr
-            && !clipping_active
+        let may_skip_discard = !clipping_active
             && !self.force_po_discard
             && matches!(
                 material.alpha_mode,
@@ -112,8 +111,7 @@ impl DeviceResources {
             PipelineKey::two_sided(two_sided),
             PipelineKey {
                 two_sided,
-                no_discard_eligible: hdr
-                    && !clipping_active
+                no_discard_eligible: !clipping_active
                     && !self.force_po_discard
                     && !batch.has_alpha_mask
                     && !batch.has_attribute
