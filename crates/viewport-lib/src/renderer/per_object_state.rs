@@ -1,10 +1,10 @@
-//! State for the fat mesh batches (the per-object pipelines): their group-1
+//! State for the mesh batches: their group-1
 //! bind groups, the opaque-draw render bundle, the per-viewport foreground
 //! items and the transparent-volume-mesh wireframe draw resources.
 
 use crate::resources::mesh::mesh_store::MeshId;
 
-/// One cached group-1 bind group, shared by every fat batch whose mesh +
+/// One cached group-1 bind group, shared by every batch whose mesh +
 /// material resources hash to the same [`crate::resources::DeviceResources::per_item_object_bg_key`].
 /// Binding 0 is the shared instance buffer; a draw selects its records by
 /// instance range, so batches with the same material reuse this one handle.
@@ -52,10 +52,10 @@ pub(crate) struct PerObjectBundle {
     /// bundle only replays in the pass family it was recorded for; `key`
     /// also hashes this, so switching paths re-records.
     pub(crate) hdr: bool,
-    /// Whether the bundle holds only the fat batches. Recorded that way when
-    /// GPU-driven submission draws the lean batches from indirect args; the
-    /// pass then replays it after those draws. `key` hashes this too.
-    pub(crate) fat_only: bool,
+    /// Whether the bundle holds only the batches the GPU cull does not draw.
+    /// Recorded that way when GPU-driven submission draws the rest from
+    /// indirect args; the pass then replays it after those draws. `key` hashes this too.
+    pub(crate) direct_only: bool,
     /// The camera bind group recorded into the bundle. Paint only replays the
     /// bundle when its pass camera bind group is this exact resource, so a
     /// different viewport (or a rebuilt slot) falls back to immediate draws.
@@ -74,10 +74,10 @@ pub(crate) struct PerObjectBundle {
 pub(crate) struct BundleChurnGate {
     /// Plan key from the previous prepare.
     pub(crate) last_key: Option<u64>,
-    /// Whether the previous plan covered the fat batches only. A switch
+    /// Whether the previous plan covered the unculled batches only. A switch
     /// (GPU-driven submission coming up on the second HDR frame) changes
     /// the key without the batch list moving, so it is not counted as churn.
-    pub(crate) last_fat_only: Option<bool>,
+    pub(crate) last_direct_only: Option<bool>,
     /// Frames since the plan key or a per-item bind group last changed.
     pub(crate) frames_since_change: u32,
     /// While set, the bundle is not recorded and draws stay immediate.
@@ -88,7 +88,7 @@ impl Default for BundleChurnGate {
     fn default() -> Self {
         Self {
             last_key: None,
-            last_fat_only: None,
+            last_direct_only: None,
             // Large so the very first plan key does not read as a second
             // change in quick succession.
             frames_since_change: u32::MAX,
@@ -114,8 +114,8 @@ pub(crate) struct ForegroundObjectEntry {
 }
 
 pub(crate) struct PerObjectState {
-    /// Group-1 bind groups of the fat batches, deduped by mesh+material
-    /// fingerprint (`FatBatch::bind_key`). Binding 0 is the shared instance
+    /// Group-1 bind groups of the batches, deduped by mesh+material
+    /// fingerprint (`InstancedBatch::bind_key`). Binding 0 is the shared instance
     /// buffer. Persists across frames; pruned by capacity and on a
     /// resource-free epoch bump.
     pub(crate) material_bind_groups: crate::resources::fast_hash::FastMap<u64, MaterialBindGroup>,

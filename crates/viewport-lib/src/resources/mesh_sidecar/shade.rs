@@ -1122,6 +1122,7 @@ impl crate::resources::DeviceResources {
         if let Some(gpu) = self.material_plugins.get_mut(&plugin.plugin_index()) {
             gpu.texture_groups.insert(*textures, group);
         }
+        self.material_plugin_epoch = self.material_plugin_epoch.wrapping_add(1);
     }
 
     /// The group-3 bind group for a plugin texture set: its own once prepare
@@ -1203,7 +1204,10 @@ impl crate::resources::DeviceResources {
     fn warm_material_plugin(&mut self, device: &crate::gpu::Device, id: MaterialPluginId) {
         self.ensure_material_plugin_pipelines(device, id);
         if let Some(gpu) = self.material_plugins.get(&id.plugin_index()) {
-            for set in [&gpu.pipelines, &gpu.pipelines_bindless].into_iter().flatten() {
+            for set in [&gpu.pipelines, &gpu.pipelines_bindless]
+                .into_iter()
+                .flatten()
+            {
                 set.request_all();
             }
         }
@@ -1331,10 +1335,7 @@ impl crate::resources::DeviceResources {
                     target_format: self.target_format,
                     sample_count: self.sample_count,
                     mesh: LazyModule::new(format!("material_plugin_{name}_mesh{suffix}"), mesh),
-                    oit_module: LazyModule::new(
-                        format!("material_plugin_{name}_oit{suffix}"),
-                        oit,
-                    ),
+                    oit_module: LazyModule::new(format!("material_plugin_{name}_oit{suffix}"), oit),
                 },
                 std::sync::Arc::clone(&self.pipeline_compiler),
             )
@@ -1354,6 +1355,7 @@ impl crate::resources::DeviceResources {
             .expect("checked above");
         gpu.pipelines = Some(pipelines);
         gpu.pipelines_bindless = pipelines_bindless;
+        self.material_plugin_epoch = self.material_plugin_epoch.wrapping_add(1);
     }
 
     /// Resolve a plugin and texture set to the plugin's pipeline set and the

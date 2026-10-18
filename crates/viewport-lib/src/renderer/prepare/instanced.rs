@@ -4,13 +4,13 @@ use super::*;
 use crate::resources::mesh::instanced_bindless::MaterialTextureBinding;
 use viewport_lib_types::ids::TextureId;
 
-/// The batch grouping key for one instanced item: items with an equal key share
-/// a batch (same pipeline state and, under `PerBatch`, the same texture bind
-/// group). `mesh_id` and `two_sided` are always part of the key; the five
-/// material texture ids are only included under `PerBatch` binding. Under
-/// `Bindless` the shader indexes a texture array by a per-material index, so the
-/// texture ids collapse to `None` and instances of one mesh with different
-/// materials batch together.
+/// The material part of a batch key: items with an equal key share a batch
+/// (same pipeline state and, under `PerBatch`, the same texture bind group).
+/// `mesh_id` and `two_sided` are always part of the key; the five material
+/// texture ids are only included under `PerBatch` binding. Under `Bindless`
+/// the shader indexes a texture array by a per-material index, so the texture
+/// ids collapse to `None` and instances of one mesh with different materials
+/// batch together.
 ///
 /// One exception under `Bindless`: an alpha-masked material keeps its albedo id
 /// in the key. The shadow-cutout pass stays on the per-batch binding (it does not
@@ -26,10 +26,7 @@ use viewport_lib_types::ids::TextureId;
 /// whole draw, so two items batch together only when their plugin and plugin
 /// textures match (`None` for built-in shading). Plugin parameters ride each
 /// material's block and do not split. Carried as `(plugin_index, textures)`.
-///
-/// Used by both the sort comparator and the batch-split predicate below, so the
-/// two cannot drift out of sync.
-type BatchGroupKey = (
+type MaterialKey = (
     usize,
     Option<TextureId>,
     Option<TextureId>,
@@ -41,6 +38,37 @@ type BatchGroupKey = (
     Option<(u32, crate::resources::mesh_sidecar::shade::PluginTextures)>,
     u32,
 );
+
+/// The batch key of one record: its material key, what it draws, the
+/// colourmap and matcap its group-1 bind group binds, and the deform instance
+/// it binds at group 2. The per-record stream words (scalar attribute, warp,
+/// lightmap) are not in it: each record carries its own, and the batch's
+/// feature set is the union over its records.
+///
+/// Used by both the sort comparator and the batch-split predicate below, so the
+/// two cannot drift out of sync.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct BatchKey {
+    material: MaterialKey,
+    draw: crate::renderer::types::DrawKind,
+    lut: u64,
+    matcap: u64,
+    deform_instance: Option<u32>,
+}
+
+impl BatchKey {
+    /// Whether the record draws blended. Edge and normal lines always draw
+    /// opaque, whatever the item's opacity: a translucent wireframe item draws
+    /// its lines, not a blended surface.
+    fn blends(&self) -> bool {
+        self.material.7
+            && !matches!(
+                self.draw,
+                crate::renderer::types::DrawKind::Edges
+                    | crate::renderer::types::DrawKind::NormalLines
+            )
+    }
+}
 
 /// Form the opaque and OIT draw groups for GPU-driven submission and size + upload
 /// the buffers the compaction pass and the count-multi-draw need. Returns whether
@@ -102,7 +130,7 @@ fn build_and_upload_draw_groups(
         use std::hash::{Hash, Hasher};
         let mut h = crate::resources::fast_hash::FastHasher::default();
         for batch in &instancing.batches {
-            batch.fat.as_ref().map(|f| f.bind_key).hash(&mut h);
+            batch.bind_key.hash(&mut h);
         }
         resources.mesh_universal.hash(&mut h);
         h.finish()
@@ -149,27 +177,27 @@ fn build_and_upload_draw_groups(
             // batch sits between into separate groups, which is correct: each
             // group's compacted args occupy its own arg-base range and the
             // skipped slot is simply never read.
-            let Some(fat) = batch.fat.as_ref().filter(|_| batch.draws_grouped()) else {
+            if !batch.draws_grouped() {
                 cur = None;
                 continue;
-            };
+            }
             let transparent = batch.is_transparent;
             // OIT has no discard-free variant; only the opaque pass keys on it.
             let no_discard = !transparent
-                && crate::renderer::types::opaque_key(resources, batch, fat, true, clipping_active)
+                && crate::renderer::types::opaque_key(resources, batch, true, clipping_active)
                     .no_discard_eligible;
             let vertex_chunk = mesh.vertex_span.chunk;
             let index_chunk = mesh.index_span.chunk;
-            let features = crate::renderer::types::draw_features(resources, fat);
+            let features = crate::renderer::types::draw_features(resources, batch);
             let key = (
                 transparent,
                 batch.two_sided,
                 no_discard,
                 vertex_chunk,
                 index_chunk,
-                fat.bind_key,
+                batch.bind_key,
                 features,
-                fat.bindless,
+                batch.bindless,
             );
             let vec_ref = if transparent {
                 &mut oit_groups
@@ -192,9 +220,9 @@ fn build_and_upload_draw_groups(
                         vertex_chunk,
                         index_chunk,
                         count_index,
-                        bind_key: fat.bind_key,
+                        bind_key: batch.bind_key,
                         features,
-                        bindless: fat.bindless,
+                        bindless: batch.bindless,
                     });
                     let gv = vec_ref.len() - 1;
                     cur = Some((key, gv));
@@ -288,17 +316,6 @@ enum RecordKind {
     Normals,
 }
 
-/// The part of a batch key beyond the material: what the batch draws and the
-/// group-1 bindings and deform instance its items share.
-type FatKey = (
-    crate::renderer::types::DrawKind,
-    u64,
-    u64,
-    u64,
-    u64,
-    Option<u32>,
-);
-
 /// A sorter entry: the record's item, kind, and precomputed keys. The keys
 /// are computed once here rather than in the sort comparator, which runs
 /// O(n log n) times.
@@ -306,8 +323,7 @@ struct Entry<'a> {
     idx: usize,
     item: &'a SceneRenderItem,
     kind: RecordKind,
-    key: BatchGroupKey,
-    fat: FatKey,
+    key: BatchKey,
     /// The scene index of a blended record on an LDR frame, which draws as its
     /// own batch so the pass can sort it by distance. `None` otherwise.
     solo: Option<usize>,
@@ -323,24 +339,16 @@ impl Entry<'_> {
     }
 }
 
-fn hash_name(name: Option<&str>) -> u64 {
-    use std::hash::{Hash, Hasher};
-    name.map_or(u64::MAX, |n| {
-        let mut h = crate::resources::fast_hash::FastHasher::default();
-        n.hash(&mut h);
-        h.finish()
-    })
-}
-
-/// The fat key for an item record. `None` when the record names a submesh
+/// The batch key for an item record. `None` when the record names a submesh
 /// range its mesh does not have.
-fn fat_key(
+fn batch_key(
     item: &SceneRenderItem,
     material: &crate::scene::material::Material,
     kind: RecordKind,
     resources: &DeviceResources,
     wireframe_mode: bool,
-) -> Option<FatKey> {
+    binding: MaterialTextureBinding,
+) -> Option<BatchKey> {
     use crate::renderer::types::DrawKind;
     let draw = match kind {
         RecordKind::Normals => DrawKind::NormalLines,
@@ -367,14 +375,13 @@ fn fat_key(
             }
         }
     };
-    Some((
+    Some(BatchKey {
+        material: material_group_key(item.mesh_id, material, item.settings.opacity, binding),
         draw,
-        hash_name(item.active_attribute.as_ref().map(|a| a.name.as_str())),
-        item.colourmap_id.map_or(u64::MAX, |c| c.0 as u64),
-        material.matcap_id().map_or(u64::MAX, |m| m.index() as u64),
-        hash_name(item.warp_attribute.as_deref()),
-        item.deform_instance,
-    ))
+        lut: item.colourmap_id.map_or(u64::MAX, |c| c.0 as u64),
+        matcap: material.matcap_id().map_or(u64::MAX, |m| m.index() as u64),
+        deform_instance: item.deform_instance,
+    })
 }
 
 /// Records of the current batches whose features fall outside their batch's
@@ -393,7 +400,6 @@ pub(crate) fn feature_set_violations(
         use crate::renderer::pipeline_key::FeatureSet;
         let mut out = Vec::new();
         for (bi, batch) in instancing.batches.iter().enumerate() {
-            let Some(fat) = &batch.fat else { continue };
             let start = batch.instance_offset as usize;
             let end = start + batch.instance_count as usize;
             for record in instancing.cached_records.get(start..end).unwrap_or(&[]) {
@@ -405,11 +411,11 @@ pub(crate) fn feature_set_violations(
                     FeatureSet::DEFORM,
                     resources.deform.flag_bits(batch.mesh_id) != 0,
                 );
-                if needs.union(fat.features) != fat.features {
+                if needs.union(batch.features) != batch.features {
                     out.push(format!(
                         "batch {bi} (mesh {:?}): set {:02x}, record needs {:02x}",
                         batch.mesh_id,
-                        fat.features.bits(),
+                        batch.features.bits(),
                         needs.bits()
                     ));
                 }
@@ -424,10 +430,11 @@ pub(crate) fn feature_set_violations(
     }
 }
 
-/// Visible items that draw through a fat batch: the count the batch cache
-/// keys on, so a per-frame change that moves an item between lean and fat
-/// rebuilds without a generation bump.
-fn fat_item_count(
+/// Visible items with a per-item feature (an attribute, warp, matcap, submesh
+/// materials, wireframe, normals and the rest `fallback_reason` names): the
+/// count the batch cache keys on, so a per-frame change that turns one on or
+/// off rebuilds without a generation bump.
+fn featured_item_count(
     scene_items: &[SceneRenderItem],
     resources: &DeviceResources,
     wireframe_mode: bool,
@@ -441,21 +448,10 @@ fn fat_item_count(
         .count()
 }
 
-/// Whether a record draws blended. Edge and normal lines always draw opaque,
-/// whatever the item's opacity: a translucent wireframe item draws its lines,
-/// not a blended surface.
-fn record_blends(key: &BatchGroupKey, fat: &FatKey) -> bool {
-    key.7
-        && !matches!(
-            fat.0,
-            crate::renderer::types::DrawKind::Edges | crate::renderer::types::DrawKind::NormalLines
-        )
-}
-
-/// The group-1 bind-group key of a fat batch, from the facts that pick its
+/// The group-1 bind-group key of a batch, from the facts that pick its
 /// bindings. Recomputed each frame: it hashes the mesh's override and lightmap
 /// generations, which move without a batch rebuild.
-fn fat_bind_key(
+fn batch_bind_key(
     resources: &DeviceResources,
     mesh_id: crate::resources::mesh::mesh_store::MeshId,
     item: &SceneRenderItem,
@@ -482,7 +478,7 @@ fn material_group_key(
     m: &crate::scene::material::Material,
     opacity: f32,
     binding: MaterialTextureBinding,
-) -> BatchGroupKey {
+) -> MaterialKey {
     let textured = binding == MaterialTextureBinding::PerBatch;
     // Under bindless the texture ids drop out of the key (the array is bound
     // once per frame); keep them only for the per-batch binding path.
@@ -527,7 +523,7 @@ struct KeyProbe {
 }
 
 #[cfg(test)]
-fn batch_group_key(p: &KeyProbe, binding: MaterialTextureBinding) -> BatchGroupKey {
+fn batch_group_key(p: &KeyProbe, binding: MaterialTextureBinding) -> MaterialKey {
     material_group_key(p.mesh_id, &p.material, p.opacity, binding)
 }
 
@@ -560,7 +556,7 @@ pub(crate) fn cached_batches_resolve(
     })
 }
 
-/// Look up or build one fat batch's group-1 bind group on the per-batch or
+/// Look up or build one batch's group-1 bind group on the per-batch or
 /// the bindless member, and mark it used this frame. Returns its key, or
 /// `None` when the mesh or the instance buffer is gone.
 #[allow(clippy::too_many_arguments)]
@@ -579,7 +575,7 @@ fn prime_group(
     if bindless {
         resources.ensure_object_bindless_bgl(device);
     }
-    let key = fat_bind_key(resources, mesh_id, item, material, bindless)?;
+    let key = batch_bind_key(resources, mesh_id, item, material, bindless)?;
     let fresh = mesh_uniforms
         .material_bind_groups
         .get(&key)
@@ -665,7 +661,8 @@ impl ViewportRenderer {
         // must bump `frame.scene.generation`.
         // Per-frame item mutations that do not bump the scene generation
         // (an attribute toggled on, an item hidden) move these two counts.
-        let fat_count = fat_item_count(scene_items, resources, frame.viewport.wireframe_mode);
+        let featured_count =
+            featured_item_count(scene_items, resources, frame.viewport.wireframe_mode);
         let visible_count = scene_items.iter().filter(|i| !i.settings.hidden).count();
         // A single-item scene repacks every frame. Packing one record costs
         // nothing, and it keeps the behaviour such scenes have always had: an
@@ -675,7 +672,7 @@ impl ViewportRenderer {
             && !resources.material_table.variants_near_limit()
             && resources.mesh_sidecar_epoch == instancing.last_sidecar_epoch
             && resources.deform.epoch == instancing.last_deform_epoch
-            && fat_count == instancing.last_instancable_count
+            && featured_count == instancing.last_instancable_count
             && visible_count == instancing.last_visible_count
             && frame.scene.generation == instancing.last_scene_generation
             && frame.interaction.selection_generation == instancing.last_selection_generation
@@ -703,7 +700,7 @@ impl ViewportRenderer {
     /// Build instanced batches for the current frame: filter eligible items,
     /// pack instance/AABB/batch-meta buffers (partial upload when the structure
     /// is preserved), and dispatch the GPU frustum cull + indirect-args passes.
-    /// Returns `(batches_reuploaded, batches_skipped, fat_bind_groups_built)`
+    /// Returns `(batches_reuploaded, batches_skipped, batch_bind_groups_built)`
     /// for frame stats.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prepare_instanced(
@@ -723,7 +720,6 @@ impl ViewportRenderer {
         let mut batches_skipped = 0u32;
         // The shared layout and shadow pipelines, then the colour pipelines of
         // the family this frame is drawn with.
-        resources.ensure_instanced_pipelines(device);
         if hdr_family {
             resources.ensure_hdr_mesh_pipelines(device);
         } else {
@@ -751,22 +747,20 @@ impl ViewportRenderer {
                 };
                 let mut push = |kind: RecordKind, material: crate::resources::MaterialId| {
                     let material = resources.material_or_default(material);
-                    let key =
-                        material_group_key(item.mesh_id, material, item.settings.opacity, binding);
-                    let Some(fat) = fat_key(item, material, kind, resources, wireframe_mode)
+                    let Some(key) =
+                        batch_key(item, material, kind, resources, wireframe_mode, binding)
                     else {
                         return;
                     };
                     // HDR resolves blended batches through OIT, which needs no
                     // order. The LDR pass blends in draw order, so there each
                     // blended record is its own batch and the pass sorts them.
-                    let solo = (!hdr_family && record_blends(&key, &fat)).then_some(idx);
+                    let solo = (!hdr_family && key.blends()).then_some(idx);
                     entries.push(Entry {
                         idx,
                         item,
                         kind,
                         key,
-                        fat,
                         solo,
                     });
                 };
@@ -784,14 +778,10 @@ impl ViewportRenderer {
             }
 
             entries.sort_unstable_by(|a, b| {
-                // Batch grouping key, then the fat key. two_sided is part of the
-                // key because the two pipelines differ in cull mode, so a batch
-                // must not mix one- and two-sided items.
-                let ord = a
-                    .key
-                    .cmp(&b.key)
-                    .then_with(|| a.fat.cmp(&b.fat))
-                    .then_with(|| a.solo.cmp(&b.solo));
+                // Batch key first. two_sided is part of it because the two
+                // pipelines differ in cull mode, so a batch must not mix one-
+                // and two-sided items.
+                let ord = a.key.cmp(&b.key).then_with(|| a.solo.cmp(&b.solo));
                 if ord != std::cmp::Ordering::Equal {
                     return ord;
                 }
@@ -836,7 +826,7 @@ impl ViewportRenderer {
                     let key_changed = !at_end && {
                         let a = &entries[batch_start];
                         let b = &entries[i];
-                        a.key != b.key || a.fat != b.fat || a.solo != b.solo
+                        a.key != b.key || a.solo != b.solo
                     };
 
                     if at_end || key_changed {
@@ -853,7 +843,7 @@ impl ViewportRenderer {
                             )
                         });
                         let instance_offset = all_instances.len() as u32;
-                        let is_transparent = record_blends(&rep.key, &rep.fat);
+                        let is_transparent = rep.key.blends();
 
                         // All records in a batch share the same mesh_id (batch key),
                         // so its counts and bounds are read once here. The record
@@ -877,7 +867,8 @@ impl ViewportRenderer {
                             .unwrap_or((0, 0));
                         // A range batch's indirect args draw its range only.
                         let mut mesh_index_count = mesh_index_count;
-                        if let crate::renderer::types::DrawKind::Range(start, count) = rep.fat.0 {
+                        if let crate::renderer::types::DrawKind::Range(start, count) = rep.key.draw
+                        {
                             mesh_first_index += start;
                             mesh_index_count = count;
                         }
@@ -988,21 +979,17 @@ impl ViewportRenderer {
                             _reserved_flags: 0,
                         });
 
-                        let fat = Some(crate::renderer::types::FatBatch {
-                            draw: rep.fat.0,
+                        let has_attribute = batch_entries
+                            .iter()
+                            .any(|e| e.item.active_attribute.is_some());
+                        instanced_batches.push(InstancedBatch {
+                            draw: rep.key.draw,
                             // Filled by `prime_batch_bind_groups` each frame.
                             bind_key: 0,
                             deform_instance: rep.item.deform_instance,
-                            has_attribute: rep.item.active_attribute.is_some(),
+                            has_attribute,
                             features,
                             bindless: binding == MaterialTextureBinding::Bindless,
-                            instanced_shadow: rep.fat.0 == crate::renderer::types::DrawKind::Triangles
-                                && rep.item.deform_instance.is_none()
-                                && !features.has(
-                                    crate::renderer::pipeline_key::FeatureSet::DEFORM
-                                        | crate::renderer::pipeline_key::FeatureSet::OVERRIDES
-                                        | crate::renderer::pipeline_key::FeatureSet::WARP,
-                                ),
                             // Filled by `prime_batch_bind_groups` each frame.
                             shadow_bind_key: 0,
                             group: Default::default(),
@@ -1011,8 +998,6 @@ impl ViewportRenderer {
                                 RecordKind::Range(r) => Some(r),
                                 _ => None,
                             },
-                        });
-                        instanced_batches.push(InstancedBatch {
                             mesh_id: rep.item.mesh_id,
                             texture_id: rep_material.texture_id,
                             normal_map_id: rep_material.normal_map_id,
@@ -1041,7 +1026,6 @@ impl ViewportRenderer {
                             plugin_textures: rep_material.plugin_textures,
                             // Batch-uniform: the sampler is part of the batch key.
                             sampler: rep_material.selected_sampler().unwrap_or_default(),
-                            fat,
                             sort_centre: if bounds_min.x <= bounds_max.x {
                                 ((bounds_min + bounds_max) * 0.5).into()
                             } else {
@@ -1055,7 +1039,7 @@ impl ViewportRenderer {
             }
             // Items, not records: a show_normals or submesh item packs several
             // records, and the cache check counts items.
-            let fat_count = fat_item_count(scene_items, resources, wireframe_mode);
+            let featured_count = featured_item_count(scene_items, resources, wireframe_mode);
 
             // Partial upload: when the batch structure is unchanged (same
             // count, same offsets and sizes per batch), compare each
@@ -1163,7 +1147,7 @@ impl ViewportRenderer {
             instancing.last_hdr_family = hdr_family;
             instancing.last_selection_generation = frame.interaction.selection_generation;
             instancing.last_scene_items_count = scene_items.len();
-            instancing.last_instancable_count = fat_count;
+            instancing.last_instancable_count = featured_count;
             instancing.last_visible_count = visible_count;
             instancing.last_sidecar_epoch = resources.mesh_sidecar_epoch;
             instancing.last_deform_epoch = resources.deform.epoch;
@@ -1171,7 +1155,7 @@ impl ViewportRenderer {
             instancing.last_resource_view_epoch = resources.resource_view_epoch;
         }
 
-        let fat_bind_groups_built = Self::prime_batch_bind_groups(
+        let batch_bind_groups_built = Self::prime_batch_bind_groups(
             resources,
             instancing,
             mesh_uniforms,
@@ -1180,13 +1164,13 @@ impl ViewportRenderer {
             frame_index,
         );
 
-        (batches_reuploaded, batches_skipped, fat_bind_groups_built)
+        (batches_reuploaded, batches_skipped, batch_bind_groups_built)
     }
 
-    /// Build or look up every batch's group-1 bind group: the lean texture
-    /// groups and, for fat batches, the per-object groups on the shared
-    /// instance buffer. Runs on hit and miss frames alike; a cached group is
-    /// a map lookup. Returns how many fat groups were built.
+    /// Build or look up every batch's group-1 bind group on the shared
+    /// instance buffer, and the instanced shadow pass's texture group. Runs on
+    /// hit and miss frames alike; a cached group is a map lookup. Returns how
+    /// many group-1 bind groups were built.
     fn prime_batch_bind_groups(
         resources: &mut DeviceResources,
         instancing: &mut InstancingState,
@@ -1195,7 +1179,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         frame_index: u64,
     ) -> u32 {
-        // Drop fat bind groups that no longer match what they sample, so no
+        // Drop bind groups that no longer match what they sample, so no
         // bind group keeps freed GPU memory alive or draws a texture that has
         // been swapped underneath it.
         match mesh_uniforms.deps_gate.poll(resources) {
@@ -1212,37 +1196,19 @@ impl ViewportRenderer {
         let mut built = 0u32;
         let instance_gen = instancing.instance_gen;
         for batch in instancing.batches.iter_mut() {
-            let uv1_chunk = resources
-                .mesh_store
-                .get(batch.mesh_id)
-                .map(|m| m.vertex_span.chunk)
-                .unwrap_or(u32::MAX);
-            resources.get_instance_bind_group(
-                device,
-                batch.texture_id,
-                batch.normal_map_id,
-                batch.ao_map_id,
-                batch.metallic_roughness_id,
-                batch.emissive_id,
-                uv1_chunk,
-                batch.sampler,
-            );
             let mesh_id = batch.mesh_id;
-            let Some(fat) = batch.fat.as_mut() else {
-                continue;
-            };
             // The batch's representative item: the first record's. Every
             // record in the batch shares the facts the key hashes.
-            let Some(item) = scene_items.get(fat.rep_idx) else {
+            let Some(item) = scene_items.get(batch.rep_idx) else {
                 continue;
             };
             let material = *resources.material_or_default(
-                match (fat.rep_range, item.submesh_materials.as_deref()) {
+                match (batch.rep_range, item.submesh_materials.as_deref()) {
                     (Some(r), Some(mats)) => mats[r as usize],
                     _ => item.material,
                 },
             );
-            match fat.draw {
+            match batch.draw {
                 crate::renderer::types::DrawKind::Edges => {
                     resources.ensure_edge_indices(device, mesh_id)
                 }
@@ -1265,11 +1231,11 @@ impl ViewportRenderer {
                     &mut built,
                 )
             };
-            let Some(key) = prime(fat.bindless) else {
+            let Some(key) = prime(batch.bindless) else {
                 continue;
             };
-            fat.bind_key = key;
-            fat.group = crate::renderer::types::GroupInputs {
+            batch.bind_key = key;
+            batch.group = crate::renderer::types::GroupInputs {
                 textures: [
                     material.texture_id,
                     material.normal_map_id,
@@ -1281,8 +1247,8 @@ impl ViewportRenderer {
                 matcap: material.matcap_id(),
                 sampler: material.selected_sampler(),
             };
-            // The per-object shadow casters bind the per-batch member.
-            fat.shadow_bind_key = if fat.bindless && !fat.instanced_shadow {
+            // The shadow casters bind the per-batch member.
+            batch.shadow_bind_key = if batch.bindless {
                 prime(false).unwrap_or(key)
             } else {
                 key
@@ -1354,7 +1320,6 @@ impl ViewportRenderer {
         let batch_count = instancing.batches.len() as u32;
 
         // Do all mutable borrows before taking immutable borrows from resources.
-        resources.ensure_cull_instance_pipelines(device);
         if hdr_family {
             resources.ensure_hdr_cull_pipelines(device);
         }
@@ -1374,8 +1339,6 @@ impl ViewportRenderer {
             || (cull_state.built_free_epoch != resources.resource_free_epoch
                 && !cached_batches_resolve(resources, &instancing.batches));
         if cull_state.built_gen != instancing.instance_gen || cull_bgs_stale {
-            cull_state.instance_cull_bind_groups.clear();
-            cull_state.bindless_cull_bind_groups.clear();
             cull_state.object_cull_bind_groups.clear();
             cull_state.built_gen = instancing.instance_gen;
             cull_state.built_free_epoch = resources.resource_free_epoch;
@@ -1385,14 +1348,17 @@ impl ViewportRenderer {
         // with this viewport's visible list at binding 15, keyed like it.
         let mut live = std::collections::HashSet::new();
         for batch in &instancing.batches {
-            let Some(fat) = batch.fat.as_ref().filter(|_| batch.draws_culled()) else {
-                continue;
-            };
-            live.insert(fat.bind_key);
-            if cull_state.object_cull_bind_groups.contains_key(&fat.bind_key) {
+            if !batch.draws_culled() {
                 continue;
             }
-            if fat.bindless {
+            live.insert(batch.bind_key);
+            if cull_state
+                .object_cull_bind_groups
+                .contains_key(&batch.bind_key)
+            {
+                continue;
+            }
+            if batch.bindless {
                 resources.ensure_object_bindless_bgl(device);
             }
             let (Some(records), Some(visible)) = (
@@ -1401,7 +1367,7 @@ impl ViewportRenderer {
             ) else {
                 continue;
             };
-            let g = &fat.group;
+            let g = &batch.group;
             if let Some((bg, _)) = resources.build_per_item_object_bind_group(
                 device,
                 batch.mesh_id,
@@ -1415,10 +1381,12 @@ impl ViewportRenderer {
                 g.textures[4],
                 g.sampler,
                 None,
-                fat.bindless,
+                batch.bindless,
                 Some(visible),
             ) {
-                cull_state.object_cull_bind_groups.insert(fat.bind_key, bg);
+                cull_state
+                    .object_cull_bind_groups
+                    .insert(batch.bind_key, bg);
             }
         }
         cull_state

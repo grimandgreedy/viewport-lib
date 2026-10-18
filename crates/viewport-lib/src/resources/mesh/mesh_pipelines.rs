@@ -56,8 +56,8 @@ pub(crate) fn mesh_vertex_buffers(culled: bool) -> [crate::gpu::VertexBufferLayo
             }
         } else {
             crate::gpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<crate::resources::mesh::instancing::InstanceData>()
-                    as u64,
+                array_stride: std::mem::size_of::<crate::resources::mesh::instancing::InstanceData>(
+                ) as u64,
                 step_mode: crate::gpu::VertexStepMode::Instance,
                 attributes: &RECORD_WORD_ATTRIBUTES,
             }
@@ -172,7 +172,16 @@ pub(crate) fn hdr_mesh_pipeline(
     constants: &[(&str, f64)],
 ) -> crate::gpu::RenderPipeline {
     hdr_mesh_pipeline_entry(
-        device, layout, shader, label, cull, blend, topo, depth_write, constants, false,
+        device,
+        layout,
+        shader,
+        label,
+        cull,
+        blend,
+        topo,
+        depth_write,
+        constants,
+        false,
     )
 }
 
@@ -414,14 +423,16 @@ pub const CSM_SHADOW_BIAS_TWO_SIDED: crate::gpu::DepthBiasState = crate::gpu::De
 /// `cutout` selects `vs_cutout`/`fs_cutout` instead of the plain `vs_main`:
 /// the fragment stage samples the caster's albedo alpha and discards below
 /// its cutoff, punching holes in the shadow instead of casting a solid
-/// silhouette for an `AlphaMode::Mask` material. Mirrors the instanced
-/// family's `shadow_instanced.wgsl` cutout pipelines.
+/// silhouette for an `AlphaMode::Mask` material. `culled` selects the
+/// `_cull` entry points, which read each visible slot's record index from
+/// group-1 binding 15 and draw from the cascade cull's indirect args.
 pub(crate) fn build_shadow_pipeline(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
     cull_mode: Option<crate::gpu::Face>,
     cutout: bool,
+    culled: bool,
     cache: Option<&crate::gpu::PipelineCache>,
 ) -> crate::gpu::RenderPipeline {
     let label = match (cull_mode, cutout) {
@@ -432,13 +443,23 @@ pub(crate) fn build_shadow_pipeline(
         (Some(crate::gpu::Face::Back), true) => "shadow_cutout_pipeline_cull_back",
         (None, true) => "shadow_cutout_pipeline_two_sided",
     };
+    let label = if culled {
+        format!("{label}_cull")
+    } else {
+        label.to_string()
+    };
     crate::resources::builders::render_pipeline(
         device,
         crate::resources::builders::RenderPipelineDesc {
-            label,
+            label: &label,
             layout,
             vertex_module: shader,
-            vertex_entry: if cutout { "vs_cutout" } else { "vs_main" },
+            vertex_entry: match (cutout, culled) {
+                (false, false) => "vs_main",
+                (false, true) => "vs_main_cull",
+                (true, false) => "vs_cutout",
+                (true, true) => "vs_cutout_cull",
+            },
             vertex_buffers: &[Vertex::buffer_layout()],
             fragment: cutout.then_some(crate::gpu::FragmentState {
                 module: shader,
@@ -478,8 +499,7 @@ pub(crate) fn build_shadow_pipeline(
     )
 }
 
-/// `shadow_point.wgsl` (per-object casters) and `shadow_point_instanced.wgsl`
-/// (instanced batches): depth + fragment pipeline for point-light cubemap
+/// `shadow_point.wgsl`: depth + fragment pipeline for point-light cubemap
 /// shadow faces. Writes linear distance-to-light to `frag_depth`. `cutout`
 /// selects `vs_cutout`/`fs_cutout`, which discard below an
 /// `AlphaMode::Mask` caster's cutoff.

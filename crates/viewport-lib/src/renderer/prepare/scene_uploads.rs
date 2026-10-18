@@ -31,7 +31,6 @@ impl ViewportRenderer {
             }
             return (0, 0, 0, 0);
         }
-        resources.ensure_instanced_pipelines(device);
         if hdr_family {
             resources.ensure_hdr_mesh_pipelines(device);
         } else {

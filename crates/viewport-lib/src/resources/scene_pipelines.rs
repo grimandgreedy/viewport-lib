@@ -263,7 +263,6 @@ fn build_hdr_features(
 }
 
 impl SceneCorePipelines {
-
     pub(crate) fn wireframe(&self) -> Option<&crate::gpu::RenderPipeline> {
         self.ldr.as_ref()?.get(LDR_WIREFRAME)
     }
@@ -579,11 +578,14 @@ impl crate::resources::DeviceResources {
         } else {
             include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))
         };
-        let source =
-            crate::resources::mesh_sidecar::registry::compose_shader(base, &self.deform.registrations);
-        crate::resources::builders::builtin_hook_env(
-            crate::resources::builders::strip_debug_vis(source, self.debug_vis_shaders),
-        )
+        let source = crate::resources::mesh_sidecar::registry::compose_shader(
+            base,
+            &self.deform.registrations,
+        );
+        crate::resources::builders::builtin_hook_env(crate::resources::builders::strip_debug_vis(
+            source,
+            self.debug_vis_shaders,
+        ))
         .into_owned()
     }
 
@@ -729,21 +731,18 @@ mod tests {
             "the HDR mesh family adds its discard-free twin and nothing else"
         );
 
-        res.ensure_instanced_pipelines(&device);
-        assert_eq!(modules(&res), 3 + 2 * b, "the instanced shadow module");
-        res.ensure_cull_instance_pipelines(&device);
         res.ensure_hdr_cull_pipelines(&device);
         assert_eq!(
             modules(&res),
-            3 + 2 * b,
-            "the culled HDR family and the culled shadows reuse the modules above"
+            2 + 2 * b,
+            "the culled HDR family reuses the modules above"
         );
 
         res.ensure_oit_cull_pipelines(&device);
         res.ensure_oit_mesh_pipelines(&device);
         assert_eq!(
             modules(&res),
-            4 + 3 * b,
+            3 + 3 * b,
             "the OIT family and its culled twin share one module"
         );
         assert_eq!(compiled(&res), 0, "composing a family compiled a module");

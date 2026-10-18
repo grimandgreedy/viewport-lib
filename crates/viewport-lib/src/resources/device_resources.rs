@@ -696,9 +696,13 @@ pub struct DeviceResources {
     pub(crate) resource_view_epoch: u64,
     /// Bumped whenever a mesh's position or normal override, lightmap
     /// registration, or deform slot data changes. The instanced batch cache
-    /// keys on it: those changes alter the instance records and the fat
+    /// keys on it: those changes alter the instance records and the
     /// bind groups without a scene generation bump.
     pub(crate) mesh_sidecar_epoch: u64,
+    /// Bumped whenever a material plugin's pipeline set is built or dropped,
+    /// or one of its texture groups is built or evicted. A recorded render
+    /// bundle that draws plugin batches keys on it.
+    pub(crate) material_plugin_epoch: u64,
     /// Whether a mesh upload keeps a CPU-side copy of its positions, normals,
     /// and indices. Default `true`. See
     /// `DeviceResources::set_retain_mesh_cpu_geometry`.
@@ -764,22 +768,6 @@ pub(crate) struct ViewportCullState {
     pub(crate) indirect_args_buf: Option<crate::gpu::Buffer>,
     /// Capacity (in batches) of the counter and indirect-args buffers.
     pub(crate) batch_output_capacity: usize,
-    /// Per-texture-key bind groups for the main cull pipelines. These also serve
-    /// as the group-1 bind for the indirect draw, so they sample the albedo,
-    /// normal, and ao views (bindings 1/3/4). Keyed by
-    /// [`BatchBindKey`](crate::renderer::BatchBindKey); invalidated when `visibility_index_buf` is resized, when the instance buffer
-    /// is rebuilt, or when a texture behind a key is replaced or freed (see
-    /// `built_free_epoch`).
-    pub(crate) instance_cull_bind_groups:
-        std::collections::HashMap<crate::renderer::BatchBindKey, crate::gpu::BindGroup>,
-    /// The bindless cull bind groups for this viewport (instances + texture array +
-    /// sampler + this viewport's visibility buffer + a vertex-slab chunk's uv1
-    /// buffer). Used by the culled colour draws under `Bindless` instead of
-    /// `instance_cull_bind_groups`. Keyed by the uv1 chunk discriminator
-    /// (`uv1_chunk_key`) and the batch's sampler code (`sampler_code`); rebuilt with the same `built_gen` / `built_free_epoch`
-    /// staleness checks as that map.
-    pub(crate) bindless_cull_bind_groups:
-        std::collections::HashMap<(u32, u32), crate::gpu::BindGroup>,
     /// GPU-driven submission (bindless + native multi-draw only): this viewport's
     /// compacted draw args, holding each pipeline group's visible batches packed to
     /// the front of its range. Written by the compaction pass from this viewport's
@@ -822,8 +810,6 @@ impl ViewportCullState {
             object_cull_bind_groups: Default::default(),
             indirect_args_buf: None,
             batch_output_capacity: 0,
-            instance_cull_bind_groups: std::collections::HashMap::new(),
-            bindless_cull_bind_groups: std::collections::HashMap::new(),
             compacted_args_buf: None,
             draw_counts_buf: None,
             compact_capacity: 0,
@@ -871,9 +857,7 @@ impl ViewportCullState {
                 mapped_at_creation: false,
             }));
             self.visibility_index_capacity = new_cap;
-            // The cull bind groups bind the vis buffer at binding 5.
-            self.instance_cull_bind_groups.clear();
-            self.bindless_cull_bind_groups.clear();
+            // The cull bind groups bind the vis buffer at binding 15.
             self.object_cull_bind_groups.clear();
         }
 
@@ -926,15 +910,14 @@ pub(crate) struct ShadowCullState {
     pub(crate) shadow_vis_bufs: [Option<crate::gpu::Buffer>; 4],
     /// Per-cascade indirect draw args buffers (grow with the batch count).
     pub(crate) shadow_indirect_bufs: [Option<crate::gpu::Buffer>; 4],
-    /// Per-cascade instance+visibility bind groups. Invalidated when
-    /// `shadow_vis_bufs` are reallocated.
-    pub(crate) shadow_cull_instance_bgs: [Option<crate::gpu::BindGroup>; 4],
-    /// Per-(cascade, albedo, normal, ao, sampler code) bind groups for the alpha-cutout shadow
-    /// cull pipeline: like `shadow_cull_instance_bgs` but also carries the batch's
-    /// albedo texture (from the full cull BGL) so the fragment can discard leaf
-    /// gaps. Invalidated with `shadow_cull_instance_bgs`.
-    pub(crate) shadow_cutout_cull_bgs:
-        std::collections::HashMap<(usize, u64, u64, u64, u32), crate::gpu::BindGroup>,
+    /// Per-cascade group-1 bind groups of the culled casters: each batch's
+    /// per-batch member with the cascade's visible list at binding 15, keyed
+    /// by the batch's `shadow_bind_key`. Invalidated when `shadow_vis_bufs`
+    /// are reallocated.
+    pub(crate) object_bgs: [crate::resources::fast_hash::FastMap<u64, crate::gpu::BindGroup>; 4],
+    /// Bumped whenever `object_bgs` gains or drops a group, so the cascade
+    /// bundles that bind them re-record.
+    pub(crate) groups_gen: u64,
     /// Capacity (in instances) of `shadow_vis_bufs`.
     pub(crate) vis_capacity: usize,
     /// Capacity (in batches) of the counter and indirect-args buffers.
@@ -963,11 +946,11 @@ pub(crate) struct ShadowCullState {
     /// still apply around bundle execution, so the per-cascade atlas tiles work
     /// unchanged.
     pub(crate) shadow_bundles: [Option<crate::gpu::RenderBundle>; 4],
-    /// (instance_gen, batches_gen, outputs_gen, cascade_count, casters) the
-    /// bundles were recorded against; a mismatch re-records them. `casters`
-    /// hashes which batches cast, since one whose colour pipeline is still
-    /// compiling is left out until it draws.
-    pub(crate) bundle_key: Option<(u64, u64, u64, usize, u64)>,
+    /// (instance_gen, batches_gen, outputs_gen, cascade_count, casters,
+    /// groups_gen) the bundles were recorded against; a mismatch re-records
+    /// them. `casters` hashes which batches cast, since one whose colour
+    /// pipeline is still compiling is left out until it draws.
+    pub(crate) bundle_key: Option<(u64, u64, u64, usize, u64, u64)>,
     /// GPU draws recorded per cascade bundle, for FrameStats.
     pub(crate) bundle_draws: u32,
     /// Geometry buffer binds (`set_vertex_buffer` + `set_index_buffer`) recorded
@@ -980,13 +963,21 @@ pub(crate) struct ShadowCullState {
 }
 
 impl ShadowCullState {
+    /// Drop every cascade's caster bind groups.
+    pub(crate) fn clear_bind_groups(&mut self) {
+        for m in &mut self.object_bgs {
+            m.clear();
+        }
+        self.groups_gen = self.groups_gen.wrapping_add(1);
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             batch_counter_buf: None,
             shadow_vis_bufs: [None, None, None, None],
             shadow_indirect_bufs: [None, None, None, None],
-            shadow_cull_instance_bgs: [None, None, None, None],
-            shadow_cutout_cull_bgs: std::collections::HashMap::new(),
+            object_bgs: Default::default(),
+            groups_gen: 0,
             vis_capacity: 0,
             batch_output_capacity: 0,
             built_gen: u64::MAX,
@@ -1026,9 +1017,8 @@ impl ShadowCullState {
                     }));
             }
             self.vis_capacity = new_cap;
-            // The shadow cull bind groups bind these vis buffers at binding 5.
-            self.shadow_cull_instance_bgs = [None, None, None, None];
-            self.shadow_cutout_cull_bgs.clear();
+            // The shadow cull bind groups bind these vis buffers at binding 15.
+            self.clear_bind_groups();
             self.outputs_gen = self.outputs_gen.wrapping_add(1);
         }
 
@@ -1556,40 +1546,6 @@ impl DeviceResources {
             std::sync::Arc::clone(&self.pipeline_compiler),
             crate::resources::shadow::build_point,
         ));
-    }
-
-    /// Build the instanced point-shadow pipelines: the point face layout at
-    /// group 0 and the instanced colour pass's per-batch layout at group 1. A
-    /// no-op once built, and until the instance layout exists (no instanced
-    /// batch has been prepared yet, so there is nothing to draw).
-    pub(crate) fn ensure_point_instanced_shadow_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.shadow.point_instanced_pipeline.is_some() {
-            return;
-        }
-        let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() else {
-            return;
-        };
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "shadow_point_instanced_shader",
-            crate::resources::builders::wgsl_source!("shadow_point_instanced"),
-        );
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            "shadow_point_instanced_pipeline_layout",
-            &[&self.shadow.point_face_bgl, instance_bgl],
-        );
-        self.shadow.point_instanced_pipeline =
-            Some(crate::resources::pipeline_slot::LazyFamily::new(
-                crate::resources::shadow::ShadowRecipe {
-                    device: device.clone(),
-                    layout,
-                    shader,
-                },
-                std::sync::Arc::clone(&self.pipeline_compiler),
-                crate::resources::shadow::build_point_instanced,
-            ));
     }
 
     /// Promote the cascade shadow atlas from its 1x1 placeholder to the full

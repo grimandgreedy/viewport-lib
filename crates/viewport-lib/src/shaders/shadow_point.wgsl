@@ -56,12 +56,15 @@ struct CasterVertex {
 
 fn caster_vertex(position: vec3<f32>, vertex_index: u32, instance_index: u32) -> CasterVertex {
     object = objects[instance_index];
+    // The draw binds at the record's base vertex, so this is the mesh-local
+    // index the overrides and deformers read by.
+    let vi = vertex_index - object.vertex_base;
     // Override replaces the vertex-buffer position outright, matching the main mesh pass and the
     // cascade pass; deformers layer on top.
     var local_pos = position;
     let rec = object.sidecar_record;
-    if (object.flags & INST_HAS_POSITION_OVERRIDE) != 0u && vertex_index < sc_word(rec + SC_POS_LEN) {
-        let pi = (sc_word(rec + SC_POS_BASE) + vertex_index) * 3u;
+    if (object.flags & INST_HAS_POSITION_OVERRIDE) != 0u && vi < sc_word(rec + SC_POS_LEN) {
+        let pi = (sc_word(rec + SC_POS_BASE) + vi) * 3u;
         let plen = arrayLength(&position_override_buffer);
         if pi + 2u < plen {
             local_pos = vec3<f32>(
@@ -71,7 +74,7 @@ fn caster_vertex(position: vec3<f32>, vertex_index: u32, instance_index: u32) ->
             );
         }
     }
-    var dv = DeformVertex(local_pos, vec3<f32>(0.0, 0.0, 1.0), vertex_index);
+    var dv = DeformVertex(local_pos, vec3<f32>(0.0, 0.0, 1.0), vi);
     let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, object.deform_flags, 0u);
     dv = viewport_deform_object_space(dv, dctx);
     let world_pos4 = object.model * vec4<f32>(dv.position, 1.0);

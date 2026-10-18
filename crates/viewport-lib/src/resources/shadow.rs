@@ -51,10 +51,6 @@ pub(crate) struct ShadowResources {
     /// has point-shadow faces to draw; see
     /// [`DeviceResources::ensure_point_shadow_pipeline`](crate::resources::DeviceResources::ensure_point_shadow_pipeline).
     pub(crate) point_pipeline: Option<LazyFamily<ShadowRecipe, 2>>,
-    /// The same pair for instanced batches, reading per-instance transforms
-    /// from the instanced colour pass's per-batch group. `None` until the
-    /// instance layout exists and a frame has point-shadow faces.
-    pub(crate) point_instanced_pipeline: Option<LazyFamily<ShadowRecipe, 2>>,
     /// Bind group layout for the point-shadow per-face uniform (group 0
     /// of the point shadow pass). Kept for pipeline rebuilds.
     #[allow(dead_code)]
@@ -81,7 +77,8 @@ pub(crate) struct ShadowResources {
     /// material instead of casting a solid silhouette.
     /// `None` until a frame rasterises casters into the atlas; see
     /// [`DeviceResources::ensure_cascade_shadow_pipelines`](crate::resources::DeviceResources::ensure_cascade_shadow_pipelines).
-    pub(crate) pipeline: Option<LazyFamily<ShadowRecipe, 4>>,
+    /// Members 4 to 7 are the same four through the culled entry points.
+    pub(crate) pipeline: Option<LazyFamily<ShadowRecipe, 8>>,
     /// Bind group layout for the shadow camera uniform (group 0 of the
     /// shadow pass). Kept so `register_deformer` can rebuild the shadow
     /// pipeline from a freshly composed shader module.
@@ -204,20 +201,24 @@ pub(crate) struct ShadowRecipe {
     pub(crate) shader: crate::gpu::ShaderModule,
 }
 
-/// Slot index of the cascade pipeline for `key`: bit 0 two-sided, bit 1 cutout.
-fn cascade_index(key: PipelineKey) -> usize {
-    key.two_sided as usize + 2 * key.cutout as usize
+/// Slot index of the cascade pipeline for `key`: bit 0 two-sided, bit 1
+/// cutout, bit 2 the culled entry points (drawn from the cascade cull's
+/// indirect args).
+fn cascade_index(key: PipelineKey, culled: bool) -> usize {
+    key.two_sided as usize + 2 * key.cutout as usize + 4 * culled as usize
 }
 
 pub(crate) fn build_cascade(r: &ShadowRecipe, i: usize) -> crate::gpu::RenderPipeline {
     let two_sided = i & 1 != 0;
     let cutout = i & 2 != 0;
+    let culled = i & 4 != 0;
     crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
         &r.device,
         &r.layout,
         &r.shader,
         (!two_sided).then_some(crate::gpu::Face::Front),
         cutout,
+        culled,
         None,
     )
 }
@@ -238,39 +239,24 @@ pub(crate) fn build_point(r: &ShadowRecipe, i: usize) -> crate::gpu::RenderPipel
     )
 }
 
-/// Instanced point-shadow pipeline `i`: 0 plain, 1 alpha cutout.
-pub(crate) fn build_point_instanced(r: &ShadowRecipe, i: usize) -> crate::gpu::RenderPipeline {
-    crate::resources::mesh::mesh_pipelines::build_shadow_point_pipeline(
-        &r.device,
-        &r.layout,
-        &r.shader,
-        if i == 1 {
-            "shadow_point_instanced_cutout_pipeline"
-        } else {
-            "shadow_point_instanced_pipeline"
-        },
-        i == 1,
-        None,
-    )
-}
-
 impl ShadowResources {
     /// The cascade depth pipeline for `key`'s facedness and cutout, or `None`
     /// while a worker has it (or before the family is composed by
     /// [`DeviceResources::ensure_cascade_shadow_pipelines`](crate::resources::DeviceResources::ensure_cascade_shadow_pipelines)).
     pub(crate) fn cascade(&self, key: PipelineKey) -> Option<&crate::gpu::RenderPipeline> {
-        self.pipeline.as_ref()?.get(cascade_index(key))
+        self.pipeline.as_ref()?.get(cascade_index(key, false))
+    }
+
+    /// The same pipeline through the culled entry points, which read each
+    /// visible slot's record index from group-1 binding 15.
+    pub(crate) fn cascade_culled(&self, key: PipelineKey) -> Option<&crate::gpu::RenderPipeline> {
+        self.pipeline.as_ref()?.get(cascade_index(key, true))
     }
 
     /// The point-shadow depth pipeline for per-object casters, composed
     /// alongside the cube array. `cutout` selects the alpha-tested variant.
     pub(crate) fn point(&self, cutout: bool) -> Option<&crate::gpu::RenderPipeline> {
         self.point_pipeline.as_ref()?.get(cutout as usize)
-    }
-
-    /// The point-shadow depth pipeline for instanced batches.
-    pub(crate) fn point_instanced(&self, cutout: bool) -> Option<&crate::gpu::RenderPipeline> {
-        self.point_instanced_pipeline.as_ref()?.get(cutout as usize)
     }
 }
 
@@ -375,6 +361,7 @@ mod tests {
         res.ensure_cascade_shadow_pipelines(&device);
         for key in crate::renderer::pipeline_key::PipelineKey::all() {
             assert!(res.shadow.cascade(key).is_some());
+            assert!(res.shadow.cascade_culled(key).is_some());
         }
     }
 }

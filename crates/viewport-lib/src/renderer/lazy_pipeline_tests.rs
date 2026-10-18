@@ -54,8 +54,6 @@ fn build_everything(
     let res = &mut renderer.resources;
     res.ensure_hdr_pipelines(device, queue, FORMAT);
     res.ensure_ldr_mesh_pipelines(device);
-    res.ensure_instanced_pipelines(device);
-    res.ensure_cull_instance_pipelines(device);
     res.ensure_hdr_cull_pipelines(device);
     res.ensure_oit_cull_pipelines(device);
     res.ensure_outline_pipelines(device);

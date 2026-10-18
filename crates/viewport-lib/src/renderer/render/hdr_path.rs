@@ -97,7 +97,9 @@ pub(super) fn draw_mesh_item(
     // own slice. Either way the record's `vertex_base` is the base drawn with.
     let (vertices, indices, base_vertex, first_index) = if obj_override.is_some() {
         (
-            resources.geometry.vertex_chunk_slice(mesh.vertex_span.chunk),
+            resources
+                .geometry
+                .vertex_chunk_slice(mesh.vertex_span.chunk),
             resources.geometry.index_chunk_slice(mesh.index_span.chunk),
             resources.geometry.base_vertex(mesh.vertex_span),
             resources.geometry.first_index(mesh.index_span),
@@ -426,7 +428,6 @@ impl ViewportRenderer {
             if (self.instancing.use_instancing && !self.instancing.batches.is_empty())
                 || !self.mesh_instance_gpu_data.is_empty()
             {
-                res.ensure_instanced_pipelines(device);
                 res.ensure_hdr_mesh_pipelines(device);
                 res.ensure_hdr_cull_pipelines(device);
             }
@@ -809,10 +810,10 @@ impl ViewportRenderer {
                     && resources.cull.hdr.is_some()
                     && cull0.indirect_args_buf.is_some();
                 // A cached bundle holds the opaque batches this pass draws
-                // directly, except a material plugin's; under GPU culling,
-                // only those the cull does not draw.
+                // directly; under GPU culling, only those the cull does not
+                // draw.
                 let bundle_hit = self.per_object_bundle.as_ref().filter(|pb| {
-                    pb.hdr && pb.fat_only == use_indirect && pb.camera_bg == *camera_bg
+                    pb.hdr && pb.direct_only == use_indirect && pb.camera_bg == *camera_bg
                 });
                 if use_indirect {
                     let multi_draw = self.instancing.multi_draw_active();
@@ -914,54 +915,51 @@ impl ViewportRenderer {
                 if resources.scene.hdr.is_some() {
                     let hdr_family = resources.scene.hdr_family();
                     let hdr_bindless_family = resources.scene.hdr_bindless_family();
-                    let fat_pass = crate::renderer::types::FatPass::Colour {
+                    let batch_pass = crate::renderer::types::BatchPass::Colour {
                         family: &hdr_family,
                         bindless_family: &hdr_bindless_family,
                         hdr: true,
                         clipping_active,
                     };
-                    let mut fat_bound = crate::renderer::types::FatBound::default();
-                    let fat_bgs = &self.mesh_uniforms.material_bind_groups;
+                    let mut batch_bound = crate::renderer::types::BatchBound::default();
+                    let batch_bgs = &self.mesh_uniforms.material_bind_groups;
                     for batch in batches {
-                        let Some(fat) = batch.fat.as_ref() else {
-                            continue;
-                        };
                         if batch.is_transparent
-                            || matches!(fat.draw, crate::renderer::types::DrawKind::NormalLines)
+                            || matches!(batch.draw, crate::renderer::types::DrawKind::NormalLines)
                             || (use_indirect && batch.draws_culled())
-                            || (bundle_hit.is_some() && batch.shading_plugin.is_none())
+                            || bundle_hit.is_some()
                         {
                             continue;
                         }
-                        if crate::renderer::types::draw_fat_batch(
+                        if crate::renderer::types::draw_batch(
                             resources,
-                            fat_bgs,
+                            batch_bgs,
                             &mut render_pass,
                             batch,
-                            &fat_pass,
-                            &mut fat_bound,
+                            &batch_pass,
+                            &mut batch_bound,
                         ) {
                             self.frame_main_draw_commands
                                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
                     for batch in batches {
-                        if !batch.fat.as_ref().is_some_and(|f| {
-                            matches!(f.draw, crate::renderer::types::DrawKind::NormalLines)
-                        }) {
+                        if !matches!(batch.draw, crate::renderer::types::DrawKind::NormalLines) {
                             continue;
                         }
-                        crate::renderer::types::draw_fat_batch(
+                        crate::renderer::types::draw_batch(
                             resources,
-                            fat_bgs,
+                            batch_bgs,
                             &mut render_pass,
                             batch,
-                            &fat_pass,
-                            &mut fat_bound,
+                            &batch_pass,
+                            &mut batch_bound,
                         );
                     }
-                    self.frame_main_buffer_binds
-                        .fetch_add(fat_bound.buffer_binds, std::sync::atomic::Ordering::Relaxed);
+                    self.frame_main_buffer_binds.fetch_add(
+                        batch_bound.buffer_binds,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
                 }
             }
 
@@ -1541,30 +1539,27 @@ impl ViewportRenderer {
                     // Every blended batch the cull did not draw: the per-object
                     // OIT pipelines, by instance range.
                     if resources.oit.pipeline.is_some() {
-                        let fat_pass = crate::renderer::types::FatPass::Oit;
-                        let mut fat_bound = crate::renderer::types::FatBound::default();
-                        let fat_bgs = &self.mesh_uniforms.material_bind_groups;
+                        let batch_pass = crate::renderer::types::BatchPass::Oit;
+                        let mut batch_bound = crate::renderer::types::BatchBound::default();
+                        let batch_bgs = &self.mesh_uniforms.material_bind_groups;
                         for batch in batches {
-                            if !batch.is_transparent
-                                || batch.fat.is_none()
-                                || (use_indirect_oit && batch.draws_culled())
-                            {
+                            if !batch.is_transparent || (use_indirect_oit && batch.draws_culled()) {
                                 continue;
                             }
-                            if crate::renderer::types::draw_fat_batch(
+                            if crate::renderer::types::draw_batch(
                                 resources,
-                                fat_bgs,
+                                batch_bgs,
                                 &mut oit_pass,
                                 batch,
-                                &fat_pass,
-                                &mut fat_bound,
+                                &batch_pass,
+                                &mut batch_bound,
                             ) {
                                 self.frame_main_draw_commands
                                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
                         self.frame_main_buffer_binds.fetch_add(
-                            fat_bound.buffer_binds,
+                            batch_bound.buffer_binds,
                             std::sync::atomic::Ordering::Relaxed,
                         );
                     }

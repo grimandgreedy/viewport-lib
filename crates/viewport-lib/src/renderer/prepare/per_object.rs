@@ -131,7 +131,10 @@ pub(crate) fn build_instance_record(
         )
         | f::when(item.warp_attribute.is_some(), f::HAS_WARP)
         | f::when(record.is_some(), f::HAS_SIDECAR)
-        | f::when(mesh.is_some_and(|m| m.has_uv1) && !per_face_draw, f::HAS_UV1);
+        | f::when(
+            mesh.is_some_and(|m| m.has_uv1) && !per_face_draw,
+            f::HAS_UV1,
+        );
     InstanceData {
         model: cm.model,
         colour: cm.colour,
@@ -323,12 +326,11 @@ impl ViewportRenderer {
     /// Eligible frames draw the batch list directly (no GPU-driven submission,
     /// no wireframe mode) with no registered deformers (their bind groups
     /// change under the recording) and enough opaque draws to be worth the
-    /// recording. The bundle stores the opaque lean and fat batch draws in
-    /// batch order; plugin batches and blended batches draw immediately after
-    /// it. Per-instance transforms and colours flow through the instance
+    /// recording. The bundle stores the opaque batch draws in batch order;
+    /// blended batches and normal lines draw immediately after it. Per-instance transforms and colours flow through the instance
     /// buffer the recorded bind groups reference, so camera and object motion
     /// do not re-record; a batch-list rebuild, an instance-buffer
-    /// reallocation or a rebuilt fat bind group does.
+    /// reallocation or a rebuilt bind group does.
     pub(super) fn update_per_object_bundle(
         &mut self,
         device: &crate::gpu::Device,
@@ -354,7 +356,7 @@ impl ViewportRenderer {
         let clipping_active = DeviceResources::clipping_active(frame);
         // GPU-driven submission draws the culled batches from cull-written
         // indirect args, so under it the bundle records the rest only.
-        let fat_only =
+        let direct_only =
             hdr && self.instancing.gpu_culling_enabled && self.resources.cull.hdr.is_some();
         let plan = 'plan: {
             if frame.viewport.wireframe_mode
@@ -372,11 +374,8 @@ impl ViewportRenderer {
                 .iter()
                 .filter(|b| {
                     !b.is_transparent
-                        && b.shading_plugin.is_none()
-                        && (!fat_only || !b.draws_culled())
-                        && !b.fat.as_ref().is_some_and(|f| {
-                            matches!(f.draw, crate::renderer::types::DrawKind::NormalLines)
-                        })
+                        && (!direct_only || !b.draws_culled())
+                        && !matches!(b.draw, crate::renderer::types::DrawKind::NormalLines)
                 })
                 .count();
             if opaque < MIN_BUNDLE_DRAWS {
@@ -385,18 +384,18 @@ impl ViewportRenderer {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
             hdr.hash(&mut h);
-            fat_only.hash(&mut h);
+            direct_only.hash(&mut h);
             clipping_active.hash(&mut h);
             frame.camera.viewport_index.hash(&mut h);
             self.instancing.batches_gen.hash(&mut h);
             self.instancing.instance_gen.hash(&mut h);
-            // Fat bind keys move with a mesh's override or lightmap
-            // generation without a batch rebuild.
+            // Bind keys move with a mesh's override or lightmap generation
+            // without a batch rebuild, and a plugin's pipelines and texture
+            // groups move under its batches.
             for b in &self.instancing.batches {
-                if let Some(f) = &b.fat {
-                    f.bind_key.hash(&mut h);
-                }
+                b.bind_key.hash(&mut h);
             }
+            self.resources.material_plugin_epoch.hash(&mut h);
             self.resources.force_po_discard.hash(&mut h);
             self.resources.mesh_universal.hash(&mut h);
             Some(h.finish())
@@ -419,8 +418,8 @@ impl ViewportRenderer {
         // A rebuilt bind group means the recorded one is stale even though
         // the key still matches, so it counts as a change too.
         let dirty = self.last_stats.per_object_bind_groups_built > 0;
-        if self.per_object_bundle_gate.last_fat_only != Some(fat_only) {
-            self.per_object_bundle_gate.last_fat_only = Some(fat_only);
+        if self.per_object_bundle_gate.last_direct_only != Some(direct_only) {
+            self.per_object_bundle_gate.last_direct_only = Some(direct_only);
             self.per_object_bundle_gate.frames_since_change = u32::MAX;
         }
         let changed = dirty || self.per_object_bundle_gate.last_key != Some(key);
@@ -463,7 +462,14 @@ impl ViewportRenderer {
                 .as_ref()
                 .is_some_and(|pb| pb.key == key && pb.camera_bg == camera_bg);
         if !reusable {
-            match self.record_batch_bundle(device, key, camera_bg, hdr, fat_only, clipping_active) {
+            match self.record_batch_bundle(
+                device,
+                key,
+                camera_bg,
+                hdr,
+                direct_only,
+                clipping_active,
+            ) {
                 Some(bundle) => self.per_object_bundle = Some(bundle),
                 // A pipeline the list needs is still compiling: draw
                 // immediately and try again next frame.
@@ -485,10 +491,12 @@ impl ViewportRenderer {
         key: u64,
         camera_bg: crate::gpu::BindGroup,
         hdr: bool,
-        fat_only: bool,
+        direct_only: bool,
         clipping_active: bool,
     ) -> Option<crate::renderer::per_object_state::PerObjectBundle> {
-        use crate::renderer::types::{FatBound, DrawKind, FatPass, MeshDrawEncoder, draw_fat_batch};
+        use crate::renderer::types::{
+            BatchBound, BatchPass, DrawKind, MeshDrawEncoder, draw_batch,
+        };
         let resources = &self.resources;
         // The HDR scene pass renders Rgba16Float at sample count 1 with a
         // writable stencil aspect; the LDR passes render the surface format
@@ -527,30 +535,26 @@ impl ViewportRenderer {
         } else {
             (&ldr_family, &ldr_bindless_family)
         };
-        let fat_pass = FatPass::Colour {
+        let batch_pass = BatchPass::Colour {
             family,
             bindless_family,
             hdr,
             clipping_active,
         };
-        let mut bound = FatBound::default();
+        let mut bound = BatchBound::default();
         for batch in &self.instancing.batches {
-            let Some(fat) = batch.fat.as_ref() else {
-                continue;
-            };
             if batch.is_transparent
-                || batch.shading_plugin.is_some()
-                || matches!(fat.draw, DrawKind::NormalLines)
-                || (fat_only && batch.draws_culled())
+                || matches!(batch.draw, DrawKind::NormalLines)
+                || (direct_only && batch.draws_culled())
             {
                 continue;
             }
-            if !draw_fat_batch(
+            if !draw_batch(
                 resources,
                 &self.mesh_uniforms.material_bind_groups,
                 &mut enc,
                 batch,
-                &fat_pass,
+                &batch_pass,
                 &mut bound,
             ) || bound.stand_in
             {
@@ -565,7 +569,7 @@ impl ViewportRenderer {
             bundle,
             key,
             hdr,
-            fat_only,
+            direct_only,
             camera_bg,
         })
     }

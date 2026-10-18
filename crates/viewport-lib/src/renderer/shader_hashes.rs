@@ -176,7 +176,7 @@ mod tests {
         let hashes = current_shader_hashes();
         let names: Vec<&str> = hashes.iter().map(|(n, _)| *n).collect();
         assert!(names.contains(&"mesh.wgsl"));
-        assert!(names.contains(&"shadow_instanced.wgsl"));
+        assert!(names.contains(&"shadow.wgsl"));
         assert!(names.contains(&"tone_map.wgsl"));
     }
 

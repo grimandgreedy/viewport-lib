@@ -190,9 +190,7 @@ impl ViewportRenderer {
         let r = &mut self.resources;
 
         if set.direct || set.hdr {
-            r.ensure_instanced_pipelines(device);
             if cull {
-                r.ensure_cull_instance_pipelines(device);
                 // The compute side of GPU culling, which the first culled
                 // frame would otherwise build.
                 let dev = device.clone();
@@ -282,18 +280,6 @@ impl ViewportRenderer {
                 f.request_all();
             }
             if let Some(f) = &r.shadow.point_pipeline {
-                f.request_all();
-            }
-            if let Some(f) = &r.instancing.shadow {
-                f.request_all();
-            }
-            // Needs the instance layout, which exists once the instanced
-            // families above do.
-            r.ensure_point_instanced_shadow_pipeline(device);
-            if let Some(f) = &r.shadow.point_instanced_pipeline {
-                f.request_all();
-            }
-            if let Some(f) = &r.cull.shadow {
                 f.request_all();
             }
         }

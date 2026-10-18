@@ -1950,6 +1950,7 @@ impl DeviceResources {
             plugin.pipelines = None;
             plugin.pipelines_bindless = None;
         }
+        self.material_plugin_epoch = self.material_plugin_epoch.wrapping_add(1);
         // Every family is rebuilt through its own `ensure_*`, which composes
         // the registered deformers in, so there is one copy of each build. A
         // family that has not been built yet is left alone: its first use
@@ -1992,16 +1993,7 @@ impl DeviceResources {
         // place that way, so a bindless bind group can never meet a per-batch
         // pipeline (a validation error). Clear the cached pipelines so the guarded
         // `ensure_*` calls rebuild them from the fresh deform composition; nothing
-        // rebuilds unless it was already built. Recreated bind group layouts stay
-        // structurally identical, so the cached instance bind groups remain valid.
-        if self.instancing.bind_group_layout.is_some() {
-            self.instancing.bind_group_layout = None;
-            self.ensure_instanced_pipelines(device);
-        }
-        if self.cull.bind_group_layout.is_some() {
-            self.cull.bind_group_layout = None;
-            self.ensure_cull_instance_pipelines(device);
-        }
+        // rebuilds unless it was already built.
         if self.cull.hdr.is_some() {
             self.cull.hdr = None;
             self.ensure_hdr_cull_pipelines(device);

@@ -569,8 +569,7 @@ impl ViewportRenderer {
             let visible = scene_items.iter().filter(|i| !i.settings.hidden).count() as u32;
             let mut draw_calls = 0u32;
             let mut triangles = 0u64;
-            // Every batch is one draw. A lean batch draws the whole mesh; a fat
-            // one draws what its `DrawKind` names. A wireframe draw submits its
+            // Every batch is one draw of what its `DrawKind` names. A wireframe draw submits its
             // mesh's triangles as edge lines, so it counts them; normal lines
             // submit no triangles.
             let instanced_batch_count = self.instancing.batches.len() as u32;
@@ -579,9 +578,9 @@ impl ViewportRenderer {
                     continue;
                 };
                 draw_calls += 1;
-                let indices = match batch.fat.as_ref().map(|f| f.draw) {
-                    Some(crate::renderer::types::DrawKind::Range(_, count)) => count,
-                    Some(crate::renderer::types::DrawKind::NormalLines) => 0,
+                let indices = match batch.draw {
+                    crate::renderer::types::DrawKind::Range(_, count) => count,
+                    crate::renderer::types::DrawKind::NormalLines => 0,
                     _ => mesh.index_count,
                 };
                 triangles += (indices / 3) as u64 * batch.instance_count as u64;

@@ -6,7 +6,9 @@
 // its cutoff, so an `AlphaMode::Mask` material punches holes in the shadow
 // instead of casting a solid silhouette.
 // Group 0: Light uniform (light-space view-projection matrix).
-// Group 1: Object uniform (model matrix : reuses the same object bind group as the main pass).
+// Group 1: the mesh group 1 the colour pass binds: the record buffer, the
+// albedo for cutouts, the overrides and, for the culled entry points, the
+// cascade's visible list at binding 15.
 
 struct Light {
     view_proj: mat4x4<f32>,
@@ -35,6 +37,9 @@ var<private> object: InstanceData;
 // The mesh's sidecar record chunk, for the override window.
 @group(1) @binding(6) var<storage, read> sidecar_pool: array<u32>;
 // #include "helpers/sidecar.wgsl"
+// Record index of each visible slot, written by the cascade cull. Read only
+// by the `_cull` entry points, which draw from the cull's indirect args.
+@group(1) @binding(15) var<storage, read> visibility_indices: array<u32>;
 
 // Per-vertex deformation hook contract.
 // #include "helpers/deform.wgsl"
@@ -43,14 +48,17 @@ var<private> object: InstanceData;
 // pass on. Only written when some deformer defines `keep`.
 var<private> shadow_keep: f32 = 1.0;
 
-fn shadow_clip_position(position: vec3<f32>, vertex_index: u32, instance_index: u32) -> vec4<f32> {
-    object = objects[instance_index];
+fn shadow_clip_position(position: vec3<f32>, vertex_index: u32, record: u32) -> vec4<f32> {
+    object = objects[record];
+    // The draw binds at the record's base vertex, so this is the mesh-local
+    // index the overrides and deformers read by.
+    let vi = vertex_index - object.vertex_base;
     // Override replaces the vertex-buffer position outright, matching the main
     // mesh pass; deformers layer on top.
     var local_pos = position;
     let rec = object.sidecar_record;
-    if (object.flags & INST_HAS_POSITION_OVERRIDE) != 0u && vertex_index < sc_word(rec + SC_POS_LEN) {
-        let pi = (sc_word(rec + SC_POS_BASE) + vertex_index) * 3u;
+    if (object.flags & INST_HAS_POSITION_OVERRIDE) != 0u && vi < sc_word(rec + SC_POS_LEN) {
+        let pi = (sc_word(rec + SC_POS_BASE) + vi) * 3u;
         let plen = arrayLength(&position_override_buffer);
         if pi + 2u < plen {
             local_pos = vec3<f32>(
@@ -60,7 +68,13 @@ fn shadow_clip_position(position: vec3<f32>, vertex_index: u32, instance_index: 
             );
         }
     }
-    var dv = DeformVertex(local_pos, vec3<f32>(0.0, 0.0, 1.0), vertex_index);
+    // With no deformer the world position is not needed, so the matrices
+    // multiply first. The order changes the depth's rounding, and the shadow
+    // reference images are blessed with this one.
+    if object.deform_flags == 0u {
+        return light.view_proj * object.model * vec4<f32>(local_pos, 1.0);
+    }
+    var dv = DeformVertex(local_pos, vec3<f32>(0.0, 0.0, 1.0), vi);
     let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, object.deform_flags, 0u);
     dv = viewport_deform_object_space(dv, dctx);
     let world_pos4 = object.model * vec4<f32>(dv.position, 1.0);
@@ -79,6 +93,15 @@ fn vs_main(
     return shadow_clip_position(position, vertex_index, instance_index);
 }
 
+@vertex
+fn vs_main_cull(
+    @location(0) position: vec3<f32>,
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
+) -> @builtin(position) vec4<f32> {
+    return shadow_clip_position(position, vertex_index, visibility_indices[instance_index]);
+}
+
 // Alpha-cutout variant: carries the UV and object index to the fragment
 // stage so it can sample the caster's albedo alpha and discard cut-out
 // fragments (leaf gaps) instead of casting a solid silhouette.
@@ -94,6 +117,16 @@ struct CutoutOut {
     // <viewport-deform-keep> @location(2) deform_keep: f32,
 };
 
+fn cutout_vertex(position: vec3<f32>, colour: vec4<f32>, uv: vec2<f32>, vertex_index: u32, record: u32) -> CutoutOut {
+    var out: CutoutOut;
+    out.clip_pos = shadow_clip_position(position, vertex_index, record);
+    out.uv = uv;
+    out.obj_idx = record;
+    out.vertex_alpha = colour.a;
+    // <viewport-deform-keep> out.deform_keep = shadow_keep;
+    return out;
+}
+
 @vertex
 fn vs_cutout(
     @location(0) position: vec3<f32>,
@@ -102,13 +135,18 @@ fn vs_cutout(
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
 ) -> CutoutOut {
-    var out: CutoutOut;
-    out.clip_pos = shadow_clip_position(position, vertex_index, instance_index);
-    out.uv = uv;
-    out.obj_idx = instance_index;
-    out.vertex_alpha = colour.a;
-    // <viewport-deform-keep> out.deform_keep = shadow_keep;
-    return out;
+    return cutout_vertex(position, colour, uv, vertex_index, instance_index);
+}
+
+@vertex
+fn vs_cutout_cull(
+    @location(0) position: vec3<f32>,
+    @location(2) colour: vec4<f32>,
+    @location(3) uv: vec2<f32>,
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
+) -> CutoutOut {
+    return cutout_vertex(position, colour, uv, vertex_index, visibility_indices[instance_index]);
 }
 
 @fragment
