@@ -171,11 +171,6 @@ impl ViewportRenderer {
                             self.resources.scene.wireframe(),
                         ) {
                             render_pass.set_pipeline(wf);
-                            bind_deform_group!(
-                                render_pass,
-                                self.resources,
-                                &self.resources.deform.dummy_bind_group
-                            );
                             render_pass.set_bind_group(1, tvm_bg, &[]);
                             if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
                                 render_pass.set_vertex_buffer(1, records.slice(..));

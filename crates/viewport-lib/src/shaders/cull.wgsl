@@ -311,7 +311,7 @@ fn cull_instances(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 // Copy the record words the culled mesh draws fetch per instance (record base,
-// colour, warp and lightmap streams, base vertex) into the visibility buffer's
+// colour, warp and lightmap streams, base vertex, deform table) into the visibility buffer's
 // words region, at the survivor's visible slot. A culled draw's instance index
 // is that slot, so a vertex buffer over the region steps through them.
 fn write_words(slot: u32, record: u32) {
@@ -325,6 +325,7 @@ fn write_words(slot: u32, record: u32) {
     visibility_indices[w + 2u] = inst.warp_stream;
     visibility_indices[w + 3u] = inst.lightmap_stream;
     visibility_indices[w + 4u] = inst.vertex_base;
+    visibility_indices[w + 5u] = inst.deform_table;
 }
 
 // Workgroup scratch shared by the planning, counting and scattering phases.

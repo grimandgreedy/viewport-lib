@@ -375,9 +375,6 @@ impl DeviceResources {
             "hdr_cull_pipeline_layout",
             &self.binds.camera_bgl,
             &self.binds.object_bgl,
-            self.deform
-                .enabled
-                .then_some(&self.deform.bind_group_layout),
         );
         let per_batch = ctx(layout, &source, "mesh_shader_hdr", self);
         let bindless = if self.bindless_textures() {
@@ -416,9 +413,6 @@ impl DeviceResources {
             "oit_cull_pipeline_layout",
             &self.binds.camera_bgl,
             &self.binds.object_bgl,
-            self.deform
-                .enabled
-                .then_some(&self.deform.bind_group_layout),
         );
         let per_batch = crate::resources::postprocess::oit::OitContext {
             device: device.clone(),
@@ -555,7 +549,7 @@ impl DeviceResources {
                 warp_stream: 0,
                 lightmap_stream: 0,
                 vertex_base: 0,
-                _pad: 0,
+                deform_table: 0,
             }
         };
         let instances: Vec<InstanceData> = match indices {
@@ -823,7 +817,7 @@ const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 368);
 /// - warp_stream:            u32      =  4 bytes  offset 144
 /// - lightmap_stream:        u32      =  4 bytes  offset 148
 /// - vertex_base:            u32      =  4 bytes  offset 152
-/// - _pad:                   u32      =  4 bytes  offset 156
+/// - deform_table:           u32      =  4 bytes  offset 156
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct InstanceData {
@@ -876,7 +870,10 @@ pub(crate) struct InstanceData {
     /// subtracts it to get the mesh-local index. 0 for a draw of a buffer of
     /// its own (per-face vertices, normal lines).
     pub(crate) vertex_base: u32,
-    pub(crate) _pad: u32,
+    /// The deform table this draw reads, as a word of the bound sidecar
+    /// chunk: the deform instance's table when it has data, the mesh's
+    /// otherwise. 0 for a mesh without deform data.
+    pub(crate) deform_table: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<InstanceData>() == 160);
@@ -948,8 +945,11 @@ pub struct PickInstance {
     pub model_c3: [f32; 4],
     /// The pick id written to the pick target for this instance.
     pub object_id: u32,
+    /// The deform table the instance's mesh draw reads, as a word of the
+    /// sidecar chunk bound beside the pick instances. 0 for none.
+    pub deform_table: u32,
     /// Padding to the 80-byte stride the shader declares.
-    pub _pad: [u32; 3],
+    pub _pad: [u32; 2],
 }
 
 const _: () = assert!(std::mem::size_of::<PickInstance>() == 80);

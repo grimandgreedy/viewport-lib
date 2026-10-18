@@ -504,17 +504,16 @@ pub struct DeviceResources {
     /// Registered LOD groups. Each groups several meshes that are detail
     /// variants of one object; the renderer picks a level per frame.
     pub(crate) lod_groups: crate::resources::mesh::lod::LodGroupStore,
-    /// Per-vertex deformation sidecar storage: header uniform, dummy fallback
-    /// buffers, and per-mesh slot bind groups. Every mesh-family pipeline
-    /// binds `@group(2)` from this state; meshes without attached deformer
-    /// data fall back to the renderer-owned dummy bind group.
+    /// Per-vertex deformation state: the header uniform (group 0 binding 23)
+    /// and the host copy of every mesh's slot data, which lives on the GPU in
+    /// the mesh's sidecar record.
     pub(crate) deform: crate::resources::mesh_sidecar::deform::DeformationState,
     /// Registered fragment shading hooks (`register_shading_hook`). Each
     /// entry composes its own lit-shader modules; the base pipelines are
     /// untouched by registrations.
     pub(crate) shade_hooks: Vec<crate::resources::mesh_sidecar::shade::StoredShadingHook>,
     /// Per-material-plugin GPU state (`register_material_plugin`), keyed by
-    /// hook index: declared parameters, group-3 texture sets and the lazily
+    /// hook index: declared parameters, group-2 texture sets and the lazily
     /// built lit pipeline sets.
     pub(crate) material_plugins:
         std::collections::HashMap<u32, crate::resources::mesh_sidecar::shade::MaterialPluginGpu>,
@@ -1253,11 +1252,7 @@ impl DeviceResources {
         self.note_pipeline_built(concat!(file!(), ":", line!()));
         // Mask-write pipelines: selected objects as r=1.0 into an R8 mask with
         // depth testing.
-        let mask_src = if self.deform.enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/outline_mask.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/outline_mask_noop.wgsl"))
-        };
+        let mask_src = include_str!(concat!(env!("OUT_DIR"), "/outline_mask.wgsl"));
         let mask_shader = crate::resources::builders::wgsl_module(
             device,
             "outline_mask_shader",
@@ -1450,13 +1445,10 @@ impl DeviceResources {
         self.ibl.skybox_bgl = Some(skybox_bgl);
     }
 
-    /// The layout the outline mask and x-ray pipelines share: camera, the
-    /// outline uniform, and the deform sidecar when it is enabled.
+    /// The layout the outline mask and x-ray pipelines share: camera and the
+    /// outline group.
     fn outline_pipeline_layout(&self, device: &crate::gpu::Device) -> crate::gpu::PipelineLayout {
-        let mut bgls = vec![&self.binds.camera_bgl, &self.outline.bind_group_layout];
-        if self.deform.enabled {
-            bgls.push(&self.deform.bind_group_layout);
-        }
+        let bgls = [&self.binds.camera_bgl, &self.outline.bind_group_layout];
         crate::resources::builders::pipeline_layout(device, "outline_pipeline_layout", &bgls)
     }
 
@@ -1471,11 +1463,7 @@ impl DeviceResources {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let src = if self.deform.enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow_noop.wgsl"))
-        };
+        let src = include_str!(concat!(env!("OUT_DIR"), "/shadow.wgsl"));
         let shader = crate::resources::builders::wgsl_module(
             device,
             "shadow_shader",
@@ -1484,10 +1472,7 @@ impl DeviceResources {
                 &self.deform.registrations,
             ),
         );
-        let mut bgls = vec![&self.shadow.camera_bgl, &self.binds.object_bgl];
-        if self.deform.enabled {
-            bgls.push(&self.deform.bind_group_layout);
-        }
+        let bgls = [&self.shadow.camera_bgl, &self.binds.object_bgl];
         let layout =
             crate::resources::builders::pipeline_layout(device, "shadow_pipeline_layout", &bgls);
         // Keyed by facedness (cull-front for closed solids so a solid's own
@@ -1515,11 +1500,7 @@ impl DeviceResources {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let src = if self.deform.enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow_point.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow_point_noop.wgsl"))
-        };
+        let src = include_str!(concat!(env!("OUT_DIR"), "/shadow_point.wgsl"));
         let shader = crate::resources::builders::wgsl_module(
             device,
             "shadow_point_shader",
@@ -1528,10 +1509,7 @@ impl DeviceResources {
                 &self.deform.registrations,
             ),
         );
-        let mut bgls = vec![&self.shadow.point_face_bgl, &self.binds.object_bgl];
-        if self.deform.enabled {
-            bgls.push(&self.deform.bind_group_layout);
-        }
+        let bgls = [&self.shadow.point_face_bgl, &self.binds.object_bgl];
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "shadow_point_pipeline_layout",
@@ -1777,6 +1755,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 21,
                     resource: self.material_gpu_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 23,
+                    resource: self.deform.header_buffer.as_entire_binding(),
                 },
             ],
         })

@@ -22,7 +22,7 @@ use viewport_lib_types::ids::TextureId;
 /// group-1 binding 2 for the whole draw, so a batch has one sampler.
 ///
 /// A material plugin also splits the key: plugin items select a per-plugin
-/// pipeline set and a group-3 bind group per texture set that apply to the
+/// pipeline set and a group-2 bind group per texture set that apply to the
 /// whole draw, so two items batch together only when their plugin and plugin
 /// textures match (`None` for built-in shading). Plugin parameters ride each
 /// material's block and do not split. Carried as `(plugin_index, textures)`.
@@ -41,7 +41,7 @@ type MaterialKey = (
 
 /// The batch key of one record: its material key, what it draws, the
 /// colourmap and matcap its group-1 bind group binds, and the deform instance
-/// it binds at group 2. The per-record stream words (scalar attribute, warp,
+/// whose table it reads. The per-record stream words (scalar attribute, warp,
 /// lightmap) are not in it: each record carries its own, and the batch's
 /// feature set is the union over its records.
 ///
@@ -170,8 +170,8 @@ fn build_and_upload_draw_groups(
                 continue;
             };
             // A batch the groups cannot draw (one with a material plugin,
-            // whose set has no culled members, or a deformer, which binds its
-            // own deform group) is left out: its `group_id` stays `NO_GROUP`,
+            // which binds its own group 2) is left out: its `group_id` stays
+            // `NO_GROUP`,
             // so the compaction skips it, and the culled run path draws it.
             // Breaking the run here also splits two same-key runs that such a
             // batch sits between into separate groups, which is correct: each
@@ -912,7 +912,7 @@ impl ViewportRenderer {
                                     warp_stream: 0,
                                     lightmap_stream: 0,
                                     vertex_base: 0,
-                                    _pad: 0,
+                                    deform_table: 0,
                                 }
                             } else {
                                 // A range record draws with its range's material.
@@ -1671,7 +1671,7 @@ mod batch_key_tests {
                 batch_group_key(&plug_a, binding),
                 batch_group_key(&plug_a_params, binding),
             );
-            // A different texture set binds a different group 3, and a
+            // A different texture set binds a different group 2, and a
             // different plugin a different pipeline.
             assert_ne!(
                 batch_group_key(&plug_a, binding),

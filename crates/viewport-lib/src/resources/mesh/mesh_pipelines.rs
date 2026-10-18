@@ -10,23 +10,26 @@ use crate::resources::types::Vertex;
 /// The record words the `mesh.wgsl` and `mesh_oit.wgsl` vertex stages use as
 /// addresses, at the [`InstanceData`](crate::resources::mesh::instancing::InstanceData)
 /// offsets: the sidecar record base, the colour, warp and lightmap streams,
-/// and the mesh's first vertex in its slab chunk. Locations 5 to 9.
-const RECORD_WORD_ATTRIBUTES: [crate::gpu::VertexAttribute; 5] = [
+/// the mesh's first vertex in its slab chunk and the deform table. Locations
+/// 5 to 10.
+const RECORD_WORD_ATTRIBUTES: [crate::gpu::VertexAttribute; 6] = [
     word_attribute(5, 108),
     word_attribute(6, 116),
     word_attribute(7, 144),
     word_attribute(8, 148),
     word_attribute(9, 152),
+    word_attribute(10, 156),
 ];
 
-/// The same words as the GPU cull packs them for each survivor: six words
-/// a slot, the sixth unused.
-const CULLED_WORD_ATTRIBUTES: [crate::gpu::VertexAttribute; 5] = [
+/// The same words as the GPU cull packs them for each survivor, six words a
+/// slot.
+const CULLED_WORD_ATTRIBUTES: [crate::gpu::VertexAttribute; 6] = [
     word_attribute(5, 0),
     word_attribute(6, 4),
     word_attribute(7, 8),
     word_attribute(8, 12),
     word_attribute(9, 16),
+    word_attribute(10, 20),
 ];
 
 /// Bytes the cull writes per survivor into the words region of the
@@ -604,19 +607,12 @@ pub(crate) const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::Blend
 };
 
 /// Build the shared mesh pipeline layout used by both LDR and HDR mesh
-/// pipelines. Groups: 0=camera, 1=object+texture, and optionally 2=deform.
-/// Pass `None` for `deform_bgl` on devices with max_bind_groups < 3.
+/// pipelines. Groups: 0=camera, 1=object+texture.
 pub(crate) fn mesh_pipeline_layout(
     device: &crate::gpu::Device,
     label: &str,
     camera_bgl: &crate::gpu::BindGroupLayout,
     object_bgl: &crate::gpu::BindGroupLayout,
-    deform_bgl: Option<&crate::gpu::BindGroupLayout>,
 ) -> crate::gpu::PipelineLayout {
-    let layouts: Vec<&crate::gpu::BindGroupLayout> = if let Some(d) = deform_bgl {
-        vec![camera_bgl, object_bgl, d]
-    } else {
-        vec![camera_bgl, object_bgl]
-    };
-    crate::resources::builders::pipeline_layout(device, label, &layouts)
+    crate::resources::builders::pipeline_layout(device, label, &[camera_bgl, object_bgl])
 }

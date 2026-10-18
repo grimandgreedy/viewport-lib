@@ -132,19 +132,6 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Shader module
         // ------------------------------------------------------------------
-        // The deform sidecar is group 2 and adds two vertex-stage storage
-        // buffers (seven total in the vertex stage). It needs both a third bind
-        // group and the storage-buffer headroom for those two buffers, which
-        // wgpu's default limit of 8 has. iced_wgpu and other WebGL2-targeting
-        // backends cap max_bind_groups at 2; there we compile the _noop
-        // variants, which omit the deform group, and build 2-group pipeline
-        // layouts. Per-vertex deformers are unavailable in that state, and
-        // register_deformer reports it.
-        let device_limits = device.limits();
-        let deform_enabled = device_limits.max_bind_groups >= 3
-            && device_limits.max_storage_buffers_per_shader_stage
-                >= crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE;
-
         // ------------------------------------------------------------------
         // Bind group layouts
         // ------------------------------------------------------------------
@@ -369,6 +356,9 @@ impl DeviceResources {
             },
             // Binding 22 is free: the per-instance custom data is the last
             // region of the binding-18 buffer.
+            // binding 23: the deform header (time and per-slot parameters),
+            // read by the deform hooks in the vertex stage.
+            crate::resources::builders::uniform_entry(23, crate::gpu::ShaderStages::VERTEX),
         ];
         let camera_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("camera_bgl"),
@@ -648,23 +638,16 @@ impl DeviceResources {
         mark("shaders_and_bind_group_layouts");
 
         // ------------------------------------------------------------------
-        // Per-vertex deformation sidecar. Constructed early because every
-        // mesh-family pipeline layout binds its group(2) BGL.
+        // Per-vertex deformation state. Constructed early because the group-0
+        // bind groups bind its header uniform.
         // ------------------------------------------------------------------
-        let deform = if deform_enabled {
-            crate::resources::mesh_sidecar::deform::DeformationState::new(device)
-        } else {
-            crate::resources::mesh_sidecar::deform::DeformationState::new_disabled(device)
-        };
+        let deform = crate::resources::mesh_sidecar::deform::DeformationState::new(device);
 
         // wgpu counts max_storage_buffers_per_shader_stage per stage across
         // every group in a pipeline layout, so the mesh pipelines pay the sum of
-        // the groups they bind. The constants describing that sum live in
-        // ViewportRenderer and drift silently when a vertex-stage binding is
-        // added here: a deform gate one short of what the layout binds turns
-        // deformers on and then fails every pipeline layout that includes the
-        // deform group, which renders nothing at all. Derive the counts from the
-        // entries just used rather than trusting the constants.
+        // the groups they bind. Derive the counts from the entries just used, so
+        // a binding added here that takes the mesh path over the default limit
+        // fails here rather than on a consumer's device.
         #[cfg(debug_assertions)]
         {
             let base = stage_storage_buffers(&camera_bgl_entries, crate::gpu::ShaderStages::VERTEX)
@@ -693,34 +676,15 @@ impl DeviceResources {
                 base_fragment <= default_limit,
                 "the base mesh path binds {base_fragment} fragment-stage storage buffers, over                  wgpu's default limit of {default_limit}; a consumer creating a device with                  default limits could no longer render at all"
             );
-            let with_deform = base
-                + stage_storage_buffers(
-                    &crate::resources::mesh_sidecar::deform::BGL_ENTRIES,
-                    crate::gpu::ShaderStages::VERTEX,
-                );
-            debug_assert_eq!(
-                with_deform,
-                crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE,
-                "the deform-enabled mesh pipeline layout binds {} vertex-stage storage buffers \
-                 but DEFORM_STORAGE_BUFFERS_PER_STAGE gates deformers at {}; a device granted \
-                 exactly the gate value would enable the deform group and then fail every \
-                 pipeline layout that includes it",
-                with_deform,
-                crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE,
-            );
         }
 
-        // A material plugin's group 3 adds its textures to the fragment stage of
+        // A material plugin's group 2 adds its textures to the fragment stage of
         // the mesh pipelines. The per-object layouts bind the most of the mesh
         // paths, so what they leave is what a plugin may declare.
         let plugin_texture_budget = {
             let fragment = crate::gpu::ShaderStages::FRAGMENT;
             let used = stage_sampled_textures(&camera_bgl_entries, fragment)
-                + stage_sampled_textures(&object_bgl_entries, fragment)
-                + stage_sampled_textures(
-                    &crate::resources::mesh_sidecar::deform::BGL_ENTRIES,
-                    fragment,
-                );
+                + stage_sampled_textures(&object_bgl_entries, fragment);
             device
                 .limits()
                 .max_sampled_textures_per_shader_stage
@@ -1001,26 +965,34 @@ impl DeviceResources {
                     binding: 21,
                     resource: material_gpu_buf.as_entire_binding(),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 23,
+                    resource: deform.header_buffer.as_entire_binding(),
+                },
             ],
         });
 
-        // Shadow pass uses a simple bind group layout: just the light uniform.
+        // Shadow pass uses a simple bind group layout: the light uniform and
+        // the deform header.
         let shadow_camera_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("shadow_camera_bgl"),
-                entries: &[crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        // Dynamic offset lets the cascade loop select per-cascade matrix slot
-                        // without calling write_buffer inside the render pass (which would be
-                        // a no-op per-cascade since wgpu batches all writes before execution).
-                        has_dynamic_offset: true,
-                        min_binding_size: None,
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::VERTEX,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            // Dynamic offset lets the cascade loop select per-cascade matrix slot
+                            // without calling write_buffer inside the render pass (which would be
+                            // a no-op per-cascade since wgpu batches all writes before execution).
+                            has_dynamic_offset: true,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    crate::resources::builders::uniform_entry(23, crate::gpu::ShaderStages::VERTEX),
+                ],
             });
 
         // The depth-only cascade pipelines are built by
@@ -1040,18 +1012,27 @@ impl DeviceResources {
         let shadow_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("shadow_bind_group"),
             layout: &shadow_camera_bgl,
-            entries: &[crate::gpu::BindGroupEntry {
-                binding: 0,
-                // Bind only the first 64-byte matrix slot; dynamic offset selects cascade.
-                resource: crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
-                    buffer: &shadow_uniform_buf,
-                    offset: 0,
-                    size: Some(
-                        crate::gpu::BufferSize::new(std::mem::size_of::<[[f32; 4]; 4]>() as u64)
-                            .unwrap(),
-                    ),
-                }),
-            }],
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    // Bind only the first 64-byte matrix slot; dynamic offset selects cascade.
+                    resource: crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
+                        buffer: &shadow_uniform_buf,
+                        offset: 0,
+                        size:
+                            Some(
+                                crate::gpu::BufferSize::new(
+                                    std::mem::size_of::<[[f32; 4]; 4]>() as u64
+                                )
+                                .unwrap(),
+                            ),
+                    }),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 23,
+                    resource: deform.header_buffer.as_entire_binding(),
+                },
+            ],
         });
 
         // ------------------------------------------------------------------
@@ -1059,25 +1040,29 @@ impl DeviceResources {
         //
         // One render pass per (light slot, face) writes linear distance to
         // the light into a per-face depth attachment. The bind group layout
-        // mirrors the cascade pipeline (same object + deform bind groups)
-        // and carries a per-face uniform with view_proj + light_pos + range.
+        // mirrors the cascade pipeline (same object bind group) and carries a
+        // per-face uniform with view_proj + light_pos + range, and the deform
+        // header.
         // ------------------------------------------------------------------
         // The pipeline itself is built by `ensure_point_shadow_pipeline` on the
         // first frame with point-shadow faces to draw.
         let shadow_point_face_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("shadow_point_face_bgl"),
-                entries: &[crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: None,
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::VERTEX
+                            | crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: true,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    crate::resources::builders::uniform_entry(23, crate::gpu::ShaderStages::VERTEX),
+                ],
             });
         // Per-face uniform buffer. Stride 256 satisfies wgpu's dynamic-offset
         // alignment requirement. Total slots = MAX_POINT_SHADOW_LIGHTS * 6.
@@ -1093,16 +1078,22 @@ impl DeviceResources {
             device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("shadow_point_face_bind_group"),
                 layout: &shadow_point_face_bgl,
-                entries: &[crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
-                        buffer: &shadow_point_face_buf,
-                        offset: 0,
-                        // Bind one PointFace slot worth (96 bytes rounded up
-                        // to 16-byte alignment is fine here).
-                        size: Some(crate::gpu::BufferSize::new(96).unwrap()),
-                    }),
-                }],
+                entries: &[
+                    crate::gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
+                            buffer: &shadow_point_face_buf,
+                            offset: 0,
+                            // Bind one PointFace slot worth (96 bytes rounded up
+                            // to 16-byte alignment is fine here).
+                            size: Some(crate::gpu::BufferSize::new(96).unwrap()),
+                        }),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: 23,
+                        resource: deform.header_buffer.as_entire_binding(),
+                    },
+                ],
             });
 
         mark("shadow_pipelines");
@@ -1635,6 +1626,17 @@ impl DeviceResources {
                 ),
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // The outlined mesh's sidecar chunk, for its deform data.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 2,
                     visibility: crate::gpu::ShaderStages::VERTEX,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Storage { read_only: true },

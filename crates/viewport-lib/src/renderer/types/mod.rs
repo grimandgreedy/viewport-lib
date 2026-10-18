@@ -4,44 +4,15 @@
 //! that take raw `wgpu` types. GUI framework adapters (e.g. the egui
 //! `CallbackTrait` impl in the application crate) delegate to these methods.
 
-/// Bind the deform sidecar bind group (index 2) for a mesh-family draw.
-///
-/// On limited devices (`max_bind_groups < 3`, e.g. iced's shared device, which
-/// requests 2) the mesh family compiles 2-group noop pipelines and
-/// `deform.enabled` is false; issuing `set_bind_group(2, ...)` there is a wgpu
-/// validation error. Every mesh-family deform bind goes through this macro so
-/// the guard lives in one greppable place; do not open-code a deform group-2
-/// bind at a draw site. Group-2 binds for features that fundamentally need a
-/// third group (soft body, refraction, scivis LUT, volumes, vector/tensor
-/// instance data, GPU picking) are not deform binds and are not gated: those
-/// features do not run on 2-group devices. The invariant is enforced
-/// headlessly by `two_bind_group_device_renders_without_validation_errors`.
-macro_rules! bind_deform_group {
-    ($pass:expr, $resources:expr, $bg:expr) => {
-        if $resources.deform.enabled {
-            $pass.set_bind_group(2, $bg, &[]);
-        }
-    };
-}
-
-/// Bind a material plugin's group-3 texture bind group for a plugin draw.
+/// Bind a material plugin's group-2 texture bind group for a plugin draw.
 ///
 /// Only called with a bind group resolved by `material_plugin_draw`, which
-/// only exists on devices that passed the `max_bind_groups >= 4` registration
-/// gate, so no runtime capability check is needed here. Route every group-3
-/// material bind through this macro (the same choke-point rule as
-/// `bind_deform_group!` above).
-///
-/// Plugin pipeline layouts always carry a group 2 so that group 3 lands at 3.
-/// Where deformers are off (a device short of storage buffers) that group is
-/// empty, `bind_deform_group!` binds nothing, and this binds the empty group in
-/// its place.
+/// only exists on devices that passed the `max_bind_groups >= 3` registration
+/// gate, so no runtime capability check is needed here. Route every material
+/// bind through this macro so the group index lives in one place.
 macro_rules! bind_material_group {
-    ($pass:expr, $resources:expr, $bg:expr) => {
-        if !$resources.deform.enabled {
-            $pass.set_bind_group(2, &$resources.deform.empty_bind_group, &[]);
-        }
-        $pass.set_bind_group(3, $bg, &[]);
+    ($pass:expr, $bg:expr) => {
+        $pass.set_bind_group(2, $bg, &[])
     };
 }
 
@@ -72,11 +43,11 @@ pub(crate) struct InstancedBatch {
     /// The material plugin whose composed shading this batch draws with, or
     /// `None` for built-in shading. All items in the batch share it (it is
     /// part of the batch key). A plugin batch draws through the plugin's
-    /// pipeline set plus its group-3 texture bind; the set has no culled
+    /// pipeline set plus its group-2 texture bind; the set has no culled
     /// members, so the GPU cull never draws it.
     pub shading_plugin: Option<crate::scene::material::MaterialPluginId>,
     /// The plugin textures every item in the batch names (part of the batch
-    /// key): which group-3 bind group the batch draws with.
+    /// key): which group-2 bind group the batch draws with.
     pub plugin_textures: crate::resources::mesh_sidecar::shade::PluginTextures,
     /// The sampler bound at group-1 binding 2 for the whole batch: the
     /// material's selected sampler, or the default key. Part of the batch key.
@@ -150,7 +121,6 @@ pub(crate) struct GroupInputs {
 pub(crate) struct BatchBound {
     pipeline: Option<*const crate::gpu::RenderPipeline>,
     group1: Option<*const crate::gpu::BindGroup>,
-    deform: Option<*const crate::gpu::BindGroup>,
     geometry: Option<BoundGeometry>,
     records: Option<*const crate::gpu::Buffer>,
     /// A batch drew through a stand-in pipeline while its own compiles. A
@@ -285,8 +255,8 @@ pub(crate) enum BatchPass<'a> {
     Oit,
 }
 
-/// Draw one batch: bind its group-1 bind group, deform group and the
-/// geometry its `DrawKind` names, select the per-object pipeline for `pass`,
+/// Draw one batch: bind its group-1 bind group and the geometry its
+/// `DrawKind` names, select the per-object pipeline for `pass`,
 /// and draw its instance range. Returns false when something it needs (a
 /// pipeline still compiling, a missing bind group or buffer) kept it from
 /// drawing. `bound` carries the state set by the previous batch.
@@ -395,18 +365,7 @@ pub(crate) fn draw_batch<'a, E: MeshDrawEncoder<'a>>(
         bound.group1 = Some(group1 as *const _);
     }
     if let Some(mat_bg) = mat_bg {
-        bind_material_group!(encoder, resources, mat_bg);
-    }
-    let deform_bg = if matches!(batch.draw, DrawKind::NormalLines) {
-        &resources.deform.dummy_bind_group
-    } else {
-        resources
-            .deform
-            .instance_bind_group_for(batch.mesh_id, batch.deform_instance)
-    };
-    if bound.deform != Some(deform_bg as *const _) {
-        bind_deform_group!(encoder, resources, deform_bg);
-        bound.deform = Some(deform_bg as *const _);
+        bind_material_group!(encoder, mat_bg);
     }
     // The record words reach the vertex stage through slot 1, read from the
     // instance buffer the group-1 bind group holds at binding 0.
@@ -525,7 +484,7 @@ pub(crate) enum CulledPass {
 
 /// Draw the GPU-culled batches of `pass` from this viewport's cull-written
 /// indirect args, skipping any `skip` names. Consecutive batches that share
-/// the pipeline, the group-1 and deform bind groups and the slab chunk form a
+/// the pipeline, the group-1 and material bind groups and the slab chunk form a
 /// run drawn with one multi-draw where the backend has it; a run breaks on a
 /// batch-index gap, so a multi-draw never sweeps in a batch this skipped.
 /// Returns the draw commands and buffer binds it issued.
@@ -547,7 +506,6 @@ pub(crate) fn draw_culled_batches(
     let mut words_bound = false;
     let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
     let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
-    let mut cur_deform: Option<*const crate::gpu::BindGroup> = None;
     let mut cur_mat: Option<*const crate::gpu::BindGroup> = None;
     let mut cur_chunks: Option<(u32, u32)> = None;
     let (mut run_start, mut run_len) = (0u64, 0u32);
@@ -595,16 +553,12 @@ pub(crate) fn draw_culled_batches(
         let Some(pipeline) = got.pipeline else {
             continue;
         };
-        let deform = resources
-            .deform
-            .instance_bind_group_for(batch.mesh_id, batch.deform_instance);
         let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
         let g = g as u64;
         if run_len > 0
             && g == run_start + u64::from(run_len)
             && cur_pipe == Some(pipeline as *const _)
             && cur_bg == Some(group1 as *const _)
-            && cur_deform == Some(deform as *const _)
             && cur_mat == mat_bg.map(|b| b as *const _)
             && cur_chunks == Some(chunks)
         {
@@ -628,12 +582,8 @@ pub(crate) fn draw_culled_batches(
             render_pass.set_bind_group(1, group1, &[]);
             cur_bg = Some(group1 as *const _);
         }
-        if cur_deform != Some(deform as *const _) {
-            bind_deform_group!(render_pass, resources, deform);
-            cur_deform = Some(deform as *const _);
-        }
         if let Some(bg) = mat_bg.filter(|bg| cur_mat != Some(*bg as *const _)) {
-            bind_material_group!(render_pass, resources, bg);
+            bind_material_group!(render_pass, bg);
         }
         cur_mat = mat_bg.map(|b| b as *const _);
         if !words_bound {
@@ -672,30 +622,20 @@ impl InstancedBatch {
     }
 
     /// Whether the batch can join a GPU-driven draw group: a culled draw
-    /// with built-in shading (a group binds no plugin group 3) and no
-    /// deformer, whose deform group is the empty one every group binds.
+    /// with built-in shading (a group binds no plugin group 2).
     pub(crate) fn draws_grouped(&self) -> bool {
-        self.draws_culled()
-            && self.shading_plugin.is_none()
-            && self.deform_instance.is_none()
-            && !self
-                .features
-                .has(crate::renderer::pipeline_key::FeatureSet::DEFORM)
+        self.draws_culled() && self.shading_plugin.is_none()
     }
 
     /// Whether the batch casts from the cascade cull's visible lists: an
-    /// indexed draw of the mesh's triangles with no deformer, whose deform
-    /// group is the empty one and which binds the slab chunk as the colour
-    /// pass does. A per-face draw binds its own vertex buffer there, so it
-    /// casts directly.
+    /// indexed draw of the mesh's triangles, which binds the slab chunk as the
+    /// colour pass does. A per-face draw binds its own vertex buffer there, so
+    /// it casts directly.
     pub(crate) fn casts_culled(&self) -> bool {
         matches!(
             self.draw,
             DrawKind::Triangles | DrawKind::Range(..) | DrawKind::Edges
-        ) && self.deform_instance.is_none()
-            && !self
-                .features
-                .has(crate::renderer::pipeline_key::FeatureSet::DEFORM)
+        )
     }
 }
 
@@ -1015,10 +955,6 @@ macro_rules! emit_draw_calls {
             if !slot.xray_object_buffers.is_empty() {
                 render_pass.set_pipeline(resources.outline.xray_pipeline());
                 render_pass.set_bind_group(0, camera_bg, &[]);
-                // The x-ray pipeline shares the outline layout, so group 2 is
-                // part of it whenever deformers are enabled. X-ray draws the
-                // undeformed mesh, so the dummy group is what it wants.
-                bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
                 for (mesh_id, xray) in &slot.xray_object_buffers {
                     let Some(mesh) = resources.mesh_store.get(*mesh_id) else {
                         continue;

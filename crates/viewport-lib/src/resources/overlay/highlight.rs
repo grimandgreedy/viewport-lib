@@ -633,7 +633,8 @@ impl DeviceResources {
 /// - position_override_base:    u32       =  4 bytes  (first vec3 element of the window)
 /// - position_override_len:     u32       =  4 bytes  (element count; u32::MAX = whole buffer)
 /// - deform_flags:              u32       =  4 bytes  (bit i set when deformer slot i is active for this draw)
-/// - _deform_pad:               [u32;3]   = 12 bytes
+/// - deform_table:              u32       =  4 bytes  (the draw's deform table in the binding 2 chunk, 0 none)
+/// - _deform_pad:               [u32;2]   =  8 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct OutlineUniform {
@@ -649,30 +650,28 @@ pub(crate) struct OutlineUniform {
     /// Mirror of `InstanceData::position_override_len`.
     pub(crate) position_override_len: u32, //   4 bytes
     pub(crate) deform_flags: u32,    //   4 bytes
-    pub(crate) _deform_pad: [u32; 3], //  12 bytes
+    /// Mirror of `InstanceData::deform_table`, a word of the sidecar chunk
+    /// bound at binding 2.
+    pub(crate) deform_table: u32, //   4 bytes
+    pub(crate) _deform_pad: [u32; 2], //   8 bytes
 }
 
 pub(crate) struct OutlineObjectBuffers {
     pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
     pub two_sided: bool,
-    /// Per-instance deformer id for the picked node, or `None` when the node
-    /// has no per-instance deformer data. When `Some` and the renderer has
-    /// per-instance data for `(mesh_id, instance_id)`, the outline mask is
-    /// drawn with that bind group so the selection halo tracks the deformed
-    /// silhouette.
-    pub deform_instance: Option<u32>,
     pub mask: OutlineBinding,
 }
 
 /// A uniform buffer and bind group over the outline layout for one mask or
 /// x-ray draw, kept across frames: the next frame's draw at the same position
 /// rewrites the uniform only when it changed and rebuilds the bind group only
-/// when the position-override buffer did.
+/// when the position-override buffer or the sidecar chunk did.
 pub(crate) struct OutlineBinding {
     pub bind_group: crate::gpu::BindGroup,
     buf: crate::gpu::Buffer,
     uniform: OutlineUniform,
     override_buf: crate::gpu::Buffer,
+    sidecar_buf: crate::gpu::Buffer,
 }
 
 impl OutlineBinding {
@@ -683,6 +682,7 @@ impl OutlineBinding {
         layout: &crate::gpu::BindGroupLayout,
         uniform: OutlineUniform,
         override_buf: &crate::gpu::Buffer,
+        sidecar_buf: &crate::gpu::Buffer,
         label: &'static str,
     ) -> Self {
         if let Some(mut old) = old {
@@ -690,9 +690,11 @@ impl OutlineBinding {
                 queue.write_buffer(&old.buf, 0, bytemuck::bytes_of(&uniform));
                 old.uniform = uniform;
             }
-            if old.override_buf != *override_buf {
-                old.bind_group = Self::bind_group(device, layout, &old.buf, override_buf, label);
+            if old.override_buf != *override_buf || old.sidecar_buf != *sidecar_buf {
+                old.bind_group =
+                    Self::bind_group(device, layout, &old.buf, override_buf, sidecar_buf, label);
                 old.override_buf = override_buf.clone();
+                old.sidecar_buf = sidecar_buf.clone();
             }
             return old;
         }
@@ -704,10 +706,11 @@ impl OutlineBinding {
         });
         queue.write_buffer(&buf, 0, bytemuck::bytes_of(&uniform));
         Self {
-            bind_group: Self::bind_group(device, layout, &buf, override_buf, label),
+            bind_group: Self::bind_group(device, layout, &buf, override_buf, sidecar_buf, label),
             buf,
             uniform,
             override_buf: override_buf.clone(),
+            sidecar_buf: sidecar_buf.clone(),
         }
     }
 
@@ -716,6 +719,7 @@ impl OutlineBinding {
         layout: &crate::gpu::BindGroupLayout,
         buf: &crate::gpu::Buffer,
         override_buf: &crate::gpu::Buffer,
+        sidecar_buf: &crate::gpu::Buffer,
         label: &'static str,
     ) -> crate::gpu::BindGroup {
         device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -729,6 +733,10 @@ impl OutlineBinding {
                 crate::gpu::BindGroupEntry {
                     binding: 1,
                     resource: override_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 2,
+                    resource: sidecar_buf.as_entire_binding(),
                 },
             ],
         })

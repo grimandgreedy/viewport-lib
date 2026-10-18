@@ -557,3 +557,97 @@ fn a_short_vertex_scalar_draws_like_its_last_value() {
         "a replace with a different length is rejected"
     );
 }
+
+/// A deformer slot fed from one of the mesh's own attributes reads that
+/// attribute's stream, so a move of the mesh's record (a lightmap set here)
+/// takes the slot with it: a later `replace_attribute` draws the new values.
+/// The slot used to copy from the byte range it found at the call, which a
+/// move left pointing at freed storage.
+#[test]
+fn an_attribute_fed_deform_slot_follows_a_record_move() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    let mut data = box_mesh();
+    let n = data.positions.len();
+    data.attributes
+        .insert("lift".to_string(), AttributeData::Vertex(vec![0.0; n]));
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &data)
+        .unwrap();
+    let slot = renderer
+        .resources_mut()
+        .register_deformer(
+            &device,
+            viewport_lib::resources::DeformerDesc {
+                name: "lift_x",
+                stage: viewport_lib::resources::DeformStage::ObjectSpace,
+                priority: 0,
+                wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    if deform_slot_stride(ctx.slot) > 0u {\n        o.position.x = o.position.x + deform_read_f32(ctx.slot, v.vertex_index, 0u);\n    }\n    return o;\n}\n".to_string(),
+                per_vertex_stride: 4,
+            },
+        )
+        .unwrap()
+        .slot();
+    renderer
+        .resources_mut()
+        .set_deform_slot_source_attribute(&device, mesh_id, slot, "lift")
+        .unwrap();
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.settings.unlit = true;
+    let mut frame = frame_of(vec![item]);
+    let still = renderer.render_offscreen(&device, &queue, &frame, W, H);
+
+    // Move the record, then change the attribute in its new home.
+    let radiance = renderer
+        .resources_mut()
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::linear(1, 1, vec![255; 4]),
+        )
+        .unwrap();
+    renderer
+        .resources_mut()
+        .set_lightmap(
+            &device,
+            mesh_id,
+            &[],
+            viewport_lib::resources::LightmapData::NonDirectional { radiance },
+            viewport_lib::resources::LightmapMode::Replace,
+        )
+        .unwrap();
+    renderer
+        .resources_mut()
+        .replace_attribute(&queue, mesh_id, "lift", &vec![0.6; n])
+        .unwrap();
+    frame.scene.generation += 1;
+    let moved = renderer.render_offscreen(&device, &queue, &frame, W, H);
+
+    // The same shift attached as CPU data: what the slot should read.
+    renderer
+        .resources_mut()
+        .clear_deform_slot_source(&device, mesh_id, slot);
+    let shift = vec![0.6f32; n];
+    renderer.resources_mut().attach_deform_slot(
+        &device,
+        mesh_id,
+        slot,
+        4,
+        bytemuck::cast_slice(&shift),
+    );
+    frame.scene.generation += 1;
+    let expected = renderer.render_offscreen(&device, &queue, &frame, W, H);
+
+    assert_ne!(still, expected, "the shift moves the box");
+    assert_eq!(
+        moved, expected,
+        "after the record moved, the slot must read the attribute's new values"
+    );
+}

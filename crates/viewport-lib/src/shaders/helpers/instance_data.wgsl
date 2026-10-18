@@ -5,8 +5,9 @@
 //
 // Material scalars live in `material_gpu_buf`, read via `material_id`, and the
 // override windows in the mesh's sidecar record. The mesh shaders take the
-// record and stream words and `vertex_base` from vertex buffer slot 1 rather
-// than from this buffer, so their stream reads do not wait on a load of it.
+// record, stream and deform table words and `vertex_base` from vertex buffer
+// slot 1 rather than from this buffer, so their stream reads do not wait on a
+// load of it.
 struct InstanceData {
     model: mat4x4<f32>,                   // offset 0
     colour: vec4<f32>,                    // offset 64 : base colour, opacity in .a
@@ -26,7 +27,7 @@ struct InstanceData {
     warp_stream: u32,                     // offset 144 : first chunk word of the warp stream, 0 none
     lightmap_stream: u32,                 // offset 148 : first chunk word of the lightmap UV1 stream, 0 none
     vertex_base: u32,                     // offset 152 : first vertex of the mesh in its slab chunk
-    _pad: u32,                            // offset 156
+    deform_table: u32,                    // offset 156 : first chunk word of the draw's deform table, 0 none
 };
 
 const INST_SELECTED: u32 = 1u;

@@ -362,7 +362,12 @@ impl ViewportRenderer {
                     position_override_base: override_slice.map_or(0, |s| s.base_element),
                     position_override_len: override_slice.map_or(u32::MAX, |s| s.element_count),
                     deform_flags: resources.deform.flag_bits(item.mesh_id),
-                    _deform_pad: [0; 3],
+                    deform_table: resources.deform.table_word(
+                        item.mesh_id,
+                        item.deform_instance,
+                        mesh.and_then(|m| m.sidecar.as_ref()),
+                    ),
+                    _deform_pad: [0; 2],
                 };
                 let mask = OutlineBinding::reuse_or_new(
                     old_outlines.next(),
@@ -371,12 +376,14 @@ impl ViewportRenderer {
                     &resources.outline.bind_group_layout,
                     uniform,
                     override_buf.unwrap_or(&resources.content.fallback_position_override_buf),
+                    resources
+                        .sidecar
+                        .binding_buffer(mesh.and_then(|m| m.sidecar.as_ref())),
                     "outline_mask_object_bg",
                 );
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id: item.mesh_id,
                     two_sided: resources.material_or_default(item.material).is_two_sided(),
-                    deform_instance: item.deform_instance,
                     mask,
                 });
             }
@@ -399,7 +406,8 @@ impl ViewportRenderer {
                     position_override_base: 0,
                     position_override_len: u32::MAX,
                     deform_flags: 0,
-                    _deform_pad: [0; 3],
+                    deform_table: 0,
+                    _deform_pad: [0; 2],
                 };
                 let mask = OutlineBinding::reuse_or_new(
                     old_outlines.next(),
@@ -408,12 +416,12 @@ impl ViewportRenderer {
                     &resources.outline.bind_group_layout,
                     uniform,
                     &resources.content.fallback_position_override_buf,
+                    resources.sidecar.fallback(),
                     "outline_mask_object_bg",
                 );
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id: item.boundary_mesh_id,
                     two_sided: false,
-                    deform_instance: None,
                     mask,
                 });
             }
@@ -438,7 +446,8 @@ impl ViewportRenderer {
                     position_override_base: 0,
                     position_override_len: u32::MAX,
                     deform_flags: 0,
-                    _deform_pad: [0; 3],
+                    deform_table: 0,
+                    _deform_pad: [0; 2],
                 };
                 let binding = OutlineBinding::reuse_or_new(
                     old_xray.next(),
@@ -447,6 +456,7 @@ impl ViewportRenderer {
                     &resources.outline.bind_group_layout,
                     uniform,
                     &resources.content.fallback_position_override_buf,
+                    resources.sidecar.fallback(),
                     "xray_object_bg",
                 );
                 xray_object_buffers.push((item.mesh_id, binding));
@@ -709,14 +719,6 @@ impl ViewportRenderer {
                 });
 
                 pass.set_bind_group(0, camera_bg, &[]);
-                // Bind group 2 is required by outline_mask_pipeline and
-                // outline_mask_two_sided_pipeline. Set the dummy here so it is
-                // always valid; the mesh outline loop below overrides it per item.
-                bind_deform_group!(
-                    pass,
-                    self.resources,
-                    &self.resources.deform.dummy_bind_group
-                );
                 for outlined in outlines {
                     let Some(mesh) = self.resources.mesh_store.get(outlined.mesh_id) else {
                         continue;
@@ -728,13 +730,6 @@ impl ViewportRenderer {
                     };
                     pass.set_pipeline(pipeline);
                     pass.set_bind_group(1, &outlined.mask.bind_group, &[]);
-                    bind_deform_group!(
-                        pass,
-                        self.resources,
-                        self.resources
-                            .deform
-                            .instance_bind_group_for(outlined.mesh_id, outlined.deform_instance,)
-                    );
                     pass.set_vertex_buffer(
                         0,
                         self.resources.geometry.vertex_slice(mesh.vertex_span),

@@ -145,7 +145,7 @@ impl DeviceResources {
     }
 
     /// A mesh pipeline layout on the bindless member of group 1: the camera
-    /// group, the member, and the deform group when deformers are on.
+    /// group and the member.
     pub(crate) fn object_bindless_layout(
         &mut self,
         device: &crate::gpu::Device,
@@ -157,9 +157,6 @@ impl DeviceResources {
             label,
             &self.binds.camera_bgl,
             self.binds.object_bindless_bgl.as_ref().unwrap(),
-            self.deform
-                .enabled
-                .then_some(&self.deform.bind_group_layout),
         )
     }
 
@@ -186,7 +183,6 @@ impl DeviceResources {
             })
             .collect()
     }
-
 }
 
 #[cfg(test)]
@@ -235,17 +231,11 @@ mod tests {
 
     #[test]
     fn bindless_colour_shader_validates() {
-        validate_bindless(include_str!(concat!(
-            env!("OUT_DIR"),
-            "/mesh_noop.wgsl"
-        )));
+        validate_bindless(include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl")));
     }
 
     #[test]
     fn bindless_oit_shader_validates() {
-        validate_bindless(include_str!(concat!(
-            env!("OUT_DIR"),
-            "/mesh_oit_noop.wgsl"
-        )));
+        validate_bindless(include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl")));
     }
 }

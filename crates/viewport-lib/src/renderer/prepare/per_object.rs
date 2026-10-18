@@ -165,7 +165,9 @@ pub(crate) fn build_instance_record(
         } else {
             mesh.map_or(0, |m| resources.geometry.base_vertex(m.vertex_span) as u32)
         },
-        _pad: 0,
+        deform_table: resources
+            .deform
+            .table_word(item.mesh_id, item.deform_instance, record),
     }
 }
 
@@ -323,14 +325,15 @@ impl ViewportRenderer {
 
     /// Rebuild or drop the cached batch render bundle for this frame.
     ///
-    /// Eligible frames draw the batch list directly (no GPU-driven submission,
-    /// no wireframe mode) with no registered deformers (their bind groups
-    /// change under the recording) and enough opaque draws to be worth the
-    /// recording. The bundle stores the opaque batch draws in batch order;
-    /// blended batches and normal lines draw immediately after it. Per-instance transforms and colours flow through the instance
-    /// buffer the recorded bind groups reference, so camera and object motion
-    /// do not re-record; a batch-list rebuild, an instance-buffer
-    /// reallocation or a rebuilt bind group does.
+    /// Eligible frames are not in wireframe mode and have enough opaque draws
+    /// to be worth the recording; under GPU-driven submission the bundle holds
+    /// the batches the cull does not draw. The bundle stores the opaque batch
+    /// draws in batch order; blended batches and normal lines draw immediately
+    /// after it. Per-instance transforms and colours, and deform slot data,
+    /// flow through buffers the recorded bind groups reference, so camera and
+    /// object motion and a deformer's per-frame writes do not re-record; a
+    /// batch-list rebuild (a sidecar record move among them), an
+    /// instance-buffer reallocation or a rebuilt bind group does.
     pub(super) fn update_per_object_bundle(
         &mut self,
         device: &crate::gpu::Device,
@@ -359,10 +362,7 @@ impl ViewportRenderer {
         let direct_only =
             hdr && self.instancing.gpu_culling_enabled && self.resources.cull.hdr.is_some();
         let plan = 'plan: {
-            if frame.viewport.wireframe_mode
-                || self.instancing.batches.is_empty()
-                || !self.resources.deform.meshes.is_empty()
-            {
+            if frame.viewport.wireframe_mode || self.instancing.batches.is_empty() {
                 break 'plan None;
             }
             if hdr && self.resources.scene.hdr.is_none() {
@@ -520,7 +520,6 @@ impl ViewportRenderer {
             sample_count,
         );
         MeshDrawEncoder::set_bind_group(&mut enc, 0, &camera_bg, &[]);
-        bind_deform_group!(enc, resources, &resources.deform.dummy_bind_group);
 
         // Every opaque batch the pass draws directly.
         let ldr_family = resources.scene.ldr_family();

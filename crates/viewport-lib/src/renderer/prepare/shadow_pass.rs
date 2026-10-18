@@ -383,11 +383,6 @@ impl ViewportRenderer {
                                 &resources.shadow.bind_group,
                                 &[cascade as u32 * 256],
                             );
-                            bind_deform_group!(
-                                bundle_enc,
-                                resources,
-                                &resources.deform.dummy_bind_group
-                            );
                             let mut bound = BoundCaster::default();
                             let mut draws = 0u32;
                             let mut binds = 0u32;
@@ -480,11 +475,6 @@ impl ViewportRenderer {
                             &resources.shadow.bind_group,
                             &[cascade as u32 * 256],
                         );
-                        bind_deform_group!(
-                            shadow_pass,
-                            resources,
-                            &resources.deform.dummy_bind_group
-                        );
                         let mut bound = BoundCaster::default();
                         for (bi, batch) in instancing.batches.iter().enumerate() {
                             let Some(&(start, count)) = ranges[cascade].get(bi) else {
@@ -539,8 +529,8 @@ impl ViewportRenderer {
                 }
 
                 // Every other caster: drawn through the cascade pipelines with
-                // its own group-1 and deform bind groups, by the runs of its
-                // instances that cast and sit in the cascade.
+                // its own group-1 bind group, by the runs of its instances that
+                // cast and sit in the cascade.
                 for cascade in 0..light.effective_cascade_count {
                     set_cascade_tile(&mut shadow_pass, cascade, tile_px, light.tile_size);
                     shadow_pass.set_bind_group(
@@ -591,13 +581,6 @@ impl ViewportRenderer {
                         if bound.group1 != Some(group1 as *const _) {
                             shadow_pass.set_bind_group(1, group1, &[]);
                             bound.group1 = Some(group1 as *const _);
-                        }
-                        let group2 = resources
-                            .deform
-                            .instance_bind_group_for(batch.mesh_id, batch.deform_instance);
-                        if bound.group2 != Some(group2 as *const _) {
-                            bind_deform_group!(shadow_pass, resources, group2);
-                            bound.group2 = Some(group2 as *const _);
                         }
                         let geometry = CasterGeometry::of(resources, batch, mesh);
                         shadow_binds +=
@@ -897,13 +880,6 @@ impl ViewportRenderer {
                             bound_cutout = Some(c.cutout);
                         }
                         pass.set_bind_group(1, c.group1, &[]);
-                        bind_deform_group!(
-                            pass,
-                            resources,
-                            resources
-                                .deform
-                                .instance_bind_group_for(c.batch.mesh_id, c.batch.deform_instance)
-                        );
                         let geometry = CasterGeometry::of(resources, c.batch, c.mesh);
                         geometry.bind(&mut pass, resources, c.mesh, &mut bound);
                         for run in &runs {
@@ -967,7 +943,6 @@ fn draw_shadow_cascades_multi_draw(
             continue;
         };
         pass.set_bind_group(0, &resources.shadow.bind_group, &[cascade as u32 * 256]);
-        bind_deform_group!(pass, resources, &resources.deform.dummy_bind_group);
 
         let mut bound = BoundCaster::default();
         let mut run_start: u64 = 0;
@@ -1301,14 +1276,13 @@ fn caster_runs(
 }
 
 /// What a per-item caster loop last bound, so a run of casters that share a
-/// pipeline, object bind group, deform group and slab chunk binds them once
+/// pipeline, object bind group and slab chunk binds them once
 /// and draws each from the bound chunk with its own base vertex and first
 /// index.
 #[derive(Default)]
 struct BoundCaster {
     pipeline: Option<PipelineKey>,
     group1: Option<*const crate::gpu::BindGroup>,
-    group2: Option<*const crate::gpu::BindGroup>,
     chunks: Option<(u32, u32)>,
     /// The mesh whose own sub-slice is bound, for per-face casters.
     slice: Option<*const crate::resources::GpuMesh>,

@@ -513,11 +513,7 @@ impl crate::resources::DeviceResources {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let mesh_src = if self.deform.enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))
-        };
+        let mesh_src = include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"));
         let source = crate::resources::builders::builtin_hook_env(
             crate::resources::builders::strip_mesh_non_pbr(
                 crate::resources::builders::strip_mesh_discards(
@@ -538,9 +534,6 @@ impl crate::resources::DeviceResources {
             "mesh_pipeline_layout",
             &self.binds.camera_bgl,
             &self.binds.object_bgl,
-            self.deform
-                .enabled
-                .then_some(&self.deform.bind_group_layout),
         );
         let bindless = if self.bindless_textures() {
             let shader = self.shared_module(
@@ -580,11 +573,7 @@ impl crate::resources::DeviceResources {
     /// discard-free twin is stripped from the exact source the discarding
     /// module compiles, and shared by the scene and GPU-culled families.
     pub(crate) fn hdr_mesh_source(&self) -> String {
-        let base = if self.deform.enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))
-        };
+        let base = include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"));
         let source = crate::resources::mesh_sidecar::registry::compose_shader(
             base,
             &self.deform.registrations,
@@ -617,9 +606,6 @@ impl crate::resources::DeviceResources {
             "hdr_mesh_pipeline_layout",
             &self.binds.camera_bgl,
             &self.binds.object_bgl,
-            self.deform
-                .enabled
-                .then_some(&self.deform.bind_group_layout),
         );
         let overlay_shader = crate::resources::builders::wgsl_module(
             device,

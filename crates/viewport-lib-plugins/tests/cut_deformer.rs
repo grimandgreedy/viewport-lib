@@ -328,8 +328,10 @@ fn install_finds_the_registered_deformer() {
     assert_eq!(again.deformer_id(), s.cut.deformer_id());
 }
 
+/// Deformers bind nothing of their own, so the cut installs on a device with
+/// two bind groups (iced's).
 #[test]
-fn install_reports_a_device_without_deformer_support() {
+fn install_works_on_a_two_bind_group_device() {
     let Some((device, _queue)) =
         headless_device_with(&DeviceProfile::low_power("cut-two-groups").max_bind_groups(2))
     else {
@@ -337,5 +339,5 @@ fn install_reports_a_device_without_deformer_support() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, gpu::TextureFormat::Rgba8UnormSrgb);
-    assert!(CutDeformer::install(renderer.resources_mut(), &device).is_err());
+    assert!(CutDeformer::install(renderer.resources_mut(), &device).is_ok());
 }

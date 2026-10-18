@@ -29,13 +29,9 @@ impl DeviceResources {
         // The object pick runs the registered deformers, so a deformed mesh is
         // picked where it is drawn and a deformer's `keep` removes surface from
         // the pick as it does from the colour pass. Composed like the other mesh
-        // shaders, from the stub build on a device without the deform group.
+        // shaders.
         let base_src = crate::resources::mesh_sidecar::registry::compose_shader(
-            if self.deform.enabled {
-                include_str!(concat!(env!("OUT_DIR"), "/pick_id.wgsl"))
-            } else {
-                include_str!(concat!(env!("OUT_DIR"), "/pick_id_noop.wgsl"))
-            },
+            include_str!(concat!(env!("OUT_DIR"), "/pick_id.wgsl")),
             &self.deform.registrations,
         );
         // The default fragment writes a constant `0u` into the primitive-id
@@ -63,16 +59,13 @@ impl DeviceResources {
             crate::resources::builders::wgsl_module(device, "pick_id_shader", base_src)
         };
 
-        let mut bgls = vec![
+        let bgls = [
             self.pick.camera_bgl.as_ref().expect("pick camera bgl"),
             self.pick
                 .bind_group_layout_1
                 .as_ref()
                 .expect("pick instance bgl"),
         ];
-        if self.deform.enabled {
-            bgls.push(&self.deform.bind_group_layout);
-        }
         let layout =
             crate::resources::builders::pipeline_layout(device, "pick_pipeline_layout", &bgls);
 
@@ -144,7 +137,8 @@ impl DeviceResources {
     /// The group 0 and group 1 layouts every surface pick pipeline shares.
     fn create_pick_layouts(&mut self, device: &crate::gpu::Device) {
         // --- group 0: pick camera bind group layout ---
-        // Includes binding 0 (CameraUniform) and binding 6 (ClipVolumesUniform).
+        // Includes binding 0 (CameraUniform), binding 6 (ClipVolumesUniform)
+        // and binding 23 (the deform header).
         // The full camera_bind_group_layout has many more bindings; a separate
         // minimal layout is cleaner and avoids binding unused resources.
         let pick_camera_bgl =
@@ -171,27 +165,42 @@ impl DeviceResources {
                         },
                         count: None,
                     },
+                    crate::resources::builders::uniform_entry(23, crate::gpu::ShaderStages::VERTEX),
                 ],
             });
 
-        // --- group 1: PickInstance storage buffer ---
-        // Visible to both stages: the object-id pipeline reads it in the vertex
-        // stage, and the per-pixel VERTEX / NODE variants also read the model
-        // matrix in the fragment stage to place the hit primitive's corners.
+        // --- group 1: PickInstance storage buffer and the sidecar chunk ---
+        // The instances are visible to both stages: the object-id pipeline
+        // reads them in the vertex stage, and the per-pixel VERTEX / NODE
+        // variants also read the model matrix in the fragment stage to place
+        // the hit primitive's corners. The chunk holds the drawn mesh's deform
+        // data, which the object-id pipeline reads.
         let pick_instance_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("pick_instance_bgl"),
-                entries: &[crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::VERTEX
+                            | crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: crate::gpu::ShaderStages::VERTEX,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
         self.pick.camera_bgl = Some(pick_camera_bgl);

@@ -352,6 +352,7 @@ struct VertexIn {
     @location(7) w_warp: u32,
     @location(8) w_lightmap: u32,
     @location(9) w_vertex_base: u32,
+    @location(10) w_deform: u32,
 };
 
 struct VertexOut {
@@ -411,6 +412,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
     let inst_flags = instances[record].flags;
     let has_sidecar = FEAT_RECORD && (inst_flags & INST_HAS_SIDECAR) != 0u;
     object.uv1_base = in.w_vertex_base;
+    deform_table = in.w_deform;
     // Override > vertex attribute, as in mesh.wgsl; warp layers on top.
     var local_pos = in.position;
     if FEAT_OVERRIDES && (inst_flags & INST_HAS_POSITION_OVERRIDE) != 0u && vi < sc_word(rec + SC_POS_LEN) {

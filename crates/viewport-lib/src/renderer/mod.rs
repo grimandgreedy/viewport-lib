@@ -737,29 +737,9 @@ impl ViewportRenderer {
     /// The storage-buffer floor in one shader stage, wgpu's default. A device
     /// below it cannot render the mesh path at all and [`new`](Self::new)
     /// rejects it. The `raytrace` path tracer's compute layouts bind at most
-    /// eight, so a build with that feature runs on default limits too. Optional
-    /// features that could need more are gated on the device providing the
-    /// headroom (see [`DEFORM_STORAGE_BUFFERS_PER_STAGE`]) rather than
-    /// asserted here, so they degrade instead of crashing.
-    ///
-    /// [`DEFORM_STORAGE_BUFFERS_PER_STAGE`]: Self::DEFORM_STORAGE_BUFFERS_PER_STAGE
+    /// eight, so a build with that feature runs on default limits too, as do
+    /// per-vertex deformers, whose data lives in the mesh's sidecar record.
     pub const MIN_STORAGE_BUFFERS_PER_STAGE: u32 = 8;
-
-    /// The per-stage storage-buffer count per-vertex deformers need: the base
-    /// vertex stage (six: the instance records, the sidecar record chunk, the
-    /// two overrides, the uv1 stream and the GPU cull's visible list) plus the
-    /// two the deform sidecar adds. That is the floor exactly, so any
-    /// device the renderer accepts with three bind groups runs deformers. The
-    /// gate stays so a later vertex-stage binding cannot quietly push the
-    /// deform layouts past a device's limit.
-    ///
-    /// This must equal what the deform-enabled mesh pipeline layout actually
-    /// binds in the vertex stage. A device granted exactly one less passes the
-    /// gate and then fails every pipeline layout that includes the deform
-    /// group, which renders nothing at all. `ViewportGpuResources::new` counts
-    /// the layouts it builds and `debug_assert!`s against this, so adding a
-    /// vertex-stage storage buffer without updating it fails a debug build.
-    pub const DEFORM_STORAGE_BUFFERS_PER_STAGE: u32 = 8;
 
     /// The device limits viewport-lib runs best with, above wgpu's defaults.
     ///
@@ -790,9 +770,9 @@ impl ViewportRenderer {
             .max(Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE)
             .min(adapter_limits.max_storage_buffers_per_shader_stage);
         // Assign the adapter's own maximum (never more than it reports, so the
-        // request always succeeds). A deform-slot buffer for a big morph mesh can
-        // exceed the 128 MiB binding / 256 MiB buffer defaults, which would make
-        // the deform bind group invalid; the base draw path stays under both.
+        // request always succeeds). A big morph mesh's deform slots, which sit in
+        // its sidecar record, can take the record past the 128 MiB binding /
+        // 256 MiB buffer defaults; the base draw path stays under both.
         limits.max_storage_buffer_binding_size = adapter_limits.max_storage_buffer_binding_size;
         limits.max_buffer_size = adapter_limits.max_buffer_size;
         // The scene and per-object groups already take 15 of the default 16
@@ -3536,11 +3516,6 @@ impl ViewportRenderer {
                         self.resources.scene.wireframe(),
                     ) {
                         render_pass.set_pipeline(wf);
-                        bind_deform_group!(
-                            render_pass,
-                            self.resources,
-                            &self.resources.deform.dummy_bind_group
-                        );
                         render_pass.set_bind_group(1, tvm_bg, &[]);
                         if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
                             render_pass.set_vertex_buffer(1, records.slice(..));

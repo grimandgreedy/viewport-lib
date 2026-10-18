@@ -5,7 +5,8 @@
 // (`fs_cutout`) that samples the caster's albedo alpha and discards below
 // its cutoff, so an `AlphaMode::Mask` material punches holes in the shadow
 // instead of casting a solid silhouette.
-// Group 0: Light uniform (light-space view-projection matrix).
+// Group 0: Light uniform (light-space view-projection matrix) and the deform
+// header.
 // Group 1: the mesh group 1 the colour pass binds: the record buffer, the
 // albedo for cutouts, the overrides and, for the culled entry points, the
 // cascade's visible list at binding 15.
@@ -50,6 +51,7 @@ var<private> shadow_keep: f32 = 1.0;
 
 fn shadow_clip_position(position: vec3<f32>, vertex_index: u32, record: u32) -> vec4<f32> {
     object = objects[record];
+    deform_table = object.deform_table;
     // The draw binds at the record's base vertex, so this is the mesh-local
     // index the overrides and deformers read by.
     let vi = vertex_index - object.vertex_base;

@@ -129,9 +129,9 @@ async function checkFeaturePipelines(device, module, name, code) {
     stepMode: "instance",
     attributes: offsets.map((offset, i) => ({ shaderLocation: 5 + i, offset, format: "uint32" })),
   });
-  const entries = [["vs_main", words(160, [108, 116, 144, 148, 152])]];
+  const entries = [["vs_main", words(160, [108, 116, 144, 148, 152, 156])]];
   if (code.includes("fn vs_main_cull")) {
-    entries.push(["vs_main_cull", words(24, [0, 4, 8, 12, 16])]);
+    entries.push(["vs_main_cull", words(24, [0, 4, 8, 12, 16, 20])]);
   }
   for (const [entryPoint, slot1] of entries) {
     for (const on of [true, false]) {

@@ -5,7 +5,7 @@
 //! real splice leans on and those fixtures do not touch: a deformer body
 //! reading its per-vertex slot data through `deform_read_f32`, and a material
 //! plugin authoring the surface through `shade_surface` with its own texture
-//! bound at group 3.
+//! bound at group 2.
 //!
 //! Both need the renderer's recommended device limits, so they skip cleanly
 //! when no adapter offers them.
@@ -114,7 +114,7 @@ fn per_vertex_deformer_addresses_vertices_by_index() {
 }
 
 /// The material plugin's `shade_surface` hook samples the material's texture
-/// at group 3 and tints it from a declared parameter, and editing the
+/// at group 2 and tints it from a declared parameter, and editing the
 /// parameter changes the result without re-registering.
 #[test]
 fn textured_material_plugin_samples_its_texture_and_params() {

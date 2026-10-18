@@ -298,15 +298,6 @@ impl DeviceResources {
         &self.shadow.sampler
     }
 
-    /// Bind group layout for the per-vertex deformation sidecar.
-    ///
-    /// Plugins building pipelines that draw meshes with registered deformers
-    /// add this layout at group 2 so their vertex stage can read from the
-    /// shared `deform_data` / `deform_instance_data` storage buffers.
-    pub fn deform_bind_group_layout(&self) -> &crate::gpu::BindGroupLayout {
-        &self.deform.bind_group_layout
-    }
-
     /// Number of live user-uploaded textures.
     ///
     /// `id` values in `0..texture_count()` are addressable via

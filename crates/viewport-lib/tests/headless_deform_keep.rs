@@ -101,8 +101,8 @@ fn a_keep_hook_cuts_only_the_item_that_selects_it() {
     cuts_only_the_item_that_selects_it(&device, &queue);
 }
 
-/// Deformers fit wgpu's default limits: the deform group adds two vertex-stage
-/// storage buffers to the five the mesh path binds, under the default of eight.
+/// Deformers run on wgpu's default limits: their data lives in the mesh's
+/// sidecar record, so they add no storage binding to the mesh path.
 #[test]
 fn a_keep_hook_cuts_on_a_default_limits_device() {
     let Some((device, queue)) = headless_device_default_limits() else {

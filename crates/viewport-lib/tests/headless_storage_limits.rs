@@ -3,8 +3,8 @@
 //! A consumer that creates its own wgpu device with `Limits::default()` gets
 //! `max_storage_buffers_per_shader_stage = 8`. The renderer must build on that
 //! device (the base lit mesh path fits in 8) instead of panicking, and per-vertex
-//! deformers, whose group adds two vertex-stage buffers to the five the mesh
-//! path binds, must work there too.
+//! deformers, whose data lives in the mesh's sidecar record and adds no storage
+//! binding, must work there too.
 //!
 //! Note what these tests can and cannot catch. Not every backend enforces
 //! `max_storage_buffers_per_shader_stage` as a sum across the groups in a
@@ -12,7 +12,7 @@
 //! so the validation error scopes below stay empty there even when the layout
 //! is over the limit. wgpu 29 and 30 sum them, as Vulkan, DX12 and the browsers
 //! do. The backend-independent guard is the count `ViewportGpuResources::new`
-//! derives from the layouts it builds and checks against these constants,
+//! derives from the layouts it builds and checks against wgpu's default limit,
 //! which fails any debug build. A green run of this file on Metal is
 //! necessary, not sufficient.
 
@@ -64,16 +64,13 @@ fn renderer_builds_on_default_storage_limit() {
     drop(renderer);
 }
 
-/// On a default-limits device the deform group fits, so registering a deformer
-/// succeeds and every pipeline layout it brings in validates.
+/// On a default-limits device registering a deformer succeeds and every
+/// pipeline it rebuilds validates.
 #[test]
 fn deformers_register_on_default_limits() {
     let Some(adapter) = adapter() else {
         return;
     };
-    if adapter.limits().max_bind_groups < 3 {
-        return;
-    }
     let (device, _queue) = device_with_limits(&adapter, wgpu::Limits::default());
     let scope = wgpu::push_error_scope(&device, wgpu::ErrorFilter::Validation);
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
@@ -95,37 +92,12 @@ fn deformers_register_on_default_limits() {
     assert!(error.is_none(), "default limits must validate: {error:?}");
 }
 
-/// The deform gate must sit within the floor the renderer already requires, or
-/// a device the renderer accepts could leave deformers off for no reason. A
-/// vertex-stage binding added to the mesh path moves the gate (the debug-build
-/// count check ties the two), and this is where crossing the floor shows.
-#[test]
-fn the_deform_gate_is_within_the_base_floor() {
-    assert!(
-        ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE
-            <= ViewportRenderer::MIN_STORAGE_BUFFERS_PER_STAGE
-    );
-}
-
-/// With the recommended limits the storage headroom is present, so the deform
-/// group is active and registering a deformer succeeds. Guards against the fix
-/// accidentally disabling deform everywhere.
+/// With the recommended limits registering a deformer succeeds too.
 #[test]
 fn deformer_registration_succeeds_with_recommended_limits() {
     let Some(adapter) = adapter() else {
         return;
     };
-    // Skip on adapters that cannot actually provide the deform headroom. This
-    // compares against the gate, which must equal what the deform-enabled layout
-    // binds: when the two disagreed, an adapter sitting on the gate value ran
-    // this test, registered a deformer successfully, and passed green while
-    // every pipeline in the renderer was invalid.
-    if adapter.limits().max_storage_buffers_per_shader_stage
-        < ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE
-        || adapter.limits().max_bind_groups < 3
-    {
-        return;
-    }
     let limits = ViewportRenderer::recommended_device_limits(&adapter);
     let (device, _queue) = device_with_limits(&adapter, limits);
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);

@@ -276,7 +276,7 @@ impl ViewportRenderer {
 
         let per_object_start = web_time::Instant::now();
         // Set up the pipeline sets of the material plugins the frame references,
-        // and the group-3 bind groups of the texture sets it draws, before draw
+        // and the group-2 bind groups of the texture sets it draws, before draw
         // time (paint has no mutable access). This compiles nothing: each
         // pipeline is built by the first draw that selects it. Unknown ids are
         // ignored and those items fall back to built-in shading.
@@ -589,8 +589,6 @@ impl ViewportRenderer {
                 plugin_draw_calls,
                 plugin_upload_bytes,
                 deform_buffer_reallocations: deform.buffer_reallocations,
-                deform_mesh_bind_groups_rebuilt: deform.mesh_bind_groups_rebuilt,
-                deform_instance_bind_groups_rebuilt: deform.instance_bind_groups_rebuilt,
                 triangles_submitted: triangles,
                 shadow_draw_calls: 0,    // Updated below in shadow pass.
                 shadow_draw_commands: 0, // Updated below in shadow pass.

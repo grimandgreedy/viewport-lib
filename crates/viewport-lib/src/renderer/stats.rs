@@ -384,24 +384,16 @@ pub struct FrameStats {
     /// [`Self::plugin_draw_calls`]: it is what plugins report, not what the
     /// renderer observed.
     pub plugin_upload_bytes: u64,
-    /// Deform slot-storage buffers reallocated since the previous `prepare()`.
+    /// Sidecar records moved or created by deform-slot changes since the
+    /// previous `prepare()`.
     ///
-    /// A slot write that fits its existing buffer is a `write_buffer` and reads
-    /// zero here. A per-frame deformation is a same-size write, so a steady
-    /// animated scene should read zero: a value that tracks the deformed mesh
-    /// count every frame means the writes are reallocating instead.
+    /// Deform slot data lives in the mesh's sidecar record. A slot write that
+    /// fits its existing stream lands in place and reads zero here; an attach,
+    /// a detach or a new source moves the record, copying its other streams. A
+    /// per-frame deformation is a same-size write, so a steady animated scene
+    /// should read zero: a value that tracks the deformed mesh count every
+    /// frame means the writes are restructuring the record instead.
     pub deform_buffer_reallocations: u32,
-    /// Per-mesh deform bind groups rebuilt since the previous `prepare()`.
-    /// One per per-mesh reallocation, since the bind group points at the buffer
-    /// that was replaced.
-    pub deform_mesh_bind_groups_rebuilt: u32,
-    /// Per-instance deform bind groups rebuilt since the previous `prepare()`.
-    ///
-    /// The one that scales: a per-instance reallocation rebuilds one, but a
-    /// per-mesh reallocation rebuilds every instance bind group on that mesh,
-    /// because they bind the mesh buffer too. For a crowd sharing one mesh that
-    /// is one bind group per crowd member per write.
-    pub deform_instance_bind_groups_rebuilt: u32,
     /// Total triangles submitted to the GPU by mesh-family draws. Excludes
     /// plugin-owned geometry, for the reason given on [`Self::draw_calls`].
     pub triangles_submitted: u64,
@@ -670,8 +662,6 @@ mod tests {
         assert_eq!(stats.plugin_draw_calls, 0);
         assert_eq!(stats.plugin_upload_bytes, 0);
         assert_eq!(stats.deform_buffer_reallocations, 0);
-        assert_eq!(stats.deform_mesh_bind_groups_rebuilt, 0);
-        assert_eq!(stats.deform_instance_bind_groups_rebuilt, 0);
         assert!(!stats.gpu_culling_active);
         assert!(stats.gpu_visible_instances.is_none());
         assert!(!stats.shadows_skipped);

@@ -24,9 +24,10 @@ pub enum DeformStage {
 /// The composer prefixes every top-level identifier it finds inside
 /// `wgsl_body` with `<name>__` to keep multiple deformers independent, so the
 /// entry point is written as plain `deform` and dispatched as
-/// `<name>__deform`. The body may read `deform_data` / `deform_instance_data` via the
-/// `deform_read_*` helpers in `deform.wgsl`, and read its slot's parameter
-/// region via `deform_header.slot_params[ctx.slot * 4 + k]`.
+/// `<name>__deform`. The body reads its slot's per-vertex and per-instance
+/// data through the `deform_read_*` and `deform_read_instance_*` helpers in
+/// `deform.wgsl`, and its slot's parameter region via
+/// `deform_header.slot_params[ctx.slot * 4 + k]`.
 ///
 /// # Removing surface
 ///
@@ -77,10 +78,10 @@ pub enum DeformStage {
 /// init they don't touch is filled by the caller.
 ///
 /// `position` is object-space on entry to an `ObjectSpace` body and
-/// world-space on entry to a `WorldSpace` body. `vertex_index` is the
-/// `@builtin(vertex_index)` from the vertex stage. `ctx.slot` is the slot
-/// the registry assigned to this deformer; use it to address `deform_data`
-/// and `deform_instance_data` rather than baking in a literal.
+/// world-space on entry to a `WorldSpace` body. `vertex_index` is the vertex's
+/// index within its mesh, the index slot data is laid out by. `ctx.slot` is
+/// the slot the registry assigned to this deformer; pass it to the
+/// `deform_read_*` helpers rather than baking in a literal.
 ///
 /// # Composition order
 ///

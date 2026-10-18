@@ -5,18 +5,15 @@
 // branch. Stages run object-space first, then world-space after the model
 // transform.
 //
-// Two storage buffers carry slot data:
-//   * `deform_data` is per-mesh. The first `2 * DEFORM_SLOT_COUNT` u32s
-//     hold an `(offset, stride)` pair per slot, in u32 words. Vertex reads
-//     go through the `deform_read_*` helpers.
-//   * `deform_instance_data` is per-(mesh, instance). It carries the same
-//     `(offset, stride)` prefix and is read through the
-//     `deform_read_instance_*` helpers. Used by deformers whose data
-//     varies per instance, e.g. joint palettes.
+// Slot data lives in the mesh's sidecar record, in the bound `sidecar_pool`
+// chunk. A draw's deform table (`deform_table`, a word in that chunk, 0 for
+// none) holds an `(offset, stride)` pair per slot for the per-mesh data, then
+// one per slot for the per-instance data, each offset an absolute word of the
+// chunk. Vertex reads go through the `deform_read_*` helpers, and per-instance
+// reads (joint palettes, say) through `deform_read_instance_*`.
 //
-// Meshes or instances that have no data attached bind dummy buffers whose
-// prefix is all zeros; `deform_slot_stride(slot)` returning zero is the
-// signal a registered body should use to skip its work.
+// A slot with no data reads a zero pair: `deform_slot_stride(slot)` returning
+// zero is the signal a registered body should use to skip its work.
 
 struct DeformVertex {
     position: vec3<f32>,
@@ -30,8 +27,8 @@ struct DeformContext {
     time_seconds: f32,
     flags: u32,
     // Slot index of the deformer reading this context. Set per call by the
-    // composer-emitted dispatch so a body can address `deform_data` and
-    // `deform_instance_data` without baking in a literal.
+    // composer-emitted dispatch so a body can address its slot data without
+    // baking in a literal.
     slot: u32,
 };
 
@@ -43,22 +40,33 @@ struct DeformHeader {
     slot_params: array<vec4<f32>, 32>,
 };
 
-@group(2) @binding(0) var<uniform>        deform_header:        DeformHeader;
-@group(2) @binding(1) var<storage, read>  deform_data:          array<u32>;
-@group(2) @binding(2) var<storage, read>  deform_instance_data: array<u32>;
+@group(0) @binding(23) var<uniform> deform_header: DeformHeader;
+
+// The draw's deform table, set by the entry point before the hooks run.
+var<private> deform_table: u32;
+
+// Words in a deform table: the per-mesh pairs, then the per-instance pairs.
+const DEFORM_INSTANCE_PAIRS: u32 = 16u;
+
+fn deform_table_word(i: u32) -> u32 {
+    if deform_table == 0u {
+        return 0u;
+    }
+    return sidecar_pool[deform_table + i];
+}
 
 fn deform_slot_offset(slot: u32) -> u32 {
-    return deform_data[2u * slot + 0u];
+    return deform_table_word(2u * slot);
 }
 
 fn deform_slot_stride(slot: u32) -> u32 {
-    return deform_data[2u * slot + 1u];
+    return deform_table_word(2u * slot + 1u);
 }
 
 fn deform_read_u32(slot: u32, vertex_index: u32, k: u32) -> u32 {
     let base = deform_slot_offset(slot);
     let stride = deform_slot_stride(slot);
-    return deform_data[base + vertex_index * stride + k];
+    return sidecar_pool[base + vertex_index * stride + k];
 }
 
 fn deform_read_f32(slot: u32, vertex_index: u32, k: u32) -> f32 {
@@ -66,17 +74,17 @@ fn deform_read_f32(slot: u32, vertex_index: u32, k: u32) -> f32 {
 }
 
 fn deform_instance_slot_offset(slot: u32) -> u32 {
-    return deform_instance_data[2u * slot + 0u];
+    return deform_table_word(DEFORM_INSTANCE_PAIRS + 2u * slot);
 }
 
 fn deform_instance_slot_stride(slot: u32) -> u32 {
-    return deform_instance_data[2u * slot + 1u];
+    return deform_table_word(DEFORM_INSTANCE_PAIRS + 2u * slot + 1u);
 }
 
 fn deform_read_instance_u32(slot: u32, element_index: u32, k: u32) -> u32 {
     let base = deform_instance_slot_offset(slot);
     let stride = deform_instance_slot_stride(slot);
-    return deform_instance_data[base + element_index * stride + k];
+    return sidecar_pool[base + element_index * stride + k];
 }
 
 fn deform_read_instance_f32(slot: u32, element_index: u32, k: u32) -> f32 {
@@ -91,28 +99,28 @@ fn deform_read_instance_mat4(slot: u32, element_index: u32) -> mat4x4<f32> {
     let stride = deform_instance_slot_stride(slot);
     let off = base + element_index * stride;
     let c0 = vec4<f32>(
-        bitcast<f32>(deform_instance_data[off + 0u]),
-        bitcast<f32>(deform_instance_data[off + 1u]),
-        bitcast<f32>(deform_instance_data[off + 2u]),
-        bitcast<f32>(deform_instance_data[off + 3u]),
+        bitcast<f32>(sidecar_pool[off + 0u]),
+        bitcast<f32>(sidecar_pool[off + 1u]),
+        bitcast<f32>(sidecar_pool[off + 2u]),
+        bitcast<f32>(sidecar_pool[off + 3u]),
     );
     let c1 = vec4<f32>(
-        bitcast<f32>(deform_instance_data[off + 4u]),
-        bitcast<f32>(deform_instance_data[off + 5u]),
-        bitcast<f32>(deform_instance_data[off + 6u]),
-        bitcast<f32>(deform_instance_data[off + 7u]),
+        bitcast<f32>(sidecar_pool[off + 4u]),
+        bitcast<f32>(sidecar_pool[off + 5u]),
+        bitcast<f32>(sidecar_pool[off + 6u]),
+        bitcast<f32>(sidecar_pool[off + 7u]),
     );
     let c2 = vec4<f32>(
-        bitcast<f32>(deform_instance_data[off + 8u]),
-        bitcast<f32>(deform_instance_data[off + 9u]),
-        bitcast<f32>(deform_instance_data[off + 10u]),
-        bitcast<f32>(deform_instance_data[off + 11u]),
+        bitcast<f32>(sidecar_pool[off + 8u]),
+        bitcast<f32>(sidecar_pool[off + 9u]),
+        bitcast<f32>(sidecar_pool[off + 10u]),
+        bitcast<f32>(sidecar_pool[off + 11u]),
     );
     let c3 = vec4<f32>(
-        bitcast<f32>(deform_instance_data[off + 12u]),
-        bitcast<f32>(deform_instance_data[off + 13u]),
-        bitcast<f32>(deform_instance_data[off + 14u]),
-        bitcast<f32>(deform_instance_data[off + 15u]),
+        bitcast<f32>(sidecar_pool[off + 12u]),
+        bitcast<f32>(sidecar_pool[off + 13u]),
+        bitcast<f32>(sidecar_pool[off + 14u]),
+        bitcast<f32>(sidecar_pool[off + 15u]),
     );
     return mat4x4<f32>(c0, c1, c2, c3);
 }

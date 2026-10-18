@@ -5,9 +5,9 @@
 // this linear depth, sidestepping the inverse perspective non-linearity that
 // makes biasing point shadows awkward.
 //
-// Group 0: per-face uniform (view_proj + light_pos + range, dynamic offset).
-// Group 1: object uniform (model + deform_flags, shared with main pass).
-// Group 2: deformer data (shared with main pass).
+// Group 0: per-face uniform (view_proj + light_pos + range, dynamic offset)
+// and the deform header.
+// Group 1: the mesh group 1 the colour pass binds.
 
 struct PointFace {
     view_proj: mat4x4<f32>,
@@ -56,6 +56,7 @@ struct CasterVertex {
 
 fn caster_vertex(position: vec3<f32>, vertex_index: u32, instance_index: u32) -> CasterVertex {
     object = objects[instance_index];
+    deform_table = object.deform_table;
     // The draw binds at the record's base vertex, so this is the mesh-local
     // index the overrides and deformers read by.
     let vi = vertex_index - object.vertex_base;

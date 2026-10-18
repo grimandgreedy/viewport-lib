@@ -1166,16 +1166,15 @@ impl DeviceResources {
     /// registered deformers and the debug-vis state. Shared by the direct and
     /// GPU-culled families.
     pub(crate) fn oit_mesh_source(&self) -> String {
-        let base = if self.deform.enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/mesh_oit_noop.wgsl"))
-        };
-        let source =
-            crate::resources::mesh_sidecar::registry::compose_shader(base, &self.deform.registrations);
-        crate::resources::builders::builtin_hook_env(
-            crate::resources::builders::strip_debug_vis(source, self.debug_vis_shaders),
-        )
+        let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl"));
+        let source = crate::resources::mesh_sidecar::registry::compose_shader(
+            base,
+            &self.deform.registrations,
+        );
+        crate::resources::builders::builtin_hook_env(crate::resources::builders::strip_debug_vis(
+            source,
+            self.debug_vis_shaders,
+        ))
         .into_owned()
     }
 
@@ -1195,9 +1194,6 @@ impl DeviceResources {
             "oit_pipeline_layout",
             &self.binds.camera_bgl,
             &self.binds.object_bgl,
-            self.deform
-                .enabled
-                .then_some(&self.deform.bind_group_layout),
         );
         let bindless = if self.bindless_textures() {
             let shader = self.shared_module(

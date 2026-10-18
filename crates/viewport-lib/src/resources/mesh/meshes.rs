@@ -1222,6 +1222,8 @@ impl DeviceResources {
             }
             None => None,
         };
+        // The record moved, and its deform tables name absolute words.
+        self.sync_deform_record(device, mesh_id, &[]);
     }
 
     /// Drop the lightmap UV1 stream from `mesh_id`'s record in place. The
@@ -1546,6 +1548,9 @@ impl DeviceResources {
             + data.indices.len() * std::mem::size_of::<u32>())
             as u64;
         let _ = self.mesh_store.replace(mesh_id, new_mesh);
+        // The fresh record holds the attributes only; the mesh's deform slots
+        // follow it there.
+        self.sync_deform_record(device, mesh_id, &[]);
         tracing::debug!(
             mesh_index = mesh_id.index(),
             vertices = data.positions.len(),
@@ -2641,7 +2646,7 @@ impl DeviceResources {
             warp_stream: 0,
             lightmap_stream: 0,
             vertex_base: 0,
-            _pad: 0,
+            deform_table: 0,
         };
         let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -2766,7 +2771,7 @@ impl DeviceResources {
             warp_stream: 0,
             lightmap_stream: 0,
             vertex_base: 0,
-            _pad: 0,
+            deform_table: 0,
         };
         let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),

@@ -293,7 +293,8 @@ impl CurvePickGpu {
             model_c2: model[2],
             model_c3: model[3],
             object_id: pick_id.0 as u32,
-            _pad: [0; 3],
+            deform_table: 0,
+            _pad: [0; 2],
         };
         let buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
             label: Some(label),

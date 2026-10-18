@@ -143,15 +143,29 @@ fn build_surface_pick_meta(frame: &FrameData) -> SurfacePickMeta {
     meta
 }
 
+/// The pick pass's group 1 for each sidecar chunk its meshes sit in: the
+/// shared `PickInstance` buffer beside that chunk, which holds the meshes'
+/// deform data. Meshes without a record take the pool's empty header.
+struct PickInstanceGroups {
+    fallback: crate::gpu::BindGroup,
+    chunks: std::collections::HashMap<u32, crate::gpu::BindGroup>,
+}
+
+impl PickInstanceGroups {
+    fn for_mesh(&self, mesh: &crate::resources::GpuMesh) -> &crate::gpu::BindGroup {
+        mesh.sidecar
+            .as_ref()
+            .and_then(|r| self.chunks.get(&r.chunk()))
+            .unwrap_or(&self.fallback)
+    }
+}
+
 /// Every pick pipeline's draw list plus the sub-object decode map, built once
 /// per query and shared by the point and rect pick passes. Building this is
 /// query-shape-agnostic: it does not know whether the caller wants a single
 /// pixel or a whole rect region back, only which types answer `mask`.
 struct PickDrawSet {
     draws: Vec<(crate::resources::mesh::mesh_store::MeshId, PickInstance)>,
-    /// The deform instance each of `draws` selects, aligned with it, so the pick
-    /// draw binds the same deformer data the colour pass does.
-    deform_instances: Vec<Option<u32>>,
     /// Whether any registered plugin has pickable geometry this frame. Plugin
     /// draws are not collected here; they are issued directly from
     /// `dispatch_plugin_pick` during `record_pick_pass_draws`.
@@ -732,29 +746,31 @@ impl ViewportRenderer {
                     .resources
                     .item_colour_ready(item, colour_hdr, clipping_active)
         };
+        // The instance reads the same deform table as the item's colour draw,
+        // so a deformed mesh is picked where it is drawn.
         let to_instance = |item: &SceneRenderItem| {
             let m = item.model;
+            let record = self
+                .resources
+                .mesh_store
+                .get(item.mesh_id)
+                .and_then(|g| g.sidecar.as_ref());
             PickInstance {
                 model_c0: m[0],
                 model_c1: m[1],
                 model_c2: m[2],
                 model_c3: m[3],
                 object_id: item.settings.pick_id.0 as u32,
-                _pad: [0; 3],
+                deform_table: self.resources.deform.table_word(
+                    item.mesh_id,
+                    item.deform_instance,
+                    record,
+                ),
+                _pad: [0; 2],
             }
         };
 
-        let _instance_from = |model: [[f32; 4]; 4], pick_id: PickId| PickInstance {
-            model_c0: model[0],
-            model_c1: model[1],
-            model_c2: model[2],
-            model_c3: model[3],
-            object_id: pick_id.0 as u32,
-            _pad: [0; 3],
-        };
-
         let mut draws: Vec<(crate::resources::mesh::mesh_store::MeshId, PickInstance)> = Vec::new();
-        let mut deform_instances: Vec<Option<u32>> = Vec::new();
 
         // Surfaces and volume-mesh boundaries draw through the Surface pipeline;
         // skip building their instance data when the mask asks for none of the
@@ -762,7 +778,6 @@ impl ViewportRenderer {
         if PickItemType::Surface.satisfies(mask) {
             for item in scene_items.iter().filter(|i| pickable(i)) {
                 draws.push((item.mesh_id, to_instance(item)));
-                deform_instances.push(item.deform_instance);
             }
             for ri in frame
                 .scene
@@ -772,7 +787,6 @@ impl ViewportRenderer {
                 .filter(pickable)
             {
                 draws.push((ri.mesh_id, to_instance(&ri)));
-                deform_instances.push(None);
             }
         }
 
@@ -813,7 +827,6 @@ impl ViewportRenderer {
 
         PickDrawSet {
             draws,
-            deform_instances,
             has_plugin_pick,
             kinds,
             surface_meta,
@@ -822,14 +835,15 @@ impl ViewportRenderer {
         }
     }
 
-    /// Build the group-1 `PickInstance` storage buffer + bind group for the
-    /// surface-pipeline `draws` list. Shared by the point and rect pick passes.
+    /// Build the group-1 `PickInstance` storage buffer and its bind groups for
+    /// the surface-pipeline `draws` list, one per sidecar chunk the draws'
+    /// meshes sit in. Shared by the point and rect pick passes.
     fn build_pick_instance_bind_group(
         &self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         draws: &[(crate::resources::mesh::mesh_store::MeshId, PickInstance)],
-    ) -> (crate::gpu::Buffer, crate::gpu::BindGroup) {
+    ) -> (crate::gpu::Buffer, PickInstanceGroups) {
         let pick_instances: Vec<PickInstance> = draws.iter().map(|(_, inst)| *inst).collect();
         let pick_instance_bytes = bytemuck::cast_slice(&pick_instances);
         let pick_instance_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -840,20 +854,47 @@ impl ViewportRenderer {
         });
         queue.write_buffer(&pick_instance_buf, 0, pick_instance_bytes);
 
-        let pick_instance_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("pick_instance_bg"),
-            layout: self
+        let layout = self
+            .resources
+            .pick
+            .bind_group_layout_1
+            .as_ref()
+            .expect("ensure_pick_pipeline must be called first");
+        let group = |chunk: &crate::gpu::Buffer| {
+            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                label: Some("pick_instance_bg"),
+                layout,
+                entries: &[
+                    crate::gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: pick_instance_buf.as_entire_binding(),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: 1,
+                        resource: chunk.as_entire_binding(),
+                    },
+                ],
+            })
+        };
+        let mut groups = PickInstanceGroups {
+            fallback: group(self.resources.sidecar.fallback()),
+            chunks: std::collections::HashMap::new(),
+        };
+        for (mesh_id, _) in draws {
+            let Some(record) = self
                 .resources
-                .pick
-                .bind_group_layout_1
-                .as_ref()
-                .expect("ensure_pick_pipeline must be called first"),
-            entries: &[crate::gpu::BindGroupEntry {
-                binding: 0,
-                resource: pick_instance_buf.as_entire_binding(),
-            }],
-        });
-        (pick_instance_buf, pick_instance_bg)
+                .mesh_store
+                .get(*mesh_id)
+                .and_then(|g| g.sidecar.as_ref())
+            else {
+                continue;
+            };
+            groups
+                .chunks
+                .entry(record.chunk())
+                .or_insert_with(|| group(self.resources.sidecar.chunk_buffer(record.chunk())));
+        }
+        (pick_instance_buf, groups)
     }
 
     /// Build the group-0 minimal pick camera uniform buffer + bind group
@@ -890,6 +931,10 @@ impl ViewportRenderer {
                 crate::gpu::BindGroupEntry {
                     binding: 6,
                     resource: self.resources.binds.clip_volume_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 23,
+                    resource: self.resources.deform.header_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -958,7 +1003,7 @@ impl ViewportRenderer {
         &'rp self,
         pick_pass: &mut crate::gpu::RenderPass<'rp>,
         pick_camera_bg: &'rp crate::gpu::BindGroup,
-        pick_instance_bg: &'rp crate::gpu::BindGroup,
+        pick_instance_bg: &'rp PickInstanceGroups,
         draw_set: &PickDrawSet,
         sublevel: &'rp [Option<PickSublevelBind>],
         frame: &'rp FrameData,
@@ -984,6 +1029,7 @@ impl ViewportRenderer {
             let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
                 continue;
             };
+            let pick_instance_bg = pick_instance_bg.for_mesh(mesh);
             match variant {
                 Some(PickSublevelBind::Vertex(bg)) => {
                     pick_pass.set_pipeline(self.resources.pick.vertex_pipeline.as_ref().unwrap());
@@ -1001,18 +1047,6 @@ impl ViewportRenderer {
                     pick_pass.set_pipeline(default_pipeline);
                     pick_pass.set_bind_group(0, pick_camera_bg, &[]);
                     pick_pass.set_bind_group(1, pick_instance_bg, &[]);
-                    let deform_instance = draw_set
-                        .deform_instances
-                        .get(instance_slot)
-                        .copied()
-                        .flatten();
-                    bind_deform_group!(
-                        pick_pass,
-                        self.resources,
-                        self.resources
-                            .deform
-                            .instance_bind_group_for(*mesh_id, deform_instance)
-                    );
                 }
             }
             pick_pass.set_vertex_buffer(0, self.resources.geometry.vertex_slice(mesh.vertex_span));

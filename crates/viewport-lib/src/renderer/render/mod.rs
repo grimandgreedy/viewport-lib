@@ -333,11 +333,6 @@ impl ViewportRenderer {
                             self.resources.scene.wireframe(),
                         ) {
                             render_pass.set_pipeline(wf);
-                            bind_deform_group!(
-                                render_pass,
-                                self.resources,
-                                &self.resources.deform.dummy_bind_group
-                            );
                             render_pass.set_bind_group(1, tvm_bg, &[]);
                             if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
                                 render_pass.set_vertex_buffer(1, records.slice(..));
@@ -1549,16 +1544,6 @@ impl crate::renderer::ViewportRenderer {
                     }
                     render_pass.set_bind_group(1, &batch.bind_group, &[]);
                     render_pass.set_vertex_buffer(1, batch.instance_buf.slice(..));
-                    // The mesh pipeline layout includes the deform bind group
-                    // at index 2. MeshInstanceItem does not expose
-                    // per-instance deform handles, so bind the per-mesh
-                    // fallback (or the dummy group when the mesh has no
-                    // attached deform data).
-                    let deform_bg = self
-                        .resources
-                        .deform
-                        .instance_bind_group_for(batch.mesh_id, None);
-                    bind_deform_group!(render_pass, self.resources, deform_bg);
                     render_pass.set_vertex_buffer(
                         0,
                         self.resources.geometry.vertex_slice(mesh.vertex_span),

@@ -50,9 +50,8 @@ fn post_effect_ctx<'a>(
     }
 }
 
-/// Encode one non-instanced mesh item's draws: bind the object (group 1),
-/// material plugin (group 3), and deform (group 2) groups, pick the pipeline,
-/// and draw. `obj_override` is the item's per-item bind group and the record
+/// Encode one non-instanced mesh item's draws: bind the object (group 1) and
+/// material plugin (group 2) groups, pick the pipeline, and draw. `obj_override` is the item's per-item bind group and the record
 /// buffer it binds, when one was prepared; `None` falls back to the mesh's
 /// shared object bind group and template record. `hdr`
 /// selects the material-plugin pipeline family and `family` the built-in
@@ -116,12 +115,9 @@ pub(super) fn draw_mesh_item(
     let plug =
         resources.material_plugin_draw(material.shading_plugin, &material.plugin_textures, false);
     if let Some((_, mat_bg)) = plug {
-        bind_material_group!(render_pass, resources, mat_bg);
+        bind_material_group!(render_pass, mat_bg);
     }
 
-    let deform_bg = resources
-        .deform
-        .instance_bind_group_for(item.mesh_id, item.deform_instance);
     let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
         matches!(
             a.kind,
@@ -138,7 +134,6 @@ pub(super) fn draw_mesh_item(
                 return;
             };
             render_pass.set_pipeline(wf_pl);
-            bind_deform_group!(render_pass, resources, deform_bg);
             render_pass.set_vertex_buffer(0, vertices);
             render_pass.set_index_buffer(edge_buf.slice(..), crate::gpu::IndexFormat::Uint32);
             render_pass.draw_indexed(
@@ -171,7 +166,6 @@ pub(super) fn draw_mesh_item(
                 return;
             };
             render_pass.set_pipeline(pl);
-            bind_deform_group!(render_pass, resources, deform_bg);
             render_pass.set_vertex_buffer(0, fvb.slice(..));
             render_pass.draw(0..mesh.index_count, obj_index..obj_index + 1);
         }
@@ -179,7 +173,6 @@ pub(super) fn draw_mesh_item(
         let ranges =
             crate::renderer::prepare::active_submesh_materials(item, mesh).zip(submesh_bgs);
         if let Some((mats, bgs)) = ranges {
-            bind_deform_group!(render_pass, resources, deform_bg);
             render_pass.set_vertex_buffer(0, vertices);
             render_pass.set_index_buffer(indices, crate::gpu::IndexFormat::Uint32);
             for (r, (mat, range)) in mats.iter().zip(&mesh.submeshes).enumerate() {
@@ -229,7 +222,7 @@ pub(super) fn draw_mesh_item(
                 };
                 render_pass.set_bind_group(1, bg, &[]);
                 if let Some((_, mat_bg)) = plug_r {
-                    bind_material_group!(render_pass, resources, mat_bg);
+                    bind_material_group!(render_pass, mat_bg);
                 }
                 let first = first_index + range.first_index;
                 render_pass.draw_indexed(
@@ -260,7 +253,6 @@ pub(super) fn draw_mesh_item(
                 return;
             };
             render_pass.set_pipeline(pl);
-            bind_deform_group!(render_pass, resources, deform_bg);
             render_pass.set_vertex_buffer(0, vertices);
             render_pass.set_index_buffer(indices, crate::gpu::IndexFormat::Uint32);
             render_pass.draw_indexed(
@@ -274,7 +266,6 @@ pub(super) fn draw_mesh_item(
         if let (Some(nl_buf), Some(wf_pl)) = (&mesh.normal_line_buffer, family.wireframe()) {
             if mesh.normal_line_count > 0 {
                 render_pass.set_pipeline(wf_pl);
-                bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
                 render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, nl_buf.slice(..));
                 render_pass.set_vertex_buffer(1, mesh.normal_uniform_buf.slice(..));
@@ -829,11 +820,6 @@ impl ViewportRenderer {
                         cull0.words_slice(),
                     ) {
                         grouped = true;
-                        bind_deform_group!(
-                            render_pass,
-                            resources,
-                            &resources.deform.dummy_bind_group
-                        );
                         render_pass.set_vertex_buffer(1, words);
                         let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
                         let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
@@ -995,11 +981,6 @@ impl ViewportRenderer {
                     {
                         if let Some(mesh) = resources.mesh_store.get(*mesh_id) {
                             render_pass.set_pipeline(hdr_wf);
-                            bind_deform_group!(
-                                render_pass,
-                                resources,
-                                &resources.deform.dummy_bind_group
-                            );
                             render_pass.set_bind_group(1, tvm_bg, &[]);
                             if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
                                 render_pass.set_vertex_buffer(1, records.slice(..));
@@ -1449,11 +1430,6 @@ impl ViewportRenderer {
                             cull0.words_slice(),
                         ) {
                             grouped = true;
-                            bind_deform_group!(
-                                oit_pass,
-                                resources,
-                                &resources.deform.dummy_bind_group
-                            );
                             oit_pass.set_vertex_buffer(1, words);
                             let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
                             let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
@@ -2345,14 +2321,6 @@ impl ViewportRenderer {
                 if !slot.xray_object_buffers.is_empty() {
                     overlay_pass.set_pipeline(self.resources.outline.xray_pipeline());
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
-                    // The x-ray pipeline shares the outline layout, so group 2 is
-                    // part of it whenever deformers are enabled. X-ray draws the
-                    // undeformed mesh, so the dummy group is what it wants.
-                    bind_deform_group!(
-                        overlay_pass,
-                        self.resources,
-                        &self.resources.deform.dummy_bind_group
-                    );
                     for (mesh_id, xray) in &slot.xray_object_buffers {
                         let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
                             continue;

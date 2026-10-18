@@ -34,7 +34,7 @@ pub use viewport_lib_types::plugin::material::{
 
 /// A material's plugin textures, one id per slot. Upload refuses a slot past
 /// the plugin's `texture_count`, so a stored material's set is what its plugin
-/// binds. Materials with equal sets share a group-3 bind group and can share a
+/// binds. Materials with equal sets share a group-2 bind group and can share a
 /// batch.
 pub(crate) type PluginTextures =
     [Option<crate::resources::TextureId>; MATERIAL_PLUGIN_MAX_TEXTURES];
@@ -105,7 +105,7 @@ pub struct ShadingHookDesc {
     /// shadow samples) is kept.
     pub needs_back_hemisphere: bool,
     /// Number of plugin textures. When non-zero, the composed module declares
-    /// `material_sampler` at `@group(3) @binding(0)` and
+    /// `material_sampler` at `@group(2) @binding(0)` and
     /// `material_texture_0..N` at bindings 1.., which hook bodies sample with
     /// `textureSampleGrad(..., surf.uv_ddx, surf.uv_ddy)` or
     /// `textureSampleLevel`. Texture views bind per material; unset slots
@@ -308,12 +308,12 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
     s = s.replace(PBR_SELECT, PBR_FORCED);
 
     // Splice the prefixed body above the fragment stage, preceded by the
-    // declared parameters and the group-3 textures.
+    // declared parameters and the group-2 textures.
     let anchor = "fn compute_surface(";
     let idx = s
         .find(anchor)
         .ok_or_else(|| "missing compute_surface anchor".to_string())?;
-    // The group-3 declarations are only emitted when the hook declares
+    // The group-2 declarations are only emitted when the hook declares
     // textures, so a hook without them composes to a module with the standard
     // 3-group interface (the internal builtin-hook A/B knob relies on this to
     // swap base pipeline modules without new bind groups).
@@ -344,10 +344,10 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
         body.push_str("    return p;\n}\n");
     }
     if hook.desc.texture_count > 0 {
-        body.push_str("@group(3) @binding(0) var material_sampler: sampler;\n");
+        body.push_str("@group(2) @binding(0) var material_sampler: sampler;\n");
         for t in 0..hook.desc.texture_count {
             body.push_str(&format!(
-                "@group(3) @binding({}) var material_texture_{t}: texture_2d<f32>;\n",
+                "@group(2) @binding({}) var material_texture_{t}: texture_2d<f32>;\n",
                 t + 1
             ));
         }
@@ -566,16 +566,15 @@ impl crate::resources::DeviceResources {
         device: &crate::gpu::Device,
         desc: ShadingHookDesc,
     ) -> ViewportResult<ShadingHookId> {
-        // Hook pipelines carry a 4-group layout (group 3 holds the plugin's
-        // textures), so custom shading needs the wgpu
-        // default of 4 bind groups. iced's shared device requests 2 (see
-        // notes/iced-two-bind-group-ceiling.md); fail here with a clear
-        // message instead of at module validation.
+        // Hook pipelines carry a 3-group layout (group 2 holds the plugin's
+        // textures), so custom shading needs three bind groups. iced's shared
+        // device requests 2; fail here with a clear message instead of at
+        // module validation.
         let max_groups = device.limits().max_bind_groups;
-        if max_groups < 4 {
+        if max_groups < 3 {
             return Err(ViewportError::ShadeShaderInvalid {
                 reason: format!(
-                    "shading hook '{}' requires max_bind_groups >= 4, but the device \
+                    "shading hook '{}' requires max_bind_groups >= 3, but the device \
                      reports {max_groups}; custom shading is unavailable on this device",
                     desc.name
                 ),
@@ -585,7 +584,7 @@ impl crate::resources::DeviceResources {
         let stored = StoredShadingHook::analyse(desc)?;
 
         for shader_name in SHADE_FAMILY_SHADERS {
-            let Some(base) = registry::lookup_lit_source(shader_name, self.deform.enabled) else {
+            let Some(base) = registry::lookup_source(shader_name) else {
                 return Err(ViewportError::ShadeShaderInvalid {
                     reason: format!("internal: shader '{shader_name}' missing from shader catalog"),
                 });
@@ -631,7 +630,7 @@ impl crate::resources::DeviceResources {
         shader_name: &str,
     ) -> Option<String> {
         let hook = self.shade_hooks.get(id.0)?;
-        let base = registry::lookup_lit_source(shader_name, self.deform.enabled)?;
+        let base = registry::lookup_source(shader_name)?;
         let with_deform = registry::compose_shader(base, &self.deform.registrations);
         compose_shade_shader(&with_deform, hook).ok()
     }
@@ -689,8 +688,8 @@ struct PluginSetContext {
 
 /// The lit pipelines composed for one material plugin: the LDR and HDR
 /// families from `mesh.wgsl` and the OIT accumulate pipelines from
-/// `mesh_oit.wgsl`, all on the 4-group layout (camera, object, deform, plugin
-/// params).
+/// `mesh_oit.wgsl`, all on the 3-group layout (camera, object, plugin
+/// textures).
 ///
 /// Each pipeline, and each of the three shader modules behind them, is built
 /// by the first draw that selects it, under the renderer's compilation
@@ -962,7 +961,7 @@ pub struct MaterialPluginStats {
     pub params: u32,
     /// Declared texture slots.
     pub texture_count: u32,
-    /// Distinct texture sets with a group-3 bind group built, across the
+    /// Distinct texture sets with a group-2 bind group built, across the
     /// materials drawn so far. Each draws as its own batch.
     pub texture_sets: u32,
     /// Render pipelines built for this plugin so far. Each is built by the
@@ -979,7 +978,7 @@ pub struct MaterialPluginStats {
 }
 
 /// GPU state per registered material plugin: its declared parameters, the
-/// group-3 layout and sampler, one group-3 bind group per texture set its
+/// group-2 layout and sampler, one group-2 bind group per texture set its
 /// materials name, and the lazily built pipeline sets (invalidated by deformer
 /// registration and debug-vis toggles, rebuilt on the next prepare that
 /// references them).
@@ -1151,7 +1150,7 @@ impl crate::resources::DeviceResources {
         Ok(MaterialPluginId::from_index(id))
     }
 
-    /// Build one texture set's group-3 bind group, resolving texture ids
+    /// Build one texture set's group-2 bind group, resolving texture ids
     /// against the texture store (fallback: 1x1 white).
     fn build_plugin_texture_group(
         &self,
@@ -1186,7 +1185,7 @@ impl crate::resources::DeviceResources {
         })
     }
 
-    /// Build the group-3 bind group for one of a plugin's texture sets if it
+    /// Build the group-2 bind group for one of a plugin's texture sets if it
     /// does not exist yet. Called from prepare for the sets the frame draws.
     pub(crate) fn ensure_plugin_texture_group(
         &mut self,
@@ -1215,7 +1214,7 @@ impl crate::resources::DeviceResources {
         self.material_plugin_epoch = self.material_plugin_epoch.wrapping_add(1);
     }
 
-    /// The group-3 bind group for a plugin texture set: its own once prepare
+    /// The group-2 bind group for a plugin texture set: its own once prepare
     /// has built it, the all-white default otherwise.
     fn plugin_texture_group<'a>(
         gpu: &'a MaterialPluginGpu,
@@ -1393,7 +1392,6 @@ impl crate::resources::DeviceResources {
             &[
                 &self.binds.camera_bgl,
                 &self.binds.object_bgl,
-                self.deform.slot_layout(),
                 &gpu.bind_group_layout,
             ],
         );
@@ -1409,7 +1407,6 @@ impl crate::resources::DeviceResources {
                 &[
                     &self.binds.camera_bgl,
                     self.binds.object_bindless_bgl.as_ref().unwrap(),
-                    self.deform.slot_layout(),
                     &gpu.bind_group_layout,
                 ],
             ))
@@ -1449,7 +1446,7 @@ impl crate::resources::DeviceResources {
     }
 
     /// Resolve a plugin and texture set to the plugin's pipeline set and the
-    /// set's group-3 bind group. `None` when there is no plugin, the id is
+    /// set's group-2 bind group. `None` when there is no plugin, the id is
     /// unknown (e.g. deserialized from another session), or the pipelines have
     /// not been built yet; callers fall back to the built-in pipelines.
     pub(crate) fn material_plugin_draw(
@@ -1565,7 +1562,10 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         let row = stats.iter().find(|s| s.id == id).expect("stats row");
         let sets = if resources.bindless_textures() { 2 } else { 1 };
         // Every member, with every feature and with none.
-        assert_eq!(row.pipelines_built, 2 * MaterialPluginPipelines::COUNT * sets);
+        assert_eq!(
+            row.pipelines_built,
+            2 * MaterialPluginPipelines::COUNT * sets
+        );
 
         let unknown = MaterialPluginId::from_index(9999);
         assert!(!resources.material_plugin_pipelines_ready(unknown));
@@ -1714,17 +1714,17 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
             return;
         };
         let composed = compose_shade_shader(base, &hook).expect("compose");
-        assert!(composed.contains("@group(3) @binding(0) var material_sampler: sampler;"));
+        assert!(composed.contains("@group(2) @binding(0) var material_sampler: sampler;"));
         assert!(
-            composed.contains("@group(3) @binding(1) var material_texture_0: texture_2d<f32>;")
+            composed.contains("@group(2) @binding(1) var material_texture_0: texture_2d<f32>;")
         );
         assert!(
-            composed.contains("@group(3) @binding(2) var material_texture_1: texture_2d<f32>;")
+            composed.contains("@group(2) @binding(2) var material_texture_1: texture_2d<f32>;")
         );
-        // Textureless hooks declare no group 3 at all.
+        // Textureless hooks declare no group 2 at all.
         let plain = stored("plain", TOON_BODY, false);
         let composed = compose_shade_shader(base, &plain).expect("compose");
-        assert!(!composed.contains("@group(3)"));
+        assert!(!composed.contains("@group(2)"));
     }
 
     #[test]
@@ -1753,8 +1753,8 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
                 composed.contains("params = rim__load_params(shade_material);"),
                 "{shader} loads params before any hook runs"
             );
-            // Parameters ride the material block, not group 3.
-            assert!(!composed.contains("@group(3)"), "{shader}");
+            // Parameters ride the material block, not group 2.
+            assert!(!composed.contains("@group(2)"), "{shader}");
         }
         // No layout, no struct.
         let plain = stored("plain", TOON_BODY, false);
@@ -1925,9 +1925,9 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
         let composed = compose_builtin_pbr_hook(base).expect("lit shader composes");
         assert!(composed.contains("fn builtin_pbr__shade_light("));
         assert!(composed.contains("Lo += builtin_pbr__shade_light(surf, LightSample(L, radiance,"));
-        // The body reads neither params nor textures, so no group-3
+        // The body reads neither params nor textures, so no group-2
         // declarations appear and the module keeps the standard interface.
-        assert!(!composed.contains("@group(3)"));
+        assert!(!composed.contains("@group(2)"));
         // Backface early-continue kept (needs_back_hemisphere = false).
         assert!(composed.contains("if dot(N, L) <= 0.0 { continue; }"));
         // Non-lit shaders pass through as None.
@@ -1964,7 +1964,6 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
             "builtin_hook_test_layout",
             &resources.binds.camera_bgl,
             &resources.binds.object_bgl,
-            Some(&resources.deform.bind_group_layout),
         );
         let (_pipeline, captured) = crate::resources::builders::capture_validation(&device, || {
             crate::resources::mesh::mesh_pipelines::ldr_mesh_pipeline_with(
@@ -2105,7 +2104,6 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
             "shade_test_layout",
             &resources.binds.camera_bgl,
             &resources.binds.object_bgl,
-            Some(&resources.deform.bind_group_layout),
         );
         let (_pipeline, captured) = crate::resources::builders::capture_validation(&device, || {
             crate::resources::mesh::mesh_pipelines::ldr_mesh_pipeline_with(

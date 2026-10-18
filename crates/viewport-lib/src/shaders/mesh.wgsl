@@ -406,12 +406,14 @@ struct VertexIn {
     // The record words the vertex stage uses as addresses, fetched per
     // instance from vertex buffer slot 1 so a stream read never waits on a
     // load of the record: the sidecar record base, the colour, warp and
-    // lightmap streams, and the mesh's first vertex in its slab chunk.
+    // lightmap streams, the mesh's first vertex in its slab chunk and the
+    // deform table.
     @location(5) w_record: u32,
     @location(6) w_colour: u32,
     @location(7) w_warp: u32,
     @location(8) w_lightmap: u32,
     @location(9) w_vertex_base: u32,
+    @location(10) w_deform: u32,
 };
 
 struct VertexOut {
@@ -472,6 +474,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
     let rec = in.w_record;
     let has_sidecar = FEAT_RECORD && (flags & INST_HAS_SIDECAR) != 0u;
     object.uv1_base = in.w_vertex_base;
+    deform_table = in.w_deform;
     if FEAT_OVERRIDES && has_sidecar && object.has_position_override != 0u {
         object.position_override_base = sc_word(rec + SC_POS_BASE);
         object.position_override_len = sc_word(rec + SC_POS_LEN);

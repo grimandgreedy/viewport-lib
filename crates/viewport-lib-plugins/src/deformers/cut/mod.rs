@@ -207,8 +207,7 @@ impl CutDeformer {
     /// Register the deformer, or find it if it is already registered.
     ///
     /// Takes one of the renderer's deformer slots, whatever the number of cut
-    /// items. Fails on a device without deformer support, or when every slot
-    /// is taken.
+    /// items. Fails when every slot is taken.
     pub fn install(resources: &mut DeviceResources, device: &gpu::Device) -> ViewportResult<Self> {
         if let Some(id) = resources.deformer_id_by_name(DEFORMER_NAME) {
             return Ok(Self { id });

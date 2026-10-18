@@ -19,6 +19,9 @@
 //! | 7 | stream count |
 //! | 8.. | the stream table, `(offset, len)` per stream (offset in words from the record base, len in elements), then the streams |
 //!
+//! A deformed mesh's slot data and deform tables are streams too; see
+//! `mesh_sidecar::deform`.
+//!
 //! The table sits at a fixed offset so a shader reaches a stream in one
 //! dependent load. It never grows in place: adding a stream moves the record.
 //!
@@ -54,16 +57,37 @@ pub(crate) enum StreamKind {
     Extension,
     /// One `vec4<f32>` per vertex: lightmap UV in `.xy`, atlas page in `.z`.
     LightmapUv,
+    /// A deformer slot's per-mesh data, one word an element.
+    DeformSlot(u8),
+    /// A deformer slot's data for one deform instance, one word an element.
+    DeformInstanceSlot(u8, u32),
+    /// A deform table: an `(offset, stride)` pair per slot for the per-mesh
+    /// data, then one per slot for the instance's (`Some`) or zero (`None`).
+    DeformTable(Option<u32>),
 }
 
 impl StreamKind {
     /// Words per element.
     pub(crate) fn words(self) -> u32 {
         match self {
-            StreamKind::Scalar | StreamKind::FaceScalar => 1,
+            StreamKind::Scalar
+            | StreamKind::FaceScalar
+            | StreamKind::DeformSlot(_)
+            | StreamKind::DeformInstanceSlot(..)
+            | StreamKind::DeformTable(_) => 1,
             StreamKind::Vector => 3,
             StreamKind::FaceColour | StreamKind::Extension | StreamKind::LightmapUv => 4,
         }
+    }
+
+    /// Whether the stream belongs to the mesh's deform data.
+    pub(crate) fn is_deform(self) -> bool {
+        matches!(
+            self,
+            StreamKind::DeformSlot(_)
+                | StreamKind::DeformInstanceSlot(..)
+                | StreamKind::DeformTable(_)
+        )
     }
 }
 
@@ -113,6 +137,16 @@ impl StreamData {
             name: name.into(),
             words: bytemuck::cast_slice(values).to_vec(),
             given: values.len() as u32,
+        }
+    }
+
+    /// A stream of whole words, every one supplied.
+    pub(crate) fn from_words(kind: StreamKind, words: Vec<u32>) -> Self {
+        Self {
+            kind,
+            name: String::new(),
+            given: words.len() as u32 / kind.words(),
+            words,
         }
     }
 
@@ -425,6 +459,27 @@ impl SidecarPool {
             );
         } else {
             self.write_stream(record, stream, words);
+        }
+    }
+
+    /// Write `bytes` at byte `offset` of `chunk` now when nothing is queued
+    /// ahead of it, otherwise queue it behind the earlier work. For a part of
+    /// one stream rewritten in place.
+    pub(crate) fn write_bytes_with(
+        &mut self,
+        queue: &gpu::Queue,
+        chunk: u32,
+        offset: u64,
+        bytes: &[u8],
+    ) {
+        if self.ops.is_empty() {
+            queue.write_buffer(self.slab.buffer(chunk), offset, bytes);
+        } else {
+            self.ops.push(Op::Write {
+                chunk,
+                offset,
+                words: bytemuck::pod_collect_to_vec(bytes),
+            });
         }
     }
 
