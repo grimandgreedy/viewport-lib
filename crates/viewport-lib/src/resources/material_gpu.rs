@@ -541,6 +541,13 @@ impl MaterialTable {
         Some(index)
     }
 
+    /// Block `index`'s `item_flags`, or zeros past the end.
+    pub(crate) fn item_flags(&self, index: u32) -> [u32; 4] {
+        self.blocks
+            .get(index as usize)
+            .map_or([0; 4], |b| b.item_flags)
+    }
+
     pub(crate) fn write(&mut self, index: u32, block: MaterialGpu) {
         self.blocks[index as usize] = block;
         self.mark(index as usize);

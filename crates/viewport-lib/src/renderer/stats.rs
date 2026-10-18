@@ -643,6 +643,16 @@ pub struct FrameStats {
     /// skipped this frame and draws once it is ready. Always zero under
     /// `Blocking`. The same number as `ViewportRenderer::pipelines_pending`.
     pub pipelines_pending: u32,
+    /// Mesh pipelines built for a set of shader features rather than with
+    /// every feature compiled in, over the renderer's life. A mesh batch draws
+    /// through the pipeline built for the features its items use; each new
+    /// combination a scene brings builds one. A count that keeps rising means
+    /// the scene keeps bringing new combinations.
+    pub feature_pipelines_built: u32,
+    /// Mesh draws this frame that stayed on the pipeline with every feature
+    /// compiled in because their pipeline family already held its limit of
+    /// feature sets. Same image, more shading cost.
+    pub feature_sets_capped: u32,
     /// True when GPU-driven culling is active this frame.
     ///
     /// False when the device does not support `INDIRECT_FIRST_INSTANCE` or

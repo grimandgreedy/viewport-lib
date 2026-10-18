@@ -2,6 +2,7 @@ use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
 
 mod instanced;
+pub(crate) use instanced::feature_set_violations as instanced_feature_set_violations;
 mod lighting;
 mod math;
 mod mesh_material;
@@ -377,6 +378,15 @@ impl ViewportRenderer {
                 self.frame_counter,
             );
         settle_gpu_culling(&mut self.instancing, &resources.pipeline_compiler, device);
+        #[cfg(debug_assertions)]
+        {
+            let wrong = instanced::feature_set_violations(resources, &self.instancing);
+            debug_assert!(
+                wrong.is_empty(),
+                "mesh batches drawn without features their records use:\n  {}",
+                wrong.join("\n  ")
+            );
+        }
         let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0;
 
         let geometry_start = web_time::Instant::now();

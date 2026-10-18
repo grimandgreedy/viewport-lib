@@ -346,6 +346,36 @@ pub struct LazyFamily<C, const N: usize, P = crate::gpu::RenderPipeline> {
     compiler: Arc<PipelineCompiler>,
     slots: [PipelineSlot<P>; N],
     build: fn(&C, usize) -> P,
+    features: Option<Box<FeatureSlots<C, P>>>,
+}
+
+/// Live feature sets a family holds before a draw that asks for another
+/// stays on the universal member.
+pub(crate) const FEATURE_SETS_PER_FAMILY: usize = 32;
+
+/// The scoped lazy axis beside a family's eager members: member `i` built
+/// with a [`FeatureSet`](crate::renderer::pipeline_key::FeatureSet), keyed by
+/// value. Entries are only ever added, so a slot's address is stable and a
+/// draw can hold the pipeline for the life of the family.
+struct FeatureSlots<C, P> {
+    build: fn(&C, usize, crate::renderer::pipeline_key::FeatureSet) -> P,
+    /// `(member << 8 | feature bits) + 1` per slot in use; 0 is empty.
+    keys: [std::sync::atomic::AtomicU32; FEATURE_SETS_PER_FAMILY],
+    len: AtomicUsize,
+    insert: Mutex<()>,
+    slots: [PipelineSlot<P>; FEATURE_SETS_PER_FAMILY],
+}
+
+/// What [`LazyFamily::get_features`] found.
+pub(crate) struct FeatureGet<'a, P> {
+    /// The pipeline to draw with, or `None` when nothing for the member is
+    /// ready yet.
+    pub(crate) pipeline: Option<&'a P>,
+    /// The universal member stands in while the asked-for set compiles. It
+    /// draws the same image.
+    pub(crate) stand_in: bool,
+    /// The family was full, so the universal member draws instead.
+    pub(crate) capped: bool,
 }
 
 impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, N, P> {
@@ -355,7 +385,86 @@ impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, 
             compiler,
             slots: std::array::from_fn(|_| PipelineSlot::new()),
             build,
+            features: None,
         }
+    }
+
+    /// Give the family a feature axis: `build` makes member `i` with a
+    /// feature set, and [`get_features`](Self::get_features) reads it.
+    pub(crate) fn with_features(
+        mut self,
+        build: fn(&C, usize, crate::renderer::pipeline_key::FeatureSet) -> P,
+    ) -> Self {
+        self.features = Some(Box::new(FeatureSlots {
+            build,
+            keys: std::array::from_fn(|_| std::sync::atomic::AtomicU32::new(0)),
+            len: AtomicUsize::new(0),
+            insert: Mutex::new(()),
+            slots: std::array::from_fn(|_| PipelineSlot::new()),
+        }));
+        self
+    }
+
+    /// Member `i` built with `feats`. The universal set, or a family with no
+    /// feature axis, is the eager member itself. Otherwise the set's pipeline
+    /// is asked for (and compiled under the policy) the first time it is
+    /// seen, and the universal member stands in until it is ready, or for
+    /// good once the family holds [`FEATURE_SETS_PER_FAMILY`] sets.
+    pub(crate) fn get_features(
+        &self,
+        i: usize,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+    ) -> FeatureGet<'_, P> {
+        let universal = |stand_in, capped| FeatureGet {
+            pipeline: self.get(i),
+            stand_in,
+            capped,
+        };
+        let Some(f) = self.features.as_deref() else {
+            return universal(false, false);
+        };
+        if feats == crate::renderer::pipeline_key::FeatureSet::UNIVERSAL {
+            return universal(false, false);
+        }
+        let key = ((i as u32) << 8 | feats.bits() as u32) + 1;
+        let find = |len: usize| {
+            f.keys[..len]
+                .iter()
+                .position(|k| k.load(Ordering::Acquire) == key)
+        };
+        let slot = match find(f.len.load(Ordering::Acquire)) {
+            Some(s) => s,
+            None => {
+                let _guard = f.insert.lock().unwrap();
+                let len = f.len.load(Ordering::Acquire);
+                match find(len) {
+                    Some(s) => s,
+                    None if len == FEATURE_SETS_PER_FAMILY => return universal(false, true),
+                    None => {
+                        f.keys[len].store(key, Ordering::Release);
+                        f.len.store(len + 1, Ordering::Release);
+                        len
+                    }
+                }
+            }
+        };
+        let ctx = Arc::clone(&self.ctx);
+        let build = f.build;
+        match f.slots[slot].get(&self.compiler, move || build(&ctx, i, feats)) {
+            Some(p) => FeatureGet {
+                pipeline: Some(p),
+                stand_in: false,
+                capped: false,
+            },
+            None => universal(true, false),
+        }
+    }
+
+    /// Feature sets this family has been asked for.
+    pub(crate) fn feature_sets(&self) -> usize {
+        self.features
+            .as_deref()
+            .map_or(0, |f| f.len.load(Ordering::Acquire))
     }
 
     /// What the builds read.

@@ -1199,15 +1199,18 @@ impl DeviceResources {
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
-        self.oit.pipeline = Some(crate::resources::pipeline_slot::LazyFamily::new(
-            oit::OitContext {
-                device: device.clone(),
-                layout,
-                shader,
-            },
-            std::sync::Arc::clone(&self.pipeline_compiler),
-            oit::build_per_object,
-        ));
+        self.oit.pipeline = Some(
+            crate::resources::pipeline_slot::LazyFamily::new(
+                oit::OitContext {
+                    device: device.clone(),
+                    layout,
+                    shader,
+                },
+                std::sync::Arc::clone(&self.pipeline_compiler),
+                oit::build_per_object,
+            )
+            .with_features(oit::build_per_object_features),
+        );
     }
 
     /// The SSAA colour resolve and its depth half, which downsamples the

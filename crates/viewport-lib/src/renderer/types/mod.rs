@@ -123,6 +123,9 @@ pub(crate) struct FatBatch {
     /// The batch has an active scalar attribute, which keeps the discarding
     /// pipeline (NaN samples discard).
     pub has_attribute: bool,
+    /// The shader features the batch's records use: the union over them.
+    /// The batch draws through the pipeline built with exactly these.
+    pub features: crate::renderer::pipeline_key::FeatureSet,
     /// Scene index of the item the batch's first record came from, and the
     /// submesh range it draws when it is a range record. Every record in the
     /// batch shares the facts its bind group hashes, so the first stands for
@@ -284,6 +287,22 @@ pub(crate) fn draw_fat_batch<'a, E: MeshDrawEncoder<'a>>(
     };
     let lines = matches!(fat.draw, FatDraw::Edges | FatDraw::NormalLines);
     let two_sided = PipelineKey::two_sided(batch.two_sided);
+    let feats = if resources.mesh_universal {
+        crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
+    } else {
+        fat.features
+    };
+    // A feature-set pipeline, or the universal one while it compiles: both
+    // draw the same image.
+    let mut take = |got: crate::resources::pipeline_slot::FeatureGet<'a, _>| {
+        bound.stand_in |= got.stand_in;
+        if got.capped {
+            resources
+                .frame_feature_sets_capped
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        got.pipeline
+    };
     let plug = resources.material_plugin_draw(batch.shading_plugin, &batch.plugin_textures);
     let (pipeline, mat_bg): (
         Option<&crate::gpu::RenderPipeline>,
@@ -313,7 +332,7 @@ pub(crate) fn draw_fat_batch<'a, E: MeshDrawEncoder<'a>>(
                 // The plugin's per-object set is not composed yet.
                 (None, None)
             } else if batch.is_transparent {
-                (family.transparent(), None)
+                (take(family.transparent_features(feats)), None)
             } else {
                 // Early-Z: a batch that can never discard draws through
                 // the discard-free twin.
@@ -330,22 +349,7 @@ pub(crate) fn draw_fat_batch<'a, E: MeshDrawEncoder<'a>>(
                             .may_discard(batch.mesh_id, fat.deform_instance),
                     ..PipelineKey::default()
                 };
-                // A mesh with no sidecar record takes the pipeline with the
-                // sidecar reads compiled out, or the full one while that
-                // compiles: both draw the same image.
-                let lean = PipelineKey {
-                    no_sidecar: mesh.sidecar.is_none(),
-                    ..key
-                };
-                let pl = if lean.no_sidecar && *hdr {
-                    family.opaque(lean).or_else(|| {
-                        bound.stand_in = true;
-                        family.opaque(key)
-                    })
-                } else {
-                    family.opaque(key)
-                };
-                (pl, None)
+                (take(family.opaque_features(key, feats)), None)
             }
         }
         FatPass::Oit => {
@@ -356,7 +360,10 @@ pub(crate) fn draw_fat_batch<'a, E: MeshDrawEncoder<'a>>(
             } else if batch.shading_plugin.is_some() {
                 (None, None)
             } else {
-                (resources.oit.per_object(two_sided), None)
+                (
+                    take(resources.oit.per_object_features(two_sided, feats)),
+                    None,
+                )
             }
         }
     };

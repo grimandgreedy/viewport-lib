@@ -144,6 +144,7 @@ egui-adapter-036 = ["viewport-lib-input/egui-adapter-036"]
 minify-shaders = []
 # Read the renderer's benchmarking switches from the environment
 # (VIEWPORT_MESH_NO_DISCARD, VIEWPORT_MESH_PBR_ONLY, VIEWPORT_MESH_BUILTIN_HOOK,
+# VIEWPORT_MESH_UNIVERSAL,
 # VIEWPORT_DISABLE_PER_OBJECT_BUNDLE, VIEWPORT_DISABLE_BUNDLE_CHURN_GATE,
 # VIEWPORT_SLAB_CHUNK_BYTES). Off by default, so a shipped binary neither
 # reads nor names them. For measuring the renderer, not for applications.

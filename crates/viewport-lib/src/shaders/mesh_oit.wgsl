@@ -238,6 +238,14 @@ var<private> object: Object;
 // The mesh's sidecar record chunk (see mesh.wgsl).
 @group(1) @binding(6) var<storage, read> sidecar_pool: array<u32>;
 // #include "helpers/sidecar.wgsl"
+// Optional features, one constant each, as in mesh.wgsl.
+override FEAT_RECORD: bool = true;
+override FEAT_COLOUR_STREAM: bool = true;
+override FEAT_WARP: bool = true;
+override FEAT_OVERRIDES: bool = true;
+override FEAT_LIGHTMAP: bool = true;
+override FEAT_MATCAP: bool = true;
+override FEAT_DEFORM: bool = true;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
 @group(1) @binding(12) var emissive_tex: texture_2d<f32>;
@@ -379,13 +387,13 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     // mesh.wgsl; each read is behind the flag that needs it.
     let rec = instances[instance_index].sidecar_record;
     let inst_flags = instances[instance_index].flags;
-    let has_sidecar = (inst_flags & INST_HAS_SIDECAR) != 0u;
+    let has_sidecar = FEAT_RECORD && (inst_flags & INST_HAS_SIDECAR) != 0u;
     if has_sidecar {
         object.uv1_base = instances[instance_index].uv1_base;
     }
     // Override > vertex attribute, as in mesh.wgsl; warp layers on top.
     var local_pos = in.position;
-    if (inst_flags & INST_HAS_POSITION_OVERRIDE) != 0u && in.vertex_index < sc_word(rec + SC_POS_LEN) {
+    if FEAT_OVERRIDES && (inst_flags & INST_HAS_POSITION_OVERRIDE) != 0u && in.vertex_index < sc_word(rec + SC_POS_LEN) {
         let pi = (sc_word(rec + SC_POS_BASE) + in.vertex_index) * 3u;
         if pi + 2u < arrayLength(&position_override_buffer) {
             local_pos = vec3<f32>(
@@ -395,14 +403,14 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
             );
         }
     }
-    if has_sidecar && object.has_warp != 0u {
+    if FEAT_WARP && has_sidecar && object.has_warp != 0u {
         let warp = instances[instance_index].warp_stream;
         if warp != 0u {
             local_pos += sc_vec3(warp + in.vertex_index * 3u) * object.warp_scale;
         }
     }
     var local_normal = in.normal;
-    if (inst_flags & INST_HAS_NORMAL_OVERRIDE) != 0u && in.vertex_index < sc_word(rec + SC_NRM_LEN) {
+    if FEAT_OVERRIDES && (inst_flags & INST_HAS_NORMAL_OVERRIDE) != 0u && in.vertex_index < sc_word(rec + SC_NRM_LEN) {
         let ni = (sc_word(rec + SC_NRM_BASE) + in.vertex_index) * 3u;
         if ni + 2u < arrayLength(&normal_override_buffer) {
             local_normal = vec3<f32>(
@@ -414,7 +422,9 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     }
     var dv = DeformVertex(local_pos, local_normal, in.vertex_index);
     let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, object.deform_flags, 0u);
-    dv = viewport_deform_object_space(dv, dctx);
+    if FEAT_DEFORM {
+        dv = viewport_deform_object_space(dv, dctx);
+    }
     let model3 = mat3x3<f32>(
         object.model[0].xyz,
         object.model[1].xyz,
@@ -423,7 +433,9 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     let world_pos4 = object.model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;
     dv.normal = normalize(model3 * dv.normal);
-    dv = viewport_deform_world_space(dv, dctx);
+    if FEAT_DEFORM {
+        dv = viewport_deform_world_space(dv, dctx);
+    }
     // <viewport-deform-keep> out.deform_keep = viewport_deform_keep(dv, dctx);
     let world_pos = vec4<f32>(dv.position, 1.0);
     out.clip_pos = camera.view_proj * world_pos;
@@ -441,7 +453,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     let colour_stream = instances[instance_index].colour_stream;
     var has_attr = false;
     var raw_scalar = 0.0;
-    if has_sidecar && object.has_attribute != 0u && object.use_face_colour == 0u && colour_stream != 0u {
+    if FEAT_COLOUR_STREAM && has_sidecar && object.has_attribute != 0u && object.use_face_colour == 0u && colour_stream != 0u {
         has_attr = true;
         raw_scalar = sc_f32(colour_stream + idx);
     }
@@ -450,14 +462,14 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     let sv_is_nan = has_attr && (sv_bits & 0x7F800000u) == 0x7F800000u && (sv_bits & 0x007FFFFFu) != 0u;
     out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
     out.face_colour = vec4<f32>(1.0);
-    if has_sidecar && object.use_face_colour != 0u && colour_stream != 0u {
+    if FEAT_COLOUR_STREAM && has_sidecar && object.use_face_colour != 0u && colour_stream != 0u {
         out.face_colour = sc_vec4(colour_stream + 4u * idx);
     }
     // Lightmap UV1 through the draw's placement, as in mesh.wgsl.
     out.lightmap_uv = vec2<f32>(0.0);
     out.lightmap_page = 0.0;
     let lm = instances[instance_index].lightmap_stream;
-    if has_sidecar && lm != 0u {
+    if FEAT_LIGHTMAP && has_sidecar && lm != 0u {
         let lm_sidecar = sc_vec4(lm + 4u * idx);
         let placement = instances[instance_index].lightmap_scale_bias;
         out.lightmap_uv = lm_sidecar.xy * placement.xy + placement.zw;
@@ -687,7 +699,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     var base_colour = obj_colour.rgb;
 
     // Per-face RGBA colour: use directly, bypassing all lighting and colourmap logic.
-    if object.use_face_colour != 0u {
+    if FEAT_COLOUR_STREAM && object.use_face_colour != 0u {
         var fc = in.face_colour;
         if object.selected != 0u {
             fc = mix(fc, vec4<f32>(1.0, 0.55, 0.1, 1.0), 0.35);
@@ -701,7 +713,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     }
 
     // Scalar attribute colour override.
-    if object.has_attribute != 0u {
+    if FEAT_COLOUR_STREAM && object.has_attribute != 0u {
         if in.is_nan_scalar > 0.5 {
             if object.use_nan_colour == 0u {
                 discard;
@@ -893,7 +905,7 @@ fn compute_lit(
             // Subtractive lightmap: the main directional light is baked in, so
             // suppress its realtime direct to avoid double counting (transparent
             // surfaces have no realtime shadow to add back).
-            if !(object.lightmap_mode == 4u && i == 0u) {
+            if !(FEAT_LIGHTMAP && object.lightmap_mode == 4u && i == 0u) {
                 Lo += pbr_light_contrib(N, V, L, radiance, base_colour, metallic, roughness, F0);
             }
             // </viewport-shade-slot:light>
@@ -951,7 +963,7 @@ fn compute_lit(
         // Baked lightmap: replace, add, or occlude the ambient term. Force the
         // base mip: derivative-based selection over tightly-packed atlas charts
         // reads as blocky bands on the mesh.
-        if object.lightmap_mode != 0u {
+        if FEAT_LIGHTMAP && object.lightmap_mode != 0u {
             // Scene-atlas placement: map the object's [0,1] unwrap into its sub-rect
             // and add its base layer to the per-vertex page. Identity scale/bias and
             // layer 0 reproduce a per-mesh (single- or multi-page) lightmap exactly.
@@ -1007,7 +1019,7 @@ fn compute_lit(
         }
         // Baked lightmap: replace, add, or occlude the ambient term. Force the
         // base mip (see the ambient branch above).
-        if object.lightmap_mode != 0u {
+        if FEAT_LIGHTMAP && object.lightmap_mode != 0u {
             // Scene-atlas placement: map the object's [0,1] unwrap into its sub-rect
             // and add its base layer to the per-vertex page. Identity scale/bias and
             // layer 0 reproduce a per-mesh (single- or multi-page) lightmap exactly.

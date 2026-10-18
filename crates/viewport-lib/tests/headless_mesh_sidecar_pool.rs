@@ -442,8 +442,9 @@ fn copies_of_a_lightmapped_mesh_sample_their_own_rects() {
     );
 }
 
-/// A per-object draw of a mesh with no sidecar record takes the pipeline with
-/// the sidecar reads compiled out; a mesh with a record keeps the full one.
+/// A per-object draw takes the pipeline built for the features its batch
+/// uses: a mesh with no sidecar record compiles every feature out, and a mesh
+/// with a record keeps only the record reads.
 #[test]
 fn a_mesh_without_a_record_draws_through_the_lean_pipeline() {
     let Some((device, queue)) = headless_device() else {
@@ -484,12 +485,12 @@ fn a_mesh_without_a_record_draws_through_the_lean_pipeline() {
     };
     let lean = built(&mut renderer, plain);
     assert!(
-        lean.iter().any(|l| l.contains("nosidecar")),
+        lean.iter().any(|l| l.ends_with("_feat00")),
         "a mesh without a record built {lean:?}"
     );
     let full = built(&mut renderer, with_record);
     assert!(
-        full.iter().any(|l| !l.contains("nosidecar")),
+        full.iter().any(|l| l.ends_with("_feat01")),
         "a mesh with a record built {full:?}"
     );
 }

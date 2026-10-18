@@ -53,12 +53,6 @@ pub(crate) struct PipelineKey {
     /// into this by the caller before the key is built, since they are not a
     /// property of the item itself.
     pub no_discard_eligible: bool,
-    /// The mesh has no sidecar record, so the pipeline may compile the
-    /// vertex stage's sidecar reads out. Only the HDR opaque per-object
-    /// family has these variants; every other family ignores the field and
-    /// draws with the full shader, which handles a record-less mesh at
-    /// runtime.
-    pub no_sidecar: bool,
 }
 
 impl PipelineKey {
@@ -76,11 +70,116 @@ impl PipelineKey {
     /// family offers.
     #[cfg(test)]
     pub fn all() -> impl Iterator<Item = PipelineKey> {
-        (0u8..16).map(|bits| PipelineKey {
+        (0u8..8).map(|bits| PipelineKey {
             two_sided: bits & 1 != 0,
             cutout: bits & 2 != 0,
             no_discard_eligible: bits & 4 != 0,
-            no_sidecar: bits & 8 != 0,
         })
+    }
+}
+
+/// Which optional shader features a mesh pipeline compiles in. Each bit is a
+/// WGSL `override` constant in `mesh.wgsl` and `mesh_oit.wgsl`; a block under
+/// a false constant is compiled out. Every block also tests its per-draw flag,
+/// so the universal set (every bit on) draws any item, and a set with a bit
+/// off draws the same image for every item that does not use the feature.
+///
+/// The set is a lazily built axis beside [`PipelineKey`]: the eager members of
+/// a family are built universal, and a draw whose set is not built yet draws
+/// the universal member while it compiles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+pub(crate) struct FeatureSet(u8);
+
+impl FeatureSet {
+    /// The mesh's sidecar record: the override windows and every stream read.
+    pub const RECORD: u8 = 1;
+    /// The scalar or face-colour stream, the LUT and NaN colour, face colours.
+    pub const COLOUR_STREAM: u8 = 2;
+    /// The warp stream.
+    pub const WARP: u8 = 4;
+    /// The position and normal override buffers.
+    pub const OVERRIDES: u8 = 8;
+    /// Lightmap UVs and sampling, the shadowmask, the subtractive mode.
+    pub const LIGHTMAP: u8 = 16;
+    /// Matcap shading.
+    pub const MATCAP: u8 = 32;
+    /// The deformer hooks.
+    pub const DEFORM: u8 = 64;
+
+    /// Every feature compiled out.
+    pub const NONE: Self = Self(0);
+    /// Every feature compiled in: the eager pipelines.
+    pub const UNIVERSAL: Self = Self(127);
+
+    /// The WGSL constant each bit sets.
+    const CONSTANTS: [(u8, &'static str); 7] = [
+        (Self::RECORD, "FEAT_RECORD"),
+        (Self::COLOUR_STREAM, "FEAT_COLOUR_STREAM"),
+        (Self::WARP, "FEAT_WARP"),
+        (Self::OVERRIDES, "FEAT_OVERRIDES"),
+        (Self::LIGHTMAP, "FEAT_LIGHTMAP"),
+        (Self::MATCAP, "FEAT_MATCAP"),
+        (Self::DEFORM, "FEAT_DEFORM"),
+    ];
+
+    pub fn bits(self) -> u8 {
+        self.0
+    }
+
+    pub fn has(self, bit: u8) -> bool {
+        self.0 & bit != 0
+    }
+
+    pub fn with(self, bit: u8, on: bool) -> Self {
+        if on { Self(self.0 | bit) } else { self }
+    }
+
+    pub fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// The features an instance record and its material block use. A batch's
+    /// set is the union over its records.
+    pub fn of_record(
+        inst: &crate::resources::mesh::instancing::InstanceData,
+        material_flags: [u32; 4],
+    ) -> Self {
+        use crate::resources::material_gpu::item_flags as m;
+        use crate::resources::mesh::instancing::instance_flags as f;
+        let flag = |bit: u32| inst.flags & bit != 0;
+        Self::NONE
+            .with(Self::RECORD, flag(f::HAS_SIDECAR))
+            .with(
+                Self::COLOUR_STREAM,
+                flag(f::HAS_ATTRIBUTE) || flag(f::USE_FACE_COLOUR),
+            )
+            .with(Self::WARP, flag(f::HAS_WARP))
+            .with(
+                Self::OVERRIDES,
+                flag(f::HAS_POSITION_OVERRIDE) || flag(f::HAS_NORMAL_OVERRIDE),
+            )
+            .with(
+                Self::LIGHTMAP,
+                inst.lightmap_stream != 0
+                    || material_flags[1] != 0
+                    || material_flags[0] & (m::LIGHTMAP_DIRECTIONAL | m::HAS_SHADOWMASK) != 0,
+            )
+            .with(Self::MATCAP, material_flags[0] & m::USE_MATCAP != 0)
+            .with(Self::DEFORM, inst.deform_flags != 0)
+    }
+
+    /// The pipeline constants for this set: the features it leaves out set
+    /// false, the rest left at their `true` default.
+    pub fn constants(self) -> Vec<(&'static str, f64)> {
+        Self::CONSTANTS
+            .iter()
+            .filter(|(bit, _)| !self.has(*bit))
+            .map(|(_, name)| (*name, 0.0))
+            .collect()
+    }
+
+    /// A label suffix naming the set, for the build log.
+    pub fn label(self, base: &str) -> String {
+        format!("{base}_feat{:02x}", self.0)
     }
 }

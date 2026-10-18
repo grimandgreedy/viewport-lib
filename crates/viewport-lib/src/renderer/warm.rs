@@ -221,6 +221,7 @@ impl ViewportRenderer {
             if let Some(f) = &r.scene.hdr {
                 f.request_all();
             }
+            r.scene.request_plain_hdr();
             if let Some(f) = &r.instancing.hdr {
                 f.request_all();
             }

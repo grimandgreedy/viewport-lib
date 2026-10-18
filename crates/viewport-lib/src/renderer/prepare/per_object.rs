@@ -380,6 +380,7 @@ impl ViewportRenderer {
                 }
             }
             self.resources.force_po_discard.hash(&mut h);
+            self.resources.mesh_universal.hash(&mut h);
             Some(h.finish())
         };
 

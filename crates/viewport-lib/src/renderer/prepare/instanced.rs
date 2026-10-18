@@ -360,6 +360,53 @@ fn fat_key(
     ))
 }
 
+/// Records of the current batches whose features fall outside their batch's
+/// feature set, one line each. A batch draws through the pipeline built for
+/// its set, so a record outside it would draw without a feature it uses. The
+/// record's features are taken from its flags, its material block as the
+/// table holds it now, and the mesh's deformer slots as they are now, so a
+/// set left stale by an edit that did not repack shows up here. Empty in a
+/// release build, which keeps no records.
+pub(crate) fn feature_set_violations(
+    resources: &DeviceResources,
+    instancing: &InstancingState,
+) -> Vec<String> {
+    #[cfg(debug_assertions)]
+    {
+        use crate::renderer::pipeline_key::FeatureSet;
+        let mut out = Vec::new();
+        for (bi, batch) in instancing.batches.iter().enumerate() {
+            let Some(fat) = &batch.fat else { continue };
+            let start = batch.instance_offset as usize;
+            let end = start + batch.instance_count as usize;
+            for record in instancing.cached_records.get(start..end).unwrap_or(&[]) {
+                let needs = FeatureSet::of_record(
+                    record,
+                    resources.material_table.item_flags(record.material_id),
+                )
+                .with(
+                    FeatureSet::DEFORM,
+                    resources.deform.flag_bits(batch.mesh_id) != 0,
+                );
+                if needs.union(fat.features) != fat.features {
+                    out.push(format!(
+                        "batch {bi} (mesh {:?}): set {:02x}, record needs {:02x}",
+                        batch.mesh_id,
+                        fat.features.bits(),
+                        needs.bits()
+                    ));
+                }
+            }
+        }
+        out
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (resources, instancing);
+        Vec::new()
+    }
+}
+
 /// Visible items that draw through a fat batch: the count the batch cache
 /// keys on, so a per-frame change that moves an item between lean and fat
 /// rebuilds without a generation bump.
@@ -737,6 +784,7 @@ impl ViewportRenderer {
 
                         let mut bounds_min = glam::Vec3::splat(f32::MAX);
                         let mut bounds_max = glam::Vec3::splat(f32::MIN);
+                        let mut features = crate::renderer::pipeline_key::FeatureSet::NONE;
                         for entry in batch_entries {
                             let item = entry.item;
                             // Recover this item's light-probe SH block (assigned
@@ -803,6 +851,14 @@ impl ViewportRenderer {
                                 record.custom_data_id = custom_data_id;
                                 record
                             };
+                            if rep.fat.is_some() {
+                                features = features.union(
+                                    crate::renderer::pipeline_key::FeatureSet::of_record(
+                                        &record,
+                                        resources.material_table.item_flags(record.material_id),
+                                    ),
+                                );
+                            }
                             all_instances.push(record);
                             if let Some(aabb) = &mesh_aabb {
                                 let model = glam::Mat4::from_cols_array_2d(&item.model);
@@ -840,6 +896,7 @@ impl ViewportRenderer {
                             bind_key: 0,
                             deform_instance: rep.item.deform_instance,
                             has_attribute: rep.item.active_attribute.is_some(),
+                            features,
                             rep_idx: rep.idx,
                             rep_range: match rep.kind {
                                 RecordKind::Range(r) => Some(r),
@@ -979,6 +1036,10 @@ impl ViewportRenderer {
 
             instancing.cached_instance_count = all_instances.len();
             instancing.cached_aabbs = all_aabbs;
+            #[cfg(debug_assertions)]
+            {
+                instancing.cached_records = all_instances.clone();
+            }
             // The cached shadow render bundles replay the batch draw sequence;
             // any change to the batch list (not just structure: textures and
             // cutout flags pick pipelines and bind groups too) invalidates them.

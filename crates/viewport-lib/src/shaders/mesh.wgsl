@@ -270,9 +270,17 @@ var<private> object: Object;
 // draw words, reached through the record at `sidecar_record`.
 @group(1) @binding(6) var<storage, read> sidecar_pool: array<u32>;
 // #include "helpers/sidecar.wgsl"
-// False in the pipelines built for meshes with no sidecar record, which
-// compiles every sidecar read out of the vertex stage.
-override SIDECAR_READS: bool = true;
+// Optional features, one constant each. A pipeline sets a constant false
+// when none of its draws uses the feature, which compiles the feature out.
+// Every block below also tests its per-draw flag, so with every constant
+// true any item draws correctly.
+override FEAT_RECORD: bool = true;
+override FEAT_COLOUR_STREAM: bool = true;
+override FEAT_WARP: bool = true;
+override FEAT_OVERRIDES: bool = true;
+override FEAT_LIGHTMAP: bool = true;
+override FEAT_MATCAP: bool = true;
+override FEAT_DEFORM: bool = true;
 @group(1) @binding(7) var matcap_texture: texture_2d<f32>;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
@@ -434,15 +442,15 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     // words in the bound chunk (0 for none). A mesh without a record reads
     // nothing; each read below is behind the flag that needs it.
     let rec = instances[instance_index].sidecar_record;
-    let has_sidecar = SIDECAR_READS && (instances[instance_index].flags & INST_HAS_SIDECAR) != 0u;
+    let has_sidecar = FEAT_RECORD && (instances[instance_index].flags & INST_HAS_SIDECAR) != 0u;
     if has_sidecar {
         object.uv1_base = instances[instance_index].uv1_base;
     }
-    if has_sidecar && object.has_position_override != 0u {
+    if FEAT_OVERRIDES && has_sidecar && object.has_position_override != 0u {
         object.position_override_base = sc_word(rec + SC_POS_BASE);
         object.position_override_len = sc_word(rec + SC_POS_LEN);
     }
-    if has_sidecar && object.has_normal_override != 0u {
+    if FEAT_OVERRIDES && has_sidecar && object.has_normal_override != 0u {
         object.normal_override_base = sc_word(rec + SC_NRM_BASE);
         object.normal_override_len = sc_word(rec + SC_NRM_LEN);
     }
@@ -450,7 +458,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     // storage buffer, replace `in.position` outright; warp is then layered on top
     // additively. Same idea for normals further down.
     var local_pos = in.position;
-    if object.has_position_override != 0u && in.vertex_index < object.position_override_len {
+    if FEAT_OVERRIDES && object.has_position_override != 0u && in.vertex_index < object.position_override_len {
         // base/len slice a window out of a pooled buffer; base = 0 and
         // len = 0xffffffff reproduce the whole-buffer behaviour.
         let pi = (object.position_override_base + in.vertex_index) * 3u;
@@ -463,14 +471,14 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
             );
         }
     }
-    if has_sidecar && object.has_warp != 0u {
+    if FEAT_WARP && has_sidecar && object.has_warp != 0u {
         let warp = instances[instance_index].warp_stream;
         if warp != 0u {
             local_pos += sc_vec3(warp + in.vertex_index * 3u) * object.warp_scale;
         }
     }
     var local_normal = in.normal;
-    if object.has_normal_override != 0u && in.vertex_index < object.normal_override_len {
+    if FEAT_OVERRIDES && object.has_normal_override != 0u && in.vertex_index < object.normal_override_len {
         let ni = (object.normal_override_base + in.vertex_index) * 3u;
         let nlen = arrayLength(&normal_override_buffer);
         if ni + 2u < nlen {
@@ -483,7 +491,9 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     }
     var dv = DeformVertex(local_pos, local_normal, in.vertex_index);
     let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, object.deform_flags, 0u);
-    dv = viewport_deform_object_space(dv, dctx);
+    if FEAT_DEFORM {
+        dv = viewport_deform_object_space(dv, dctx);
+    }
     let model3 = mat3x3<f32>(
         object.model[0].xyz,
         object.model[1].xyz,
@@ -492,7 +502,9 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     let world_pos4 = object.model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;
     dv.normal = normalize(model3 * dv.normal);
-    dv = viewport_deform_world_space(dv, dctx);
+    if FEAT_DEFORM {
+        dv = viewport_deform_world_space(dv, dctx);
+    }
     // <viewport-deform-keep> out.deform_keep = viewport_deform_keep(dv, dctx);
     let world_pos = vec4<f32>(dv.position, 1.0);
     out.clip_pos = camera.view_proj * world_pos;
@@ -514,7 +526,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     let colour_stream = instances[instance_index].colour_stream;
     var has_attr = false;
     var raw_scalar = 0.0;
-    if has_sidecar && object.has_attribute != 0u && object.use_face_colour == 0u && colour_stream != 0u {
+    if FEAT_COLOUR_STREAM && has_sidecar && object.has_attribute != 0u && object.use_face_colour == 0u && colour_stream != 0u {
         has_attr = true;
         raw_scalar = sc_f32(colour_stream + idx);
     }
@@ -526,7 +538,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     // Per-face RGBA colour (FaceColour attribute kind). Indexed by vertex_index which
     // equals the sequential draw invocation counter for non-indexed face draws.
     out.face_colour = vec4<f32>(1.0);
-    if has_sidecar && object.use_face_colour != 0u && colour_stream != 0u {
+    if FEAT_COLOUR_STREAM && has_sidecar && object.use_face_colour != 0u && colour_stream != 0u {
         out.face_colour = sc_vec4(colour_stream + 4u * idx);
     }
     // Lightmap UV1 in .xy and the atlas page in .z, mapped through the draw's
@@ -536,7 +548,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     out.lightmap_uv = vec2<f32>(0.0);
     out.lightmap_page = 0.0;
     let lm = instances[instance_index].lightmap_stream;
-    if has_sidecar && lm != 0u {
+    if FEAT_LIGHTMAP && has_sidecar && lm != 0u {
         let lm_sidecar = sc_vec4(lm + 4u * idx);
         let placement = instances[instance_index].lightmap_scale_bias;
         out.lightmap_uv = lm_sidecar.xy * placement.xy + placement.zw;
@@ -833,7 +845,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     var base_colour = obj_colour.rgb;
 
     // Scalar attribute colour override: sample LUT when has_attribute is set.
-    if object.has_attribute != 0u {
+    if FEAT_COLOUR_STREAM && object.has_attribute != 0u {
         if in.is_nan_scalar > 0.5 {
             if object.use_nan_colour == 0u {
                 discard;
@@ -852,7 +864,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     }
 
     // Per-face RGBA colour: use directly, bypassing all lighting and colourmap logic.
-    if object.use_face_colour != 0u {
+    if FEAT_COLOUR_STREAM && object.use_face_colour != 0u {
         var fc = in.face_colour;
         if object.selected != 0u {
             fc = mix(fc, vec4<f32>(1.0, 0.55, 0.1, 1.0), 0.35);
@@ -944,7 +956,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
 
     // Matcap shading : the matcap texture encodes material appearance as a sphere-space lookup.
     // UV is derived from the view-space normal (x,y components).
-    if object.use_matcap != 0u {
+    if FEAT_MATCAP && object.use_matcap != 0u {
         // Transform world-space shading normal to view space (rotation only, w=0).
         let view_normal = normalize((camera.view * vec4<f32>(N, 0.0)).xyz);
         // Map view-space normal XY to UV.
@@ -1051,7 +1063,7 @@ fn compute_lit(
     // combined with each light's realtime shadow in the loops below, so static
     // shadows come from the bake and dynamic ones from the shadow map.
     var shadowmask = vec4<f32>(1.0);
-    if object.has_shadowmask != 0u {
+    if FEAT_LIGHTMAP && object.has_shadowmask != 0u {
         let sm_uv = in.lightmap_uv;
         let sm_page = i32(round(in.lightmap_page));
         shadowmask = textureSampleLevel(lightmap_dir_tex, obj_sampler, sm_uv, sm_page, 0.0);
@@ -1129,7 +1141,7 @@ fn compute_lit(
             // Shadowmask: fold in the baked static-occluder visibility for this
             // light (channel = light index) by min, so static shadows are baked
             // and dynamic ones come from the realtime shadow above.
-            if object.has_shadowmask != 0u && i < 4u {
+            if FEAT_LIGHTMAP && object.has_shadowmask != 0u && i < 4u {
                 shadow_factor = min(shadow_factor, shadowmask[i]);
             }
             // <viewport-shade-slot:light>
@@ -1138,7 +1150,7 @@ fn compute_lit(
             // into the lightmap, so suppress its realtime direct here to avoid
             // double counting. Its shadow (sampled above) still darkens the baked
             // term in apply_lightmap below.
-            if object.lightmap_mode == 4u && i == 0u {
+            if FEAT_LIGHTMAP && object.lightmap_mode == 4u && i == 0u {
                 radiance = vec3<f32>(0.0);
             }
             Lo += pbr_light_contrib(N, V, L, radiance, base_colour,
@@ -1205,7 +1217,7 @@ fn compute_lit(
         // derivatives across a chart are large and derivative-based mip
         // selection would snap to a coarse level and show the atlas texels as
         // blocky bands on the mesh. The atlas has no detail to lose at range.
-        if object.lightmap_mode != 0u {
+        if FEAT_LIGHTMAP && object.lightmap_mode != 0u {
             // Scene-atlas placement: map the object's [0,1] unwrap into its sub-rect
             // and add its base layer to the per-vertex page. Identity scale/bias and
             // layer 0 reproduce a per-mesh (single- or multi-page) lightmap exactly.
@@ -1256,7 +1268,7 @@ fn compute_lit(
                     shadow = sample_point_shadow(l, in.world_pos, geo_normal);
                 }
             }
-            if object.has_shadowmask != 0u && i < 4u {
+            if FEAT_LIGHTMAP && object.has_shadowmask != 0u && i < 4u {
                 shadow = min(shadow, shadowmask[i]);
             }
 
@@ -1274,7 +1286,7 @@ fn compute_lit(
 
             // Subtractive lightmap: the main directional light is baked in, so skip
             // its realtime direct (its shadow still darkens the baked term below).
-            if !(object.lightmap_mode == 4u && i == 0u) {
+            if !(FEAT_LIGHTMAP && object.lightmap_mode == 4u && i == 0u) {
                 total_colour_contrib += (diffuse_contrib + specular_contrib) * ev.radiance;
             }
         }
@@ -1294,7 +1306,7 @@ fn compute_lit(
         // Baked lightmap: replace, add, or occlude the ambient term. Sample the
         // base mip explicitly (see the ambient branch above): derivative-based
         // mip selection over tightly-packed atlas charts reads as blocky bands.
-        if object.lightmap_mode != 0u {
+        if FEAT_LIGHTMAP && object.lightmap_mode != 0u {
             // Scene-atlas placement: map the object's [0,1] unwrap into its sub-rect
             // and add its base layer to the per-vertex page. Identity scale/bias and
             // layer 0 reproduce a per-mesh (single- or multi-page) lightmap exactly.

@@ -1290,6 +1290,30 @@ impl ViewportRenderer {
         self.resources.set_force_po_discard(force);
     }
 
+    /// Draw every mesh batch with every shader feature compiled in.
+    ///
+    /// Off by default. A mesh batch normally draws through a pipeline built
+    /// with only the shader features its items use (scalar colouring,
+    /// lightmaps, matcaps, deformers and so on), which is cheaper to run. The
+    /// two pipelines draw the same image, so this exists to check that they do
+    /// and to measure what the reduced pipelines save. It does not change
+    /// rendered output.
+    pub fn set_mesh_universal(&mut self, universal: bool) {
+        self.resources.set_mesh_universal(universal);
+    }
+
+    /// Mesh records drawn through a pipeline that leaves out a shader feature
+    /// they use, one line each. Always empty when the renderer is correct;
+    /// checked by the test suites. Debug builds only: a release build keeps
+    /// no records to check and returns nothing.
+    #[doc(hidden)]
+    pub fn feature_set_violations(&self) -> Vec<String> {
+        crate::renderer::prepare::instanced_feature_set_violations(
+            &self.resources,
+            &self.instancing,
+        )
+    }
+
     /// Keep the debug-visualisation block compiled into the lit pipelines even
     /// while [`DebugVis`] is off.
     ///
@@ -1467,6 +1491,7 @@ impl ViewportRenderer {
         self.set_cpu_pick_cache(tuning.cpu_pick_cache);
         self.set_force_multi_draw(tuning.diagnostics.force_multi_draw);
         self.set_force_po_discard(tuning.diagnostics.force_po_discard);
+        self.set_mesh_universal(tuning.diagnostics.mesh_universal);
     }
 
     /// Snapshot the current persistent tuning, so a consumer wanting to tune for
@@ -1486,6 +1511,7 @@ impl ViewportRenderer {
             diagnostics: crate::renderer::tuning::RenderDiagnostics {
                 force_multi_draw: self.instancing.multi_draw_forced,
                 force_po_discard: self.resources.force_po_discard,
+                mesh_universal: self.resources.mesh_universal,
             },
         }
     }

@@ -717,6 +717,15 @@ pub struct DeviceResources {
     /// path in a single process. It does not change rendered output, only which
     /// pipeline draws eligible opaque items.
     pub(crate) force_po_discard: bool,
+    /// When true, every per-object mesh draw takes the universal pipeline
+    /// (every shader feature compiled in) instead of the one built for the
+    /// features its batch uses. The two draw the same image, so this is the
+    /// check that they do. Measurement knob only.
+    pub(crate) mesh_universal: bool,
+    /// Draws this frame that stayed on the universal pipeline because their
+    /// family already held its limit of feature sets. Bumped during encode
+    /// through `&self` and latched into `FrameStats` after paint.
+    pub(crate) frame_feature_sets_capped: std::sync::atomic::AtomicU32,
 
     // --- Shadow texture promotion ---
     /// Set when a shadow texture was promoted from its placeholder and the

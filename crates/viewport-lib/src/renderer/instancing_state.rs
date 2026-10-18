@@ -117,6 +117,10 @@ pub(crate) struct InstancingState {
     /// instance buffer. Used by the CPU per-cascade shadow cull on devices
     /// without GPU-driven culling.
     pub(crate) cached_aabbs: Vec<crate::resources::InstanceAabb>,
+    /// The instance records from the last rebuild, kept in debug builds so the
+    /// feature-set check can read them.
+    #[cfg(debug_assertions)]
+    pub(crate) cached_records: Vec<crate::resources::mesh::instancing::InstanceData>,
     /// When true, the next cache-miss forces a full buffer upload instead of the
     /// per-batch partial-upload path. Set by `force_dirty()` and consumed once.
     pub(crate) force_full_upload: bool,
@@ -204,6 +208,8 @@ impl InstancingState {
             cached_instance_hashes: Vec::new(),
             cached_batches: Vec::new(),
             cached_aabbs: Vec::new(),
+            #[cfg(debug_assertions)]
+            cached_records: Vec::new(),
             force_full_upload: false,
             indirect_readback_buf: None,
             indirect_readback_batch_count: 0,

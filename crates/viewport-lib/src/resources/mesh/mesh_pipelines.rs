@@ -22,9 +22,41 @@ pub(crate) fn ldr_mesh_pipeline(
     topo: crate::gpu::PrimitiveTopology,
     depth_write: bool,
 ) -> crate::gpu::RenderPipeline {
+    ldr_mesh_pipeline_with(
+        device,
+        layout,
+        shader,
+        target_format,
+        sample_count,
+        cache,
+        label,
+        cull,
+        blend,
+        topo,
+        depth_write,
+        &[],
+    )
+}
+
+/// [`ldr_mesh_pipeline`] with values for the module's `override` constants.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn ldr_mesh_pipeline_with(
+    device: &crate::gpu::Device,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+    target_format: crate::gpu::TextureFormat,
+    sample_count: u32,
+    cache: Option<&crate::gpu::PipelineCache>,
+    label: &str,
+    cull: Option<crate::gpu::Face>,
+    blend: Option<crate::gpu::BlendState>,
+    topo: crate::gpu::PrimitiveTopology,
+    depth_write: bool,
+    constants: &[(&str, f64)],
+) -> crate::gpu::RenderPipeline {
     let depth_stencil =
         crate::resources::builders::scene_depth_stencil(true, crate::gpu::CompareFunction::Less);
-    crate::resources::builders::render_pipeline(
+    crate::resources::builders::render_pipeline_with_constants(
         device,
         crate::resources::builders::RenderPipelineDesc {
             label,
@@ -62,12 +94,13 @@ pub(crate) fn ldr_mesh_pipeline(
             },
             cache,
         },
+        constants,
     )
 }
 
 /// One HDR `mesh.wgsl` pipeline, drawing into the Rgba16Float intermediate.
-/// `vertex_constants` sets the vertex stage's `override` constants (empty for
-/// the defaults).
+/// `constants` sets the module's `override` constants (empty for the
+/// defaults).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn hdr_mesh_pipeline(
     device: &crate::gpu::Device,
@@ -78,7 +111,7 @@ pub(crate) fn hdr_mesh_pipeline(
     blend: Option<crate::gpu::BlendState>,
     topo: crate::gpu::PrimitiveTopology,
     depth_write: bool,
-    vertex_constants: &[(&str, f64)],
+    constants: &[(&str, f64)],
 ) -> crate::gpu::RenderPipeline {
     crate::resources::builders::render_pipeline_with_constants(
         device,
@@ -113,7 +146,7 @@ pub(crate) fn hdr_mesh_pipeline(
             },
             cache: None,
         },
-        vertex_constants,
+        constants,
     )
 }
 
@@ -130,6 +163,19 @@ pub(crate) fn build_oit_pipeline(
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
     two_sided: bool,
+) -> crate::gpu::RenderPipeline {
+    build_oit_pipeline_with(device, layout, shader, two_sided, "oit_pipeline", &[])
+}
+
+/// [`build_oit_pipeline`] with a label and values for the module's
+/// `override` constants.
+pub(crate) fn build_oit_pipeline_with(
+    device: &crate::gpu::Device,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+    two_sided: bool,
+    label: &str,
+    constants: &[(&str, f64)],
 ) -> crate::gpu::RenderPipeline {
     let accum_blend = crate::gpu::BlendState {
         color: crate::gpu::BlendComponent {
@@ -159,10 +205,10 @@ pub(crate) fn build_oit_pipeline(
         false,
         crate::gpu::CompareFunction::LessEqual,
     );
-    crate::resources::builders::render_pipeline(
+    crate::resources::builders::render_pipeline_with_constants(
         device,
         crate::resources::builders::RenderPipelineDesc {
-            label: "oit_pipeline",
+            label,
             layout,
             vertex_module: shader,
             vertex_entry: "vs_main",
@@ -196,6 +242,7 @@ pub(crate) fn build_oit_pipeline(
             },
             cache: None,
         },
+        constants,
     )
 }
 

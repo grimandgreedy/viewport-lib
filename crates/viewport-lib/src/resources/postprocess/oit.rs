@@ -35,11 +35,27 @@ pub(crate) struct OitResources {
 }
 
 pub(crate) fn build_per_object(ctx: &OitContext, i: usize) -> crate::gpu::RenderPipeline {
-    crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
+    build_per_object_features(ctx, i, crate::renderer::pipeline_key::FeatureSet::UNIVERSAL)
+}
+
+/// Per-object member `i` built with `feats`.
+pub(crate) fn build_per_object_features(
+    ctx: &OitContext,
+    i: usize,
+    feats: crate::renderer::pipeline_key::FeatureSet,
+) -> crate::gpu::RenderPipeline {
+    let label = if feats == crate::renderer::pipeline_key::FeatureSet::UNIVERSAL {
+        "oit_pipeline".to_owned()
+    } else {
+        feats.label("oit_pipeline")
+    };
+    crate::resources::mesh::mesh_pipelines::build_oit_pipeline_with(
         &ctx.device,
         &ctx.layout,
         ctx.shader.get(),
         i & 1 != 0,
+        &label,
+        &feats.constants(),
     )
 }
 
@@ -62,8 +78,26 @@ pub(crate) fn build_instanced(ctx: &OitContext, i: usize) -> crate::gpu::RenderP
 impl OitResources {
     /// The per-object accumulate pipeline for `key`'s facedness, or `None`
     /// while a worker has it (or before the family is composed).
+    #[cfg(test)]
     pub(crate) fn per_object(&self, key: PipelineKey) -> Option<&crate::gpu::RenderPipeline> {
         self.pipeline.as_ref()?.get(key.two_sided as usize)
+    }
+
+    /// The per-object accumulate pipeline for `key` built with `feats`, with
+    /// the universal one standing in while it compiles.
+    pub(crate) fn per_object_features(
+        &self,
+        key: PipelineKey,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+    ) -> crate::resources::pipeline_slot::FeatureGet<'_, crate::gpu::RenderPipeline> {
+        match self.pipeline.as_ref() {
+            Some(f) => f.get_features(key.two_sided as usize, feats),
+            None => crate::resources::pipeline_slot::FeatureGet {
+                pipeline: None,
+                stand_in: false,
+                capped: false,
+            },
+        }
     }
 
     /// The instanced accumulate pipeline for `key`'s facedness.

@@ -871,12 +871,12 @@ pub fn render_pipeline(
     render_pipeline_with_constants(device, desc, &[])
 }
 
-/// [`render_pipeline`] with values for the vertex module's `override`
-/// constants.
+/// [`render_pipeline`] with values for the module's `override` constants,
+/// set on both stages.
 pub(crate) fn render_pipeline_with_constants(
     device: &crate::gpu::Device,
     desc: RenderPipelineDesc,
-    vertex_constants: &[(&str, f64)],
+    constants: &[(&str, f64)],
 ) -> crate::gpu::RenderPipeline {
     // wgpu 30 changed `VertexState::buffers` to `&[Option<VertexBufferLayout>]`;
     // 27 and 29 take `&[VertexBufferLayout]`. The wrapped Vec is a local here so
@@ -892,9 +892,19 @@ pub(crate) fn render_pipeline_with_constants(
         #[cfg(wgpu30)]
         buffers: &vbufs,
         compilation_options: crate::gpu::PipelineCompilationOptions {
-            constants: vertex_constants,
+            constants,
             ..Default::default()
         },
+    };
+    let fragment = match desc.fragment {
+        Some(f) if !constants.is_empty() => Some(crate::gpu::FragmentState {
+            compilation_options: crate::gpu::PipelineCompilationOptions {
+                constants,
+                ..Default::default()
+            },
+            ..f
+        }),
+        f => f,
     };
     let build_start = web_time::Instant::now();
     let build_label = desc.label;
@@ -907,7 +917,7 @@ pub(crate) fn render_pipeline_with_constants(
         label: Some(desc.label),
         layout: Some(desc.layout),
         vertex,
-        fragment: desc.fragment,
+        fragment,
         primitive: desc.primitive,
         depth_stencil: desc.depth_stencil,
         multisample: desc.multisample,
