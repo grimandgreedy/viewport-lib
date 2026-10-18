@@ -71,14 +71,14 @@ fn evaluate_sh_probe(base: u32, n: vec3<f32>) -> vec3<f32> {
 /// black when no volume is uploaded (header enabled flag is 0). Mirrors the CPU
 /// `LightProbeVolume::sample_irradiance`.
 fn sample_probe_volume(p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
-    let h0 = probe_volume[0];
+    let h0 = indirect_light_data[PROBE_VOLUME_BASE + 0];
     if h0.w < 0.5 { return vec3<f32>(0.0); }
     let gmin = h0.xyz;
-    let inv_cell = probe_volume[1].xyz;
+    let inv_cell = indirect_light_data[PROBE_VOLUME_BASE + 1].xyz;
     let dims = vec3<u32>(
-        bitcast<u32>(probe_volume[2].x),
-        bitcast<u32>(probe_volume[2].y),
-        bitcast<u32>(probe_volume[2].z),
+        bitcast<u32>(indirect_light_data[PROBE_VOLUME_BASE + 2].x),
+        bitcast<u32>(indirect_light_data[PROBE_VOLUME_BASE + 2].y),
+        bitcast<u32>(indirect_light_data[PROBE_VOLUME_BASE + 2].z),
     );
     let last = vec3<f32>(dims - vec3<u32>(1u));
 
@@ -110,7 +110,7 @@ fn sample_probe_volume(p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
         // 3 header vec4 precede the SH data; each cell holds 9 vec4.
         let cell = 3u + (ix + iy * nx + iz * nx * ny) * 9u;
         for (var k = 0u; k < 9u; k = k + 1u) {
-            coeff[k] = coeff[k] + probe_volume[cell + k].rgb * w;
+            coeff[k] = coeff[k] + indirect_light_data[PROBE_VOLUME_BASE + cell + k].rgb * w;
         }
     }
 

@@ -303,22 +303,12 @@ impl DeviceResources {
                 },
                 count: None,
             },
-            // Binding 15: cluster cell storage (offset + count per cell),
-            // read-only in the fragment stage.
+            // Binding 15: the cluster cells (offset + count per cell) then
+            // the global cluster light index list, read-only in the fragment
+            // stage. Binding 16 is free: the index list had it before the
+            // two shared one buffer.
             crate::gpu::BindGroupLayoutEntry {
                 binding: 15,
-                visibility: crate::gpu::ShaderStages::FRAGMENT,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // Binding 16: global cluster light index list, read-only in
-            // the fragment stage.
-            crate::gpu::BindGroupLayoutEntry {
-                binding: 16,
                 visibility: crate::gpu::ShaderStages::FRAGMENT,
                 ty: crate::gpu::BindingType::Buffer {
                     ty: crate::gpu::BufferBindingType::Storage { read_only: true },
@@ -348,7 +338,8 @@ impl DeviceResources {
             // binding 18: indirect-lighting storage buffer (FRAGMENT,
             // read-only). Holds per-object light-probe SH blocks then the
             // environment-selection zones in a second region (see
-            // indirect_light_data / load_env_zone in scene_lighting.wgsl).
+            // indirect_light_data / load_env_zone in scene_lighting.wgsl),
+            // then the adaptive probe volume.
             // Binding 19 is intentionally free: env zones used to live there
             // before they were folded into this buffer.
             crate::gpu::BindGroupLayoutEntry {
@@ -361,20 +352,8 @@ impl DeviceResources {
                 },
                 count: None,
             },
-            // binding 20: adaptive probe volume (FRAGMENT, read-only). A
-            // 3-vec4 header (grid box + dims) then 9 vec4 of SH per grid
-            // cell, trilinearly sampled per fragment when the object's
-            // light_probe_index is the volume sentinel.
-            crate::gpu::BindGroupLayoutEntry {
-                binding: 20,
-                visibility: crate::gpu::ShaderStages::FRAGMENT,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
+            // Binding 20 is free: the adaptive probe volume moved into the
+            // last region of the binding-18 buffer.
             // binding 21: per-material UV transform buffer (FRAGMENT,
             // read-only). Array of `MaterialGpu` transform blocks, indexed by
             // the per-draw `material_id`. Scene-global, so it lives in group 0.
@@ -388,19 +367,8 @@ impl DeviceResources {
                 },
                 count: None,
             },
-            // binding 22: per-instance custom-data buffer (FRAGMENT,
-            // read-only). Array of `InstanceCustomData` payloads, indexed by
-            // the per-instance `custom_data_id`. Scene-global, group 0.
-            crate::gpu::BindGroupLayoutEntry {
-                binding: 22,
-                visibility: crate::gpu::ShaderStages::FRAGMENT,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
+            // Binding 22 is free: the per-instance custom data is the last
+            // region of the binding-18 buffer.
         ];
         let camera_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("camera_bgl"),
@@ -784,41 +752,20 @@ impl DeviceResources {
             crate::resources::material_gpu::MATERIAL_GPU_INITIAL_CAPACITY,
         );
 
-        // Per-instance custom-data buffer (group 0, binding 22). Starts small
-        // and grows when a frame interns more blocks than it holds; see
-        // `upload_custom_data`.
-        let instance_custom_data_buf = Self::create_custom_data_buffer(
-            device,
-            crate::resources::custom_data::CUSTOM_DATA_INITIAL_CAPACITY,
-        );
-
-        // Indirect-lighting storage buffer (group 0 binding 18). Holds the
-        // per-object light-probe SH blocks in the first region and the
-        // environment-selection zones in the second, sharing one binding so the
-        // fragment stage stays within the storage-buffer budget. Both regions are
-        // fixed capacity, so writes are sub-region and never realloc. The env-zone
-        // region starts at MAX_LIGHT_PROBE_OBJECTS * SH_GPU_STRIDE_BYTES; the
-        // shader's ENV_ZONE_BASE (in vec4) must match (guarded by a const_assert
-        // in resources::material::environment).
-        let indirect_light_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("indirect_light_buf"),
-            size: (crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS
-                * crate::resources::light_probes::SH_GPU_STRIDE_BYTES
-                + crate::resources::material::environment::MAX_ENV_ZONES
-                    * crate::resources::material::environment::ENV_ZONE_STRIDE_BYTES)
-                as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Disabled probe-volume header (binding 20 fallback): 3 vec4, all zero so
-        // the enabled flag (header[0].w) reads 0 and the sampler returns black.
-        let light_probe_volume_fallback =
-            device.logged_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                label: Some("light_probe_volume_fallback"),
-                contents: bytemuck::cast_slice(&[[0.0f32; 4]; 3]),
-                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            });
+        // Indirect-lighting storage buffer (group 0 binding 18): the per-object
+        // light-probe SH blocks, the environment-selection zones, the adaptive
+        // probe volume, then the per-instance custom-data blocks, sharing one
+        // binding so the fragment stage stays within the storage-buffer budget.
+        // The first two regions are fixed capacity; the volume region holds a
+        // disabled header until a volume is set, and the custom data starts
+        // small and grows when a frame interns more blocks than it holds (see
+        // `lighting::indirect_light_buffer` and `upload_custom_data`).
+        let (indirect_light_buf, custom_data_base_bytes) =
+            crate::resources::lighting::indirect_light_buffer(
+                device,
+                None,
+                crate::resources::custom_data::CUSTOM_DATA_INITIAL_CAPACITY,
+            );
 
         // Clip planes uniform buffer (binding 4 of camera bind group).
         // Initialized to count=0 (no active clip planes).
@@ -1027,11 +974,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 15,
-                    resource: clustered.cluster_grid_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 16,
-                    resource: clustered.light_index_buf.as_entire_binding(),
+                    resource: clustered.cluster_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 17,
@@ -1042,16 +985,8 @@ impl DeviceResources {
                     resource: indirect_light_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 20,
-                    resource: light_probe_volume_fallback.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
                     binding: 21,
                     resource: material_gpu_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 22,
-                    resource: instance_custom_data_buf.as_entire_binding(),
                 },
             ],
         });
@@ -1784,8 +1719,8 @@ impl DeviceResources {
                 storage_buf: light_storage_buf,
                 probes: None,
                 indirect_buf: indirect_light_buf,
-                probe_volume_buf: None,
-                probe_volume_fallback: light_probe_volume_fallback,
+                has_probe_volume: false,
+                custom_data_base_bytes,
             },
             clustered,
             exposure,
@@ -1948,7 +1883,6 @@ impl DeviceResources {
                 / std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>())
             .max(crate::resources::material_gpu::MATERIAL_GPU_INITIAL_CAPACITY),
             material_table: crate::resources::material_gpu::MaterialTable::default(),
-            instance_custom_data_buf,
             instance_custom_data_capacity:
                 crate::resources::custom_data::CUSTOM_DATA_INITIAL_CAPACITY,
             custom_data_builder: crate::resources::custom_data::CustomDataBuilder::default(),

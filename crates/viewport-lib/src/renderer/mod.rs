@@ -726,32 +726,25 @@ impl ViewportRenderer {
     }
 
     /// The storage-buffer-per-stage headroom
-    /// [`recommended_device_limits`](Self::recommended_device_limits) requests:
-    /// the most any single pipeline binds in one stage across all optional
-    /// features. The `raytrace` path tracer's compute stage is the high-water
-    /// mark at ten; the base lit mesh path, per-vertex deformers included,
-    /// needs only
-    /// [`MIN_STORAGE_BUFFERS_PER_STAGE`](Self::MIN_STORAGE_BUFFERS_PER_STAGE).
-    /// Requesting this much up front lets every optional feature run; it is
-    /// clamped to what the adapter actually supports.
+    /// [`recommended_device_limits`](Self::recommended_device_limits) requests.
+    /// Nothing the renderer builds needs more than
+    /// [`MIN_STORAGE_BUFFERS_PER_STAGE`](Self::MIN_STORAGE_BUFFERS_PER_STAGE):
+    /// the lit mesh path, per-vertex deformers and the `raytrace` path tracer
+    /// all fit in it. The headroom is for item-type plugins and consumer
+    /// pipelines that bind their own storage buffers. It is clamped to what the
+    /// adapter actually supports.
     pub const REQUIRED_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
 
-    /// The hard floor the base lit mesh pipeline needs in one shader stage. The
-    /// clustered lit fragment binds this many storage buffers (clustered light
-    /// data, light probes, shadow data, plus the per-object buffer), so a device
-    /// below this cannot render the mesh path at all and [`new`](Self::new)
-    /// rejects it. Optional features that need more are gated on the device
-    /// providing the headroom (see [`DEFORM_STORAGE_BUFFERS_PER_STAGE`]) rather
-    /// than asserted here, so they degrade instead of crashing.
+    /// The storage-buffer floor in one shader stage, wgpu's default. A device
+    /// below it cannot render the mesh path at all and [`new`](Self::new)
+    /// rejects it. The `raytrace` path tracer's compute layouts bind at most
+    /// eight, so a build with that feature runs on default limits too. Optional
+    /// features that could need more are gated on the device providing the
+    /// headroom (see [`DEFORM_STORAGE_BUFFERS_PER_STAGE`]) rather than
+    /// asserted here, so they degrade instead of crashing.
     ///
     /// [`DEFORM_STORAGE_BUFFERS_PER_STAGE`]: Self::DEFORM_STORAGE_BUFFERS_PER_STAGE
-    #[cfg(not(feature = "raytrace"))]
     pub const MIN_STORAGE_BUFFERS_PER_STAGE: u32 = 8;
-    /// The `raytrace` path tracer's compute stage binds ten storage buffers, so
-    /// a build with that feature requires ten up front. See the non-`raytrace`
-    /// definition for the base rationale.
-    #[cfg(feature = "raytrace")]
-    pub const MIN_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
 
     /// The per-stage storage-buffer count per-vertex deformers need: the base
     /// vertex stage (five: the instance records, the sidecar record chunk, the
@@ -773,12 +766,11 @@ impl ViewportRenderer {
     ///
     /// Raises `max_storage_buffers_per_shader_stage` to
     /// [`REQUIRED_STORAGE_BUFFERS_PER_STAGE`](Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE),
-    /// enough headroom for every optional feature (the `raytrace` path
-    /// tracer). The base lit mesh path needs only
+    /// headroom for item-type plugins and consumer pipelines. Everything the
+    /// renderer builds, the `raytrace` path tracer included, needs only
     /// [`MIN_STORAGE_BUFFERS_PER_STAGE`](Self::MIN_STORAGE_BUFFERS_PER_STAGE) and
-    /// renders on wgpu's default limits, so passing this is not required just to
-    /// draw: it is what turns the optional features on. Features whose headroom
-    /// the device lacks are disabled rather than fatal.
+    /// renders on wgpu's default limits, so passing this is not required to
+    /// draw.
     ///
     /// Pass the result as `required_limits` in the `DeviceDescriptor`. It starts
     /// from [`Limits::default`](crate::gpu::Limits::default) and raises the

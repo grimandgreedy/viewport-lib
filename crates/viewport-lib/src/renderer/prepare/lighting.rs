@@ -695,7 +695,7 @@ impl ViewportRenderer {
             },
             env_zone_count: resources.ibl.env_zone_count,
             ibl_specular_scale,
-            _pad_dbg: 0,
+            custom_data_base: (resources.lighting.custom_data_base_bytes / 16) as u32,
         };
         if LightingWrites::changed(&mut shadow.written.lights, lights_uniform) {
             queue.write_buffer(

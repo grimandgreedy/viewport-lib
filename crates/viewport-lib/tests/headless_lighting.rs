@@ -1264,6 +1264,21 @@ fn environment_zones_select_the_second_zone() {
         "sphere in the second (green) zone must read green (g {g}), not the \
          garbage a stride mismatch produces (r {r})"
     );
+
+    // The probe volume shares the zones' buffer, so setting one swaps the
+    // buffer. The zones already uploaded must come across with it.
+    let volume = viewport_lib::resources::LightProbeVolume::new(
+        [-1.5, -1.5, -1.5],
+        [3.0, 3.0, 3.0],
+        [2, 1, 1],
+        vec![viewport_lib::resources::SHCoefficients::default(); 2],
+    );
+    renderer.set_light_probe_volume(&device, &volume);
+    let after = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_eq!(
+        after, pixels,
+        "setting a probe volume after the zones changed the zone lighting"
+    );
 }
 
 /// Render a matte white sphere lit only by the environment and return the

@@ -273,7 +273,7 @@ pub struct SingleLightUniform {
 /// - debug_vis_split_x:    f32            =  4 bytes
 /// - env_zone_count:       u32            =  4 bytes
 /// - ibl_specular_scale:   f32            =  4 bytes
-/// - _pad_dbg:             u32            =  4 bytes
+/// - custom_data_base:     u32            =  4 bytes
 /// Total: 16 + 16 + 16 + 16 + 16 = 80 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -309,8 +309,9 @@ pub struct LightsUniform {
     pub env_zone_count: u32, // 4 bytes
     /// Scale on the IBL specular term.
     pub ibl_specular_scale: f32, // 4 bytes
-    /// Reserved.
-    pub _pad_dbg: u32, // 4 bytes
+    /// Start of the custom-data region of the binding-18 buffer, in `vec4`
+    /// elements.
+    pub custom_data_base: u32, // 4 bytes
 }
 
 /// Maximum number of lights packed into `light_storage_buf` per frame.

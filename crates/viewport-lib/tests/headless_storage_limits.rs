@@ -144,3 +144,113 @@ fn deformer_registration_succeeds_with_recommended_limits() {
         "register_deformer must succeed with recommended limits: {result:?}"
     );
 }
+
+/// The path tracer fits the base floor: on a default-limits device a `raytrace`
+/// build constructs a renderer, and a denoised trace and all three bakes run
+/// without a validation error. Its compute layouts bind at most eight storage
+/// buffers (the trace and bake layouts eight each, the denoiser four), so a
+/// binding added to either fails here.
+#[cfg(feature = "raytrace")]
+#[test]
+fn the_path_tracer_runs_on_default_limits() {
+    use glam::{Mat4, Vec3};
+    use viewport_lib::Colour;
+    use viewport_lib::raytrace::{
+        RtCamera, RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, Tracer,
+    };
+    let Some(adapter) = adapter() else {
+        return;
+    };
+    let (device, queue) = device_with_limits(&adapter, wgpu::Limits::default());
+    let renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+    drop(renderer);
+
+    let scope = wgpu::push_error_scope(&device, wgpu::ErrorFilter::Validation);
+    let mut scene = RtScene::new();
+    scene.set_sky([0.2; 3], [0.2; 3]);
+    let p = [
+        Vec3::new(-1.0, 0.0, -1.0),
+        Vec3::new(1.0, 0.0, -1.0),
+        Vec3::new(1.0, 0.0, 1.0),
+        Vec3::new(-1.0, 0.0, 1.0),
+    ];
+    let n = [Vec3::new(0.0, -1.0, 0.0); 4];
+    scene.add_mesh(&p, &[0u32, 1, 2, 0, 2, 3], Some(&n), RtMaterial::default());
+    scene.add_light(RtLight::Directional {
+        direction: [0.0, -0.3, 1.0],
+        colour: Colour::linear_rgb(4.0, 4.0, 4.0),
+    });
+    let settings = RtSettings {
+        samples: 2,
+        max_bounces: 2,
+        denoise: true,
+        seed: 0,
+    };
+    let mut tracer = Tracer::new(&device, &queue, &scene);
+    let eye = Vec3::new(0.0, -4.0, 0.0);
+    let view_proj = Mat4::perspective_rh(45f32.to_radians(), 1.0, 0.1, 100.0)
+        * Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Z);
+    let camera = RtCamera {
+        inv_view_proj: view_proj.inverse(),
+        position: eye,
+        width: 16,
+        height: 16,
+    };
+    let image = tracer.trace(&device, &queue, &camera, &settings);
+    assert_eq!(image.rgba.len(), 16 * 16 * 4);
+
+    let world_pos = vec![[0.0, 0.0, 0.0, 1.0]; 16];
+    let world_normal = vec![[0.0, -1.0, 0.0, 0.0]; 16];
+    let surfaces = TexelSurfaces {
+        width: 4,
+        height: 4,
+        world_pos: &world_pos,
+        world_normal: &world_normal,
+    };
+    let _ = tracer.bake(&device, &queue, &surfaces, &settings);
+    let _ = tracer.bake_directional(&device, &queue, &surfaces, &settings);
+    let _ = tracer.bake_shadowmask(&device, &queue, &surfaces, &settings);
+    let error = pollster::block_on(scope.pop());
+    assert!(
+        error.is_none(),
+        "the path tracer failed validation on default limits: {error:?}"
+    );
+}
+
+/// A transparent volume draws through the projected-tet pass, which binds its
+/// own per-volume storage beside group 0's. On a default-limits device that
+/// draw must validate.
+#[test]
+fn a_transparent_volume_draws_on_default_limits() {
+    let Some(adapter) = adapter() else {
+        return;
+    };
+    let (device, queue) = device_with_limits(&adapter, wgpu::Limits::default());
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let s = viewport_lib::CELL_SENTINEL;
+    let mut data = viewport_lib::VolumeMeshData::default();
+    data.positions = vec![
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.5, 1.0, 0.0],
+        [0.5, 0.5, 1.0],
+    ];
+    data.cells = vec![[0, 1, 2, 3, s, s, s, s]];
+    data.cell_scalars.insert("t".to_string(), vec![0.5]);
+    let mut volume = renderer
+        .resources_mut()
+        .upload_volume_mesh_with_transparency(&device, data, "t")
+        .expect("volume upload");
+    volume.transparency = Some(viewport_lib::VolumeTransparency::default());
+
+    let scope = wgpu::push_error_scope(&device, wgpu::ErrorFilter::Validation);
+    let mut frame = viewport_lib::FrameData::default();
+    frame.camera.viewport_size = [32.0, 32.0];
+    frame.scene.volume_meshes = vec![volume];
+    let _ = renderer.render_offscreen(&device, &queue, &frame, 32, 32);
+    let error = pollster::block_on(scope.pop());
+    assert!(
+        error.is_none(),
+        "the projected-tet draw failed validation on default limits: {error:?}"
+    );
+}

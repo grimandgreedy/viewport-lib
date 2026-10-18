@@ -14,7 +14,7 @@ struct InstanceData {
     material_id: u32,                     // offset 84 : index into material_gpu_buf
     alpha_cutoff: f32,                    // offset 88 : AlphaMode::Mask cutoff
     light_probe_index: u32,               // offset 92 : base block in light_probe_sh
-    custom_data_id: u32,                  // offset 96 : index into instance_custom_data_buf
+    custom_data_id: u32,                  // offset 96 : custom-data block (custom_data0 / custom_data1)
     backface_pattern_scale: f32,          // offset 100 : styled back-face Pattern world scale
     object_mask: u32,                     // offset 104 : layer mask, AND-tested per light
     sidecar_record: u32,                  // offset 108 : record base word in the bound sidecar chunk

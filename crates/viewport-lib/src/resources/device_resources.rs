@@ -642,15 +642,13 @@ pub struct DeviceResources {
     pub(crate) material_table: crate::resources::material_gpu::MaterialTable,
 
     // --- Per-instance custom-data buffer (group 0, binding 22) ---
-    /// Scene-global buffer of per-instance custom-data blocks
+    /// Custom-data blocks the last region of `lighting.indirect_buf` holds
     /// (`InstanceCustomData`, one per distinct payload this frame). Grows when
-    /// a frame needs more blocks than it holds, which replaces the buffer and
-    /// rebuilds the camera bind groups that name it.
-    pub(crate) instance_custom_data_buf: crate::gpu::Buffer,
-    /// Blocks `instance_custom_data_buf` holds.
+    /// a frame needs more, which replaces the buffer and rebuilds the camera
+    /// bind groups that name it.
     pub(crate) instance_custom_data_capacity: usize,
     /// Per-frame interner that deduplicates custom-data payloads and hands out
-    /// `custom_data_id` indices into `instance_custom_data_buf`. Reset at each
+    /// `custom_data_id` indices into the custom-data region. Reset at each
     /// `prepare()`.
     pub(crate) custom_data_builder: crate::resources::custom_data::CustomDataBuilder,
 
@@ -1106,22 +1104,8 @@ impl DeviceResources {
         })
     }
 
-    pub(crate) fn create_custom_data_buffer(
-        device: &crate::gpu::Device,
-        capacity: usize,
-    ) -> crate::gpu::Buffer {
-        use crate::resources::builders::LoggedAlloc;
-        device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("instance_custom_data_buf"),
-            size: (std::mem::size_of::<crate::resources::custom_data::InstanceCustomData>()
-                * capacity) as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
-    }
-
-    /// Upload the current per-instance custom-data blocks to
-    /// `instance_custom_data_buf`. Called after interning finishes, alongside
+    /// Upload the current per-instance custom-data blocks to the last region
+    /// of `lighting.indirect_buf`. Called after interning finishes, alongside
     /// [`upload_material_gpu`](Self::upload_material_gpu). Overwriting a superset
     /// each time is safe: index 0 is always the zero block and ids only grow
     /// within a frame, so earlier custom_data_ids stay valid.
@@ -1144,7 +1128,13 @@ impl DeviceResources {
                 .next_power_of_two()
                 .max(self.instance_custom_data_capacity * 2)
                 .min(crate::resources::custom_data::CUSTOM_DATA_CAPACITY);
-            self.instance_custom_data_buf = Self::create_custom_data_buffer(device, capacity);
+            self.lighting.indirect_buf = crate::resources::lighting::grow_indirect_light_buffer(
+                device,
+                queue,
+                &self.lighting.indirect_buf,
+                self.lighting.custom_data_base_bytes,
+                capacity,
+            );
             self.instance_custom_data_capacity = capacity;
             self.camera_bind_groups_dirty = true;
             self.custom_data_written.clear();
@@ -1156,7 +1146,11 @@ impl DeviceResources {
         if self.custom_data_written.as_slice() == data {
             return;
         }
-        queue.write_buffer(&self.instance_custom_data_buf, 0, data);
+        queue.write_buffer(
+            &self.lighting.indirect_buf,
+            self.lighting.custom_data_base_bytes,
+            data,
+        );
         self.custom_data_written.clear();
         self.custom_data_written.extend_from_slice(data);
         let bytes = data.len() as u64;
@@ -1780,11 +1774,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 15,
-                    resource: self.clustered.cluster_grid_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 16,
-                    resource: self.clustered.light_index_buf.as_entire_binding(),
+                    resource: self.clustered.cluster_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 17,
@@ -1797,21 +1787,8 @@ impl DeviceResources {
                     resource: self.lighting.indirect_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 20,
-                    resource: self
-                        .lighting
-                        .probe_volume_buf
-                        .as_ref()
-                        .unwrap_or(&self.lighting.probe_volume_fallback)
-                        .as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
                     binding: 21,
                     resource: self.material_gpu_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 22,
-                    resource: self.instance_custom_data_buf.as_entire_binding(),
                 },
             ],
         })

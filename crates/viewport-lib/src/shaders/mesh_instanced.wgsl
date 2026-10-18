@@ -82,15 +82,8 @@ struct MaterialGpu {
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
-// Per-instance custom-data payload (group 0, binding 22). Raw [f32; 8] per
-// instance, indexed by custom_data_id. Slots 0..3 add to emissive (nits), slot 3
-// is pad, and slots 4..8 (`data1`) are the raw material-plugin channel, surfaced
-// to a plugin hook as `surf.attr`. custom_data_id 0 is the zero block.
-struct CustomData {
-    data0: vec4<f32>,   // slots 0..4
-    data1: vec4<f32>,   // slots 4..8
-}
-@group(0) @binding(22) var<storage, read> instance_custom_data_buf: array<CustomData>;
+// Per-instance custom data is the last region of indirect_light_data, read
+// through custom_data0 and custom_data1 (helpers/scene_lighting.wgsl).
 
 struct SlotUv {
     uv: vec2<f32>,
@@ -403,7 +396,7 @@ fn build_shading_surface(
     // plugins (slots 0..3 add to emissive, slot 3 is pad). A plugin hook that
     // instances reads its per-instance inputs here; `custom_data_id` 0 is the
     // shared all-zero block, so instances that set no custom data read zero.
-    surf.attr = instance_custom_data_buf[instances[in.instance_idx].custom_data_id].data1;
+    surf.attr = custom_data1(lights_uniform.custom_data_base, instances[in.instance_idx].custom_data_id);
     return surf;
 }
 
@@ -896,7 +889,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         );
         emissive = emissive * textureSampleGrad(emissive_tex, obj_sampler, s_em.uv, s_em.ddx, s_em.ddy).rgb;
     }
-    let inst_emissive = instance_custom_data_buf[e_inst.custom_data_id].data0.xyz;
+    let inst_emissive = custom_data0(lights_uniform.custom_data_base, e_inst.custom_data_id).xyz;
     emissive = emissive + inst_emissive;
     final_rgb += emissive;
     let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);

@@ -2095,7 +2095,7 @@ pub(crate) struct InstanceData {
     /// Base block index into the shared light-probe SH buffer (group 0 binding
     /// 18), read when [`instance_flags::HAS_LIGHT_PROBE`] is set.
     pub(crate) light_probe_index: u32,
-    /// Index into `instance_custom_data_buf` (group 0 binding 22). 0 is the zero
+    /// Custom-data block index, in the last region of group 0 binding 18. 0 is the zero
     /// block.
     pub(crate) custom_data_id: u32,
     /// Styled back-face `Pattern` world scale (`cfg.scale / world_extent`), which
