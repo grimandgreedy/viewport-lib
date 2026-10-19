@@ -167,6 +167,7 @@ const MAT_USE_MATCAP: u32 = 2u;
 const MAT_MATCAP_BLENDABLE: u32 = 4u;
 const MAT_LIGHTMAP_DIRECTIONAL: u32 = 8u;
 const MAT_HAS_SHADOWMASK: u32 = 16u;
+const MAT_HAS_EMISSIVE_TEX: u32 = 32u;
 
 // A transformed UV plus its screen-space derivatives, for textureSampleGrad.
 struct SlotUv {
@@ -281,6 +282,7 @@ override FEAT_OVERRIDES: bool = true;
 override FEAT_LIGHTMAP: bool = true;
 override FEAT_MATCAP: bool = true;
 override FEAT_DEFORM: bool = true;
+override FEAT_EMISSIVE_MAP: bool = true;
 @group(1) @binding(7) var matcap_texture: texture_2d<f32>;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
@@ -1521,7 +1523,7 @@ fn fs_body(in: VertexOut, is_front: bool) -> vec4<f32> {
 
     // Emissive term: added after lighting so it can push HDR values above 1.0.
     var emissive = object.emissive;
-    if object.has_emissive_tex != 0u {
+    if FEAT_EMISSIVE_MAP && object.has_emissive_tex != 0u {
         let s_em = material_slot_uv(
             object.material_id, 4u, in.uv, in.uv1,
             surface.d_uv_dx, surface.d_uv_dy, surface.d_uv1_dx, surface.d_uv1_dy,

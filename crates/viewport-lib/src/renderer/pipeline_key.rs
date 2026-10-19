@@ -105,14 +105,17 @@ impl FeatureSet {
     pub const MATCAP: u8 = 32;
     /// The deformer hooks.
     pub const DEFORM: u8 = 64;
+    /// The emissive map: its slot lookup and sample. A material without one
+    /// adds its emissive colour and custom data only.
+    pub const EMISSIVE_MAP: u8 = 128;
 
     /// Every feature compiled out.
     pub const NONE: Self = Self(0);
     /// Every feature compiled in: the eager pipelines.
-    pub const UNIVERSAL: Self = Self(127);
+    pub const UNIVERSAL: Self = Self(255);
 
     /// The WGSL constant each bit sets.
-    const CONSTANTS: [(u8, &'static str); 7] = [
+    const CONSTANTS: [(u8, &'static str); 8] = [
         (Self::RECORD, "FEAT_RECORD"),
         (Self::COLOUR_STREAM, "FEAT_COLOUR_STREAM"),
         (Self::WARP, "FEAT_WARP"),
@@ -120,6 +123,7 @@ impl FeatureSet {
         (Self::LIGHTMAP, "FEAT_LIGHTMAP"),
         (Self::MATCAP, "FEAT_MATCAP"),
         (Self::DEFORM, "FEAT_DEFORM"),
+        (Self::EMISSIVE_MAP, "FEAT_EMISSIVE_MAP"),
     ];
 
     pub fn bits(self) -> u8 {
@@ -166,6 +170,10 @@ impl FeatureSet {
             )
             .with(Self::MATCAP, material_flags[0] & m::USE_MATCAP != 0)
             .with(Self::DEFORM, inst.deform_flags != 0)
+            .with(
+                Self::EMISSIVE_MAP,
+                material_flags[0] & m::HAS_EMISSIVE_TEX != 0,
+            )
     }
 
     /// The pipeline constants for this set: the features it leaves out set

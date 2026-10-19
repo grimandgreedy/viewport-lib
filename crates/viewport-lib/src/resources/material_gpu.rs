@@ -136,6 +136,9 @@ pub(crate) mod item_flags {
     pub(crate) const MATCAP_BLENDABLE: u32 = 1 << 2;
     pub(crate) const LIGHTMAP_DIRECTIONAL: u32 = 1 << 3;
     pub(crate) const HAS_SHADOWMASK: u32 = 1 << 4;
+    /// The material binds an emissive map; mirrors `scalars3.w` as a bit so a
+    /// pipeline feature set can read it.
+    pub(crate) const HAS_EMISSIVE_TEX: u32 = 1 << 5;
 }
 
 /// The item-level and mesh-level shading facts that ride the material block
@@ -434,7 +437,8 @@ impl MaterialGpu {
                         | on(item.matcap.is_some(), f::USE_MATCAP)
                         | on(item.matcap == Some(true), f::MATCAP_BLENDABLE)
                         | on(directional, f::LIGHTMAP_DIRECTIONAL)
-                        | on(shadowmask, f::HAS_SHADOWMASK),
+                        | on(shadowmask, f::HAS_SHADOWMASK)
+                        | on(resolved.live(Emissive), f::HAS_EMISSIVE_TEX),
                     mode,
                     0,
                     0,
