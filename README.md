@@ -63,7 +63,7 @@ cargo run --release -p viewport-lib-examples-winit --no-default-features --featu
 
 A viewport is created and managed via a runner. There are two primary runners that we maintain and ship, but for intensive applications you are encouraged to make your own. The runner is an object that manages the viewport's per-frame work.
 
-- **`ViewportApp`**: owns the window and the run loop -- this is a full app runner. The simplest and easiest way to get started, for a standalone viewport with no surrounding GUI.
+- **`ViewportApp`**: owns the windows and the run loop -- this is a full app runner, for one window or several. The simplest and easiest way to get started, for a standalone viewport with no surrounding GUI.
 - **`ViewportInstance`**: the runner you drive yourself. You own the loop and the input, redraw when you want, and route each event to either the viewport's input controller or your GUI. This is the right fit when you are embedding a viewport into an existing application which already owns the run-loop. 
 - **Custom runner**: For fine-grained control of wgpu device features or split viewports, or performance optimisation, you can create your own runner to drive the `ViewportRenderer` directly with your own camera and controllers, which is what the two runners do internally. Most of the older examples still implement their own runner. Look at, e.g., `eframe-multi-viewport` in the eframe example crate, or `wgpu-leg-agnostic` in the headless one.
 
@@ -71,23 +71,29 @@ Native events reach either runner as a `ViewportEvent`, translated by an adapter
 
 ### `ViewportApp`
 
-`ViewportApp` owns the window and event loop, so you only write scene setup and a per-frame closure.
+`ViewportApp` owns the windows and event loop, so you only write scene setup and a per-frame closure for each window. One `window` call is a single-window app; call it again for more windows, or open and close them at runtime from a frame callback (see the `app-multi-window` example).
 
 ```rust
-use viewport_lib::{AppConfig, Material, ViewportApp, primitives};
+use viewport_lib::{AppConfig, Colour, Material, ViewportApp, WindowConfig, primitives};
 
-ViewportApp::new(AppConfig::default().with_title("demo").with_window_size(1280, 720))
-    .setup(|viewport, device| {
-        // runs once, with the device in hand: upload meshes and build the scene
-        let mesh = viewport.resources_mut()
-            .upload_mesh_data(device, &primitives::cube(1.0)).unwrap();
-        viewport.scene_mut().add(
-            Some(mesh), glam::Mat4::IDENTITY, Material::from_colour([0.85, 0.25, 0.2]));
-    })
-    .run(|_ctx| {
-        // runs once per frame, before rendering: update the scene here
-    });
+ViewportApp::new(AppConfig::default())
+    .window(
+        WindowConfig::default().with_title("demo").with_window_size(1280, 720),
+        |viewport, device| {
+            // runs once, with the device in hand: upload meshes and build the scene
+            let mesh = viewport.resources_mut()
+                .upload_mesh_data(device, &primitives::cube(1.0)).unwrap();
+            viewport.scene_mut().add(
+                Some(mesh), glam::Mat4::IDENTITY, Material::from_colour(Colour::srgb_rgb(0.85, 0.25, 0.2)));
+        },
+        |_ctx| {
+            // runs once per frame, before rendering: update the scene here
+        },
+    )
+    .run();
 ```
+
+To handle input yourself before it reaches the viewport, use `window_with_input`; to draw other viewports into parts of the window, use `window_with_paint`.
 
 ### `ViewportInstance`
 
@@ -95,7 +101,7 @@ When your app already owns the window, wgpu device/queue, and event loop, drive 
 
 ```rust
 use viewport_lib::{
-    Material, OrbitCameraController, PointerOwnership, ViewportContext, ViewportInstance,
+    Colour, Material, OrbitCameraController, PointerOwnership, ViewportContext, ViewportInstance,
     forward_to_viewport, primitives,
 };
 
@@ -107,7 +113,7 @@ let mut viewport = ViewportInstance::new(&device, target_format);
 let mut orbit = OrbitCameraController::new_stateless();
 
 let mesh = viewport.resources_mut().upload_mesh_data(&device, &primitives::cube(1.0))?;
-viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, Material::from_colour([0.85, 0.25, 0.2]));
+viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, Material::from_colour(Colour::srgb_rgb(0.85, 0.25, 0.2)));
 
 // Then, each frame inside your app's render loop:
 // `ownership` is your routing decision: Owned when the viewport won the input this
