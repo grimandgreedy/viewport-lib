@@ -90,8 +90,8 @@ pub struct AutoExposure {
     /// Default: `1.0`.
     pub speed_down: f32,
     /// Frame time in seconds for temporal smoothing. `<= 0` snaps to the target
-    /// this frame (no adaptation animation). `ViewportApp` auto-fills this from
-    /// `ctx.dt`; hand-written hosts pass it (or `0.0`). Default: `0.0`.
+    /// this frame (no adaptation animation). `ViewportApp` auto-fills this
+    /// from `ctx.dt`; hand-written hosts pass it (or `0.0`). Default: `0.0`.
     pub dt: f32,
     /// Lower edge of the metering window: the cumulative pixel fraction below
     /// which luminances are discarded before averaging, in `[0, 1)`. Together

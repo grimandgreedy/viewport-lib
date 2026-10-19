@@ -28,7 +28,7 @@ use std::rc::Rc;
 
 use viewport_lib as vpl;
 use vpl::{
-    AppConfigV2, BlitTexture, Colour, Material, OffscreenViewportTarget, ViewportAppV2,
+    AppConfig, BlitTexture, Colour, Material, OffscreenViewportTarget, ViewportApp,
     ViewportContext, ViewportInstance, WindowConfig, primitives,
 };
 
@@ -185,7 +185,7 @@ fn main() {
     let state: Rc<RefCell<Scene>> = Rc::new(RefCell::new(Scene::default()));
     let paint_state = state.clone();
 
-    ViewportAppV2::new(AppConfigV2::default())
+    ViewportApp::new(AppConfig::default())
         .window_with_paint(
             WindowConfig::default()
                 .with_title("viewport-lib : viewport in viewport")
