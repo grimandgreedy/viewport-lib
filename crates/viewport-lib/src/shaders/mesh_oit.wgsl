@@ -406,6 +406,12 @@ struct Surface {
     normal: vec3<f32>,
     ao_factor: f32,
     mat_uv: vec2<f32>,
+    // Raw metallic-roughness sample (G = roughness, B = metallic), read only
+    // when the material has the map.
+    mr_sample: vec2<f32>,
+    // Emissive factor times the emissive map. Sampled here rather than after
+    // lighting so the UV gradients are not held through the light loop.
+    emissive: vec3<f32>,
     alpha: f32,
     front_facing: u32,
 };
@@ -486,6 +492,8 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     out.normal = vec3<f32>(0.0, 0.0, 1.0);
     out.ao_factor = 1.0;
     out.mat_uv = in.uv;
+    out.mr_sample = vec2<f32>(1.0);
+    out.emissive = vec3<f32>(0.0);
     out.alpha = 1.0;
     out.front_facing = select(0u, 1u, is_front);
 
@@ -673,6 +681,23 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         ao_factor = mix(object.ao_range.x, object.ao_range.y, raw_ao);
     }
 
+    // Metallic-roughness (slot 3) and emissive (slot 4), each with its own
+    // transform and uv_set.
+    if object.has_metallic_roughness_tex != 0u {
+        let s_mr = material_slot_uv(
+            object.material_id, 3u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+        );
+        out.mr_sample = textureSampleGrad(metallic_roughness_tex, obj_sampler, s_mr.uv, s_mr.ddx, s_mr.ddy).gb;
+    }
+    var emissive = object.emissive;
+    if object.has_emissive_tex != 0u {
+        let s_em = material_slot_uv(
+            object.material_id, 4u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+        );
+        emissive = emissive * textureSampleGrad(emissive_tex, obj_sampler, s_em.uv, s_em.ddx, s_em.ddy).rgb;
+    }
+    out.emissive = emissive;
+
     out.base_colour = base_colour;
     out.normal = N;
     out.ao_factor = ao_factor;
@@ -686,8 +711,6 @@ fn compute_lit(
     in: VertexOut,
     saa_kernel: f32,
     refl_dr: f32,
-    uv_ddx: vec2<f32>,
-    uv_ddy: vec2<f32>,
 ) -> LitResult {
     var base_colour = surface.base_colour;
     let ao_factor = surface.ao_factor;
@@ -714,9 +737,9 @@ fn compute_lit(
             // glTF ORM texture: G=roughness factor, B=metallic factor. Per-material
             // `metallic_range` / `roughness_range` remap the raw samples before the
             // scalar factor; identity `(0, 1)` is a no-op.
-            let mr = textureSampleGrad(metallic_roughness_tex, obj_sampler, surface.mat_uv, uv_ddx, uv_ddy);
-            let m_remapped = mix(object.metallic_range.x, object.metallic_range.y, mr.b);
-            let r_remapped = mix(object.roughness_range.x, object.roughness_range.y, mr.g);
+            let mr = surface.mr_sample;
+            let m_remapped = mix(object.metallic_range.x, object.metallic_range.y, mr.y);
+            let r_remapped = mix(object.roughness_range.x, object.roughness_range.y, mr.x);
             metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
             roughness = max(r_remapped * roughness, 0.04);
         }
@@ -902,14 +925,12 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     let V_dr = normalize(camera.eye_pos - in.world_pos);
     let R_dr = reflect(-V_dr, surface.normal);
     let refl_dr = max(length(dpdx(R_dr)), length(dpdy(R_dr)));
-    let uv_ddx = dpdx(surface.mat_uv);
-    let uv_ddy = dpdy(surface.mat_uv);
 
     if surface.resolved {
         return surface.out_oit;
     }
 
-    let lit = compute_lit(surface, in, saa_kernel, refl_dr, uv_ddx, uv_ddy);
+    let lit = compute_lit(surface, in, saa_kernel, refl_dr);
 
     // Re-bind the locals the debug-vis overlay reads before the include.
     let N = surface.normal;
@@ -925,10 +946,7 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     var final_rgb = lit.rgb;
 
     // Emissive term: added after lighting so it can push HDR values above 1.0.
-    var emissive = object.emissive;
-    if object.has_emissive_tex != 0u {
-        emissive = emissive * textureSampleGrad(emissive_tex, obj_sampler, surface.mat_uv, uv_ddx, uv_ddy).rgb;
-    }
+    var emissive = surface.emissive;
     final_rgb += emissive;
     var dbg_emissive_lum = dot(emissive, lum_weights);
     // Surface-hook emissive: the composer adds the hook's emissive term here
