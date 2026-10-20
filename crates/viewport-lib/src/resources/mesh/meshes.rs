@@ -4359,6 +4359,42 @@ mod override_tests {
         assert_eq!(resources.resident_bytes().cpu_geometry_bytes, 0);
     }
 
+    /// The built-in cube is the slab's first allocation, so the first
+    /// application mesh lands in the same chunk, as does a scene uploaded after
+    /// an earlier one was freed.
+    #[test]
+    fn application_meshes_share_the_built_in_cube_chunk() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let cube = resources
+            .mesh_store
+            .iter_mut()
+            .next()
+            .map(|(_, m)| m.vertex_span.chunk);
+        assert_eq!(cube, Some(0));
+
+        let first: Vec<_> = (0..4)
+            .map(|_| {
+                resources
+                    .upload_mesh_data(&device, &primitives::sphere(1.0, 32, 16))
+                    .unwrap()
+            })
+            .collect();
+        for &id in &first {
+            assert_eq!(resources.mesh(id).unwrap().vertex_span.chunk, 0);
+            assert!(resources.free_mesh(id));
+        }
+        let second = resources
+            .upload_mesh_data(&device, &primitives::torus(1.0, 0.3, 48, 24))
+            .unwrap();
+        assert_eq!(resources.mesh(second).unwrap().vertex_span.chunk, 0);
+        assert_eq!(resources.mesh(second).unwrap().index_span.chunk, 0);
+    }
+
     #[test]
     fn retention_off_uploads_no_cpu_geometry() {
         let Some((device, _queue)) = try_make_device() else {
