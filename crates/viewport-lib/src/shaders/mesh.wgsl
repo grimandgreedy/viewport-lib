@@ -168,6 +168,7 @@ const MAT_MATCAP_BLENDABLE: u32 = 4u;
 const MAT_LIGHTMAP_DIRECTIONAL: u32 = 8u;
 const MAT_HAS_SHADOWMASK: u32 = 16u;
 const MAT_HAS_EMISSIVE_TEX: u32 = 32u;
+const MAT_UV_TRANSFORM: u32 = 128u;
 
 // A transformed UV plus its screen-space derivatives, for textureSampleGrad.
 struct SlotUv {
@@ -200,6 +201,10 @@ fn material_slot_uv(
     let uv = select(uv0, uv1, use1);
     let duvdx = select(ddx0, ddx1, use1);
     let duvdy = select(ddy0, ddy1, use1);
+    // Off when every slot of the batch's materials is at identity.
+    if !FEAT_UV_TRANSFORM {
+        return SlotUv(uv, duvdx, duvdy);
+    }
     let s = xf.offset_scale.zw;
     let o = xf.offset_scale.xy;
     let rot = xf.rot_tc.x;
@@ -283,6 +288,7 @@ override FEAT_LIGHTMAP: bool = true;
 override FEAT_MATCAP: bool = true;
 override FEAT_DEFORM: bool = true;
 override FEAT_EMISSIVE_MAP: bool = true;
+override FEAT_UV_TRANSFORM: bool = true;
 @group(1) @binding(7) var matcap_texture: texture_2d<f32>;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
