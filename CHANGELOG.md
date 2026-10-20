@@ -181,6 +181,7 @@
 
 ### Fixed
 
+- **Overlays in multi-viewport frames** - with `prepare_viewport` called for every viewport before any `render_viewport`, each viewport drew the overlays prepared for the last one, so the transform gizmo, the axes indicator and any labels or shapes showed the last viewport's placement and orientation everywhere. Each viewport now keeps its own overlay buffers.
 - **Material plugin items vanished under the opaque bundle** - once 64 or more opaque batches engaged the cached render bundle, batches drawn with a material plugin were left out of both the bundle and the immediate draws. The bundle now records them with the rest.
 - **Shadows under background compilation** - an item drawn through a reduced or GPU-culled pipeline never cast a shadow while pipelines compiled in the background, because the shadow pass waited on a pipeline the draw never asked for.
 - **Material plugins draw on a device without deformers** - a material plugin's pipeline layouts carried the full deform group even where deformers are off, so on such a device every plugin draw failed validation, and on wgpu 29 and 30 the per-object layout went over the storage-buffer limit. Plugin layouts no longer carry a deform group at all.

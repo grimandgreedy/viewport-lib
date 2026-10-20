@@ -617,14 +617,14 @@ impl ViewportRenderer {
     /// logical pixels; the overlay shaders map them to NDC using this uniform, so
     /// overlay geometry does not depend on the viewport size.
     fn ensure_overlay_viewport_buf(
-        &mut self,
+        ov: &mut crate::renderer::ViewportOverlay,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         vp_w: f32,
         vp_h: f32,
     ) {
         let data = [vp_w, vp_h, 0.0, 0.0];
-        if let Some(buf) = &self.overlay_viewport_buf {
+        if let Some(buf) = &ov.overlay_viewport_buf {
             queue.write_buffer(buf, 0, bytemuck::cast_slice(&data));
         } else {
             let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -634,7 +634,7 @@ impl ViewportRenderer {
                 mapped_at_creation: false,
             });
             queue.write_buffer(&buf, 0, bytemuck::cast_slice(&data));
-            self.overlay_viewport_buf = Some(buf);
+            ov.overlay_viewport_buf = Some(buf);
         }
     }
 
@@ -643,18 +643,18 @@ impl ViewportRenderer {
     /// this fallback covers a frame with immediate shapes but no text or retained
     /// groups, so the shape pipeline's binding is always satisfied.
     fn ensure_overlay_instances_default(
-        &mut self,
+        ov: &mut crate::renderer::ViewportOverlay,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
     ) {
-        if self.overlay_instances_ready {
+        if ov.overlay_instances_ready {
             return;
         }
         let data = [crate::resources::OverlayInstance::IDENTITY];
-        self.overlay_bindings
+        ov.overlay_bindings
             .instances
             .write_changed(device, queue, &data);
-        self.overlay_instances_ready = true;
+        ov.overlay_instances_ready = true;
     }
 
     pub(super) fn prepare_overlay_labels(
@@ -662,6 +662,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        ov: &mut crate::renderer::ViewportOverlay,
     ) {
         // ---------------------------------------------------------------
         // Overlay labels
@@ -670,7 +671,7 @@ impl ViewportRenderer {
         // z_order-sorted vertex buffer so that items at the same z_order
         // interleave correctly (e.g. a polyline underline at i32::MAX sits with
         // console text at i32::MAX but above HUD labels at 0).
-        self.label_gpu_data = None;
+        ov.label_gpu_data = None;
         // Counted before any of the paths below can skip a group, so the
         // submitted/drawn pair carries the skips.
         self.overlay_retained_counters.submitted = frame.overlays.retained.len() as u32;
@@ -1342,9 +1343,9 @@ impl ViewportRenderer {
                 for (z, v) in batches {
                     let start = verts.len() as u32;
                     verts.extend(v);
-                    if self.overlay_uses_zorder {
+                    if ov.overlay_uses_zorder {
                         OverlayDrawSegment::push_text(
-                            &mut self.overlay_draw_segments,
+                            &mut ov.overlay_draw_segments,
                             z,
                             start,
                             verts.len() as u32 - start,
@@ -1487,8 +1488,8 @@ impl ViewportRenderer {
                     // least one of the two streams below records a draw.
                     self.overlay_retained_counters.drawn += 1;
                     if let Some((vbuf, vcount)) = text {
-                        let draw_index = self.overlay_retained_draws.len() as u32;
-                        self.overlay_retained_draws.push(
+                        let draw_index = ov.overlay_retained_draws.len() as u32;
+                        ov.overlay_retained_draws.push(
                             crate::renderer::overlay_buffers::RetainedDraw {
                                 vertex_buf: vbuf,
                                 vertex_count: vcount,
@@ -1496,7 +1497,7 @@ impl ViewportRenderer {
                             },
                         );
                         crate::renderer::overlay_draw_order::OverlayDrawSegment::push_retained(
-                            &mut self.overlay_draw_segments,
+                            &mut ov.overlay_draw_segments,
                             r.z_order,
                             draw_index,
                         );
@@ -1507,36 +1508,36 @@ impl ViewportRenderer {
                 }
 
                 if !verts.is_empty()
-                    || !self.overlay_retained_draws.is_empty()
+                    || !ov.overlay_retained_draws.is_empty()
                     || !pending_shapes.is_empty()
                 {
-                    let vertex_buf = self.overlay_text_vbuf.write(device, queue, &verts);
-                    self.ensure_overlay_viewport_buf(device, queue, vp_w, vp_h);
-                    let clip_buf = self.overlay_bindings.clip.write_changed(
+                    let vertex_buf = ov.overlay_text_vbuf.write(device, queue, &verts);
+                    Self::ensure_overlay_viewport_buf(ov, device, queue, vp_w, vp_h);
+                    let clip_buf = ov.overlay_bindings.clip.write_changed(
                         device,
                         queue,
                         clip_data(&clip_shapes),
                     );
                     // Shared with the shape pass (immediate shapes read the
                     // identity at slot 0; retained shape draws use their slot).
-                    let instances_buf = self
+                    let instances_buf = ov
                         .overlay_bindings
                         .instances
                         .write_changed(device, queue, &instances);
-                    self.overlay_instances_ready = true;
+                    ov.overlay_instances_ready = true;
 
                     // Finish retained shape-stream draws now that the instance
                     // buffer exists: build each group's shape bind group (its shadow
                     // buffer plus the shared clip / viewport / instances) and record
                     // its draw + segment.
                     if pending_shapes.is_empty() {
-                        self.overlay_bindings.retained_shape_bgs.clear();
+                        ov.overlay_bindings.retained_shape_bgs.clear();
                     } else {
                         self.resources.ensure_overlay_shape_pipeline(device);
-                        let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
+                        let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
                         if let Some(sh_bgl) = self.resources.overlay_shape.shadow_bgl.as_ref() {
                             let mut previous =
-                                std::mem::take(&mut self.overlay_bindings.retained_shape_bgs);
+                                std::mem::take(&mut ov.overlay_bindings.retained_shape_bgs);
                             for (svbuf, svcount, shbuf, instance_index, z) in
                                 pending_shapes.drain(..)
                             {
@@ -1568,11 +1569,9 @@ impl ViewportRenderer {
                                         ],
                                     })
                                 });
-                                self.overlay_bindings
-                                    .retained_shape_bgs
-                                    .insert(shbuf, cached);
-                                let draw_index = self.overlay_retained_shape_draws.len() as u32;
-                                self.overlay_retained_shape_draws.push(
+                                ov.overlay_bindings.retained_shape_bgs.insert(shbuf, cached);
+                                let draw_index = ov.overlay_retained_shape_draws.len() as u32;
+                                ov.overlay_retained_shape_draws.push(
                                     crate::renderer::overlay_buffers::RetainedShapeDraw {
                                         vertex_buf: svbuf,
                                         vertex_count: svcount,
@@ -1581,7 +1580,7 @@ impl ViewportRenderer {
                                     },
                                 );
                                 crate::renderer::overlay_draw_order::OverlayDrawSegment::push_retained_shape(
-                                    &mut self.overlay_draw_segments,
+                                    &mut ov.overlay_draw_segments,
                                     z,
                                     draw_index,
                                 );
@@ -1590,7 +1589,7 @@ impl ViewportRenderer {
                     }
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
-                    let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
+                    let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
                     let atlas_view = &self.resources.content.glyph_atlas.view;
                     let key = (
                         atlas_view.clone(),
@@ -1598,7 +1597,7 @@ impl ViewportRenderer {
                         vp_buf.clone(),
                         instances_buf.clone(),
                     );
-                    let bind_group = self.overlay_bindings.label_bg.get(key, || {
+                    let bind_group = ov.overlay_bindings.label_bg.get(key, || {
                         device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                             label: Some("overlay_label_bg"),
                             layout: bgl,
@@ -1626,7 +1625,7 @@ impl ViewportRenderer {
                             ],
                         })
                     });
-                    self.label_gpu_data = Some(crate::resources::LabelGpuData {
+                    ov.label_gpu_data = Some(crate::resources::LabelGpuData {
                         vertex_buf,
                         vertex_count: verts.len() as u32,
                         bind_group,
@@ -1643,11 +1642,12 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        ov: &mut crate::renderer::ViewportOverlay,
     ) {
         // ------------------------------------------------------------------
         // SDF overlay shapes
         // ------------------------------------------------------------------
-        self.overlay_shape_gpu_data = None;
+        ov.overlay_shape_gpu_data = None;
         // The gizmo's arrow shafts and cone heads are generated as overlay
         // shapes; they merge into the shape batch here (see `gizmo_overlay`).
         let (gizmo_shapes, _) = self.gizmo_overlay_items(frame);
@@ -1667,8 +1667,8 @@ impl ViewportRenderer {
             let vp_w = frame.camera.viewport_size[0];
             let vp_h = frame.camera.viewport_size[1];
             if vp_w > 0.0 && vp_h > 0.0 {
-                self.ensure_overlay_viewport_buf(device, queue, vp_w, vp_h);
-                self.ensure_overlay_instances_default(device, queue);
+                Self::ensure_overlay_viewport_buf(ov, device, queue, vp_w, vp_h);
+                Self::ensure_overlay_instances_default(ov, device, queue);
                 let mut sorted: Vec<&crate::renderer::types::OverlayShapeItem> = frame
                     .overlays
                     .shapes
@@ -2386,9 +2386,9 @@ impl ViewportRenderer {
                                 stop_positions,
                             });
                         }
-                        if self.overlay_uses_zorder {
+                        if ov.overlay_uses_zorder {
                             crate::renderer::overlay_draw_order::OverlayDrawSegment::push_shape(
-                                &mut self.overlay_draw_segments,
+                                &mut ov.overlay_draw_segments,
                                 shape.z_order,
                                 solid_seg_start,
                                 solid_verts.len() as u32 - solid_seg_start,
@@ -2504,7 +2504,7 @@ impl ViewportRenderer {
                 }
 
                 let solid_vbuf = if !solid_verts.is_empty() {
-                    Some(self.overlay_shape_vbuf.write(device, queue, &solid_verts))
+                    Some(ov.overlay_shape_vbuf.write(device, queue, &solid_verts))
                 } else {
                     None
                 };
@@ -2524,7 +2524,7 @@ impl ViewportRenderer {
                             params2: [0.0, 1.0, 0.0, 0.0],
                         });
                     }
-                    Some(self.overlay_bindings.shape_shadow.write_changed(
+                    Some(ov.overlay_bindings.shape_shadow.write_changed(
                         device,
                         queue,
                         &shadow_layers,
@@ -2535,20 +2535,20 @@ impl ViewportRenderer {
 
                 let (shadow_bind_group, shape_clip_buf) =
                     if let (true, Some(buf)) = (solid_vbuf.is_some(), shadow_buf.as_ref()) {
-                        let clip_buf = self.overlay_bindings.clip.write_changed(
+                        let clip_buf = ov.overlay_bindings.clip.write_changed(
                             device,
                             queue,
                             clip_data(&clip_shapes),
                         );
-                        let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
-                        let inst_buf = self.overlay_bindings.instances.buffer().unwrap().clone();
+                        let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
+                        let inst_buf = ov.overlay_bindings.instances.buffer().unwrap().clone();
                         let key = [
                             buf.clone(),
                             clip_buf.clone(),
                             vp_buf.clone(),
                             inst_buf.clone(),
                         ];
-                        let cache = &mut self.overlay_bindings.shape_shadow_bg;
+                        let cache = &mut ov.overlay_bindings.shape_shadow_bg;
                         let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
                             cache.get(key, || {
                                 device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -2590,7 +2590,7 @@ impl ViewportRenderer {
                         self.resources.overlay_shape.tex_bgl.as_ref(),
                         self.resources.overlay_shape.tex_sampler.as_ref(),
                     ) {
-                        let mut previous = std::mem::take(&mut self.overlay_bindings.tex_bgs);
+                        let mut previous = std::mem::take(&mut ov.overlay_bindings.tex_bgs);
                         for (group_idx, (tex_id, verts)) in tex_groups.iter().enumerate() {
                             if verts.is_empty() {
                                 continue;
@@ -2602,7 +2602,7 @@ impl ViewportRenderer {
                             let view = &entry.view;
                             let bind_group = match previous
                                 .remove(view)
-                                .or_else(|| self.overlay_bindings.tex_bgs.get(view).cloned())
+                                .or_else(|| ov.overlay_bindings.tex_bgs.get(view).cloned())
                             {
                                 Some(bg) => bg,
                                 None => {
@@ -2626,19 +2626,19 @@ impl ViewportRenderer {
                                     })
                                 }
                             };
-                            self.overlay_bindings
+                            ov.overlay_bindings
                                 .tex_bgs
                                 .insert(view.clone(), bind_group.clone());
                             let batch_index = tex_batches.len();
-                            if batch_index >= self.overlay_shape_tex_vbufs.len() {
-                                self.overlay_shape_tex_vbufs.push(
+                            if batch_index >= ov.overlay_shape_tex_vbufs.len() {
+                                ov.overlay_shape_tex_vbufs.push(
                                     crate::renderer::overlay_buffers::GrowBuffer::vertex(
                                         "overlay_shape_tex_vbuf",
                                     ),
                                 );
                             }
-                            let vertex_buf = self.overlay_shape_tex_vbufs[batch_index]
-                                .write(device, queue, verts);
+                            let vertex_buf =
+                                ov.overlay_shape_tex_vbufs[batch_index].write(device, queue, verts);
                             group_to_batch[group_idx] = Some(batch_index as u32);
                             tex_batches.push(crate::resources::OverlayShapeTexBatch {
                                 vertex_buf,
@@ -2653,13 +2653,13 @@ impl ViewportRenderer {
                     // z_order, so a solid shape can layer between two shapes that
                     // share a texture. The whole batch no longer collapses to its
                     // lowest z.
-                    if self.overlay_uses_zorder {
+                    if ov.overlay_uses_zorder {
                         for &(z, group_idx, vstart, vcount) in &tex_shape_segs {
                             if let Some(batch_index) =
                                 group_to_batch.get(group_idx).copied().flatten()
                             {
                                 crate::renderer::overlay_draw_order::OverlayDrawSegment::push_shape_tex(
-                                    &mut self.overlay_draw_segments,
+                                    &mut ov.overlay_draw_segments,
                                     z,
                                     batch_index,
                                     vstart,
@@ -2676,15 +2676,15 @@ impl ViewportRenderer {
                 // textured shape the same way it is on a solid one.
                 let (tex_clip_bind_group, tex_clip_buf) = if has_tex || has_blur {
                     if let Some(bgl) = self.resources.overlay_shape.tex_clip_bgl.as_ref() {
-                        let clip_buf = self.overlay_bindings.clip.write_changed(
+                        let clip_buf = ov.overlay_bindings.clip.write_changed(
                             device,
                             queue,
                             clip_data(&clip_shapes),
                         );
-                        let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
+                        let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
                         let shadow = shadow_buf.as_ref().unwrap();
                         let key = [clip_buf.clone(), vp_buf.clone(), shadow.clone()];
-                        let bg = self.overlay_bindings.tex_clip_bg.get(key, || {
+                        let bg = ov.overlay_bindings.tex_clip_bg.get(key, || {
                             device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                                 label: Some("overlay_shape_tex_clip_bg"),
                                 layout: bgl,
@@ -2713,16 +2713,13 @@ impl ViewportRenderer {
                 };
 
                 let blur_vbuf = if !blur_verts.is_empty() {
-                    Some(
-                        self.overlay_shape_blur_vbuf
-                            .write(device, queue, &blur_verts),
-                    )
+                    Some(ov.overlay_shape_blur_vbuf.write(device, queue, &blur_verts))
                 } else {
                     None
                 };
 
                 if solid_vbuf.is_some() || !tex_batches.is_empty() || blur_vbuf.is_some() {
-                    self.overlay_shape_gpu_data = Some(crate::resources::OverlayShapeGpuData {
+                    ov.overlay_shape_gpu_data = Some(crate::resources::OverlayShapeGpuData {
                         vertex_buf: solid_vbuf,
                         vertex_count: solid_verts.len() as u32,
                         shadow_bind_group,
@@ -2743,14 +2740,14 @@ impl ViewportRenderer {
     /// Sort the overlay draw list into paint order. The family passes have
     /// already recorded their own segments; this orders them by
     /// `(z_order, family_rank)` for the ordered emit path.
-    pub(super) fn finalize_overlay_draw_order(&mut self, _frame: &FrameData) {
+    pub(super) fn finalize_overlay_draw_order(ov: &mut crate::renderer::ViewportOverlay) {
         // When no overlay uses z_order, the family passes recorded nothing and
         // the emit path keeps its fixed order; there is nothing to finalize.
-        if !self.overlay_uses_zorder {
+        if !ov.overlay_uses_zorder {
             return;
         }
         use crate::renderer::overlay_draw_order::sort_overlay_segments;
-        sort_overlay_segments(&mut self.overlay_draw_segments);
+        sort_overlay_segments(&mut ov.overlay_draw_segments);
     }
 }
 

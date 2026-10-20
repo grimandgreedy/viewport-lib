@@ -111,7 +111,8 @@ impl ViewportRenderer {
                 }
             }
         }
-        emit_overlay_2d!(self, render_pass);
+        let ov = &self.viewport_slots[vp_idx].overlay;
+        emit_overlay_2d!(self, ov, render_pass);
         // Shadow atlas viewer overlay.
         if let (true, Some(pipeline)) = (
             frame.effects.debug.show_shadow_atlas,
