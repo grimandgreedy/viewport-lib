@@ -85,6 +85,7 @@
 
 ### Changed
 
+- **Mesh uploads no longer wait for the closed-surface check** - `upload_mesh_data`, `upload_mesh` and `replace_mesh_data` run it on a worker thread and the next `prepare` collects the answer, waiting only if it is still running; `begin_upload_mesh_data` runs it beside its GPU fill. `GpuMesh::closed` reads `false` from the upload until that `prepare`.
 - **The emissive-map sample is compiled out of mesh batches whose material binds no emissive map** - it joins the per-batch shader features, so a batch without a map adds the material's emissive colour and custom data only; the full pipeline stands in while the reduced one compiles, and `FrameStats::feature_pipelines_built` counts it.
 - **`ItemSettings::force_per_object` and `FrameStats::per_object_items` are removed** - every mesh item draws in a batch through one set of shaders, so there is no per-object path to force or count. Delete any `force_per_object` assignment; read `instanced_batches` and `draw_calls` instead of `per_object_items`.
 - **Shadow casters draw through one shader** - every mesh batch casts through the cascade and point-light shadow shaders the per-object casters used, drawing from the cascade cull. Batches that used to cast whole into every point-light face are now culled per face.

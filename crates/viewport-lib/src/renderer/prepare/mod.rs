@@ -174,6 +174,8 @@ impl ViewportRenderer {
         // advance promotions: doing so drains the one-cycle promotion window a
         // consumer polls to fire a deferred bind, which strands the bind
         // permanently (the runner clears its `finished` table every call).
+        // A derivative render skips the drain but still reads `GpuMesh::closed`.
+        self.resources.resolve_closed_checks();
         if self.render_advances_state() {
             match self.upload_budget {
                 Some(d) => self.resources.process_uploads_with_budget(

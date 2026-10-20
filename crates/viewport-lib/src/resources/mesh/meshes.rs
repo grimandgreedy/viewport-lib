@@ -70,9 +70,10 @@ pub(crate) struct MeshPrep {
     pub cpu_positions: Option<Vec<[f32; 3]>>,
     pub cpu_normals: Option<Vec<[f32; 3]>>,
     pub cpu_indices: Option<Vec<u32>>,
-    /// `mesh_is_closed` on the source geometry, computed here so the async
-    /// path pays for it on the worker thread.
-    pub closed: bool,
+    /// `mesh_is_closed` on the source geometry when the prep ran it, which the
+    /// worker-thread volume uploads do. `None` leaves the check to
+    /// `assemble_mesh_data`, which runs it on a worker after the upload.
+    pub closed: Option<bool>,
 }
 
 impl DeviceResources {
@@ -108,7 +109,7 @@ impl DeviceResources {
         }
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
             + indices.len() * std::mem::size_of::<u32>()) as u64;
-        let mesh = Self::create_mesh(
+        let mut mesh = Self::create_mesh(
             device,
             &mut self.geometry,
             &self.binds.object_bgl,
@@ -129,7 +130,13 @@ impl DeviceResources {
             vertices,
             indices,
         );
-        Ok(self.mesh_store.insert(mesh))
+        mesh.closed_check = Some(ClosedCheck::spawn(
+            vertices.iter().map(|v| v.position).collect(),
+            indices.to_vec(),
+        ));
+        let id = self.mesh_store.insert(mesh);
+        self.pending_closed_checks.push(id);
+        Ok(id)
     }
 
     /// Upload a `MeshData` (from the geometry primitives module) directly.
@@ -163,7 +170,7 @@ impl DeviceResources {
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         validate_mesh_data(data)?;
         Self::validate_mesh_size(device, data)?;
-        let prep = Self::prep_mesh_data(data, self.retain_mesh_cpu_geometry);
+        let prep = Self::prep_mesh_data(data, self.retain_mesh_cpu_geometry, false);
         Ok(self.assemble_mesh_data(device, data, prep))
     }
 
@@ -191,8 +198,13 @@ impl DeviceResources {
     /// Split out so it can run on a worker thread for
     /// `begin_upload_mesh_data`. Returns owned buffers; the caller hands
     /// them to `assemble_mesh_data` on the main thread to finish the
-    /// upload.
-    pub(crate) fn prep_mesh_data(data: &MeshData, retain_cpu: bool) -> MeshPrep {
+    /// upload. `check_closed` runs `mesh_is_closed` here as well, for callers
+    /// already on a worker thread.
+    pub(crate) fn prep_mesh_data(
+        data: &MeshData,
+        retain_cpu: bool,
+        check_closed: bool,
+    ) -> MeshPrep {
         let computed_tangents: Option<Vec<[f32; 4]>> = if data.tangents.is_none() {
             data.uvs
                 .as_ref()
@@ -253,7 +265,8 @@ impl DeviceResources {
             cpu_positions: retain_cpu.then(|| data.positions.clone()),
             cpu_normals: retain_cpu.then(|| data.normals.clone()),
             cpu_indices: retain_cpu.then(|| data.indices.clone()),
-            closed: mesh_is_closed(data.positions.iter().copied(), &data.indices),
+            closed: check_closed
+                .then(|| mesh_is_closed(data.positions.iter().copied(), &data.indices)),
         }
     }
 
@@ -300,7 +313,19 @@ impl DeviceResources {
             uv1_bytes,
             None,
         );
-        mesh.closed = closed;
+        let pending_check = match closed {
+            Some(closed) => {
+                mesh.closed = closed;
+                false
+            }
+            None => {
+                mesh.closed_check = Some(ClosedCheck::spawn(
+                    data.positions.clone(),
+                    data.indices.clone(),
+                ));
+                true
+            }
+        };
         mesh.cpu_positions = cpu_positions;
         mesh.cpu_normals = cpu_normals;
         mesh.cpu_indices = cpu_indices;
@@ -310,6 +335,9 @@ impl DeviceResources {
             + data.indices.len() * std::mem::size_of::<u32>())
             as u64;
         let id = self.mesh_store.insert(mesh);
+        if pending_check {
+            self.pending_closed_checks.push(id);
+        }
         tracing::debug!(
             mesh_index = id.index(),
             vertices = data.positions.len(),
@@ -379,7 +407,10 @@ impl DeviceResources {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu_then_gpu_chunked(move |progress| {
                 progress.set(0.1);
-                let prep = DeviceResources::prep_mesh_data(&data, retain_cpu);
+                // The closed check runs beside the prep and the GPU fill; the
+                // mesh is assembled once it lands.
+                let closed_check = ClosedCheck::spawn(data.positions.clone(), data.indices.clone());
+                let prep = DeviceResources::prep_mesh_data(&data, retain_cpu, false);
                 let aabb = crate::scene::aabb::Aabb::from_positions(&data.positions);
                 progress.set(0.5);
 
@@ -398,7 +429,7 @@ impl DeviceResources {
                     cpu_positions,
                     cpu_normals,
                     cpu_indices,
-                    closed,
+                    closed: _,
                 } = prep;
                 let mut voff: usize = 0;
                 let mut ioff: usize = 0;
@@ -461,6 +492,9 @@ impl DeviceResources {
                         if voff < vsrc.len() || ioff < indices_bytes {
                             return Ok(crate::resources::upload_jobs::GpuStep::Continue);
                         }
+                        let Some(closed) = closed_check.try_get() else {
+                            return Ok(crate::resources::upload_jobs::GpuStep::Continue);
+                        };
 
                         let (
                             data,
@@ -1512,7 +1546,10 @@ impl DeviceResources {
             new_mesh.cpu_normals = Some(data.normals.clone());
             new_mesh.cpu_indices = Some(data.indices.clone());
         }
-        new_mesh.closed = mesh_is_closed(data.positions.iter().copied(), &data.indices);
+        new_mesh.closed_check = Some(ClosedCheck::spawn(
+            data.positions.clone(),
+            data.indices.clone(),
+        ));
         new_mesh.submeshes = data.submeshes.clone();
         // Content changed under a stable id: carry the old revision forward
         // plus one so content-keyed caches invalidate.
@@ -1548,6 +1585,7 @@ impl DeviceResources {
             + data.indices.len() * std::mem::size_of::<u32>())
             as u64;
         let _ = self.mesh_store.replace(mesh_id, new_mesh);
+        self.pending_closed_checks.push(mesh_id);
         // The fresh record holds the attributes only; the mesh's deform slots
         // follow it there.
         self.sync_deform_record(device, mesh_id, &[]);
@@ -1903,7 +1941,7 @@ impl DeviceResources {
                     crate::resources::volume::volume_mesh::extract_boundary_faces(&data);
                 progress.set(0.5);
                 validate_mesh_data(&mesh_data)?;
-                let prep = DeviceResources::prep_mesh_data(&mesh_data, retain_cpu);
+                let prep = DeviceResources::prep_mesh_data(&mesh_data, retain_cpu, true);
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut DeviceResources| {
@@ -1980,7 +2018,7 @@ impl DeviceResources {
                     );
                 progress.set(0.5);
                 validate_mesh_data(&mesh_data)?;
-                let prep = DeviceResources::prep_mesh_data(&mesh_data, retain_cpu);
+                let prep = DeviceResources::prep_mesh_data(&mesh_data, retain_cpu, true);
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut DeviceResources| {
@@ -2479,7 +2517,7 @@ impl DeviceResources {
         vertices: &[Vertex],
         indices: &[u32],
     ) -> GpuMesh {
-        let mut mesh = Self::create_mesh_with_normals(
+        Self::create_mesh_with_normals(
             device,
             geometry,
             object_bgl,
@@ -2501,9 +2539,7 @@ impl DeviceResources {
             indices,
             None,
             None,
-        );
-        mesh.closed = mesh_is_closed(vertices.iter().map(|v| v.position), indices);
-        mesh
+        )
     }
 
     pub(crate) fn create_mesh_with_normals(
@@ -2875,6 +2911,7 @@ impl DeviceResources {
             index_span,
             index_count,
             closed: false,
+            closed_check: None,
             submeshes: Vec::new(),
             // Wireframe edges are built lazily on first use; the indices are
             // retained so any mesh can materialise them.
@@ -3555,6 +3592,60 @@ impl DeviceResources {
         uniform_buffer.unmap();
 
         (pending, scalar_range, uniform_buffer)
+    }
+}
+
+/// A `mesh_is_closed` answer computed on the thread pool, so an upload does not
+/// wait for it. The mesh reads as open until `DeviceResources` resolves it,
+/// which happens before the next frame reads `GpuMesh::closed`.
+pub(crate) struct ClosedCheck(std::sync::Arc<(std::sync::Mutex<Option<bool>>, std::sync::Condvar)>);
+
+impl ClosedCheck {
+    pub(crate) fn spawn(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> Self {
+        let cell = std::sync::Arc::new((std::sync::Mutex::new(None), std::sync::Condvar::new()));
+        let worker = cell.clone();
+        crate::util::par::spawn(move || {
+            // A panic reads as open, the conservative answer.
+            let closed =
+                std::panic::catch_unwind(|| mesh_is_closed(positions.iter().copied(), &indices))
+                    .unwrap_or(false);
+            let (lock, ready) = &*worker;
+            *lock.lock().expect("closed check poisoned") = Some(closed);
+            ready.notify_all();
+        });
+        Self(cell)
+    }
+
+    /// The answer if the worker has finished.
+    pub(crate) fn try_get(&self) -> Option<bool> {
+        *self.0.0.lock().expect("closed check poisoned")
+    }
+
+    /// The answer, blocking until the worker has finished.
+    pub(crate) fn wait(&self) -> bool {
+        let (lock, ready) = &*self.0;
+        let mut guard = lock.lock().expect("closed check poisoned");
+        loop {
+            if let Some(closed) = *guard {
+                return closed;
+            }
+            guard = ready.wait(guard).expect("closed check poisoned");
+        }
+    }
+}
+
+impl DeviceResources {
+    /// Settle every closed check still running, so the frame about to be
+    /// prepared reads each mesh's real answer. Blocks only on checks that have
+    /// not finished yet.
+    pub(crate) fn resolve_closed_checks(&mut self) {
+        for id in std::mem::take(&mut self.pending_closed_checks) {
+            if let Some(mesh) = self.mesh_store.get_mut(id) {
+                if let Some(check) = mesh.closed_check.take() {
+                    mesh.closed = check.wait();
+                }
+            }
+        }
     }
 }
 
@@ -4438,7 +4529,7 @@ mod vertex_colour_tests {
 
     #[test]
     fn none_leaves_vertices_white() {
-        let prep = DeviceResources::prep_mesh_data(&tri(), true);
+        let prep = DeviceResources::prep_mesh_data(&tri(), true, true);
         assert!(
             prep.vertices
                 .iter()
@@ -4454,7 +4545,7 @@ mod vertex_colour_tests {
             [0.0, 1.0, 0.0, 1.0],
             [0.0, 0.0, 1.0, 0.5],
         ]);
-        let prep = DeviceResources::prep_mesh_data(&data, true);
+        let prep = DeviceResources::prep_mesh_data(&data, true, true);
         assert_eq!(prep.vertices[0].colour, [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(prep.vertices[1].colour, [0.0, 1.0, 0.0, 1.0]);
         assert_eq!(prep.vertices[2].colour, [0.0, 0.0, 1.0, 0.5]);
@@ -4464,7 +4555,7 @@ mod vertex_colour_tests {
     fn short_colour_slice_defaults_missing_entries_white() {
         let mut data = tri();
         data.vertex_colours = Some(vec![[0.2, 0.4, 0.6, 1.0]]);
-        let prep = DeviceResources::prep_mesh_data(&data, true);
+        let prep = DeviceResources::prep_mesh_data(&data, true, true);
         assert_eq!(prep.vertices[0].colour, [0.2, 0.4, 0.6, 1.0]);
         assert_eq!(prep.vertices[1].colour, [1.0, 1.0, 1.0, 1.0]);
         assert_eq!(prep.vertices[2].colour, [1.0, 1.0, 1.0, 1.0]);
@@ -4510,6 +4601,59 @@ mod async_upload_tests {
             }
         }
         panic!("mesh upload did not complete in time");
+    }
+
+    #[test]
+    fn every_upload_path_settles_the_closed_check() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let cube = primitives::cube(1.0);
+        let plane = primitives::grid_plane(1.0, 1.0, 4, 4);
+
+        let sync_closed = resources.upload_mesh_data(&device, &cube).unwrap();
+        let sync_open = resources.upload_mesh_data(&device, &plane).unwrap();
+        let verts: Vec<crate::resources::Vertex> = cube
+            .positions
+            .iter()
+            .zip(&cube.normals)
+            .map(|(&position, &normal)| crate::resources::Vertex {
+                position,
+                normal,
+                colour: [1.0; 4],
+                uv: [0.0; 2],
+                tangent: [1.0, 0.0, 0.0, 1.0],
+            })
+            .collect();
+        let raw = resources
+            .upload_mesh(&device, &verts, &cube.indices)
+            .unwrap();
+        let replaced = resources.upload_mesh_data(&device, &plane).unwrap();
+        resources.process_uploads(&device, &queue);
+        assert!(!resources.mesh(replaced).unwrap().closed);
+        resources
+            .replace_mesh_data(&device, &queue, replaced, &cube)
+            .unwrap();
+        let job = resources
+            .begin_upload_mesh_data(&device, cube.clone())
+            .unwrap();
+        drive_until_ready(&mut resources, &device, &queue, job);
+        let async_closed = resources.upload_result_mesh(job).unwrap();
+
+        for (id, closed) in [
+            (sync_closed, true),
+            (sync_open, false),
+            (raw, true),
+            (replaced, true),
+            (async_closed, true),
+        ] {
+            let mesh = resources.mesh(id).unwrap();
+            assert!(mesh.closed_check.is_none(), "check still pending");
+            assert_eq!(mesh.closed, closed);
+        }
     }
 
     #[test]
