@@ -29,7 +29,7 @@ use viewport_lib_plugins::deformers::cut::{Cut, CutDeformer};
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePattern, BackfacePolicy, BuiltinColourmap,
     BuiltinMatcap, ButtonState, Camera, CameraFrame, ColourmapId, FrameData, LightKind,
-    LightSource, LightingSettings, MatcapId, Material, MeshId, OffscreenViewportTarget,
+    LightSource, LightingSettings, MatcapId, Material, MaterialId, MeshId, OffscreenViewportTarget,
     OrbitCameraController, ParamVis, ParamVisMode, PatternConfig, PickId, PickMask, SceneFrame,
     SceneRenderItem, ScrollUnits, ShadingModel, ShadowFilter, ViewportContext, ViewportEvent,
     ViewportInput, ViewportRenderer,
@@ -256,8 +256,8 @@ fn main() -> eframe::Result {
                 let scalar_t = res.upload_mesh_data(device, &arrow_mesh).expect("scalar_t");
 
                 // Position-override sphere: bind a per-vertex position buffer (a radial
-                // bump of the rest sphere). A bound override buffer forces the per-object
-                // path via the `is_instanceable` override-buffer exclusion.
+                // bump of the rest sphere), which the mesh draws in place of its own
+                // positions.
                 let sphere_o = primitives::sphere(0.85, 40, 20);
                 let mut flat: Vec<f32> = Vec::with_capacity(sphere_o.positions.len() * 3);
                 for p in &sphere_o.positions {
@@ -302,12 +302,13 @@ fn main() -> eframe::Result {
             let colourmap = renderer
                 .resources()
                 .builtin_colourmap_id(BuiltinColourmap::Viridis);
+            let materials = ObjectMaterials::upload(renderer.resources_mut(), matcap);
 
             rs.renderer.write().callback_resources.insert(renderer);
 
             Ok(Box::new(App::new(
                 meshes,
-                matcap,
+                materials,
                 colourmap,
                 skinning,
                 skin_pivot_z,
@@ -334,6 +335,133 @@ struct Meshes {
     override_pos: MeshId,
 }
 
+/// The material of each object, indexed by pick id; index 0 is the ground.
+/// Vivid base colours so every object stands out against the white platform.
+/// Matcap (8) and scalar (9, 13) ignore base_colour (their own shading wins).
+fn authored_materials(matcap: MatcapId) -> Vec<Material> {
+    let colour = |r, g, b, edit: &dyn Fn(&mut Material)| {
+        let mut m = Material::from_colour(Colour::linear_rgb(r, g, b));
+        edit(&mut m);
+        m
+    };
+    vec![
+        // 0: ground platform.
+        colour(0.86, 0.85, 0.82, &|m| {
+            m.roughness = 0.9;
+            m.backface_policy = BackfacePolicy::Cull;
+        }),
+        // 1: red, one-sided.
+        colour(0.85, 0.10, 0.10, &|m| {
+            m.backface_policy = BackfacePolicy::Cull
+        }),
+        // 2: orange, two-sided.
+        colour(0.95, 0.45, 0.05, &|m| {
+            m.backface_policy = BackfacePolicy::Identical
+        }),
+        // 3: yellow, transparent one-sided.
+        colour(0.93, 0.83, 0.10, &|m| {
+            m.backface_policy = BackfacePolicy::Cull;
+            m.alpha_mode = AlphaMode::Blend;
+        }),
+        // 4: green, transparent two-sided.
+        colour(0.15, 0.80, 0.25, &|m| {
+            m.backface_policy = BackfacePolicy::Identical;
+            m.alpha_mode = AlphaMode::Blend;
+        }),
+        // 5: teal front, DifferentColour backface.
+        colour(0.05, 0.70, 0.65, &|m| {
+            m.backface_policy =
+                BackfacePolicy::DifferentColour(Colour::linear_rgb(0.95, 0.35, 0.10))
+        }),
+        // 6: blue, Tint backface.
+        colour(0.15, 0.35, 0.95, &|m| {
+            m.backface_policy = BackfacePolicy::Tint(0.4)
+        }),
+        // 7: violet front, Pattern backface.
+        colour(0.60, 0.20, 0.90, &|m| {
+            m.backface_policy = BackfacePolicy::Pattern(PatternConfig {
+                pattern: BackfacePattern::Hatching,
+                colour: Colour::linear_rgb(0.1, 0.4, 0.8),
+                ..Default::default()
+            })
+        }),
+        // 8: matcap.
+        colour(0.80, 0.82, 0.88, &|m| {
+            m.shading_model = ShadingModel::Matcap(matcap)
+        }),
+        // 9: scalar attribute.
+        colour(0.80, 0.82, 0.88, &|_| {}),
+        // 10: magenta, UV param-vis.
+        colour(0.95, 0.15, 0.65, &|m| {
+            m.param_vis = Some(ParamVis {
+                mode: ParamVisMode::Checker,
+                scale: 8.0,
+            })
+        }),
+        // 11: cyan, two-sided to show the cut interior.
+        colour(0.10, 0.75, 0.90, &|m| {
+            m.backface_policy = BackfacePolicy::Identical
+        }),
+        // 12: amber, skinned.
+        colour(0.90, 0.55, 0.05, &|_| {}),
+        // 13: scalar attribute, transparent one-sided.
+        colour(0.80, 0.82, 0.88, &|m| {
+            m.backface_policy = BackfacePolicy::Cull;
+            m.alpha_mode = AlphaMode::Blend;
+        }),
+        // 14: lime, one-sided.
+        colour(0.55, 0.85, 0.20, &|m| {
+            m.backface_policy = BackfacePolicy::Cull
+        }),
+    ]
+}
+
+/// Uploaded object materials, plus each one as authored so the PBR toggle can
+/// rewrite its shading model in place.
+struct ObjectMaterials {
+    ids: Vec<MaterialId>,
+    authored: Vec<Material>,
+    // The `pbr` value the uploaded materials were last written for.
+    written_pbr: Option<bool>,
+}
+
+impl ObjectMaterials {
+    fn upload(res: &mut vpl::DeviceResources, matcap: MatcapId) -> Self {
+        let authored = authored_materials(matcap);
+        let ids = authored
+            .iter()
+            .map(|m| res.upload_material(*m).expect("material"))
+            .collect();
+        Self {
+            ids,
+            authored,
+            written_pbr: None,
+        }
+    }
+
+    /// Flip every lit (non-matcap) material between PBR and Phong when the
+    /// toggle changes. Matcap keeps its own model; scalar/param-vis items still
+    /// shade through the selected lit model underneath. The ids do not change,
+    /// so the items need no edit.
+    fn sync(&mut self, res: &mut vpl::DeviceResources, pbr: bool) {
+        if self.written_pbr == Some(pbr) {
+            return;
+        }
+        for (id, authored) in self.ids.iter().zip(&self.authored) {
+            let mut m = *authored;
+            if !matches!(m.shading_model, ShadingModel::Matcap(_)) {
+                m.shading_model = if pbr {
+                    ShadingModel::Pbr
+                } else {
+                    ShadingModel::Phong
+                };
+            }
+            res.replace_material(*id, m).expect("live material");
+        }
+        self.written_pbr = Some(pbr);
+    }
+}
+
 struct App {
     camera: Camera,
     controller: OrbitCameraController,
@@ -342,7 +470,7 @@ struct App {
     input: ViewportInput,
 
     meshes: Meshes,
-    matcap: MatcapId,
+    materials: ObjectMaterials,
     colourmap: ColourmapId,
     skinning: SkinningPlugin,
     skin_pivot_z: f32,
@@ -394,7 +522,7 @@ struct Target {
 impl App {
     fn new(
         meshes: Meshes,
-        matcap: MatcapId,
+        materials: ObjectMaterials,
         colourmap: ColourmapId,
         skinning: SkinningPlugin,
         skin_pivot_z: f32,
@@ -407,7 +535,7 @@ impl App {
             controller: OrbitCameraController::new_stateless(),
             input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
             meshes,
-            matcap,
+            materials,
             colourmap,
             skinning,
             skin_pivot_z,
@@ -494,69 +622,35 @@ impl App {
     /// One render item per object, plus the ground.
     fn build_scene(&self) -> Vec<SceneRenderItem> {
         let mut items = Vec::new();
+        let mats = &self.materials.ids;
 
         let mut place = |mesh: MeshId, pick_id: u64, configure: &dyn Fn(&mut SceneRenderItem)| {
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = mesh;
+            let mut item = SceneRenderItem::new(mesh, mats[pick_id as usize]);
             item.model = glam::Mat4::from_translation(grid_pos(pick_id)).to_cols_array_2d();
-            item.material = Material::from_colour(Colour::linear_rgb(0.80, 0.82, 0.88));
             item.settings.pick_id = PickId(pick_id);
             item.settings.selected = self.selection.contains(&pick_id);
             configure(&mut item);
             items.push(item);
         };
 
-        // Vivid base colours so every object stands out against the white platform.
-        // Matcap (8) and scalar (9) ignore base_colour (their own shading wins).
+        // Each object's material is in `authored_materials`, by pick id.
 
         // 1: instanced opaque, one-sided.
-        place(self.meshes.cube, 1, &|it| {
-            it.material.base_colour = Colour::linear_rgb(0.85, 0.10, 0.10); // red
-            it.material.backface_policy = BackfacePolicy::Cull;
-        });
+        place(self.meshes.cube, 1, &|_| {});
         // 2: instanced opaque, two-sided (the path the two-sided shadow fix covers).
-        place(self.meshes.hemisphere, 2, &|it| {
-            it.material.base_colour = Colour::linear_rgb(0.95, 0.45, 0.05); // orange
-            it.material.backface_policy = BackfacePolicy::Identical;
-        });
+        place(self.meshes.hemisphere, 2, &|_| {});
         // 3: instanced transparent, one-sided.
-        place(self.meshes.sphere_t, 3, &|it| {
-            it.material.base_colour = Colour::linear_rgb(0.93, 0.83, 0.10); // yellow
-            it.material.backface_policy = BackfacePolicy::Cull;
-            it.material.alpha_mode = AlphaMode::Blend;
-            it.settings.opacity = 0.5;
-        });
+        place(self.meshes.sphere_t, 3, &|it| it.settings.opacity = 0.5);
         // 4: per-object transparent, two-sided (OIT is back-culled, so this stays per-object).
-        place(self.meshes.torus, 4, &|it| {
-            it.material.base_colour = Colour::linear_rgb(0.15, 0.80, 0.25); // green
-            it.material.backface_policy = BackfacePolicy::Identical;
-            it.material.alpha_mode = AlphaMode::Blend;
-            it.settings.opacity = 0.5;
-        });
+        place(self.meshes.torus, 4, &|it| it.settings.opacity = 0.5);
         // 5: per-object two-sided, DifferentColour backface.
-        place(self.meshes.cone, 5, &|it| {
-            it.material.base_colour = Colour::linear_rgb(0.05, 0.70, 0.65); // teal (front)
-            it.material.backface_policy =
-                BackfacePolicy::DifferentColour(Colour::linear_rgb(0.95, 0.35, 0.10));
-        });
+        place(self.meshes.cone, 5, &|_| {});
         // 6: per-object two-sided, Tint backface.
-        place(self.meshes.cylinder, 6, &|it| {
-            it.material.base_colour = Colour::linear_rgb(0.15, 0.35, 0.95); // blue
-            it.material.backface_policy = BackfacePolicy::Tint(0.4);
-        });
+        place(self.meshes.cylinder, 6, &|_| {});
         // 7: per-object two-sided, Pattern backface.
-        place(self.meshes.ring, 7, &|it| {
-            it.material.base_colour = Colour::linear_rgb(0.60, 0.20, 0.90); // violet (front)
-            it.material.backface_policy = BackfacePolicy::Pattern(PatternConfig {
-                pattern: BackfacePattern::Hatching,
-                colour: Colour::linear_rgb(0.1, 0.4, 0.8),
-                ..Default::default()
-            });
-        });
+        place(self.meshes.ring, 7, &|_| {});
         // 8: per-object matcap (base_colour ignored).
-        place(self.meshes.icosphere, 8, &|it| {
-            it.material.shading_model = ShadingModel::Matcap(self.matcap);
-        });
+        place(self.meshes.icosphere, 8, &|_| {});
         // 9: per-object scalar attribute + colourmap (base_colour ignored).
         place(self.meshes.scalar, 9, &|it| {
             it.active_attribute = Some(AttributeRef {
@@ -566,25 +660,14 @@ impl App {
             it.colourmap_id = Some(self.colourmap);
         });
         // 10: per-object UV param-vis.
-        place(self.meshes.ellipsoid, 10, &|it| {
-            it.material.base_colour = Colour::linear_rgb(0.95, 0.15, 0.65); // magenta
-            it.material.param_vis = Some(ParamVis {
-                mode: ParamVisMode::Checker,
-                scale: 8.0,
-            });
-        });
+        place(self.meshes.ellipsoid, 10, &|_| {});
         // 11: per-object cut deformer (its deform instance forces per-object).
         place(self.meshes.filter, 11, &|it| {
-            it.material.base_colour = Colour::linear_rgb(0.10, 0.75, 0.90); // cyan
-            it.material.backface_policy = BackfacePolicy::Identical; // show the cut interior
             it.deform_instance = Some(CUT_INSTANCE);
         });
         // 12: per-object GPU skinning. deform_instance binds the per-instance palette.
         place(self.meshes.skinned, 12, &|it| {
             it.deform_instance = Some(0);
-            it.material = Material::from_colour(Colour::linear_rgb(0.90, 0.55, 0.05)); // amber
-            it.settings.pick_id = PickId(12);
-            it.settings.selected = self.selection.contains(&12);
         });
         // 13: per-object transparent one-sided (scalar attribute forces per-object).
         place(self.meshes.scalar_t, 13, &|it| {
@@ -593,38 +676,16 @@ impl App {
                 kind: AttributeKind::Vertex,
             });
             it.colourmap_id = Some(self.colourmap);
-            it.material.backface_policy = BackfacePolicy::Cull;
-            it.material.alpha_mode = AlphaMode::Blend;
             it.settings.opacity = 0.5;
         });
         // 14: per-object via a bound position-override buffer.
-        place(self.meshes.override_pos, 14, &|it| {
-            it.material.base_colour = Colour::linear_rgb(0.55, 0.85, 0.20); // lime
-            it.material.backface_policy = BackfacePolicy::Cull;
-        });
+        place(self.meshes.override_pos, 14, &|_| {});
 
         // Ground platform: instanced opaque, receives every object's shadow.
-        let mut ground = SceneRenderItem::default();
-        ground.mesh_id = self.meshes.ground;
+        let mut ground = SceneRenderItem::new(self.meshes.ground, mats[0]);
         ground.model =
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-        ground.material = Material::from_colour(Colour::linear_rgb(0.86, 0.85, 0.82));
-        ground.material.roughness = 0.9;
-        ground.material.backface_policy = BackfacePolicy::Cull;
         items.push(ground);
-
-        // Flip every lit (non-matcap) material between PBR and Phong. Matcap
-        // keeps its own model; scalar/param-vis items still shade through the
-        // selected lit model underneath. Best viewed with the HDR path on.
-        for it in &mut items {
-            if !matches!(it.material.shading_model, ShadingModel::Matcap(_)) {
-                it.material.shading_model = if self.pbr {
-                    ShadingModel::Pbr
-                } else {
-                    ShadingModel::Phong
-                };
-            }
-        }
 
         items
     }
@@ -839,6 +900,7 @@ impl eframe::App for App {
             let render_view = target.inner.render_view();
             let tex_id = target.id;
             if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                self.materials.sync(renderer.resources_mut(), self.pbr);
                 if gpu_culling && renderer.is_gpu_culling_supported() {
                     renderer.enable_gpu_driven_culling();
                 } else {

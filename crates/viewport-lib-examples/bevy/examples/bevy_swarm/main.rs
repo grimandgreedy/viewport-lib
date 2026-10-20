@@ -40,8 +40,9 @@ use viewport_lib::wgpu;
 use glam::{Mat4, Vec2, Vec3};
 use vpl::{
     BindingPreset, ButtonState, Camera as VplCamera, CameraFrame, FrameData, LightingSettings,
-    Material, MeshId, OrbitCameraController, PostProcessSettings, SceneFrame, SceneRenderItem,
-    ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
+    Material, MaterialId, MeshId, OrbitCameraController, PostProcessSettings, SceneFrame,
+    SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
+    primitives,
 };
 
 // Flocking / world tuning.
@@ -693,6 +694,9 @@ fn update_info_panel(
 struct VplRenderer {
     inner: Option<ViewportRenderer>,
     sphere: Option<MeshId>,
+    /// Glow for selected spheres. The others use the default material; every
+    /// sphere sets its own colour.
+    selected_material: MaterialId,
 }
 
 fn render_swarm(
@@ -716,22 +720,30 @@ fn render_swarm(
             .resources_mut()
             .upload_mesh_data(wgpu_device, &primitives::sphere(SPHERE_RADIUS, 16, 10))
             .expect("upload sphere mesh");
+        let mut selected = Material::default();
+        selected.emissive = Colour::linear_rgb(1.6, 1.1, 0.25);
+        renderer.selected_material = r
+            .resources_mut()
+            .upload_material(selected)
+            .expect("upload selected material");
         renderer.inner = Some(r);
         renderer.sphere = Some(sphere);
     }
     let sphere = renderer.sphere.expect("sphere mesh id");
+    let selected_material = renderer.selected_material;
 
     let items: Vec<SceneRenderItem> = data
         .instances
         .iter()
         .map(|inst| {
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = sphere;
+            let material = if inst.selected {
+                selected_material
+            } else {
+                MaterialId::DEFAULT
+            };
+            let mut item = SceneRenderItem::new(sphere, material);
             item.model = inst.model;
-            item.material = Material::from_colour(Colour::from_linear_rgb_array(inst.color));
-            if inst.selected {
-                item.material.emissive = Colour::linear_rgb(1.6, 1.1, 0.25);
-            }
+            item.settings.colour = Some(Colour::from_linear_rgb_array(inst.color));
             item
         })
         .collect();

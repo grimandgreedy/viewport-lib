@@ -137,11 +137,13 @@ fn main() -> eframe::Result {
                 .resources_mut()
                 .upload_mesh_data(&rs.device, &primitives::cube(1.0))
                 .unwrap();
-            session.scene_mut().add(
-                Some(cube),
-                glam::Mat4::IDENTITY,
-                Material::from_colour(Colour::linear_rgb(0.2, 0.4, 0.7)),
-            );
+            let blue = session
+                .resources_mut()
+                .upload_material(Material::from_colour(Colour::linear_rgb(0.2, 0.4, 0.7)))
+                .unwrap();
+            session
+                .scene_mut()
+                .add(Some(cube), glam::Mat4::IDENTITY, blue);
             session.camera_mut().distance = 6.0;
 
             Ok(Box::new(App {

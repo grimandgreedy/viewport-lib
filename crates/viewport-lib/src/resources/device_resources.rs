@@ -342,6 +342,8 @@ pub struct ContentResources {
     /// User-uploaded textures, keyed by the `texture_id` in Material. Slotted
     /// with generational ids so a freed slot cannot alias a later upload.
     pub(crate) textures: crate::resources::material::texture_store::TextureStore,
+    /// Uploaded materials, keyed by `MaterialId`. Slot 0 is the default.
+    pub(crate) materials: crate::resources::material::material_store::MaterialStore,
     /// Uploaded 3D volume textures, keyed by `VolumeId`. Slotted with
     /// generational ids so a freed slot cannot alias a later upload, and the
     /// per-entry byte charge feeds `ResidentBytes::volume_bytes`.
@@ -395,12 +397,6 @@ pub struct ContentResources {
     pub(crate) fallback_lut_texture: crate::gpu::Texture,
     /// View of fallback_lut_texture.
     pub(crate) fallback_lut_view: crate::gpu::TextureView,
-    /// Fallback 4-byte zero storage buffer (bound when no scalar attribute is active).
-    pub(crate) fallback_scalar_buf: crate::gpu::Buffer,
-    /// Fallback 16-byte zero storage buffer (bound to binding 8 when no face colour attribute is active).
-    pub(crate) fallback_face_colour_buf: crate::gpu::Buffer,
-    /// Fallback 12-byte zero storage buffer (bound to binding 9 when no warp attribute is active).
-    pub(crate) fallback_warp_buf: crate::gpu::Buffer,
     /// Fallback 12-byte zero storage buffer (bound to binding 13 when no
     /// position override is active). Single `vec3<f32>(0,0,0)` entry; the
     /// shader bounds-checks `arrayLength` before reading.
@@ -408,14 +404,11 @@ pub struct ContentResources {
     /// Fallback 12-byte zero storage buffer (bound to binding 14 when no
     /// normal override is active).
     pub(crate) fallback_normal_override_buf: crate::gpu::Buffer,
-    /// Fallback 16-byte zero storage buffer (bound to binding 15 when the
-    /// mesh has no extension-attribute buffer). Single `vec4<f32>(0)` entry;
-    /// plugin modules clamp the vertex index so every read resolves to zero.
-    pub(crate) fallback_extension_attr_buf: crate::gpu::Buffer,
     /// Fallback 8-byte zero storage buffer (bound at the mesh bind group's
     /// second-UV-set slot when the mesh has no `uvs1`). Single `vec2<f32>(0)`
     /// entry; the mesh shaders clamp the vertex index so every read resolves to
-    /// `vec2(0.0)`.
+    /// `vec2(0.0)`. Also bound as the visible list (binding 15) of a direct
+    /// draw, which never reads it.
     pub(crate) fallback_uv1_buf: crate::gpu::Buffer,
     /// IDs of built-in preset colourmaps, in BuiltinColourmap discriminant order.
     /// Assigned at construction, so resolving a preset never depends on a frame
@@ -466,8 +459,8 @@ pub struct DeviceResources {
     pub(crate) pipeline_cache_lease: crate::resources::builders::device_pipeline_cache::Lease,
     /// Shader modules shared between the pipeline families compiled from the
     /// same source, keyed by the source text. The LDR and HDR mesh families
-    /// compile one `mesh.wgsl`, and the LDR, HDR and culled instanced families
-    /// one `mesh_instanced.wgsl`; a module this size takes milliseconds to
+    /// and the culled family compile one `mesh.wgsl`; a module this size
+    /// takes milliseconds to
     /// parse, so each is built once. See [`shared_module`](Self::shared_module).
     pub(crate) shader_modules: std::sync::Mutex<
         std::collections::HashMap<(usize, u64), crate::resources::pipeline_slot::ModuleCell>,
@@ -498,22 +491,35 @@ pub struct DeviceResources {
     /// `index_span` is a window into these; geometry writes recorded at upload
     /// flush in `process_uploads`.
     pub(crate) geometry: crate::resources::mesh::geometry_slab::GeometrySlab,
+    /// Shared sidecar chunks: each mesh's per-vertex streams and per-mesh draw
+    /// words, bound at group 1 binding 6. Writes queue and flush in
+    /// `process_uploads`.
+    pub(crate) sidecar: crate::resources::mesh::sidecar_pool::SidecarPool,
+    /// Meshes whose record head (override windows) must be rewritten at the
+    /// next `process_uploads`.
+    pub(crate) sidecar_dirty: Vec<crate::resources::mesh::mesh_store::MeshId>,
+    /// This frame's `SceneFrame::lightmap_placements`, copied at the start of
+    /// prepare so the instance packer can resolve an item's placement id.
+    pub(crate) frame_lightmap_placements: Vec<crate::resources::LightmapPlacement>,
     /// Registered LOD groups. Each groups several meshes that are detail
     /// variants of one object; the renderer picks a level per frame.
     pub(crate) lod_groups: crate::resources::mesh::lod::LodGroupStore,
-    /// Per-vertex deformation sidecar storage: header uniform, dummy fallback
-    /// buffers, and per-mesh slot bind groups. Every mesh-family pipeline
-    /// binds `@group(2)` from this state; meshes without attached deformer
-    /// data fall back to the renderer-owned dummy bind group.
+    /// Per-vertex deformation state: the header uniform (group 0 binding 23)
+    /// and the host copy of every mesh's slot data, which lives on the GPU in
+    /// the mesh's sidecar record.
     pub(crate) deform: crate::resources::mesh_sidecar::deform::DeformationState,
     /// Registered fragment shading hooks (`register_shading_hook`). Each
     /// entry composes its own lit-shader modules; the base pipelines are
     /// untouched by registrations.
     pub(crate) shade_hooks: Vec<crate::resources::mesh_sidecar::shade::StoredShadingHook>,
     /// Per-material-plugin GPU state (`register_material_plugin`), keyed by
-    /// hook index: group-3 params window + lazily built lit pipeline set.
+    /// hook index: declared parameters, group-2 texture sets and the lazily
+    /// built lit pipeline sets.
     pub(crate) material_plugins:
         std::collections::HashMap<u32, crate::resources::mesh_sidecar::shade::MaterialPluginGpu>,
+    /// Sampled textures a material plugin can add in the fragment stage: the
+    /// device's limit less what the per-object mesh layouts already bind there.
+    pub(crate) plugin_texture_budget: u32,
     // --- Shadow map resources ---
     /// Cascade shadow atlas, point-light shadow cube array, their depth passes,
     /// and the atlas debug viewer. See `resources::shadow::ShadowResources`.
@@ -624,27 +630,25 @@ pub struct DeviceResources {
     // The depth-blit and dynamic-resolution upscale pipelines live on `post`.
 
     // --- Per-material UV transform buffer (group 0, binding 13) ---
-    /// Scene-global buffer of per-material UV transform blocks
-    /// (`MaterialGpu`, one per distinct transform this frame). Fixed capacity
-    /// ([`MATERIAL_GPU_CAPACITY`](crate::resources::material_gpu::MATERIAL_GPU_CAPACITY)),
-    /// so its handle is stable and the camera bind group never rebuilds for it.
+    /// Scene-global buffer of material blocks (`MaterialGpu`), indexed by
+    /// `material_id`. Grows when the table outgrows it, which replaces the
+    /// buffer and rebuilds the camera bind groups that name it.
     pub(crate) material_gpu_buf: crate::gpu::Buffer,
     /// Blocks `material_gpu_buf` holds.
     pub(crate) material_gpu_capacity: usize,
-    /// Per-frame interner that deduplicates transform blocks and hands out
-    /// `material_id` indices into `material_gpu_buf`. Reset at each `prepare()`.
-    pub(crate) material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder,
+    /// The most blocks one storage binding of the device can hold.
+    pub(crate) material_gpu_limit: usize,
+    /// The material blocks: one per stored material plus shading variants.
+    pub(crate) material_table: crate::resources::material_gpu::MaterialTable,
 
     // --- Per-instance custom-data buffer (group 0, binding 22) ---
-    /// Scene-global buffer of per-instance custom-data blocks
+    /// Custom-data blocks the last region of `lighting.indirect_buf` holds
     /// (`InstanceCustomData`, one per distinct payload this frame). Grows when
-    /// a frame needs more blocks than it holds, which replaces the buffer and
-    /// rebuilds the camera bind groups that name it.
-    pub(crate) instance_custom_data_buf: crate::gpu::Buffer,
-    /// Blocks `instance_custom_data_buf` holds.
+    /// a frame needs more, which replaces the buffer and rebuilds the camera
+    /// bind groups that name it.
     pub(crate) instance_custom_data_capacity: usize,
     /// Per-frame interner that deduplicates custom-data payloads and hands out
-    /// `custom_data_id` indices into `instance_custom_data_buf`. Reset at each
+    /// `custom_data_id` indices into the custom-data region. Reset at each
     /// `prepare()`.
     pub(crate) custom_data_builder: crate::resources::custom_data::CustomDataBuilder,
 
@@ -673,9 +677,8 @@ pub struct DeviceResources {
     /// depth for occlusion culling.
     pub(crate) hiz_pipelines:
         std::sync::OnceLock<std::sync::Arc<crate::resources::gpu::hiz::HizPipelines>>,
-    /// The material table and instance custom data as last uploaded, so an
-    /// unchanged table is not written again.
-    pub(crate) material_gpu_written: Vec<u8>,
+    /// The instance custom data as last uploaded, so an unchanged table is not
+    /// written again.
     pub(crate) custom_data_written: Vec<u8>,
     /// Cancels and waits for this renderer's compiles when it is dropped.
     pub(crate) pipeline_compiler_shutdown: crate::resources::pipeline_slot::CompilerShutdown,
@@ -690,6 +693,15 @@ pub struct DeviceResources {
     /// ids did not change. `resource_free_epoch` moves for these too, so a
     /// consumer that checks only the free epoch keeps its old behaviour.
     pub(crate) resource_view_epoch: u64,
+    /// Bumped whenever a mesh's position or normal override, lightmap
+    /// registration, or deform slot data changes. The instanced batch cache
+    /// keys on it: those changes alter the instance records and the
+    /// bind groups without a scene generation bump.
+    pub(crate) mesh_sidecar_epoch: u64,
+    /// Bumped whenever a material plugin's pipeline set is built or dropped,
+    /// or one of its texture groups is built or evicted. A recorded render
+    /// bundle that draws plugin batches keys on it.
+    pub(crate) material_plugin_epoch: u64,
     /// Whether a mesh upload keeps a CPU-side copy of its positions, normals,
     /// and indices. Default `true`. See
     /// `DeviceResources::set_retain_mesh_cpu_geometry`.
@@ -709,6 +721,19 @@ pub struct DeviceResources {
     /// path in a single process. It does not change rendered output, only which
     /// pipeline draws eligible opaque items.
     pub(crate) force_po_discard: bool,
+    /// When true, every per-object mesh draw takes the universal pipeline
+    /// (every shader feature compiled in) instead of the one built for the
+    /// features its batch uses. The two draw the same image, so this is the
+    /// check that they do. Measurement knob only.
+    pub(crate) mesh_universal: bool,
+    /// Draws this frame that stayed on the universal pipeline because their
+    /// family already held its limit of feature sets. Bumped during encode
+    /// through `&self` and latched into `FrameStats` after paint.
+    pub(crate) frame_feature_sets_capped: std::sync::atomic::AtomicU32,
+    /// Draws this frame that stood in on the universal pipeline while their
+    /// feature set compiled. Bumped and latched like
+    /// `frame_feature_sets_capped`.
+    pub(crate) frame_stand_in_draws: std::sync::atomic::AtomicU32,
 
     // --- Shadow texture promotion ---
     /// Set when a shadow texture was promoted from its placeholder and the
@@ -731,29 +756,21 @@ pub struct DeviceResources {
 pub(crate) struct ViewportCullState {
     /// Per-batch atomic counter buffer. Zeroed at the start of each cull dispatch.
     pub(crate) batch_counter_buf: Option<crate::gpu::Buffer>,
-    /// Compact list of visible instance indices. Written by the compute cull pass.
+    /// Compact list of visible instance indices, then the words region: each
+    /// survivor's record words, six u32s per visible slot, starting at
+    /// `visibility_index_capacity` u32s. Written by the compute cull pass; the
+    /// culled mesh draws bind the words region as vertex buffer slot 1.
     pub(crate) visibility_index_buf: Option<crate::gpu::Buffer>,
     pub(crate) visibility_index_capacity: usize,
+    /// The mesh group-1 bind groups of this viewport's culled draws: a
+    /// batch's group with this viewport's visible list at binding 15. Keyed by
+    /// the batch's group-1 bind key; cleared with the other cull groups.
+    pub(crate) object_cull_bind_groups:
+        crate::resources::fast_hash::FastMap<u64, crate::gpu::BindGroup>,
     /// Indirect draw args buffer for the main pass (one DrawIndexedIndirect per batch).
     pub(crate) indirect_args_buf: Option<crate::gpu::Buffer>,
     /// Capacity (in batches) of the counter and indirect-args buffers.
     pub(crate) batch_output_capacity: usize,
-    /// Per-texture-key bind groups for the main cull pipelines. These also serve
-    /// as the group-1 bind for the indirect draw, so they sample the albedo,
-    /// normal, and ao views (bindings 1/3/4). Keyed by
-    /// (albedo_id, normal_map_id, ao_map_id, mr_id, emissive_id, uv1_chunk);
-    /// invalidated when `visibility_index_buf` is resized, when the instance buffer
-    /// is rebuilt, or when a texture behind a key is replaced or freed (see
-    /// `built_free_epoch`).
-    pub(crate) instance_cull_bind_groups:
-        std::collections::HashMap<(u64, u64, u64, u64, u64, u32), crate::gpu::BindGroup>,
-    /// The bindless cull bind groups for this viewport (instances + texture array +
-    /// sampler + this viewport's visibility buffer + a vertex-slab chunk's uv1
-    /// buffer). Used by the culled colour draws under `Bindless` instead of
-    /// `instance_cull_bind_groups`. Keyed by the uv1 chunk discriminator
-    /// (`uv1_chunk_key`); rebuilt with the same `built_gen` / `built_free_epoch`
-    /// staleness checks as that map.
-    pub(crate) bindless_cull_bind_groups: std::collections::HashMap<u32, crate::gpu::BindGroup>,
     /// GPU-driven submission (bindless + native multi-draw only): this viewport's
     /// compacted draw args, holding each pipeline group's visible batches packed to
     /// the front of its range. Written by the compaction pass from this viewport's
@@ -793,10 +810,9 @@ impl ViewportCullState {
             batch_counter_buf: None,
             visibility_index_buf: None,
             visibility_index_capacity: 0,
+            object_cull_bind_groups: Default::default(),
             indirect_args_buf: None,
             batch_output_capacity: 0,
-            instance_cull_bind_groups: std::collections::HashMap::new(),
-            bindless_cull_bind_groups: std::collections::HashMap::new(),
             compacted_args_buf: None,
             draw_counts_buf: None,
             compact_capacity: 0,
@@ -805,6 +821,15 @@ impl ViewportCullState {
             built_view_epoch: u64::MAX,
             hiz: None,
         }
+    }
+
+    /// The words region of the visibility buffer, as the culled mesh draws
+    /// bind it in vertex buffer slot 1.
+    pub(crate) fn words_slice(&self) -> Option<crate::gpu::BufferSlice<'_>> {
+        let offset = (self.visibility_index_capacity * std::mem::size_of::<u32>()) as u64;
+        self.visibility_index_buf
+            .as_ref()
+            .map(|b| b.slice(offset..))
     }
 
     /// Allocate or grow this viewport's cull output buffers to fit the current
@@ -824,17 +849,19 @@ impl ViewportCullState {
         let instance_count = (instance_count as usize).min(max_instances);
         if instance_count > self.visibility_index_capacity {
             let new_cap = (instance_count * 2).max(64).min(max_instances);
-            let vis_size = (new_cap * std::mem::size_of::<u32>()) as u64;
+            // The index list, then six words per slot.
+            let vis_size = (new_cap * 7 * std::mem::size_of::<u32>()) as u64;
             self.visibility_index_buf = Some(device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("visibility_index_buf"),
                 size: vis_size,
-                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE
+                    | crate::gpu::BufferUsages::VERTEX
+                    | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
             self.visibility_index_capacity = new_cap;
-            // The cull bind groups bind the vis buffer at binding 5.
-            self.instance_cull_bind_groups.clear();
-            self.bindless_cull_bind_groups.clear();
+            // The cull bind groups bind the vis buffer at binding 15.
+            self.object_cull_bind_groups.clear();
         }
 
         // Counter and indirect-args buffers, sized like the shared batch-meta buffer.
@@ -886,15 +913,14 @@ pub(crate) struct ShadowCullState {
     pub(crate) shadow_vis_bufs: [Option<crate::gpu::Buffer>; 4],
     /// Per-cascade indirect draw args buffers (grow with the batch count).
     pub(crate) shadow_indirect_bufs: [Option<crate::gpu::Buffer>; 4],
-    /// Per-cascade instance+visibility bind groups. Invalidated when
-    /// `shadow_vis_bufs` are reallocated.
-    pub(crate) shadow_cull_instance_bgs: [Option<crate::gpu::BindGroup>; 4],
-    /// Per-(cascade, albedo, normal, ao) bind groups for the alpha-cutout shadow
-    /// cull pipeline: like `shadow_cull_instance_bgs` but also carries the batch's
-    /// albedo texture (from the full cull BGL) so the fragment can discard leaf
-    /// gaps. Invalidated with `shadow_cull_instance_bgs`.
-    pub(crate) shadow_cutout_cull_bgs:
-        std::collections::HashMap<(usize, u64, u64, u64), crate::gpu::BindGroup>,
+    /// Per-cascade group-1 bind groups of the culled casters: each batch's
+    /// per-batch member with the cascade's visible list at binding 15, keyed
+    /// by the batch's `shadow_bind_key`. Invalidated when `shadow_vis_bufs`
+    /// are reallocated.
+    pub(crate) object_bgs: [crate::resources::fast_hash::FastMap<u64, crate::gpu::BindGroup>; 4],
+    /// Bumped whenever `object_bgs` gains or drops a group, so the cascade
+    /// bundles that bind them re-record.
+    pub(crate) groups_gen: u64,
     /// Capacity (in instances) of `shadow_vis_bufs`.
     pub(crate) vis_capacity: usize,
     /// Capacity (in batches) of the counter and indirect-args buffers.
@@ -923,11 +949,11 @@ pub(crate) struct ShadowCullState {
     /// still apply around bundle execution, so the per-cascade atlas tiles work
     /// unchanged.
     pub(crate) shadow_bundles: [Option<crate::gpu::RenderBundle>; 4],
-    /// (instance_gen, batches_gen, outputs_gen, cascade_count, casters) the
-    /// bundles were recorded against; a mismatch re-records them. `casters`
-    /// hashes which batches cast, since one whose colour pipeline is still
-    /// compiling is left out until it draws.
-    pub(crate) bundle_key: Option<(u64, u64, u64, usize, u64)>,
+    /// (instance_gen, batches_gen, outputs_gen, cascade_count, casters,
+    /// groups_gen) the bundles were recorded against; a mismatch re-records
+    /// them. `casters` hashes which batches cast, since one whose colour
+    /// pipeline is still compiling is left out until it draws.
+    pub(crate) bundle_key: Option<(u64, u64, u64, usize, u64, u64)>,
     /// GPU draws recorded per cascade bundle, for FrameStats.
     pub(crate) bundle_draws: u32,
     /// Geometry buffer binds (`set_vertex_buffer` + `set_index_buffer`) recorded
@@ -940,13 +966,21 @@ pub(crate) struct ShadowCullState {
 }
 
 impl ShadowCullState {
+    /// Drop every cascade's caster bind groups.
+    pub(crate) fn clear_bind_groups(&mut self) {
+        for m in &mut self.object_bgs {
+            m.clear();
+        }
+        self.groups_gen = self.groups_gen.wrapping_add(1);
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             batch_counter_buf: None,
             shadow_vis_bufs: [None, None, None, None],
             shadow_indirect_bufs: [None, None, None, None],
-            shadow_cull_instance_bgs: [None, None, None, None],
-            shadow_cutout_cull_bgs: std::collections::HashMap::new(),
+            object_bgs: Default::default(),
+            groups_gen: 0,
             vis_capacity: 0,
             batch_output_capacity: 0,
             built_gen: u64::MAX,
@@ -986,9 +1020,8 @@ impl ShadowCullState {
                     }));
             }
             self.vis_capacity = new_cap;
-            // The shadow cull bind groups bind these vis buffers at binding 5.
-            self.shadow_cull_instance_bgs = [None, None, None, None];
-            self.shadow_cutout_cull_bgs.clear();
+            // The shadow cull bind groups bind these vis buffers at binding 15.
+            self.clear_bind_groups();
             self.outputs_gen = self.outputs_gen.wrapping_add(1);
         }
 
@@ -1045,53 +1078,40 @@ impl DeviceResources {
     ///
     /// NOTE: The initial bind group in `init.rs` is constructed inline (before
     /// `Self` exists). Keep the binding layout in sync when modifying either site.
-    /// Upload the current per-material transform blocks to `material_gpu_buf`.
-    /// Called after interning finishes (end of scene prep, and again after
-    /// per-viewport foreground objects intern). Overwriting a superset each time
-    /// is safe: index 0 is always identity and ids only grow within a frame, so
-    /// earlier material_ids stay valid.
+    /// Write the material blocks changed since the last upload to
+    /// `material_gpu_buf`. Called after each prepare stage that can write
+    /// blocks (the scene, then each viewport's foreground items).
     ///
-    /// A frame that interns more blocks than the buffer holds replaces it with
-    /// a larger one and sets `camera_bind_groups_dirty`, like
+    /// A table that outgrows the buffer replaces it with a larger one, writes
+    /// every block, and sets `camera_bind_groups_dirty`, like
     /// `upload_custom_data`.
     pub(crate) fn upload_material_gpu(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
     ) {
-        let entries = self.material_gpu_builder.entries();
-        let n = entries
-            .len()
-            .min(crate::resources::material_gpu::MATERIAL_GPU_CAPACITY);
+        let n = self.material_table.blocks().len();
         if n > self.material_gpu_capacity {
             let capacity = n
                 .next_power_of_two()
                 .max(self.material_gpu_capacity * 2)
-                .min(crate::resources::material_gpu::MATERIAL_GPU_CAPACITY);
+                .min(self.material_gpu_limit);
             self.material_gpu_buf = Self::create_material_gpu_buffer(device, capacity);
             self.material_gpu_capacity = capacity;
             self.camera_bind_groups_dirty = true;
-            self.material_gpu_written.clear();
+            self.material_table.mark_all();
         }
-        let entries = self.material_gpu_builder.entries();
-        // Prepare runs this once for the scene and again per viewport, and a
-        // static scene's table does not change between frames: write only
-        // what differs from the last upload.
-        let data: &[u8] = bytemuck::cast_slice(&entries[..n]);
-        if self.material_gpu_written.as_slice() == data {
+        let Some((lo, hi)) = self.material_table.take_dirty() else {
+            return;
+        };
+        let hi = hi.min(self.material_gpu_capacity);
+        if lo >= hi {
             return;
         }
-        queue.write_buffer(&self.material_gpu_buf, 0, data);
-        self.material_gpu_written.clear();
-        self.material_gpu_written.extend_from_slice(data);
-        let bytes = data.len() as u64;
-        if self.material_gpu_builder.overflowed {
-            tracing::warn!(
-                capacity = crate::resources::material_gpu::MATERIAL_GPU_CAPACITY,
-                "material UV transform buffer overflowed; excess materials fell back to identity"
-            );
-        }
-        self.frame_upload_bytes += bytes;
+        let data: &[u8] = bytemuck::cast_slice(&self.material_table.blocks()[lo..hi]);
+        let stride = std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>() as u64;
+        queue.write_buffer(&self.material_gpu_buf, lo as u64 * stride, data);
+        self.frame_upload_bytes += data.len() as u64;
     }
 
     /// A custom-data buffer holding `capacity` blocks.
@@ -1109,22 +1129,8 @@ impl DeviceResources {
         })
     }
 
-    pub(crate) fn create_custom_data_buffer(
-        device: &crate::gpu::Device,
-        capacity: usize,
-    ) -> crate::gpu::Buffer {
-        use crate::resources::builders::LoggedAlloc;
-        device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("instance_custom_data_buf"),
-            size: (std::mem::size_of::<crate::resources::custom_data::InstanceCustomData>()
-                * capacity) as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
-    }
-
-    /// Upload the current per-instance custom-data blocks to
-    /// `instance_custom_data_buf`. Called after interning finishes, alongside
+    /// Upload the current per-instance custom-data blocks to the last region
+    /// of `lighting.indirect_buf`. Called after interning finishes, alongside
     /// [`upload_material_gpu`](Self::upload_material_gpu). Overwriting a superset
     /// each time is safe: index 0 is always the zero block and ids only grow
     /// within a frame, so earlier custom_data_ids stay valid.
@@ -1147,7 +1153,13 @@ impl DeviceResources {
                 .next_power_of_two()
                 .max(self.instance_custom_data_capacity * 2)
                 .min(crate::resources::custom_data::CUSTOM_DATA_CAPACITY);
-            self.instance_custom_data_buf = Self::create_custom_data_buffer(device, capacity);
+            self.lighting.indirect_buf = crate::resources::lighting::grow_indirect_light_buffer(
+                device,
+                queue,
+                &self.lighting.indirect_buf,
+                self.lighting.custom_data_base_bytes,
+                capacity,
+            );
             self.instance_custom_data_capacity = capacity;
             self.camera_bind_groups_dirty = true;
             self.custom_data_written.clear();
@@ -1159,7 +1171,11 @@ impl DeviceResources {
         if self.custom_data_written.as_slice() == data {
             return;
         }
-        queue.write_buffer(&self.instance_custom_data_buf, 0, data);
+        queue.write_buffer(
+            &self.lighting.indirect_buf,
+            self.lighting.custom_data_base_bytes,
+            data,
+        );
         self.custom_data_written.clear();
         self.custom_data_written.extend_from_slice(data);
         let bytes = data.len() as u64;
@@ -1240,11 +1256,7 @@ impl DeviceResources {
         self.note_pipeline_built(concat!(file!(), ":", line!()));
         // Mask-write pipelines: selected objects as r=1.0 into an R8 mask with
         // depth testing.
-        let mask_src = if self.deform.enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/outline_mask.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/outline_mask_noop.wgsl"))
-        };
+        let mask_src = include_str!(concat!(env!("OUT_DIR"), "/outline_mask.wgsl"));
         let mask_shader = crate::resources::builders::wgsl_module(
             device,
             "outline_mask_shader",
@@ -1437,13 +1449,10 @@ impl DeviceResources {
         self.ibl.skybox_bgl = Some(skybox_bgl);
     }
 
-    /// The layout the outline mask and x-ray pipelines share: camera, the
-    /// outline uniform, and the deform sidecar when it is enabled.
+    /// The layout the outline mask and x-ray pipelines share: camera and the
+    /// outline group.
     fn outline_pipeline_layout(&self, device: &crate::gpu::Device) -> crate::gpu::PipelineLayout {
-        let mut bgls = vec![&self.binds.camera_bgl, &self.outline.bind_group_layout];
-        if self.deform.enabled {
-            bgls.push(&self.deform.bind_group_layout);
-        }
+        let bgls = [&self.binds.camera_bgl, &self.outline.bind_group_layout];
         crate::resources::builders::pipeline_layout(device, "outline_pipeline_layout", &bgls)
     }
 
@@ -1458,11 +1467,7 @@ impl DeviceResources {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let src = if self.deform.enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow_noop.wgsl"))
-        };
+        let src = include_str!(concat!(env!("OUT_DIR"), "/shadow.wgsl"));
         let shader = crate::resources::builders::wgsl_module(
             device,
             "shadow_shader",
@@ -1471,10 +1476,7 @@ impl DeviceResources {
                 &self.deform.registrations,
             ),
         );
-        let mut bgls = vec![&self.shadow.camera_bgl, &self.binds.object_bgl];
-        if self.deform.enabled {
-            bgls.push(&self.deform.bind_group_layout);
-        }
+        let bgls = [&self.shadow.camera_bgl, &self.binds.object_bgl];
         let layout =
             crate::resources::builders::pipeline_layout(device, "shadow_pipeline_layout", &bgls);
         // Keyed by facedness (cull-front for closed solids so a solid's own
@@ -1502,11 +1504,7 @@ impl DeviceResources {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let src = if self.deform.enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow_point.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow_point_noop.wgsl"))
-        };
+        let src = include_str!(concat!(env!("OUT_DIR"), "/shadow_point.wgsl"));
         let shader = crate::resources::builders::wgsl_module(
             device,
             "shadow_point_shader",
@@ -1515,10 +1513,7 @@ impl DeviceResources {
                 &self.deform.registrations,
             ),
         );
-        let mut bgls = vec![&self.shadow.point_face_bgl, &self.binds.object_bgl];
-        if self.deform.enabled {
-            bgls.push(&self.deform.bind_group_layout);
-        }
+        let bgls = [&self.shadow.point_face_bgl, &self.binds.object_bgl];
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "shadow_point_pipeline_layout",
@@ -1749,11 +1744,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 15,
-                    resource: self.clustered.cluster_grid_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 16,
-                    resource: self.clustered.light_index_buf.as_entire_binding(),
+                    resource: self.clustered.cluster_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 17,
@@ -1766,21 +1757,12 @@ impl DeviceResources {
                     resource: self.lighting.indirect_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 20,
-                    resource: self
-                        .lighting
-                        .probe_volume_buf
-                        .as_ref()
-                        .unwrap_or(&self.lighting.probe_volume_fallback)
-                        .as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
                     binding: 21,
                     resource: self.material_gpu_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 22,
-                    resource: self.instance_custom_data_buf.as_entire_binding(),
+                    binding: 23,
+                    resource: self.deform.header_buffer.as_entire_binding(),
                 },
             ],
         })

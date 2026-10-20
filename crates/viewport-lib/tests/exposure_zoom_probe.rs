@@ -25,13 +25,17 @@ fn sphere_scene(
         .upload_mesh_data(device, &sphere)
         .unwrap();
 
+    let grey = upload_material(
+        renderer,
+        Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6)),
+    );
     let mut items = Vec::new();
     for i in -1..=1 {
         let mut s = SceneRenderItem::default();
         s.mesh_id = sphere_id;
         s.model = glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 1.8, 0.0, 0.0))
             .to_cols_array_2d();
-        s.material = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6));
+        s.material = grey;
         items.push(s);
     }
     items
@@ -152,8 +156,9 @@ fn probe_example_scene() {
     g.mesh_id = ground;
     g.model =
         glam::Mat4::from_translation(glam::Vec3::new(span * 0.5, 0.0, -0.2)).to_cols_array_2d();
-    g.material = Material::from_colour(Colour::linear_rgb(0.45, 0.45, 0.48));
-    g.material.roughness = 0.95;
+    let mut m = Material::from_colour(Colour::linear_rgb(0.45, 0.45, 0.48));
+    m.roughness = 0.95;
+    g.material = upload_material(&mut renderer, m);
     items.push(g);
     for c in 0..cols {
         let a = 0.05 + (c as f32 / (cols - 1) as f32) * 0.85;
@@ -161,8 +166,9 @@ fn probe_example_scene() {
         s.mesh_id = sphere;
         s.model = glam::Mat4::from_translation(glam::Vec3::new(c as f32 * spacing, 0.8, 0.8))
             .to_cols_array_2d();
-        s.material = Material::from_colour(Colour::linear_rgb(a, a, a));
-        s.material.roughness = 0.6;
+        let mut m = Material::from_colour(Colour::linear_rgb(a, a, a));
+        m.roughness = 0.6;
+        s.material = upload_material(&mut renderer, m);
         items.push(s);
     }
 

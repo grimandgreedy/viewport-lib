@@ -326,7 +326,8 @@ pub struct FrameStats {
     /// Objects culled by frustum or visibility. Excludes plugin content, as
     /// [`Self::total_objects`] describes.
     pub culled_objects: u32,
-    /// Number of draw calls issued in the main pass for mesh-family content.
+    /// Number of draw calls issued in the main pass for mesh-family content:
+    /// one per batch, since every mesh draw is a batch draw.
     ///
     /// Plugin draws are **not** counted here: an
     /// [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin) records its own
@@ -337,32 +338,20 @@ pub struct FrameStats {
     /// drawn entirely by plugins reads `draw_calls: 0`, which is correct rather
     /// than broken.
     pub draw_calls: u32,
-    /// Number of instanced batches (0 when using per-object path).
+    /// Number of mesh batches this frame. Every visible mesh item is packed
+    /// into a batch, so a one-item scene reads 1.
     pub instanced_batches: u32,
     /// True when `prepare()` holds a cached render bundle for the opaque
-    /// per-object draws this frame (large all-per-object scenes on the LDR
-    /// path). The paint pass replays the bundle instead of recording one draw
-    /// per item.
+    /// batch draws this frame (a stable batch list with enough opaque
+    /// draws). The paint pass replays the bundle instead of recording one
+    /// draw per batch.
     pub per_object_bundle_cached: bool,
-    /// Visible items that miss the instanced fast path and are drawn one at a
-    /// time through the per-object path.
+    /// Batch group-1 bind groups actually (re)built this frame.
     ///
-    /// An item is non-instanceable when it uses a styled back-face policy
-    /// (different-colour/tint/pattern) or is two-sided and transparent, uses a
-    /// matcap, has a scalar attribute or parameter visualization, carries a
-    /// position/normal override, carries deform slot data (per-mesh or
-    /// per-instance, so skinning and displacement both land here). Each such
-    /// item costs a uniform write and a bind-group
-    /// build in `prepare`, so a large count here means `prepare` is paying
-    /// per-object cost across much of the scene rather than batching it.
-    pub per_object_items: u32,
-    /// Per-object bind groups actually (re)built this frame.
-    ///
-    /// The per-object path caches bind groups and skips the rebuild when the
-    /// item's textures, attributes, and overrides are unchanged. A value near
-    /// `per_object_items` means the cache is missing most frames (for example
-    /// because items move between slots); a value near zero means the remaining
-    /// per-object cost is the uniform writes, not the bind-group builds.
+    /// Batches cache their bind groups and skip the rebuild while the
+    /// textures, overrides and lightmap they bind are unchanged, so a steady
+    /// scene reads zero. A value that stays high means the cache is missing
+    /// most frames.
     pub per_object_bind_groups_built: u32,
     /// Instanced batches whose GPU sub-range was re-uploaded this frame.
     ///
@@ -395,38 +384,16 @@ pub struct FrameStats {
     /// [`Self::plugin_draw_calls`]: it is what plugins report, not what the
     /// renderer observed.
     pub plugin_upload_bytes: u64,
-    /// Items drawn this frame that carried deform-slot data the chosen draw
-    /// path did not apply, so they drew undeformed.
+    /// Sidecar records moved or created by deform-slot changes since the
+    /// previous `prepare()`.
     ///
-    /// Reads zero in a correct frame. A non-zero value is a wrong picture, not
-    /// a slow one: the deformation the consumer attached is silently absent. It
-    /// happens when an item with per-mesh slot data is admitted to an instanced
-    /// batch, because the instanced draws bind the empty deform group. Assert on
-    /// it in a test rather than watching it.
-    ///
-    /// Covers mesh-family items only. A plugin that binds the deform group in
-    /// its own pipeline reads the slot buffers itself, and deformer bodies are
-    /// composed into mesh-family shaders only, so plugin geometry is not
-    /// counted here and never deforms from a registered deformer.
-    pub deform_slots_ignored: u32,
-    /// Deform slot-storage buffers reallocated since the previous `prepare()`.
-    ///
-    /// A slot write that fits its existing buffer is a `write_buffer` and reads
-    /// zero here. A per-frame deformation is a same-size write, so a steady
-    /// animated scene should read zero: a value that tracks the deformed mesh
-    /// count every frame means the writes are reallocating instead.
+    /// Deform slot data lives in the mesh's sidecar record. A slot write that
+    /// fits its existing stream lands in place and reads zero here; an attach,
+    /// a detach or a new source moves the record, copying its other streams. A
+    /// per-frame deformation is a same-size write, so a steady animated scene
+    /// should read zero: a value that tracks the deformed mesh count every
+    /// frame means the writes are restructuring the record instead.
     pub deform_buffer_reallocations: u32,
-    /// Per-mesh deform bind groups rebuilt since the previous `prepare()`.
-    /// One per per-mesh reallocation, since the bind group points at the buffer
-    /// that was replaced.
-    pub deform_mesh_bind_groups_rebuilt: u32,
-    /// Per-instance deform bind groups rebuilt since the previous `prepare()`.
-    ///
-    /// The one that scales: a per-instance reallocation rebuilds one, but a
-    /// per-mesh reallocation rebuilds every instance bind group on that mesh,
-    /// because they bind the mesh buffer too. For a crowd sharing one mesh that
-    /// is one bind group per crowd member per write.
-    pub deform_instance_bind_groups_rebuilt: u32,
     /// Total triangles submitted to the GPU by mesh-family draws. Excludes
     /// plugin-owned geometry, for the reason given on [`Self::draw_calls`].
     pub triangles_submitted: u64,
@@ -557,6 +524,21 @@ pub struct FrameStats {
     /// skipped this frame and draws once it is ready. Always zero under
     /// `Blocking`. The same number as `ViewportRenderer::pipelines_pending`.
     pub pipelines_pending: u32,
+    /// Mesh pipelines built for a set of shader features rather than with
+    /// every feature compiled in, over the renderer's life. A mesh batch draws
+    /// through the pipeline built for the features its items use; each new
+    /// combination a scene brings builds one. A count that keeps rising means
+    /// the scene keeps bringing new combinations.
+    pub feature_pipelines_built: u32,
+    /// Mesh draws this frame that stayed on the pipeline with every feature
+    /// compiled in because their pipeline family already held its limit of
+    /// feature sets. Same image, more shading cost.
+    pub feature_sets_capped: u32,
+    /// Mesh draws this frame that drew through the pipeline with every
+    /// feature compiled in because their own feature set was still
+    /// compiling. Same image, more shading cost; non-zero only on the frames
+    /// between a new feature set appearing and its pipeline landing.
+    pub stand_in_draws: u32,
     /// True when GPU-driven culling is active this frame.
     ///
     /// False when the device does not support `INDIRECT_FIRST_INSTANCE` or
@@ -684,10 +666,7 @@ mod tests {
         assert_eq!(stats.upload_bytes, 0);
         assert_eq!(stats.plugin_draw_calls, 0);
         assert_eq!(stats.plugin_upload_bytes, 0);
-        assert_eq!(stats.deform_slots_ignored, 0);
         assert_eq!(stats.deform_buffer_reallocations, 0);
-        assert_eq!(stats.deform_mesh_bind_groups_rebuilt, 0);
-        assert_eq!(stats.deform_instance_bind_groups_rebuilt, 0);
         assert!(!stats.gpu_culling_active);
         assert!(stats.gpu_visible_instances.is_none());
         assert!(!stats.shadows_skipped);

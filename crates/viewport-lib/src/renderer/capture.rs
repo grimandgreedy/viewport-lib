@@ -169,10 +169,11 @@ impl ViewportRenderer {
         let dummy_view = dummy.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         // Derivative mode suppresses the upload pump, but sync mesh uploads defer
-        // their slab geometry write to `process_uploads`; a capture can run
-        // without an intervening presented frame, so flush geometry here or the
-        // scene renders from unwritten (degenerate) vertices.
+        // their slab geometry and sidecar writes to `process_uploads`; a capture
+        // can run without an intervening presented frame, so flush them here or
+        // the scene renders from unwritten (degenerate) vertices.
         self.resources.geometry.flush(queue);
+        self.resources.flush_sidecars(device, queue);
 
         // Render the full HDR frame; the pre-tonemap radiance lands in the
         // per-viewport hdr_texture.
@@ -573,20 +574,36 @@ impl ViewportRenderer {
         volume: &crate::resources::LightProbeVolume,
     ) {
         let gpu = volume.to_gpu();
-        self.resources.lighting.probe_volume_buf = Some(device.create_buffer_init(
-            &crate::gpu::util::BufferInitDescriptor {
-                label: Some("light_probe_volume_buf"),
-                contents: bytemuck::cast_slice(&gpu),
-                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            },
-        ));
-        self.rebuild_camera_bind_groups(device);
+        self.replace_indirect_light_buffer(device, Some(&gpu));
+        self.resources.lighting.has_probe_volume = true;
     }
 
     /// Remove the uploaded probe volume. Objects that opted into it fall back to
-    /// no indirect (a disabled header is bound in its place).
+    /// no indirect (a disabled header takes its place).
     pub fn clear_light_probe_volume(&mut self, device: &crate::gpu::Device) {
-        self.resources.lighting.probe_volume_buf = None;
+        self.replace_indirect_light_buffer(device, None);
+        self.resources.lighting.has_probe_volume = false;
+    }
+
+    /// Swap in an indirect-light buffer holding `volume`. The probe volume
+    /// shares the buffer with the light-probe SH, the environment zones and the
+    /// custom data, which the next prepare writes into the new buffer: the SH
+    /// every frame, the zones because they are marked dirty, and the custom
+    /// data because its last-written copy is cleared.
+    fn replace_indirect_light_buffer(
+        &mut self,
+        device: &crate::gpu::Device,
+        volume: Option<&[[f32; 4]]>,
+    ) {
+        let (buffer, custom_base) = crate::resources::lighting::indirect_light_buffer(
+            device,
+            volume,
+            self.resources.instance_custom_data_capacity,
+        );
+        self.resources.lighting.indirect_buf = buffer;
+        self.resources.lighting.custom_data_base_bytes = custom_base;
+        self.resources.ibl.zones_dirty = true;
+        self.resources.custom_data_written.clear();
         self.rebuild_camera_bind_groups(device);
     }
 
@@ -1428,7 +1445,7 @@ mod tests {
                 mesh_id: mesh,
                 ..Default::default()
             };
-            item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+            item.settings.colour = Some(Colour::linear_rgb(1.0, 1.0, 1.0));
             item.settings.unlit = true;
             item.settings.visibility_mask = 0b01;
             frame.scene.foreground_items = vec![item];

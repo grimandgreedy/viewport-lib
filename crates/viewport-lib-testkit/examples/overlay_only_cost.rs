@@ -503,7 +503,12 @@ fn main() {
         let mut item = vpl::SceneRenderItem::default();
         item.mesh_id = cube;
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-        item.material = vpl::Material::from_colour(Colour::linear_rgb(0.8, 0.85, 0.9));
+        item.material = renderer
+            .resources_mut()
+            .upload_material(vpl::Material::from_colour(Colour::linear_rgb(
+                0.8, 0.85, 0.9,
+            )))
+            .expect("material upload");
         let mut shadow_frame = FrameData::default();
         shadow_frame.camera.render_camera = frame.camera.render_camera.clone();
         shadow_frame.camera.viewport_size = frame.camera.viewport_size;
@@ -535,7 +540,12 @@ fn main() {
         let mut item = vpl::SceneRenderItem::default();
         item.mesh_id = cube;
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-        item.material = vpl::Material::from_colour(Colour::linear_rgb(0.8, 0.85, 0.9));
+        item.material = renderer
+            .resources_mut()
+            .upload_material(vpl::Material::from_colour(Colour::linear_rgb(
+                0.8, 0.85, 0.9,
+            )))
+            .expect("material upload");
         let mut mesh_frame = FrameData::default();
         mesh_frame.camera.render_camera = frame.camera.render_camera.clone();
         mesh_frame.camera.viewport_size = frame.camera.viewport_size;

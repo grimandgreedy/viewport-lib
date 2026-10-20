@@ -52,6 +52,10 @@ fn main() {
         .resources_mut()
         .upload_mesh_data(&device, &primitives::cube(1.0))
         .expect("upload cube");
+    let material = renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.8, 0.85, 0.9)))
+        .expect("upload material");
 
     let mut camera = Camera {
         distance: 5.0,
@@ -59,10 +63,8 @@ fn main() {
     };
     camera.set_aspect_ratio(W as f32, H as f32);
 
-    let mut item = SceneRenderItem::default();
-    item.mesh_id = cube;
+    let mut item = SceneRenderItem::new(cube, material);
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    item.material = Material::from_colour(Colour::linear_rgb(0.8, 0.85, 0.9));
 
     let frame = FrameData::new(
         CameraFrame::from_camera(&camera, [W as f32, H as f32]),

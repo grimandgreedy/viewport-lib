@@ -232,11 +232,11 @@ impl SkinningPlugin {
     ) {
         let packed = pack(weights);
         let tight = pack_skin_weights_tight(&packed);
-        resources.deform.attach_slot(
+        resources.attach_deform_slot(
             device,
             mesh_id,
             self.deformer_id.slot(),
-            SKIN_WEIGHT_STRIDE_BYTES / 4,
+            SKIN_WEIGHT_STRIDE_BYTES,
             &tight,
         );
         self.skinned_meshes
@@ -268,11 +268,11 @@ impl SkinningPlugin {
             progress.set(0.9);
             Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                 Box::new(move |resources: &mut DeviceResources| {
-                    resources.deform.attach_slot(
+                    resources.attach_deform_slot(
                         &device_for_apply,
                         mesh_id,
                         slot,
-                        SKIN_WEIGHT_STRIDE_BYTES / 4,
+                        SKIN_WEIGHT_STRIDE_BYTES,
                         &tight,
                     );
                     marker
@@ -316,13 +316,13 @@ impl SkinningPlugin {
             return false;
         }
         let bytes: Vec<[[f32; 4]; 4]> = palette.iter().map(|m| m.to_cols_array_2d()).collect();
-        resources.deform.attach_slot_instance(
+        resources.attach_deform_slot_instance(
             device,
             queue,
             mesh_id,
             instance_id,
             self.deformer_id.slot(),
-            SKIN_PALETTE_STRIDE_BYTES / 4,
+            SKIN_PALETTE_STRIDE_BYTES,
             bytemuck::cast_slice(&bytes),
         );
         true

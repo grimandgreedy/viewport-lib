@@ -14,15 +14,15 @@
 //! per-instance record beyond the id it already had room for.
 //!
 //! The buffer is bound at group 0 (the scene-wide bind group) so every mesh
-//! shader and draw variant reaches it without touching the per-object /
-//! instanced group-1 layouts.
+//! shader and draw variant reaches it without touching the group-1 layout.
 //!
-//! Slot convention read by the built-in instanced shading:
+//! Slot convention read by the built-in shading:
 //! - slots 0..3 (`data[0..3]`): added to the material's emissive (nits). Zero is
 //!   a no-op, so leaving custom data unset changes nothing.
 //! - slot 3: padding, not read.
 //! - slots 4..8: a raw channel for material plugins, handed to the plugin hook
-//!   as `surf.attr`. The built-in shading does not read them.
+//!   as `surf.attr` unless the plugin reads the per-vertex extension attribute
+//!   there instead. The built-in shading does not read them.
 
 use std::collections::HashMap;
 

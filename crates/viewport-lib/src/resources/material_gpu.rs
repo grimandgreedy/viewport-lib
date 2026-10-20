@@ -12,16 +12,10 @@
 //! group-1 layouts.
 
 use crate::scene::material::Material;
+use viewport_lib_types::plugin::material::MATERIAL_PLUGIN_MAX_PARAMS;
 
-/// Maximum distinct material transform blocks per frame. Distinct blocks are rare
-/// (identity collapses to one entry), so this is a generous ceiling that is not
-/// expected to bind in practice. On overflow, further materials fall back to the
-/// identity entry (id 0) and [`MaterialGpuBuilder::overflowed`] is set so the
-/// caller can log it.
-pub(crate) const MATERIAL_GPU_CAPACITY: usize = 4096;
-
-/// Blocks the material buffer holds before its first growth. A scene with more
-/// distinct transforms grows it, up to [`MATERIAL_GPU_CAPACITY`].
+/// Blocks the material buffer holds before its first growth. It doubles as
+/// materials are uploaded, up to what one storage binding can hold.
 pub(crate) const MATERIAL_GPU_INITIAL_CAPACITY: usize = 64;
 
 /// Number of texture slots carrying an independent transform, in this order:
@@ -54,7 +48,7 @@ impl TexTransformGpu {
 }
 
 /// A material's per-slot UV transforms plus its scalar shading parameters, as the
-/// instanced mesh shaders read them. Matches the WGSL `MaterialGpu` struct, 304
+/// instanced mesh shaders read them. Matches the WGSL `MaterialGpu` struct, 368
 /// bytes. The scalars are the per-material fields that used to be duplicated into
 /// every `InstanceData` record; moving them here shrinks the per-instance record
 /// to O(instances) transform-free and keeps a single copy per distinct material.
@@ -68,7 +62,7 @@ impl TexTransformGpu {
 /// - `backface_colour` = the styled-backface colour (see below)
 /// - `mr_range`  = (metallic_min, metallic_max, roughness_min, roughness_max)
 /// - `tex_index0` = bindless array indices (albedo, normal, ao, metallic-roughness)
-/// - `tex_index1` = bindless array indices (emissive, unused, unused, unused)
+/// - `tex_index1` = (emissive bindless index, sampler code, unused, unused)
 ///
 /// `tex_index0` / `tex_index1` hold each material texture's index into the
 /// bindless texture array, or `NO_TEXTURE` (`u32::MAX`) when the material has no
@@ -78,6 +72,11 @@ impl TexTransformGpu {
 /// before (textures are keyed by the batch, not the material buffer). The
 /// bindless shader reads the index and samples the array; the per-batch shaders
 /// ignore these fields.
+///
+/// The sampler code (`sampler_code` of the material's selected sampler, or the
+/// default key) is not read by any shader. It is in the block so that two
+/// materials differing only in sampler intern to different ids, the same way
+/// they land in different batches.
 ///
 /// `has_mr_tex` / `has_emissive_tex` (0 or 1) gate the instanced metallic-roughness
 /// and emissive texture samples; `mr_range` remaps the raw MR sample before the
@@ -113,9 +112,123 @@ pub(crate) struct MaterialGpu {
     pub(crate) mr_range: [f32; 4],
     pub(crate) tex_index0: [u32; 4],
     pub(crate) tex_index1: [u32; 4],
+    /// `(scalar_min, scalar_max, 0, 0)`: the item's scalar-attribute range.
+    pub(crate) item0: [f32; 4],
+    /// Colour drawn where the item's scalar attribute is NaN.
+    pub(crate) nan_colour: [f32; 4],
+    /// `(item_flags, lightmap_mode, 0, 0)`; see [`item_flags`]. The lightmap
+    /// placement rides the instance record.
+    pub(crate) item_flags: [u32; 4],
+    /// The material plugin's declared parameters, one word each in
+    /// declaration order, defaults filled in. Zero without a plugin.
+    pub(crate) params: [[f32; 4]; MATERIAL_PLUGIN_MAX_PARAMS],
 }
 
-const _: () = assert!(std::mem::size_of::<MaterialGpu>() == 304);
+/// Size in bytes of one [`MaterialGpu`] block.
+pub(crate) const MATERIAL_GPU_BYTES: usize = 608;
+const _: () = assert!(std::mem::size_of::<MaterialGpu>() == MATERIAL_GPU_BYTES);
+
+/// Bit lanes of `MaterialGpu::item_flags[0]`. The WGSL `MAT_*` constants in the
+/// mesh shaders mirror these.
+pub(crate) mod item_flags {
+    pub(crate) const USE_NAN_COLOUR: u32 = 1 << 0;
+    pub(crate) const USE_MATCAP: u32 = 1 << 1;
+    pub(crate) const MATCAP_BLENDABLE: u32 = 1 << 2;
+    pub(crate) const LIGHTMAP_DIRECTIONAL: u32 = 1 << 3;
+    pub(crate) const HAS_SHADOWMASK: u32 = 1 << 4;
+    /// The material binds an emissive map; mirrors `scalars3.w` as a bit so a
+    /// pipeline feature set can read it.
+    pub(crate) const HAS_EMISSIVE_TEX: u32 = 1 << 5;
+}
+
+/// The item-level and mesh-level shading facts that ride the material block
+/// next to the `Material` fields: a scalar attribute's range and NaN colour,
+/// a matcap's blend flag, and the mesh's baked lightmap mode. They are
+/// not `Material` fields, but the fragment stage reads them like material
+/// scalars, and interning them into the block keeps the per-instance record
+/// free of them. A plain item has the default value and interns to the same
+/// block as before.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) struct ItemShading {
+    pub(crate) scalar_range: (f32, f32),
+    pub(crate) nan_colour: Option<[f32; 4]>,
+    /// `Some(blendable)` when the material names a matcap.
+    pub(crate) matcap: Option<bool>,
+    /// `(mode, directional, shadowmask)` of the mesh's lightmap registration.
+    /// The placement rides the instance record, so draws at different
+    /// placements share a block.
+    pub(crate) lightmap: Option<(u32, bool, bool)>,
+}
+
+impl Default for ItemShading {
+    fn default() -> Self {
+        ItemShading {
+            scalar_range: (0.0, 1.0),
+            nan_colour: None,
+            matcap: None,
+            lightmap: None,
+        }
+    }
+}
+
+impl ItemShading {
+    /// The shading a stored material's own block is built with: the defaults,
+    /// plus the matcap blend flag, which the material decides.
+    pub(crate) fn for_material(m: &Material) -> ItemShading {
+        ItemShading {
+            matcap: m.matcap_id().map(|id| id.blendable),
+            ..ItemShading::default()
+        }
+    }
+
+    /// The shading as hashable bits.
+    pub(crate) fn key(&self) -> ShadingKey {
+        let (mode, directional, shadowmask) = self.lightmap.unwrap_or((u32::MAX, false, false));
+        let nan = self.nan_colour.unwrap_or([0.0; 4]);
+        [
+            self.scalar_range.0.to_bits(),
+            self.scalar_range.1.to_bits(),
+            self.nan_colour.is_some() as u32
+                | (self.matcap.is_some() as u32) << 1
+                | ((self.matcap == Some(true)) as u32) << 2
+                | (directional as u32) << 3
+                | (shadowmask as u32) << 4,
+            nan[0].to_bits(),
+            nan[1].to_bits(),
+            nan[2].to_bits(),
+            nan[3].to_bits(),
+            mode,
+        ]
+    }
+
+    /// Read the item's shading facts off the item, its material and its
+    /// resident mesh.
+    pub(crate) fn from_item(
+        item: &crate::renderer::SceneRenderItem,
+        material: &Material,
+        mesh: Option<&crate::resources::GpuMesh>,
+    ) -> ItemShading {
+        let scalar_range = match &item.active_attribute {
+            Some(attr) => item
+                .scalar_range
+                .or_else(|| mesh.and_then(|m| m.attribute_ranges.get(&attr.name).copied()))
+                .unwrap_or((0.0, 1.0)),
+            None => (0.0, 1.0),
+        };
+        ItemShading {
+            scalar_range,
+            nan_colour: item.nan_colour.map(|c| c.to_linear_rgba()),
+            matcap: material.matcap_id().map(|id| id.blendable),
+            lightmap: mesh.and_then(|m| m.lightmap.as_ref()).map(|lm| {
+                (
+                    lm.mode,
+                    lm.direction_texture_id.is_some() && !lm.is_shadowmask,
+                    lm.is_shadowmask,
+                )
+            }),
+        }
+    }
+}
 
 /// Sentinel bindless index for "this material has no texture in this slot". The
 /// bindless shader falls back to the neutral default (white albedo, flat normal,
@@ -222,6 +335,7 @@ impl MaterialGpu {
         m: &Material,
         tex_indices: bool,
         resolved: MaterialSlots,
+        item: &ItemShading,
     ) -> MaterialGpu {
         use crate::scene::material::TextureSlot::{
             Albedo, Ao, Emissive, MetallicRoughness, Normal,
@@ -304,104 +418,227 @@ impl MaterialGpu {
                 m.roughness_range[1],
             ],
             tex_index0: [idx(Albedo), idx(Normal), idx(Ao), idx(MetallicRoughness)],
-            tex_index1: [idx(Emissive), NO_TEXTURE, NO_TEXTURE, NO_TEXTURE],
+            tex_index1: [
+                idx(Emissive),
+                crate::resources::material::fallbacks::sampler_code(
+                    m.selected_sampler().unwrap_or_default(),
+                ),
+                NO_TEXTURE,
+                NO_TEXTURE,
+            ],
+            item0: [item.scalar_range.0, item.scalar_range.1, 0.0, 0.0],
+            nan_colour: item.nan_colour.unwrap_or([0.0; 4]),
+            item_flags: {
+                use item_flags as f;
+                let on = |c: bool, bit: u32| if c { bit } else { 0 };
+                let (mode, directional, shadowmask) = item.lightmap.unwrap_or((0, false, false));
+                [
+                    on(item.nan_colour.is_some(), f::USE_NAN_COLOUR)
+                        | on(item.matcap.is_some(), f::USE_MATCAP)
+                        | on(item.matcap == Some(true), f::MATCAP_BLENDABLE)
+                        | on(directional, f::LIGHTMAP_DIRECTIONAL)
+                        | on(shadowmask, f::HAS_SHADOWMASK)
+                        | on(resolved.live(Emissive), f::HAS_EMISSIVE_TEX),
+                    mode,
+                    0,
+                    0,
+                ]
+            },
+            params: [[0.0; 4]; MATERIAL_PLUGIN_MAX_PARAMS],
         }
     }
 }
 
-/// Per-frame interner that deduplicates material transform blocks and assigns each
-/// a stable `material_id` (its index in the uploaded buffer). Entry 0 is always
-/// the identity block, so any material with no authored transform maps to 0.
-pub(crate) struct MaterialGpuBuilder {
-    entries: Vec<MaterialGpu>,
-    lookup: crate::resources::fast_hash::FastMap<[u8; 304], u32>,
-    /// The last block interned and its id: consecutive items usually share a
-    /// material, and a byte compare is far cheaper than a hash.
-    last: Option<([u8; 304], u32)>,
-    /// Set when the capacity was hit and some materials were forced to entry 0.
-    pub(crate) overflowed: bool,
-    /// When true, `from_material` fills the bindless texture array indices; when
-    /// false (the per-batch binding), the index slots are constant `NO_TEXTURE`
-    /// so blocks dedup independently of their textures. Fixed for the renderer's
-    /// lifetime, set from the device's texture-binding mode.
+/// The GPU material table: one block per stored material at a fixed index,
+/// plus variant blocks for items whose shading facts differ from their
+/// material's default (`ItemShading`).
+///
+/// A stored material's block is written at upload and rewritten in place on
+/// replace, so a handle names the same index for its lifetime. Variants are
+/// keyed by material and shading, built on first use, and dropped when the
+/// instanced batch cache rebuilds, since every item that names one is
+/// re-packed then. Block 0 is the default material.
+pub(crate) struct MaterialTable {
+    blocks: Vec<MaterialGpu>,
+    free: Vec<u32>,
+    /// `(material, shading key) -> (block, shading)`.
+    variants: crate::resources::fast_hash::FastMap<
+        (crate::resources::MaterialId, ShadingKey),
+        (u32, ItemShading),
+    >,
+    /// Lowest and one-past-highest block written since the last upload.
+    dirty: Option<(usize, usize)>,
+    /// When true, blocks carry bindless texture array indices; when false (the
+    /// per-batch binding), the index slots are constant `NO_TEXTURE`. Fixed
+    /// for the renderer's lifetime, set from the device's texture-binding mode.
     bindless: bool,
 }
 
-impl Default for MaterialGpuBuilder {
+/// Variant blocks the table holds before the instanced batch cache is forced
+/// to rebuild and drop them. Variants accumulate only from items whose shading
+/// facts change between rebuilds (an animated scalar range on a static scene).
+pub(crate) const MATERIAL_VARIANT_LIMIT: usize = 4096;
+
+/// [`ItemShading`] as hashable bits.
+pub(crate) type ShadingKey = [u32; 8];
+
+impl Default for MaterialTable {
     fn default() -> Self {
-        let mut b = MaterialGpuBuilder {
-            entries: Vec::new(),
-            lookup: Default::default(),
-            last: None,
-            overflowed: false,
+        let mut t = MaterialTable {
+            blocks: Vec::new(),
+            free: Vec::new(),
+            variants: Default::default(),
+            dirty: None,
             bindless: false,
         };
-        b.reset();
-        b
+        let block = t.build(
+            &Material::default(),
+            MaterialSlots::default(),
+            &ItemShading::default(),
+        );
+        t.blocks.push(block);
+        t.mark(0);
+        t
     }
 }
 
-impl MaterialGpuBuilder {
-    /// Clear to a single default-material entry (id 0) for a new frame. Entry 0 is
-    /// the default material block, so a draw with `material_id` 0 (the normal-vis
-    /// uniform, or an overflow fallback) reads sensible default shading. A default
-    /// material interns straight to 0.
-    pub(crate) fn reset(&mut self) {
-        self.entries.clear();
-        self.lookup.clear();
-        self.last = None;
-        self.overflowed = false;
-        // The default material names no textures, so nothing to resolve.
-        let default_block = MaterialGpu::from_material(
-            &Material::default(),
-            self.bindless,
-            MaterialSlots::default(),
-        );
-        self.entries.push(default_block);
-        self.lookup.insert(bytemuck::cast(default_block), 0);
-    }
-
-    /// Select whether interned blocks carry bindless texture array indices. Set
-    /// once from the device's texture-binding mode; re-runs `reset` so the
-    /// default entry matches.
+impl MaterialTable {
+    /// Select whether blocks carry bindless texture array indices. The caller
+    /// rewrites every stored block afterwards.
     pub(crate) fn set_bindless(&mut self, bindless: bool) {
         self.bindless = bindless;
-        self.reset();
     }
 
-    /// Intern a material's block, returning its `material_id` (its index in the
-    /// uploaded buffer). Deduplicates by the block bytes, so instances sharing a
-    /// material share an id. On overflow, returns 0.
-    ///
-    /// `resolved` comes from [`MaterialSlots::resolve`] against the texture store.
-    /// The caller resolves rather than this method, so one resolve serves both the
-    /// block and the per-item flags in `common_material`.
-    pub(crate) fn intern(&mut self, m: &Material, resolved: MaterialSlots) -> u32 {
-        let block = MaterialGpu::from_material(m, self.bindless, resolved);
-        let key: [u8; 304] = bytemuck::cast(block);
-        if let Some((last, id)) = &self.last
-            && *last == key
-        {
-            return *id;
-        }
-        let id = if let Some(&id) = self.lookup.get(&key) {
-            id
-        } else if self.entries.len() >= MATERIAL_GPU_CAPACITY {
-            self.overflowed = true;
-            return 0;
-        } else {
-            let id = self.entries.len() as u32;
-            self.entries.push(block);
-            self.lookup.insert(key, id);
-            id
+    pub(crate) fn build(
+        &self,
+        m: &Material,
+        resolved: MaterialSlots,
+        shading: &ItemShading,
+    ) -> MaterialGpu {
+        MaterialGpu::from_material(m, self.bindless, resolved, shading)
+    }
+
+    fn mark(&mut self, index: usize) {
+        self.dirty = Some(match self.dirty {
+            Some((lo, hi)) => (lo.min(index), hi.max(index + 1)),
+            None => (index, index + 1),
+        });
+    }
+
+    /// Store `block` at a free index and return it, or `None` when the table
+    /// is at `capacity`.
+    pub(crate) fn alloc(&mut self, block: MaterialGpu, capacity: usize) -> Option<u32> {
+        let index = match self.free.pop() {
+            Some(i) => {
+                self.blocks[i as usize] = block;
+                i
+            }
+            None => {
+                if self.blocks.len() >= capacity {
+                    return None;
+                }
+                self.blocks.push(block);
+                (self.blocks.len() - 1) as u32
+            }
         };
-        self.last = Some((key, id));
-        id
+        self.mark(index as usize);
+        Some(index)
     }
 
-    /// The blocks to upload this frame (always at least the identity entry).
-    pub(crate) fn entries(&self) -> &[MaterialGpu] {
-        &self.entries
+    /// Block `index`'s `item_flags`, or zeros past the end.
+    pub(crate) fn item_flags(&self, index: u32) -> [u32; 4] {
+        self.blocks
+            .get(index as usize)
+            .map_or([0; 4], |b| b.item_flags)
+    }
+
+    pub(crate) fn write(&mut self, index: u32, block: MaterialGpu) {
+        self.blocks[index as usize] = block;
+        self.mark(index as usize);
+    }
+
+    pub(crate) fn release(&mut self, index: u32) {
+        debug_assert_ne!(index, 0, "block 0 is the default material");
+        self.free.push(index);
+    }
+
+    /// The variant block for `id` drawn with `shading`, built with `build` on
+    /// first use. Falls back to `base` when the table is full.
+    pub(crate) fn variant(
+        &mut self,
+        id: crate::resources::MaterialId,
+        shading: &ItemShading,
+        base: u32,
+        capacity: usize,
+        build: impl FnOnce(&Self) -> MaterialGpu,
+    ) -> u32 {
+        let key = (id, shading.key());
+        if let Some(&(index, _)) = self.variants.get(&key) {
+            return index;
+        }
+        let block = build(self);
+        match self.alloc(block, capacity) {
+            Some(index) => {
+                self.variants.insert(key, (index, *shading));
+                index
+            }
+            None => base,
+        }
+    }
+
+    /// The variants of `id`, with their shading, for a rewrite after replace.
+    pub(crate) fn variants_of(&self, id: crate::resources::MaterialId) -> Vec<(u32, ItemShading)> {
+        self.variants
+            .iter()
+            .filter(|((m, _), _)| *m == id)
+            .map(|(_, v)| *v)
+            .collect()
+    }
+
+    /// Drop the variants of `id`, freeing their blocks.
+    pub(crate) fn release_variants_of(&mut self, id: crate::resources::MaterialId) {
+        let freed: Vec<u32> = self
+            .variants
+            .iter()
+            .filter(|((m, _), _)| *m == id)
+            .map(|(_, (b, _))| *b)
+            .collect();
+        self.variants.retain(|(m, _), _| *m != id);
+        self.free.extend(freed);
+    }
+
+    /// Drop every variant. Called when the instanced batch cache rebuilds, so
+    /// no packed record still names one.
+    pub(crate) fn clear_variants(&mut self) {
+        let mut freed: Vec<u32> = self.variants.values().map(|(b, _)| *b).collect();
+        self.variants.clear();
+        // Highest first, so `alloc` pops the lowest: a rebuild of the same
+        // scene hands its variants the same blocks, and its records match the
+        // last upload byte for byte.
+        freed.sort_unstable_by(|a, b| b.cmp(a));
+        self.free.extend(freed);
+    }
+
+    pub(crate) fn variants_near_limit(&self) -> bool {
+        self.variants.len() > MATERIAL_VARIANT_LIMIT
+    }
+
+    /// Every block, indexed by `material_id`. Freed indices hold stale data
+    /// nothing reads.
+    pub(crate) fn blocks(&self) -> &[MaterialGpu] {
+        &self.blocks
+    }
+
+    /// The block range written since the last call, clearing it.
+    pub(crate) fn take_dirty(&mut self) -> Option<(usize, usize)> {
+        self.dirty.take()
+    }
+
+    /// Mark every block for upload, after the GPU buffer was replaced.
+    pub(crate) fn mark_all(&mut self) {
+        if !self.blocks.is_empty() {
+            self.dirty = Some((0, self.blocks.len()));
+        }
     }
 }
 
@@ -423,26 +660,49 @@ mod tests {
     use super::*;
     use crate::scene::material::{Material, TextureSlot, UvTransform};
 
-    #[test]
-    fn identity_material_interns_to_zero() {
-        let mut b = MaterialGpuBuilder::default();
-        assert_eq!(
-            b.intern(&Material::default(), all_live(&Material::default())),
-            0
-        );
-        // Only the reserved identity entry exists.
-        assert_eq!(b.entries().len(), 1);
+    fn bytes(m: &Material, bindless: bool) -> [u8; MATERIAL_GPU_BYTES] {
+        bytemuck::cast(MaterialGpu::from_material(
+            m,
+            bindless,
+            all_live(m),
+            &ItemShading::default(),
+        ))
     }
 
     #[test]
-    fn rotation_makes_a_distinct_entry_and_dedups() {
-        let mut b = MaterialGpuBuilder::default();
+    fn default_table_holds_the_default_block() {
+        let t = MaterialTable::default();
+        assert_eq!(t.blocks().len(), 1);
+        let block: [u8; MATERIAL_GPU_BYTES] = bytemuck::cast(t.blocks()[0]);
+        assert_eq!(block, bytes(&Material::default(), false));
+    }
+
+    #[test]
+    fn rotation_changes_the_block() {
         let rotated = Material::default().with_uv_rotation(std::f32::consts::FRAC_PI_2);
-        let id = b.intern(&rotated, all_live(&rotated));
-        assert_ne!(id, 0, "a rotated material is not identity");
-        // Same transform interns to the same id (dedup), no new entry.
-        assert_eq!(b.intern(&rotated, all_live(&rotated)), id);
-        assert_eq!(b.entries().len(), 2);
+        assert_ne!(bytes(&rotated, false), bytes(&Material::default(), false));
+    }
+
+    #[test]
+    fn variants_are_keyed_by_shading_and_dropped_on_clear() {
+        let mut t = MaterialTable::default();
+        let id = crate::resources::MaterialId::DEFAULT;
+        let ranged = ItemShading {
+            scalar_range: (2.0, 5.0),
+            ..ItemShading::default()
+        };
+        let build =
+            |t: &MaterialTable| t.build(&Material::default(), MaterialSlots::default(), &ranged);
+        let a = t.variant(id, &ranged, 0, 64, build);
+        assert_ne!(a, 0);
+        assert_eq!(
+            t.variant(id, &ranged, 0, 64, build),
+            a,
+            "same shading, same block"
+        );
+        t.clear_variants();
+        let b = t.variant(id, &ranged, 0, 64, build);
+        assert_eq!(b, a, "the freed block is reused");
     }
 
     #[test]
@@ -450,7 +710,7 @@ mod tests {
         let mut m = Material::default();
         m.emissive = crate::Colour::linear_rgb(1.5, 0.25, 4.0);
         m.metallic = 0.7;
-        let b = MaterialGpu::from_material(&m, false, all_live(&m));
+        let b = MaterialGpu::from_material(&m, false, all_live(&m), &ItemShading::default());
         // scalars2.xyz = emissive (HDR nits), scalars1.x = metallic.
         assert_eq!(
             [b.scalars2[0], b.scalars2[1], b.scalars2[2]],
@@ -468,7 +728,7 @@ mod tests {
                 ..UvTransform::IDENTITY
             },
         );
-        let block = MaterialGpu::from_material(&m, false, all_live(&m));
+        let block = MaterialGpu::from_material(&m, false, all_live(&m), &ItemShading::default());
         // Albedo (slot 0) stays identity; normal (slot 1) carries the 4x scale.
         assert_eq!(block.xf[0].offset_scale, [0.0, 0.0, 1.0, 1.0]);
         assert_eq!(block.xf[1].offset_scale, [0.0, 0.0, 4.0, 4.0]);
@@ -481,7 +741,7 @@ mod tests {
         let mut m = Material::default();
         m.backface_policy =
             BackfacePolicy::DifferentColour(crate::Colour::linear_rgb(0.1, 0.2, 0.3));
-        let b = MaterialGpu::from_material(&m, false, all_live(&m));
+        let b = MaterialGpu::from_material(&m, false, all_live(&m), &ItemShading::default());
         assert_eq!(u32::try_from(b.scalars3[2] as i64).unwrap(), 2);
         assert_eq!(
             [
@@ -495,21 +755,29 @@ mod tests {
         // Tint: policy 3, factor in backface_colour.r.
         let mut m = Material::default();
         m.backface_policy = BackfacePolicy::Tint(0.4);
-        let b = MaterialGpu::from_material(&m, false, all_live(&m));
+        let b = MaterialGpu::from_material(&m, false, all_live(&m), &ItemShading::default());
         assert_eq!(b.scalars3[2] as u32, 3);
         assert!((b.backface_colour[0] - 0.4).abs() < 1e-6);
 
         // A default material is Cull (policy 0), no styled back-face.
-        let b =
-            MaterialGpu::from_material(&Material::default(), false, all_live(&Material::default()));
+        let b = MaterialGpu::from_material(
+            &Material::default(),
+            false,
+            all_live(&Material::default()),
+            &ItemShading::default(),
+        );
         assert_eq!(b.scalars3[2] as u32, 0);
     }
 
     #[test]
     fn pbr_texture_flags_and_ranges_pack() {
         // No MR/emissive texture: both has-flags are 0.
-        let b =
-            MaterialGpu::from_material(&Material::default(), false, all_live(&Material::default()));
+        let b = MaterialGpu::from_material(
+            &Material::default(),
+            false,
+            all_live(&Material::default()),
+            &ItemShading::default(),
+        );
         assert_eq!(b.scalars1[3], 0.0, "has_mr_tex off by default");
         assert_eq!(b.scalars3[3], 0.0, "has_emissive_tex off by default");
 
@@ -518,13 +786,24 @@ mod tests {
         m.emissive_texture_id = Some(crate::resources::TextureId::from_raw(8));
         m.metallic_range = [0.1, 0.9];
         m.roughness_range = [0.2, 0.8];
-        let b = MaterialGpu::from_material(&m, false, all_live(&m));
+        let b = MaterialGpu::from_material(&m, false, all_live(&m), &ItemShading::default());
         assert_eq!(b.scalars1[3], 1.0, "has_mr_tex set");
         assert_eq!(b.scalars3[3], 1.0, "has_emissive_tex set");
         assert_eq!(b.mr_range, [0.1, 0.9, 0.2, 0.8]);
-        // Per-batch binding (tex_indices = false) leaves every array index unset.
+        // Per-batch binding (tex_indices = false) leaves every array index unset;
+        // `tex_index1.y` is the sampler code, zero for the default key.
         assert_eq!(b.tex_index0, [NO_TEXTURE; 4]);
-        assert_eq!(b.tex_index1, [NO_TEXTURE; 4]);
+        assert_eq!(b.tex_index1, [NO_TEXTURE, 0, NO_TEXTURE, NO_TEXTURE]);
+    }
+
+    #[test]
+    fn sampler_key_splits_blocks_and_default_key_does_not() {
+        use crate::scene::material::{SamplerKey, TextureSlot};
+        let plain = Material::default();
+        let default_key = plain.with_sampler(TextureSlot::Albedo, SamplerKey::default());
+        let clamp = plain.with_sampler(TextureSlot::Albedo, SamplerKey::clamp());
+        assert_eq!(bytes(&default_key, false), bytes(&plain, false));
+        assert_ne!(bytes(&clamp, false), bytes(&plain, false));
     }
 
     #[test]
@@ -535,30 +814,25 @@ mod tests {
         m.emissive_texture_id = Some(crate::resources::TextureId::from_raw(9));
         // Bindless on: the slot index (low 32 bits of the handle) lands in the
         // matching lane; empty slots stay NO_TEXTURE.
-        let b = MaterialGpu::from_material(&m, true, all_live(&m));
+        let b = MaterialGpu::from_material(&m, true, all_live(&m), &ItemShading::default());
         assert_eq!(b.tex_index0[0], 3, "albedo index");
         assert_eq!(b.tex_index0[1], 4, "normal index");
         assert_eq!(b.tex_index0[2], NO_TEXTURE, "no AO texture");
         assert_eq!(b.tex_index0[3], NO_TEXTURE, "no MR texture");
         assert_eq!(b.tex_index1[0], 9, "emissive index");
-        // The interner keys on the full block, so under bindless two materials
-        // that differ only by texture no longer dedup together.
-        let mut with_indices = MaterialGpuBuilder::default();
-        with_indices.set_bindless(true);
-        let a_id = with_indices.intern(&m, all_live(&m));
-        let mut m2 = m.clone();
+        // Under bindless two materials that differ only by texture build
+        // different blocks; per-batch, the textures are not in the block.
+        let mut m2 = m;
         m2.texture_id = Some(crate::resources::TextureId::from_raw(5));
         assert_ne!(
-            a_id,
-            with_indices.intern(&m2, all_live(&m2)),
+            bytes(&m, true),
+            bytes(&m2, true),
             "bindless splits by texture"
         );
-        // Per-batch: the same two materials dedup (textures not in the block).
-        let mut per_batch = MaterialGpuBuilder::default();
         assert_eq!(
-            per_batch.intern(&m, all_live(&m)),
-            per_batch.intern(&m2, all_live(&m2)),
-            "per-batch dedups across textures",
+            bytes(&m, false),
+            bytes(&m2, false),
+            "per-batch ignores textures"
         );
     }
 }

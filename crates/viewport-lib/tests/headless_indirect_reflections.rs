@@ -45,7 +45,7 @@ fn centre(
     queue: &wgpu::Queue,
     sky: viewport_lib::EnvironmentMapId,
     mut item: SceneRenderItem,
-    material: Material,
+    material: MaterialId,
 ) -> [u8; 3] {
     let mut frame = FrameData::default();
     frame.camera.render_camera = {
@@ -106,11 +106,15 @@ fn light_probe_objects_keep_the_sky_reflection() {
             sh,
         },
     ]));
+    let (metal, matte) = (
+        upload_material(&mut renderer, metal()),
+        upload_material(&mut renderer, matte()),
+    );
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.indirect_light = IndirectLightSource::LightProbe;
-    let metal_px = centre(&mut renderer, &device, &queue, sky, item.clone(), metal());
-    let matte_px = centre(&mut renderer, &device, &queue, sky, item, matte());
+    let metal_px = centre(&mut renderer, &device, &queue, sky, item.clone(), metal);
+    let matte_px = centre(&mut renderer, &device, &queue, sky, item, matte);
     check("light probe", metal_px, matte_px);
 }
 
@@ -133,6 +137,10 @@ fn lightmapped_objects_keep_the_sky_reflection() {
         .positions
         .len();
     let uv1 = vec![glam::Vec2::new(0.5, 0.5); vcount];
+    let (metal, matte) = (
+        upload_material(&mut renderer, metal()),
+        upload_material(&mut renderer, matte()),
+    );
     for mode in [
         viewport_lib::resources::LightmapMode::Replace,
         viewport_lib::resources::LightmapMode::Subtractive,
@@ -149,8 +157,8 @@ fn lightmapped_objects_keep_the_sky_reflection() {
             .unwrap();
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
-        let metal_px = centre(&mut renderer, &device, &queue, sky, item.clone(), metal());
-        let matte_px = centre(&mut renderer, &device, &queue, sky, item, matte());
+        let metal_px = centre(&mut renderer, &device, &queue, sky, item.clone(), metal);
+        let matte_px = centre(&mut renderer, &device, &queue, sky, item, matte);
         check(&format!("lightmap {mode:?}"), metal_px, matte_px);
     }
 }

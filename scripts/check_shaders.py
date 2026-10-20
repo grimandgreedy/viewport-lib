@@ -13,7 +13,10 @@ So this hands the composed shader set to the browser's own front end. It reads
 the `.wgsl` files `build.rs` writes into `OUT_DIR` (includes already resolved),
 adds the shaders the item-type crates compose at runtime (asked for by name and
 source through their own dump-shaders example), loads the lot in headless
-Chrome, and calls `createShaderModule` on each one.
+Chrome, and calls `createShaderModule` on each one. A mesh shader's feature
+constants are only resolved when a pipeline is made, so for each shader that
+declares them it also builds the pipeline with every feature on and with every
+feature off.
 
 What it does not cover: the substitutions the renderer makes at runtime, such as
 stripping the debug-vis block or composing a registered deformer into the mesh
@@ -91,6 +94,70 @@ async function main() {
     } else {
       for (const m of errors) {
         add(false, name + ":" + m.lineNum + ":" + m.linePos + " " + m.message);
+      }
+      continue;
+    }
+    if (code.includes("override FEAT_")) {
+      await checkFeaturePipelines(device, module, name, code);
+    }
+  }
+}
+
+// A mesh shader's feature constants resolve when a pipeline is created, so
+// build its pipelines with every feature on and with every feature off.
+async function checkFeaturePipelines(device, module, name, code) {
+  const feats = [...code.matchAll(/override (FEAT_[A-Z_]+)/g)].map((m) => m[1]);
+  const oit = code.includes("fn fs_oit_main");
+  const targets = oit
+    ? [{ format: "rgba16float" }, { format: "r8unorm" }]
+    : [{ format: "rgba16float" }];
+  const vertex = {
+    arrayStride: 64,
+    attributes: [
+      { shaderLocation: 0, offset: 0, format: "float32x3" },
+      { shaderLocation: 1, offset: 12, format: "float32x3" },
+      { shaderLocation: 2, offset: 24, format: "float32x4" },
+      { shaderLocation: 3, offset: 40, format: "float32x2" },
+      { shaderLocation: 4, offset: 48, format: "float32x4" },
+    ],
+  };
+  // Slot 1: the record words, stepped per instance. A direct draw reads them
+  // from the instance records (160-byte stride), a GPU-culled one from the
+  // cull's packed copy (24 bytes a survivor).
+  const words = (stride, offsets) => ({
+    arrayStride: stride,
+    stepMode: "instance",
+    attributes: offsets.map((offset, i) => ({ shaderLocation: 5 + i, offset, format: "uint32" })),
+  });
+  const entries = [["vs_main", words(160, [108, 116, 144, 148, 152, 156])]];
+  if (code.includes("fn vs_main_cull")) {
+    entries.push(["vs_main_cull", words(24, [0, 4, 8, 12, 16, 20])]);
+  }
+  // With every feature off the renderer draws through the `_lean` vertex
+  // entries (no record words, so slot 0 alone) and the `_plain` fragment
+  // entries (no colour-stream or lightmap varyings).
+  const plain = code.includes("fn vs_main_lean");
+  for (const [vsEntry, slot1] of entries) {
+    for (const on of [true, false]) {
+      const constants = Object.fromEntries(feats.map((f) => [f, on ? 1 : 0]));
+      const suffix = !on && plain ? "_plain" : "";
+      const entryPoint = vsEntry + (suffix ? "_lean" : "");
+      const fsEntry = (oit ? "fs_oit_main" : "fs_main") + suffix;
+      const label = name + " " + entryPoint + (on ? " (every feature)" : " (no features)");
+      device.pushErrorScope("validation");
+      try {
+        await device.createRenderPipelineAsync({
+          label,
+          layout: "auto",
+          // A lean pipeline declares slot 0 alone: it reads no record word.
+          vertex: { module, entryPoint, buffers: suffix ? [vertex] : [vertex, slot1], constants },
+          fragment: { module, entryPoint: fsEntry, targets, constants },
+        });
+        const err = await device.popErrorScope();
+        add(!err, label + (err ? ": " + err.message : ""));
+      } catch (err) {
+        await device.popErrorScope();
+        add(false, label + ": " + err);
       }
     }
   }
@@ -253,7 +320,8 @@ def main():
         sys.stdout.write(result.stdout)
         sys.stderr.write(result.stderr)
         return result.returncode
-    print(f"\nall {len(shaders) - len(known)} checked shaders compiled")
+    pipelines = sum(1 for line in result.stdout.splitlines() if "feature" in line and line.strip().startswith("ok "))
+    print(f"\nall {len(shaders) - len(known)} checked shaders compiled, and {pipelines} feature pipelines built")
     return 0
 
 

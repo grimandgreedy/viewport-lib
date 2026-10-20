@@ -31,11 +31,10 @@ impl ViewportRenderer {
             }
             return (0, 0, 0, 0);
         }
-        resources.ensure_instanced_pipelines(device);
         if hdr_family {
-            resources.ensure_hdr_instanced_pipelines(device);
+            resources.ensure_hdr_mesh_pipelines(device);
         } else {
-            resources.ensure_ldr_instanced_pipelines(device);
+            resources.ensure_ldr_mesh_pipelines(device);
         }
 
         let mut resolved = 0u32;

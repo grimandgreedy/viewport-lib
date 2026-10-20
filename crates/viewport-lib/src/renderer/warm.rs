@@ -190,9 +190,7 @@ impl ViewportRenderer {
         let r = &mut self.resources;
 
         if set.direct || set.hdr {
-            r.ensure_instanced_pipelines(device);
             if cull {
-                r.ensure_cull_instance_pipelines(device);
                 // The compute side of GPU culling, which the first culled
                 // frame would otherwise build.
                 let dev = device.clone();
@@ -205,50 +203,29 @@ impl ViewportRenderer {
         }
         if set.direct {
             r.ensure_ldr_mesh_pipelines(device);
-            r.ensure_ldr_instanced_pipelines(device);
-            if let Some(f) = &r.scene.ldr {
-                f.request_all();
-            }
-            if let Some(f) = &r.instancing.ldr {
-                f.request_all();
-            }
+            r.scene.request_plain_ldr();
         }
         if set.hdr {
             r.ensure_hdr_infra(device, queue);
             r.ensure_tone_map_pipeline(device, format);
             r.ensure_hdr_mesh_pipelines(device);
-            r.ensure_hdr_instanced_pipelines(device);
-            if let Some(f) = &r.scene.hdr {
-                f.request_all();
-            }
-            if let Some(f) = &r.instancing.hdr {
-                f.request_all();
-            }
+            r.scene.request_plain_hdr();
             if cull {
                 r.ensure_hdr_cull_pipelines(device);
-                if let Some(f) = &r.cull.hdr {
-                    f.request_all();
-                }
             }
             if set.transparency {
                 r.ensure_oit_composite_pipeline(device);
                 r.ensure_oit_mesh_pipelines(device);
-                r.ensure_oit_instanced_pipeline(device);
                 if let Some(f) = &r.oit.composite_pipeline {
                     f.request_all();
                 }
-                if let Some(f) = &r.oit.pipeline {
-                    f.request_all();
-                }
-                if let Some(f) = &r.oit.instanced {
-                    f.request_all();
-                }
+                r.oit.request_plain();
                 if cull {
                     r.ensure_oit_cull_pipelines(device);
-                    if let Some(f) = &r.cull.oit {
-                        f.request_all();
-                    }
                 }
+            }
+            if cull {
+                r.cull.request_plain();
             }
             // The effects need the HDR infrastructure above.
             if set.bloom {
@@ -305,12 +282,6 @@ impl ViewportRenderer {
             if let Some(f) = &r.shadow.point_pipeline {
                 f.request_all();
             }
-            if let Some(f) = &r.instancing.shadow {
-                f.request_all();
-            }
-            if let Some(f) = &r.cull.shadow {
-                f.request_all();
-            }
         }
         if set.outlines {
             r.ensure_outline_pipelines(device);
@@ -345,6 +316,22 @@ impl ViewportRenderer {
         }
         if set.material_plugins {
             r.warm_all_material_plugin_pipelines(device);
+        }
+        // The mesh families' universal members last. Each stands in for a
+        // feature set that appears after warm-up; the compile queue is first
+        // in, first out, so asking for them earlier would put them ahead of
+        // the plain sets and every other pipeline a plain scene draws with.
+        if set.direct {
+            r.scene.request_members_ldr();
+        }
+        if set.hdr {
+            r.scene.request_members_hdr();
+            if set.transparency {
+                r.oit.request_members();
+            }
+            if cull {
+                r.cull.request_members();
+            }
         }
         if set.all_item_types || !set.item_types.is_empty() {
             for plugin in self.item_type_plugins.values_mut() {

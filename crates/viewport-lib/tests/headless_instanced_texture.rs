@@ -83,11 +83,21 @@ fn frame_gen(items: Vec<viewport_lib::SceneRenderItem>, generation: u64) -> Fram
     fd
 }
 
-/// A textured plane at world x, unlit and two-sided (the material a windowed
-/// compositor uses for its client planes), sharing `mesh`.
-fn textured_plane(mesh: MeshId, tex: TextureId, x: f32) -> viewport_lib::SceneRenderItem {
+/// The material a windowed compositor uses for its client planes: textured and
+/// two-sided.
+fn plane_material(tex: TextureId) -> Material {
     let mut material = Material::textured(tex);
     material.backface_policy = BackfacePolicy::Identical;
+    material
+}
+
+/// `plane_material(tex)`, uploaded.
+fn upload_plane_material(renderer: &mut ViewportRenderer, tex: TextureId) -> MaterialId {
+    upload_material(renderer, plane_material(tex))
+}
+
+/// An unlit plane at world x drawn with `material`, sharing `mesh`.
+fn textured_plane(mesh: MeshId, material: MaterialId, x: f32) -> viewport_lib::SceneRenderItem {
     let mut item = viewport_lib::SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
@@ -127,9 +137,11 @@ fn two_textured_planes(
             TextureData::srgb(2, 2, solid_rgba(2, 2, C_START)),
         )
         .unwrap();
+    let mat_a = upload_plane_material(renderer, tex_a);
+    let mat_b = upload_plane_material(renderer, tex_b);
     (
-        textured_plane(mesh, tex_a, -1.05),
-        textured_plane(mesh, tex_b, 1.05),
+        textured_plane(mesh, mat_a, -1.05),
+        textured_plane(mesh, mat_b, 1.05),
         tex_b,
     )
 }
@@ -214,13 +226,21 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
         .unwrap();
 
     use viewport_lib::AlphaMode;
+    let ground_mat = upload_material(
+        &mut renderer,
+        Material::from_colour(Colour::linear_rgb(0.85, 0.85, 0.85)),
+    );
+    let mut m = Material::textured(tex);
+    m.backface_policy = BackfacePolicy::Identical;
+    m.alpha_mode = AlphaMode::Mask(0.5);
+    let caster_mat = upload_material(&mut renderer, m);
     // `with_casters` toggles the casters for the shadow-present sanity check.
     let build = |with_casters: bool| -> FrameData {
         let mut items = Vec::new();
         let mut g = viewport_lib::SceneRenderItem::default();
         g.mesh_id = ground;
         g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-        g.material = Material::from_colour(Colour::linear_rgb(0.85, 0.85, 0.85));
+        g.material = ground_mat;
         items.push(g);
         if with_casters {
             // Two casters sharing one mesh and one texture -> a single instanced
@@ -230,10 +250,7 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
                 c.mesh_id = caster_mesh;
                 c.model =
                     glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).to_cols_array_2d();
-                let mut m = Material::textured(tex);
-                m.backface_policy = BackfacePolicy::Identical;
-                m.alpha_mode = AlphaMode::Mask(0.5);
-                c.material = m;
+                c.material = caster_mat;
                 items.push(c);
             }
         }
@@ -400,7 +417,8 @@ fn instanced_path_reflects_replace_texture_with_untextured_sibling() {
         )
         .unwrap();
 
-    let textured = textured_plane(mesh, tex, -1.05);
+    let plane_mat = upload_plane_material(&mut renderer, tex);
+    let textured = textured_plane(mesh, plane_mat, -1.05);
     // The sibling shares the mesh but carries no texture, only a base colour.
     let mut untextured_mat = Material::default();
     untextured_mat.backface_policy = BackfacePolicy::Identical;
@@ -409,7 +427,7 @@ fn instanced_path_reflects_replace_texture_with_untextured_sibling() {
     untextured.mesh_id = mesh;
     untextured.model =
         glam::Mat4::from_translation(glam::Vec3::new(1.05, 0.0, 0.0)).to_cols_array_2d();
-    untextured.material = untextured_mat;
+    untextured.material = upload_material(&mut renderer, untextured_mat);
     untextured.settings = unlit_settings();
 
     let sum1 = checksum(&renderer.render_offscreen(
@@ -584,7 +602,8 @@ fn bindless_scene(
                     TextureData::srgb(2, 2, solid_rgba(2, 2, *colour)),
                 )
                 .unwrap();
-            textured_plane(mesh, tex, x)
+            let material = upload_plane_material(renderer, tex);
+            textured_plane(mesh, material, x)
         })
         .collect::<Vec<_>>();
     frame_for(items)
@@ -800,9 +819,10 @@ fn bindless_plugin_scene(
                     TextureData::srgb(2, 2, solid_rgba(2, 2, *colour)),
                 )
                 .unwrap();
-            let mut it = textured_plane(mesh, tex, x);
-            it.material.shading_plugin = Some(plugin);
-            it
+            let mut m = plane_material(tex);
+            m.shading_plugin = Some(plugin);
+            let material = upload_material(renderer, m);
+            textured_plane(mesh, material, x)
         })
         .collect::<Vec<_>>();
     frame_for(items)
@@ -836,16 +856,6 @@ fn bindless_plugin_instances_and_matches_per_batch() {
     let bindless_frame = bindless_plugin_scene(&mut bindless, &bd, &bq);
     let bindless_img = bindless.render_offscreen(&bd, &bq, &bindless_frame, W, H);
     let bindless_stats = bindless.last_frame_stats();
-
-    // Both paths instanced every plugin item.
-    assert_eq!(
-        per_stats.per_object_items, 0,
-        "per-batch plugin items should instance, not fall per-object",
-    );
-    assert_eq!(
-        bindless_stats.per_object_items, 0,
-        "bindless plugin items should instance, not fall per-object",
-    );
 
     // Bindless drops the texture ids: four distinct-albedo plugin planes on one
     // mesh collapse to a single batch, where per-batch keeps four.
@@ -1022,15 +1032,16 @@ fn freeing_a_mesh_drops_its_items_from_the_cached_batches() {
         )
         .unwrap();
 
+    let mat = upload_plane_material(&mut renderer, tex);
     // Two items per mesh so each mesh forms its own instanced batch.
     let items = |with_doomed: bool| {
         let mut v = vec![
-            textured_plane(keep, tex, -1.8),
-            textured_plane(keep, tex, -0.6),
+            textured_plane(keep, mat, -1.8),
+            textured_plane(keep, mat, -0.6),
         ];
         if with_doomed {
-            v.push(textured_plane(doomed, tex, 0.6));
-            v.push(textured_plane(doomed, tex, 1.8));
+            v.push(textured_plane(doomed, mat, 0.6));
+            v.push(textured_plane(doomed, mat, 1.8));
         }
         v
     };
@@ -1092,15 +1103,22 @@ fn freeing_a_texture_used_only_by_a_submesh_material_reaches_the_screen() {
     // The item's own material is untextured; only the submesh material names the
     // texture, so a cache that looked at `item.material` alone would not know the
     // submesh texture had gone.
+    let dark = Material::from_colour(Colour::linear_rgb(0.1, 0.1, 0.1));
+    let base = upload_material(&mut renderer, dark);
+    let sub_plain = upload_material(&mut renderer, dark);
+    let mut sub_textured = dark;
+    sub_textured.texture_id = Some(tex);
+    let sub_textured = upload_material(&mut renderer, sub_textured);
     let item = |with_submesh_texture: bool| {
         let mut it = viewport_lib::SceneRenderItem::default();
         it.mesh_id = mesh;
-        it.material = Material::from_colour(Colour::linear_rgb(0.1, 0.1, 0.1));
+        it.material = base;
         it.settings = unlit_settings();
-        let mut sub = Material::from_colour(Colour::linear_rgb(0.1, 0.1, 0.1));
-        if with_submesh_texture {
-            sub.texture_id = Some(tex);
-        }
+        let sub = if with_submesh_texture {
+            sub_textured
+        } else {
+            sub_plain
+        };
         it.submesh_materials = Some(vec![sub]);
         it
     };
@@ -1200,9 +1218,10 @@ fn update_texture_view_reaches_the_screen() {
     let id = renderer
         .resources_mut()
         .register_texture_view(&device, &view_a, 2, 2);
+    let mat = upload_plane_material(&mut renderer, id);
     let items = vec![
-        textured_plane(mesh, id, -1.05),
-        textured_plane(mesh, id, 1.05),
+        textured_plane(mesh, mat, -1.05),
+        textured_plane(mesh, mat, 1.05),
     ];
 
     let before =
@@ -1248,15 +1267,16 @@ fn a_free_racing_an_in_flight_upload_does_not_resurrect_the_texture() {
             TextureData::srgb(2, 2, solid_rgba(2, 2, C_SWAP)),
         )
         .unwrap();
+    let mat = upload_plane_material(&mut renderer, doomed);
     let items = vec![
-        textured_plane(mesh, doomed, -1.05),
-        textured_plane(mesh, doomed, 1.05),
+        textured_plane(mesh, mat, -1.05),
+        textured_plane(mesh, mat, 1.05),
     ];
     let untextured: Vec<viewport_lib::SceneRenderItem> = items
         .iter()
         .cloned()
         .map(|mut it| {
-            it.material = Material::default();
+            it.material = MaterialId::DEFAULT;
             it.settings = unlit_settings();
             it
         })
@@ -1348,21 +1368,26 @@ fn instanced_cutout_shadow_reflects_free_texture() {
         .unwrap();
 
     use viewport_lib::AlphaMode;
+    let ground_mat = upload_material(
+        &mut renderer,
+        Material::from_colour(Colour::linear_rgb(0.85, 0.85, 0.85)),
+    );
+    let mut m = Material::textured(tex);
+    m.backface_policy = BackfacePolicy::Identical;
+    m.alpha_mode = AlphaMode::Mask(0.5);
+    let caster_mat = upload_material(&mut renderer, m);
     let build = || -> FrameData {
         let mut items = Vec::new();
         let mut g = viewport_lib::SceneRenderItem::default();
         g.mesh_id = ground;
         g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-        g.material = Material::from_colour(Colour::linear_rgb(0.85, 0.85, 0.85));
+        g.material = ground_mat;
         items.push(g);
         for x in [-1.0f32, 1.0] {
             let mut c = viewport_lib::SceneRenderItem::default();
             c.mesh_id = caster_mesh;
             c.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).to_cols_array_2d();
-            let mut m = Material::textured(tex);
-            m.backface_policy = BackfacePolicy::Identical;
-            m.alpha_mode = AlphaMode::Mask(0.5);
-            c.material = m;
+            c.material = caster_mat;
             items.push(c);
         }
         let mut cam = Camera {

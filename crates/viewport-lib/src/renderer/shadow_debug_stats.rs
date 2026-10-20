@@ -5,10 +5,7 @@
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ShadowDebugStats {
-    /// True when the current frame uses the instanced draw path.
-    ///
-    /// When true, edits to `mesh.wgsl` shadow sampling code have no effect --
-    /// the active shader is `mesh_instanced.wgsl`.
+    /// True when the current frame draws its meshes in batches.
     pub using_instanced_path: bool,
     /// Number of instanced batches in the current frame. Zero when non-instanced.
     pub instanced_batch_count: usize,

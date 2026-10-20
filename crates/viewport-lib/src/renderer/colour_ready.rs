@@ -41,12 +41,12 @@ impl DeviceResources {
         // The colour pass binds the discard-free twin when the early-Z gate
         // allows it and the discarding pipeline otherwise; which of the two a
         // given draw site picks differs, so either counts as ready.
-        let two_sided = item.material.is_two_sided();
-        let may_skip_discard = hdr
-            && !clipping_active
+        let material = self.material_or_default(item.material);
+        let two_sided = material.is_two_sided();
+        let may_skip_discard = !clipping_active
             && !self.force_po_discard
             && matches!(
-                item.material.alpha_mode,
+                material.alpha_mode,
                 crate::scene::material::AlphaMode::Opaque
             )
             && item.active_attribute.is_none()
@@ -60,10 +60,17 @@ impl DeviceResources {
                 ..PipelineKey::default()
             },
         ];
-        match self.material_plugin_draw(item.material.shading_plugin) {
-            Some((set, _)) => keys.iter().any(|&k| set.opaque_ready(hdr, k)),
+        match self.material_plugin_draw(material.shading_plugin, &material.plugin_textures, false) {
+            Some((set, _)) => keys.iter().any(|&k| {
+                set.opaque_ready(
+                    hdr,
+                    k,
+                    crate::renderer::pipeline_key::FeatureSet::UNIVERSAL,
+                    false,
+                )
+            }),
             // A plugin item whose set is not composed yet draws nothing.
-            None if item.material.shading_plugin.is_some() => false,
+            None if material.shading_plugin.is_some() => false,
             None => keys.iter().any(|&k| self.scene.opaque_ready(hdr, k)),
         }
     }
@@ -80,15 +87,62 @@ impl DeviceResources {
         if self.pipeline_compiler.policy() == crate::resources::PipelineCompilation::Blocking {
             return true;
         }
-        let key = PipelineKey {
-            two_sided: batch.two_sided,
-            no_discard_eligible: !clipping_active && !batch.has_alpha_mask,
-            ..PipelineKey::default()
+        // Either the
+        // discarding pipeline or its discard-free twin counts as ready,
+        // whichever the draw site picks.
+        use crate::renderer::types::DrawKind;
+        let hdr_family = if batch.bindless {
+            self.scene.hdr_bindless_family()
+        } else {
+            self.scene.hdr_family()
         };
-        match self.material_plugin_instanced_draw(batch.shading_plugin) {
-            Some((set, _)) => set.opaque_ready(hdr, key),
+        let ldr_family = if batch.bindless {
+            self.scene.ldr_bindless_family()
+        } else {
+            self.scene.ldr_family()
+        };
+        let family: &dyn crate::resources::scene_pipelines::MeshColourFamily =
+            if hdr { &hdr_family } else { &ldr_family };
+        if matches!(batch.draw, DrawKind::Edges | DrawKind::NormalLines) {
+            return family.wireframe().is_some();
+        }
+        let two_sided = batch.two_sided;
+        let keys = [
+            PipelineKey::two_sided(two_sided),
+            PipelineKey {
+                two_sided,
+                no_discard_eligible: !clipping_active
+                    && !self.force_po_discard
+                    && !batch.has_alpha_mask
+                    && !batch.has_attribute
+                    && !matches!(batch.draw, DrawKind::Range(..))
+                    && !self
+                        .deform
+                        .may_discard(batch.mesh_id, batch.deform_instance),
+                ..PipelineKey::default()
+            },
+        ];
+        let feats = if self.mesh_universal {
+            crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
+        } else {
+            batch.features
+        };
+        // A batch the GPU cull draws binds the culled family instead, so
+        // either counts.
+        let culled = hdr && batch.draws_culled();
+        match self.material_plugin_draw(
+            batch.shading_plugin,
+            &batch.plugin_textures,
+            batch.bindless,
+        ) {
+            Some((set, _)) => keys
+                .iter()
+                .any(|&k| set.opaque_ready(hdr, k, feats, culled)),
             None if batch.shading_plugin.is_some() => false,
-            None => self.instancing.opaque_ready(hdr, key) || (hdr && self.cull.opaque_ready(key)),
+            None => keys.iter().any(|&k| {
+                family.opaque_ready(k, feats)
+                    || (culled && self.cull.opaque_features_ready(k, feats, batch.bindless))
+            }),
         }
     }
 }

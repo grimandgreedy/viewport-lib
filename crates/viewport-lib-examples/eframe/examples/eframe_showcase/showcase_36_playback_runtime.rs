@@ -14,11 +14,13 @@ use viewport_lib::Colour;
 
 use crate::eframe::egui;
 use vpl::{
-    BackfacePolicy, FrameStats, Material, MeshData, MeshId, PerformancePolicy, QualityPreset,
-    RuntimeMode, SceneRenderItem, ViewportRenderer, scene::Scene, selection::Selection,
+    BackfacePolicy, FrameStats, Material, MaterialId, MeshData, MeshId, PerformancePolicy,
+    QualityPreset, RuntimeMode, SceneRenderItem, ViewportRenderer, scene::Scene,
+    selection::Selection,
 };
 
 use crate::App;
+use crate::shared::upload_material;
 
 // ---------------------------------------------------------------------------
 // Load selectors
@@ -58,6 +60,9 @@ pub(crate) struct PbState {
     pub time: f32,
     pub mesh_id: Option<MeshId>,
     pub static_mesh_id: Option<MeshId>,
+    /// Materials for the deforming grid and the static boxes.
+    pub mesh_material: MaterialId,
+    pub static_material: MaterialId,
     pub scene: Scene,
     pub last_stats: FrameStats,
     pub stats_history: VecDeque<f32>,
@@ -79,6 +84,8 @@ impl Default for PbState {
             time: 0.0,
             mesh_id: None,
             static_mesh_id: None,
+            mesh_material: MaterialId::DEFAULT,
+            static_material: MaterialId::DEFAULT,
             scene: Scene::new(),
             last_stats: FrameStats::default(),
             stats_history: VecDeque::new(),
@@ -109,6 +116,14 @@ pub(crate) fn build_pb_scene(app: &mut App, renderer: &mut ViewportRenderer) {
         .expect("pb static box mesh upload");
     app.pb_state.static_mesh_id = Some(box_id);
 
+    let mut mesh_mat = Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05));
+    mesh_mat.backface_policy = BackfacePolicy::Identical;
+    app.pb_state.mesh_material = upload_material(renderer, mesh_mat);
+    app.pb_state.static_material = upload_material(
+        renderer,
+        Material::from_colour(Colour::linear_rgb(0.10, 0.26, 0.68)),
+    );
+
     rebuild_pb_static_scene(app);
     app.pb_state.built = true;
 }
@@ -123,7 +138,7 @@ pub(crate) fn rebuild_pb_static_scene(app: &mut App) {
     let n = app.pb_state.instance_count;
     let per_row = (n as f32).sqrt().ceil() as usize;
     let spacing = 2.5_f32;
-    let mat = Material::from_colour(Colour::linear_rgb(0.10, 0.26, 0.68));
+    let mat = app.pb_state.static_material;
     for i in 0..n {
         let col = i % per_row;
         let row = i / per_row;
@@ -144,11 +159,7 @@ pub(crate) fn pb_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
 
     // Deforming mesh: single item placed at origin.
     if let Some(mid) = app.pb_state.mesh_id {
-        let mut item = SceneRenderItem::default();
-        item.mesh_id = mid;
-        let mut mat = Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05));
-        mat.backface_policy = BackfacePolicy::Identical;
-        item.material = mat;
+        let mut item = SceneRenderItem::new(mid, app.pb_state.mesh_material);
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
         items.push(item);
     }

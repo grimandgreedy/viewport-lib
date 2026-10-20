@@ -56,9 +56,10 @@ struct FrustumUniform {
     // exactly as large as this dispatch needs and no scene is too big for them.
     plan_cap:        u32,
     chunk_cap:       u32,
-    // Pad to a 16-byte multiple. A scalar, not a vec3: a vec3 aligns to 16 and
-    // would push the struct to 224 bytes.
-    _pad0:           u32,
+    // Where, in u32s, the visibility buffer's words region starts. The cull
+    // copies each survivor's record words there (see `write_words`); 0 means
+    // no region, and the instance records at binding 8 are a fallback.
+    words_base:      u32,
 }
 
 struct InstanceAabb {
@@ -69,30 +70,7 @@ struct InstanceAabb {
     cast_shadows: u32,
 }
 
-// Per-instance record, matching the 144-byte `InstanceData` in
-// `mesh_instanced.wgsl` and the Rust `InstanceData`. The cull reads only
-// `object_mask` (offset 140); the other fields keep the array stride at 144 so
-// the instance index aligns with `instance_aabbs`.
-struct InstanceData {
-    model:                  mat4x4<f32>,  // offset 0
-    colour:                 vec4<f32>,    // offset 64
-    selected:               u32,          // offset 80
-    wireframe:              u32,          // offset 84
-    has_texture:            u32,          // offset 88
-    has_normal_map:         u32,          // offset 92
-    has_ao_map:             u32,          // offset 96
-    unlit:                  u32,          // offset 100
-    receive_shadows:        u32,          // offset 104
-    material_id:            u32,          // offset 108
-    alpha_cutoff:           f32,          // offset 112
-    alpha_flag:             u32,          // offset 116
-    has_light_probe:        u32,          // offset 120
-    light_probe_index:      u32,          // offset 124
-    ignore_clip:            u32,          // offset 128
-    custom_data_id:         u32,          // offset 132
-    backface_pattern_scale: f32,          // offset 136
-    object_mask:            u32,          // offset 140
-}
+// #include "helpers/instance_data.wgsl"
 
 struct BatchMeta {
     index_count:     u32,
@@ -128,7 +106,7 @@ struct DrawIndirect {
 // opt-out), [1] = instances surviving the frustum test (before occlusion).
 // The drawn count comes from the indirect args. Cleared each main dispatch.
 @group(0) @binding(7) var<storage, read_write> cull_stats:         array<atomic<u32>, 2>;
-// Per-instance records (144-byte stride), read only for `object_mask` in the
+// Per-instance records (160-byte stride), read only for `object_mask` in the
 // layer-mask reject. Bound with a 1-element fallback when do_mask_cull is off
 // (shadow / single-mesh / plugin dispatches) so the layout is always satisfied.
 @group(0) @binding(8) var<storage, read>       instance_data:      array<InstanceData>;
@@ -328,7 +306,26 @@ fn cull_instances(@builtin(global_invocation_id) id: vec3<u32>) {
     let slot = atomicAdd(&batch_counters[aabb.batch_index], 1u);
     if slot < slot_meta.instance_count {
         visibility_indices[slot_meta.vis_offset + slot] = i;
+        write_words(slot_meta.vis_offset + slot, i);
     }
+}
+
+// Copy the record words the culled mesh draws fetch per instance (record base,
+// colour, warp and lightmap streams, base vertex, deform table) into the visibility buffer's
+// words region, at the survivor's visible slot. A culled draw's instance index
+// is that slot, so a vertex buffer over the region steps through them.
+fn write_words(slot: u32, record: u32) {
+    if frustum.words_base == 0u {
+        return;
+    }
+    let inst = instance_data[record];
+    let w = frustum.words_base + slot * 6u;
+    visibility_indices[w] = inst.sidecar_record;
+    visibility_indices[w + 1u] = inst.colour_stream;
+    visibility_indices[w + 2u] = inst.warp_stream;
+    visibility_indices[w + 3u] = inst.lightmap_stream;
+    visibility_indices[w + 4u] = inst.vertex_base;
+    visibility_indices[w + 5u] = inst.deform_table;
 }
 
 // Workgroup scratch shared by the planning, counting and scattering phases.
@@ -512,6 +509,7 @@ fn scatter_visible(
     if chunk_in_range && survives == 1u {
         let rank = scan[lid.x] - 1u;
         visibility_indices[bmeta.vis_offset + base + rank] = entry;
+        write_words(bmeta.vis_offset + base + rank, entry);
     }
 
     // Last chunk of the batch: publish the batch's visible count. Batches with

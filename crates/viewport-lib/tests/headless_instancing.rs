@@ -66,7 +66,7 @@ fn position_override_takes_effect_through_render_path() {
     // Pin a fixed neutral exposure and a modest single light so the red plane
     // tone-maps to a clear saturated red, independent of the library's
     // photometric default lighting (daylight lux + auto-exposure).
-    frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
+    frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
     frame.effects.lighting.lights = vec![{
         let mut s = LightSource::default();
         s.intensity = 1.0;
@@ -79,13 +79,19 @@ fn position_override_takes_effect_through_render_path() {
     let mut red_item = SceneRenderItem::default();
     red_item.mesh_id = red_id;
     red_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    red_item.material = Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0));
+    red_item.material = upload_material(
+        &mut renderer,
+        Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0)),
+    );
 
     let mut blue_item = SceneRenderItem::default();
     blue_item.mesh_id = blue_id;
     blue_item.model =
         glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)).to_cols_array_2d();
-    blue_item.material = Material::from_colour(Colour::linear_rgb(0.0, 0.0, 1.0));
+    blue_item.material = upload_material(
+        &mut renderer,
+        Material::from_colour(Colour::linear_rgb(0.0, 0.0, 1.0)),
+    );
 
     frame.scene.surfaces =
         SurfaceSubmission::Flat(vec![red_item.clone(), blue_item.clone()].into());
@@ -186,7 +192,10 @@ fn outline_mask_follows_position_override() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    item.material = Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0));
+    item.material = upload_material(
+        &mut renderer,
+        Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0)),
+    );
     item.settings.selected = true;
     let frame = make_frame(vec![item]);
 
@@ -291,7 +300,7 @@ fn position_override_slice_reads_correct_pool_window() {
     // Pin a fixed neutral exposure and a modest single light so the red plane
     // tone-maps to a clear saturated red, independent of the library's
     // photometric default lighting (daylight lux + auto-exposure).
-    frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
+    frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
     frame.effects.lighting.lights = vec![{
         let mut s = LightSource::default();
         s.intensity = 1.0;
@@ -302,7 +311,10 @@ fn position_override_slice_reads_correct_pool_window() {
     let mut red_item = SceneRenderItem::default();
     red_item.mesh_id = red_id;
     red_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    red_item.material = Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0));
+    red_item.material = upload_material(
+        &mut renderer,
+        Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0)),
+    );
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![red_item].into());
 
     // Pool: body A (elements 0..5) far behind the camera, body B (elements
@@ -598,10 +610,11 @@ fn lod_culled_per_object_item_is_not_drawn() {
     // A single non-instanced (per-object) LOD item filling the view centre. The
     // DifferentColour back-face policy is what forces it onto the per-object path.
     let mut item = SceneRenderItem::default();
+    let mut mat = Material::default();
     item.mesh_id = full;
     item.lod_group = Some(group);
-    item.material.backface_policy =
-        BackfacePolicy::DifferentColour(Colour::linear_rgb(1.0, 0.2, 0.2));
+    mat.backface_policy = BackfacePolicy::DifferentColour(Colour::linear_rgb(1.0, 0.2, 0.2));
+    item.material = upload_material(&mut renderer, mat);
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
 
     // Empty scene baseline.
@@ -670,6 +683,14 @@ fn multi_draw_collapse_is_pixel_identical() {
         [0.2, 0.2, 0.9],
         [0.9, 0.9, 0.2],
     ];
+    let mut colour = |i: usize| {
+        upload_material(
+            &mut renderer,
+            Material::from_colour(Colour::from_linear_rgb_array(colours[i])),
+        )
+    };
+    let shared = colour(0);
+    let materials = [shared, shared, colour(2), colour(3), colour(4)];
     let mut surfaces = Vec::new();
     for (i, &mesh_id) in mesh_ids.iter().enumerate() {
         // Two instances per mesh, offset along X and Y, so instancing engages
@@ -681,7 +702,7 @@ fn multi_draw_collapse_is_pixel_identical() {
             let y = inst as f32 * 1.1;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
-            item.material = Material::from_colour(Colour::from_linear_rgb_array(colours[i]));
+            item.material = materials[i];
             if i == 2 {
                 item.settings.opacity = 0.5;
             }
@@ -881,4 +902,183 @@ fn opaque_and_translucent_copies_of_a_mesh_draw_independently() {
             "{name}: the translucent copy did not draw as it does alone"
         );
     }
+}
+
+/// An opaque caster without a cutout reads no material binding, so per-material
+/// textures must not split the shadow cascades' multi-draw runs: a scene whose
+/// every material carries its own albedo texture issues as many shadow draw
+/// commands as the same scene untextured.
+#[test]
+fn textured_casters_share_shadow_draw_runs() {
+    let Some((device, queue)) = headless_device_with_indirect() else {
+        eprintln!("skipping: no GPU adapter with INDIRECT_FIRST_INSTANCE");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_force_multi_draw(true);
+
+    const MESHES: usize = 8;
+    let mesh_ids: Vec<_> = (0..MESHES)
+        .map(|_| {
+            renderer
+                .resources_mut()
+                .upload_mesh_data(&device, &box_mesh())
+                .unwrap()
+        })
+        .collect();
+    let mut plain = Vec::new();
+    let mut textured = Vec::new();
+    for i in 0..MESHES {
+        let tint = i as f32 / MESHES as f32;
+        let material = Material::from_colour(Colour::from_linear_rgb_array([tint, 0.5, 0.5]));
+        plain.push(upload_material(&mut renderer, material.clone()));
+        let texture = renderer
+            .resources_mut()
+            .upload_texture(
+                &device,
+                &queue,
+                viewport_lib::TextureData::srgb(2, 2, [(i * 30) as u8, 128, 64, 255].repeat(4)),
+            )
+            .unwrap();
+        let mut material = material;
+        material.texture_id = Some(texture);
+        textured.push(upload_material(&mut renderer, material));
+    }
+
+    let frame_with = |materials: &[MaterialId], generation: u64| {
+        let mut surfaces = Vec::new();
+        for (i, &mesh_id) in mesh_ids.iter().enumerate() {
+            for inst in 0..2 {
+                let mut item = SceneRenderItem::default();
+                item.mesh_id = mesh_id;
+                let x = (i as f32 - MESHES as f32 / 2.0) * 1.3;
+                let y = inst as f32 * 1.1;
+                item.model =
+                    glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
+                item.material = materials[i];
+                surfaces.push(item);
+            }
+        }
+        let mut frame = FrameData::default();
+        frame.scene.surfaces = SurfaceSubmission::Flat(surfaces.into());
+        frame.scene.generation = generation;
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        let cam = Camera::default();
+        frame.camera.render_camera = {
+            let mut rc = RenderCamera::from_camera(&cam);
+            let eye = glam::Vec3::new(0.0, -12.0, 8.0);
+            rc.eye_position = eye.into();
+            rc.forward = (-eye).normalize().into();
+            rc.aspect = 1.0;
+            rc
+        };
+        frame.camera.viewport_size = [96.0, 96.0];
+        let mut light = LightSource::default();
+        light.kind = LightKind::Directional {
+            direction: [0.3, 0.4, -1.0],
+        };
+        light.intensity = 4.0;
+        frame.effects.lighting.lights = vec![light];
+        frame
+    };
+
+    renderer.render_offscreen(&device, &queue, &frame_with(&plain, 1), 96, 96);
+    let plain_stats = renderer.last_frame_stats();
+    renderer.render_offscreen(&device, &queue, &frame_with(&textured, 2), 96, 96);
+    let textured_stats = renderer.last_frame_stats();
+
+    assert!(
+        plain_stats.shadow_draw_commands < plain_stats.shadow_draw_calls,
+        "expected the untextured casters to collapse: {} commands for {} batch-draws",
+        plain_stats.shadow_draw_commands,
+        plain_stats.shadow_draw_calls,
+    );
+    assert_eq!(
+        textured_stats.shadow_draw_calls, plain_stats.shadow_draw_calls,
+        "both scenes draw the same casters",
+    );
+    assert_eq!(
+        textured_stats.shadow_draw_commands, plain_stats.shadow_draw_commands,
+        "per-material textures split the shadow runs: {} commands against {} untextured",
+        textured_stats.shadow_draw_commands, plain_stats.shadow_draw_commands,
+    );
+}
+
+/// The direct (LDR) path draws an unclipped opaque batch through the
+/// discard-free pipeline, so a clip plane must switch it back to the
+/// discarding one: the clipped side renders nothing.
+#[test]
+fn direct_path_clip_plane_still_discards() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let material = upload_material(
+        &mut renderer,
+        Material::from_colour(Colour::from_linear_rgb_array([0.9, 0.9, 0.9])),
+    );
+    let mut surfaces = Vec::new();
+    for i in 0..6 {
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_id;
+        item.material = material;
+        let x = (i as f32 - 2.5) * 1.2;
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        surfaces.push(item);
+    }
+    let mut frame = FrameData::default();
+    frame.scene.surfaces = SurfaceSubmission::Flat(surfaces.into());
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    let cam = Camera::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        let eye = glam::Vec3::new(0.0, -10.0, 0.0);
+        rc.eye_position = eye.into();
+        rc.forward = (-eye).normalize().into();
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+
+    // Lit pixels in the left and right halves of the frame.
+    let halves = |px: &[u8]| {
+        let (mut left, mut right) = (0, 0);
+        for (i, p) in px.chunks_exact(4).enumerate() {
+            if p[0] > 40 || p[1] > 40 || p[2] > 40 {
+                if i % 64 < 32 { left += 1 } else { right += 1 }
+            }
+        }
+        (left, right)
+    };
+    let (open_left, open_right) =
+        halves(&renderer.render_offscreen(&device, &queue, &frame, 64, 64));
+    assert!(
+        open_left > 100 && open_right > 100,
+        "both halves should draw unclipped: {open_left} / {open_right}",
+    );
+
+    // Keep x >= 0 only.
+    let mut plane = viewport_lib::ClipObject::default();
+    plane.shape = viewport_lib::ClipShape::Plane {
+        normal: [1.0, 0.0, 0.0],
+        distance: 0.0,
+        cap_colour: None,
+    };
+    frame.effects.clip.objects.push(plane);
+    frame.scene.generation += 1;
+    let (left, right) = halves(&renderer.render_offscreen(&device, &queue, &frame, 64, 64));
+    assert!(right > 100, "the kept half should still draw: {right}");
+    assert!(
+        left < open_left / 10,
+        "the clipped half should be empty: {left} lit pixels against {open_left} unclipped",
+    );
 }

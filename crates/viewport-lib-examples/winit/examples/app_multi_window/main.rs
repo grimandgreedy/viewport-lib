@@ -70,11 +70,12 @@ fn handle_open_close(ctx: &mut FrameCtx) {
                     .resources_mut()
                     .upload_mesh_data(device, &primitives::sphere(0.7, 24, 12))
                     .unwrap();
-                vp.scene_mut().add(
-                    Some(sphere),
-                    glam::Mat4::IDENTITY,
-                    Material::from_colour(Colour::linear_rgb(0.8, 0.5, 0.1)),
-                );
+                let material = vp
+                    .resources_mut()
+                    .upload_material(Material::from_colour(Colour::linear_rgb(0.8, 0.5, 0.1)))
+                    .unwrap();
+                vp.scene_mut()
+                    .add(Some(sphere), glam::Mat4::IDENTITY, material);
                 vp.camera_mut().distance = 6.0;
             },
             handle_open_close,
@@ -102,11 +103,13 @@ fn main() {
                     .resources_mut()
                     .upload_mesh_data(device, &primitives::cube(1.0))
                     .unwrap();
-                let node = vp.scene_mut().add(
-                    Some(cube),
-                    glam::Mat4::IDENTITY,
-                    Material::from_colour(Colour::linear_rgb(0.12, 0.3, 0.7)),
-                );
+                let material = vp
+                    .resources_mut()
+                    .upload_material(Material::from_colour(Colour::linear_rgb(0.12, 0.3, 0.7)))
+                    .unwrap();
+                let node = vp
+                    .scene_mut()
+                    .add(Some(cube), glam::Mat4::IDENTITY, material);
                 left_setup_id.set(Some(node));
                 vp.camera_mut().distance = 6.0;
             },
@@ -129,11 +132,12 @@ fn main() {
                     .resources_mut()
                     .upload_mesh_data(device, &primitives::torus(0.6, 0.22, 32, 16))
                     .unwrap();
-                vp.scene_mut().add(
-                    Some(torus),
-                    glam::Mat4::IDENTITY,
-                    Material::from_colour(Colour::linear_rgb(0.1, 0.55, 0.2)),
-                );
+                let material = vp
+                    .resources_mut()
+                    .upload_material(Material::from_colour(Colour::linear_rgb(0.1, 0.55, 0.2)))
+                    .unwrap();
+                vp.scene_mut()
+                    .add(Some(torus), glam::Mat4::IDENTITY, material);
                 vp.camera_mut().distance = 6.0;
             },
             handle_open_close,

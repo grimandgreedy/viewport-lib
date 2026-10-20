@@ -151,27 +151,13 @@ impl ViewportRenderer {
                 &self.resources,
                 &mut render_pass,
                 frame,
-                self.instancing.use_instancing,
                 &self.instancing.batches,
                 camera_bg,
                 grid_bg,
                 Some(slot),
-                &self.mesh_uniforms.wireframe_bind_groups,
-                &self.mesh_uniforms.bind_groups,
-                &self.mesh_uniforms.submesh_bind_groups,
-                &self.mesh_uniforms.object_indices,
-                &self.mesh_uniforms.submesh_indices,
+                &self.mesh_uniforms.material_bind_groups,
                 scene_items,
-                // The cached bundle was recorded from `prepared_surfaces` (the
-                // surface submission, with the opaque volume-mesh boundaries
-                // truncated off). When those boundaries are appended to
-                // `scene_items` the bundle no longer covers the full list, so
-                // fall back to the per-item draw path that walks every item.
-                if scene_items.len() == self.prepared_surface_count {
-                    self.per_object_bundle.as_ref()
-                } else {
-                    None
-                }
+                self.per_object_bundle.as_ref()
             );
             self.draw_line_and_instance_layers(&mut render_pass, camera_bg, false);
             // TransparentVolumeMesh boundary wireframe overlay.
@@ -185,12 +171,10 @@ impl ViewportRenderer {
                             self.resources.scene.wireframe(),
                         ) {
                             render_pass.set_pipeline(wf);
-                            bind_deform_group!(
-                                render_pass,
-                                self.resources,
-                                &self.resources.deform.dummy_bind_group
-                            );
                             render_pass.set_bind_group(1, tvm_bg, &[]);
+                            if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
+                                render_pass.set_vertex_buffer(1, records.slice(..));
+                            }
                             render_pass.set_vertex_buffer(
                                 0,
                                 self.resources.geometry.vertex_slice(mesh.vertex_span),
@@ -278,7 +262,9 @@ impl ViewportRenderer {
                     if (item.settings.visibility_mask & frame.camera.cull_mask) == 0 {
                         continue;
                     }
-                    if item.settings.opacity < 1.0 || item.material.is_blend() {
+                    if item.settings.opacity < 1.0
+                        || self.resources.material_or_default(item.material).is_blend()
+                    {
                         transparent.push((idx, item));
                     } else {
                         opaque.push((idx, item));
@@ -332,7 +318,7 @@ impl ViewportRenderer {
                     let obj_bg = slot
                         .foreground_objects
                         .get(*idx)
-                        .and_then(|e| e.bind_group.as_ref());
+                        .and_then(|e| e.bind_group.as_ref().map(|bg| (bg, &e.uniform_buf)));
                     super::hdr_path::draw_mesh_item(
                         resources,
                         &mut render_pass,

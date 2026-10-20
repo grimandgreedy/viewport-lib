@@ -2,6 +2,7 @@ use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
 
 mod instanced;
+pub(crate) use instanced::feature_set_violations as instanced_feature_set_violations;
 mod lighting;
 mod math;
 mod mesh_material;
@@ -19,9 +20,7 @@ mod viewport_overlays;
 
 use math::*;
 use mesh_material::*;
-pub(crate) use mesh_material::{
-    active_submesh_materials, has_opaque_draws, has_transparent_draws, is_instanceable,
-};
+pub(crate) use mesh_material::{active_submesh_materials, has_transparent_draws};
 use overlay_geometry::*;
 use projection::*;
 
@@ -166,13 +165,6 @@ impl ViewportRenderer {
             self.resources.content.glyph_atlas.evict_if_full();
         }
 
-        // Reset the per-material transform interner for this frame. The per-object
-        // and instanced passes below intern each item's material into it; the
-        // buffer is uploaded at the end of this function (and again after
-        // per-viewport foreground objects intern).
-        self.resources.material_gpu_builder.reset();
-        self.resources.custom_data_builder.reset();
-
         // Drain the upload-job runner. Worker results received since the last
         // frame are observed, GPU submissions are polled for completion, and
         // any registered completion callbacks fire on this thread.
@@ -202,7 +194,7 @@ impl ViewportRenderer {
         // Write the built-in colourmap texels on the first frame, and upload
         // the built-in matcaps on the first frame whose scene uses a matcap.
         self.resources.ensure_colourmaps_initialized(device, queue);
-        if !self.resources.content.matcaps_initialized && Self::uses_matcap(frame) {
+        if !self.resources.content.matcaps_initialized && self.uses_matcap(frame) {
             self.resources.ensure_matcaps_initialized(device, queue);
         }
 
@@ -211,6 +203,10 @@ impl ViewportRenderer {
         let hdr_family = self.draws_hdr(frame);
         let resources = &mut self.resources;
         let lighting = scene_fx.lighting;
+        resources.frame_lightmap_placements.clear();
+        resources
+            .frame_lightmap_placements
+            .extend_from_slice(&frame.scene.lightmap_placements);
 
         // Read scene items from the surface submission, then extend with the
         // boundary draws contributed by opaque volume meshes (items in
@@ -275,104 +271,91 @@ impl ViewportRenderer {
         );
         let lighting_ms = lighting_start.elapsed().as_secs_f32() * 1000.0;
 
-        // -- Instancing preparation --
-        // Determine instancing mode BEFORE per-object uniforms so we can skip them.
-        let visible_count = scene_items.iter().filter(|i| !i.settings.hidden).count();
-        let prev_use_instancing = self.instancing.use_instancing;
-        self.instancing.use_instancing = visible_count > INSTANCING_THRESHOLD;
-
-        // If instancing mode changed (e.g. objects added/removed crossing the threshold),
-        // clear batches so the generation check below forces a rebuild.
-        if self.instancing.use_instancing != prev_use_instancing {
-            self.instancing.batches.clear();
-            self.instancing.last_scene_generation = u64::MAX;
-            self.instancing.last_scene_items_count = usize::MAX;
-        }
-        if self.instancing.use_instancing != prev_use_instancing {
-            tracing::debug!(
-                visible_objects = visible_count,
-                threshold = INSTANCING_THRESHOLD,
-                instanced = self.instancing.use_instancing,
-                "instancing mode changed"
-            );
-        }
+        // Every mesh draw is an instanced draw; a one-item scene is one batch.
+        self.instancing.use_instancing = true;
 
         let per_object_start = web_time::Instant::now();
-        // Set up the pipeline sets of the material plugins the frame references
-        // before draw time (paint has no mutable access). This compiles
-        // nothing: each pipeline is built by the first draw that selects it.
-        // Unknown ids are ignored and those items fall back to built-in
-        // shading.
+        // Set up the pipeline sets of the material plugins the frame references,
+        // and the group-2 bind groups of the texture sets it draws, before draw
+        // time (paint has no mutable access). This compiles nothing: each
+        // pipeline is built by the first draw that selects it. Unknown ids are
+        // ignored and those items fall back to built-in shading.
         let mut seen: Vec<u32> = Vec::new();
+        let mut texture_sets: Vec<(
+            crate::scene::material::MaterialPluginId,
+            crate::resources::mesh_sidecar::shade::PluginTextures,
+        )> = Vec::new();
         for item in scene_items.iter() {
-            let Some(pid) = item.material.shading_plugin else {
-                continue;
-            };
-            if seen.contains(&pid.plugin_index()) {
-                continue;
-            }
-            seen.push(pid.plugin_index());
-            // The per-object set draws the items that cannot join a batch; the
-            // instanced set lets the rest draw one call per batch (see
-            // `is_instanceable`).
-            if resources.material_plugin_needs_build(pid) {
-                resources.ensure_material_plugin_pipelines(device, pid);
-            }
-            if !resources.material_plugin_instanced_ready(pid) {
-                // The instanced set sits on the built-in instanced group-1
-                // layout, and its GPU-culled twins on the cull layout, so both
-                // come first. Both calls are idempotent.
-                resources.ensure_instanced_pipelines(device);
-                resources.ensure_cull_instance_pipelines(device);
-                resources.ensure_material_plugin_instanced_pipelines(device, pid);
+            let submeshes = item.submesh_materials.as_deref().unwrap_or(&[]);
+            for &id in std::iter::once(&item.material).chain(submeshes) {
+                let material = resources.material_or_default(id);
+                let Some(pid) = material.shading_plugin else {
+                    continue;
+                };
+                let set = (pid, material.plugin_textures);
+                if set.1.iter().any(Option::is_some) && !texture_sets.contains(&set) {
+                    texture_sets.push(set);
+                }
+                if seen.contains(&pid.plugin_index()) {
+                    continue;
+                }
+                seen.push(pid.plugin_index());
+                if resources.material_plugin_needs_build(pid) {
+                    resources.ensure_material_plugin_pipelines(device, pid);
+                }
             }
         }
-        // Evaluate instanceability once per frame and share the result. Each
-        // `is_instanceable` call does several mesh-store and deform lookups, so
-        // computing it once here instead of separately in the per-object skip
-        // test and the instanced batch filter keeps this O(items) rather than running the
-        // same per-item work three times over. At city scale (tens of thousands
-        // of resident meshes) that is the difference between a few milliseconds
-        // and a few hundred.
-        let instanceable: Vec<bool> = scene_items
-            .iter()
-            .map(|item| is_instanceable(item, resources))
-            .collect();
+        for (pid, textures) in &texture_sets {
+            resources.ensure_plugin_texture_group(device, *pid, textures);
+        }
         // Blend each light-probe-lit item's SH into the shared buffer once, so
         // the per-object and instanced paths that draw those items index the
         // same block. No probes uploaded -> all None and nothing written.
         let probe_indices = per_object::prepare_light_probe_sh(resources, scene_items, queue);
-        let per_object_bind_groups_built = Self::prepare_per_object(
+
+        // Material blocks persist for their material's lifetime. The shading
+        // variants and the custom-data table hold while the instanced batch
+        // cache does: cached records keep their ids, and the foreground items
+        // that intern every frame dedup to the existing entries. A miss
+        // re-packs every record, so they reset there, before any packer runs.
+        let instanced_cache_valid = Self::instanced_cache_valid(
             resources,
-            &mut self.mesh_uniforms,
-            self.instancing.use_instancing,
+            &self.instancing,
             scene_items,
-            &instanceable,
-            &probe_indices,
-            self.frame_counter,
-            device,
-            queue,
             frame,
+            hdr_family,
         );
+        if !instanced_cache_valid {
+            resources.material_table.clear_variants();
+            resources.custom_data_builder.reset();
+        }
         let uniforms_ms = per_object_start.elapsed().as_secs_f32() * 1000.0;
 
         let instanced_start = web_time::Instant::now();
-        let (batches_reuploaded, batches_skipped) = if self.instancing.use_instancing {
+        let (batches_reuploaded, batches_skipped, per_object_bind_groups_built) =
             Self::prepare_instanced(
                 resources,
                 &mut self.instancing,
-                &instanceable,
+                &mut self.mesh_uniforms,
+                instanced_cache_valid,
                 scene_items,
                 &probe_indices,
                 device,
                 queue,
                 frame,
                 hdr_family,
-            )
-        } else {
-            (0, 0)
-        };
+                self.frame_counter,
+            );
         settle_gpu_culling(&mut self.instancing, &resources.pipeline_compiler, device);
+        #[cfg(debug_assertions)]
+        {
+            let wrong = instanced::feature_set_violations(resources, &self.instancing);
+            debug_assert!(
+                wrong.is_empty(),
+                "mesh batches drawn without features their records use:\n  {}",
+                wrong.join("\n  ")
+            );
+        }
         let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0;
 
         let geometry_start = web_time::Instant::now();
@@ -406,7 +389,7 @@ impl ViewportRenderer {
         // gather boundary edges for items rendering through the projected-tet
         // path so they still get a wireframe overlay.
         self.mesh_uniforms.tvm_wireframe_draws.clear();
-        let mut tvm_wireframe_records: Vec<crate::resources::ObjectUniform> = Vec::new();
+        let mut tvm_wireframe_records: Vec<crate::resources::InstanceData> = Vec::new();
         for item in &frame.scene.volume_meshes {
             if item.settings.hidden || item.transparency.is_none() {
                 continue;
@@ -422,10 +405,10 @@ impl ViewportRenderer {
             self.mesh_uniforms
                 .tvm_wireframe_draws
                 .push(item.boundary_mesh_id);
-            let mut record: crate::resources::ObjectUniform = bytemuck::Zeroable::zeroed();
+            let mut record: crate::resources::InstanceData = bytemuck::Zeroable::zeroed();
             record.model = item.model;
             record.colour = [0.75, 0.75, 0.75, 1.0];
-            record.wireframe = 1;
+            record.flags = crate::resources::mesh::instancing::instance_flags::WIREFRAME;
             tvm_wireframe_records.push(record);
         }
         // One record per draw, selected by instance index. The buffer and its
@@ -435,8 +418,10 @@ impl ViewportRenderer {
             let capacity = tvm_wireframe_records.len().next_power_of_two();
             let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("tvm_wireframe_uniform"),
-                size: (capacity * std::mem::size_of::<crate::resources::ObjectUniform>()) as u64,
-                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                size: (capacity * std::mem::size_of::<crate::resources::InstanceData>()) as u64,
+                usage: crate::gpu::BufferUsages::STORAGE
+                    | crate::gpu::BufferUsages::VERTEX
+                    | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             self.mesh_uniforms.tvm_wireframe_capacity = capacity;
@@ -456,7 +441,9 @@ impl ViewportRenderer {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&resources.material.sampler),
+                        resource: crate::gpu::BindingResource::Sampler(
+                            &resources.material.mesh_sampler,
+                        ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 3,
@@ -478,7 +465,7 @@ impl ViewportRenderer {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 6,
-                        resource: resources.content.fallback_scalar_buf.as_entire_binding(),
+                        resource: resources.sidecar.fallback().as_entire_binding(),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 7,
@@ -489,17 +476,6 @@ impl ViewportRenderer {
                                 .as_ref()
                                 .unwrap_or(&resources.material.texture.view),
                         ),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 8,
-                        resource: resources
-                            .content
-                            .fallback_face_colour_buf
-                            .as_entire_binding(),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 9,
-                        resource: resources.content.fallback_warp_buf.as_entire_binding(),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 10,
@@ -534,13 +510,6 @@ impl ViewportRenderer {
                             .as_entire_binding(),
                     },
                     crate::gpu::BindGroupEntry {
-                        binding: 15,
-                        resource: resources
-                            .content
-                            .fallback_extension_attr_buf
-                            .as_entire_binding(),
-                    },
-                    crate::gpu::BindGroupEntry {
                         binding: 17,
                         resource: crate::gpu::BindingResource::TextureView(
                             &resources.material.texture_array_view,
@@ -554,6 +523,10 @@ impl ViewportRenderer {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 19,
+                        resource: resources.content.fallback_uv1_buf.as_entire_binding(),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: 15,
                         resource: resources.content.fallback_uv1_buf.as_entire_binding(),
                     },
                 ],
@@ -576,78 +549,22 @@ impl ViewportRenderer {
             let visible = scene_items.iter().filter(|i| !i.settings.hidden).count() as u32;
             let mut draw_calls = 0u32;
             let mut triangles = 0u64;
-            let instanced_batch_count = if self.instancing.use_instancing {
-                self.instancing.batches.len() as u32
-            } else {
-                0
-            };
-
-            if self.instancing.use_instancing {
-                for batch in &self.instancing.batches {
-                    if let Some(mesh) = resources.mesh_store.get(batch.mesh_id) {
-                        draw_calls += 1;
-                        triangles += (mesh.index_count / 3) as u64 * batch.instance_count as u64;
-                    }
-                }
-                // Items outside the batches still issue one draw each through
-                // the per-object path (one per range for per-submesh-material
-                // items); count them so `draw_calls` and `triangles_submitted`
-                // cover both paths.
-                for (item, inst) in scene_items.iter().zip(instanceable.iter()) {
-                    if item.settings.hidden || *inst {
-                        continue;
-                    }
-                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                        draw_calls += active_submesh_materials(item, mesh)
-                            .map_or(1, |mats| mats.len() as u32);
-                        triangles += (mesh.index_count / 3) as u64;
-                    }
-                }
-            } else {
-                for item in scene_items {
-                    if item.settings.hidden {
-                        continue;
-                    }
-                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                        draw_calls += active_submesh_materials(item, mesh)
-                            .map_or(1, |mats| mats.len() as u32);
-                        triangles += (mesh.index_count / 3) as u64;
-                    }
-                }
+            // Every batch is one draw of what its `DrawKind` names. A wireframe draw submits its
+            // mesh's triangles as edge lines, so it counts them; normal lines
+            // submit no triangles.
+            let instanced_batch_count = self.instancing.batches.len() as u32;
+            for batch in &self.instancing.batches {
+                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                    continue;
+                };
+                draw_calls += 1;
+                let indices = match batch.draw {
+                    crate::renderer::types::DrawKind::Range(_, count) => count,
+                    crate::renderer::types::DrawKind::NormalLines => 0,
+                    _ => mesh.index_count,
+                };
+                triangles += (indices / 3) as u64 * batch.instance_count as u64;
             }
-
-            // Visible items that miss the instanced fast path. Reuses the
-            // instanceable bitset computed above, so this is just a count.
-            let per_object_items = scene_items
-                .iter()
-                .zip(instanceable.iter())
-                .filter(|(item, inst)| !item.settings.hidden && !**inst)
-                .count() as u32;
-
-            // Items drawn instanced whose mesh carries per-mesh deform slot
-            // data. The instanced draws bind the empty deform group and the
-            // instanced shader passes no flags, so that data does not reach the
-            // draw and the item renders undeformed. Per-instance data is
-            // excluded from instancing by `is_instanceable`, so it is not at
-            // risk and is not counted here.
-            //
-            // Gated on `use_instancing` as well as the per-item predicate:
-            // below the threshold every item draws per-object whatever
-            // `is_instanceable` says about it, and the per-object path binds
-            // the mesh's real deform group.
-            let deform_slots_ignored = if self.instancing.use_instancing {
-                scene_items
-                    .iter()
-                    .zip(instanceable.iter())
-                    .filter(|(item, inst)| {
-                        **inst
-                            && !item.settings.hidden
-                            && resources.deform.has_mesh_slot_data(item.mesh_id)
-                    })
-                    .count() as u32
-            } else {
-                0
-            };
 
             let deform = resources.deform.take_counters();
             let plugin_draw_calls = self
@@ -666,16 +583,12 @@ impl ViewportRenderer {
                 culled_objects: total.saturating_sub(visible),
                 draw_calls,
                 instanced_batches: instanced_batch_count,
-                per_object_items,
                 per_object_bind_groups_built,
                 batches_reuploaded,
                 batches_skipped,
                 plugin_draw_calls,
                 plugin_upload_bytes,
-                deform_slots_ignored,
                 deform_buffer_reallocations: deform.buffer_reallocations,
-                deform_mesh_bind_groups_rebuilt: deform.mesh_bind_groups_rebuilt,
-                deform_instance_bind_groups_rebuilt: deform.instance_bind_groups_rebuilt,
                 triangles_submitted: triangles,
                 shadow_draw_calls: 0,    // Updated below in shadow pass.
                 shadow_draw_commands: 0, // Updated below in shadow pass.
@@ -718,7 +631,7 @@ impl ViewportRenderer {
             plugin_frame_index,
             lighting,
             scene_items,
-            &instanceable,
+            &self.mesh_uniforms,
             &lighting_frame,
             self.degradation_shadows_skipped,
             &mut self.last_stats,
@@ -795,13 +708,15 @@ impl ViewportRenderer {
     /// Whether `frame` is drawn through the HDR path. A frame that asks for
     /// HDR is still drawn with the LDR pipelines when the caller paints it
     /// straight into its own render pass.
-    /// Whether any surface item in `frame` draws with a matcap. Matcaps are
-    /// read only by the per-object surface path.
-    fn uses_matcap(frame: &FrameData) -> bool {
+    /// Whether any surface item in `frame` draws with a matcap.
+    fn uses_matcap(&self, frame: &FrameData) -> bool {
         match &frame.scene.surfaces {
-            SurfaceSubmission::Flat(items) => {
-                items.iter().any(|i| i.material.matcap_id().is_some())
-            }
+            SurfaceSubmission::Flat(items) => items.iter().any(|i| {
+                self.resources
+                    .material_or_default(i.material)
+                    .matcap_id()
+                    .is_some()
+            }),
         }
     }
 
@@ -1016,10 +931,6 @@ impl ViewportRenderer {
             self.dispatch_plugin_cull(&frustum, frame);
         }
         self.prepare_breakdown.plugin_cull_ms = cull_start.elapsed().as_secs_f32() * 1000.0;
-
-        // Rebuild or drop the cached per-object render bundle now that the
-        // prepared item list, LOD resolve, and per-item bind groups are final.
-        self.update_per_object_bundle(device, frame);
 
         // Read back GPU timestamps without blocking. The staging buffer is
         // mapped on one frame and read on a later one; a non-blocking poll
@@ -1285,6 +1196,9 @@ impl ViewportRenderer {
 
         let (scene_fx, viewport_fx) = frame.effects.split();
         self.prepare_scene_internal(device, queue, frame, &scene_fx, sink);
+        // Rebuild or drop the cached batch render bundle now that this
+        // frame's batch list and its bind groups are final.
+        self.update_per_object_bundle(device, frame);
 
         let viewport_start = web_time::Instant::now();
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx, sink);

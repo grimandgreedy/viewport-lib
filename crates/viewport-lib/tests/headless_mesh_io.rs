@@ -171,7 +171,7 @@ fn test_scene_collect_render_items_roundtrip() {
     let node_id = scene.add(
         Some(mesh_idx),
         glam::Mat4::from_translation(glam::Vec3::new(1.0, 2.0, 3.0)),
-        Material::default(),
+        MaterialId::DEFAULT,
     );
 
     let mut sel = Selection::new();

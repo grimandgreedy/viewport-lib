@@ -8,6 +8,7 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{Easing, Material, Projection, ViewPreset, ViewportRenderer, scene::Scene};
@@ -70,7 +71,10 @@ impl App {
                 name,
                 Some(mesh),
                 glam::Mat4::from_translation(*pos),
-                Material::from_colour(Colour::from_linear_rgb_array(*colour)),
+                upload_material(
+                    renderer,
+                    Material::from_colour(Colour::from_linear_rgb_array(*colour)),
+                ),
             );
         }
 

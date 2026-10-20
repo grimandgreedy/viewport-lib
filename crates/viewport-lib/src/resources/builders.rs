@@ -868,6 +868,16 @@ pub fn render_pipeline(
     device: &crate::gpu::Device,
     desc: RenderPipelineDesc,
 ) -> crate::gpu::RenderPipeline {
+    render_pipeline_with_constants(device, desc, &[])
+}
+
+/// [`render_pipeline`] with values for the module's `override` constants,
+/// set on both stages.
+pub(crate) fn render_pipeline_with_constants(
+    device: &crate::gpu::Device,
+    desc: RenderPipelineDesc,
+    constants: &[(&str, f64)],
+) -> crate::gpu::RenderPipeline {
     // wgpu 30 changed `VertexState::buffers` to `&[Option<VertexBufferLayout>]`;
     // 27 and 29 take `&[VertexBufferLayout]`. The wrapped Vec is a local here so
     // it outlives the `VertexState` it is borrowed into.
@@ -881,7 +891,20 @@ pub fn render_pipeline(
         buffers: desc.vertex_buffers,
         #[cfg(wgpu30)]
         buffers: &vbufs,
-        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+        compilation_options: crate::gpu::PipelineCompilationOptions {
+            constants,
+            ..Default::default()
+        },
+    };
+    let fragment = match desc.fragment {
+        Some(f) if !constants.is_empty() => Some(crate::gpu::FragmentState {
+            compilation_options: crate::gpu::PipelineCompilationOptions {
+                constants,
+                ..Default::default()
+            },
+            ..f
+        }),
+        f => f,
     };
     let build_start = web_time::Instant::now();
     let build_label = desc.label;
@@ -894,7 +917,7 @@ pub fn render_pipeline(
         label: Some(desc.label),
         layout: Some(desc.layout),
         vertex,
-        fragment: desc.fragment,
+        fragment,
         primitive: desc.primitive,
         depth_stencil: desc.depth_stencil,
         multisample: desc.multisample,
@@ -1495,14 +1518,9 @@ mod strip_debug_vis_tests {
     /// the debug variant is requested.
     #[test]
     fn strips_debug_block_from_every_lit_shader() {
-        let sources: [(&str, &str); 4] = [
+        let sources: [(&str, &str); 2] = [
             ("mesh", super::wgsl_source!("mesh")),
-            ("mesh_instanced", super::wgsl_source!("mesh_instanced")),
             ("mesh_oit", super::wgsl_source!("mesh_oit")),
-            (
-                "mesh_instanced_oit",
-                super::wgsl_source!("mesh_instanced_oit"),
-            ),
         ];
         for (name, src) in sources {
             assert!(
@@ -1526,17 +1544,17 @@ mod strip_debug_vis_tests {
         }
     }
 
-    /// The discard-free twin of the lit instanced shader must lose every
+    /// The discard-free twin of the lit mesh shader must lose every
     /// `discard` statement (any survivor silently forfeits the early-Z win),
     /// while identifiers that merely end in "discard" survive untouched:
     /// composed sources include consumer-supplied deformer bodies, and a
     /// substring replace would corrupt them.
     #[test]
     fn strips_discard_statements_but_not_identifiers() {
-        let src = super::wgsl_source!("mesh_instanced");
+        let src = super::wgsl_source!("mesh");
         assert!(
             src.contains("discard;"),
-            "baked mesh_instanced source has no discard; sites moved?"
+            "baked mesh source has no discard; sites moved?"
         );
         let stripped = super::strip_discards(src);
         assert!(

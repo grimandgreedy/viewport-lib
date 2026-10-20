@@ -46,6 +46,7 @@ fn render_batch(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     ids: &[MeshId],
+    red: MaterialId,
     generation: u64,
     size: u32,
 ) -> (usize, u32) {
@@ -69,7 +70,7 @@ fn render_batch(
         .map(|(id, x)| {
             let mut it = SceneRenderItem::default();
             it.mesh_id = *id;
-            it.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
+            it.material = red;
             it.settings.unlit = true;
             it.model =
                 glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
@@ -90,10 +91,13 @@ fn free_mesh_invalidates_instanced_batch_cache() {
     };
     let size = 160u32;
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut m = Material::default();
+    m.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
+    let red = upload_material(&mut renderer, m);
 
     // First scene: four boxes on the instanced path.
     let first = upload_batch(&mut renderer, &device);
-    let (cov0, draws0) = render_batch(&mut renderer, &device, &queue, &first, 0, size);
+    let (cov0, draws0) = render_batch(&mut renderer, &device, &queue, &first, red, 0, size);
     assert!(
         draws0 > 0 && cov0 > 500,
         "baseline instanced scene did not draw (coverage {cov0}, draw_calls {draws0}); test would be vacuous"
@@ -107,7 +111,7 @@ fn free_mesh_invalidates_instanced_batch_cache() {
         assert!(renderer.resources_mut().free_mesh(id), "free_mesh failed");
     }
 
-    let (cov1, draws1) = render_batch(&mut renderer, &device, &queue, &second, 0, size);
+    let (cov1, draws1) = render_batch(&mut renderer, &device, &queue, &second, red, 0, size);
     assert_eq!(
         draws1, draws0,
         "after free_mesh the instanced draw count changed ({draws1} vs {draws0}); \
@@ -120,7 +124,7 @@ fn free_mesh_invalidates_instanced_batch_cache() {
     );
 
     // Render once more (still constant generation) to confirm it stays drawn.
-    let (cov2, draws2) = render_batch(&mut renderer, &device, &queue, &second, 0, size);
+    let (cov2, draws2) = render_batch(&mut renderer, &device, &queue, &second, red, 0, size);
     assert_eq!(
         (cov2, draws2),
         (cov0, draws0),

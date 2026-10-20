@@ -8,7 +8,7 @@
 use viewport_lib::Colour;
 mod common;
 use common::*;
-use viewport_lib::{AttributeData, Material, MeshId, SceneRenderItem, SurfaceSubmission};
+use viewport_lib::{AttributeData, MeshId, SceneRenderItem, SurfaceSubmission};
 use viewport_lib_plugins::item_types::surface_lic::SurfaceLicItem;
 
 const SIZE: u32 = 96;
@@ -60,7 +60,7 @@ fn surface(mesh: MeshId, x: f32) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = quad_model(x);
-    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
+    item.settings.colour = Some(Colour::linear_rgb(0.7, 0.7, 0.7));
     item.settings.unlit = true;
     item
 }
@@ -185,7 +185,7 @@ fn streaks_are_clipped_with_the_surface() {
     backdrop.model = (glam::Mat4::from_translation(glam::Vec3::new(0.5, 0.0, -0.5))
         * glam::Mat4::from_scale(glam::Vec3::splat(2.0)))
     .to_cols_array_2d();
-    backdrop.material = Material::from_colour(Colour::linear_rgb(0.4, 0.5, 0.6));
+    backdrop.settings.colour = Some(Colour::linear_rgb(0.4, 0.5, 0.6));
     backdrop.settings.ignore_clip = true;
 
     // Keep x <= 0.5: the flow quad at 0.5 loses its right half.

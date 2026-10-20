@@ -20,6 +20,7 @@
 use crate::App;
 use crate::eframe;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
@@ -155,10 +156,12 @@ impl App {
             let mesh = self.upload_box(renderer);
             let transform = glam::Mat4::from_translation(glam::Vec3::from(*pos));
             let mat = Material::from_colour(Colour::from_linear_rgb_array(*colour));
-            let id = self
-                .mv_state
-                .scene
-                .add_named(name, Some(mesh), transform, mat);
+            let id = self.mv_state.scene.add_named(
+                name,
+                Some(mesh),
+                transform,
+                upload_material(renderer, mat),
+            );
             if i == 0 {
                 self.mv_state.selection.select_one(id);
             }

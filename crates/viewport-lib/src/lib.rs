@@ -236,8 +236,8 @@ pub use camera::view_preset::ViewPreset;
 pub use scene::aabb::Aabb;
 pub use scene::material::{
     AlphaMode, BackfacePattern, BackfacePolicy, ItemSettings, Material, MaterialPluginId, ParamVis,
-    ParamVisMode, PatternConfig, SamplerKey, ShadingModel, TextureFilter, TextureSlot, UvTransform,
-    WrapMode,
+    ParamVisMode, PatternConfig, PluginParams, SamplerKey, ShadingModel, TextureFilter,
+    TextureSlot, UvTransform, WrapMode,
 };
 pub use scene::scene::{Group, GroupId, Layer, LayerId, Scene, SceneNode, SceneStats};
 pub use scene::traits::{RenderMode, ViewportObject};
@@ -325,15 +325,15 @@ pub use renderer::{
     OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
     OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
     OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
-    OverlayStyleSupport, OverlayTextureId, OverlayTransform, OwnedPath, PassPath, PassView,
-    PathSegment, PickBackend, PickHit, PickId, PickMask, PickPoll, PickRectResult, PipelineMode,
-    PolylineCap, PolylineItem, PolylineRefItem, PolylineSelectionInfo, PositionedGlyph,
-    PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality,
-    ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer,
-    ShadowSettings, SnapHit, SnapPoll, SpriteBlend, StrokePattern, SubObjectRef, SubPath,
-    SubSelection, SubSelectionRef, SurfaceSubmission, TextureTransform, TileMode, ToneMapping,
-    TriangleDirection, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer,
-    VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
+    OverlayStyleSupport, OverlayTextureId, OverlayTransform, OwnedPath, PASSTHROUGH_EV100,
+    PassPath, PassView, PathSegment, PickBackend, PickHit, PickId, PickMask, PickPoll,
+    PickRectResult, PipelineMode, PolylineCap, PolylineItem, PolylineRefItem,
+    PolylineSelectionInfo, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
+    RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem,
+    ShadowFilter, ShadowLayer, ShadowSettings, SnapHit, SnapPoll, SpriteBlend, StrokePattern,
+    SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceSubmission, TextureTransform,
+    TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, ViewportId,
+    ViewportRenderer, VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
     aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
@@ -366,9 +366,9 @@ pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
     ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc, DeviceResources,
     EnvironmentMapId, EnvironmentOptions, EnvironmentZone, FontError, FontHandle, FrameBudget,
-    JobId, MatcapId, MeshData, ProgressHandle, ResidentBytes, SubmeshRange, TextMetrics, TextureId,
-    TextureMemoryStats, UnknownColourmap, UploadStatus, VolumeId, VramBudget, lerp_attributes,
-    supports_texture_format, vram_budget,
+    JobId, MatcapId, MaterialId, MeshData, ProgressHandle, ResidentBytes, SubmeshRange,
+    TextMetrics, TextureId, TextureMemoryStats, UnknownColourmap, UploadStatus, VolumeId,
+    VramBudget, lerp_attributes, supports_texture_format, vram_budget,
 };
 pub use resources::{
     DEFORM_PARAMS_PER_SLOT_PUB as DEFORM_PARAMS_PER_SLOT,
@@ -376,8 +376,8 @@ pub use resources::{
     DeformSourceSlice, DeformStage, DeformerDesc, DeformerId, deform_slot_params_byte_offset,
 };
 pub use resources::{
-    MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, MaterialPluginStats,
-    ShadingHookDesc, ShadingHookId,
+    MATERIAL_PLUGIN_MAX_PARAMS, MATERIAL_PLUGIN_MAX_TEXTURES, MaterialPlugin, MaterialPluginStats,
+    ParamDesc, ParamKind, ParamValue, ShadingHookDesc, ShadingHookId,
 };
 
 pub use runtime::{

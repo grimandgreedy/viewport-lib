@@ -203,12 +203,12 @@ impl crate::plugin_api::PluginInstaller for AnimationPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scene::material::Material;
+    use crate::resources::MaterialId;
     use crate::scene::scene::Scene;
     use glam::{Affine3A, Vec3};
 
     fn some_node() -> NodeId {
-        Scene::new().add(None, glam::Mat4::IDENTITY, Material::default())
+        Scene::new().add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT)
     }
     fn kf(time: f32, pos: Vec3) -> Keyframe {
         Keyframe {

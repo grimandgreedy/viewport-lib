@@ -2,6 +2,7 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{Material, Selection, ViewportRenderer, scene::Scene};
@@ -47,7 +48,10 @@ impl App {
             "Gold (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, -1.5, 0.0)),
-            Material::pbr_with_ao(Colour::linear_rgb(1.0, 0.78, 0.2), 0.95, 0.05, None),
+            upload_material(
+                renderer,
+                Material::pbr_with_ao(Colour::linear_rgb(1.0, 0.78, 0.2), 0.95, 0.05, None),
+            ),
         );
         self.materials_visibility_state.selection.select_one(id);
 
@@ -56,7 +60,10 @@ impl App {
             "Brushed Steel (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, 1.5, 0.0)),
-            Material::pbr(Colour::linear_rgb(0.82, 0.82, 0.86), 0.75, 0.35),
+            upload_material(
+                renderer,
+                Material::pbr(Colour::linear_rgb(0.82, 0.82, 0.86), 0.75, 0.35),
+            ),
         );
 
         let m = self.upload_box(renderer);
@@ -64,12 +71,12 @@ impl App {
             "Shiny Blue (Blinn-Phong)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, -1.5, 0.0)),
-            {
+            upload_material(renderer, {
                 let mut mat = Material::from_colour(Colour::linear_rgb(0.2, 0.4, 0.9));
                 mat.specular = 0.9;
                 mat.shininess = 128.0;
                 mat
-            },
+            }),
         );
 
         let m = self.upload_box(renderer);
@@ -77,13 +84,13 @@ impl App {
             "Matte Green (Blinn-Phong)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, 1.5, 0.0)),
-            {
+            upload_material(renderer, {
                 let mut mat = Material::from_colour(Colour::linear_rgb(0.2, 0.7, 0.3));
                 mat.specular = 0.05;
                 mat.diffuse = 0.95;
                 mat.shininess = 4.0;
                 mat
-            },
+            }),
         );
 
         let m = self.upload_box(renderer);
@@ -95,7 +102,10 @@ impl App {
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(0.0, 3.5, 0.25),
             ),
-            Material::from_colour(Colour::linear_rgb(0.35, 0.35, 0.35)),
+            upload_material(
+                renderer,
+                Material::from_colour(Colour::linear_rgb(0.35, 0.35, 0.35)),
+            ),
         );
 
         let m = self.upload_box(renderer);
@@ -103,7 +113,10 @@ impl App {
             "Hidden Magenta (x-ray target)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 5.5, 0.0)),
-            Material::from_colour(Colour::linear_rgb(0.65, 0.06, 0.45)),
+            upload_material(
+                renderer,
+                Material::from_colour(Colour::linear_rgb(0.65, 0.06, 0.45)),
+            ),
         );
 
         self.materials_visibility_state.built = true;

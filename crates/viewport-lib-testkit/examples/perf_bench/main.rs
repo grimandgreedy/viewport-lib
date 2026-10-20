@@ -34,8 +34,8 @@ use viewport_lib::Colour;
 
 use viewport_lib::wgpu;
 use viewport_lib::{
-    FrameData, ItemSettings, LightSource, LightingSettings, Material, MeshId, RenderCamera,
-    SceneRenderItem, SurfaceSubmission, ViewportRenderer, primitives,
+    FrameData, ItemSettings, LightSource, LightingSettings, Material, MaterialId, MeshId,
+    RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer, primitives,
 };
 // The game-like mesh corpus from the test/bench kit (concave, higher-poly).
 use viewport_lib_testkit::meshes as tk;
@@ -311,7 +311,9 @@ struct Meshes {
     /// a single unit cube in `--simple` mode).
     prop_ids: Vec<MeshId>,
     slab_id: MeshId,
-    textures: Vec<viewport_lib::TextureId>,
+    /// A flat grey material, and one per pool texture for textured runs.
+    plain: MaterialId,
+    textured: Vec<MaterialId>,
     /// Grid half-extent in world units.
     extent: f32,
     /// Average triangle count across the prop set (for the startup banner).
@@ -403,11 +405,28 @@ fn build_meshes(
             .expect("texture upload");
         textures.push(id);
     }
+    let plain_material = Material::flat(Colour::linear_rgb(0.8, 0.8, 0.8));
+    let mut upload = |m: Material| {
+        renderer
+            .resources_mut()
+            .upload_material(m)
+            .expect("material upload")
+    };
+    let plain = upload(plain_material.clone());
+    let textured = textures
+        .iter()
+        .map(|&t| {
+            let mut m = plain_material.clone();
+            m.texture_id = Some(t);
+            upload(m)
+        })
+        .collect();
 
     Meshes {
         prop_ids,
         slab_id,
-        textures,
+        plain,
+        textured,
         extent,
         avg_tris,
         count,
@@ -486,10 +505,11 @@ fn make_item(mesh: MeshId, model: glam::Mat4, m: &Meshes, run: &Run, idx: u32) -
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = model.to_cols_array_2d();
-    item.material = Material::flat(Colour::linear_rgb(0.8, 0.8, 0.8));
-    if run.textured {
-        item.material.texture_id = Some(m.textures[(idx as usize) % m.textures.len()]);
-    }
+    item.material = if run.textured {
+        m.textured[(idx as usize) % m.textured.len()]
+    } else {
+        m.plain
+    };
     let mut settings = ItemSettings::default();
     settings.unlit = !run.lit;
     item.settings = settings;

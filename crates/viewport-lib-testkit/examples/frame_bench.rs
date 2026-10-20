@@ -43,7 +43,21 @@ struct Cell {
     build: Box<dyn Fn(&mut BuildCtx<'_>) -> BuiltScene>,
 }
 
-fn cube_grid(mesh: MeshId, count: u32, instanced: bool) -> Vec<SceneRenderItem> {
+fn cube_grid(
+    ctx: &mut BuildCtx<'_>,
+    mesh: MeshId,
+    count: u32,
+    instanced: bool,
+) -> Vec<SceneRenderItem> {
+    let mut material = Material::pbr(Colour::linear_rgb(0.7, 0.6, 0.5), 0.2, 0.5);
+    if !instanced {
+        material.backface_policy = BackfacePolicy::Tint(0.4);
+    }
+    let material = ctx
+        .renderer
+        .resources_mut()
+        .upload_material(material)
+        .expect("material upload");
     let side = (count as f64).cbrt().ceil() as i32;
     let mut items = Vec::with_capacity(count as usize);
     'outer: for x in 0..side {
@@ -54,10 +68,7 @@ fn cube_grid(mesh: MeshId, count: u32, instanced: bool) -> Vec<SceneRenderItem> 
                 it.model =
                     glam::Mat4::from_translation(Vec3::new(x as f32, y as f32, z as f32) * 1.5)
                         .to_cols_array_2d();
-                it.material = Material::pbr(Colour::linear_rgb(0.7, 0.6, 0.5), 0.2, 0.5);
-                if !instanced {
-                    it.material.backface_policy = BackfacePolicy::Tint(0.4);
-                }
+                it.material = material;
                 items.push(it);
                 if items.len() == count as usize {
                     break 'outer;
@@ -88,7 +99,7 @@ fn cube_cell(id: &'static str, count: u32, instanced: bool, hdr: bool, camera: C
                 .upload_mesh_data(ctx.device, &primitives::cube(0.6))
                 .expect("cube");
             BuiltScene {
-                items: cube_grid(cube, count, instanced),
+                items: cube_grid(ctx, cube, count, instanced),
                 lighting: rigs::from_above(),
                 background: None,
                 ..Default::default()
@@ -117,7 +128,11 @@ fn mesh_cell(id: &'static str, sub: u32, tris: u64) -> Cell {
                 .expect("icosphere");
             let mut it = SceneRenderItem::default();
             it.mesh_id = m;
-            it.material = Material::pbr(Colour::linear_rgb(0.7, 0.6, 0.85), 0.3, 0.4);
+            it.material = ctx
+                .renderer
+                .resources_mut()
+                .upload_material(Material::pbr(Colour::linear_rgb(0.7, 0.6, 0.85), 0.3, 0.4))
+                .expect("material upload");
             BuiltScene {
                 items: vec![it],
                 lighting: rigs::from_above(),
@@ -294,7 +309,7 @@ fn main() {
         "gpu,cell,family,mesh_class,tris,count,material,camera,hdr,frames,\
          gpu_ms_p50,gpu_ms_p95,gpu_ms_p99,scene_ms_p50,shadow_ms_p50,oit_ms_p50,post_ms_p50,\
          cull_ms_p50,prepare_ms_p50,paint_ms_p50,total_ms_p50,total_ms_p95,\
-         draw_calls,instanced_batches,triangles,visible,per_object_items\n",
+         draw_calls,instanced_batches,triangles,visible\n",
     );
 
     for (i, cell) in cells.iter().enumerate() {
@@ -317,7 +332,7 @@ fn main() {
         let mut prepare = Vec::new();
         let mut paint = Vec::new();
         let mut total = Vec::new();
-        let mut counters = (0u32, 0u32, 0u64, 0u32, 0u32);
+        let mut counters = (0u32, 0u32, 0u64, 0u32);
 
         for f in 0..(args.warmup + args.frames) {
             let cam = camera_for(cell, f, args.frames);
@@ -357,14 +372,13 @@ fn main() {
                 s.instanced_batches,
                 s.triangles_submitted,
                 s.visible_objects,
-                s.per_object_items,
             );
         }
 
         csv.push_str(&format!(
             "{},{},{},{},{},{},{},{},{},{},\
              {:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},\
-             {},{},{},{},{}\n",
+             {},{},{},{}\n",
             gpu_name,
             cell.id,
             cell.family,
@@ -395,7 +409,6 @@ fn main() {
             counters.1,
             counters.2,
             counters.3,
-            counters.4,
         ));
         println!("[{}/{}] {}", i + 1, cells.len(), cell.id);
     }

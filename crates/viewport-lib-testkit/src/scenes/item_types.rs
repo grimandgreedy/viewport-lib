@@ -30,7 +30,10 @@ use viewport_lib_plugins::item_types::{
     surface_lic::SurfaceLicItem,
 };
 
-use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, orbit_camera, rigs, standard_cameras};
+use super::{
+    BuildCtx, BuiltScene, NamedCamera, NamedScene, material, orbit_camera, rigs, standard_cameras,
+    two_sided,
+};
 use viewport_lib_plugins::item_types::{
     gaussian_splat::{GaussianSplatData, GaussianSplatItem, ShDegree},
     gpu_implicit::{GpuImplicitItem, ImplicitBlendMode, ImplicitPrimitive},
@@ -515,7 +518,10 @@ fn build_sprites_soft(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ground = viewport_lib::SceneRenderItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-    ground.material = Material::pbr(Colour::linear_rgb(0.62, 0.6, 0.58), 0.0, 0.8);
+    ground.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.62, 0.6, 0.58), 0.0, 0.8),
+    );
 
     let box_mesh = ctx
         .renderer
@@ -525,7 +531,10 @@ fn build_sprites_soft(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut cube = viewport_lib::SceneRenderItem::default();
     cube.mesh_id = box_mesh;
     cube.model = Mat4::from_translation(Vec3::new(-1.3, 0.9, 0.8)).to_cols_array_2d();
-    cube.material = Material::pbr(Colour::linear_rgb(0.45, 0.5, 0.65), 0.2, 0.5);
+    cube.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.45, 0.5, 0.65), 0.2, 0.5),
+    );
 
     let tex = checker_texture(ctx, [255, 200, 80], [60, 40, 160]);
 
@@ -582,7 +591,10 @@ fn build_sprites_oit(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .expect("cube upload");
     let mut cube = viewport_lib::SceneRenderItem::default();
     cube.mesh_id = box_mesh;
-    cube.material = Material::pbr(Colour::linear_rgb(0.5, 0.45, 0.4), 0.1, 0.6);
+    cube.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.5, 0.45, 0.4), 0.1, 0.6),
+    );
 
     let tex = checker_texture(ctx, [255, 120, 90], [40, 70, 180]);
 
@@ -733,8 +745,9 @@ fn build_sprites_refraction(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ground = viewport_lib::SceneRenderItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -1.2)).to_cols_array_2d();
-    ground.material = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.85);
-    ground.material.texture_id = Some(backdrop_tex);
+    let mut backdrop = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.85);
+    backdrop.texture_id = Some(backdrop_tex);
+    ground.material = material(ctx, backdrop);
 
     // The sprite's own texture is the displacement map: red and green become a
     // signed screen-space offset, and the alpha gates how much of it shows. A
@@ -985,7 +998,10 @@ fn build_scatter_volume(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ground = viewport_lib::SceneRenderItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.2)).to_cols_array_2d();
-    ground.material = Material::pbr(Colour::linear_rgb(0.5, 0.52, 0.5), 0.0, 0.85);
+    ground.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.5, 0.52, 0.5), 0.0, 0.85),
+    );
 
     let sphere = ctx
         .renderer
@@ -995,7 +1011,10 @@ fn build_scatter_volume(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ball = viewport_lib::SceneRenderItem::default();
     ball.mesh_id = sphere;
     ball.model = Mat4::from_translation(Vec3::new(0.0, 0.0, 1.0)).to_cols_array_2d();
-    ball.material = Material::pbr(Colour::linear_rgb(0.75, 0.35, 0.25), 0.1, 0.4);
+    ball.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.75, 0.35, 0.25), 0.1, 0.4),
+    );
 
     let fog = ScatterVolume::box_uniform(
         Aabb {
@@ -1039,7 +1058,10 @@ fn build_scatter_layered(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ground = viewport_lib::SceneRenderItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.2)).to_cols_array_2d();
-    ground.material = Material::pbr(Colour::linear_rgb(0.42, 0.44, 0.46), 0.0, 0.85);
+    ground.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.42, 0.44, 0.46), 0.0, 0.85),
+    );
 
     let post = ctx
         .renderer
@@ -1049,7 +1071,10 @@ fn build_scatter_layered(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut pillar = viewport_lib::SceneRenderItem::default();
     pillar.mesh_id = post;
     pillar.model = Mat4::from_translation(Vec3::new(2.4, -1.4, 1.6)).to_cols_array_2d();
-    pillar.material = Material::pbr(Colour::linear_rgb(0.8, 0.45, 0.2), 0.1, 0.5);
+    pillar.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.8, 0.45, 0.2), 0.1, 0.5),
+    );
 
     let fog = ScatterVolume::box_uniform(
         Aabb {
@@ -1118,7 +1143,10 @@ fn build_scatter_textured(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut wall = viewport_lib::SceneRenderItem::default();
     wall.mesh_id = backdrop;
     wall.model = Mat4::from_translation(Vec3::new(0.0, 2.6, 0.0)).to_cols_array_2d();
-    wall.material = Material::pbr(Colour::linear_rgb(0.55, 0.55, 0.6), 0.0, 0.9);
+    wall.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.55, 0.55, 0.6), 0.0, 0.9),
+    );
 
     let mut textured = ScatterVolume::box_uniform(
         Aabb {
@@ -1191,7 +1219,10 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut wall = viewport_lib::SceneRenderItem::default();
     wall.mesh_id = backdrop;
     wall.model = Mat4::from_translation(Vec3::new(0.0, 2.8, 0.0)).to_cols_array_2d();
-    wall.material = Material::pbr(Colour::linear_rgb(0.75, 0.3, 0.25), 0.0, 0.85);
+    wall.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.75, 0.3, 0.25), 0.0, 0.85),
+    );
 
     // Struts in front of the wall, so the refraction has hard edges to bend.
     let strut = ctx
@@ -1205,10 +1236,13 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         post.mesh_id = strut;
         post.model = Mat4::from_translation(Vec3::new(*x, 1.9, 0.0)).to_cols_array_2d();
         let t = i as f32 / 3.0;
-        post.material = Material::pbr(
-            Colour::linear_rgb(0.3 + 0.5 * t, 0.55, 0.85 - 0.4 * t),
-            0.1,
-            0.5,
+        post.material = material(
+            ctx,
+            Material::pbr(
+                Colour::linear_rgb(0.3 + 0.5 * t, 0.55, 0.85 - 0.4 * t),
+                0.1,
+                0.5,
+            ),
         );
         posts.push(post);
     }
@@ -1360,7 +1394,10 @@ fn build_decals(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ground = viewport_lib::SceneRenderItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-    ground.material = Material::pbr(Colour::linear_rgb(0.62, 0.6, 0.58), 0.0, 0.8);
+    ground.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.62, 0.6, 0.58), 0.0, 0.8),
+    );
 
     let box_mesh = ctx
         .renderer
@@ -1370,7 +1407,10 @@ fn build_decals(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut cube = viewport_lib::SceneRenderItem::default();
     cube.mesh_id = box_mesh;
     cube.model = Mat4::from_translation(Vec3::new(-1.6, 1.2, 0.6)).to_cols_array_2d();
-    cube.material = Material::pbr(Colour::linear_rgb(0.45, 0.5, 0.65), 0.2, 0.5);
+    cube.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.45, 0.5, 0.65), 0.2, 0.5),
+    );
 
     let checker = checker_texture(ctx, [220, 70, 40], [240, 220, 200]);
     let dark = checker_texture(ctx, [70, 70, 80], [110, 110, 120]);
@@ -1432,8 +1472,9 @@ fn build_refraction_over_soft_sprite(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ground = viewport_lib::SceneRenderItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -1.2)).to_cols_array_2d();
-    ground.material = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.85);
-    ground.material.texture_id = Some(backdrop_tex);
+    let mut backdrop = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.85);
+    backdrop.texture_id = Some(backdrop_tex);
+    ground.material = material(ctx, backdrop);
 
     // Soft particles hugging the slab, so they fade where they intersect it.
     let soft_tex = checker_texture(ctx, [80, 140, 255], [20, 30, 90]);
@@ -1542,7 +1583,10 @@ fn build_decal_on_non_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut mesh = viewport_lib::SceneRenderItem::default();
     mesh.mesh_id = ball;
     mesh.model = Mat4::from_translation(Vec3::new(-1.6, 0.0, 0.0)).to_cols_array_2d();
-    mesh.material = Material::pbr(Colour::linear_rgb(0.55, 0.55, 0.58), 0.1, 0.6);
+    mesh.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.55, 0.55, 0.58), 0.1, 0.6),
+    );
     // The mesh declines the decal by leaving the layers the surface mask
     // holds. The implicit surface beside it stays on them and takes it.
     mesh.settings.visibility_mask &= !SURFACE_MASK_LAYERS;
@@ -1585,11 +1629,14 @@ fn build_decal_layers(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::sphere(1.0, 32, 16))
         .expect("sphere upload");
-    let sphere = |x: f32| {
+    let mut sphere = |x: f32| {
         let mut item = viewport_lib::SceneRenderItem::default();
         item.mesh_id = ball;
         item.model = Mat4::from_translation(Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
-        item.material = Material::pbr(Colour::linear_rgb(0.55, 0.55, 0.58), 0.1, 0.6);
+        item.material = material(
+            ctx,
+            Material::pbr(Colour::linear_rgb(0.55, 0.55, 0.58), 0.1, 0.6),
+        );
         item
     };
     let mut left = sphere(-2.4);
@@ -1639,13 +1686,17 @@ fn with_swirl(mut mesh: viewport_lib::MeshData) -> viewport_lib::MeshData {
 
 /// A surface and the flow streaks drawn on it.
 fn lic_surface(
+    ctx: &mut BuildCtx<'_>,
     mesh: viewport_lib::MeshId,
     model: Mat4,
 ) -> (viewport_lib::SceneRenderItem, SurfaceLicItem) {
     let mut item = viewport_lib::SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = model.to_cols_array_2d();
-    item.material = Material::pbr(Colour::linear_rgb(0.55, 0.6, 0.7), 0.0, 0.7);
+    item.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.55, 0.6, 0.7), 0.0, 0.7),
+    );
     let lic = SurfaceLicItem::new(mesh, model.to_cols_array_2d(), "flow");
     (item, lic)
 }
@@ -1657,7 +1708,7 @@ fn build_surface_lic(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &with_swirl(primitives::sphere(2.0, 48, 24)))
         .expect("sphere upload");
-    let (surface, lic) = lic_surface(ball, Mat4::IDENTITY);
+    let (surface, lic) = lic_surface(ctx, ball, Mat4::IDENTITY);
     BuiltScene {
         items: vec![surface],
         surface_lics: vec![lic],
@@ -1696,10 +1747,14 @@ fn build_surface_lic_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut blocker = viewport_lib::SceneRenderItem::default();
     blocker.mesh_id = cube;
     blocker.model = Mat4::from_translation(sphere_at + toward_eye * 2.2).to_cols_array_2d();
-    blocker.material = Material::pbr(Colour::linear_rgb(0.8, 0.45, 0.2), 0.0, 0.6);
+    blocker.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.8, 0.45, 0.2), 0.0, 0.6),
+    );
 
-    let (sphere, sphere_lic) = lic_surface(ball, Mat4::from_translation(sphere_at));
+    let (sphere, sphere_lic) = lic_surface(ctx, ball, Mat4::from_translation(sphere_at));
     let (torus, torus_lic) = lic_surface(
+        ctx,
         ring,
         Mat4::from_translation(Vec3::new(1.9, 0.0, 0.0)) * Mat4::from_rotation_x(-0.45),
     );
@@ -1806,7 +1861,7 @@ fn build_volume_mesh_node_scalars_cut(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     });
     cut.colourmap_id = Some(ColourmapId(0));
     // Section faces point into the kept side, so draw both sides.
-    cut.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+    cut.material = material(ctx, two_sided(Material::default()));
 
     let mut volume = ctx
         .renderer
@@ -1891,7 +1946,7 @@ fn build_surface_contours(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         "wave",
         viewport_lib::BuiltinColourmap::Coolwarm,
     );
-    floor.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+    floor.material = material(ctx, two_sided(Material::default()));
     let sphere = coloured(
         ball,
         ball_model,
@@ -1948,8 +2003,14 @@ fn build_surface_contours_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut floor = viewport_lib::SceneRenderItem::default();
     floor.mesh_id = plane;
     floor.model = plane_model.to_cols_array_2d();
-    floor.material = Material::pbr(Colour::linear_rgb(0.75, 0.75, 0.72), 0.0, 0.8);
-    floor.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+    floor.material = material(
+        ctx,
+        two_sided(Material::pbr(
+            Colour::linear_rgb(0.75, 0.75, 0.72),
+            0.0,
+            0.8,
+        )),
+    );
     let mut rings = SurfaceContourItem::new(
         plane,
         plane_model.to_cols_array_2d(),
@@ -1967,7 +2028,10 @@ fn build_surface_contours_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut blocker = viewport_lib::SceneRenderItem::default();
     blocker.mesh_id = cube;
     blocker.model = Mat4::from_translation(plane_at + Vec3::new(1.3, 0.6, 0.4)).to_cols_array_2d();
-    blocker.material = Material::pbr(Colour::linear_rgb(0.8, 0.45, 0.2), 0.0, 0.6);
+    blocker.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.8, 0.45, 0.2), 0.0, 0.6),
+    );
 
     let mut cells = Vec::new();
     for k in 0..3u32 {
@@ -2007,7 +2071,7 @@ fn build_surface_contours_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     });
     block.colourmap_id = Some(ColourmapId(0));
     // Section faces point into the kept side, so draw both sides.
-    block.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+    block.material = material(ctx, two_sided(Material::default()));
     let mut shells = SurfaceContourItem::new(
         block.boundary_mesh_id,
         block_model.to_cols_array_2d(),
@@ -2041,7 +2105,10 @@ fn build_decal_under_soft_sprite(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut ground = viewport_lib::SceneRenderItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-    ground.material = Material::pbr(Colour::linear_rgb(0.62, 0.6, 0.58), 0.0, 0.8);
+    ground.material = material(
+        ctx,
+        Material::pbr(Colour::linear_rgb(0.62, 0.6, 0.58), 0.0, 0.8),
+    );
 
     let checker = checker_texture(ctx, [220, 70, 40], [240, 220, 200]);
     let mut decal = DecalItem::default();

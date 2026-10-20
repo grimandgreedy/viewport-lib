@@ -18,6 +18,7 @@
 use crate::App;
 use crate::eframe;
 use crate::eframe::egui;
+use crate::shared::{edit_material, upload_material};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::volume::VolumeItem;
@@ -26,8 +27,8 @@ use viewport_lib_plugins::item_types::{
     volume_surface_slice::VolumeSurfaceSliceItem,
 };
 use vpl::{
-    BuiltinColourmap, ColourmapId, FrameData, LightingSettings, Material, MeshData, MeshId,
-    SceneRenderItem, VolumeData, VolumeId, extract_isosurface,
+    BuiltinColourmap, ColourmapId, FrameData, LightingSettings, Material, MaterialId, MeshData,
+    MeshId, SceneRenderItem, VolumeData, VolumeId, extract_isosurface,
 };
 
 // ---------------------------------------------------------------------------
@@ -59,7 +60,8 @@ pub(crate) struct VolumeState {
     pub step_scale: f32,
     pub shading: bool,
     pub nan_on: bool,
-    pub iso_material: Material,
+    /// Isosurface material, uploaded at build and edited from the controls.
+    pub iso_material: MaterialId,
     /// Whether to overlay an image slice on the volume scene.
     pub show_slice: bool,
     /// Axis for the image slice (0=X, 1=Y, 2=Z).
@@ -82,8 +84,6 @@ pub(crate) struct VolumeState {
 
 impl Default for VolumeState {
     fn default() -> Self {
-        let mut iso_material = Material::from_colour(vpl::Colour::srgb(0.16, 0.4, 0.8, 1.0));
-        iso_material.roughness = 0.4;
         Self {
             built: false,
             volume_id: None,
@@ -102,7 +102,7 @@ impl Default for VolumeState {
             step_scale: 1.0,
             shading: true,
             nan_on: false,
-            iso_material,
+            iso_material: MaterialId::DEFAULT,
             show_slice: true,
             slice_axis: 2,
             slice_offset: 0.5,
@@ -137,6 +137,10 @@ impl App {
         );
         self.vol_state.volume_id = Some(vol_id);
         self.vol_state.field = field;
+
+        let mut iso_material = Material::from_colour(vpl::Colour::srgb(0.16, 0.4, 0.8, 1.0));
+        iso_material.roughness = 0.4;
+        self.vol_state.iso_material = upload_material(renderer, iso_material);
 
         // Upload an initial isosurface mesh.
         let iso_mesh = extract_isosurface(&self.vol_state.field, self.vol_state.isovalue);
@@ -383,14 +387,16 @@ pub(crate) fn controls_volume(app: &mut App, ui: &mut egui::Ui, frame: &eframe::
     if s.mode != VolumeMode::VolumeOnly {
         ui.separator();
         ui.label("Isosurface colour:");
-        let mut iso_rgb = s.iso_material.base_colour.to_linear_rgb();
-        if ui.color_edit_button_rgb(&mut iso_rgb).changed() {
-            s.iso_material.base_colour = Colour::from_linear_rgb_array(iso_rgb);
-        }
-        ui.label("Roughness:");
-        ui.add(egui::Slider::new(&mut s.iso_material.roughness, 0.0..=1.0).step_by(0.05));
-        ui.label("Metallic:");
-        ui.add(egui::Slider::new(&mut s.iso_material.metallic, 0.0..=1.0).step_by(0.05));
+        edit_material(frame, s.iso_material, |m| {
+            let mut iso_rgb = m.base_colour.to_linear_rgb();
+            if ui.color_edit_button_rgb(&mut iso_rgb).changed() {
+                m.base_colour = Colour::from_linear_rgb_array(iso_rgb);
+            }
+            ui.label("Roughness:");
+            ui.add(egui::Slider::new(&mut m.roughness, 0.0..=1.0).step_by(0.05));
+            ui.label("Metallic:");
+            ui.add(egui::Slider::new(&mut m.metallic, 0.0..=1.0).step_by(0.05));
+        });
     }
 
     // Volume surface slice controls

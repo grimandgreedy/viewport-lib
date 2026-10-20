@@ -1485,7 +1485,7 @@ mod tests {
         scene.add(
             Some(crate::resources::mesh::mesh_store::MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            crate::scene::material::Material::default(),
+            crate::resources::MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -1508,7 +1508,7 @@ mod tests {
         scene.add(
             Some(crate::resources::mesh::mesh_store::MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            crate::scene::material::Material::default(),
+            crate::resources::MaterialId::DEFAULT,
         );
         scene.update_transforms();
 

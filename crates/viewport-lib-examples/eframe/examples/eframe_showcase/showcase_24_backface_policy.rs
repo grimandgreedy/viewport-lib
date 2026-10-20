@@ -19,6 +19,7 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use glam::Mat4;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
@@ -132,7 +133,7 @@ impl App {
                 &format!("Torus {label}"),
                 Some(mesh_id),
                 Mat4::from_translation(glam::Vec3::new(col_x[i], 0.0, 4.5)),
-                make_material(*policy),
+                upload_material(renderer, make_material(*policy)),
             );
         }
 
@@ -147,7 +148,7 @@ impl App {
                 &format!("Sphere {label}"),
                 Some(mesh_id),
                 Mat4::from_translation(glam::Vec3::new(col_x[i], 0.0, 1.5)),
-                make_material(*policy),
+                upload_material(renderer, make_material(*policy)),
             );
         }
 
@@ -162,7 +163,7 @@ impl App {
                 &format!("Cone {label}"),
                 Some(mesh_id),
                 Mat4::from_translation(glam::Vec3::new(col_x[i], 0.0, -1.5)),
-                make_material(*policy),
+                upload_material(renderer, make_material(*policy)),
             );
         }
 
@@ -177,7 +178,7 @@ impl App {
                 &format!("Spring {label}"),
                 Some(mesh_id),
                 Mat4::from_translation(glam::Vec3::new(col_x[i], 0.0, -4.5)),
-                make_material(*policy),
+                upload_material(renderer, make_material(*policy)),
             );
         }
 
@@ -201,7 +202,7 @@ impl App {
                 &format!("InnerSphere {label}"),
                 Some(mesh_id),
                 Mat4::from_translation(glam::Vec3::new(col_x[i], 1.5, -7.5)),
-                make_material(*policy),
+                upload_material(renderer, make_material(*policy)),
             );
         }
 

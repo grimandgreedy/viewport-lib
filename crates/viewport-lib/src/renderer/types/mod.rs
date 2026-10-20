@@ -4,45 +4,17 @@
 //! that take raw `wgpu` types. GUI framework adapters (e.g. the egui
 //! `CallbackTrait` impl in the application crate) delegate to these methods.
 
-/// Bind the deform sidecar bind group (index 2) for a mesh-family draw.
-///
-/// On limited devices (`max_bind_groups < 3`, e.g. iced's shared device, which
-/// requests 2) the mesh family compiles 2-group noop pipelines and
-/// `deform.enabled` is false; issuing `set_bind_group(2, ...)` there is a wgpu
-/// validation error. Every mesh-family deform bind goes through this macro so
-/// the guard lives in one greppable place; do not open-code a deform group-2
-/// bind at a draw site. Group-2 binds for features that fundamentally need a
-/// third group (soft body, refraction, scivis LUT, volumes, vector/tensor
-/// instance data, GPU picking) are not deform binds and are not gated: those
-/// features do not run on 2-group devices. The invariant is enforced
-/// headlessly by `two_bind_group_device_renders_without_validation_errors`.
-macro_rules! bind_deform_group {
-    ($pass:expr, $resources:expr, $bg:expr) => {
-        if $resources.deform.enabled {
-            $pass.set_bind_group(2, $bg, &[]);
-        }
-    };
-}
-
-/// Bind a material plugin's group-3 params bind group for a plugin draw.
+/// Bind a material plugin's group-2 texture bind group for a plugin draw.
 ///
 /// Only called with a bind group resolved by `material_plugin_draw`, which
-/// only exists on devices that passed the `max_bind_groups >= 4` registration
-/// gate, so no runtime capability check is needed here. Route every group-3
-/// material bind through this macro (the same choke-point rule as
-/// `bind_deform_group!` above).
+/// only exists on devices that passed the `max_bind_groups >= 3` registration
+/// gate, so no runtime capability check is needed here. Route every material
+/// bind through this macro so the group index lives in one place.
 macro_rules! bind_material_group {
     ($pass:expr, $bg:expr) => {
-        $pass.set_bind_group(3, $bg, &[]);
+        $pass.set_bind_group(2, $bg, &[])
     };
 }
-
-/// Minimum scene item count to activate the instanced draw path.
-/// Use instancing for any scene with more than 1 object. The per-object path
-/// writes uniforms into a per-mesh buffer, so two scene nodes sharing the same
-/// mesh would clobber each other. Instancing avoids this by keeping per-item
-/// data in a separate instance buffer indexed by draw-call range.
-pub(super) const INSTANCING_THRESHOLD: usize = 1;
 
 /// A batch of instances sharing the same mesh and material textures, drawn in one call.
 #[derive(Debug, Clone, PartialEq)]
@@ -68,13 +40,617 @@ pub(crate) struct InstancedBatch {
     /// discard-free early-Z pipeline: a batch with a masked instance must keep
     /// the full shader so the per-fragment alpha discard still runs.
     pub has_alpha_mask: bool,
-    /// The material plugin whose composed instanced shading this batch draws
-    /// with, or `None` for built-in shading. All items in the batch share it
-    /// (it is part of the batch key). A plugin batch draws through the plugin's
-    /// instanced pipeline plus its group-3 params bind, outside the GPU-cull /
-    /// count-multi-draw run-forming, so the field also flags "skip me" in those
-    /// loops.
+    /// The material plugin whose composed shading this batch draws with, or
+    /// `None` for built-in shading. All items in the batch share it (it is
+    /// part of the batch key). A plugin batch draws through the plugin's
+    /// pipeline set plus its group-2 texture bind; the set has no culled
+    /// members, so the GPU cull never draws it.
     pub shading_plugin: Option<crate::scene::material::MaterialPluginId>,
+    /// The plugin textures every item in the batch names (part of the batch
+    /// key): which group-2 bind group the batch draws with.
+    pub plugin_textures: crate::resources::mesh_sidecar::shade::PluginTextures,
+    /// The sampler bound at group-1 binding 2 for the whole batch: the
+    /// material's selected sampler, or the default key. Part of the batch key.
+    pub sampler: crate::scene::material::SamplerKey,
+    /// What the batch draws.
+    pub draw: DrawKind,
+    /// Key of this batch's group-1 bind group in
+    /// `PerObjectState::material_bind_groups`.
+    pub bind_key: u64,
+    /// The deform instance every item in the batch shares (part of the key).
+    pub deform_instance: Option<u32>,
+    /// Some record in the batch has an active scalar attribute, which keeps
+    /// the discarding pipeline (NaN samples discard).
+    pub has_attribute: bool,
+    /// The shader features the batch's records use: the union over them.
+    /// The batch draws through the pipeline built with exactly these.
+    pub features: crate::renderer::pipeline_key::FeatureSet,
+    /// The batch binds the bindless member of group 1: its material
+    /// textures come from the texture array by each record's material index,
+    /// so it draws through the bindless pipeline families.
+    pub bindless: bool,
+    /// Key of the per-batch group-1 bind group the shadow casters bind: for
+    /// a cutout caster `bind_key` (or for a bindless batch its per-batch
+    /// member twin), for any other caster the shared fallback group.
+    pub shadow_bind_key: u64,
+    /// What the shadow casters' group binds beyond the mesh: `group` for a
+    /// cutout caster, the fallback textures for any other.
+    pub shadow_group: GroupInputs,
+    /// What the batch's group-1 bind group binds beyond its mesh, so a
+    /// viewport's culled twin of it can be built without the scene items.
+    pub group: GroupInputs,
+    /// Scene index of the item the batch's first record came from, and the
+    /// submesh range it draws when it is a range record. Every record in the
+    /// batch shares the facts its bind group hashes, so the first stands for
+    /// all; the bind group is rebuilt from it each frame.
+    pub rep_idx: usize,
+    pub rep_range: Option<u32>,
+    /// World-space centre of the batch's instance bounds. The LDR pass sorts
+    /// blended batches back to front by it; on an LDR frame each blended item
+    /// is its own batch, so the sort is per item.
+    pub sort_centre: [f32; 3],
+}
+
+/// Which geometry a batch draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum DrawKind {
+    /// The whole mesh, indexed.
+    Triangles,
+    /// One submesh index range: `(first_index, index_count)`.
+    Range(u32, u32),
+    /// The mesh's edge lines: a wireframe item, or viewport wireframe mode.
+    Edges,
+    /// The per-face expanded vertex buffer (face, corner and half-edge
+    /// attributes), drawn unindexed.
+    FaceVertices,
+    /// The mesh's normal-line buffer, for `show_normals` items.
+    NormalLines,
+}
+
+/// What a batch's group-1 bind group binds beyond its mesh: its
+/// representative material's slot textures (albedo, normal, AO,
+/// metallic-roughness, emissive), colourmap, matcap and sampler.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(crate) struct GroupInputs {
+    pub textures: [Option<crate::resources::TextureId>; 5],
+    pub lut: Option<crate::resources::ColourmapId>,
+    pub matcap: Option<crate::resources::MatcapId>,
+    pub sampler: Option<crate::scene::material::SamplerKey>,
+}
+
+/// Bound state the batch draw loops carry between batches so a
+/// pipeline, bind group or vertex buffer shared by consecutive batches is
+/// set once.
+#[derive(Default)]
+pub(crate) struct BatchBound {
+    pipeline: Option<*const crate::gpu::RenderPipeline>,
+    group1: Option<*const crate::gpu::BindGroup>,
+    geometry: Option<BoundGeometry>,
+    records: Option<*const crate::gpu::Buffer>,
+    /// A batch drew through a stand-in pipeline while its own compiles. A
+    /// render bundle must not keep that draw, since nothing re-records it
+    /// when the compile finishes.
+    pub(crate) stand_in: bool,
+    /// Vertex and index buffer binds issued, for the frame stats.
+    pub(crate) buffer_binds: u32,
+}
+
+/// The vertex and index buffers a batch draw left bound.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BoundGeometry {
+    /// A slab chunk's vertex and index buffers.
+    Chunk((u32, u32)),
+    /// A slab chunk's vertex buffer and this mesh's edge indices.
+    Edges(crate::resources::mesh::mesh_store::MeshId),
+    FaceVertices(crate::resources::mesh::mesh_store::MeshId),
+    NormalLines(crate::resources::mesh::mesh_store::MeshId),
+}
+
+/// The render-pass methods a mesh draw needs, so one draw helper serves both
+/// an immediate `RenderPass` and a `RenderBundleEncoder`. `'a` is the
+/// lifetime of the resources an encoder may hold on to (a bundle encoder
+/// keeps them until `finish`).
+pub(crate) trait MeshDrawEncoder<'a> {
+    fn set_pipeline(&mut self, pipeline: &'a crate::gpu::RenderPipeline);
+    fn set_bind_group(
+        &mut self,
+        index: u32,
+        bind_group: &'a crate::gpu::BindGroup,
+        offsets: &[u32],
+    );
+    fn set_vertex_buffer(&mut self, slot: u32, slice: crate::gpu::BufferSlice<'a>);
+    fn set_index_buffer(
+        &mut self,
+        slice: crate::gpu::BufferSlice<'a>,
+        format: crate::gpu::IndexFormat,
+    );
+    fn draw(&mut self, vertices: std::ops::Range<u32>, instances: std::ops::Range<u32>);
+    fn draw_indexed(
+        &mut self,
+        indices: std::ops::Range<u32>,
+        base_vertex: i32,
+        instances: std::ops::Range<u32>,
+    );
+}
+
+impl<'a> MeshDrawEncoder<'a> for crate::gpu::RenderPass<'_> {
+    fn set_pipeline(&mut self, pipeline: &'a crate::gpu::RenderPipeline) {
+        crate::gpu::RenderPass::set_pipeline(self, pipeline);
+    }
+    fn set_bind_group(
+        &mut self,
+        index: u32,
+        bind_group: &'a crate::gpu::BindGroup,
+        offsets: &[u32],
+    ) {
+        crate::gpu::RenderPass::set_bind_group(self, index, bind_group, offsets);
+    }
+    fn set_vertex_buffer(&mut self, slot: u32, slice: crate::gpu::BufferSlice<'a>) {
+        crate::gpu::RenderPass::set_vertex_buffer(self, slot, slice);
+    }
+    fn set_index_buffer(
+        &mut self,
+        slice: crate::gpu::BufferSlice<'a>,
+        format: crate::gpu::IndexFormat,
+    ) {
+        crate::gpu::RenderPass::set_index_buffer(self, slice, format);
+    }
+    fn draw(&mut self, vertices: std::ops::Range<u32>, instances: std::ops::Range<u32>) {
+        crate::gpu::RenderPass::draw(self, vertices, instances);
+    }
+    fn draw_indexed(
+        &mut self,
+        indices: std::ops::Range<u32>,
+        base_vertex: i32,
+        instances: std::ops::Range<u32>,
+    ) {
+        crate::gpu::RenderPass::draw_indexed(self, indices, base_vertex, instances);
+    }
+}
+
+impl<'a> MeshDrawEncoder<'a> for crate::gpu::RenderBundleEncoder<'a> {
+    fn set_pipeline(&mut self, pipeline: &'a crate::gpu::RenderPipeline) {
+        crate::gpu::RenderBundleEncoder::set_pipeline(self, pipeline);
+    }
+    fn set_bind_group(
+        &mut self,
+        index: u32,
+        bind_group: &'a crate::gpu::BindGroup,
+        offsets: &[u32],
+    ) {
+        crate::gpu::RenderBundleEncoder::set_bind_group(self, index, bind_group, offsets);
+    }
+    fn set_vertex_buffer(&mut self, slot: u32, slice: crate::gpu::BufferSlice<'a>) {
+        crate::gpu::RenderBundleEncoder::set_vertex_buffer(self, slot, slice);
+    }
+    fn set_index_buffer(
+        &mut self,
+        slice: crate::gpu::BufferSlice<'a>,
+        format: crate::gpu::IndexFormat,
+    ) {
+        crate::gpu::RenderBundleEncoder::set_index_buffer(self, slice, format);
+    }
+    fn draw(&mut self, vertices: std::ops::Range<u32>, instances: std::ops::Range<u32>) {
+        crate::gpu::RenderBundleEncoder::draw(self, vertices, instances);
+    }
+    fn draw_indexed(
+        &mut self,
+        indices: std::ops::Range<u32>,
+        base_vertex: i32,
+        instances: std::ops::Range<u32>,
+    ) {
+        crate::gpu::RenderBundleEncoder::draw_indexed(self, indices, base_vertex, instances);
+    }
+}
+
+/// Which pass a batch is being drawn into, which picks its pipeline set.
+pub(crate) enum BatchPass<'a> {
+    /// A colour pass: the LDR or HDR scene family. `hdr` selects the early-Z
+    /// twin where the batch cannot discard.
+    Colour {
+        family: &'a dyn crate::resources::scene_pipelines::MeshColourFamily,
+        /// The same family on the bindless member of group 1, for batches
+        /// that bind it.
+        bindless_family: &'a dyn crate::resources::scene_pipelines::MeshColourFamily,
+        hdr: bool,
+        clipping_active: bool,
+    },
+    /// The weighted-blended OIT pass.
+    Oit,
+}
+
+/// Draw one batch: bind its group-1 bind group and the geometry its
+/// `DrawKind` names, select the per-object pipeline for `pass`,
+/// and draw its instance range. Returns false when something it needs (a
+/// pipeline still compiling, a missing bind group or buffer) kept it from
+/// drawing. `bound` carries the state set by the previous batch.
+pub(crate) fn draw_batch<'a, E: MeshDrawEncoder<'a>>(
+    resources: &'a crate::resources::DeviceResources,
+    batch_bind_groups: &'a crate::resources::fast_hash::FastMap<
+        u64,
+        crate::renderer::per_object_state::MaterialBindGroup,
+    >,
+    encoder: &mut E,
+    batch: &InstancedBatch,
+    pass: &BatchPass<'a>,
+    bound: &mut BatchBound,
+) -> bool {
+    use crate::renderer::pipeline_key::PipelineKey;
+    let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+        return false;
+    };
+    let Some(group1) = batch_bind_groups
+        .get(&batch.bind_key)
+        .map(|m| &m.bind_group)
+    else {
+        return false;
+    };
+    let lines = matches!(batch.draw, DrawKind::Edges | DrawKind::NormalLines);
+    let two_sided = PipelineKey::two_sided(batch.two_sided);
+    let feats = draw_features(resources, batch);
+    // A feature-set pipeline, or the universal one while it compiles: both
+    // draw the same image.
+    let mut take = |got: crate::resources::pipeline_slot::FeatureGet<'a, _>| {
+        bound.stand_in |= got.stand_in;
+        // Counted only when the universal member was there to draw: a draw
+        // with neither pipeline built is skipped, not stood in for.
+        if got.stand_in && got.pipeline.is_some() {
+            resources
+                .frame_stand_in_draws
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        if got.capped {
+            resources
+                .frame_feature_sets_capped
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        got.pipeline
+    };
+    let plug = resources.material_plugin_draw(
+        batch.shading_plugin,
+        &batch.plugin_textures,
+        batch.bindless,
+    );
+    let (pipeline, mat_bg): (
+        Option<&crate::gpu::RenderPipeline>,
+        Option<&crate::gpu::BindGroup>,
+    ) = match pass {
+        BatchPass::Colour {
+            family,
+            bindless_family,
+            hdr,
+            clipping_active,
+        } => {
+            let family = if batch.bindless {
+                *bindless_family
+            } else {
+                *family
+            };
+            if lines {
+                (family.wireframe(), None)
+            } else if let Some((pp, mat_bg)) = plug {
+                let got = if batch.is_transparent {
+                    pp.transparent(*hdr, feats)
+                } else {
+                    pp.opaque(*hdr, two_sided, feats)
+                };
+                (take(got), Some(mat_bg))
+            } else if batch.shading_plugin.is_some() {
+                // The plugin's per-object set is not composed yet.
+                (None, None)
+            } else if batch.is_transparent {
+                (take(family.transparent_features(feats)), None)
+            } else {
+                let key = opaque_key(resources, batch, *clipping_active);
+                (take(family.opaque_features(key, feats)), None)
+            }
+        }
+        BatchPass::Oit => {
+            if lines {
+                (None, None)
+            } else if let Some((pp, mat_bg)) = plug {
+                (take(pp.oit(two_sided, feats)), Some(mat_bg))
+            } else if batch.shading_plugin.is_some() {
+                (None, None)
+            } else {
+                (
+                    take(
+                        resources
+                            .oit
+                            .per_object_features(two_sided, feats, batch.bindless),
+                    ),
+                    None,
+                )
+            }
+        }
+    };
+    let Some(pipeline) = pipeline else {
+        return false;
+    };
+    if bound.pipeline != Some(pipeline as *const _) {
+        encoder.set_pipeline(pipeline);
+        bound.pipeline = Some(pipeline as *const _);
+    }
+    if bound.group1 != Some(group1 as *const _) {
+        encoder.set_bind_group(1, group1, &[]);
+        bound.group1 = Some(group1 as *const _);
+    }
+    if let Some(mat_bg) = mat_bg {
+        bind_material_group!(encoder, mat_bg);
+    }
+    // The record words reach the vertex stage through slot 1, read from the
+    // instance buffer the group-1 bind group holds at binding 0.
+    let Some(records) = resources.instancing.storage_buf.as_ref() else {
+        return false;
+    };
+    if bound.records != Some(records as *const _) {
+        encoder.set_vertex_buffer(1, records.slice(..));
+        bound.records = Some(records as *const _);
+    }
+    let instances = batch.instance_offset..batch.instance_offset + batch.instance_count;
+    // Indexed draws bind the whole slab chunk and offset into it per mesh, so
+    // consecutive batches in one chunk keep their geometry bound. A record's
+    // `vertex_base` is the base vertex drawn with here.
+    let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+    let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+    match batch.draw {
+        DrawKind::Triangles | DrawKind::Range(..) => {
+            if bound.geometry != Some(BoundGeometry::Chunk(chunks)) {
+                encoder.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
+                encoder.set_index_buffer(
+                    resources.geometry.index_chunk_slice(chunks.1),
+                    crate::gpu::IndexFormat::Uint32,
+                );
+                bound.geometry = Some(BoundGeometry::Chunk(chunks));
+                bound.buffer_binds += 2;
+            }
+            let first = resources.geometry.first_index(mesh.index_span);
+            let range = match batch.draw {
+                DrawKind::Range(start, count) => first + start..first + start + count,
+                _ => first..first + mesh.index_count,
+            };
+            encoder.draw_indexed(range, base_vertex, instances);
+        }
+        DrawKind::Edges => {
+            let Some(edge_buf) = &mesh.edge_index_buffer else {
+                return false;
+            };
+            if bound.geometry != Some(BoundGeometry::Edges(batch.mesh_id)) {
+                encoder.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
+                encoder.set_index_buffer(edge_buf.slice(..), crate::gpu::IndexFormat::Uint32);
+                bound.geometry = Some(BoundGeometry::Edges(batch.mesh_id));
+            }
+            encoder.draw_indexed(0..mesh.edge_index_count, base_vertex, instances);
+        }
+        DrawKind::FaceVertices => {
+            let Some(fvb) = &mesh.face_vertex_buffer else {
+                return false;
+            };
+            if bound.geometry != Some(BoundGeometry::FaceVertices(batch.mesh_id)) {
+                encoder.set_vertex_buffer(0, fvb.slice(..));
+                bound.geometry = Some(BoundGeometry::FaceVertices(batch.mesh_id));
+            }
+            encoder.draw(0..mesh.index_count, instances);
+        }
+        DrawKind::NormalLines => {
+            let Some(nl_buf) = &mesh.normal_line_buffer else {
+                return false;
+            };
+            if mesh.normal_line_count == 0 {
+                return false;
+            }
+            if bound.geometry != Some(BoundGeometry::NormalLines(batch.mesh_id)) {
+                encoder.set_vertex_buffer(0, nl_buf.slice(..));
+                bound.geometry = Some(BoundGeometry::NormalLines(batch.mesh_id));
+            }
+            encoder.draw(0..mesh.normal_line_count, instances);
+        }
+    }
+    true
+}
+
+/// The opaque pipeline key of a batch. Early-Z: a batch that can never
+/// discard draws through the discard-free twin.
+pub(crate) fn opaque_key(
+    resources: &crate::resources::DeviceResources,
+    batch: &InstancedBatch,
+    clipping_active: bool,
+) -> crate::renderer::pipeline_key::PipelineKey {
+    crate::renderer::pipeline_key::PipelineKey {
+        two_sided: batch.two_sided,
+        no_discard_eligible: !clipping_active
+            && !resources.force_po_discard
+            && !batch.has_alpha_mask
+            && !batch.has_attribute
+            && !matches!(batch.draw, DrawKind::Range(..))
+            && !resources
+                .deform
+                .may_discard(batch.mesh_id, batch.deform_instance),
+        ..Default::default()
+    }
+}
+
+/// The feature set a batch draws with: its own, or every feature under the
+/// `mesh_universal` knob.
+pub(crate) fn draw_features(
+    resources: &crate::resources::DeviceResources,
+    batch: &InstancedBatch,
+) -> crate::renderer::pipeline_key::FeatureSet {
+    if resources.mesh_universal {
+        crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
+    } else {
+        batch.features
+    }
+}
+
+/// Which pass a run of GPU-culled batches is drawn into.
+pub(crate) enum CulledPass {
+    /// The HDR opaque scene pass.
+    Opaque { clipping_active: bool },
+    /// The weighted-blended OIT pass.
+    Oit,
+}
+
+/// Draw the GPU-culled batches of `pass` from this viewport's cull-written
+/// indirect args, skipping any `skip` names. Consecutive batches that share
+/// the pipeline, the group-1 and material bind groups and the slab chunk form a
+/// run drawn with one multi-draw where the backend has it; a run breaks on a
+/// batch-index gap, so a multi-draw never sweeps in a batch this skipped.
+/// Returns the draw commands and buffer binds it issued.
+pub(crate) fn draw_culled_batches(
+    resources: &crate::resources::DeviceResources,
+    cull: &crate::resources::ViewportCullState,
+    render_pass: &mut crate::gpu::RenderPass<'_>,
+    batches: &[InstancedBatch],
+    pass: CulledPass,
+    multi_draw: bool,
+    skip: impl Fn(&InstancedBatch) -> bool,
+) -> (u32, u32) {
+    let (Some(indirect), Some(words)) = (cull.indirect_args_buf.as_ref(), cull.words_slice())
+    else {
+        return (0, 0);
+    };
+    let mut commands = 0u32;
+    let mut binds = 0u32;
+    let mut words_bound = false;
+    let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
+    let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
+    let mut cur_mat: Option<*const crate::gpu::BindGroup> = None;
+    let mut cur_chunks: Option<(u32, u32)> = None;
+    let (mut run_start, mut run_len) = (0u64, 0u32);
+    let oit = matches!(pass, CulledPass::Oit);
+    for (g, batch) in batches.iter().enumerate() {
+        if batch.is_transparent != oit || !batch.draws_culled() || skip(batch) {
+            continue;
+        }
+        let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+            continue;
+        };
+        let Some(group1) = cull.object_cull_bind_groups.get(&batch.bind_key) else {
+            continue;
+        };
+        let feats = draw_features(resources, batch);
+        let two_sided = crate::renderer::pipeline_key::PipelineKey::two_sided(batch.two_sided);
+        let plug = resources.material_plugin_draw(
+            batch.shading_plugin,
+            &batch.plugin_textures,
+            batch.bindless,
+        );
+        let mat_bg = plug.map(|(_, bg)| bg);
+        let got = match (&pass, plug) {
+            // The plugin's set is not composed yet.
+            (_, None) if batch.shading_plugin.is_some() => continue,
+            (CulledPass::Opaque { .. }, Some((pp, _))) => pp.hdr_culled(two_sided, feats),
+            (CulledPass::Oit, Some((pp, _))) => pp.oit_culled(two_sided, feats),
+            (CulledPass::Opaque { clipping_active }, None) => resources.cull.hdr_opaque_features(
+                opaque_key(resources, batch, *clipping_active),
+                feats,
+                batch.bindless,
+            ),
+            (CulledPass::Oit, None) => {
+                resources
+                    .cull
+                    .oit_features(two_sided, feats, batch.bindless)
+            }
+        };
+        if got.stand_in && got.pipeline.is_some() {
+            resources
+                .frame_stand_in_draws
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        if got.capped {
+            resources
+                .frame_feature_sets_capped
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        // Still compiling: the batch waits a frame.
+        let Some(pipeline) = got.pipeline else {
+            continue;
+        };
+        let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+        let g = g as u64;
+        if run_len > 0
+            && g == run_start + u64::from(run_len)
+            && cur_pipe == Some(pipeline as *const _)
+            && cur_bg == Some(group1 as *const _)
+            && cur_mat == mat_bg.map(|b| b as *const _)
+            && cur_chunks == Some(chunks)
+        {
+            run_len += 1;
+            continue;
+        }
+        if run_len > 0 {
+            commands += crate::renderer::render::emit_indirect_run(
+                render_pass,
+                indirect,
+                run_start,
+                run_len,
+                multi_draw,
+            );
+        }
+        if cur_pipe != Some(pipeline as *const _) {
+            render_pass.set_pipeline(pipeline);
+            cur_pipe = Some(pipeline as *const _);
+        }
+        if cur_bg != Some(group1 as *const _) {
+            render_pass.set_bind_group(1, group1, &[]);
+            cur_bg = Some(group1 as *const _);
+        }
+        if let Some(bg) = mat_bg.filter(|bg| cur_mat != Some(*bg as *const _)) {
+            bind_material_group!(render_pass, bg);
+        }
+        cur_mat = mat_bg.map(|b| b as *const _);
+        if !words_bound {
+            render_pass.set_vertex_buffer(1, words);
+            words_bound = true;
+        }
+        if cur_chunks != Some(chunks) {
+            render_pass.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
+            render_pass.set_index_buffer(
+                resources.geometry.index_chunk_slice(chunks.1),
+                crate::gpu::IndexFormat::Uint32,
+            );
+            binds += 2;
+            cur_chunks = Some(chunks);
+        }
+        run_start = g;
+        run_len = 1;
+    }
+    if run_len > 0 {
+        commands += crate::renderer::render::emit_indirect_run(
+            render_pass,
+            indirect,
+            run_start,
+            run_len,
+            multi_draw,
+        );
+    }
+    (commands, binds)
+}
+
+impl InstancedBatch {
+    /// Whether the batch draws from the GPU cull's indirect args when the
+    /// cull runs: an indexed draw of its mesh or a submesh range.
+    pub(crate) fn draws_culled(&self) -> bool {
+        matches!(self.draw, DrawKind::Triangles | DrawKind::Range(..))
+    }
+
+    /// Whether the batch can join a GPU-driven draw group: a culled draw
+    /// with built-in shading (a group binds no plugin group 2).
+    pub(crate) fn draws_grouped(&self) -> bool {
+        self.draws_culled() && self.shading_plugin.is_none()
+    }
+
+    /// Whether the batch casts from the cascade cull's visible lists: an
+    /// indexed draw of the mesh's triangles, which binds the slab chunk as the
+    /// colour pass does. A per-face draw binds its own vertex buffer there, so
+    /// it casts directly.
+    pub(crate) fn casts_culled(&self) -> bool {
+        matches!(
+            self.draw,
+            DrawKind::Triangles | DrawKind::Range(..) | DrawKind::Edges
+        )
+    }
 }
 
 mod clip;
@@ -222,51 +798,26 @@ impl FrameData {
 /// ~90 lines of rendering code while satisfying Rust's lifetime invariance
 /// on `&mut RenderPass<'a>`.
 macro_rules! emit_draw_calls {
-    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $slot:expr, $wireframe_bgs:expr, $per_item_bgs:expr, $submesh_bgs:expr, $object_indices:expr, $submesh_indices:expr, $scene_items:expr, $po_bundle:expr) => {{
+    ($resources:expr, $render_pass:expr, $frame:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $slot:expr, $batch_bgs:expr, $scene_items:expr, $po_bundle:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let frame = $frame;
-        let use_instancing: bool = $use_instancing;
         let po_bundle: Option<&crate::renderer::per_object_state::PerObjectBundle> = $po_bundle;
         let _vp_slot: Option<&ViewportSlot> = $slot;
         let batches: &[InstancedBatch] = $batches;
         let camera_bg: &crate::gpu::BindGroup = $camera_bg;
         let grid_bg: &crate::gpu::BindGroup = $grid_bg;
-        let wireframe_bind_groups: &[crate::gpu::BindGroup] = $wireframe_bgs;
-        // Per-item object bind groups indexed by position in scene_items. Each combines
-        // a per-item ObjectUniform buffer with the mesh's real textures/LUT/matcap.
-        // Items routed through the instanced path have None here and use mesh.object_bind_group.
-        let per_item_object_bind_groups: &[Option<crate::gpu::BindGroup>] = $per_item_bgs;
-        // Per-range bind groups for items drawn with per-submesh materials,
-        // keyed by item position. Empty for frames without range items.
-        let submesh_bind_groups: &std::collections::HashMap<
-            usize,
-            Vec<Option<crate::gpu::BindGroup>>,
-        > = $submesh_bgs;
-        // Object-data element index for each item's whole-mesh draw (parallel to
-        // per_item_object_bind_groups) and for each submesh range. A per-object
-        // draw binds the shared object-data buffer and selects its element via
-        // this index as @builtin(instance_index); a None bind-group slot falls
-        // back to the mesh's single-element buffer and draws at instance 0.
-        let object_indices: &[u32] = $object_indices;
-        let submesh_indices: &std::collections::HashMap<usize, Vec<u32>> = $submesh_indices;
-        // Whole-mesh instance for an item: its object-data index when a shared
-        // material bind group is used, else 0 for the mesh's fallback buffer.
-        let object_inst = |item_idx: usize| -> u32 {
-            match per_item_object_bind_groups
-                .get(item_idx)
-                .and_then(|o| o.as_ref())
-            {
-                Some(_) => object_indices.get(item_idx).copied().unwrap_or(0),
-                None => 0,
-            }
-        };
+        // Group-1 bind groups of the batches, keyed by `InstancedBatch::bind_key`.
+        let batch_bind_groups: &crate::resources::fast_hash::FastMap<
+            u64,
+            crate::renderer::per_object_state::MaterialBindGroup,
+        > = $batch_bgs;
 
         // The LOD-resolved surface items from prepare: each item's mesh is the
         // level chosen for its on-screen size, and culled items are hidden.
         // Matches `frame.scene.surfaces` in order and length, so the per-object
         // bind groups (indexed by position) line up unchanged.
-        let scene_items: &[SceneRenderItem] = $scene_items;
+        let _scene_items: &[SceneRenderItem] = $scene_items;
 
         render_pass.set_bind_group(0, camera_bg, &[]);
 
@@ -276,8 +827,7 @@ macro_rules! emit_draw_calls {
         if let (true, Some(pipeline)) = (
             frame.viewport.show_grid,
             resources.guide_pipeline(crate::resources::overlay::guides::GUIDE_GRID),
-        )
-        {
+        ) {
             render_pass.set_pipeline(pipeline);
             render_pass.set_bind_group(0, grid_bg, &[]);
             render_pass.draw(0..3, 0..1);
@@ -296,702 +846,83 @@ macro_rules! emit_draw_calls {
             render_pass.set_bind_group(0, camera_bg, &[]);
         }
 
-            if !scene_items.is_empty() {
-                if use_instancing && !batches.is_empty() {
-                    let excluded_items: Vec<(usize, &SceneRenderItem)> = scene_items
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, item)| {
-                            // Per-object set = visible items not admitted to an instanced
-                            // batch. Reuse `is_instanceable` so this cannot drift from it.
-                            !item.settings.hidden
-                                && resources.mesh_store.get(item.mesh_id).is_some()
-                                && !crate::renderer::prepare::is_instanceable(
-                                    item,
-                                    resources
-                                )
-                        })
-                        .collect();
+        if !batches.is_empty() {
+            // When prepare cached a render bundle for this batch list and
+            // this pass uses the camera bind group it was recorded with,
+            // replay it instead of re-encoding the opaque draws.
+            let bundle_hit: Option<&crate::renderer::per_object_state::PerObjectBundle> =
+                po_bundle.filter(|pb| !pb.hdr && pb.camera_bg == *camera_bg);
+            if let Some(pb) = bundle_hit {
+                render_pass.execute_bundles(std::iter::once(&pb.bundle));
+                // Bundle execution resets all render-pass state; restore
+                // the camera bind group for the draws and passes below.
+                render_pass.set_bind_group(0, camera_bg, &[]);
+            }
+            let mut transparent_batches: Vec<&InstancedBatch> =
+                batches.iter().filter(|b| b.is_transparent).collect();
 
-                // --- Instanced draw path ---
-                // Separate opaque and transparent batches.
-                let mut opaque_batches: Vec<&InstancedBatch> = Vec::new();
-                let mut transparent_batches: Vec<&InstancedBatch> = Vec::new();
+            // Every batch by instance range: opaque first (the bundle covers
+            // these too), then normal lines, then the blended ones.
+            let ldr_family = resources.scene.ldr_family();
+            let ldr_bindless_family = resources.scene.ldr_bindless_family();
+            let batch_pass = crate::renderer::types::BatchPass::Colour {
+                family: &ldr_family,
+                bindless_family: &ldr_bindless_family,
+                hdr: false,
+                clipping_active: crate::resources::DeviceResources::clipping_active(frame),
+            };
+            let mut batch_bound = crate::renderer::types::BatchBound::default();
+            {
                 for batch in batches {
-                    if batch.is_transparent {
-                        transparent_batches.push(batch);
-                    } else {
-                        opaque_batches.push(batch);
-                    }
-                }
-
-                    // Draw opaque instanced batches.
-                    if !opaque_batches.is_empty() && !frame.viewport.wireframe_mode {
-                        if resources.instancing.ldr.is_some() {
-                            // Early-Z fast path: discard-free pipeline twin for
-                            // opaque batches when no clip object or alpha-mask
-                            // instance can discard this frame.
-                            let clipping_active = frame
-                                .effects
-                                .clip.objects
-                                .iter()
-                                .any(|o| o.enabled && o.clip_geometry);
-                            bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
-                            // Batches are sorted with two_sided in the key, so one- and
-                            // two-sided runs are contiguous; switch pipeline on change.
-                            // Geometry is in the shared slab, so the chunk buffers bind
-                            // once and each draw carries the mesh's base_vertex /
-                            // first_index instead of re-binding a sub-slice per batch.
-                            let mut cur_pipe: Option<(bool, bool)> = None;
-                            let mut cur_chunks: Option<(u32, u32)> = None;
-                            for batch in &opaque_batches {
-                                // Plugin batches draw in the dedicated plugin
-                                // sub-loop below (their own pipeline + group-3
-                                // params bind); the built-in pipeline would shade
-                                // them without the plugin hook.
-                                if batch.shading_plugin.is_some() { continue; }
-                                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
-                                let mat_key = (
-                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                                );
-                                // Combined (instance storage + texture) bind group, primed in prepare().
-                                let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
-                                let no_discard = !clipping_active && !batch.has_alpha_mask;
-                                if cur_pipe != Some((batch.two_sided, no_discard)) {
-                                    // A pipeline still compiling skips the batch this frame.
-                                    let Some(pipeline) = resources.instancing.ldr_opaque(PipelineKey {
-                                        two_sided: batch.two_sided,
-                                        no_discard_eligible: no_discard,
-                                        ..PipelineKey::default()
-                                    }) else { cur_pipe = None; continue };
-                                    render_pass.set_pipeline(pipeline);
-                                    cur_pipe = Some((batch.two_sided, no_discard));
-                                }
-                                render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                                if cur_chunks != Some(chunks) {
-                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
-                                    render_pass.set_index_buffer(resources.geometry.index_chunk_slice(chunks.1), crate::gpu::IndexFormat::Uint32);
-                                    cur_chunks = Some(chunks);
-                                }
-                                let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                                let first_index = resources.geometry.first_index(mesh.index_span);
-                                render_pass.draw_indexed(
-                                    first_index..first_index + mesh.index_count,
-                                    base_vertex,
-                                    batch.instance_offset..batch.instance_offset + batch.instance_count,
-                                );
-                            }
-                        }
-                    }
-
-                    // Material-plugin opaque instanced batches (LDR): one call
-                    // each through the plugin's composed instanced pipeline plus
-                    // its group-3 params bind. The built-in opaque loop above
-                    // skips these. Mirrors the HDR plugin sub-loop; drawn before
-                    // the transparent batches so depth ordering matches built-in.
-                    if !frame.viewport.wireframe_mode
-                        && opaque_batches.iter().any(|b| b.shading_plugin.is_some())
+                    // The bundle holds every opaque batch.
+                    if batch.is_transparent
+                        || matches!(batch.draw, crate::renderer::types::DrawKind::NormalLines)
+                        || bundle_hit.is_some()
                     {
-                        bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
-                        let mut cur_chunks: Option<(u32, u32)> = None;
-                        let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
-                        for batch in &opaque_batches {
-                            if batch.shading_plugin.is_none() { continue; }
-                            let Some((plug_pipes, mat_bg)) =
-                                resources.material_plugin_instanced_draw(batch.shading_plugin) else { continue };
-                            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
-                            let mat_key = (
-                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                            );
-                            let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
-                            let Some(pipeline) = plug_pipes.ldr_opaque(
-                                crate::renderer::pipeline_key::PipelineKey::two_sided(batch.two_sided),
-                            ) else { continue };
-                            if cur_pipe != Some(pipeline as *const _) {
-                                render_pass.set_pipeline(pipeline);
-                                cur_pipe = Some(pipeline as *const _);
-                            }
-                            render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                            bind_material_group!(render_pass, mat_bg);
-                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                            if cur_chunks != Some(chunks) {
-                                render_pass.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
-                                render_pass.set_index_buffer(resources.geometry.index_chunk_slice(chunks.1), crate::gpu::IndexFormat::Uint32);
-                                cur_chunks = Some(chunks);
-                            }
-                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                            let first_index = resources.geometry.first_index(mesh.index_span);
-                            render_pass.draw_indexed(
-                                first_index..first_index + mesh.index_count,
-                                base_vertex,
-                                batch.instance_offset..batch.instance_offset + batch.instance_count,
-                            );
-                        }
+                        continue;
                     }
-
-                    // Draw transparent instanced batches.
-                    if !transparent_batches.is_empty() && !frame.viewport.wireframe_mode {
-                        if let Some(pipeline) = resources.instancing.ldr_transparent() {
-                            render_pass.set_pipeline(pipeline);
-                            bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
-                            let mut cur_chunks: Option<(u32, u32)> = None;
-                            for batch in &transparent_batches {
-                                // Plugin batches draw in the dedicated plugin
-                                // sub-loop below.
-                                if batch.shading_plugin.is_some() { continue; }
-                                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
-                                let mat_key = (
-                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                                );
-                                let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
-                                render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                                if cur_chunks != Some(chunks) {
-                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
-                                    render_pass.set_index_buffer(resources.geometry.index_chunk_slice(chunks.1), crate::gpu::IndexFormat::Uint32);
-                                    cur_chunks = Some(chunks);
-                                }
-                                let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                                let first_index = resources.geometry.first_index(mesh.index_span);
-                                render_pass.draw_indexed(
-                                    first_index..first_index + mesh.index_count,
-                                    base_vertex,
-                                    batch.instance_offset..batch.instance_offset + batch.instance_count,
-                                );
-                            }
-                        }
-                    }
-
-                    // Material-plugin transparent instanced batches (LDR): the
-                    // alpha-blend plugin pipeline, drawn after the transparent
-                    // built-in loop above (which skips them).
-                    if !frame.viewport.wireframe_mode
-                        && transparent_batches.iter().any(|b| b.shading_plugin.is_some())
-                    {
-                        bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
-                        let mut cur_chunks: Option<(u32, u32)> = None;
-                        let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
-                        for batch in &transparent_batches {
-                            if batch.shading_plugin.is_none() { continue; }
-                            let Some((plug_pipes, mat_bg)) =
-                                resources.material_plugin_instanced_draw(batch.shading_plugin) else { continue };
-                            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
-                            let mat_key = (
-                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                            );
-                            let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
-                            let Some(pipeline) = plug_pipes.ldr_transparent() else { continue };
-                            if cur_pipe != Some(pipeline as *const _) {
-                                render_pass.set_pipeline(pipeline);
-                                cur_pipe = Some(pipeline as *const _);
-                            }
-                            render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                            bind_material_group!(render_pass, mat_bg);
-                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                            if cur_chunks != Some(chunks) {
-                                render_pass.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
-                                render_pass.set_index_buffer(resources.geometry.index_chunk_slice(chunks.1), crate::gpu::IndexFormat::Uint32);
-                                cur_chunks = Some(chunks);
-                            }
-                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                            let first_index = resources.geometry.first_index(mesh.index_span);
-                            render_pass.draw_indexed(
-                                first_index..first_index + mesh.index_count,
-                                base_vertex,
-                                batch.instance_offset..batch.instance_offset + batch.instance_count,
-                            );
-                        }
-                    }
-
-                    // Wireframe mode fallback: draw per-object using per-item bind
-                    // groups so that items sharing a MeshId each get their own uniform.
-                    if frame.viewport.wireframe_mode {
-                        let mut wf_idx = 0usize;
-                        for item in scene_items {
-                            if item.settings.hidden { continue; }
-                            let Some(mesh) = resources.mesh_store.get(item.mesh_id) else { continue };
-                            let Some(wf) = resources.scene.wireframe() else { continue };
-                            render_pass.set_pipeline(wf);
-                            bind_deform_group!(
-                                render_pass,
-                                resources,
-                                resources
-                                    .deform
-                                    .instance_bind_group_for(item.mesh_id, item.deform_instance)
-                            );
-                            let bg = wireframe_bind_groups.get(wf_idx)
-                                .unwrap_or(&mesh.object_bind_group);
-                            render_pass.set_bind_group(1, bg, &[]);
-                            render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-                            if let Some(edge_buf) = &mesh.edge_index_buffer {
-                                render_pass.set_index_buffer(edge_buf.slice(..), crate::gpu::IndexFormat::Uint32);
-                                render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
-                            }
-                            wf_idx += 1;
-                        }
-                    } else {
-                        // LDR draws all excluded items here, including transparent ones
-                        // using the transparent (alpha-blend) pipeline. HDR instead routes
-                        // transparent excluded items to the OIT pass in render_frame_internal
-                        // so they composite correctly with the HDR transparency model.
-                        //
-                        // Pipeline, deform bind group, and geometry buffers are only
-                        // re-bound when they change between consecutive items: at
-                        // thousands of per-object items the redundant re-binds dominate
-                        // command-recording time (many scenes share one mesh and one
-                        // pipeline across every item).
-                        let mut cur_pipeline: Option<*const crate::gpu::RenderPipeline> = None;
-                        let mut cur_deform: Option<*const crate::gpu::BindGroup> = None;
-                        let mut cur_geometry: Option<(crate::resources::mesh::mesh_store::MeshId, bool)> = None;
-                        for (item_idx, item) in &excluded_items {
-                            let item_idx = *item_idx;
-                            let Some(mesh) = resources
-                                .mesh_store
-                                .get(item.mesh_id)
-                            else {
-                                continue;
-                            };
-                            // A wireframe item draws its edge lines in place of
-                            // its triangles.
-                            if item.settings.wireframe {
-                                if let (Some(edge_buf), Some(wf)) =
-                                    (&mesh.edge_index_buffer, resources.scene.wireframe())
-                                {
-                                    if cur_pipeline != Some(wf as *const _) {
-                                        render_pass.set_pipeline(wf);
-                                        cur_pipeline = Some(wf as *const _);
-                                    }
-                                    let deform_bg = resources
-                                        .deform
-                                        .instance_bind_group_for(item.mesh_id, item.deform_instance);
-                                    if cur_deform != Some(deform_bg as *const _) {
-                                        bind_deform_group!(render_pass, resources, deform_bg);
-                                        cur_deform = Some(deform_bg as *const _);
-                                    }
-                                    render_pass.set_bind_group(1, per_item_object_bind_groups.get(item_idx).and_then(|opt| opt.as_ref()).unwrap_or(&mesh.object_bind_group), &[]);
-                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-                                    render_pass.set_index_buffer(edge_buf.slice(..), crate::gpu::IndexFormat::Uint32);
-                                    let inst = object_inst(item_idx);
-                                    render_pass.draw_indexed(0..mesh.edge_index_count, 0, inst..inst + 1);
-                                    cur_geometry = None;
-                                }
-                                continue;
-                            }
-                            let is_blended = item.settings.opacity < 1.0
-                                || item.material.is_blend();
-                            let plug = resources.material_plugin_draw(item.material.shading_plugin);
-                            let pipeline = if let Some((pp, _)) = plug {
-                                if is_blended {
-                                    pp.ldr_transparent()
-                                } else {
-                                    pp.ldr_opaque(PipelineKey::two_sided(item.material.is_two_sided()))
-                                }
-                            } else if is_blended {
-                                resources.scene.transparent()
-                            } else if item.material.is_two_sided() {
-                                resources.scene.solid_two_sided()
-                            } else {
-                                resources.scene.solid()
-                            };
-                            // A plugin pipeline still compiling skips the item this frame.
-                            let Some(pipeline) = pipeline else { continue };
-                            if cur_pipeline != Some(pipeline as *const _) {
-                                render_pass.set_pipeline(pipeline);
-                                cur_pipeline = Some(pipeline as *const _);
-                            }
-                            let deform_bg = resources
-                                .deform
-                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
-                            if cur_deform != Some(deform_bg as *const _) {
-                                bind_deform_group!(render_pass, resources, deform_bg);
-                                cur_deform = Some(deform_bg as *const _);
-                            }
-                            render_pass.set_bind_group(1, per_item_object_bind_groups.get(item_idx).and_then(|opt| opt.as_ref()).unwrap_or(&mesh.object_bind_group), &[]);
-                            if let Some((_, mat_bg)) = plug {
-                                bind_material_group!(render_pass, mat_bg);
-                            }
-
-                            let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
-                                matches!(
-                                    a.kind,
-                                    crate::resources::AttributeKind::Face
-                                        | crate::resources::AttributeKind::FaceColour
-                                        | crate::resources::AttributeKind::Halfedge
-                                        | crate::resources::AttributeKind::Corner
-                                )
-                            });
-                            if is_face_attr {
-                                if let Some(ref fvb) = mesh.face_vertex_buffer {
-                                    render_pass.set_vertex_buffer(0, fvb.slice(..));
-                                    let inst = object_inst(item_idx);
-                                    render_pass.draw(0..mesh.index_count, inst..inst + 1);
-                                    // The face path binds no index buffer, so the
-                                    // cached geometry state no longer holds.
-                                    cur_geometry = None;
-                                }
-                            } else if let Some((mats, bgs)) =
-                                crate::renderer::prepare::active_submesh_materials(item, mesh)
-                                    .zip(submesh_bind_groups.get(&item_idx))
-                            {
-                                // One draw per range. The LDR path draws blend
-                                // ranges inline with the transparent pipeline,
-                                // matching how it draws blended items.
-                                if cur_geometry != Some((item.mesh_id, false)) {
-                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-                                    render_pass.set_index_buffer(
-                                        resources.geometry.index_slice(mesh.index_span),
-                                        crate::gpu::IndexFormat::Uint32,
-                                    );
-                                    cur_geometry = Some((item.mesh_id, false));
-                                }
-                                for (r, (mat, range)) in
-                                    mats.iter().zip(&mesh.submeshes).enumerate()
-                                {
-                                    let blended_r =
-                                        item.settings.opacity < 1.0 || mat.is_blend();
-                                    let plug_r =
-                                        resources.material_plugin_draw(mat.shading_plugin);
-                                    let pl = if let Some((pp, _)) = plug_r {
-                                        if blended_r {
-                                            pp.ldr_transparent()
-                                        } else {
-                                            pp.ldr_opaque(PipelineKey::two_sided(mat.is_two_sided()))
-                                        }
-                                    } else if blended_r {
-                                        resources.scene.transparent()
-                                    } else if mat.is_two_sided() {
-                                        resources.scene.solid_two_sided()
-                                    } else {
-                                        resources.scene.solid()
-                                    };
-                                    let Some(pl) = pl else { continue };
-                                    if cur_pipeline != Some(pl as *const _) {
-                                        render_pass.set_pipeline(pl);
-                                        cur_pipeline = Some(pl as *const _);
-                                    }
-                                    // Prefer the range's own bind group + index;
-                                    // fall back to the item's whole-mesh slot, then
-                                    // the mesh's single-element buffer at instance 0.
-                                    let (bg, inst) = if let Some(rbg) =
-                                        bgs.get(r).and_then(|b| b.as_ref())
-                                    {
-                                        (
-                                            rbg,
-                                            submesh_indices
-                                                .get(&item_idx)
-                                                .and_then(|v| v.get(r))
-                                                .copied()
-                                                .unwrap_or(0),
-                                        )
-                                    } else if let Some(ibg) = per_item_object_bind_groups
-                                        .get(item_idx)
-                                        .and_then(|opt| opt.as_ref())
-                                    {
-                                        (ibg, object_indices.get(item_idx).copied().unwrap_or(0))
-                                    } else {
-                                        (&mesh.object_bind_group, 0)
-                                    };
-                                    render_pass.set_bind_group(1, bg, &[]);
-                                    if let Some((_, mat_bg)) = plug_r {
-                                        bind_material_group!(render_pass, mat_bg);
-                                    }
-                                    render_pass.draw_indexed(
-                                        range.first_index..range.first_index + range.index_count,
-                                        0,
-                                        inst..inst + 1,
-                                    );
-                                }
-                            } else {
-                                if cur_geometry != Some((item.mesh_id, false)) {
-                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-                                    render_pass.set_index_buffer(
-                                        resources.geometry.index_slice(mesh.index_span),
-                                        crate::gpu::IndexFormat::Uint32,
-                                    );
-                                    cur_geometry = Some((item.mesh_id, false));
-                                }
-                                let inst = object_inst(item_idx);
-                                render_pass.draw_indexed(0..mesh.index_count, 0, inst..inst + 1);
-                            }
-                        }
-                    }
-            } else {
-                // --- Per-object draw path (original) ---
-                let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
-
-                let dist_from_eye = |entry: &(usize, &SceneRenderItem)| -> f32 {
-                    let item = entry.1;
-                    let pos = glam::Vec3::new(
-                        item.model[3][0],
-                        item.model[3][1],
-                        item.model[3][2],
+                    crate::renderer::types::draw_batch(
+                        resources,
+                        batch_bind_groups,
+                        render_pass,
+                        batch,
+                        &batch_pass,
+                        &mut batch_bound,
                     );
-                    (pos - eye).length()
-                };
-
-                // When prepare cached a render bundle for this item set and
-                // this pass uses the camera bind group the bundle was recorded
-                // with, replay it instead of re-recording one draw per opaque
-                // item; only the blended items still draw immediately (their
-                // back-to-front order depends on the camera every frame).
-                let bundle_hit: Option<&crate::renderer::per_object_state::PerObjectBundle> =
-                    po_bundle.filter(|pb| !pb.hdr && pb.camera_bg == *camera_bg);
-
-                let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
-                let mut transparent: Vec<(usize, &SceneRenderItem)> = Vec::new();
-                if let Some(pb) = bundle_hit {
-                    for &idx in &pb.transparent {
-                        if let Some(item) = scene_items.get(idx) {
-                            if !item.settings.hidden
-                                && resources.mesh_store.get(item.mesh_id).is_some()
-                            {
-                                transparent.push((idx, item));
-                            }
-                        }
-                    }
-                } else {
-                    for (idx, item) in scene_items.iter().enumerate() {
-                        if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
-                            continue;
-                        }
-                        if item.settings.opacity < 1.0 {
-                            transparent.push((idx, item));
-                        } else {
-                            opaque.push((idx, item));
-                        }
-                    }
-                    opaque.sort_by(|a, b| dist_from_eye(a).partial_cmp(&dist_from_eye(b)).unwrap_or(std::cmp::Ordering::Equal));
                 }
-                transparent.sort_by(|a, b| dist_from_eye(b).partial_cmp(&dist_from_eye(a)).unwrap_or(std::cmp::Ordering::Equal));
-
-                if let Some(pb) = bundle_hit {
-                    render_pass.execute_bundles(std::iter::once(&pb.bundle));
-                    // Bundle execution resets all render-pass state; restore
-                    // the camera bind group for the draws and passes below.
-                    render_pass.set_bind_group(0, camera_bg, &[]);
+            }
+            for batch in batches {
+                if !matches!(batch.draw, crate::renderer::types::DrawKind::NormalLines) {
+                    continue;
                 }
+                crate::renderer::types::draw_batch(
+                    resources,
+                    batch_bind_groups,
+                    render_pass,
+                    batch,
+                    &batch_pass,
+                    &mut batch_bound,
+                );
+            }
 
-                // Re-bind pipeline, deform bind group, and geometry buffers only
-                // when they change between consecutive items; at thousands of
-                // items the redundant re-binds dominate command recording.
-                let mut cur_pipeline: Option<*const crate::gpu::RenderPipeline> = None;
-                let mut cur_deform: Option<*const crate::gpu::BindGroup> = None;
-                let mut cur_geometry: Option<(crate::resources::mesh::mesh_store::MeshId, bool)> = None;
-                macro_rules! set_pipeline_cached {
-                    ($pl:expr) => {{
-                        let pl: &crate::gpu::RenderPipeline = $pl;
-                        if cur_pipeline != Some(pl as *const _) {
-                            render_pass.set_pipeline(pl);
-                            cur_pipeline = Some(pl as *const _);
-                        }
-                    }};
-                }
-                macro_rules! set_deform_cached {
-                    ($bg:expr) => {{
-                        let bg: &crate::gpu::BindGroup = $bg;
-                        if cur_deform != Some(bg as *const _) {
-                            bind_deform_group!(render_pass, resources, bg);
-                            cur_deform = Some(bg as *const _);
-                        }
-                    }};
-                }
-                macro_rules! draw_item {
-                    ($entry:expr, $pipeline:expr) => {{
-                        let (item_idx, item): (usize, &SceneRenderItem) = $entry;
-                        let mesh = resources.mesh_store.get(item.mesh_id).unwrap();
-                        render_pass.set_bind_group(1, per_item_object_bind_groups.get(item_idx).and_then(|opt| opt.as_ref()).unwrap_or(&mesh.object_bind_group), &[]);
-                        if let Some((_, mat_bg)) =
-                            resources.material_plugin_draw(item.material.shading_plugin)
-                        {
-                            bind_material_group!(render_pass, mat_bg);
-                        }
-
-                        let deform_bg = resources
-                            .deform
-                            .instance_bind_group_for(item.mesh_id, item.deform_instance);
-
-                        // mesh.object_bind_group (group 1) already carries the object uniform
-                        // and the correct texture views : updated in prepare() if material changed.
-                        let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
-                            matches!(
-                                a.kind,
-                                crate::resources::AttributeKind::Face
-                                    | crate::resources::AttributeKind::FaceColour
-                                    | crate::resources::AttributeKind::Halfedge
-                                    | crate::resources::AttributeKind::Corner
-                            )
-                        });
-
-                        if frame.viewport.wireframe_mode || item.settings.wireframe {
-                            if let (Some(edge_buf), Some(wf)) =
-                                (&mesh.edge_index_buffer, resources.scene.wireframe())
-                            {
-                                set_pipeline_cached!(wf);
-                                set_deform_cached!(deform_bg);
-                                render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-                                render_pass.set_index_buffer(
-                                    edge_buf.slice(..),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                let inst = object_inst(item_idx);
-                                render_pass.draw_indexed(0..mesh.edge_index_count, 0, inst..inst + 1);
-                                cur_geometry = None;
-                            }
-                        } else if is_face_attr {
-                            if let Some(ref fvb) = mesh.face_vertex_buffer {
-                                set_pipeline_cached!($pipeline);
-                                set_deform_cached!(deform_bg);
-                                render_pass.set_vertex_buffer(0, fvb.slice(..));
-                                let inst = object_inst(item_idx);
-                                render_pass.draw(0..mesh.index_count, inst..inst + 1);
-                                cur_geometry = None;
-                            }
-                        } else {
-                            let ranges =
-                                crate::renderer::prepare::active_submesh_materials(item, mesh)
-                                    .zip(submesh_bind_groups.get(&item_idx));
-                            if let Some((mats, bgs)) = ranges {
-                                set_deform_cached!(deform_bg);
-                                if cur_geometry != Some((item.mesh_id, false)) {
-                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-                                    render_pass.set_index_buffer(
-                                        resources.geometry.index_slice(mesh.index_span),
-                                        crate::gpu::IndexFormat::Uint32,
-                                    );
-                                    cur_geometry = Some((item.mesh_id, false));
-                                }
-                                for (r, (mat, range)) in
-                                    mats.iter().zip(&mesh.submeshes).enumerate()
-                                {
-                                    let blended_r =
-                                        item.settings.opacity < 1.0 || mat.is_blend();
-                                    let plug_r =
-                                        resources.material_plugin_draw(mat.shading_plugin);
-                                    let pl = if let Some((pp, _)) = plug_r {
-                                        if blended_r {
-                                            pp.ldr_transparent()
-                                        } else {
-                                            pp.ldr_opaque(PipelineKey::two_sided(mat.is_two_sided()))
-                                        }
-                                    } else if blended_r {
-                                        resources.scene.transparent()
-                                    } else if mat.is_two_sided() {
-                                        resources.scene.solid_two_sided()
-                                    } else {
-                                        resources.scene.solid()
-                                    };
-                                    let Some(pl) = pl else { continue };
-                                    set_pipeline_cached!(pl);
-                                    // Prefer the range's own bind group + index;
-                                    // fall back to the item's whole-mesh slot, then
-                                    // the mesh's single-element buffer at instance 0.
-                                    let (bg, inst) = if let Some(rbg) =
-                                        bgs.get(r).and_then(|b| b.as_ref())
-                                    {
-                                        (
-                                            rbg,
-                                            submesh_indices
-                                                .get(&item_idx)
-                                                .and_then(|v| v.get(r))
-                                                .copied()
-                                                .unwrap_or(0),
-                                        )
-                                    } else if let Some(ibg) = per_item_object_bind_groups
-                                        .get(item_idx)
-                                        .and_then(|opt| opt.as_ref())
-                                    {
-                                        (ibg, object_indices.get(item_idx).copied().unwrap_or(0))
-                                    } else {
-                                        (&mesh.object_bind_group, 0)
-                                    };
-                                    render_pass.set_bind_group(1, bg, &[]);
-                                    if let Some((_, mat_bg)) = plug_r {
-                                        bind_material_group!(render_pass, mat_bg);
-                                    }
-                                    render_pass.draw_indexed(
-                                        range.first_index..range.first_index + range.index_count,
-                                        0,
-                                        inst..inst + 1,
-                                    );
-                                }
-                            } else {
-                                set_pipeline_cached!($pipeline);
-                                set_deform_cached!(deform_bg);
-                                let inst = object_inst(item_idx);
-                                if cur_geometry != Some((item.mesh_id, false)) {
-                                    render_pass
-                                        .set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-                                    render_pass.set_index_buffer(
-                                        resources.geometry.index_slice(mesh.index_span),
-                                        crate::gpu::IndexFormat::Uint32,
-                                    );
-                                    cur_geometry = Some((item.mesh_id, false));
-                                }
-                                render_pass.draw_indexed(0..mesh.index_count, 0, inst..inst + 1);
-                            }
-                        }
-
-                        if item.show_normals {
-                            if let (Some(nl_buf), Some(wf)) =
-                                (&mesh.normal_line_buffer, resources.scene.wireframe())
-                            {
-                                if mesh.normal_line_count > 0 {
-                                    set_pipeline_cached!(wf);
-                                    set_deform_cached!(&resources.deform.dummy_bind_group);
-                                    render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
-                                    render_pass.set_vertex_buffer(0, nl_buf.slice(..));
-                                    render_pass.draw(0..mesh.normal_line_count, 0..1);
-                                    cur_geometry = None;
-                                }
-                            }
-                        }
-                    }};
-                }
-
-                for entry in &opaque {
-                    let plug = resources.material_plugin_draw(entry.1.material.shading_plugin);
-                    let pl = if let Some((pp, _)) = plug {
-                        pp.ldr_opaque(PipelineKey::two_sided(entry.1.material.is_two_sided()))
-                    } else if entry.1.material.is_two_sided() {
-                        resources.scene.solid_two_sided()
-                    } else {
-                        resources.scene.solid()
-                    };
-                    // A plugin pipeline still compiling skips the item this frame.
-                    let Some(pl) = pl else { continue };
-                    draw_item!((entry.0, entry.1), pl);
-                }
-                for entry in &transparent {
-                    let pl = if let Some((pp, _)) =
-                        resources.material_plugin_draw(entry.1.material.shading_plugin)
-                    {
-                        pp.ldr_transparent()
-                    } else {
-                        resources.scene.transparent()
-                    };
-                    let Some(pl) = pl else { continue };
-                    draw_item!((entry.0, entry.1), pl);
+            // Blended batches, after every opaque draw. There is no OIT here,
+            // so they draw back to front by view depth. Prepare gives each
+            // blended item its own batch on this path, so the order is per
+            // item.
+            if !transparent_batches.is_empty() {
+                let view = frame.camera.render_camera.view;
+                let depth =
+                    |b: &InstancedBatch| -view.transform_point3(glam::Vec3::from(b.sort_centre)).z;
+                transparent_batches.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+                for batch in &transparent_batches {
+                    crate::renderer::types::draw_batch(
+                        resources,
+                        batch_bind_groups,
+                        render_pass,
+                        batch,
+                        &batch_pass,
+                        &mut batch_bound,
+                    );
                 }
             }
         }
@@ -1018,12 +949,10 @@ macro_rules! emit_draw_calls {
 
         // Cap fill pass (section view cross-section fill).
         if let Some(slot) = _vp_slot {
-            if let (false, Some(pipeline)) =
-                (
+            if let (false, Some(pipeline)) = (
                 slot.cap_buffers.is_empty(),
                 resources.guide_pipeline(crate::resources::overlay::guides::GUIDE_TRIANGLES),
-            )
-            {
+            ) {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.cap_buffers {
@@ -1035,21 +964,22 @@ macro_rules! emit_draw_calls {
             }
         }
 
-
         // X-ray pass: render selected objects as semi-transparent overlay through geometry.
         if let Some(slot) = _vp_slot {
             if !slot.xray_object_buffers.is_empty() {
                 render_pass.set_pipeline(resources.outline.xray_pipeline());
                 render_pass.set_bind_group(0, camera_bg, &[]);
-                // The x-ray pipeline shares the outline layout, so group 2 is
-                // part of it whenever deformers are enabled. X-ray draws the
-                // undeformed mesh, so the dummy group is what it wants.
-                bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
                 for (mesh_id, xray) in &slot.xray_object_buffers {
-                    let Some(mesh) = resources.mesh_store.get(*mesh_id) else { continue };
+                    let Some(mesh) = resources.mesh_store.get(*mesh_id) else {
+                        continue;
+                    };
                     render_pass.set_bind_group(1, &xray.bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-                    render_pass.set_index_buffer(resources.geometry.index_slice(mesh.index_span), crate::gpu::IndexFormat::Uint32);
+                    render_pass
+                        .set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
+                    render_pass.set_index_buffer(
+                        resources.geometry.index_slice(mesh.index_span),
+                        crate::gpu::IndexFormat::Uint32,
+                    );
                     render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
             }

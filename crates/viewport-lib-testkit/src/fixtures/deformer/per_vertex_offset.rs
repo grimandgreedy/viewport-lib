@@ -9,9 +9,9 @@ use viewport_lib::{DeformStage, DeformerDesc, MeshId};
 ///
 /// Where [`constant_offset_deformer`](super::constant_offset_deformer) proves
 /// registration and the params window, this one proves the data path: the
-/// body calls `deform_read_f32(ctx.slot, v.vertex_index, 0u)`, so the
-/// `(offset, stride)` prefix layout of `deform_data` and the helper that
-/// indexes it are both exercised. A test attaches a different value per
+/// body calls `deform_read_f32(ctx.slot, v.vertex_index, 0u)`, so the deform
+/// table that locates the slot and the helper that indexes it are both
+/// exercised. A test attaches a different value per
 /// vertex, so a regression in the addressing shows up as the wrong vertices
 /// moving, not just as nothing moving.
 pub fn per_vertex_offset_deformer() -> DeformerDesc {

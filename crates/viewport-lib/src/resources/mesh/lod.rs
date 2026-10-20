@@ -420,10 +420,17 @@ impl crate::resources::DeviceResources {
     fn mesh_attribute_names(&self, mesh: MeshId) -> std::collections::BTreeSet<String> {
         let mut names = std::collections::BTreeSet::new();
         if let Some(m) = self.mesh_store.get(mesh) {
-            names.extend(m.attribute_buffers.keys().cloned());
-            names.extend(m.face_attribute_buffers.keys().cloned());
-            names.extend(m.face_colour_buffers.keys().cloned());
-            names.extend(m.vector_attribute_buffers.keys().cloned());
+            if let Some(record) = m.sidecar.as_ref() {
+                use crate::resources::mesh::sidecar_pool::StreamKind;
+                for kind in [
+                    StreamKind::Scalar,
+                    StreamKind::FaceScalar,
+                    StreamKind::FaceColour,
+                    StreamKind::Vector,
+                ] {
+                    names.extend(record.names(kind).map(str::to_string));
+                }
+            }
         }
         names
     }

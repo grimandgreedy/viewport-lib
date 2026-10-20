@@ -243,13 +243,13 @@ impl crate::plugin_api::PluginInstaller for PhysicsLitePlugin {
 mod tests {
     use super::*;
     use crate::interaction::select::selection::Selection;
+    use crate::resources::MaterialId;
     use crate::runtime::context::RuntimeFrameContext;
-    use crate::scene::material::Material;
     use crate::scene::scene::Scene;
 
     #[test]
     fn body_builders_set_fields() {
-        let node = Scene::new().add(None, glam::Mat4::IDENTITY, Material::default());
+        let node = Scene::new().add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         let b = PhysicsBody::new(node)
             .with_velocity(glam::Vec3::new(1.0, 2.0, 3.0))
             .with_gravity_scale(0.5)
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn body_falls_under_gravity() {
         let mut scene = Scene::new();
-        let node = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         let mut phys = PhysicsLitePlugin::new(); // default gravity -Z
         phys.add_body(PhysicsBody::new(node));
 

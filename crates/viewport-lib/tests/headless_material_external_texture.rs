@@ -137,10 +137,12 @@ fn external_view_is_sampled_by_a_material() {
     frame.effects.lighting.lights = vec![light];
 
     let mut item = SceneRenderItem::default();
+    let mut mat = Material::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
-    item.material.texture_id = Some(tex);
+    mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+    mat.texture_id = Some(tex);
+    item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let cam = Camera::default();

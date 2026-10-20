@@ -11,7 +11,7 @@
 //! the bindless feature set it also covers the path that carried the bug; the
 //! bindless-specific test below skips where that is unavailable.
 
-use viewport_lib::{Material, SceneRenderItem, TextureData, primitives};
+use viewport_lib::{Material, MaterialId, SceneRenderItem, TextureData, primitives};
 use viewport_lib_testkit::{DeviceProfile, Harness, orbit_camera};
 
 const W: u32 = 96;
@@ -52,14 +52,14 @@ fn solid(rgba: [u8; 4]) -> TextureData {
 fn shot(
     h: &mut Harness,
     mesh: viewport_lib::MeshId,
-    material: Material,
+    material: MaterialId,
     generation: u64,
 ) -> Vec<u8> {
     let quad = |x: f32| {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
-        item.material = material.clone();
+        item.material = material;
         item.settings.unlit = true;
         item
     };
@@ -99,9 +99,14 @@ fn stale_handle_renders_as_unset(h: &mut Harness) {
 
     let mut textured = Material::default();
     textured.texture_id = Some(authored);
+    let textured = h
+        .renderer
+        .resources_mut()
+        .upload_material(textured)
+        .expect("material upload");
 
-    let unset = digest(&shot(h, mesh, Material::default(), 1));
-    let live = digest(&shot(h, mesh, textured.clone(), 2));
+    let unset = digest(&shot(h, mesh, MaterialId::DEFAULT, 1));
+    let live = digest(&shot(h, mesh, textured, 2));
     assert_ne!(
         unset, live,
         "a live texture in the albedo slot must change the image, or this test \

@@ -14,11 +14,12 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
-    Aabb, FrameData, FrameStats, LodGroupId, Material, MeshId, MeshInstanceItem, PickId,
-    RenderCamera, SceneRenderItem, SpriteBlend, ViewportRenderer, primitives,
+    Aabb, FrameData, FrameStats, LodGroupId, Material, MaterialId, MeshId, MeshInstanceItem,
+    PickId, RenderCamera, SceneRenderItem, SpriteBlend, ViewportRenderer, primitives,
     projected_screen_size,
 };
 
@@ -30,6 +31,8 @@ pub(crate) struct LodState {
     pub group: Option<LodGroupId>,
     /// One mesh per level, kept so the LOD-off mode can force the full mesh.
     pub level_meshes: Vec<MeshId>,
+    /// Material for the standalone sphere row.
+    pub sphere_material: MaterialId,
     /// Lower screen-size bound per level, used to tint instances by level.
     pub thresholds: Vec<f32>,
     /// Local-space bounds shared by every level, for the tint sizing math.
@@ -50,6 +53,7 @@ impl Default for LodState {
             built: false,
             group: None,
             level_meshes: Vec::new(),
+            sphere_material: MaterialId::DEFAULT,
             thresholds: Vec::new(),
             aabb: Aabb::default(),
             lod_enabled: true,
@@ -94,6 +98,10 @@ impl App {
         self.lod_state.level_meshes = level_meshes;
         self.lod_state.thresholds = thresholds.to_vec();
         self.lod_state.aabb = aabb;
+        self.lod_state.sphere_material = upload_material(
+            renderer,
+            Material::from_colour(Colour::linear_rgb(0.22, 0.28, 0.55)),
+        );
         self.lod_state.built = true;
     }
 }
@@ -128,7 +136,7 @@ pub(crate) fn lod_scene_items(app: &App) -> Vec<SceneRenderItem> {
             let mut item = SceneRenderItem::default();
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
-            item.material = Material::from_colour(Colour::linear_rgb(0.22, 0.28, 0.55));
+            item.material = st.sphere_material;
             item.settings.pick_id = PickId(1000 + i as u64);
             if st.lod_enabled {
                 item.lod_group = Some(group);

@@ -644,7 +644,7 @@ impl<'rp> PaintCtx<'_, 'rp> {
 /// Declare windows with [`window`](Self::window), then [`run`](Self::run):
 ///
 /// ```rust,ignore
-/// use viewport_lib::{AppConfig, Material, ViewportApp, WindowConfig, primitives};
+/// use viewport_lib::{AppConfig, Colour, Material, ViewportApp, WindowConfig, primitives};
 ///
 /// ViewportApp::new(AppConfig::default())
 ///     .window(
@@ -652,8 +652,9 @@ impl<'rp> PaintCtx<'_, 'rp> {
 ///         |vp, device| {
 ///             let mesh = vp.resources_mut()
 ///                 .upload_mesh_data(device, &primitives::cube(1.0)).unwrap();
-///             vp.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY,
-///                 Material::from_colour([0.85, 0.25, 0.2]));
+///             let red = vp.resources_mut()
+///                 .upload_material(Material::from_colour(Colour::linear_rgb(0.85, 0.25, 0.2))).unwrap();
+///             vp.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, red);
 ///             vp.camera_mut().distance = 6.0;
 ///         },
 ///         |_ctx| {},

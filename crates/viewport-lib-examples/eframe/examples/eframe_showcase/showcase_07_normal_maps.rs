@@ -13,6 +13,7 @@ use crate::geometry::{
     make_box_with_uvs, make_brick_ao_map, make_brick_normal_map, make_tile_ao_map,
     make_tile_normal_map, make_uv_sphere,
 };
+use crate::shared::{edit_material, upload_material};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{BackfacePolicy, Material, NodeId, ViewportRenderer, scene::Scene};
@@ -154,7 +155,7 @@ impl App {
                 let mut mat = Material::pbr(Colour::linear_rgb(0.85, 0.85, 0.85), 0.0, 0.85);
                 mat.normal_map_id = Some(tile_nm_id);
                 mat.ao_map_id = Some(tile_ao_id);
-                mat
+                upload_material(renderer, mat)
             },
         );
         self.nm_state
@@ -171,7 +172,7 @@ impl App {
                 mat.normal_map_id = Some(brick_nm_id);
                 mat.ao_map_id = Some(brick_ao_id);
                 mat.backface_policy = BackfacePolicy::Identical;
-                mat
+                upload_material(renderer, mat)
             },
         );
         self.nm_state
@@ -187,7 +188,7 @@ impl App {
                 let mut mat = Material::pbr(Colour::linear_rgb(0.85, 0.87, 0.9), 0.1, 0.6);
                 mat.normal_map_id = Some(tile_nm_id);
                 mat.ao_map_id = Some(tile_ao_id);
-                mat
+                upload_material(renderer, mat)
             },
         );
         self.nm_state
@@ -203,7 +204,7 @@ impl App {
                 let mut mat = Material::pbr(Colour::linear_rgb(0.92, 0.9, 0.87), 0.0, 0.7);
                 mat.normal_map_id = Some(brick_nm_id);
                 mat.ao_map_id = Some(brick_ao_id);
-                mat
+                upload_material(renderer, mat)
             },
         );
         self.nm_state
@@ -225,7 +226,7 @@ impl App {
             {
                 let mut mat = Material::pbr(Colour::linear_rgb(0.9, 0.88, 0.85), 0.0, 0.5);
                 mat.backface_policy = BackfacePolicy::Identical;
-                mat
+                upload_material(renderer, mat)
             },
         );
 
@@ -242,7 +243,7 @@ impl App {
 // Controls
 // ---------------------------------------------------------------------------
 
-pub(crate) fn controls_normal_maps(app: &mut App, ui: &mut egui::Ui) {
+pub(crate) fn controls_normal_maps(app: &mut App, ui: &mut egui::Ui, frame: &crate::eframe::Frame) {
     if ui
         .checkbox(&mut app.nm_state.normal_on, "Normal map")
         .changed()
@@ -250,9 +251,9 @@ pub(crate) fn controls_normal_maps(app: &mut App, ui: &mut egui::Ui) {
         let on = app.nm_state.normal_on;
         for &(node_id, nm_id, _) in &app.nm_state.mapped_nodes.clone() {
             if let Some(node) = app.nm_state.scene.node(node_id) {
-                let mut mat = *node.material();
-                mat.normal_map_id = if on { Some(nm_id) } else { None };
-                app.nm_state.scene.set_material(node_id, mat);
+                edit_material(frame, node.material(), |m| {
+                    m.normal_map_id = if on { Some(nm_id) } else { None }
+                });
             }
         }
     }
@@ -269,9 +270,7 @@ pub(crate) fn controls_normal_maps(app: &mut App, ui: &mut egui::Ui) {
             let s = app.nm_state.normal_strength;
             for &(node_id, _, _) in &app.nm_state.mapped_nodes.clone() {
                 if let Some(node) = app.nm_state.scene.node(node_id) {
-                    let mut mat = *node.material();
-                    mat.normal_strength = s;
-                    app.nm_state.scene.set_material(node_id, mat);
+                    edit_material(frame, node.material(), |m| m.normal_strength = s);
                 }
             }
         }
@@ -281,9 +280,9 @@ pub(crate) fn controls_normal_maps(app: &mut App, ui: &mut egui::Ui) {
         let on = app.nm_state.ao_on;
         for &(node_id, _, ao_id) in &app.nm_state.mapped_nodes.clone() {
             if let Some(node) = app.nm_state.scene.node(node_id) {
-                let mut mat = *node.material();
-                mat.ao_map_id = if on { Some(ao_id) } else { None };
-                app.nm_state.scene.set_material(node_id, mat);
+                edit_material(frame, node.material(), |m| {
+                    m.ao_map_id = if on { Some(ao_id) } else { None }
+                });
             }
         }
     }
@@ -325,9 +324,7 @@ pub(crate) fn controls_normal_maps(app: &mut App, ui: &mut egui::Ui) {
             let range = app.nm_state.ao_range;
             for &(node_id, _, _) in &app.nm_state.mapped_nodes.clone() {
                 if let Some(node) = app.nm_state.scene.node(node_id) {
-                    let mut mat = *node.material();
-                    mat.ao_range = range;
-                    app.nm_state.scene.set_material(node_id, mat);
+                    edit_material(frame, node.material(), |m| m.ao_range = range);
                 }
             }
         }
@@ -536,8 +533,8 @@ impl crate::Showcase for ScNormalMaps {
         &self,
         app: &mut crate::App,
         ui: &mut crate::eframe::egui::Ui,
-        _frame: &crate::eframe::Frame,
+        frame: &crate::eframe::Frame,
     ) {
-        controls_normal_maps(app, ui)
+        controls_normal_maps(app, ui, frame)
     }
 }

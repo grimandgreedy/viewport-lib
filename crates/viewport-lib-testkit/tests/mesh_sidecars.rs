@@ -35,7 +35,11 @@ fn big_mesh_uploads_within_device_limit() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = id;
-    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
+    item.material = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
+        .expect("material upload");
     let fd = frame_for_item(item, 150.0, [200.0, 150.0]);
     let stats = h.render_two_frames(&fd, 200, 150);
     assert_eq!(stats.triangles_submitted, expected_tris);
@@ -73,7 +77,11 @@ fn oversized_mesh_is_refused_cleanly() {
         .expect("small upload after refusal");
     let mut item = SceneRenderItem::default();
     item.mesh_id = id;
-    item.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
+    item.material = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
+        .expect("material upload");
     let fd = frame_for_item(item, 4.0, [200.0, 150.0]);
     let stats = h.render_two_frames(&fd, 200, 150);
     assert_eq!(stats.triangles_submitted, (small.indices.len() / 3) as u64);
@@ -97,7 +105,11 @@ fn normals_view_renders_lazily() {
 
     let mut plain = SceneRenderItem::default();
     plain.mesh_id = id;
-    plain.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
+    plain.material = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
+        .expect("material upload");
     let mut with_normals = plain.clone();
     with_normals.show_normals = true;
 

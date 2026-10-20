@@ -14,6 +14,7 @@
 //! - Pause/Resume: freeze the simulation.
 
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
@@ -191,7 +192,7 @@ pub(crate) fn build_dbg_draw_scene(app: &mut App, renderer: &mut vpl::ViewportRe
         let (x, y, z) = body_starts[i];
         let transform = glam::Mat4::from_translation(glam::Vec3::new(x, y, z));
         let mat = Material::from_colour(Colour::from_linear_rgb_array(*colour));
-        let id = scene.add(Some(mesh_id), transform, mat);
+        let id = scene.add(Some(mesh_id), transform, upload_material(renderer, mat));
         node_ids.push(id);
 
         let (vx, vy, vz) = body_velocities[i];

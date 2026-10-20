@@ -25,9 +25,7 @@ pub struct CounterSnapshot {
     pub draw_calls: u32,
     /// Instanced batches drawn.
     pub instanced_batches: u32,
-    /// Items routed through the per-object (non-instanced) path.
-    pub per_object_items: u32,
-    /// Per-object bind groups built this frame (0 on a settled cache).
+    /// Batch group-1 bind groups built this frame (0 on a settled cache).
     pub per_object_bind_groups_built: u32,
     /// Triangles submitted to the rasteriser.
     pub triangles_submitted: u64,
@@ -46,7 +44,6 @@ impl CounterSnapshot {
             culled_objects: s.culled_objects,
             draw_calls: s.draw_calls,
             instanced_batches: s.instanced_batches,
-            per_object_items: s.per_object_items,
             per_object_bind_groups_built: s.per_object_bind_groups_built,
             triangles_submitted: s.triangles_submitted,
             batches_reuploaded: s.batches_reuploaded,
@@ -55,7 +52,7 @@ impl CounterSnapshot {
     }
 
     /// The `Display` column order, for a header row when recording several.
-    pub const HEADER: &'static str = "total_objects,visible_objects,culled_objects,draw_calls,instanced_batches,per_object_items,per_object_bgs,triangles,batches_reup,batches_skip";
+    pub const HEADER: &'static str = "total_objects,visible_objects,culled_objects,draw_calls,instanced_batches,per_object_bgs,triangles,batches_reup,batches_skip";
 }
 
 impl fmt::Display for CounterSnapshot {
@@ -63,13 +60,12 @@ impl fmt::Display for CounterSnapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{}",
             self.total_objects,
             self.visible_objects,
             self.culled_objects,
             self.draw_calls,
             self.instanced_batches,
-            self.per_object_items,
             self.per_object_bind_groups_built,
             self.triangles_submitted,
             self.batches_reuploaded,

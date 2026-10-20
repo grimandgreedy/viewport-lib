@@ -24,9 +24,9 @@ use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material,
-    MeshData, MeshId, Modifiers, MouseButton, OffscreenViewportTarget, OrbitCameraController,
-    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
-    ViewportRenderer, primitives,
+    MaterialId, MeshData, MeshId, Modifiers, MouseButton, OffscreenViewportTarget,
+    OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
+    ViewportEvent, ViewportInput, ViewportRenderer, primitives,
 };
 
 const SLAB_HALF_EXTENTS: [f32; 3] = [0.5, 0.5, 0.005];
@@ -168,6 +168,23 @@ fn main() -> eframe::Result {
                 // A tall box (non-cubic via a scaled model matrix).
                 (3, 1.2, glam::Vec3::new(3.2, 0.0, 1.6)),
             ];
+            let tvm_material = {
+                let mut m = Material::from_colour(Colour::from_linear_rgb_array(TVM_COLOUR));
+                // Show both sides of every tet face, like the face soup.
+                m.backface_policy = BackfacePolicy::Identical;
+                res.upload_material(m).expect("tvm material")
+            };
+            let floor_material = {
+                let mut m = Material::from_colour(Colour::from_linear_rgb_array(FLOOR_COLOUR));
+                m.backface_policy = BackfacePolicy::Identical;
+                res.upload_material(m).expect("floor material")
+            };
+            let slab_material = res
+                .upload_material(Material::from_colour(Colour::from_linear_rgb_array(
+                    SLAB_COLOUR,
+                )))
+                .expect("slab material");
+
             let mut tvm_items = Vec::new();
             for (idx, (n, size, translation)) in tvm_specs.into_iter().enumerate() {
                 let (positions, tets) = tet_lattice(n, size);
@@ -183,18 +200,17 @@ fn main() -> eframe::Result {
                 item.model = (glam::Mat4::from_translation(translation)
                     * glam::Mat4::from_scale(scale))
                 .to_cols_array_2d();
-                item.material = {
-                    let mut m = Material::from_colour(Colour::from_linear_rgb_array(TVM_COLOUR));
-                    // Show both sides of every tet face, like the face soup.
-                    m.backface_policy = BackfacePolicy::Identical;
-                    m
-                };
+                item.material = tvm_material;
                 item.settings.opacity = TVM_OPACITY;
                 tvm_items.push(item);
             }
 
             rs.renderer.write().callback_resources.insert(renderer);
-            Ok(Box::new(App::new(floor_mesh, slab_mesh, tvm_items)))
+            Ok(Box::new(App::new(
+                (floor_mesh, floor_material),
+                (slab_mesh, slab_material),
+                tvm_items,
+            )))
         }),
     )
 }
@@ -205,8 +221,8 @@ struct App {
     /// Owns the bindings and resolves events into an `ActionFrame`. The
     /// controller keeps only its sensitivities and applies the frame.
     input: ViewportInput,
-    floor_mesh: MeshId,
-    slab_mesh: MeshId,
+    floor: (MeshId, MaterialId),
+    slab: (MeshId, MaterialId),
     tvm_items: Vec<SceneRenderItem>,
     target: Option<Target>,
 }
@@ -218,7 +234,11 @@ struct Target {
 }
 
 impl App {
-    fn new(floor_mesh: MeshId, slab_mesh: MeshId, tvm_items: Vec<SceneRenderItem>) -> Self {
+    fn new(
+        floor: (MeshId, MaterialId),
+        slab: (MeshId, MaterialId),
+        tvm_items: Vec<SceneRenderItem>,
+    ) -> Self {
         Self {
             camera: Camera {
                 center: glam::Vec3::new(0.0, 0.0, 1.0),
@@ -227,28 +247,20 @@ impl App {
             },
             controller: OrbitCameraController::new_stateless(),
             input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
-            floor_mesh,
-            slab_mesh,
+            floor,
+            slab,
             tvm_items,
             target: None,
         }
     }
 
     fn build_items(&self) -> Vec<SceneRenderItem> {
-        let mut floor = SceneRenderItem::default();
-        floor.mesh_id = self.floor_mesh;
+        let mut floor = SceneRenderItem::new(self.floor.0, self.floor.1);
         floor.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-        floor.material = {
-            let mut m = Material::from_colour(Colour::from_linear_rgb_array(FLOOR_COLOUR));
-            m.backface_policy = BackfacePolicy::Identical;
-            m
-        };
 
-        let mut slab = SceneRenderItem::default();
-        slab.mesh_id = self.slab_mesh;
+        let mut slab = SceneRenderItem::new(self.slab.0, self.slab.1);
         slab.model =
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, SLAB_HEIGHT)).to_cols_array_2d();
-        slab.material = Material::from_colour(Colour::from_linear_rgb_array(SLAB_COLOUR));
 
         let mut items = vec![slab, floor];
         items.extend(self.tvm_items.iter().cloned());

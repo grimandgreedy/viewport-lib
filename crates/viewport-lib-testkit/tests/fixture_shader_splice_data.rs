@@ -1,11 +1,11 @@
 //! Smoke tests for the family-D fixtures that use their data paths.
 //!
 //! `constant_offset_deformer` and `FlatColourMaterialPlugin` cover
-//! registration, composition, and the params windows. These two cover what a
+//! registration, composition, and declared parameters. These two cover what a
 //! real splice leans on and those fixtures do not touch: a deformer body
 //! reading its per-vertex slot data through `deform_read_f32`, and a material
 //! plugin authoring the surface through `shade_surface` with its own texture
-//! bound at group 3.
+//! bound at group 2.
 //!
 //! Both need the renderer's recommended device limits, so they skip cleanly
 //! when no adapter offers them.
@@ -66,7 +66,11 @@ fn per_vertex_deformer_addresses_vertices_by_index() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
-    item.material = Material::from_colour(Colour::linear_rgb(0.9, 0.9, 0.9));
+    item.material = harness
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.9, 0.9, 0.9)))
+        .expect("material upload");
     item.settings.unlit = true;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
@@ -109,9 +113,9 @@ fn per_vertex_deformer_addresses_vertices_by_index() {
     );
 }
 
-/// The material plugin's `shade_surface` hook samples its own texture at
-/// group 3 and tints it from the params window, and a live params write
-/// changes the result without re-registering.
+/// The material plugin's `shade_surface` hook samples the material's texture
+/// at group 2 and tints it from a declared parameter, and editing the
+/// parameter changes the result without re-registering.
 #[test]
 fn textured_material_plugin_samples_its_texture_and_params() {
     let Some(mut harness) = harness("fixture-material-textured") else {
@@ -151,52 +155,42 @@ fn textured_material_plugin_samples_its_texture_and_params() {
             return;
         }
     };
-    // The default variant's texture slots start at the 1x1 white fallback, so
-    // the plugin's own texture is bound through a variant.
-    let variant = match harness
-        .renderer
-        .resources_mut()
-        .create_material_plugin_variant(
-            &harness.device,
-            plugin_id,
-            &[[1.0, 0.0, 0.0, 1.0]],
-            &[texture],
-        ) {
-        Ok(id) => id,
-        Err(err) => {
-            eprintln!("skipping: variant creation failed: {err}");
-            return;
-        }
-    };
-
     let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
-    item.material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
-    item.material.shading_plugin = Some(variant);
+    let mut tinted = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8))
+        .with_plugin(plugin_id)
+        .with_param("tint", [1.0, 0.0, 0.0])
+        .with_plugin_texture(0, texture);
+    let material = harness
+        .renderer
+        .resources_mut()
+        .upload_material(tinted)
+        .expect("material upload");
+    item.material = material;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let red_tint = harness.render(&frame, SIZE, SIZE);
     let i = (((SIZE / 2) * SIZE + SIZE / 2) * 4) as usize;
     assert!(
         red_tint[i] > red_tint[i + 1] + 30 && red_tint[i] > red_tint[i + 2] + 30,
-        "the sampled texture must be tinted red by the params: got {:?}",
+        "the sampled texture must be tinted red by the tint parameter: got {:?}",
         &red_tint[i..i + 4]
     );
 
-    // Live params write: the same variant, no re-registration, green tint.
-    let params = harness
+    // A parameter edit on the same material, no re-registration: green tint.
+    tinted.set_param("tint", [0.0, 1.0, 0.0]);
+    harness
         .renderer
-        .resources()
-        .material_plugin_params_handle(variant)
-        .expect("the variant must expose a params handle");
-    params.write(&harness.queue, &[[0.0, 1.0, 0.0, 1.0]]);
+        .resources_mut()
+        .replace_material(material, tinted)
+        .expect("replace");
 
     let green_tint = harness.render(&frame, SIZE, SIZE);
     assert!(
         green_tint[i + 1] > green_tint[i] + 30,
-        "a params write must change the shading without re-registering: got {:?}",
+        "a parameter edit must change the shading without re-registering: got {:?}",
         &green_tint[i..i + 4]
     );
 }

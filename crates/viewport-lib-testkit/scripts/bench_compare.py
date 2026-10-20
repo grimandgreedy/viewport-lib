@@ -33,7 +33,7 @@ import json
 import sys
 from pathlib import Path
 
-COUNTERS = ["draw_calls", "instanced_batches", "triangles", "visible", "per_object_items"]
+COUNTERS = ["draw_calls", "instanced_batches", "triangles", "visible"]
 GATED_MS = ["gpu_ms_p50", "gpu_ms_p95"]
 INFO_MS = ["scene_ms_p50", "post_ms_p50", "cull_ms_p50", "prepare_ms_p50", "paint_ms_p50", "total_ms_p50"]
 STORED = COUNTERS + GATED_MS + INFO_MS

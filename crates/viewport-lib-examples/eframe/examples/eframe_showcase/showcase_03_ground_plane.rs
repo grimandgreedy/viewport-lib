@@ -11,6 +11,7 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{Material, ViewportRenderer, scene::Scene};
@@ -78,7 +79,7 @@ impl App {
                 name,
                 Some(sphere_id),
                 glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 1.5)),
-                mat,
+                upload_material(renderer, mat),
             );
         }
 

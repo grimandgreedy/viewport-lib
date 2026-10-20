@@ -7,9 +7,114 @@ use crate::resources::VertexBufferLayoutExt;
 
 use crate::resources::types::Vertex;
 
-/// One LDR `mesh.wgsl` pipeline, drawing into the swapchain format.
+/// The record words the `mesh.wgsl` and `mesh_oit.wgsl` vertex stages use as
+/// addresses, at the [`InstanceData`](crate::resources::mesh::instancing::InstanceData)
+/// offsets: the sidecar record base, the colour, warp and lightmap streams,
+/// the mesh's first vertex in its slab chunk and the deform table. Locations
+/// 5 to 10.
+const RECORD_WORD_ATTRIBUTES: [crate::gpu::VertexAttribute; 6] = [
+    word_attribute(5, 108),
+    word_attribute(6, 116),
+    word_attribute(7, 144),
+    word_attribute(8, 148),
+    word_attribute(9, 152),
+    word_attribute(10, 156),
+];
+
+/// The same words as the GPU cull packs them for each survivor, six words a
+/// slot.
+const CULLED_WORD_ATTRIBUTES: [crate::gpu::VertexAttribute; 6] = [
+    word_attribute(5, 0),
+    word_attribute(6, 4),
+    word_attribute(7, 8),
+    word_attribute(8, 12),
+    word_attribute(9, 16),
+    word_attribute(10, 20),
+];
+
+/// Bytes the cull writes per survivor into the words region of the
+/// visibility buffer.
+pub(crate) const CULLED_WORDS_STRIDE: u64 = 24;
+
+const fn word_attribute(location: u32, offset: u64) -> crate::gpu::VertexAttribute {
+    crate::gpu::VertexAttribute {
+        format: crate::gpu::VertexFormat::Uint32,
+        offset,
+        shader_location: location,
+    }
+}
+
+/// Vertex buffers of a `mesh.wgsl` or `mesh_oit.wgsl` pipeline: the mesh
+/// vertices in slot 0 and the record words, stepped per instance, in slot 1.
+/// A direct draw binds the instance buffer itself as slot 1; a GPU-culled
+/// draw (`culled`) binds the words region of its visibility buffer.
+pub(crate) fn mesh_vertex_buffers(culled: bool) -> [crate::gpu::VertexBufferLayout<'static>; 2] {
+    [
+        Vertex::buffer_layout(),
+        if culled {
+            crate::gpu::VertexBufferLayout {
+                array_stride: CULLED_WORDS_STRIDE,
+                step_mode: crate::gpu::VertexStepMode::Instance,
+                attributes: &CULLED_WORD_ATTRIBUTES,
+            }
+        } else {
+            crate::gpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<crate::resources::mesh::instancing::InstanceData>(
+                ) as u64,
+                step_mode: crate::gpu::VertexStepMode::Instance,
+                attributes: &RECORD_WORD_ATTRIBUTES,
+            }
+        },
+    ]
+}
+
+/// Whether a mesh pipeline built with `constants` draws through the `_plain`
+/// entries: its feature set reads neither a colour stream nor a lightmap, so
+/// the five varyings only those read are left out of its interface.
+fn plain_entries(constants: &[(&str, f64)]) -> bool {
+    let off = |name: &str| constants.iter().any(|&(n, v)| n == name && v == 0.0);
+    off("FEAT_COLOUR_STREAM") && off("FEAT_LIGHTMAP")
+}
+
+/// Whether a mesh pipeline built with `constants` draws through the `_lean`
+/// vertex entries: on top of [`plain_entries`], its feature set reads no
+/// record word (no record, warp, override or deform), so it declares vertex
+/// buffer slot 0 alone.
+fn lean_entries(constants: &[(&str, f64)]) -> bool {
+    let off = |name: &str| constants.iter().any(|&(n, v)| n == name && v == 0.0);
+    plain_entries(constants)
+        && ["FEAT_RECORD", "FEAT_WARP", "FEAT_OVERRIDES", "FEAT_DEFORM"]
+            .into_iter()
+            .all(off)
+}
+
+/// The vertex buffers a mesh pipeline declares: both slots, or for a lean
+/// pipeline slot 0 alone. The draw binds slot 1 either way; a bound slot the
+/// pipeline does not declare is ignored.
+fn mesh_vertex_state<'a>(
+    buffers: &'a [crate::gpu::VertexBufferLayout<'static>; 2],
+    lean: bool,
+) -> &'a [crate::gpu::VertexBufferLayout<'static>] {
+    if lean { &buffers[..1] } else { &buffers[..] }
+}
+
+/// The vertex entry of a mesh pipeline: GPU-culled or direct; full, plain or
+/// lean.
+fn mesh_vertex_entry(culled: bool, plain: bool, lean: bool) -> &'static str {
+    match (culled, plain, lean) {
+        (false, _, true) => "vs_main_lean",
+        (true, _, true) => "vs_main_cull_lean",
+        (false, true, false) => "vs_main_plain",
+        (true, true, false) => "vs_main_cull_plain",
+        (false, false, false) => "vs_main",
+        (true, false, false) => "vs_main_cull",
+    }
+}
+
+/// One LDR `mesh.wgsl` pipeline drawing into the surface format. `constants`
+/// sets the module's `override` constants (empty for the defaults).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn ldr_mesh_pipeline(
+pub(crate) fn ldr_mesh_pipeline_with(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
@@ -21,20 +126,23 @@ pub(crate) fn ldr_mesh_pipeline(
     blend: Option<crate::gpu::BlendState>,
     topo: crate::gpu::PrimitiveTopology,
     depth_write: bool,
+    constants: &[(&str, f64)],
 ) -> crate::gpu::RenderPipeline {
     let depth_stencil =
         crate::resources::builders::scene_depth_stencil(true, crate::gpu::CompareFunction::Less);
-    crate::resources::builders::render_pipeline(
+    let plain = plain_entries(constants);
+    let lean = lean_entries(constants);
+    crate::resources::builders::render_pipeline_with_constants(
         device,
         crate::resources::builders::RenderPipelineDesc {
             label,
             layout,
             vertex_module: shader,
-            vertex_entry: "vs_main",
-            vertex_buffers: &[Vertex::buffer_layout()],
+            vertex_entry: mesh_vertex_entry(false, plain, lean),
+            vertex_buffers: mesh_vertex_state(&mesh_vertex_buffers(false), lean),
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some(if plain { "fs_main_plain" } else { "fs_main" }),
                 targets: &[Some(crate::gpu::ColorTargetState {
                     format: target_format,
                     blend,
@@ -62,10 +170,13 @@ pub(crate) fn ldr_mesh_pipeline(
             },
             cache,
         },
+        constants,
     )
 }
 
 /// One HDR `mesh.wgsl` pipeline, drawing into the Rgba16Float intermediate.
+/// `constants` sets the module's `override` constants (empty for the
+/// defaults).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn hdr_mesh_pipeline(
     device: &crate::gpu::Device,
@@ -76,18 +187,50 @@ pub(crate) fn hdr_mesh_pipeline(
     blend: Option<crate::gpu::BlendState>,
     topo: crate::gpu::PrimitiveTopology,
     depth_write: bool,
+    constants: &[(&str, f64)],
 ) -> crate::gpu::RenderPipeline {
-    crate::resources::builders::render_pipeline(
+    hdr_mesh_pipeline_entry(
+        device,
+        layout,
+        shader,
+        label,
+        cull,
+        blend,
+        topo,
+        depth_write,
+        constants,
+        false,
+    )
+}
+
+/// [`hdr_mesh_pipeline`] for a GPU-culled draw (`culled`): the `vs_main_cull`
+/// entry and the cull's packed words in slot 1.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn hdr_mesh_pipeline_entry(
+    device: &crate::gpu::Device,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+    label: &str,
+    cull: Option<crate::gpu::Face>,
+    blend: Option<crate::gpu::BlendState>,
+    topo: crate::gpu::PrimitiveTopology,
+    depth_write: bool,
+    constants: &[(&str, f64)],
+    culled: bool,
+) -> crate::gpu::RenderPipeline {
+    let plain = plain_entries(constants);
+    let lean = lean_entries(constants);
+    crate::resources::builders::render_pipeline_with_constants(
         device,
         crate::resources::builders::RenderPipelineDesc {
             label,
             layout,
             vertex_module: shader,
-            vertex_entry: "vs_main",
-            vertex_buffers: &[Vertex::buffer_layout()],
+            vertex_entry: mesh_vertex_entry(culled, plain, lean),
+            vertex_buffers: mesh_vertex_state(&mesh_vertex_buffers(culled), lean),
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some(if plain { "fs_main_plain" } else { "fs_main" }),
                 targets: &[Some(crate::gpu::ColorTargetState {
                     format: crate::gpu::TextureFormat::Rgba16Float,
                     blend,
@@ -110,23 +253,36 @@ pub(crate) fn hdr_mesh_pipeline(
             },
             cache: None,
         },
+        constants,
     )
 }
 
-/// `mesh_oit.wgsl`: weighted-blended OIT pipeline. Draws into the
-/// `Rgba16Float` accumulation target and the `R8Unorm` reveal target.
-///
-/// `two_sided` selects `cull_mode: None` so a two-sided transparent material
-/// (`BackfacePolicy::Identical` and the styled policies) draws its back faces;
-/// the OIT fragment shader flips the normal and applies the back-face colour via
-/// `@builtin(front_facing)`. Single-sided transparents keep back-face culling so
-/// the near sheet is not double-blended with the far one.
-pub(crate) fn build_oit_pipeline(
+/// One OIT accumulate pipeline from `mesh_oit.wgsl`, with a label and values
+/// for the module's `override` constants.
+pub(crate) fn build_oit_pipeline_with(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
     two_sided: bool,
+    label: &str,
+    constants: &[(&str, f64)],
 ) -> crate::gpu::RenderPipeline {
+    build_oit_pipeline_entry(device, layout, shader, two_sided, label, constants, false)
+}
+
+/// [`build_oit_pipeline_with`] for a GPU-culled draw (`culled`): the
+/// `vs_main_cull` entry and the cull's packed words in slot 1.
+pub(crate) fn build_oit_pipeline_entry(
+    device: &crate::gpu::Device,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+    two_sided: bool,
+    label: &str,
+    constants: &[(&str, f64)],
+    culled: bool,
+) -> crate::gpu::RenderPipeline {
+    let plain = plain_entries(constants);
+    let lean = lean_entries(constants);
     let accum_blend = crate::gpu::BlendState {
         color: crate::gpu::BlendComponent {
             src_factor: crate::gpu::BlendFactor::One,
@@ -155,17 +311,21 @@ pub(crate) fn build_oit_pipeline(
         false,
         crate::gpu::CompareFunction::LessEqual,
     );
-    crate::resources::builders::render_pipeline(
+    crate::resources::builders::render_pipeline_with_constants(
         device,
         crate::resources::builders::RenderPipelineDesc {
-            label: "oit_pipeline",
+            label,
             layout,
             vertex_module: shader,
-            vertex_entry: "vs_main",
-            vertex_buffers: &[Vertex::buffer_layout()],
+            vertex_entry: mesh_vertex_entry(culled, plain, lean),
+            vertex_buffers: mesh_vertex_state(&mesh_vertex_buffers(culled), lean),
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
-                entry_point: Some("fs_oit_main"),
+                entry_point: Some(if plain {
+                    "fs_oit_main_plain"
+                } else {
+                    "fs_oit_main"
+                }),
                 targets: &[
                     Some(crate::gpu::ColorTargetState {
                         format: crate::gpu::TextureFormat::Rgba16Float,
@@ -192,6 +352,7 @@ pub(crate) fn build_oit_pipeline(
             },
             cache: None,
         },
+        constants,
     )
 }
 
@@ -271,14 +432,16 @@ pub const CSM_SHADOW_BIAS_TWO_SIDED: crate::gpu::DepthBiasState = crate::gpu::De
 /// `cutout` selects `vs_cutout`/`fs_cutout` instead of the plain `vs_main`:
 /// the fragment stage samples the caster's albedo alpha and discards below
 /// its cutoff, punching holes in the shadow instead of casting a solid
-/// silhouette for an `AlphaMode::Mask` material. Mirrors the instanced
-/// family's `shadow_instanced.wgsl` cutout pipelines.
+/// silhouette for an `AlphaMode::Mask` material. `culled` selects the
+/// `_cull` entry points, which read each visible slot's record index from
+/// group-1 binding 15 and draw from the cascade cull's indirect args.
 pub(crate) fn build_shadow_pipeline(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
     cull_mode: Option<crate::gpu::Face>,
     cutout: bool,
+    culled: bool,
     cache: Option<&crate::gpu::PipelineCache>,
 ) -> crate::gpu::RenderPipeline {
     let label = match (cull_mode, cutout) {
@@ -289,13 +452,23 @@ pub(crate) fn build_shadow_pipeline(
         (Some(crate::gpu::Face::Back), true) => "shadow_cutout_pipeline_cull_back",
         (None, true) => "shadow_cutout_pipeline_two_sided",
     };
+    let label = if culled {
+        format!("{label}_cull")
+    } else {
+        label.to_string()
+    };
     crate::resources::builders::render_pipeline(
         device,
         crate::resources::builders::RenderPipelineDesc {
-            label,
+            label: &label,
             layout,
             vertex_module: shader,
-            vertex_entry: if cutout { "vs_cutout" } else { "vs_main" },
+            vertex_entry: match (cutout, culled) {
+                (false, false) => "vs_main",
+                (false, true) => "vs_main_cull",
+                (true, false) => "vs_cutout",
+                (true, true) => "vs_cutout_cull",
+            },
             vertex_buffers: &[Vertex::buffer_layout()],
             fragment: cutout.then_some(crate::gpu::FragmentState {
                 module: shader,
@@ -336,7 +509,9 @@ pub(crate) fn build_shadow_pipeline(
 }
 
 /// `shadow_point.wgsl`: depth + fragment pipeline for point-light cubemap
-/// shadow faces. Writes linear distance-to-light to `frag_depth`.
+/// shadow faces. Writes linear distance-to-light to `frag_depth`. `cutout`
+/// selects `vs_cutout`/`fs_cutout`, which discard below an
+/// `AlphaMode::Mask` caster's cutoff.
 ///
 /// Uses back-face culling (front faces visible to the light are rendered) so
 /// the cubemap stores the near-side distance of each occluder. With linear
@@ -350,19 +525,21 @@ pub(crate) fn build_shadow_point_pipeline(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
+    label: &str,
+    cutout: bool,
     cache: Option<&crate::gpu::PipelineCache>,
 ) -> crate::gpu::RenderPipeline {
     crate::resources::builders::render_pipeline(
         device,
         crate::resources::builders::RenderPipelineDesc {
-            label: "shadow_point_pipeline",
+            label,
             layout,
             vertex_module: shader,
-            vertex_entry: "vs_main",
+            vertex_entry: if cutout { "vs_cutout" } else { "vs_main" },
             vertex_buffers: &[Vertex::buffer_layout()],
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some(if cutout { "fs_cutout" } else { "fs_main" }),
                 targets: &[],
                 compilation_options: crate::gpu::PipelineCompilationOptions::default(),
             }),
@@ -452,56 +629,6 @@ pub(crate) fn build_outline_mask_pipelines(
     }
 }
 
-/// One `mesh_instanced.wgsl` pipeline through `vs_main`, with the instance
-/// storage buffer at group 1.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn instanced_mesh_pipeline(
-    device: &crate::gpu::Device,
-    layout: &crate::gpu::PipelineLayout,
-    shader: &crate::gpu::ShaderModule,
-    format: crate::gpu::TextureFormat,
-    sample_count: u32,
-    label: &str,
-    cull: Option<crate::gpu::Face>,
-    blend: Option<crate::gpu::BlendState>,
-    depth_write: bool,
-) -> crate::gpu::RenderPipeline {
-    crate::resources::builders::render_pipeline(
-        device,
-        crate::resources::builders::RenderPipelineDesc {
-            label,
-            layout,
-            vertex_module: shader,
-            vertex_entry: "vs_main",
-            vertex_buffers: &[Vertex::buffer_layout()],
-            fragment: Some(crate::gpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(crate::gpu::ColorTargetState {
-                    format,
-                    blend,
-                    write_mask: crate::gpu::ColorWrites::ALL,
-                })],
-                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: crate::gpu::PrimitiveState {
-                topology: crate::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: cull,
-                ..Default::default()
-            },
-            depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                depth_write,
-                crate::gpu::CompareFunction::Less,
-            )),
-            multisample: crate::gpu::MultisampleState {
-                count: sample_count,
-                ..Default::default()
-            },
-            cache: None,
-        },
-    )
-}
-
 /// Additive blend, for `MeshInstanceItem` batches that opt into
 /// [`SpriteBlend::Additive`](crate::SpriteBlend::Additive).
 pub(crate) const ADDITIVE_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
@@ -532,204 +659,13 @@ pub(crate) const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::Blend
     },
 };
 
-/// One blended HDR `mesh_instanced.wgsl` pipeline: no depth write, no
-/// culling, drawing into the Rgba16Float intermediate.
-pub(crate) fn hdr_instanced_blend_pipeline(
-    device: &crate::gpu::Device,
-    layout: &crate::gpu::PipelineLayout,
-    shader: &crate::gpu::ShaderModule,
-    label: &str,
-    blend: crate::gpu::BlendState,
-) -> crate::gpu::RenderPipeline {
-    crate::resources::builders::render_pipeline(
-        device,
-        crate::resources::builders::RenderPipelineDesc {
-            label,
-            layout,
-            vertex_module: shader,
-            vertex_entry: "vs_main",
-            vertex_buffers: &[Vertex::buffer_layout()],
-            fragment: Some(crate::gpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(crate::gpu::ColorTargetState {
-                    format: crate::gpu::TextureFormat::Rgba16Float,
-                    blend: Some(blend),
-                    write_mask: crate::gpu::ColorWrites::ALL,
-                })],
-                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: crate::gpu::PrimitiveState {
-                topology: crate::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                false,
-                crate::gpu::CompareFunction::Less,
-            )),
-            multisample: crate::gpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            cache: None,
-        },
-    )
-}
-
-pub(crate) fn build_hdr_instanced_cull_pipeline_with(
-    device: &crate::gpu::Device,
-    layout: &crate::gpu::PipelineLayout,
-    shader: &crate::gpu::ShaderModule,
-    label: &str,
-    cull_mode: Option<crate::gpu::Face>,
-) -> crate::gpu::RenderPipeline {
-    crate::resources::builders::render_pipeline(
-        device,
-        crate::resources::builders::RenderPipelineDesc {
-            label,
-            layout,
-            vertex_module: shader,
-            vertex_entry: "vs_main_cull",
-            vertex_buffers: &[Vertex::buffer_layout()],
-            fragment: Some(crate::gpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(crate::gpu::ColorTargetState {
-                    format: crate::gpu::TextureFormat::Rgba16Float,
-                    blend: None,
-                    write_mask: crate::gpu::ColorWrites::ALL,
-                })],
-                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: crate::gpu::PrimitiveState {
-                topology: crate::gpu::PrimitiveTopology::TriangleList,
-                cull_mode,
-                ..Default::default()
-            },
-            depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                true,
-                crate::gpu::CompareFunction::Less,
-            )),
-            multisample: crate::gpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            cache: None,
-        },
-    )
-}
-
-/// OIT instanced pipeline shared between the non-cull (`vs_main`) and
-/// the cull (`vs_main_cull`) variants. Two color targets, depth-test
-/// only.
-pub(crate) fn build_oit_instanced_pipeline(
-    device: &crate::gpu::Device,
-    layout: &crate::gpu::PipelineLayout,
-    shader: &crate::gpu::ShaderModule,
-    label: &str,
-    vs_entry: &str,
-    two_sided: bool,
-) -> crate::gpu::RenderPipeline {
-    let accum_blend = crate::gpu::BlendState {
-        color: crate::gpu::BlendComponent {
-            src_factor: crate::gpu::BlendFactor::One,
-            dst_factor: crate::gpu::BlendFactor::One,
-            operation: crate::gpu::BlendOperation::Add,
-        },
-        alpha: crate::gpu::BlendComponent {
-            src_factor: crate::gpu::BlendFactor::One,
-            dst_factor: crate::gpu::BlendFactor::One,
-            operation: crate::gpu::BlendOperation::Add,
-        },
-    };
-    let reveal_blend = crate::gpu::BlendState {
-        color: crate::gpu::BlendComponent {
-            src_factor: crate::gpu::BlendFactor::Zero,
-            dst_factor: crate::gpu::BlendFactor::OneMinusSrc,
-            operation: crate::gpu::BlendOperation::Add,
-        },
-        alpha: crate::gpu::BlendComponent {
-            src_factor: crate::gpu::BlendFactor::Zero,
-            dst_factor: crate::gpu::BlendFactor::OneMinusSrc,
-            operation: crate::gpu::BlendOperation::Add,
-        },
-    };
-    crate::resources::builders::render_pipeline(
-        device,
-        crate::resources::builders::RenderPipelineDesc {
-            label,
-            layout,
-            vertex_module: shader,
-            vertex_entry: vs_entry,
-            vertex_buffers: &[Vertex::buffer_layout()],
-            fragment: Some(crate::gpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_oit_main"),
-                targets: &[
-                    Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::Rgba16Float,
-                        blend: Some(accum_blend),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    }),
-                    Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::R8Unorm,
-                        blend: Some(reveal_blend),
-                        write_mask: crate::gpu::ColorWrites::RED,
-                    }),
-                ],
-                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: crate::gpu::PrimitiveState {
-                topology: crate::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: (!two_sided).then_some(crate::gpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                false,
-                crate::gpu::CompareFunction::LessEqual,
-            )),
-            multisample: crate::gpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            cache: None,
-        },
-    )
-}
-
-/// Build a pipeline layout for instanced mesh-family pipelines.
-/// Groups: 0=camera, 1=instance/cull, and optionally 2=deform.
-/// Pass `None` for `deform_bgl` on devices with max_bind_groups < 3.
-pub(crate) fn instanced_pipeline_layout(
-    device: &crate::gpu::Device,
-    label: &str,
-    camera_bgl: &crate::gpu::BindGroupLayout,
-    instance_bgl: &crate::gpu::BindGroupLayout,
-    deform_bgl: Option<&crate::gpu::BindGroupLayout>,
-) -> crate::gpu::PipelineLayout {
-    let layouts: Vec<&crate::gpu::BindGroupLayout> = if let Some(d) = deform_bgl {
-        vec![camera_bgl, instance_bgl, d]
-    } else {
-        vec![camera_bgl, instance_bgl]
-    };
-    crate::resources::builders::pipeline_layout(device, label, &layouts)
-}
-
 /// Build the shared mesh pipeline layout used by both LDR and HDR mesh
-/// pipelines. Groups: 0=camera, 1=object+texture, and optionally 2=deform.
-/// Pass `None` for `deform_bgl` on devices with max_bind_groups < 3.
+/// pipelines. Groups: 0=camera, 1=object+texture.
 pub(crate) fn mesh_pipeline_layout(
     device: &crate::gpu::Device,
     label: &str,
     camera_bgl: &crate::gpu::BindGroupLayout,
     object_bgl: &crate::gpu::BindGroupLayout,
-    deform_bgl: Option<&crate::gpu::BindGroupLayout>,
 ) -> crate::gpu::PipelineLayout {
-    let layouts: Vec<&crate::gpu::BindGroupLayout> = if let Some(d) = deform_bgl {
-        vec![camera_bgl, object_bgl, d]
-    } else {
-        vec![camera_bgl, object_bgl]
-    };
-    crate::resources::builders::pipeline_layout(device, label, &layouts)
+    crate::resources::builders::pipeline_layout(device, label, &[camera_bgl, object_bgl])
 }

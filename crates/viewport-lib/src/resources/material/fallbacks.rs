@@ -32,9 +32,15 @@ pub(crate) struct MaterialFallbacks {
     #[allow(dead_code)]
     pub(crate) emissive: crate::gpu::Texture,
     pub(crate) emissive_view: crate::gpu::TextureView,
-    /// Shared linear-repeat sampler for material textures. The default bound at
-    /// group-1 binding 2 for any material that sets no `SamplerKey`.
+    /// Shared linear-repeat sampler with nearest mip selection. Handed to
+    /// plugins through `material_sampler()` and bound by the non-mesh item
+    /// types; the mesh paths bind [`Self::mesh_sampler`] instead.
     pub(crate) sampler: crate::gpu::Sampler,
+    /// The sampler `SamplerKey::default()` builds (repeat, trilinear). Bound at
+    /// group-1 binding 2 on both mesh paths for a material that sets no key, so
+    /// setting the default key changes nothing. Also the palette's entry for
+    /// the default key.
+    pub(crate) mesh_sampler: crate::gpu::Sampler,
     /// Deduped palette of samplers resolved from material [`SamplerKey`]s
     /// (`crate::scene::material::SamplerKey`). Built lazily on the per-object
     /// path so a material with a non-default sampler binds its own at binding 2.
@@ -100,12 +106,7 @@ impl MaterialFallbacks {
         device: &crate::gpu::Device,
         key: crate::scene::material::SamplerKey,
     ) -> crate::gpu::Sampler {
-        use crate::scene::material::TextureFilter;
-        let aniso = match key.filter {
-            TextureFilter::Linear => key.anisotropy.clamp(1, 16),
-            TextureFilter::Nearest => 1,
-        };
-        let palette_key = (key.wrap_u, key.wrap_v, key.filter, aniso);
+        let palette_key = sampler_palette_key(key);
         let mut palette = self.sampler_palette.lock().unwrap();
         if let Some(sampler) = palette.get(&palette_key) {
             return sampler.clone();
@@ -115,6 +116,42 @@ impl MaterialFallbacks {
         palette.insert(palette_key, sampler.clone());
         sampler
     }
+}
+
+/// The parts of a [`SamplerKey`](crate::scene::material::SamplerKey) the built
+/// sampler depends on: wrap U/V, filter and anisotropy clamped the way
+/// `sampler_from_key` clamps it. `lod_bias` is not applied, so it is left out.
+pub(crate) fn sampler_palette_key(
+    key: crate::scene::material::SamplerKey,
+) -> (
+    crate::scene::material::WrapMode,
+    crate::scene::material::WrapMode,
+    crate::scene::material::TextureFilter,
+    u16,
+) {
+    use crate::scene::material::TextureFilter;
+    let aniso = match key.filter {
+        TextureFilter::Linear => key.anisotropy.clamp(1, 16),
+        TextureFilter::Nearest => 1,
+    };
+    (key.wrap_u, key.wrap_v, key.filter, aniso)
+}
+
+/// [`sampler_palette_key`] packed into one word, for bind-group cache keys,
+/// the instanced batch key and the material block. Zero for the default key.
+pub(crate) fn sampler_code(key: crate::scene::material::SamplerKey) -> u32 {
+    use crate::scene::material::{TextureFilter, WrapMode};
+    let wrap = |w: WrapMode| match w {
+        WrapMode::Repeat => 0u32,
+        WrapMode::ClampToEdge => 1,
+        WrapMode::MirrorRepeat => 2,
+    };
+    let (u, v, filter, aniso) = sampler_palette_key(key);
+    let filter = match filter {
+        TextureFilter::Linear => 0u32,
+        TextureFilter::Nearest => 1,
+    };
+    wrap(u) | wrap(v) << 2 | filter << 4 | (aniso as u32 - 1) << 5
 }
 
 #[cfg(test)]

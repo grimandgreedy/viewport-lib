@@ -65,7 +65,8 @@ struct Lights {
     debug_vis_split_x:    f32,
     env_zone_count:       u32,
     ibl_specular_scale:   f32,
-    _pad_dbg_c:           u32,
+    // Start of the custom-data region of indirect_light_data, in vec4 elements.
+    custom_data_base:     u32,
 };
 
 // One environment-selection zone: a world-space box (center + half_extents) that
@@ -97,34 +98,48 @@ struct ClusterGrid {
     view:       mat4x4<f32>,
 };
 
-struct ClusterCell {
-    offset:          u32,
-    count:           u32,
-    punctual_count:  u32,
-    punctual_demand: u32,
-};
-
 @group(0) @binding(13) var<storage, read> lights_storage:        array<SingleLight>;
 @group(0) @binding(14) var<uniform>       cluster_grid_uniform:  ClusterGrid;
-@group(0) @binding(15) var<storage, read> cluster_cells:         array<ClusterCell>;
-@group(0) @binding(16) var<storage, read> cluster_light_indices: array<u32>;
+// The cluster cells, four words each (offset, count, punctual_count,
+// punctual_demand), then the global light index list from CLUSTER_INDEX_BASE.
+// One buffer so the pair costs one fragment storage binding.
+@group(0) @binding(15) var<storage, read> cluster_data:          array<u32>;
+// Start of the light index list in cluster_data, in u32 words. Must equal
+// resources::gpu::clustered::CLUSTER_INDEX_BASE_BYTES / 4 on the CPU side.
+const CLUSTER_INDEX_BASE: u32 = 13824u;
 @group(0) @binding(17) var                point_shadow_cube_tex: texture_depth_cube_array;
-// Indirect-lighting data (binding 18). Two fixed-size regions share one storage
-// buffer to keep the fragment stage within the per-stage storage-buffer budget:
+// Indirect-lighting data (binding 18). Three regions share one storage buffer
+// to keep the fragment stage within the per-stage storage-buffer budget:
 //   [0, ENV_ZONE_BASE)   : per-object light-probe SH, 9 vec4 per light-probe-lit
 //                          object (rgb in xyz), selected by object.light_probe_index
 //                          (see evaluate_sh_probe).
-//   [ENV_ZONE_BASE, end) : environment-selection zones, 3 vec4 per zone, read via
-//                          load_env_zone (see ibl_ambient_zoned).
+//   [ENV_ZONE_BASE, PROBE_VOLUME_BASE) : environment-selection zones, 3 vec4
+//                          per zone, read via load_env_zone (see
+//                          ibl_ambient_zoned).
+//   [PROBE_VOLUME_BASE, end) : the adaptive probe volume (below).
 @group(0) @binding(18) var<storage, read> indirect_light_data:   array<vec4<f32>>;
 // Start of the env-zone region, in vec4 elements. Must equal
 // resources::light_probes::MAX_LIGHT_PROBE_OBJECTS * 9 on the CPU side (a
 // const_assert in resources::material::environment guards this).
 const ENV_ZONE_BASE: u32 = 36864u;
-// Adaptive probe volume: a 3-vec4 header (grid box + dims) then 9 vec4 of SH per
-// grid cell, trilinearly sampled by sample_probe_volume in ambient.wgsl. A
-// disabled header (element 0 w == 0) is bound when no volume is uploaded.
-@group(0) @binding(20) var<storage, read> probe_volume:          array<vec4<f32>>;
+// Start of the adaptive probe volume in indirect_light_data, in vec4 elements:
+// a 3-vec4 header (grid box + dims) then 9 vec4 of SH per grid cell,
+// trilinearly sampled by sample_probe_volume in ambient.wgsl. A disabled header
+// (element 0 w == 0) sits there when no volume is uploaded. Must equal
+// resources::lighting::PROBE_VOLUME_REGION_OFFSET_BYTES / 16 on the CPU side.
+const PROBE_VOLUME_BASE: u32 = 37056u;
+
+// Per-instance custom-data block `id`, the last region of indirect_light_data
+// (two vec4 each) starting at `base` (the lights uniform's custom_data_base):
+// data0 adds to emissive (nits, .w pad), data1 is the raw material-plugin
+// channel surfaced to a hook as `surf.attr`. Block 0 is zero.
+fn custom_data0(base: u32, id: u32) -> vec4<f32> {
+    return indirect_light_data[base + 2u * id];
+}
+
+fn custom_data1(base: u32, id: u32) -> vec4<f32> {
+    return indirect_light_data[base + 2u * id + 1u];
+}
 
 // Reconstruct environment zone `i` from the packed vec4 region of
 // indirect_light_data. Mirrors EnvZoneGpu (resources::material::environment):
@@ -182,9 +197,8 @@ fn cluster_light_range(world_pos: vec3<f32>, total_count: u32) -> LightRange {
     } else {
         let view_pos = (cluster_grid_uniform.view * vec4<f32>(world_pos, 1.0)).xyz;
         let cid = cluster_index_for(view_pos);
-        let cell = cluster_cells[cid];
-        r.start = cell.offset;
-        r.count = cell.count;
+        r.start = cluster_data[cid * 4u];
+        r.count = cluster_data[cid * 4u + 1u];
     }
     return r;
 }
@@ -193,7 +207,7 @@ fn cluster_light_global(range: LightRange, j: u32) -> u32 {
     if range.fallback {
         return j;
     }
-    return cluster_light_indices[range.start + j];
+    return cluster_data[CLUSTER_INDEX_BASE + range.start + j];
 }
 
 // Per-light geometry and unshadowed radiance for one fragment. `radiance`

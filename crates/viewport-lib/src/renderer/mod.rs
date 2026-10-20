@@ -44,7 +44,7 @@ pub use readback::ExposureReadback;
 // Gaussian splat upload vocabulary lives in `resources`; re-exported here so the
 // public `renderer::GaussianSplat*` path and its doc links stay stable.
 pub(crate) mod pipeline_key;
-use pipeline_key::{PipelineKey, select_two_sided};
+use pipeline_key::PipelineKey;
 mod point_shadow_pool;
 mod prepare;
 mod render;
@@ -71,6 +71,8 @@ mod lazy_pipeline_tests;
 #[cfg(test)]
 mod lod_instance_tests;
 #[cfg(test)]
+mod material_store_tests;
+#[cfg(test)]
 mod prepare_timing_tests;
 
 /// Item-type names beginning with this prefix belong to the types viewport-lib
@@ -95,14 +97,14 @@ pub use self::types::{
     OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip, OverlayContentHash,
     OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
     OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
-    OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment,
-    PipelineMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph,
-    PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality,
-    ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer,
-    ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission, TextureTransform,
-    TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, VignetteSettings,
-    VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline,
-    sphere_wireframe_polyline,
+    OverlayStyleSupport, OverlayTextureId, OverlayTransform, PASSTHROUGH_EV100,
+    POINT_SHADOW_FACE_SIZE, PathSegment, PipelineMode, PointShadowMode, PolylineCap, PolylineItem,
+    PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
+    RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem,
+    ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath,
+    SurfaceSubmission, TextureTransform, TileMode, ToneMapping, TriangleDirection, ViewportEffects,
+    ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline,
+    obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -129,12 +131,12 @@ impl ViewportId {
 }
 
 use self::shadows::{compute_cascade_matrix, compute_cascade_splits};
-use self::types::{INSTANCING_THRESHOLD, InstancedBatch};
+use self::types::InstancedBatch;
 use crate::resources::{
     BatchMeta, CLIP_VOLUME_MAX, CameraUniform, ClipPlanesUniform, ClipVolumeEntry,
     ClipVolumesUniform, DeviceResources, GridUniform, InstanceAabb, InstanceData, LightsUniform,
-    ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, PickInstance,
-    PipelineCompilation, ShadowAtlasUniform, SingleLightUniform,
+    OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, PickInstance, PipelineCompilation,
+    ShadowAtlasUniform, SingleLightUniform,
 };
 
 /// Per-frame selection-outline state for one viewport, rebuilt in prepare().
@@ -723,58 +725,31 @@ impl ViewportRenderer {
     }
 
     /// The storage-buffer-per-stage headroom
-    /// [`recommended_device_limits`](Self::recommended_device_limits) requests:
-    /// the most any single pipeline binds in one stage across all optional
-    /// features. The `raytrace` path tracer's compute stage is the high-water
-    /// mark at ten; the base lit mesh path needs only
-    /// [`MIN_STORAGE_BUFFERS_PER_STAGE`](Self::MIN_STORAGE_BUFFERS_PER_STAGE),
-    /// and per-vertex deformers sit between at
-    /// [`DEFORM_STORAGE_BUFFERS_PER_STAGE`](Self::DEFORM_STORAGE_BUFFERS_PER_STAGE).
-    /// Requesting this much up front lets every optional feature run; it is
-    /// clamped to what the adapter actually supports.
+    /// [`recommended_device_limits`](Self::recommended_device_limits) requests.
+    /// Nothing the renderer builds needs more than
+    /// [`MIN_STORAGE_BUFFERS_PER_STAGE`](Self::MIN_STORAGE_BUFFERS_PER_STAGE):
+    /// the lit mesh path, per-vertex deformers and the `raytrace` path tracer
+    /// all fit in it. The headroom is for item-type plugins and consumer
+    /// pipelines that bind their own storage buffers. It is clamped to what the
+    /// adapter actually supports.
     pub const REQUIRED_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
 
-    /// The hard floor the base lit mesh pipeline needs in one shader stage. The
-    /// clustered lit fragment binds this many storage buffers (clustered light
-    /// data, light probes, shadow data, plus the per-object buffer), so a device
-    /// below this cannot render the mesh path at all and [`new`](Self::new)
-    /// rejects it. Optional features that need more are gated on the device
-    /// providing the headroom (see [`DEFORM_STORAGE_BUFFERS_PER_STAGE`]) rather
-    /// than asserted here, so they degrade instead of crashing.
-    ///
-    /// [`DEFORM_STORAGE_BUFFERS_PER_STAGE`]: Self::DEFORM_STORAGE_BUFFERS_PER_STAGE
-    #[cfg(not(feature = "raytrace"))]
+    /// The storage-buffer floor in one shader stage, wgpu's default. A device
+    /// below it cannot render the mesh path at all and [`new`](Self::new)
+    /// rejects it. The `raytrace` path tracer's compute layouts bind at most
+    /// eight, so a build with that feature runs on default limits too, as do
+    /// per-vertex deformers, whose data lives in the mesh's sidecar record.
     pub const MIN_STORAGE_BUFFERS_PER_STAGE: u32 = 8;
-    /// The `raytrace` path tracer's compute stage binds ten storage buffers, so
-    /// a build with that feature requires ten up front. See the non-`raytrace`
-    /// definition for the base rationale.
-    #[cfg(feature = "raytrace")]
-    pub const MIN_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
-
-    /// The per-stage storage-buffer count per-vertex deformers need: the base
-    /// vertex stage (eight) plus the two the deform sidecar adds. A device below
-    /// this still renders the base mesh path, but the deform group is left out
-    /// and `register_deformer` reports that deformers are unavailable, rather
-    /// than failing pipeline creation.
-    ///
-    /// This must equal what the deform-enabled mesh pipeline layout actually
-    /// binds in the vertex stage. A device granted exactly one less passes the
-    /// gate and then fails every pipeline layout that includes the deform
-    /// group, which renders nothing at all. `ViewportGpuResources::new` counts
-    /// the layouts it builds and `debug_assert!`s against this, so adding a
-    /// vertex-stage storage buffer without updating it fails a debug build.
-    pub const DEFORM_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
 
     /// The device limits viewport-lib runs best with, above wgpu's defaults.
     ///
     /// Raises `max_storage_buffers_per_shader_stage` to
     /// [`REQUIRED_STORAGE_BUFFERS_PER_STAGE`](Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE),
-    /// enough headroom for every optional feature (per-vertex deformers, the
-    /// `raytrace` path tracer). The base lit mesh path needs only
+    /// headroom for item-type plugins and consumer pipelines. Everything the
+    /// renderer builds, the `raytrace` path tracer included, needs only
     /// [`MIN_STORAGE_BUFFERS_PER_STAGE`](Self::MIN_STORAGE_BUFFERS_PER_STAGE) and
-    /// renders on wgpu's default limits, so passing this is not required just to
-    /// draw: it is what turns the optional features on. Features whose headroom
-    /// the device lacks are disabled rather than fatal.
+    /// renders on wgpu's default limits, so passing this is not required to
+    /// draw.
     ///
     /// Pass the result as `required_limits` in the `DeviceDescriptor`. It starts
     /// from [`Limits::default`](crate::gpu::Limits::default) and raises the
@@ -795,9 +770,9 @@ impl ViewportRenderer {
             .max(Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE)
             .min(adapter_limits.max_storage_buffers_per_shader_stage);
         // Assign the adapter's own maximum (never more than it reports, so the
-        // request always succeeds). A deform-slot buffer for a big morph mesh can
-        // exceed the 128 MiB binding / 256 MiB buffer defaults, which would make
-        // the deform bind group invalid; the base draw path stays under both.
+        // request always succeeds). A big morph mesh's deform slots, which sit in
+        // its sidecar record, can take the record past the 128 MiB binding /
+        // 256 MiB buffer defaults; the base draw path stays under both.
         limits.max_storage_buffer_binding_size = adapter_limits.max_storage_buffer_binding_size;
         limits.max_buffer_size = adapter_limits.max_buffer_size;
         // The scene and per-object groups already take 15 of the default 16
@@ -940,8 +915,9 @@ impl ViewportRenderer {
         }
         resources.instancing.material_texture_binding = material_texture_binding;
         resources
-            .material_gpu_builder
+            .material_table
             .set_bindless(material_texture_binding == MaterialTextureBinding::Bindless);
+        resources.rebuild_material_blocks(|_| true);
         let mut renderer = Self {
             resources,
             instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
@@ -1293,6 +1269,30 @@ impl ViewportRenderer {
         self.resources.set_force_po_discard(force);
     }
 
+    /// Draw every mesh batch with every shader feature compiled in.
+    ///
+    /// Off by default. A mesh batch normally draws through a pipeline built
+    /// with only the shader features its items use (scalar colouring,
+    /// lightmaps, matcaps, deformers and so on), which is cheaper to run. The
+    /// two pipelines draw the same image, so this exists to check that they do
+    /// and to measure what the reduced pipelines save. It does not change
+    /// rendered output.
+    pub fn set_mesh_universal(&mut self, universal: bool) {
+        self.resources.set_mesh_universal(universal);
+    }
+
+    /// Mesh records drawn through a pipeline that leaves out a shader feature
+    /// they use, one line each. Always empty when the renderer is correct;
+    /// checked by the test suites. Debug builds only: a release build keeps
+    /// no records to check and returns nothing.
+    #[doc(hidden)]
+    pub fn feature_set_violations(&self) -> Vec<String> {
+        crate::renderer::prepare::instanced_feature_set_violations(
+            &self.resources,
+            &self.instancing,
+        )
+    }
+
     /// Keep the debug-visualisation block compiled into the lit pipelines even
     /// while [`DebugVis`] is off.
     ///
@@ -1470,6 +1470,7 @@ impl ViewportRenderer {
         self.set_cpu_pick_cache(tuning.cpu_pick_cache);
         self.set_force_multi_draw(tuning.diagnostics.force_multi_draw);
         self.set_force_po_discard(tuning.diagnostics.force_po_discard);
+        self.set_mesh_universal(tuning.diagnostics.mesh_universal);
     }
 
     /// Snapshot the current persistent tuning, so a consumer wanting to tune for
@@ -1489,6 +1490,7 @@ impl ViewportRenderer {
             diagnostics: crate::renderer::tuning::RenderDiagnostics {
                 force_multi_draw: self.instancing.multi_draw_forced,
                 force_po_discard: self.resources.force_po_discard,
+                mesh_universal: self.resources.mesh_universal,
             },
         }
     }
@@ -1523,10 +1525,7 @@ impl ViewportRenderer {
         &mut self.resources
     }
 
-    /// Returns true when the current frame is rendered via the instanced draw path.
-    ///
-    /// When true, edits to mesh.wgsl shadow sampling code have no effect - the active
-    /// shader is mesh_instanced.wgsl. Check this before testing shader changes.
+    /// Returns true when the current frame draws its meshes in batches.
     pub fn is_using_instanced_path(&self) -> bool {
         self.instancing.use_instancing
     }
@@ -1569,9 +1568,10 @@ impl ViewportRenderer {
     pub fn use_per_batch_material_textures(&mut self) {
         use crate::resources::mesh::instanced_bindless::MaterialTextureBinding;
         self.resources.instancing.material_texture_binding = MaterialTextureBinding::PerBatch;
-        // The interner keys blocks on their bytes, and the texture indices are
-        // part of those bytes only on the bindless path, so it has to be told.
-        self.resources.material_gpu_builder.set_bindless(false);
+        // Material blocks carry texture array indices only on the bindless
+        // path, so every block is rebuilt for the new mode.
+        self.resources.material_table.set_bindless(false);
+        self.resources.rebuild_material_blocks(|_| true);
     }
 
     /// Returns the number of instanced batches prepared for the current frame.
@@ -3497,16 +3497,11 @@ impl ViewportRenderer {
             &self.resources,
             &mut *render_pass,
             frame,
-            self.instancing.use_instancing,
             &self.instancing.batches,
             camera_bg,
             grid_bg,
             vp_slot,
-            &self.mesh_uniforms.wireframe_bind_groups,
-            &self.mesh_uniforms.bind_groups,
-            &self.mesh_uniforms.submesh_bind_groups,
-            &self.mesh_uniforms.object_indices,
-            &self.mesh_uniforms.submesh_indices,
+            &self.mesh_uniforms.material_bind_groups,
             &self.prepared_surfaces,
             self.per_object_bundle.as_ref()
         );
@@ -3521,12 +3516,10 @@ impl ViewportRenderer {
                         self.resources.scene.wireframe(),
                     ) {
                         render_pass.set_pipeline(wf);
-                        bind_deform_group!(
-                            render_pass,
-                            self.resources,
-                            &self.resources.deform.dummy_bind_group
-                        );
                         render_pass.set_bind_group(1, tvm_bg, &[]);
+                        if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
+                            render_pass.set_vertex_buffer(1, records.slice(..));
+                        }
                         render_pass.set_vertex_buffer(
                             0,
                             self.resources.geometry.vertex_slice(mesh.vertex_span),

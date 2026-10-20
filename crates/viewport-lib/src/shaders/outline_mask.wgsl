@@ -2,8 +2,8 @@
 // mask texture. The edge detection pass reads this mask to produce a smooth
 // anti-aliased outline.
 //
-// Group 0: Camera bind group (only view_proj is used).
-// Group 1: OutlineUniform (only model is used).
+// Group 0: Camera bind group (view_proj and the deform header).
+// Group 1: OutlineUniform, the position override and the sidecar chunk.
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -19,7 +19,9 @@ struct OutlineUniform {
     position_override_base: u32,
     position_override_len: u32,
     deform_flags: u32,
-    _deform_pad0: u32,
+    // The deform table the item's colour draw reads, a word of the sidecar
+    // chunk at binding 2; 0 for none.
+    deform_table: u32,
     _deform_pad1: u32,
     _deform_pad2: u32,
 };
@@ -31,6 +33,8 @@ struct OutlineUniform {
 // from geometry driven through `set_position_override_buffer`. Bound to a
 // small fallback buffer when the outlined item has no override.
 @group(1) @binding(1) var<storage, read> position_override_buffer: array<f32>;
+// The sidecar chunk holding the outlined mesh's record, for its deform data.
+@group(1) @binding(2) var<storage, read> sidecar_pool: array<u32>;
 
 // Per-vertex deformation hook contract.
 // #include "helpers/deform.wgsl"
@@ -60,6 +64,7 @@ fn vs_main(
             );
         }
     }
+    deform_table = outline.deform_table;
     var dv = DeformVertex(local_pos, vec3<f32>(0.0, 0.0, 1.0), vertex_index);
     let dctx = DeformContext(outline.model, outline.model[3].xyz, 0.0, outline.deform_flags, 0u);
     dv = viewport_deform_object_space(dv, dctx);

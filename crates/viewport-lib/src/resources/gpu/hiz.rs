@@ -634,4 +634,10 @@ impl crate::resources::DeviceResources {
     pub(crate) fn set_force_po_discard(&mut self, force: bool) {
         self.force_po_discard = force;
     }
+
+    /// Pin every per-object mesh draw to the universal pipeline. Measurement
+    /// knob only.
+    pub(crate) fn set_mesh_universal(&mut self, universal: bool) {
+        self.mesh_universal = universal;
+    }
 }

@@ -313,16 +313,11 @@ impl ViewportRenderer {
                 &self.resources,
                 &mut render_pass,
                 frame,
-                self.instancing.use_instancing,
                 &self.instancing.batches,
                 camera_bg,
                 grid_bg,
                 Some(slot),
-                &self.mesh_uniforms.wireframe_bind_groups,
-                &self.mesh_uniforms.bind_groups,
-                &self.mesh_uniforms.submesh_bind_groups,
-                &self.mesh_uniforms.object_indices,
-                &self.mesh_uniforms.submesh_indices,
+                &self.mesh_uniforms.material_bind_groups,
                 &self.prepared_surfaces,
                 self.per_object_bundle.as_ref()
             );
@@ -338,12 +333,10 @@ impl ViewportRenderer {
                             self.resources.scene.wireframe(),
                         ) {
                             render_pass.set_pipeline(wf);
-                            bind_deform_group!(
-                                render_pass,
-                                self.resources,
-                                &self.resources.deform.dummy_bind_group
-                            );
                             render_pass.set_bind_group(1, tvm_bg, &[]);
+                            if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
+                                render_pass.set_vertex_buffer(1, records.slice(..));
+                            }
                             render_pass.set_vertex_buffer(
                                 0,
                                 self.resources.geometry.vertex_slice(mesh.vertex_span),
@@ -798,6 +791,12 @@ impl ViewportRenderer {
             .store(0, std::sync::atomic::Ordering::Relaxed);
         self.frame_main_draw_commands
             .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.resources
+            .frame_feature_sets_capped
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.resources
+            .frame_stand_in_draws
+            .store(0, std::sync::atomic::Ordering::Relaxed);
 
         let bg_colour = background_premultiplied(frame);
         let ppp = frame.camera.pixels_per_point;
@@ -880,9 +879,6 @@ impl ViewportRenderer {
             if !scene_items.is_empty() || Self::has_mesh_content(frame) {
                 self.resources.ensure_ldr_mesh_pipelines(device);
             }
-            if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
-                self.resources.ensure_ldr_instanced_pipelines(device);
-            }
             self.render_frame_ldr(
                 device,
                 queue,
@@ -929,6 +925,15 @@ impl ViewportRenderer {
             .frame_pipelines_built
             .swap(0, std::sync::atomic::Ordering::Relaxed);
         self.last_stats.pipelines_pending = self.resources.pipeline_compiler.pending() as u32;
+        self.last_stats.feature_sets_capped = self
+            .resources
+            .frame_feature_sets_capped
+            .load(std::sync::atomic::Ordering::Relaxed);
+        self.last_stats.stand_in_draws = self
+            .resources
+            .frame_stand_in_draws
+            .load(std::sync::atomic::Ordering::Relaxed);
+        self.last_stats.feature_pipelines_built = self.resources.feature_sets() as u32;
         cmd_buf
     }
 
@@ -1514,7 +1519,7 @@ impl crate::renderer::ViewportRenderer {
         }
 
         // Mesh-instance pass: one draw call per host-built batch, routed by
-        // blend mode. Reuses the scene-graph instanced mesh pipeline family.
+        // blend mode, through the HDR mesh family's blended members.
         if !self.mesh_instance_gpu_data.is_empty() {
             use crate::renderer::SpriteBlend;
             for blend in [
@@ -1536,12 +1541,7 @@ impl crate::renderer::ViewportRenderer {
                         continue;
                     }
                     if pipeline.is_none() {
-                        let instancing = &self.resources.instancing;
-                        let Some(pl) = (match blend {
-                            SpriteBlend::AlphaBlend => instancing.hdr_transparent(),
-                            SpriteBlend::Additive => instancing.hdr_additive(),
-                            SpriteBlend::Premultiplied => instancing.hdr_premultiplied(),
-                        }) else {
+                        let Some(pl) = self.resources.scene.hdr_blend(blend) else {
                             // Still compiling: this blend mode waits a frame.
                             break;
                         };
@@ -1550,16 +1550,7 @@ impl crate::renderer::ViewportRenderer {
                         pipeline = Some(pl);
                     }
                     render_pass.set_bind_group(1, &batch.bind_group, &[]);
-                    // mesh_instanced.wgsl's pipeline layout includes the deform
-                    // bind group at index 2. MeshInstanceItem does not expose
-                    // per-instance deform handles, so bind the per-mesh
-                    // fallback (or the dummy group when the mesh has no
-                    // attached deform data).
-                    let deform_bg = self
-                        .resources
-                        .deform
-                        .instance_bind_group_for(batch.mesh_id, None);
-                    bind_deform_group!(render_pass, self.resources, deform_bg);
+                    render_pass.set_vertex_buffer(1, batch.instance_buf.slice(..));
                     render_pass.set_vertex_buffer(
                         0,
                         self.resources.geometry.vertex_slice(mesh.vertex_span),

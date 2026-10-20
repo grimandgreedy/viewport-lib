@@ -66,8 +66,9 @@ pub use self::light_probes::{
     LightProbe, LightProbeSet, LightProbeVolume, SHCoefficients, evaluate_sh,
     project_equirect_to_sh,
 };
-pub use self::lightmap::{LightmapData, LightmapMode};
+pub use self::lightmap::{LightmapData, LightmapMode, LightmapPlacement, LightmapPlacementId};
 pub use self::material::environment::{EnvironmentMapId, EnvironmentOptions, EnvironmentZone};
+pub use self::material::material_store::MaterialId;
 pub use self::material::texture_store::TextureId;
 pub use self::material::textures::{CompressedTextureDesc, supports_texture_format};
 pub use self::memory::vram_budget;
@@ -83,8 +84,8 @@ pub use self::mesh_sidecar::registry::{
     DEFORM_PARAMS_PER_SLOT_PUB, DEFORM_SLOT_COUNT_PUB, DeformStage, DeformerDesc, DeformerId,
 };
 pub use self::mesh_sidecar::shade::{
-    MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, MaterialPluginStats,
-    ShadingHookDesc, ShadingHookId,
+    MATERIAL_PLUGIN_MAX_PARAMS, MATERIAL_PLUGIN_MAX_TEXTURES, MaterialPlugin, MaterialPluginStats,
+    ParamDesc, ParamKind, ParamValue, ShadingHookDesc, ShadingHookId,
 };
 pub use self::overlay::font::{FontError, FontHandle, TextMetrics};
 pub(crate) use self::overlay::geometry::{CompiledOverlay, CompiledSource, OverlayInstance};
@@ -113,10 +114,10 @@ pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
     ContactShadowUniform, DofUniform, FrustumPlane, FrustumUniform, GpuProjectedTetMesh,
     GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData, MeshInstanceGpuData,
-    ObjectUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
-    OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex,
-    OverlayTextVertex, ProjectedTetUniform, SHADOW_ATLAS_SIZE, ShadowAtlasUniform, ShadowCullState,
-    SsaoUniform, SubHighlightGpuData, ToneMapUniform, ViewportCullState, ViewportHdrState,
+    OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu, OverlayShapeGpuData,
+    OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex, OverlayTextVertex,
+    ProjectedTetUniform, SHADOW_ATLAS_SIZE, ShadowAtlasUniform, ShadowCullState, SsaoUniform,
+    SubHighlightGpuData, ToneMapUniform, ViewportCullState, ViewportHdrState,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,

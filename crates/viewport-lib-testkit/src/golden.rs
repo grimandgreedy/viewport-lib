@@ -98,6 +98,39 @@ pub fn compare(reference: &RgbaImage, actual: &RgbaImage, tol: Tolerance) -> Com
     }
 }
 
+/// The largest mean per-channel difference over any `block` x `block` tile
+/// (0..=255 scale; edge tiles are averaged over the pixels they hold).
+///
+/// A difference scattered over isolated pixels keeps every tile's mean low
+/// however large each pixel's difference; a change to a whole surface moves
+/// every tile it covers.
+pub fn max_block_mean_delta(reference: &RgbaImage, actual: &RgbaImage, block: u32) -> f32 {
+    assert_eq!(
+        reference.dimensions(),
+        actual.dimensions(),
+        "reference/actual size mismatch"
+    );
+    let (w, h) = reference.dimensions();
+    let mut worst = 0f32;
+    for by in (0..h).step_by(block as usize) {
+        for bx in (0..w).step_by(block as usize) {
+            let mut sum = 0u64;
+            let mut n = 0u64;
+            for y in by..(by + block).min(h) {
+                for x in bx..(bx + block).min(w) {
+                    let (r, a) = (reference.get_pixel(x, y), actual.get_pixel(x, y));
+                    for c in 0..4 {
+                        sum += (i16::from(r.0[c]) - i16::from(a.0[c])).unsigned_abs() as u64;
+                    }
+                    n += 4;
+                }
+            }
+            worst = worst.max(sum as f32 / n as f32);
+        }
+    }
+    worst
+}
+
 /// A red-over-grey diff: red where a pixel is over `tol.max_channel_delta`, a
 /// dimmed greyscale of the reference elsewhere.
 pub fn diff_image(reference: &RgbaImage, actual: &RgbaImage, tol: Tolerance) -> RgbaImage {

@@ -19,7 +19,7 @@ fn render(
     renderer: &mut ViewportRenderer,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    mesh: MeshId,
+    (mesh, material): (MeshId, MaterialId),
     boxes: &[(f32, bool, f32)],
     mode: viewport_lib::PipelineMode,
 ) -> Vec<u8> {
@@ -41,7 +41,7 @@ fn render(
             item.mesh_id = mesh;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
-            item.material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
+            item.material = material;
             item.settings.wireframe = wireframe;
             item.settings.opacity = opacity;
             item
@@ -59,14 +59,24 @@ fn coverage(px: &[u8], x0: u32, x1: u32) -> usize {
         .count()
 }
 
-fn setup() -> Option<(wgpu::Device, wgpu::Queue, ViewportRenderer, MeshId)> {
+/// The device, a renderer, and the grey box every test draws.
+fn setup() -> Option<(
+    wgpu::Device,
+    wgpu::Queue,
+    ViewportRenderer,
+    (MeshId, MaterialId),
+)> {
     let (device, queue) = headless_device()?;
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let mesh = renderer
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .unwrap();
-    Some((device, queue, renderer, mesh))
+    let grey = upload_material(
+        &mut renderer,
+        Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8)),
+    );
+    Some((device, queue, renderer, (mesh, grey)))
 }
 
 const MODES: [viewport_lib::PipelineMode; 2] = [

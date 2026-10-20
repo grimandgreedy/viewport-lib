@@ -13,7 +13,10 @@ use viewport_lib::Colour;
 // The corpus the catalogue builds from: procedural meshes, lighting rigs,
 // textures, and (optionally) real model files. All behind the `scenes` feature
 // with this module.
+pub mod exposure;
+pub mod fallbacks;
 pub mod item_types;
+pub mod materials;
 pub mod meshes;
 pub mod overlays;
 #[cfg(feature = "real_models")]
@@ -25,9 +28,9 @@ pub mod textures;
 use glam::{Mat4, Quat, Vec3};
 use viewport_lib::wgpu;
 use viewport_lib::{
-    BackfacePolicy, Camera, CameraFrame, FrameData, LightingSettings, Material, MeshData, MeshId,
-    MeshInstanceItem, PolylineItem, ScatterSettings, SceneFrame, SceneRenderItem, ViewportRenderer,
-    primitives,
+    BackfacePolicy, Camera, CameraFrame, FrameData, LightingSettings, Material, MaterialId,
+    MeshData, MeshId, MeshInstanceItem, PolylineItem, ScatterSettings, SceneFrame, SceneRenderItem,
+    ViewportRenderer, primitives,
 };
 use viewport_lib_plugins::item_types::decal::DecalItem;
 use viewport_lib_plugins::item_types::gpu_marching_cubes::GpuMarchingCubesItem;
@@ -129,6 +132,12 @@ pub struct BuiltScene {
     /// post-process configuration (supersampling, say) rather than an item
     /// type. `None` leaves the frame's defaults alone.
     pub post_process: Option<viewport_lib::PostProcessSettings>,
+    /// Exposure override, for a scene that exercises an exposure mode. `None`
+    /// leaves the default (passthrough) exposure.
+    pub exposure: Option<viewport_lib::ExposureSettings>,
+    /// Pipeline mode override, for a scene that exercises the direct (LDR)
+    /// path. `None` leaves the default HDR pipeline.
+    pub pipeline_mode: Option<viewport_lib::PipelineMode>,
     /// Screen-space overlay items: shapes, labels, glyph runs, polylines, and
     /// retained groups compiled during `build`.
     pub overlays: viewport_lib::OverlayFrame,
@@ -253,6 +262,12 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     if let Some(post) = scene.post_process.clone() {
         fd.effects.post_process = post;
     }
+    if let Some(exposure) = scene.exposure {
+        fd.effects.display.exposure = exposure;
+    }
+    if let Some(mode) = scene.pipeline_mode {
+        fd.effects.display.mode = mode;
+    }
     if let Some((objects, cap_fill)) = scene.clip.clone() {
         fd.effects.clip.objects = objects;
         fd.effects.clip.cap_fill_enabled = cap_fill;
@@ -278,25 +293,31 @@ fn upload(ctx: &mut BuildCtx<'_>, mesh: &MeshData) -> MeshId {
         .expect("mesh upload")
 }
 
-fn item(mesh: MeshId, pos: Vec3, material: Material) -> SceneRenderItem {
-    let mut it = SceneRenderItem::default();
-    it.mesh_id = mesh;
-    it.model = Mat4::from_translation(pos).to_cols_array_2d();
-    it.material = material;
-    it
+fn material(ctx: &mut BuildCtx<'_>, material: Material) -> MaterialId {
+    ctx.renderer
+        .resources_mut()
+        .upload_material(material)
+        .expect("material upload")
 }
 
-fn item_model(mesh: MeshId, model: Mat4, material: Material) -> SceneRenderItem {
-    let mut it = SceneRenderItem::default();
-    it.mesh_id = mesh;
+fn item(ctx: &mut BuildCtx<'_>, mesh: MeshId, pos: Vec3, material: Material) -> SceneRenderItem {
+    item_model(ctx, mesh, Mat4::from_translation(pos), material)
+}
+
+fn item_model(
+    ctx: &mut BuildCtx<'_>,
+    mesh: MeshId,
+    model: Mat4,
+    material: Material,
+) -> SceneRenderItem {
+    let mut it = SceneRenderItem::new(mesh, self::material(ctx, material));
     it.model = model.to_cols_array_2d();
-    it.material = material;
     it
 }
 
-fn two_sided(mut it: SceneRenderItem) -> SceneRenderItem {
-    it.material.backface_policy = BackfacePolicy::Identical;
-    it
+fn two_sided(mut material: Material) -> Material {
+    material.backface_policy = BackfacePolicy::Identical;
+    material
 }
 
 fn with_opacity(mut it: SceneRenderItem, opacity: f32) -> SceneRenderItem {
@@ -308,6 +329,7 @@ fn with_opacity(mut it: SceneRenderItem, opacity: f32) -> SceneRenderItem {
 fn ground(ctx: &mut BuildCtx<'_>, top: f32) -> SceneRenderItem {
     let mesh = upload(ctx, &primitives::cuboid(40.0, 40.0, 0.4));
     item(
+        ctx,
         mesh,
         Vec3::new(0.0, 0.0, top - 0.2),
         Material::pbr(Colour::linear_rgb(0.55, 0.55, 0.58), 0.0, 0.9),
@@ -323,16 +345,19 @@ fn build_primitives_trio(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     BuiltScene {
         items: vec![
             item(
+                ctx,
                 s,
                 Vec3::new(-2.5, 0.0, 0.0),
                 Material::pbr(Colour::linear_rgb(0.9, 0.5, 0.2), 0.2, 0.5),
             ),
             item(
+                ctx,
                 c,
                 Vec3::new(0.0, 0.0, 0.0),
                 Material::pbr(Colour::linear_rgb(0.4, 0.6, 0.9), 0.6, 0.4),
             ),
             item(
+                ctx,
                 t,
                 Vec3::new(2.5, 0.0, 0.0),
                 Material::pbr(Colour::linear_rgb(0.3, 0.8, 0.4), 0.3, 0.5),
@@ -348,6 +373,7 @@ fn build_torus_knot(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let k = upload(ctx, &meshes::torus_knot(2, 3, 240, 16, 0.32));
     BuiltScene {
         items: vec![item_model(
+            ctx,
             k,
             Mat4::from_scale(Vec3::splat(0.9)),
             Material::pbr(Colour::linear_rgb(0.85, 0.45, 0.5), 0.4, 0.4),
@@ -362,6 +388,7 @@ fn build_gear(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let g = upload(ctx, &meshes::gear(14, 1.0, 1.35, 0.45));
     BuiltScene {
         items: vec![item(
+            ctx,
             g,
             Vec3::ZERO,
             Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.75), 0.9, 0.35),
@@ -375,11 +402,12 @@ fn build_gear(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 fn build_bowl(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let b = upload(ctx, &meshes::bowl(1.4, 48, 14));
     BuiltScene {
-        items: vec![two_sided(item(
+        items: vec![item(
+            ctx,
             b,
             Vec3::ZERO,
-            Material::pbr(Colour::linear_rgb(0.8, 0.78, 0.7), 0.1, 0.6),
-        ))],
+            two_sided(Material::pbr(Colour::linear_rgb(0.8, 0.78, 0.7), 0.1, 0.6)),
+        )],
         lighting: rigs::from_above(),
         background: None,
         ..Default::default()
@@ -393,6 +421,7 @@ fn build_castellated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![
             g,
             item(
+                ctx,
                 bar,
                 Vec3::new(0.0, 0.0, 0.5),
                 Material::pbr(Colour::linear_rgb(0.6, 0.4, 0.35), 0.0, 0.7),
@@ -408,6 +437,7 @@ fn build_heightfield(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let h = upload(ctx, &meshes::heightfield(96, 96, 4.0, 0.8));
     BuiltScene {
         items: vec![item(
+            ctx,
             h,
             Vec3::ZERO,
             Material::pbr(Colour::linear_rgb(0.4, 0.55, 0.35), 0.0, 0.85),
@@ -421,11 +451,12 @@ fn build_heightfield(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 fn build_thin_sheet(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let sheet = upload(ctx, &meshes::thin_sheet(48, 48, 2.5, 0.18));
     BuiltScene {
-        items: vec![two_sided(item(
+        items: vec![item(
+            ctx,
             sheet,
             Vec3::ZERO,
-            Material::pbr(Colour::linear_rgb(0.85, 0.3, 0.35), 0.0, 0.5),
-        ))],
+            two_sided(Material::pbr(Colour::linear_rgb(0.85, 0.3, 0.35), 0.0, 0.5)),
+        )],
         lighting: rigs::backlit(),
         background: None,
         ..Default::default()
@@ -436,6 +467,7 @@ fn build_stress_sphere(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let s = upload(ctx, &meshes::stress_sphere(1.5, 6));
     BuiltScene {
         items: vec![item(
+            ctx,
             s,
             Vec3::ZERO,
             Material::pbr(Colour::linear_rgb(0.6, 0.6, 0.85), 0.3, 0.3),
@@ -454,16 +486,18 @@ fn build_concave_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![
             g,
             item_model(
+                ctx,
                 k,
                 Mat4::from_translation(Vec3::new(-1.6, 0.0, 1.4))
                     * Mat4::from_scale(Vec3::splat(0.7)),
                 Material::pbr(Colour::linear_rgb(0.8, 0.5, 0.3), 0.4, 0.4),
             ),
-            two_sided(item(
+            item(
+                ctx,
                 b,
                 Vec3::new(1.8, 0.0, 0.6),
-                Material::pbr(Colour::linear_rgb(0.75, 0.75, 0.8), 0.1, 0.6),
-            )),
+                two_sided(Material::pbr(Colour::linear_rgb(0.75, 0.75, 0.8), 0.1, 0.6)),
+            ),
         ],
         lighting: rigs::grazing(),
         background: None,
@@ -486,7 +520,7 @@ fn build_textured_checker(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut mat = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.6);
     mat.texture_id = Some(tex_id);
     BuiltScene {
-        items: vec![item(s, Vec3::ZERO, mat)],
+        items: vec![item(ctx, s, Vec3::ZERO, mat)],
         lighting: rigs::from_above(),
         background: None,
         ..Default::default()
@@ -508,7 +542,7 @@ fn build_textured_normalmap(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut mat = Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.75), 0.1, 0.5);
     mat.normal_map_id = Some(nm_id);
     BuiltScene {
-        items: vec![item(s, Vec3::ZERO, mat)],
+        items: vec![item(ctx, s, Vec3::ZERO, mat)],
         lighting: rigs::grazing(),
         background: None,
         ..Default::default()
@@ -525,6 +559,7 @@ fn build_transparent(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             let x = (i as f32 - 1.0) * 1.1;
             with_opacity(
                 item(
+                    ctx,
                     s,
                     Vec3::new(x, 0.0, 0.0),
                     Material::pbr(Colour::from_linear_rgb_array(c), 0.0, 0.4),
@@ -537,6 +572,45 @@ fn build_transparent(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items,
         lighting: rigs::from_above(),
         background: None,
+        ..Default::default()
+    }
+}
+
+/// Blended draw order on the direct (LDR) path, which has no OIT and so relies
+/// on drawing blended surfaces back to front.
+///
+/// Five half-transparent plates staggered along Y, from two meshes so they form
+/// two batches, and interleaved in depth so that neither batch order nor
+/// instance order is right from both cameras: only a per-item sort by distance
+/// is. The catalogue views it from both ends, along +Y and along -Y.
+fn build_ldr_blended_order(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let large = upload(ctx, &primitives::cuboid(1.6, 0.04, 1.6));
+    let small = upload(ctx, &primitives::cuboid(1.1, 0.04, 1.1));
+    let plates = [
+        (large, Vec3::new(-0.7, -1.2, 0.0), [0.9, 0.2, 0.2]),
+        (large, Vec3::new(0.0, 0.0, 0.0), [0.2, 0.9, 0.2]),
+        (large, Vec3::new(0.7, 1.2, 0.0), [0.2, 0.3, 0.9]),
+        (small, Vec3::new(-0.35, -0.6, 0.35), [0.9, 0.9, 0.2]),
+        (small, Vec3::new(0.35, 0.6, -0.35), [0.9, 0.2, 0.9]),
+    ];
+    let items = plates
+        .into_iter()
+        .map(|(mesh, pos, c)| {
+            with_opacity(
+                item(
+                    ctx,
+                    mesh,
+                    pos,
+                    Material::pbr(Colour::from_linear_rgb_array(c), 0.0, 0.6),
+                ),
+                0.5,
+            )
+        })
+        .collect();
+    BuiltScene {
+        items,
+        lighting: rigs::from_above(),
+        pipeline_mode: Some(viewport_lib::PipelineMode::Direct),
         ..Default::default()
     }
 }
@@ -580,24 +654,16 @@ fn build_transparent_background(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     glow.emissive = Colour::linear(0.95, 0.62, 0.30, 1.0);
     glow.emissive_strength = 18.0;
 
+    // Half transparent and nearer the camera, so it covers part of the sphere
+    // and part of nothing. `alpha_mode` has to be set as well as the opacity:
+    // opacity alone leaves the item on the opaque pipeline, which writes depth
+    // and comes back fully covered.
+    let mut pane = Material::pbr(Colour::linear_rgb(0.35, 0.65, 0.90), 0.0, 0.25);
+    pane.alpha_mode = viewport_lib::AlphaMode::Blend;
+
     let items = vec![
-        item(s, Vec3::new(-0.9, 0.9, 0.0), glow),
-        // Half transparent and nearer the camera, so it covers part of the
-        // sphere and part of nothing. `alpha_mode` has to be set as well as the
-        // opacity: opacity alone leaves the item on the opaque pipeline, which
-        // writes depth and comes back fully covered.
-        with_opacity(
-            {
-                let mut it = item(
-                    slab,
-                    Vec3::new(-0.3, -1.1, 0.3),
-                    Material::pbr(Colour::linear_rgb(0.35, 0.65, 0.90), 0.0, 0.25),
-                );
-                it.material.alpha_mode = viewport_lib::AlphaMode::Blend;
-                it
-            },
-            0.45,
-        ),
+        item(ctx, s, Vec3::new(-0.9, 0.9, 0.0), glow),
+        with_opacity(item(ctx, slab, Vec3::new(-0.3, -1.1, 0.3), pane), 0.45),
     ];
 
     // `PostProcessSettings` is non-exhaustive, so mutate the default rather than
@@ -624,12 +690,14 @@ fn build_surface_wireframe(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let c = upload(ctx, &primitives::cube(1.2));
     let t = upload(ctx, &primitives::torus(0.6, 0.22, 24, 12));
     let mut sphere = item(
+        ctx,
         s,
         Vec3::new(-2.5, 0.0, 0.0),
         Material::pbr(Colour::linear_rgb(0.9, 0.5, 0.2), 0.2, 0.5),
     );
     sphere.settings.wireframe = true;
     let mut torus = item(
+        ctx,
         t,
         Vec3::new(2.5, 0.0, 0.0),
         Material::pbr(Colour::linear_rgb(0.3, 0.8, 0.4), 0.3, 0.5),
@@ -640,6 +708,7 @@ fn build_surface_wireframe(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items: vec![
             sphere,
             item(
+                ctx,
                 c,
                 Vec3::ZERO,
                 Material::pbr(Colour::linear_rgb(0.4, 0.6, 0.9), 0.6, 0.4),
@@ -661,6 +730,7 @@ fn build_materials_pbr(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             let roughness = (j as f32 / 4.0).max(0.05);
             let pos = Vec3::new((i as f32 - 2.0) * 1.6, (j as f32 - 2.0) * 1.6, 0.0);
             items.push(item(
+                ctx,
                 s,
                 pos,
                 Material::pbr(Colour::linear_rgb(0.85, 0.82, 0.78), metallic, roughness),
@@ -690,6 +760,7 @@ fn build_many_objects(ctx: &mut BuildCtx<'_>) -> BuiltScene {
                 (s, [0.3, 0.6, 0.8])
             };
             items.push(item(
+                ctx,
                 mesh,
                 Vec3::new(x, y, 0.0),
                 Material::pbr(Colour::from_linear_rgb_array(colour), 0.2, 0.5),
@@ -710,6 +781,7 @@ fn build_lights_eight(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut items = vec![g];
     for i in 0..3 {
         items.push(item(
+            ctx,
             s,
             Vec3::new((i as f32 - 1.0) * 2.0, 0.0, 0.0),
             Material::pbr(Colour::linear_rgb(0.85, 0.85, 0.85), 0.1, 0.4),
@@ -739,6 +811,7 @@ fn build_game_mix(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             let x = (i as f32 - 2.5) * 3.0;
             let y = (j as f32 - 2.5) * 3.0;
             items.push(item(
+                ctx,
                 building,
                 Vec3::new(x, y, 1.5),
                 Material::pbr(Colour::linear_rgb(0.6, 0.6, 0.62), 0.1, 0.8),
@@ -748,6 +821,7 @@ fn build_game_mix(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     for i in 0..8 {
         let a = i as f32 / 8.0 * std::f32::consts::TAU;
         items.push(item(
+            ctx,
             character,
             Vec3::new(a.cos() * 6.0, a.sin() * 6.0, 0.6),
             Material::pbr(Colour::linear_rgb(0.8, 0.5, 0.4), 0.0, 0.6),
@@ -757,6 +831,7 @@ fn build_game_mix(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         let a = i as f32 * 0.61;
         let r = 1.5 + (i as f32) * 0.18;
         items.push(item(
+            ctx,
             prop,
             Vec3::new(a.cos() * r, a.sin() * r, 0.2),
             Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.3), 0.3, 0.5),
@@ -906,6 +981,24 @@ pub fn catalogue() -> Vec<NamedScene> {
             cameras: standard_cameras(Vec3::ZERO, 7.0),
             build: build_transparent,
         },
+        // The snapshot gate renders a scene's first camera, so the two views of
+        // the blended-order scene are two entries.
+        NamedScene {
+            name: "ldr_blended_order_front",
+            cameras: vec![NamedCamera {
+                name: "front",
+                camera: orbit_camera(Vec3::ZERO, 7.0, 0.3, 1.45),
+            }],
+            build: build_ldr_blended_order,
+        },
+        NamedScene {
+            name: "ldr_blended_order_back",
+            cameras: vec![NamedCamera {
+                name: "back",
+                camera: orbit_camera(Vec3::ZERO, 7.0, 0.3 + std::f32::consts::PI, 1.45),
+            }],
+            build: build_ldr_blended_order,
+        },
         NamedScene {
             name: "transparent_background",
             cameras: standard_cameras(Vec3::ZERO, 7.0),
@@ -950,6 +1043,9 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(item_types::scenes());
     scenes.extend(overlays::scenes());
     scenes.extend(shadows::scenes());
+    scenes.extend(materials::scenes());
+    scenes.extend(fallbacks::scenes());
+    scenes.extend(exposure::scenes());
     scenes
 }
 

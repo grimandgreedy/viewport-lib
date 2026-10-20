@@ -1,6 +1,22 @@
 use super::*;
 use crate::resources::builders::LoggedAlloc;
 
+/// Plain (non-array) sampled textures `entries` make visible to `stage`.
+/// Binding arrays count against a limit of their own.
+fn stage_sampled_textures(
+    entries: &[crate::gpu::BindGroupLayoutEntry],
+    stage: crate::gpu::ShaderStages,
+) -> u32 {
+    entries
+        .iter()
+        .filter(|e| {
+            e.visibility.contains(stage)
+                && e.count.is_none()
+                && matches!(e.ty, crate::gpu::BindingType::Texture { .. })
+        })
+        .count() as u32
+}
+
 /// Count the storage buffers a set of bind group layout entries costs in one
 /// shader stage. Used to check the layouts built here against the constants
 /// that describe them.
@@ -116,21 +132,6 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Shader module
         // ------------------------------------------------------------------
-        // The deform sidecar is group 2 and adds two vertex-stage storage
-        // buffers (nine total in the vertex stage). It needs both a third bind
-        // group and the storage-buffer headroom for those two buffers. iced_wgpu
-        // and other WebGL2-targeting backends cap max_bind_groups at 2, and a
-        // device created with wgpu's default max_storage_buffers_per_shader_stage
-        // of 8 has room for the base lit mesh path but not the deform buffers.
-        // On either shortfall we compile the _noop variants, which omit the
-        // deform group, and build 2-group pipeline layouts; the base mesh path
-        // then fits in the default limits. Per-vertex deformers are unavailable
-        // in that state, and register_deformer reports it.
-        let device_limits = device.limits();
-        let deform_enabled = device_limits.max_bind_groups >= 3
-            && device_limits.max_storage_buffers_per_shader_stage
-                >= crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE;
-
         // ------------------------------------------------------------------
         // Bind group layouts
         // ------------------------------------------------------------------
@@ -277,8 +278,8 @@ impl DeviceResources {
             // Binding 14: clustered-shading grid uniform (dimensions,
             // near/far, screen size, fallback flag). FRAGMENT only: the
             // cluster helpers are fragment-stage, and the vertex-stage
-            // Metal buffer table is at capacity (the object group's
-            // binding 15 took the last slot).
+            // Metal buffer table runs out around fifteen buffers, so
+            // nothing fragment-only takes a vertex slot.
             crate::gpu::BindGroupLayoutEntry {
                 binding: 14,
                 visibility: crate::gpu::ShaderStages::FRAGMENT,
@@ -289,22 +290,12 @@ impl DeviceResources {
                 },
                 count: None,
             },
-            // Binding 15: cluster cell storage (offset + count per cell),
-            // read-only in the fragment stage.
+            // Binding 15: the cluster cells (offset + count per cell) then
+            // the global cluster light index list, read-only in the fragment
+            // stage. Binding 16 is free: the index list had it before the
+            // two shared one buffer.
             crate::gpu::BindGroupLayoutEntry {
                 binding: 15,
-                visibility: crate::gpu::ShaderStages::FRAGMENT,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // Binding 16: global cluster light index list, read-only in
-            // the fragment stage.
-            crate::gpu::BindGroupLayoutEntry {
-                binding: 16,
                 visibility: crate::gpu::ShaderStages::FRAGMENT,
                 ty: crate::gpu::BindingType::Buffer {
                     ty: crate::gpu::BufferBindingType::Storage { read_only: true },
@@ -334,7 +325,8 @@ impl DeviceResources {
             // binding 18: indirect-lighting storage buffer (FRAGMENT,
             // read-only). Holds per-object light-probe SH blocks then the
             // environment-selection zones in a second region (see
-            // indirect_light_data / load_env_zone in scene_lighting.wgsl).
+            // indirect_light_data / load_env_zone in scene_lighting.wgsl),
+            // then the adaptive probe volume.
             // Binding 19 is intentionally free: env zones used to live there
             // before they were folded into this buffer.
             crate::gpu::BindGroupLayoutEntry {
@@ -347,20 +339,8 @@ impl DeviceResources {
                 },
                 count: None,
             },
-            // binding 20: adaptive probe volume (FRAGMENT, read-only). A
-            // 3-vec4 header (grid box + dims) then 9 vec4 of SH per grid
-            // cell, trilinearly sampled per fragment when the object's
-            // light_probe_index is the volume sentinel.
-            crate::gpu::BindGroupLayoutEntry {
-                binding: 20,
-                visibility: crate::gpu::ShaderStages::FRAGMENT,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
+            // Binding 20 is free: the adaptive probe volume moved into the
+            // last region of the binding-18 buffer.
             // binding 21: per-material UV transform buffer (FRAGMENT,
             // read-only). Array of `MaterialGpu` transform blocks, indexed by
             // the per-draw `material_id`. Scene-global, so it lives in group 0.
@@ -374,19 +354,11 @@ impl DeviceResources {
                 },
                 count: None,
             },
-            // binding 22: per-instance custom-data buffer (FRAGMENT,
-            // read-only). Array of `InstanceCustomData` payloads, indexed by
-            // the per-instance `custom_data_id`. Scene-global, group 0.
-            crate::gpu::BindGroupLayoutEntry {
-                binding: 22,
-                visibility: crate::gpu::ShaderStages::FRAGMENT,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
+            // Binding 22 is free: the per-instance custom data is the last
+            // region of the binding-18 buffer.
+            // binding 23: the deform header (time and per-slot parameters),
+            // read by the deform hooks in the vertex stage.
+            crate::resources::builders::uniform_entry(23, crate::gpu::ShaderStages::VERTEX),
         ];
         let camera_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("camera_bgl"),
@@ -471,11 +443,11 @@ impl DeviceResources {
                 },
                 count: None,
             },
-            // binding 6: scalar attribute storage buffer (VERTEX, read-only).
-            // Read only in vs_main; the fragment stage receives the value as
-            // the interpolated `scalar_val` varying, so it does not need the
-            // buffer visible. Keeping it vertex-only also keeps this buffer off
-            // the fragment stage's storage-buffer count.
+            // binding 6: the mesh's sidecar record chunk (VERTEX, read-only):
+            // scalar and face attributes, face colours, vector attributes, the
+            // extension attribute, lightmap UV1 and the per-mesh draw words.
+            // Read only in vs_main; the fragment stage gets the values as
+            // varyings, so the chunk stays off the fragment storage count.
             crate::gpu::BindGroupLayoutEntry {
                 binding: 6,
                 visibility: crate::gpu::ShaderStages::VERTEX,
@@ -494,31 +466,6 @@ impl DeviceResources {
                     sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
                     view_dimension: crate::gpu::TextureViewDimension::D2,
                     multisampled: false,
-                },
-                count: None,
-            },
-            // binding 8: per-face colour storage buffer (VERTEX, read-only).
-            // Like binding 6, read only in vs_main; the fragment stage gets it
-            // as the interpolated `face_colour` varying, so it stays vertex-only
-            // and off the fragment stage's storage-buffer count.
-            crate::gpu::BindGroupLayoutEntry {
-                binding: 8,
-                visibility: crate::gpu::ShaderStages::VERTEX,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // binding 9: warp vector storage buffer (VERTEX, read-only)
-            crate::gpu::BindGroupLayoutEntry {
-                binding: 9,
-                visibility: crate::gpu::ShaderStages::VERTEX,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
                 },
                 count: None,
             },
@@ -574,21 +521,6 @@ impl DeviceResources {
                 },
                 count: None,
             },
-            // binding 15: per-vertex extension attribute storage buffer
-            // (VERTEX, read-only). One vec4<f32> per vertex; declared and
-            // read only by material-plugin modules whose hook sets
-            // reads_vertex_attribute. Fallback sentinel (one zero vec4)
-            // is bound for meshes without the channel.
-            crate::gpu::BindGroupLayoutEntry {
-                binding: 15,
-                visibility: crate::gpu::ShaderStages::VERTEX,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
             // binding 17: baked lightmap texture array (FRAGMENT, filterable).
             // Sampled with the binding-2 material sampler. A lightmap can
             // spill across several atlas pages, so this is a texture_2d_array
@@ -616,6 +548,19 @@ impl DeviceResources {
                     sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
                     view_dimension: crate::gpu::TextureViewDimension::D2Array,
                     multisampled: false,
+                },
+                count: None,
+            },
+            // binding 15: the visible list of a GPU-culled draw (VERTEX,
+            // read-only): its instance index is a slot here, which names the
+            // record. Direct draws bind a zero fallback.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 15,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
                 },
                 count: None,
             },
@@ -693,23 +638,16 @@ impl DeviceResources {
         mark("shaders_and_bind_group_layouts");
 
         // ------------------------------------------------------------------
-        // Per-vertex deformation sidecar. Constructed early because every
-        // mesh-family pipeline layout binds its group(2) BGL.
+        // Per-vertex deformation state. Constructed early because the group-0
+        // bind groups bind its header uniform.
         // ------------------------------------------------------------------
-        let deform = if deform_enabled {
-            crate::resources::mesh_sidecar::deform::DeformationState::new(device)
-        } else {
-            crate::resources::mesh_sidecar::deform::DeformationState::new_disabled(device)
-        };
+        let deform = crate::resources::mesh_sidecar::deform::DeformationState::new(device);
 
         // wgpu counts max_storage_buffers_per_shader_stage per stage across
         // every group in a pipeline layout, so the mesh pipelines pay the sum of
-        // the groups they bind. The constants describing that sum live in
-        // ViewportRenderer and drift silently when a vertex-stage binding is
-        // added here: a deform gate one short of what the layout binds turns
-        // deformers on and then fails every pipeline layout that includes the
-        // deform group, which renders nothing at all. Derive the counts from the
-        // entries just used rather than trusting the constants.
+        // the groups they bind. Derive the counts from the entries just used, so
+        // a binding added here that takes the mesh path over the default limit
+        // fails here rather than on a consumer's device.
         #[cfg(debug_assertions)]
         {
             let base = stage_storage_buffers(&camera_bgl_entries, crate::gpu::ShaderStages::VERTEX)
@@ -738,22 +676,20 @@ impl DeviceResources {
                 base_fragment <= default_limit,
                 "the base mesh path binds {base_fragment} fragment-stage storage buffers, over                  wgpu's default limit of {default_limit}; a consumer creating a device with                  default limits could no longer render at all"
             );
-            let with_deform = base
-                + stage_storage_buffers(
-                    &crate::resources::mesh_sidecar::deform::BGL_ENTRIES,
-                    crate::gpu::ShaderStages::VERTEX,
-                );
-            debug_assert_eq!(
-                with_deform,
-                crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE,
-                "the deform-enabled mesh pipeline layout binds {} vertex-stage storage buffers \
-                 but DEFORM_STORAGE_BUFFERS_PER_STAGE gates deformers at {}; a device granted \
-                 exactly the gate value would enable the deform group and then fail every \
-                 pipeline layout that includes it",
-                with_deform,
-                crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE,
-            );
         }
+
+        // A material plugin's group 2 adds its textures to the fragment stage of
+        // the mesh pipelines. The per-object layouts bind the most of the mesh
+        // paths, so what they leave is what a plugin may declare.
+        let plugin_texture_budget = {
+            let fragment = crate::gpu::ShaderStages::FRAGMENT;
+            let used = stage_sampled_textures(&camera_bgl_entries, fragment)
+                + stage_sampled_textures(&object_bgl_entries, fragment);
+            device
+                .limits()
+                .max_sampled_textures_per_shader_stage
+                .saturating_sub(used)
+        };
 
         // The LDR mesh.wgsl pipelines (solid, two-sided, transparent, wireframe)
         // and the module they share are built by `ensure_ldr_mesh_pipelines` on
@@ -786,49 +722,27 @@ impl DeviceResources {
             mapped_at_creation: false,
         });
 
-        // Per-material UV transform buffer (group 0, binding 21). Starts small
-        // and grows when a frame interns more blocks than it holds; see
-        // `upload_material_gpu`.
+        // Material block buffer (group 0, binding 21). Starts small and grows
+        // when the material table outgrows it; see `upload_material_gpu`.
         let material_gpu_buf = Self::create_material_gpu_buffer(
             device,
             crate::resources::material_gpu::MATERIAL_GPU_INITIAL_CAPACITY,
         );
 
-        // Per-instance custom-data buffer (group 0, binding 22). Starts small
-        // and grows when a frame interns more blocks than it holds; see
-        // `upload_custom_data`.
-        let instance_custom_data_buf = Self::create_custom_data_buffer(
-            device,
-            crate::resources::custom_data::CUSTOM_DATA_INITIAL_CAPACITY,
-        );
-
-        // Indirect-lighting storage buffer (group 0 binding 18). Holds the
-        // per-object light-probe SH blocks in the first region and the
-        // environment-selection zones in the second, sharing one binding so the
-        // fragment stage stays within the storage-buffer budget. Both regions are
-        // fixed capacity, so writes are sub-region and never realloc. The env-zone
-        // region starts at MAX_LIGHT_PROBE_OBJECTS * SH_GPU_STRIDE_BYTES; the
-        // shader's ENV_ZONE_BASE (in vec4) must match (guarded by a const_assert
-        // in resources::material::environment).
-        let indirect_light_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("indirect_light_buf"),
-            size: (crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS
-                * crate::resources::light_probes::SH_GPU_STRIDE_BYTES
-                + crate::resources::material::environment::MAX_ENV_ZONES
-                    * crate::resources::material::environment::ENV_ZONE_STRIDE_BYTES)
-                as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Disabled probe-volume header (binding 20 fallback): 3 vec4, all zero so
-        // the enabled flag (header[0].w) reads 0 and the sampler returns black.
-        let light_probe_volume_fallback =
-            device.logged_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                label: Some("light_probe_volume_fallback"),
-                contents: bytemuck::cast_slice(&[[0.0f32; 4]; 3]),
-                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            });
+        // Indirect-lighting storage buffer (group 0 binding 18): the per-object
+        // light-probe SH blocks, the environment-selection zones, the adaptive
+        // probe volume, then the per-instance custom-data blocks, sharing one
+        // binding so the fragment stage stays within the storage-buffer budget.
+        // The first two regions are fixed capacity; the volume region holds a
+        // disabled header until a volume is set, and the custom data starts
+        // small and grows when a frame interns more blocks than it holds (see
+        // `lighting::indirect_light_buffer` and `upload_custom_data`).
+        let (indirect_light_buf, custom_data_base_bytes) =
+            crate::resources::lighting::indirect_light_buffer(
+                device,
+                None,
+                crate::resources::custom_data::CUSTOM_DATA_INITIAL_CAPACITY,
+            );
 
         // Clip planes uniform buffer (binding 4 of camera bind group).
         // Initialized to count=0 (no active clip planes).
@@ -1037,11 +951,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 15,
-                    resource: clustered.cluster_grid_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 16,
-                    resource: clustered.light_index_buf.as_entire_binding(),
+                    resource: clustered.cluster_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 17,
@@ -1052,37 +962,37 @@ impl DeviceResources {
                     resource: indirect_light_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 20,
-                    resource: light_probe_volume_fallback.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
                     binding: 21,
                     resource: material_gpu_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 22,
-                    resource: instance_custom_data_buf.as_entire_binding(),
+                    binding: 23,
+                    resource: deform.header_buffer.as_entire_binding(),
                 },
             ],
         });
 
-        // Shadow pass uses a simple bind group layout: just the light uniform.
+        // Shadow pass uses a simple bind group layout: the light uniform and
+        // the deform header.
         let shadow_camera_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("shadow_camera_bgl"),
-                entries: &[crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        // Dynamic offset lets the cascade loop select per-cascade matrix slot
-                        // without calling write_buffer inside the render pass (which would be
-                        // a no-op per-cascade since wgpu batches all writes before execution).
-                        has_dynamic_offset: true,
-                        min_binding_size: None,
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::VERTEX,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            // Dynamic offset lets the cascade loop select per-cascade matrix slot
+                            // without calling write_buffer inside the render pass (which would be
+                            // a no-op per-cascade since wgpu batches all writes before execution).
+                            has_dynamic_offset: true,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    crate::resources::builders::uniform_entry(23, crate::gpu::ShaderStages::VERTEX),
+                ],
             });
 
         // The depth-only cascade pipelines are built by
@@ -1102,18 +1012,27 @@ impl DeviceResources {
         let shadow_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("shadow_bind_group"),
             layout: &shadow_camera_bgl,
-            entries: &[crate::gpu::BindGroupEntry {
-                binding: 0,
-                // Bind only the first 64-byte matrix slot; dynamic offset selects cascade.
-                resource: crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
-                    buffer: &shadow_uniform_buf,
-                    offset: 0,
-                    size: Some(
-                        crate::gpu::BufferSize::new(std::mem::size_of::<[[f32; 4]; 4]>() as u64)
-                            .unwrap(),
-                    ),
-                }),
-            }],
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    // Bind only the first 64-byte matrix slot; dynamic offset selects cascade.
+                    resource: crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
+                        buffer: &shadow_uniform_buf,
+                        offset: 0,
+                        size:
+                            Some(
+                                crate::gpu::BufferSize::new(
+                                    std::mem::size_of::<[[f32; 4]; 4]>() as u64
+                                )
+                                .unwrap(),
+                            ),
+                    }),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 23,
+                    resource: deform.header_buffer.as_entire_binding(),
+                },
+            ],
         });
 
         // ------------------------------------------------------------------
@@ -1121,25 +1040,29 @@ impl DeviceResources {
         //
         // One render pass per (light slot, face) writes linear distance to
         // the light into a per-face depth attachment. The bind group layout
-        // mirrors the cascade pipeline (same object + deform bind groups)
-        // and carries a per-face uniform with view_proj + light_pos + range.
+        // mirrors the cascade pipeline (same object bind group) and carries a
+        // per-face uniform with view_proj + light_pos + range, and the deform
+        // header.
         // ------------------------------------------------------------------
         // The pipeline itself is built by `ensure_point_shadow_pipeline` on the
         // first frame with point-shadow faces to draw.
         let shadow_point_face_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("shadow_point_face_bgl"),
-                entries: &[crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: None,
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::VERTEX
+                            | crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: true,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    crate::resources::builders::uniform_entry(23, crate::gpu::ShaderStages::VERTEX),
+                ],
             });
         // Per-face uniform buffer. Stride 256 satisfies wgpu's dynamic-offset
         // alignment requirement. Total slots = MAX_POINT_SHADOW_LIGHTS * 6.
@@ -1155,16 +1078,22 @@ impl DeviceResources {
             device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("shadow_point_face_bind_group"),
                 layout: &shadow_point_face_bgl,
-                entries: &[crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
-                        buffer: &shadow_point_face_buf,
-                        offset: 0,
-                        // Bind one PointFace slot worth (96 bytes rounded up
-                        // to 16-byte alignment is fine here).
-                        size: Some(crate::gpu::BufferSize::new(96).unwrap()),
-                    }),
-                }],
+                entries: &[
+                    crate::gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
+                            buffer: &shadow_point_face_buf,
+                            offset: 0,
+                            // Bind one PointFace slot worth (96 bytes rounded up
+                            // to 16-byte alignment is fine here).
+                            size: Some(crate::gpu::BufferSize::new(96).unwrap()),
+                        }),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: 23,
+                        resource: deform.header_buffer.as_entire_binding(),
+                    },
+                ],
             });
 
         mark("shadow_pipelines");
@@ -1373,6 +1302,12 @@ impl DeviceResources {
             device,
             "material_sampler",
             crate::gpu::FilterMode::Nearest,
+        );
+
+        let mesh_sampler = crate::resources::builders::sampler_from_key(
+            device,
+            "mesh_material_sampler",
+            &crate::scene::material::SamplerKey::default(),
         );
 
         // Clamp-to-edge sampler for colourmap LUT lookups (prevents wrap artifact at scalar extremes).
@@ -1593,32 +1528,9 @@ impl DeviceResources {
             crate::resources::material::textures::create_builtin_colourmaps(device);
         mark("builtin_colourmaps");
 
-        let fallback_scalar_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("fallback_scalar_buf"),
-            size: 4,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(fallback_scalar_buf.slice(..), &[0u8; 4]);
-        fallback_scalar_buf.unmap();
-
-        let fallback_face_colour_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("fallback_face_colour_buf"),
-            size: 16, // one vec4<f32>
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(fallback_face_colour_buf.slice(..), &[0u8; 16]);
-        fallback_face_colour_buf.unmap();
-
-        let fallback_warp_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("fallback_warp_buf"),
-            size: 12, // one vec3<f32>
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(fallback_warp_buf.slice(..), &[0u8; 12]);
-        fallback_warp_buf.unmap();
+        // Sidecar record chunks for every mesh's per-vertex streams and per-mesh
+        // draw words, plus the empty header bound for meshes without a record.
+        let sidecar = crate::resources::mesh::sidecar_pool::SidecarPool::new(device);
 
         let fallback_position_override_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_position_override_buf"),
@@ -1643,15 +1555,6 @@ impl DeviceResources {
             &[0u8; 12],
         );
         fallback_normal_override_buf.unmap();
-
-        let fallback_extension_attr_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("fallback_extension_attr_buf"),
-            size: 16, // one vec4<f32>
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(fallback_extension_attr_buf.slice(..), &[0u8; 16]);
-        fallback_extension_attr_buf.unmap();
 
         // Zero uv1 stream bound at the mesh bind group's second-UV-set slot for
         // meshes without a second UV set (`MeshData::uvs1 == None`). A one-entry
@@ -1691,13 +1594,10 @@ impl DeviceResources {
             &fallback_texture.sampler,
             &lut_sampler,
             &fallback_lut_view,
-            &fallback_scalar_buf,
+            sidecar.fallback(),
             &fallback_texture.view,
-            &fallback_face_colour_buf,
-            &fallback_warp_buf,
             &fallback_position_override_buf,
             &fallback_normal_override_buf,
-            &fallback_extension_attr_buf,
             &fallback_metallic_roughness_texture_view,
             &fallback_emissive_texture_view,
             &fallback_uv1_buf,
@@ -1726,6 +1626,17 @@ impl DeviceResources {
                 ),
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // The outlined mesh's sidecar chunk, for its deform data.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 2,
                     visibility: crate::gpu::ShaderStages::VERTEX,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Storage { read_only: true },
@@ -1809,11 +1720,14 @@ impl DeviceResources {
             deform,
             shade_hooks: Vec::new(),
             material_plugins: std::collections::HashMap::new(),
+            plugin_texture_budget,
             binds: crate::resources::scene_bindings::SceneBindings {
                 camera_uniform_buf,
                 camera_bg: camera_bind_group,
                 camera_bgl,
                 object_bgl,
+                object_bgl_entries: object_bgl_entries.to_vec(),
+                object_bindless_bgl: None,
                 clip_planes_buf: clip_planes_uniform_buf,
                 clip_volume_buf: clip_volume_uniform_buf,
             },
@@ -1822,8 +1736,8 @@ impl DeviceResources {
                 storage_buf: light_storage_buf,
                 probes: None,
                 indirect_buf: indirect_light_buf,
-                probe_volume_buf: None,
-                probe_volume_fallback: light_probe_volume_fallback,
+                has_probe_volume: false,
+                custom_data_base_bytes,
             },
             clustered,
             exposure,
@@ -1833,6 +1747,9 @@ impl DeviceResources {
                 store
             },
             geometry,
+            sidecar,
+            sidecar_dirty: Vec::new(),
+            frame_lightmap_placements: Vec::new(),
             lod_groups: crate::resources::mesh::lod::LodGroupStore::new(),
             shadow: crate::resources::shadow::ShadowResources {
                 map_texture: shadow_map_texture,
@@ -1885,7 +1802,13 @@ impl DeviceResources {
                 emissive: fallback_emissive_texture,
                 emissive_view: fallback_emissive_texture_view,
                 sampler: material_sampler,
-                sampler_palette: std::sync::Mutex::new(std::collections::HashMap::new()),
+                mesh_sampler: mesh_sampler.clone(),
+                sampler_palette: std::sync::Mutex::new(std::collections::HashMap::from([(
+                    crate::resources::material::fallbacks::sampler_palette_key(
+                        crate::scene::material::SamplerKey::default(),
+                    ),
+                    mesh_sampler,
+                )])),
                 lut_sampler,
                 depth_read_sampler,
                 depth_read_bgl,
@@ -1895,6 +1818,7 @@ impl DeviceResources {
                 material_bind_groups: std::collections::HashMap::new(),
                 texture_slot_mismatches: std::sync::Mutex::new(Vec::new()),
                 textures: crate::resources::material::texture_store::TextureStore::new(),
+                materials: crate::resources::material::material_store::MaterialStore::new(),
                 volume_textures: crate::resources::handle::SlotStore::default(),
                 projected_tet_store: crate::resources::handle::SlotStore::default(),
                 glyph_atlas,
@@ -1911,12 +1835,8 @@ impl DeviceResources {
                 colourmaps_cpu,
                 fallback_lut_texture,
                 fallback_lut_view,
-                fallback_scalar_buf,
-                fallback_face_colour_buf,
-                fallback_warp_buf,
                 fallback_position_override_buf,
                 fallback_normal_override_buf,
-                fallback_extension_attr_buf,
                 fallback_uv1_buf,
                 builtin_colourmap_ids,
                 colourmaps_initialized: false,
@@ -1975,8 +1895,10 @@ impl DeviceResources {
             ),
             material_gpu_buf,
             material_gpu_capacity: crate::resources::material_gpu::MATERIAL_GPU_INITIAL_CAPACITY,
-            material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder::default(),
-            instance_custom_data_buf,
+            material_gpu_limit: (device.limits().max_storage_buffer_binding_size as usize
+                / std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>())
+            .max(crate::resources::material_gpu::MATERIAL_GPU_INITIAL_CAPACITY),
+            material_table: crate::resources::material_gpu::MaterialTable::default(),
             instance_custom_data_capacity:
                 crate::resources::custom_data::CUSTOM_DATA_INITIAL_CAPACITY,
             custom_data_builder: crate::resources::custom_data::CustomDataBuilder::default(),
@@ -1984,16 +1906,20 @@ impl DeviceResources {
             frame_pipelines_built: std::sync::atomic::AtomicU32::new(0),
             pipeline_compiler: std::sync::Arc::clone(&pipeline_compiler),
             hiz_pipelines: std::sync::OnceLock::new(),
-            material_gpu_written: Vec::new(),
             custom_data_written: Vec::new(),
             pipeline_compiler_shutdown: crate::resources::pipeline_slot::CompilerShutdown(
                 pipeline_compiler,
             ),
             resource_free_epoch: 0,
             resource_view_epoch: 0,
+            mesh_sidecar_epoch: 0,
+            material_plugin_epoch: 0,
             retain_mesh_cpu_geometry: true,
             occlusion_culling_enabled: false,
             force_po_discard: false,
+            mesh_universal: dev_knob!("VIEWPORT_MESH_UNIVERSAL").is_some(),
+            frame_feature_sets_capped: std::sync::atomic::AtomicU32::new(0),
+            frame_stand_in_draws: std::sync::atomic::AtomicU32::new(0),
             camera_bind_groups_dirty: false,
         };
         // Pipelines built during construction are load-time cost, not a frame

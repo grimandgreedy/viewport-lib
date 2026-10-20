@@ -448,8 +448,8 @@ pub fn pick_scene_accelerated_cpu(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resources::MaterialId;
     use crate::resources::mesh::mesh_store::MeshId;
-    use crate::scene::material::Material;
 
     fn unit_cube_mesh() -> (Vec<[f32; 3]>, Vec<u32>) {
         let positions = vec![
@@ -482,7 +482,7 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -497,7 +497,7 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -521,7 +521,7 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -545,12 +545,12 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 2.0)),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.add(
             Some(MeshId::from_index(1)),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0)),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -576,7 +576,7 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -609,12 +609,12 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.add(
             Some(MeshId::from_index(1)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -652,7 +652,7 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -696,7 +696,7 @@ mod tests {
                 ids.push(scene.add(
                     Some(MeshId::from_index(0)),
                     glam::Mat4::from_translation(t),
-                    Material::default(),
+                    MaterialId::DEFAULT,
                 ));
             }
         }
@@ -708,7 +708,7 @@ mod tests {
                 glam::Quat::from_rotation_z(ang) * glam::Quat::from_rotation_x(ang * 0.5),
                 t,
             );
-            ids.push(scene.add(Some(MeshId::from_index(0)), m, Material::default()));
+            ids.push(scene.add(Some(MeshId::from_index(0)), m, MaterialId::DEFAULT));
         }
         // Hide two nodes; both pickers must skip them.
         scene.set_visible(ids[3], false);
@@ -819,7 +819,7 @@ mod tests {
                 ids.push(scene.add(
                     Some(MeshId::from_index(0)),
                     glam::Mat4::from_translation(t),
-                    Material::default(),
+                    MaterialId::DEFAULT,
                 ));
             }
         }

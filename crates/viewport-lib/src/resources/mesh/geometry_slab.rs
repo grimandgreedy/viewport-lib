@@ -33,7 +33,7 @@ pub(crate) struct SlabSpan {
     pub len: u64,
 }
 
-fn align_up(value: u64, align: u64) -> u64 {
+pub(crate) fn align_up(value: u64, align: u64) -> u64 {
     debug_assert!(align.is_power_of_two());
     (value + align - 1) & !(align - 1)
 }
@@ -135,7 +135,7 @@ struct Chunk {
     alloc: RangeAllocator,
 }
 
-struct ByteSlab {
+pub(crate) struct ByteSlab {
     chunks: Vec<Chunk>,
     usage: gpu::BufferUsages,
     label: &'static str,
@@ -150,7 +150,7 @@ struct ByteSlab {
 }
 
 impl ByteSlab {
-    fn new(
+    pub(crate) fn new(
         usage: gpu::BufferUsages,
         label: &'static str,
         align: u64,
@@ -182,7 +182,7 @@ impl ByteSlab {
         scheduled.max(need).min(self.max_buffer.max(need))
     }
 
-    fn alloc(&mut self, device: &gpu::Device, bytes: u64) -> SlabSpan {
+    pub(crate) fn alloc(&mut self, device: &gpu::Device, bytes: u64) -> SlabSpan {
         for (ci, chunk) in self.chunks.iter_mut().enumerate() {
             if let Some(offset) = chunk.alloc.alloc(bytes) {
                 return SlabSpan {
@@ -219,17 +219,17 @@ impl ByteSlab {
         }
     }
 
-    fn free(&mut self, span: SlabSpan) {
+    pub(crate) fn free(&mut self, span: SlabSpan) {
         if let Some(chunk) = self.chunks.get_mut(span.chunk as usize) {
             chunk.alloc.free(span.offset, span.len);
         }
     }
 
-    fn buffer(&self, chunk: u32) -> &gpu::Buffer {
+    pub(crate) fn buffer(&self, chunk: u32) -> &gpu::Buffer {
         &self.chunks[chunk as usize].buffer
     }
 
-    fn resident_bytes(&self) -> u64 {
+    pub(crate) fn resident_bytes(&self) -> u64 {
         self.chunks.iter().map(|c| c.buffer.size()).sum()
     }
 }

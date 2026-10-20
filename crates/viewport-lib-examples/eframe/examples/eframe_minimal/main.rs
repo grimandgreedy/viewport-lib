@@ -60,21 +60,29 @@ fn main() -> eframe::Result {
                 .upload_mesh_data(&rs.device, &primitives::torus(0.5, 0.18, 32, 16))
                 .unwrap();
 
+            // Materials are uploaded once too; items hold their ids.
+            let resources = session.resources_mut();
+            let orange = resources
+                .upload_material(Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05)))
+                .unwrap();
+            let blue = resources
+                .upload_material(Material::from_colour(Colour::linear_rgb(0.12, 0.3, 0.7)))
+                .unwrap();
+            let green = resources
+                .upload_material(Material::from_colour(Colour::linear_rgb(0.1, 0.55, 0.2)))
+                .unwrap();
+
             let scene = session.scene_mut();
             scene.add(
                 Some(sphere),
                 glam::Mat4::from_translation(glam::Vec3::new(-2.5, 0.0, 0.0)),
-                Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05)),
+                orange,
             );
-            let cube_id = scene.add(
-                Some(cube),
-                glam::Mat4::IDENTITY,
-                Material::from_colour(Colour::linear_rgb(0.12, 0.3, 0.7)),
-            );
+            let cube_id = scene.add(Some(cube), glam::Mat4::IDENTITY, blue);
             scene.add(
                 Some(torus),
                 glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.0, 0.0)),
-                Material::from_colour(Colour::linear_rgb(0.1, 0.55, 0.2)),
+                green,
             );
             session.camera_mut().distance = 10.0;
 

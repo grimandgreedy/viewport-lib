@@ -77,3 +77,66 @@ pub enum LightmapMode {
     /// Non-lightmapped (dynamic) meshes are lit fully in realtime as usual.
     Subtractive,
 }
+
+/// Where one draw of a mesh sits in a shared lightmap atlas: the atlas page and
+/// the sub-rect its `[0, 1]` unwrap maps onto
+/// (`lm_uv = uv1 * scale_bias.xy + scale_bias.zw`).
+///
+/// A mesh's lightmap registration carries a placement for every draw of it;
+/// an item that names its own draws its copy at that placement instead, so
+/// repeated props share one upload and one unwrap, each copy in its own rect.
+/// A frame's placements live in one list, which items index with a
+/// [`LightmapPlacementId`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LightmapPlacement {
+    /// Base atlas page (array layer), added to the per-vertex page.
+    pub layer: u32,
+    /// `[scale_u, scale_v, bias_u, bias_v]` onto the page.
+    pub scale_bias: [f32; 4],
+}
+
+impl LightmapPlacement {
+    /// The whole of page 0: the mesh owns its atlas.
+    pub const WHOLE: LightmapPlacement = LightmapPlacement {
+        layer: 0,
+        scale_bias: [1.0, 1.0, 0.0, 0.0],
+    };
+
+    /// A placement on `layer` with `scale_bias`.
+    pub fn new(layer: u32, scale_bias: [f32; 4]) -> Self {
+        Self { layer, scale_bias }
+    }
+}
+
+/// An index into a frame's list of [`LightmapPlacement`]s. Four bytes, and
+/// `Option<LightmapPlacementId>` is too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LightmapPlacementId(std::num::NonZeroU32);
+
+impl LightmapPlacementId {
+    /// The placement at `index` in the frame's list.
+    ///
+    /// # Panics
+    ///
+    /// If `index` is `u32::MAX` or larger.
+    pub fn from_index(index: usize) -> Self {
+        let n = u32::try_from(index)
+            .ok()
+            .and_then(|i| i.checked_add(1))
+            .expect("lightmap placement index out of range");
+        Self(std::num::NonZeroU32::new(n).expect("nonzero by construction"))
+    }
+
+    /// Position in the frame's list.
+    pub fn index(self) -> usize {
+        self.0.get() as usize - 1
+    }
+}
+
+impl Default for LightmapPlacement {
+    fn default() -> Self {
+        Self::WHOLE
+    }
+}

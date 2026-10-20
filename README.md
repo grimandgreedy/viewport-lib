@@ -83,8 +83,9 @@ ViewportApp::new(AppConfig::default())
             // runs once, with the device in hand: upload meshes and build the scene
             let mesh = viewport.resources_mut()
                 .upload_mesh_data(device, &primitives::cube(1.0)).unwrap();
-            viewport.scene_mut().add(
-                Some(mesh), glam::Mat4::IDENTITY, Material::from_colour(Colour::srgb_rgb(0.85, 0.25, 0.2)));
+            let red = viewport.resources_mut()
+                .upload_material(Material::from_colour(Colour::srgb_rgb(0.85, 0.25, 0.2))).unwrap();
+            viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, red);
         },
         |_ctx| {
             // runs once per frame, before rendering: update the scene here
@@ -113,7 +114,8 @@ let mut viewport = ViewportInstance::new(&device, target_format);
 let mut orbit = OrbitCameraController::new_stateless();
 
 let mesh = viewport.resources_mut().upload_mesh_data(&device, &primitives::cube(1.0))?;
-viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, Material::from_colour(Colour::srgb_rgb(0.85, 0.25, 0.2)));
+let red = viewport.resources_mut().upload_material(Material::from_colour(Colour::srgb_rgb(0.85, 0.25, 0.2)))?;
+viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, red);
 
 // Then, each frame inside your app's render loop:
 // `ownership` is your routing decision: Owned when the viewport won the input this

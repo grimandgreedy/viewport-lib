@@ -69,7 +69,10 @@ fn transparent_over_empty_background_not_darker() {
     item.mesh_id = mesh;
     // Cover the centre but leave the corners as background.
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
-    item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6));
+    item.material = upload_material(
+        &mut renderer,
+        Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6)),
+    );
     item.settings.unlit = true;
     item.settings.opacity = 0.3;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -118,15 +121,17 @@ fn bloom_glows_into_empty_background() {
     let size = 128u32;
     let bg = [0.25, 0.25, 0.25, 1.0];
 
+    // Emissive well above the bloom threshold; opaque (sharp alpha edge).
+    let mut glow = Material::from_colour(Colour::linear_rgb(0.02, 0.02, 0.02));
+    glow.emissive = Colour::linear_rgb(6.0, 6.0, 6.0);
+    let glow = upload_material(&mut renderer, glow);
     let mut render = |bloom: bool| -> Vec<u8> {
         let mut frame = tonemap_frame(size, bg);
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
         // Small, so there is surrounding background for the halo to fall on.
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.6)).to_cols_array_2d();
-        // Emissive well above the bloom threshold; opaque (sharp alpha edge).
-        item.material = Material::from_colour(Colour::linear_rgb(0.02, 0.02, 0.02));
-        item.material.emissive = Colour::linear_rgb(6.0, 6.0, 6.0);
+        item.material = glow;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
         frame.effects.post_process.bloom.enabled = bloom;
@@ -189,11 +194,18 @@ fn centre_pixel(img: &[u8]) -> [u8; 4] {
     [img[i], img[i + 1], img[i + 2], img[i + 3]]
 }
 
-fn coloured_item(mesh_id: MeshId, colour: [f32; 3], model: glam::Mat4) -> SceneRenderItem {
+fn coloured_item(
+    renderer: &mut ViewportRenderer,
+    mesh_id: MeshId,
+    colour: [f32; 3],
+    model: glam::Mat4,
+) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material = Material::default();
-    item.material.base_colour = Colour::from_linear_rgb_array(colour);
+    item.material = upload_material(
+        renderer,
+        Material::from_colour(Colour::from_linear_rgb_array(colour)),
+    );
     item.model = model.to_cols_array_2d();
     item
 }
@@ -215,6 +227,7 @@ fn foreground_item_draws_over_occluding_geometry() {
 
     let mut frame = foreground_frame();
     let occluder = coloured_item(
+        &mut renderer,
         mesh_id,
         [0.1, 0.1, 0.9],
         glam::Mat4::from_scale(glam::Vec3::splat(3.0)),
@@ -222,7 +235,12 @@ fn foreground_item_draws_over_occluding_geometry() {
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![occluder].into());
     let without_fg = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    let fg = coloured_item(mesh_id, [0.9, 0.1, 0.1], glam::Mat4::IDENTITY);
+    let fg = coloured_item(
+        &mut renderer,
+        mesh_id,
+        [0.9, 0.1, 0.1],
+        glam::Mat4::IDENTITY,
+    );
     frame.scene.foreground_items.push(fg);
     let with_fg = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
@@ -263,7 +281,7 @@ fn foreground_override_projection_avoids_near_clip() {
     let fwd = glam::Vec3::from(frame.camera.render_camera.forward);
     let model = glam::Mat4::from_translation(eye + fwd * 0.05)
         * glam::Mat4::from_scale(glam::Vec3::splat(0.02));
-    let fg = coloured_item(mesh_id, [0.9, 0.1, 0.1], model);
+    let fg = coloured_item(&mut renderer, mesh_id, [0.9, 0.1, 0.1], model);
     frame.scene.foreground_items.push(fg);
 
     let scene_near = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
@@ -307,6 +325,7 @@ fn foreground_item_survives_post_effects() {
     frame.effects.post_process.bloom.enabled = true;
     frame.effects.post_process.dof.enabled = true;
     let occluder = coloured_item(
+        &mut renderer,
         mesh_id,
         [0.1, 0.1, 0.9],
         glam::Mat4::from_scale(glam::Vec3::splat(3.0)),
@@ -314,7 +333,12 @@ fn foreground_item_survives_post_effects() {
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![occluder].into());
     let without_fg = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    let fg = coloured_item(mesh_id, [0.9, 0.1, 0.1], glam::Mat4::IDENTITY);
+    let fg = coloured_item(
+        &mut renderer,
+        mesh_id,
+        [0.9, 0.1, 0.1],
+        glam::Mat4::IDENTITY,
+    );
     frame.scene.foreground_items.push(fg);
     let with_fg = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
@@ -347,6 +371,7 @@ fn foreground_item_visible_on_ldr_path() {
     let mut frame = foreground_frame();
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
     let occluder = coloured_item(
+        &mut renderer,
         mesh_id,
         [0.1, 0.1, 0.9],
         glam::Mat4::from_scale(glam::Vec3::splat(3.0)),
@@ -354,7 +379,12 @@ fn foreground_item_visible_on_ldr_path() {
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![occluder].into());
     let without_fg = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    let fg = coloured_item(mesh_id, [0.9, 0.1, 0.1], glam::Mat4::IDENTITY);
+    let fg = coloured_item(
+        &mut renderer,
+        mesh_id,
+        [0.9, 0.1, 0.1],
+        glam::Mat4::IDENTITY,
+    );
     frame.scene.foreground_items.push(fg);
     let with_fg = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
@@ -390,6 +420,7 @@ fn foreground_item_ignores_scene_clip_planes() {
     let mut frame = foreground_frame();
     frame.effects.clip.objects.push(clip);
     let world = coloured_item(
+        &mut renderer,
         mesh_id,
         [0.1, 0.1, 0.9],
         glam::Mat4::from_scale(glam::Vec3::splat(3.0)),
@@ -404,7 +435,12 @@ fn foreground_item_ignores_scene_clip_planes() {
         "sanity: the clip plane must remove the world geometry entirely"
     );
 
-    let fg = coloured_item(mesh_id, [0.9, 0.1, 0.1], glam::Mat4::IDENTITY);
+    let fg = coloured_item(
+        &mut renderer,
+        mesh_id,
+        [0.9, 0.1, 0.1],
+        glam::Mat4::IDENTITY,
+    );
     frame.scene.foreground_items.push(fg);
     let with_fg = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_ne!(
@@ -429,11 +465,17 @@ fn foreground_transparency_blends_over_opaque_foreground() {
 
     let mut frame = foreground_frame();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
-    let red = coloured_item(mesh_id, [0.9, 0.1, 0.1], glam::Mat4::IDENTITY);
+    let red = coloured_item(
+        &mut renderer,
+        mesh_id,
+        [0.9, 0.1, 0.1],
+        glam::Mat4::IDENTITY,
+    );
     frame.scene.foreground_items.push(red.clone());
     let opaque_only = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
     let mut glass = coloured_item(
+        &mut renderer,
         mesh_id,
         [0.1, 0.1, 0.9],
         glam::Mat4::from_scale(glam::Vec3::splat(1.5)),
@@ -671,7 +713,7 @@ fn bloom_firefly_cap_bounds_blob_size() {
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
     let mut mat = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
     mat.emissive = Colour::linear_rgb(400.0, 400.0, 400.0);
-    item.material = mat;
+    item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let bright_pixels = |img: &[u8]| -> usize {
@@ -1007,7 +1049,10 @@ fn post_effect_producer_fills_slot() {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
-        item.material = Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6));
+        item.material = upload_material(
+            &mut renderer,
+            Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6)),
+        );
         item.settings.unlit = true;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         renderer.render_offscreen(&device, &queue, &frame, size, size)
@@ -1197,7 +1242,10 @@ fn fs_main(in: ViewportPostVsOut) -> @location(0) vec4<f32> {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).to_cols_array_2d();
-        item.material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
+        item.material = upload_material(
+            &mut renderer,
+            Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8)),
+        );
         item.settings.unlit = true;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         renderer.render_offscreen(&device, &queue, &frame, size, size)

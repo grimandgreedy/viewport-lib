@@ -2,6 +2,9 @@
 
 use crate::colour::ColourSpace;
 use crate::data::texture::{TextureRequirement, TextureRole};
+use crate::plugin::material::{
+    MATERIAL_PLUGIN_MAX_PARAMS, MATERIAL_PLUGIN_MAX_TEXTURES, ParamValue,
+};
 
 /// Per-item render settings: visibility, appearance overrides, pick identity, and selection state.
 ///
@@ -22,6 +25,11 @@ pub struct ItemSettings {
     pub unlit: bool,
     /// Global opacity multiplier. 1.0 = fully opaque, 0.0 = fully transparent. Default 1.0.
     pub opacity: f32,
+    /// Replaces the material's base colour for this item. Default `None`.
+    ///
+    /// Items that differ only in colour can share one material, and so one
+    /// batch, with a colour each; recolouring one item needs no new material.
+    pub colour: Option<crate::colour::Colour>,
     /// Render as wireframe regardless of the global wireframe flag. Default `false`. Extended conceptually to non-mesh
     /// objects to render their sub-objects as meshes, e.g., a VolumeItem has its voxels as wireframe boxes.
     pub wireframe: bool,
@@ -105,6 +113,7 @@ impl Default for ItemSettings {
             hidden: false,
             unlit: false,
             opacity: 1.0,
+            colour: None,
             wireframe: false,
             pick_id: crate::ids::PickId::NONE,
             selected: false,
@@ -547,8 +556,8 @@ impl SamplerKey {
 
 /// Per-object material properties for Blinn-Phong and PBR shading.
 ///
-/// Each `SceneRenderItem` carries its own `Material`, so shading parameters
-/// vary per object rather than applying globally to the whole scene.
+/// Uploaded once with `upload_material`; items name it by the returned
+/// `MaterialId`, and every item holding the id draws with it.
 ///
 /// This struct is `#[non_exhaustive]`: construct via [`Material::default`],
 /// [`Material::from_colour`], or spread syntax (`..Default::default()`). This allows new
@@ -736,33 +745,136 @@ pub struct Material {
     /// built-in shading models above).
     ///
     /// `Some(id)` routes this material through the plugin registered with
-    /// `register_material_plugin` under that id: the plugin's `shade_light` /
-    /// `shade_ambient` / `recolor` hooks replace the built-in lighting terms,
-    /// always on the PBR loop structure (`shading_model` is ignored for the
-    /// lit path). Items with a plugin draw per-object rather than instanced.
-    /// The id is a small `Copy` handle; plugin parameters live in the plugin's
-    /// group-3 params buffer, not on this struct.
+    /// `register_material_plugin` under that id: the plugin's hooks replace the
+    /// built-in lighting terms, always on the PBR loop structure
+    /// (`shading_model` is ignored for the lit path). Set it with
+    /// [`with_plugin`](Self::with_plugin).
     #[cfg_attr(feature = "serde", serde(default))]
     pub shading_plugin: Option<MaterialPluginId>,
+    /// Values for the parameters the plugin declares, by name. A parameter left
+    /// unset draws with the plugin's declared default. Ignored without a
+    /// plugin. Set them with [`with_param`](Self::with_param).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub plugin_params: PluginParams,
+    /// The plugin's texture slots (`material_texture_0..N`). A slot left `None`,
+    /// or naming a freed texture, samples a 1x1 white texture. Ignored without
+    /// a plugin, and past the plugin's `texture_count`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub plugin_textures: [Option<crate::ids::TextureId>; MATERIAL_PLUGIN_MAX_TEXTURES],
 }
 
-/// Handle to a material plugin registered with `register_material_plugin`,
-/// optionally qualified to one of its variants
-/// (`create_material_plugin_variant`).
+/// A material's values for its plugin's declared parameters, keyed by name.
 ///
-/// A small `Copy` id carried on [`Material::shading_plugin`]. All variants of
-/// a plugin share its WGSL and pipelines; each variant owns its group-3
-/// params window and texture set, which is how two materials run the same
-/// plugin with different parameters. `register_material_plugin` returns the
-/// default variant (index 0). The renderer resolves the id against the
-/// registry at draw time; an id from a different session (e.g. a deserialized
-/// scene rendered before the plugin is re-registered) simply falls back to
-/// built-in shading for the frame.
+/// Holds up to [`MATERIAL_PLUGIN_MAX_PARAMS`] values. Names are matched
+/// against the plugin's [`param_layout`](crate::plugin::material::MaterialPlugin::param_layout)
+/// when the material is uploaded; an unknown name, a value of the wrong kind,
+/// or more values than fit is refused there.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PluginParams {
+    names: [u64; MATERIAL_PLUGIN_MAX_PARAMS],
+    values: [ParamValue; MATERIAL_PLUGIN_MAX_PARAMS],
+    len: u8,
+    overflowed: bool,
+}
+
+impl Default for PluginParams {
+    fn default() -> Self {
+        Self {
+            names: [0; MATERIAL_PLUGIN_MAX_PARAMS],
+            values: [ParamValue::F32(0.0); MATERIAL_PLUGIN_MAX_PARAMS],
+            len: 0,
+            overflowed: false,
+        }
+    }
+}
+
+impl PluginParams {
+    /// Set `name` to `value`, replacing an earlier value for the same name.
+    pub fn set(&mut self, name: &str, value: impl Into<ParamValue>) {
+        let key = param_name_hash(name);
+        let value = value.into();
+        let n = self.len as usize;
+        if let Some(i) = self.names[..n].iter().position(|&k| k == key) {
+            self.values[i] = value;
+        } else if n < MATERIAL_PLUGIN_MAX_PARAMS {
+            self.names[n] = key;
+            self.values[n] = value;
+            self.len += 1;
+        } else {
+            self.overflowed = true;
+        }
+    }
+
+    /// The value set for `name`, if any. Unset parameters draw with the
+    /// plugin's default, which this does not report.
+    pub fn get(&self, name: &str) -> Option<ParamValue> {
+        let key = param_name_hash(name);
+        self.iter().find(|(k, _)| *k == key).map(|(_, v)| v)
+    }
+
+    /// Remove the value for `name`, so it draws with the plugin's default.
+    pub fn unset(&mut self, name: &str) {
+        let key = param_name_hash(name);
+        let n = self.len as usize;
+        if let Some(i) = self.names[..n].iter().position(|&k| k == key) {
+            self.names.copy_within(i + 1..n, i);
+            self.values.copy_within(i + 1..n, i);
+            self.len -= 1;
+        }
+    }
+
+    /// Number of values set.
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    /// Whether no value is set.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The values set, by name hash ([`param_name_hash`]).
+    #[doc(hidden)]
+    pub fn iter(&self) -> impl Iterator<Item = (u64, ParamValue)> + '_ {
+        let n = self.len as usize;
+        self.names[..n]
+            .iter()
+            .copied()
+            .zip(self.values[..n].iter().copied())
+    }
+
+    /// Whether a `set` was dropped because every slot was taken.
+    #[doc(hidden)]
+    pub fn overflowed(&self) -> bool {
+        self.overflowed
+    }
+}
+
+/// The key [`PluginParams`] stores a parameter name under (64-bit FNV-1a).
+#[doc(hidden)]
+pub fn param_name_hash(name: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in name.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// Handle to a material plugin registered with `register_material_plugin`.
+///
+/// A small `Copy` id carried on [`Material::shading_plugin`]. Every material on
+/// a plugin shares its WGSL and pipelines; each carries its own
+/// [`plugin_params`](Material::plugin_params) and
+/// [`plugin_textures`](Material::plugin_textures). The renderer resolves the id
+/// against its registry at draw time; an id from a different session (e.g. a
+/// deserialized scene rendered before the plugin is re-registered) falls back
+/// to built-in shading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MaterialPluginId {
     pub(crate) plugin: u32,
-    pub(crate) variant: u32,
 }
 
 impl MaterialPluginId {
@@ -771,17 +883,12 @@ impl MaterialPluginId {
         self.plugin
     }
 
-    /// Variant index within the plugin (0 is the default variant).
-    pub fn variant_index(&self) -> u32 {
-        self.variant
-    }
-
-    /// Build a handle from a plugin registration index and variant index.
-    /// Crate-internal: the shading-hook registry mints these; outside code
-    /// obtains them from registration calls and treats them as opaque.
+    /// Build a handle from a plugin registration index. Crate-internal: the
+    /// shading-hook registry mints these; outside code obtains them from
+    /// registration calls and treats them as opaque.
     #[doc(hidden)]
-    pub fn from_parts(plugin: u32, variant: u32) -> Self {
-        Self { plugin, variant }
+    pub fn from_index(plugin: u32) -> Self {
+        Self { plugin }
     }
 }
 
@@ -824,6 +931,8 @@ impl Default for Material {
             metallic_range: [0.0, 1.0],
             roughness_range: [0.0, 1.0],
             shading_plugin: None,
+            plugin_params: PluginParams::default(),
+            plugin_textures: [None; MATERIAL_PLUGIN_MAX_TEXTURES],
         }
     }
 }
@@ -883,6 +992,40 @@ impl Material {
     /// Bind `id` to `slot`. See [`set_texture`](Self::set_texture).
     pub fn with_texture(mut self, slot: TextureSlot, id: crate::ids::TextureId) -> Self {
         self.set_texture(slot, Some(id));
+        self
+    }
+
+    /// Shade through a registered material plugin. See
+    /// [`shading_plugin`](Self::shading_plugin).
+    pub fn with_plugin(mut self, plugin: MaterialPluginId) -> Self {
+        self.shading_plugin = Some(plugin);
+        self
+    }
+
+    /// Set one of the plugin's declared parameters. See
+    /// [`plugin_params`](Self::plugin_params).
+    pub fn with_param(mut self, name: &str, value: impl Into<ParamValue>) -> Self {
+        self.plugin_params.set(name, value);
+        self
+    }
+
+    /// Set one of the plugin's declared parameters in place.
+    pub fn set_param(&mut self, name: &str, value: impl Into<ParamValue>) {
+        self.plugin_params.set(name, value);
+    }
+
+    /// The value set for one of the plugin's parameters, if any.
+    pub fn param(&self, name: &str) -> Option<ParamValue> {
+        self.plugin_params.get(name)
+    }
+
+    /// Bind `id` to the plugin's texture slot `slot` (`material_texture_<slot>`).
+    ///
+    /// # Panics
+    ///
+    /// When `slot` is [`MATERIAL_PLUGIN_MAX_TEXTURES`] or more.
+    pub fn with_plugin_texture(mut self, slot: usize, id: crate::ids::TextureId) -> Self {
+        self.plugin_textures[slot] = Some(id);
         self
     }
 

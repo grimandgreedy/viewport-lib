@@ -64,8 +64,10 @@ fn lightmap_replace_mode_recolors_object() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    item.material.shading_model = ShadingModel::Pbr;
-    item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+    let mut m = Material::default();
+    m.shading_model = ShadingModel::Pbr;
+    m.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+    item.material = upload_material(&mut renderer, m);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let (w, h) = (64u32, 64u32);
@@ -98,6 +100,10 @@ fn lightmap_ao_mode_darkens_object() {
         .upload_mesh_data(&device, &box_mesh())
         .unwrap();
 
+    let mut m = Material::default();
+    m.shading_model = ShadingModel::Pbr;
+    m.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+    let white = upload_material(&mut renderer, m);
     let build_frame = || {
         let cam = Camera::default();
         let mut frame = FrameData::default();
@@ -115,12 +121,11 @@ fn lightmap_ao_mode_darkens_object() {
         // defaults (a large daylight hemisphere fill and auto-exposure, which
         // would re-brighten the occluded box and mask the darkening).
         frame.effects.lighting.hemisphere_intensity = 0.5;
-        frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
+        frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-        item.material.shading_model = ShadingModel::Pbr;
-        item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+        item.material = white;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         frame
     };

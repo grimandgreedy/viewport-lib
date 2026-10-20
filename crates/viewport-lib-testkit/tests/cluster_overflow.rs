@@ -24,7 +24,11 @@ fn overflow_frame(h: &mut Harness, lights: usize) -> FrameData {
         .expect("ground");
     let mut ground = SceneRenderItem::default();
     ground.mesh_id = ground_id;
-    ground.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
+    ground.material = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
+        .expect("material upload");
 
     // Non-casting point lights stacked over one small area with generous
     // ranges: every cluster covering the ground sees most of them.

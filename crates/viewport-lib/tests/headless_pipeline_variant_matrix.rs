@@ -91,12 +91,15 @@ fn base_frame(target: PipelineMode, size: u32, generation: u64) -> FrameData {
 /// A distant, harmless item that pushes the scene's visible-item count above
 /// the instancing threshold (1) without appearing on screen, so the item(s)
 /// under test route through the instanced draw path instead of per-object.
-fn route_filler(mesh_id: MeshId) -> SceneRenderItem {
+fn route_filler(renderer: &mut ViewportRenderer, mesh_id: MeshId) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.model =
         glam::Mat4::from_translation(glam::Vec3::new(-500.0, -500.0, -500.0)).to_cols_array_2d();
-    item.material = Material::from_colour(Colour::linear_rgb(0.1, 0.9, 0.1));
+    item.material = upload_material(
+        renderer,
+        Material::from_colour(Colour::linear_rgb(0.1, 0.9, 0.1)),
+    );
     item
 }
 
@@ -125,15 +128,17 @@ fn opaque_two_sided_matrix() {
                 gen_ctr.set(gen_ctr.get() + 1);
                 let mut frame = base_frame(target, 128, gen_ctr.get());
                 let mut item = SceneRenderItem::default();
+                let mut mat = Material::default();
                 item.mesh_id = mesh_id;
-                item.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
+                mat.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
                 item.settings.unlit = true;
                 if two_sided {
-                    item.material.backface_policy = BackfacePolicy::Identical;
+                    mat.backface_policy = BackfacePolicy::Identical;
                 }
+                item.material = upload_material(renderer, mat);
                 let mut items = vec![item];
                 if instanced {
-                    items.push(route_filler(mesh_id));
+                    items.push(route_filler(renderer, mesh_id));
                 }
                 frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
                 coverage(&renderer.render_offscreen(&device, &queue, &frame, 128, 128))
@@ -199,17 +204,19 @@ fn opaque_alpha_mask_matrix() {
                     gen_ctr.set(gen_ctr.get() + 1);
                     let mut frame = base_frame(target, 128, gen_ctr.get());
                     let mut item = SceneRenderItem::default();
+                    let mut mat = Material::default();
                     item.mesh_id = mesh_id;
-                    item.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
-                    item.material.texture_id = Some(tex);
-                    item.material.alpha_mode = AlphaMode::Mask(0.5);
+                    mat.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
+                    mat.texture_id = Some(tex);
+                    mat.alpha_mode = AlphaMode::Mask(0.5);
                     item.settings.unlit = true;
                     if two_sided {
-                        item.material.backface_policy = BackfacePolicy::Identical;
+                        mat.backface_policy = BackfacePolicy::Identical;
                     }
+                    item.material = upload_material(renderer, mat);
                     let mut items = vec![item];
                     if instanced {
-                        items.push(route_filler(mesh_id));
+                        items.push(route_filler(renderer, mesh_id));
                     }
                     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
                     coverage(&renderer.render_offscreen(&device, &queue, &frame, 128, 128))
@@ -254,16 +261,18 @@ fn oit_two_sided_matrix() {
             gen_ctr.set(gen_ctr.get() + 1);
             let mut frame = base_frame(PipelineMode::Hdr, 128, gen_ctr.get());
             let mut item = SceneRenderItem::default();
+            let mut mat = Material::default();
             item.mesh_id = mesh_id;
-            item.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
+            mat.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
             item.settings.unlit = true;
             item.settings.opacity = 0.75;
             if two_sided {
-                item.material.backface_policy = BackfacePolicy::Identical;
+                mat.backface_policy = BackfacePolicy::Identical;
             }
+            item.material = upload_material(renderer, mat);
             let mut items = vec![item];
             if instanced {
-                items.push(route_filler(mesh_id));
+                items.push(route_filler(renderer, mesh_id));
             }
             frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
             coverage(&renderer.render_offscreen(&device, &queue, &frame, 128, 128))
@@ -330,11 +339,13 @@ fn oit_premultiplied_blend_matrix() {
         gen_ctr.set(gen_ctr.get() + 1);
         let mut frame = base_frame(PipelineMode::Hdr, 128, gen_ctr.get());
         let mut item = SceneRenderItem::default();
+        let mut mat = Material::default();
         item.mesh_id = mesh_id;
-        item.material.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
-        item.material.texture_id = Some(tex);
-        item.material.alpha_mode = mode;
+        mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+        mat.texture_id = Some(tex);
+        mat.alpha_mode = mode;
         item.settings.unlit = true;
+        item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         let px = renderer.render_offscreen(&device, &queue, &frame, 128, 128);
         centre_red(&px, 128)
@@ -402,14 +413,16 @@ fn shadow_two_sided_matrix() {
             frame.effects.lighting.shadows.atlas_resolution = 512;
             frame.effects.lighting.shadows.extent_override = Some(3.0);
             let mut item = SceneRenderItem::default();
+            let mut mat = Material::default();
             item.mesh_id = mesh_id;
-            item.material.base_colour = Colour::linear_rgb(0.7, 0.7, 0.7);
+            mat.base_colour = Colour::linear_rgb(0.7, 0.7, 0.7);
             if two_sided {
-                item.material.backface_policy = BackfacePolicy::Identical;
+                mat.backface_policy = BackfacePolicy::Identical;
             }
+            item.material = upload_material(renderer, mat);
             let mut items = vec![item];
             if instanced {
-                items.push(route_filler(mesh_id));
+                items.push(route_filler(renderer, mesh_id));
             }
             frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
             renderer.render_offscreen(&device, &queue, &frame, 128, 128)
@@ -505,25 +518,29 @@ fn shadow_alpha_mask_matrix() {
             frame.effects.lighting.shadows.atlas_resolution = 512;
             frame.effects.lighting.shadows.extent_override = Some(3.0);
             let mut floor = SceneRenderItem::default();
+            let mut floor_mat = Material::default();
             floor.mesh_id = floor_id;
-            floor.material.base_colour = Colour::linear_rgb(0.7, 0.7, 0.7);
+            floor_mat.base_colour = Colour::linear_rgb(0.7, 0.7, 0.7);
+            floor.material = upload_material(renderer, floor_mat);
             let mut items = vec![floor];
             if let Some(tex) = caster_tex {
                 let mut caster = SceneRenderItem::default();
+                let mut caster_mat = Material::default();
                 caster.mesh_id = caster_id;
                 caster.model =
                     glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.6)).to_cols_array_2d();
-                caster.material.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
-                caster.material.texture_id = Some(tex);
-                caster.material.alpha_mode = AlphaMode::Mask(0.5);
+                caster_mat.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
+                caster_mat.texture_id = Some(tex);
+                caster_mat.alpha_mode = AlphaMode::Mask(0.5);
                 if !route_instanced {
                     // `Tint` needs per-item back-face state, which forces the
                     // per-object path regardless of the scene's global
                     // instancing mode; two-sidedness itself is not under test
                     // here (a closed box occludes the light the same way
                     // either way).
-                    caster.material.backface_policy = BackfacePolicy::Tint(0.3);
+                    caster_mat.backface_policy = BackfacePolicy::Tint(0.3);
                 }
+                caster.material = upload_material(renderer, caster_mat);
                 items.push(caster);
             }
             frame.scene.surfaces = SurfaceSubmission::Flat(items.into());

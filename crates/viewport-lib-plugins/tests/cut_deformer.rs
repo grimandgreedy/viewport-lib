@@ -10,7 +10,7 @@
 
 use viewport_lib::renderer::{CameraFrame, FrameData, RenderCamera, SceneFrame};
 use viewport_lib::resources::{AttributeData, DeformStage, DeformerDesc};
-use viewport_lib::{Camera, Material, MeshId, SceneRenderItem, ViewportRenderer, gpu};
+use viewport_lib::{Camera, MeshId, SceneRenderItem, ViewportRenderer, gpu};
 use viewport_lib_plugins::deformers::cut::{Cut, CutDeformer};
 use viewport_lib_testkit::{DeviceProfile, headless_device_with};
 
@@ -71,7 +71,7 @@ fn flat(mesh: MeshId, translation: glam::Vec3, colour: [f32; 3]) -> SceneRenderI
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::from_translation(translation).to_cols_array_2d();
-    item.material = Material::from_colour(viewport_lib::Colour::linear_rgb(
+    item.settings.colour = Some(viewport_lib::Colour::linear_rgb(
         colour[0], colour[1], colour[2],
     ));
     item.settings.unlit = true;
@@ -328,8 +328,10 @@ fn install_finds_the_registered_deformer() {
     assert_eq!(again.deformer_id(), s.cut.deformer_id());
 }
 
+/// Deformers bind nothing of their own, so the cut installs on a device with
+/// two bind groups (iced's).
 #[test]
-fn install_reports_a_device_without_deformer_support() {
+fn install_works_on_a_two_bind_group_device() {
     let Some((device, _queue)) =
         headless_device_with(&DeviceProfile::low_power("cut-two-groups").max_bind_groups(2))
     else {
@@ -337,5 +339,5 @@ fn install_reports_a_device_without_deformer_support() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, gpu::TextureFormat::Rgba8UnormSrgb);
-    assert!(CutDeformer::install(renderer.resources_mut(), &device).is_err());
+    assert!(CutDeformer::install(renderer.resources_mut(), &device).is_ok());
 }

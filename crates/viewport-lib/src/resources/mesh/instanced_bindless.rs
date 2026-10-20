@@ -42,78 +42,61 @@ pub(crate) enum MaterialTextureBinding {
     Bindless,
 }
 
-/// Rewrite a per-batch instanced mesh shader (colour or OIT) into its bindless
-/// form: replace the group-1 texture bindings (albedo/normal/AO/MR/emissive) with
-/// a single `binding_array<texture_2d<f32>>` at binding 1, and each
-/// `textureSampleGrad(<slot texture>, ...)` with a sample of the array at the
-/// material's index for that slot. The sampler (binding 2) and the cull
-/// visibility buffer (binding 5) are unchanged.
+/// Rewrite `mesh.wgsl` or `mesh_oit.wgsl` (or a module composed from either)
+/// into the bindless member's form: the five group-1 material texture
+/// bindings (albedo 1, normal 3, AO 4, metallic-roughness 11, emissive 12)
+/// become one `binding_array` at binding 1, and each sample of a slot texture
+/// samples the array at the index the draw's material block holds for that
+/// slot. Every other binding is unchanged.
 ///
-/// This asserts each substitution lands exactly once, so a change to the source
-/// shader's binding names or sample sites fails the build loudly rather than
-/// silently producing a wrong bindless shader.
-pub(crate) fn bindlessify(src: &str) -> String {
-    // The five per-slot texture declarations become one array. Keep binding 0
-    // (instances), 2 (sampler) and 5 (visibility) as they are.
-    let binding_block = "\
-@group(1) @binding(1) var                obj_texture:        texture_2d<f32>;
-@group(1) @binding(2) var                obj_sampler:        sampler;
-@group(1) @binding(3) var                normal_map:         texture_2d<f32>;
-@group(1) @binding(4) var                ao_map:             texture_2d<f32>;
-@group(1) @binding(5) var<storage, read> visibility_indices: array<u32>;
-@group(1) @binding(6) var                metallic_roughness_tex: texture_2d<f32>;
-@group(1) @binding(7) var                emissive_tex:           texture_2d<f32>;";
-    let bindless_block = "\
-@group(1) @binding(1) var                material_textures:  binding_array<texture_2d<f32>>;
-@group(1) @binding(2) var                obj_sampler:        sampler;
-@group(1) @binding(5) var<storage, read> visibility_indices: array<u32>;";
-    assert_eq!(
-        src.matches(binding_block).count(),
-        1,
-        "bindless transform: the group-1 texture binding block was not found verbatim; \
-         the instanced shader's binding layout changed",
-    );
-    let mut out = src.replace(binding_block, bindless_block);
-
-    // Sample-site swaps. `mat` is the in-scope material block at the albedo /
-    // normal / AO / MR sites; the emissive site is in a different function where
-    // the material block local is `e_mat`.
-    for (from, to) in [
-        (
-            "textureSampleGrad(obj_texture,",
-            "textureSampleGrad(material_textures[mat.tex_index0.x],",
-        ),
-        (
-            "textureSampleGrad(normal_map,",
-            "textureSampleGrad(material_textures[mat.tex_index0.y],",
-        ),
-        (
-            "textureSampleGrad(ao_map,",
-            "textureSampleGrad(material_textures[mat.tex_index0.z],",
-        ),
-        (
-            "textureSampleGrad(metallic_roughness_tex,",
-            "textureSampleGrad(material_textures[mat.tex_index0.w],",
-        ),
-        (
-            "textureSampleGrad(emissive_tex,",
-            "textureSampleGrad(material_textures[e_mat.tex_index1.x],",
-        ),
-    ] {
+/// Each substitution must land exactly once, so a change to the source's
+/// declarations or sample sites fails loudly instead of yielding a wrong
+/// shader.
+pub(crate) fn bindlessify_mesh(src: &str) -> String {
+    let mut out = src.to_owned();
+    let mut swap = |from: &str, to: &str| {
         assert_eq!(
             out.matches(from).count(),
             1,
-            "bindless transform: expected exactly one `{from}` sample site",
+            "bindless transform: expected exactly one `{from}`",
         );
-        out = out.replace(from, to);
+        out = out.replacen(from, to, 1);
+    };
+    swap(
+        "@group(1) @binding(1) var obj_texture: texture_2d<f32>;",
+        "@group(1) @binding(1) var material_textures: binding_array<texture_2d<f32>>;",
+    );
+    for decl in [
+        "@group(1) @binding(3) var normal_map: texture_2d<f32>;",
+        "@group(1) @binding(4) var ao_map: texture_2d<f32>;",
+        "@group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;",
+        "@group(1) @binding(12) var emissive_tex: texture_2d<f32>;",
+    ] {
+        swap(decl, "");
     }
-    // The array declaration needs its module directive ahead of everything
-    // else, so it goes on here rather than at each call site.
+    for (texture, index) in [
+        ("obj_texture", "tex_index0.x"),
+        ("normal_map", "tex_index0.y"),
+        ("ao_map", "tex_index0.z"),
+        ("metallic_roughness_tex", "tex_index0.w"),
+        ("emissive_tex", "tex_index1.x"),
+    ] {
+        swap(
+            &format!("textureSampleGrad({texture},"),
+            &format!(
+                "textureSampleGrad(material_textures[material_gpu_buf[object.material_id].{index}],"
+            ),
+        );
+    }
     format!(
         "{}{out}",
         crate::plugin_api::shared_wgsl::BINDING_ARRAY_ENABLE_WGSL
     )
 }
+
+/// The group-1 bindings of `object_bgl` the bindless member folds into the
+/// texture array at binding 1.
+const MESH_TEXTURE_BINDINGS: [u32; 5] = [1, 3, 4, 11, 12];
 
 /// Fixed size of the bindless texture array binding. A material's texture index
 /// is its slot in the texture store, so this caps the highest reachable slot.
@@ -137,90 +120,46 @@ fn texture_array_entry(binding: u32) -> crate::gpu::BindGroupLayoutEntry {
     }
 }
 
-fn instance_storage_entry() -> crate::gpu::BindGroupLayoutEntry {
-    crate::gpu::BindGroupLayoutEntry {
-        binding: 0,
-        visibility: crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
-        ty: crate::gpu::BindingType::Buffer {
-            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    }
-}
-
-fn sampler_entry() -> crate::gpu::BindGroupLayoutEntry {
-    crate::gpu::BindGroupLayoutEntry {
-        binding: 2,
-        visibility: crate::gpu::ShaderStages::FRAGMENT,
-        ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
-        count: None,
-    }
-}
-
-fn visibility_entry() -> crate::gpu::BindGroupLayoutEntry {
-    crate::gpu::BindGroupLayoutEntry {
-        binding: 5,
-        visibility: crate::gpu::ShaderStages::VERTEX,
-        ty: crate::gpu::BindingType::Buffer {
-            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    }
-}
-
-/// The second UV set (uv1) storage buffer for the batch's vertex-slab chunk,
-/// binding 8. Read by `vertex_index` in the vertex shader, same as the per-batch
-/// path; the bindless group binds it per chunk rather than frame-constant.
-fn uv1_entry() -> crate::gpu::BindGroupLayoutEntry {
-    crate::gpu::BindGroupLayoutEntry {
-        binding: 8,
-        visibility: crate::gpu::ShaderStages::VERTEX,
-        ty: crate::gpu::BindingType::Buffer {
-            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    }
-}
-
-/// Group-1 layout for the bindless colour pipelines: instance storage (0), the
-/// material texture array (1), the shared sampler (2), and the chunk's uv1 buffer
-/// (8). Mirrors `instance_bgl` with the five per-slot textures collapsed to one
-/// array; uv1 stays a per-chunk storage buffer, so the bind group is built per
-/// chunk rather than once per frame.
-pub(crate) fn bindless_instance_bgl(device: &crate::gpu::Device) -> crate::gpu::BindGroupLayout {
-    device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-        label: Some("bindless_instance_bgl"),
-        entries: &[
-            instance_storage_entry(),
-            texture_array_entry(1),
-            sampler_entry(),
-            uv1_entry(),
-        ],
-    })
-}
-
-/// Group-1 layout for the bindless cull pipelines: the colour layout plus the
-/// visibility-index buffer (5) the culled vertex path reads.
-pub(crate) fn bindless_cull_bgl(device: &crate::gpu::Device) -> crate::gpu::BindGroupLayout {
-    device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-        label: Some("bindless_instance_cull_bgl"),
-        entries: &[
-            instance_storage_entry(),
-            texture_array_entry(1),
-            sampler_entry(),
-            visibility_entry(),
-            uv1_entry(),
-        ],
-    })
-}
-
 impl DeviceResources {
+    /// The bindless member of the mesh group-1 layout, built on first use:
+    /// `object_bgl` with the five material texture slots replaced by the
+    /// texture array at binding 1.
+    pub(crate) fn ensure_object_bindless_bgl(&mut self, device: &crate::gpu::Device) {
+        if self.binds.object_bindless_bgl.is_some() {
+            return;
+        }
+        let mut entries: Vec<_> = self
+            .binds
+            .object_bgl_entries
+            .iter()
+            .filter(|e| !MESH_TEXTURE_BINDINGS.contains(&e.binding))
+            .cloned()
+            .collect();
+        entries.push(texture_array_entry(1));
+        self.binds.object_bindless_bgl = Some(device.create_bind_group_layout(
+            &crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("object_bindless_bgl"),
+                entries: &entries,
+            },
+        ));
+    }
+
+    /// A mesh pipeline layout on the bindless member of group 1: the camera
+    /// group and the member.
+    pub(crate) fn object_bindless_layout(
+        &mut self,
+        device: &crate::gpu::Device,
+        label: &str,
+    ) -> crate::gpu::PipelineLayout {
+        self.ensure_object_bindless_bgl(device);
+        crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
+            device,
+            label,
+            &self.binds.camera_bgl,
+            self.binds.object_bindless_bgl.as_ref().unwrap(),
+        )
+    }
+
     /// Build the list of texture views the bindless array binds, indexed by
     /// texture-store slot: slot `i` gets its live view, or the white albedo
     /// fallback when the slot is empty (a freed handle or a gap). A material's
@@ -233,7 +172,7 @@ impl DeviceResources {
     /// material block should never produce lands on a neutral view instead of on
     /// an unbound entry. The vector is rebuilt only when the bind group is, which
     /// is a change in the instance generation, the slot count, or the free epoch.
-    fn bindless_texture_views(&self) -> Vec<&crate::gpu::TextureView> {
+    pub(crate) fn bindless_texture_views(&self) -> Vec<&crate::gpu::TextureView> {
         let fallback = &self.material.texture.view;
         (0..BINDLESS_TEXTURE_CAPACITY as usize)
             .map(|i| {
@@ -243,154 +182,6 @@ impl DeviceResources {
                     .map_or(fallback, |t| &t.view)
             })
             .collect()
-    }
-
-    /// Ensure the bindless colour bind group for one vertex-slab chunk (instances
-    /// + texture array + sampler + the chunk's uv1 buffer) exists. A no-op unless
-    /// the mode is `Bindless` and the layout and instance buffer exist. The
-    /// instances, texture array, and sampler are frame-constant; only the uv1
-    /// buffer varies per chunk, so the groups are keyed by `uv1_chunk_key` and the
-    /// whole map is cleared when the change signature `(instance_gen, texture
-    /// slot_count, free_epoch)` moves. `instance_gen` is
-    /// `InstancingState::instance_gen`, bumped when the instance buffer is rebuilt.
-    pub(crate) fn ensure_bindless_colour_bind_group(
-        &mut self,
-        device: &crate::gpu::Device,
-        instance_gen: u64,
-        uv1_chunk: u32,
-    ) {
-        if self.instancing.material_texture_binding != MaterialTextureBinding::Bindless {
-            return;
-        }
-        let sig = (
-            instance_gen,
-            self.content.textures.slot_count(),
-            self.resource_free_epoch,
-        );
-        if self.instancing.bindless_signature != Some(sig) {
-            self.instancing.bindless_bind_groups.clear();
-            self.instancing.bindless_signature = Some(sig);
-        }
-        if self.instancing.bindless_bind_group_layout.is_none()
-            || self.instancing.storage_buf.is_none()
-        {
-            return;
-        }
-        let key = self.uv1_chunk_key(uv1_chunk);
-        if self.instancing.bindless_bind_groups.contains_key(&key) {
-            return;
-        }
-        let bg = {
-            let layout = self.instancing.bindless_bind_group_layout.as_ref().unwrap();
-            let inst_buf = self.instancing.storage_buf.as_ref().unwrap();
-            let uv1_buf = self.uv1_chunk_or_fallback(uv1_chunk);
-            let views = self.bindless_texture_views();
-            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some("bindless_instance_bind_group"),
-                layout,
-                entries: &[
-                    crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: inst_buf.as_entire_binding(),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 1,
-                        resource: crate::gpu::BindingResource::TextureViewArray(&views),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 8,
-                        resource: uv1_buf.as_entire_binding(),
-                    },
-                ],
-            })
-        };
-        self.instancing.bindless_bind_groups.insert(key, bg);
-    }
-
-    /// The group-1 bind group for a direct instanced colour draw: the per-chunk
-    /// texture-array group under `Bindless` (keyed by the uv1 chunk discriminator,
-    /// `mat_key.5`), or the batch's per-texture bind group (keyed by the full
-    /// `mat_key`) under `PerBatch`. `None` skips the batch.
-    pub(crate) fn instanced_colour_bind_group(
-        &self,
-        mat_key: (u64, u64, u64, u64, u64, u32),
-    ) -> Option<&crate::gpu::BindGroup> {
-        if self.instancing.material_texture_binding == MaterialTextureBinding::Bindless {
-            self.instancing.bindless_bind_groups.get(&mat_key.5)
-        } else {
-            self.instancing.bind_groups.get(&mat_key)
-        }
-    }
-
-    /// The group-1 bind group for a culled (indirect) instanced colour draw: the
-    /// per-viewport, per-chunk texture-array group under `Bindless` (keyed by the
-    /// uv1 chunk discriminator, `mat_key.5`), or the batch's per-texture cull bind
-    /// group under `PerBatch`.
-    pub(crate) fn instanced_cull_colour_bind_group<'a>(
-        &'a self,
-        cull_state: &'a crate::resources::ViewportCullState,
-        mat_key: (u64, u64, u64, u64, u64, u32),
-    ) -> Option<&'a crate::gpu::BindGroup> {
-        if self.instancing.material_texture_binding == MaterialTextureBinding::Bindless {
-            cull_state.bindless_cull_bind_groups.get(&mat_key.5)
-        } else {
-            cull_state.instance_cull_bind_groups.get(&mat_key)
-        }
-    }
-
-    /// The per-viewport bindless cull bind group for one vertex-slab chunk (colour
-    /// array + this viewport's visibility buffer + the chunk's uv1 buffer), built
-    /// on demand and keyed by the uv1 chunk discriminator (`uv1_chunk_key`). The
-    /// map is cleared with the per-batch cull bind groups when the instance buffer
-    /// or a texture changes.
-    pub(crate) fn get_bindless_cull_bind_group<'a>(
-        &self,
-        cull_state: &'a mut crate::resources::ViewportCullState,
-        device: &crate::gpu::Device,
-        uv1_chunk: u32,
-    ) -> Option<&'a crate::gpu::BindGroup> {
-        let key = self.uv1_chunk_key(uv1_chunk);
-        if !cull_state.bindless_cull_bind_groups.contains_key(&key) {
-            let layout = self.instancing.bindless_cull_bind_group_layout.as_ref()?;
-            let inst_buf = self.instancing.storage_buf.as_ref()?;
-            let bg = {
-                let vis_buf = cull_state.visibility_index_buf.as_ref()?;
-                let uv1_buf = self.uv1_chunk_or_fallback(uv1_chunk);
-                let views = self.bindless_texture_views();
-                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("bindless_instance_cull_bind_group"),
-                    layout,
-                    entries: &[
-                        crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: inst_buf.as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 1,
-                            resource: crate::gpu::BindingResource::TextureViewArray(&views),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 2,
-                            resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 5,
-                            resource: vis_buf.as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 8,
-                            resource: uv1_buf.as_entire_binding(),
-                        },
-                    ],
-                })
-            };
-            cull_state.bindless_cull_bind_groups.insert(key, bg);
-        }
-        cull_state.bindless_cull_bind_groups.get(&key)
     }
 }
 
@@ -404,12 +195,12 @@ mod tests {
     #[cfg(wgpu30)]
     use naga30 as naga;
 
-    // The generated bindless colour and OIT shaders must be valid WGSL under the
+    // The generated bindless mesh and OIT shaders must be valid WGSL under the
     // texture-array capabilities. naga validation runs without a device, so this
     // covers the shader on the (Metal) build box where the bindless pipeline is
     // never actually created.
     fn validate_bindless(base: &str) {
-        let src = bindlessify(base);
+        let src = bindlessify_mesh(base);
         assert!(
             src.contains("binding_array<texture_2d<f32>>"),
             "transform did not emit the texture array",
@@ -440,17 +231,11 @@ mod tests {
 
     #[test]
     fn bindless_colour_shader_validates() {
-        validate_bindless(include_str!(concat!(
-            env!("OUT_DIR"),
-            "/mesh_instanced_noop.wgsl"
-        )));
+        validate_bindless(include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl")));
     }
 
     #[test]
     fn bindless_oit_shader_validates() {
-        validate_bindless(include_str!(concat!(
-            env!("OUT_DIR"),
-            "/mesh_instanced_oit_noop.wgsl"
-        )));
+        validate_bindless(include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl")));
     }
 }

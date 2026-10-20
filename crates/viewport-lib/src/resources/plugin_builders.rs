@@ -298,15 +298,6 @@ impl DeviceResources {
         &self.shadow.sampler
     }
 
-    /// Bind group layout for the per-vertex deformation sidecar.
-    ///
-    /// Plugins building pipelines that draw meshes with registered deformers
-    /// add this layout at group 2 so their vertex stage can read from the
-    /// shared `deform_data` / `deform_instance_data` storage buffers.
-    pub fn deform_bind_group_layout(&self) -> &crate::gpu::BindGroupLayout {
-        &self.deform.bind_group_layout
-    }
-
     /// Number of live user-uploaded textures.
     ///
     /// `id` values in `0..texture_count()` are addressable via
@@ -1151,15 +1142,20 @@ impl<'a> MeshDraw<'a> {
         mesh_id: MeshId,
         name: &str,
     ) -> bool {
-        let Some(buf) = self
-            .resources
-            .mesh_store
-            .get(mesh_id)
-            .and_then(|mesh| mesh.vector_attribute_buffers.get(name))
-        else {
+        let Some((chunk, range)) = self.resources.mesh_store.get(mesh_id).and_then(|mesh| {
+            let record = mesh.sidecar.as_ref()?;
+            let stream = record.find(
+                crate::resources::mesh::sidecar_pool::StreamKind::Vector,
+                name,
+            )?;
+            Some((record.chunk(), record.byte_range(stream)))
+        }) else {
             return false;
         };
-        pass.set_vertex_buffer(slot, buf.slice(..));
+        pass.set_vertex_buffer(
+            slot,
+            self.resources.sidecar.chunk_buffer(chunk).slice(range),
+        );
         true
     }
 
@@ -1183,15 +1179,20 @@ impl<'a> MeshDraw<'a> {
         mesh_id: MeshId,
         name: &str,
     ) -> bool {
-        let Some(buf) = self
-            .resources
-            .mesh_store
-            .get(mesh_id)
-            .and_then(|mesh| mesh.attribute_buffers.get(name))
-        else {
+        let Some((chunk, range)) = self.resources.mesh_store.get(mesh_id).and_then(|mesh| {
+            let record = mesh.sidecar.as_ref()?;
+            let stream = record.find(
+                crate::resources::mesh::sidecar_pool::StreamKind::Scalar,
+                name,
+            )?;
+            Some((record.chunk(), record.byte_range(stream)))
+        }) else {
             return false;
         };
-        pass.set_vertex_buffer(slot, buf.slice(..));
+        pass.set_vertex_buffer(
+            slot,
+            self.resources.sidecar.chunk_buffer(chunk).slice(range),
+        );
         true
     }
 

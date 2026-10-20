@@ -122,6 +122,7 @@ macro_rules! slot_handle {
 pub mod environment;
 pub mod gpu;
 pub mod matcap;
+pub mod material;
 pub mod mesh;
 pub mod pick;
 pub mod texture;
@@ -130,6 +131,7 @@ pub mod volume;
 pub use environment::EnvironmentMapId;
 pub use gpu::{ExternalInstanceSetId, GpuParticleSystemId};
 pub use matcap::MatcapId;
+pub use material::MaterialId;
 pub use mesh::{LodGroupId, MeshId};
 pub use pick::PickId;
 pub use texture::TextureId;

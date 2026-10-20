@@ -41,14 +41,25 @@ fn interior(lights: Vec<LightSource>) -> LightingSettings {
 fn slab(ctx: &mut BuildCtx<'_>, size: [f32; 3], at: [f32; 3], colour: [f32; 3]) -> SceneRenderItem {
     let mesh = upload(ctx, &primitives::cuboid(size[0], size[1], size[2]));
     item(
+        ctx,
         mesh,
         Vec3::from(at),
         Material::pbr(Colour::from_linear_rgb_array(colour), 0.0, 0.9),
     )
 }
 
-fn two_sided(mut it: SceneRenderItem) -> SceneRenderItem {
-    it.material.backface_policy = BackfacePolicy::Identical;
+/// Make `it` two-sided by editing its material in place. Each slab uploads
+/// its own material, so no other item sees the edit.
+fn two_sided(ctx: &mut BuildCtx<'_>, it: SceneRenderItem) -> SceneRenderItem {
+    let resources = ctx.renderer.resources_mut();
+    let mut material = resources
+        .material(it.material)
+        .expect("live material")
+        .clone();
+    material.backface_policy = BackfacePolicy::Identical;
+    resources
+        .replace_material(it.material, material)
+        .expect("material replace");
     it
 }
 
@@ -110,11 +121,13 @@ fn table_set(ctx: &mut BuildCtx<'_>, at: Vec3) -> Vec<SceneRenderItem> {
     let cube = upload(ctx, &primitives::cube(0.3));
     let sphere = upload(ctx, &primitives::sphere(0.16, 32, 16));
     items.push(item(
+        ctx,
         cube,
         Vec3::new(at.x - 0.4, at.y, top_z + 0.15),
         Material::pbr(Colour::linear_rgb(0.7, 0.8, 0.95), 0.0, 0.6),
     ));
     items.push(item(
+        ctx,
         sphere,
         Vec3::new(at.x + 0.4, at.y + 0.1, top_z + 0.16),
         Material::pbr(Colour::linear_rgb(0.95, 0.75, 0.6), 0.0, 0.5),
@@ -140,7 +153,7 @@ fn room_cameras() -> Vec<NamedCamera> {
 fn build_room_point(ctx: &mut BuildCtx<'_>, walls_two_sided: bool) -> BuiltScene {
     let mut items = room(ctx, false);
     if walls_two_sided {
-        items = items.into_iter().map(two_sided).collect();
+        items = items.into_iter().map(|it| two_sided(ctx, it)).collect();
     }
     items.extend(table_set(ctx, Vec3::new(0.6, 0.4, 0.0)));
     BuiltScene {
@@ -191,11 +204,13 @@ fn build_room_cut_solids(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         m
     };
     items.push(item(
+        ctx,
         sphere,
         Vec3::new(-1.2, 0.0, 0.6),
         styled(BackfacePolicy::Tint(0.4)),
     ));
     items.push(item(
+        ctx,
         cube,
         Vec3::new(0.3, 0.0, 0.5),
         styled(BackfacePolicy::DifferentColour(Colour::linear_rgb(
@@ -203,11 +218,13 @@ fn build_room_cut_solids(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         ))),
     ));
     items.push(item(
+        ctx,
         torus,
         Vec3::new(1.7, 0.0, 0.5),
         styled(BackfacePolicy::Tint(0.4)),
     ));
     items.push(item(
+        ctx,
         sphere,
         Vec3::new(-1.2, 1.6, 0.6),
         styled(BackfacePolicy::Identical),
@@ -289,8 +306,9 @@ fn build_long_hall(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         slab(ctx, [0.2, W + 0.4, H], [L + 0.1, 0.0, H / 2.0], wall),
     ];
     let pillar = upload(ctx, &primitives::cuboid(0.4, 0.4, H));
-    let pillar_of = |x: f32, y: f32| {
+    let mut pillar_of = |x: f32, y: f32| {
         item(
+            ctx,
             pillar,
             Vec3::new(x, y, H / 2.0),
             Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.72), 0.0, 0.7),

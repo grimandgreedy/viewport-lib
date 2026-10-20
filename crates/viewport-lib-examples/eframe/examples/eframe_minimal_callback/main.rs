@@ -17,9 +17,9 @@ use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult,
-    ManipulationContext, ManipulationController, Material, MeshId, OrbitCameraController,
-    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
-    ViewportRenderer, primitives,
+    ManipulationContext, ManipulationController, Material, MaterialId, MeshId,
+    OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
+    ViewportEvent, ViewportInput, ViewportRenderer, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -46,10 +46,14 @@ fn main() -> eframe::Result {
             let m_torus = res
                 .upload_mesh_data(device, &primitives::torus(0.5, 0.18, 32, 16))
                 .unwrap();
+            // One material for all three; each item sets its own colour.
+            let mut material = Material::default();
+            material.backface_policy = vpl::BackfacePolicy::Identical;
+            let material = res.upload_material(material).unwrap();
 
             rs.renderer.write().callback_resources.insert(renderer);
 
-            Ok(Box::new(App::new(m_sphere, m_cube, m_torus)))
+            Ok(Box::new(App::new(material, m_sphere, m_cube, m_torus)))
         }),
     )
 }
@@ -74,13 +78,11 @@ struct App {
 }
 
 impl App {
-    fn new(m_sphere: MeshId, m_cube: MeshId, m_torus: MeshId) -> Self {
+    fn new(material: MaterialId, m_sphere: MeshId, m_cube: MeshId, m_torus: MeshId) -> Self {
         let make = |mesh_id: MeshId, [x, y, z]: [f32; 3], colour: [f32; 3]| {
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = mesh_id;
+            let mut item = SceneRenderItem::new(mesh_id, material);
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-            item.material = Material::from_colour(Colour::from_linear_rgb_array(colour));
-            item.material.backface_policy = vpl::BackfacePolicy::Identical;
+            item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
             item
         };
 

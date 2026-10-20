@@ -60,17 +60,25 @@ fn main() {
                     .resources_mut()
                     .upload_mesh_data(device, &primitives::sphere(0.6, 24, 12))
                     .unwrap();
+                let blue = session
+                    .resources_mut()
+                    .upload_material(Material::from_colour(Colour::linear_rgb(0.4, 0.6, 0.9)))
+                    .unwrap();
+                let orange = session
+                    .resources_mut()
+                    .upload_material(Material::from_colour(Colour::linear_rgb(0.9, 0.5, 0.2)))
+                    .unwrap();
 
                 let scene = session.scene_mut();
                 scene.add(
                     Some(cube),
                     glam::Mat4::from_translation(glam::Vec3::new(-1.5, 0.0, 0.0)),
-                    Material::from_colour(Colour::linear_rgb(0.4, 0.6, 0.9)),
+                    blue,
                 );
                 scene.add(
                     Some(sphere),
                     glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)),
-                    Material::from_colour(Colour::linear_rgb(0.9, 0.5, 0.2)),
+                    orange,
                 );
 
                 session.camera_mut().distance = 8.0;

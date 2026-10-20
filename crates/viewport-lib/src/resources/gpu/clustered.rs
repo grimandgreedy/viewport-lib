@@ -10,9 +10,11 @@
 //! proximity), so a crowded cluster degrades by dropping its lowest-priority
 //! lights and never disturbs any other cluster.
 //!
-//! Bindings 14, 15, and 16 of the camera bind group expose the grid uniform,
-//! the per-cell offsets, and the global index list to every lit pipeline. The
-//! build pass uses a separate compute bind group with read-write access.
+//! Bindings 14 and 15 of the camera bind group expose the grid uniform and one
+//! storage buffer holding the per-cell offsets followed by the global index
+//! list (at [`CLUSTER_INDEX_BASE_BYTES`]) to every lit pipeline, so the pair
+//! costs one fragment storage binding. The build pass uses a separate compute
+//! bind group with read-write access to the two regions as two bindings.
 
 use crate::resources::builders::LoggedAlloc;
 
@@ -39,6 +41,16 @@ pub const MAX_LIGHTS_PER_CLUSTER: u32 = 64;
 /// Total light-index list capacity: one fixed slice per cluster
 /// (`3456 * 64` entries, 864 KB at 4 bytes per index).
 pub const MAX_LIGHT_INDICES: u32 = CLUSTER_COUNT * MAX_LIGHTS_PER_CLUSTER;
+/// Start of the light index list in the cluster buffer: the cell region,
+/// rounded up to the storage binding offset alignment so the build pass can
+/// bind the list as its own range. Must equal `CLUSTER_INDEX_BASE` (in `u32`
+/// words) in `helpers/scene_lighting.wgsl`.
+pub const CLUSTER_INDEX_BASE_BYTES: u64 =
+    (CLUSTER_COUNT as u64 * 16).div_ceil(STORAGE_OFFSET_ALIGN) * STORAGE_OFFSET_ALIGN;
+/// The largest `min_storage_buffer_offset_alignment` wgpu allows.
+const STORAGE_OFFSET_ALIGN: u64 = 256;
+const _: () = assert!(std::mem::size_of::<ClusterCell>() == 16);
+const _: () = assert!(CLUSTER_INDEX_BASE_BYTES / 4 == 13824);
 /// Below this active-light count the build pass is skipped and the fragment
 /// shader iterates the full light array directly. Straight iteration is
 /// cheaper than cluster lookup overhead for small light counts.
@@ -207,13 +219,12 @@ fn build_cluster(r: &ClusterRecipe, i: usize) -> crate::gpu::ComputePipeline {
 pub struct ClusteredResources {
     /// `ClusterGridUniform` uniform buffer (group 0 binding 14).
     pub grid_uniform_buf: crate::gpu::Buffer,
-    /// Cluster cell storage (group 0 binding 15, read-only fragment). A
-    /// one-cell placeholder until `ensure_pipelines` allocates the full grid;
-    /// the fragment shader reads it only once a frame uses the grid.
-    pub cluster_grid_buf: crate::gpu::Buffer,
-    /// Global light index list (group 0 binding 16, read-only fragment). A
-    /// placeholder until `ensure_pipelines`, like `cluster_grid_buf`.
-    pub light_index_buf: crate::gpu::Buffer,
+    /// Cluster cells, then the global light index list from
+    /// [`CLUSTER_INDEX_BASE_BYTES`] (group 0 binding 15, read-only fragment).
+    /// The index region is a placeholder of four entries until
+    /// `ensure_pipelines` allocates the full list; the fragment shader reads
+    /// it only once a frame uses the grid.
+    pub cluster_buf: crate::gpu::Buffer,
     /// View-space data for the active (post-cull) light set, uploaded each
     /// frame and consumed by the build pass.
     pub active_lights_buf: crate::gpu::Buffer,
@@ -221,7 +232,7 @@ pub struct ClusteredResources {
     /// pass no longer touches it (clusters own fixed slices); it stays
     /// allocated and zeroed so the clear bind group layout is unchanged.
     pub global_offset_buf: crate::gpu::Buffer,
-    /// CPU-readable staging buffer that mirrors `cluster_grid_buf`. Allocated
+    /// CPU-readable staging buffer that mirrors the cell region. Allocated
     /// by the first `read_stats`.
     stats_staging_buf: std::sync::OnceLock<crate::gpu::Buffer>,
     /// Bind group for the cluster-clear compute pass, made with the full
@@ -258,7 +269,7 @@ impl ClusteredResources {
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
         });
 
-        let (cluster_grid_buf, light_index_buf) = Self::grid_buffers(device, 1, 4);
+        let cluster_buf = Self::cluster_buffer(device, 4);
 
         let active_lights_bytes = (crate::resources::MAX_SCENE_LIGHTS as u64)
             * std::mem::size_of::<ActiveLightView>() as u64;
@@ -332,8 +343,7 @@ impl ClusteredResources {
         });
         Self {
             grid_uniform_buf,
-            cluster_grid_buf,
-            light_index_buf,
+            cluster_buf,
             active_lights_buf,
             global_offset_buf,
             stats_staging_buf: std::sync::OnceLock::new(),
@@ -347,28 +357,34 @@ impl ClusteredResources {
         }
     }
 
-    /// The cluster grid and light index storage, sized for `cells` cells and
-    /// `indices` indices.
-    fn grid_buffers(
-        device: &crate::gpu::Device,
-        cells: u32,
-        indices: u32,
-    ) -> (crate::gpu::Buffer, crate::gpu::Buffer) {
-        let cluster_grid_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("cluster_grid_buf"),
-            size: cells as u64 * std::mem::size_of::<ClusterCell>() as u64,
+    /// The cluster buffer: every cell, then room for `indices` light indices.
+    fn cluster_buffer(device: &crate::gpu::Device, indices: u32) -> crate::gpu::Buffer {
+        device.logged_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("cluster_buf"),
+            size: CLUSTER_INDEX_BASE_BYTES + indices as u64 * 4,
             usage: crate::gpu::BufferUsages::STORAGE
                 | crate::gpu::BufferUsages::COPY_DST
                 | crate::gpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
-        });
-        let light_index_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("cluster_light_index_buf"),
-            size: indices as u64 * 4,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        (cluster_grid_buf, light_index_buf)
+        })
+    }
+
+    /// The cell region, as the build and clear passes bind it.
+    fn cells_binding(&self) -> crate::gpu::BindingResource<'_> {
+        crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
+            buffer: &self.cluster_buf,
+            offset: 0,
+            size: crate::gpu::BufferSize::new(CLUSTER_COUNT as u64 * 16),
+        })
+    }
+
+    /// The light index region, as the build and clear passes bind it.
+    fn indices_binding(&self) -> crate::gpu::BindingResource<'_> {
+        crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
+            buffer: &self.cluster_buf,
+            offset: CLUSTER_INDEX_BASE_BYTES,
+            size: crate::gpu::BufferSize::new(MAX_LIGHT_INDICES as u64 * 4),
+        })
     }
 
     /// Replace the placeholder grid buffers with full-size ones and make the
@@ -377,21 +393,18 @@ impl ClusteredResources {
         if self.clear_bind_group.is_some() {
             return false;
         }
-        let (cluster_grid_buf, light_index_buf) =
-            Self::grid_buffers(device, CLUSTER_COUNT, MAX_LIGHT_INDICES);
-        self.cluster_grid_buf = cluster_grid_buf;
-        self.light_index_buf = light_index_buf;
+        self.cluster_buf = Self::cluster_buffer(device, MAX_LIGHT_INDICES);
         let clear_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("cluster_clear_bind_group"),
             layout: &self.clear_bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.cluster_grid_buf.as_entire_binding(),
+                    resource: self.cells_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: self.light_index_buf.as_entire_binding(),
+                    resource: self.indices_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
@@ -410,11 +423,11 @@ impl ClusteredResources {
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.cluster_grid_buf.as_entire_binding(),
+                    resource: self.cells_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: self.light_index_buf.as_entire_binding(),
+                    resource: self.indices_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
@@ -520,7 +533,7 @@ impl ClusteredResources {
         !self.grid_zeroed
     }
 
-    /// Copy `cluster_grid_buf` to host-readable memory, map it, and compute
+    /// Copy the cell region to host-readable memory, map it, and compute
     /// `ClusterStats`. Blocks on a device poll while the GPU finishes the
     /// copy, so this should be called sparingly : it's a debug-path readback
     /// behind a host-controlled toggle, not a per-frame operation.
@@ -547,7 +560,7 @@ impl ClusteredResources {
         let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
             label: Some("cluster_stats_copy_encoder"),
         });
-        encoder.copy_buffer_to_buffer(&self.cluster_grid_buf, 0, staging, 0, bytes);
+        encoder.copy_buffer_to_buffer(&self.cluster_buf, 0, staging, 0, bytes);
         queue.submit(std::iter::once(encoder.finish()));
 
         let slice = staging.slice(..);

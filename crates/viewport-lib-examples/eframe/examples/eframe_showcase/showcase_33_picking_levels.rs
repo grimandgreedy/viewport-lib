@@ -16,6 +16,7 @@
 //!   - Wireframe toggle in the side panel (on by default)
 
 use crate::eframe;
+use crate::shared::upload_material;
 use std::collections::HashMap;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
@@ -40,10 +41,10 @@ use viewport_lib_plugins::item_types::{
 use crate::eframe::egui;
 use vpl::{
     BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourSource, ColourmapId, FrameData,
-    ItemSettings, LightingSettings, Material, MeshId, NodeId, PickBackend, PickId, PickMask,
-    PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame, SceneRenderItem, SizeSource,
-    SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer, VolumeData, VolumeMeshData,
-    VolumeMeshItem,
+    ItemSettings, LightingSettings, Material, MaterialId, MeshId, NodeId, PickBackend, PickId,
+    PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame, SceneRenderItem,
+    SizeSource, SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer, VolumeData,
+    VolumeMeshData, VolumeMeshItem,
 };
 
 use crate::App;
@@ -358,6 +359,8 @@ pub(crate) struct PlState {
     pub splat_id: Option<GaussianSplatId>,
     /// Opaque mesh handle for TVM rendering (boundary surface).
     pub tvm_mesh_id: Option<MeshId>,
+    /// Material for the TVM boundary surface.
+    pub tvm_material: MaterialId,
     /// face_to_cell mapping from upload_volume_mesh for the capsule (pick_id=11).
     pub tvm_face_to_cell: Vec<u32>,
     /// CPU-side volume mesh data (kept for per-type cell picking and highlighting).
@@ -451,6 +454,7 @@ impl Default for PlState {
             splat_positions: Vec::new(),
             splat_id: None,
             tvm_mesh_id: None,
+            tvm_material: MaterialId::DEFAULT,
             tvm_face_to_cell: Vec::new(),
             tvm_data: None,
             tvm_tet_id: None,
@@ -569,10 +573,12 @@ impl App {
         for (name, mesh_id, pos, colour) in configs {
             let transform = glam::Mat4::from_translation(*pos);
             let mat = Material::flat(Colour::from_linear_rgb_array(*colour));
-            let node_id = self
-                .pl_state
-                .scene
-                .add_named(name, Some(*mesh_id), transform, mat);
+            let node_id = self.pl_state.scene.add_named(
+                name,
+                Some(*mesh_id),
+                transform,
+                upload_material(renderer, mat),
+            );
             self.pl_state.scene.set_appearance(node_id, unlit);
             self.pl_state.node_names.push((node_id, name.to_string()));
         }
@@ -683,6 +689,10 @@ impl App {
             .upload_volume_mesh(&self.device, &tvm_data)
         {
             self.pl_state.tvm_mesh_id = Some(item.boundary_mesh_id);
+            self.pl_state.tvm_material = upload_material(
+                renderer,
+                Material::flat(Colour::linear_rgb(0.72, 0.42, 0.04)),
+            );
             self.pl_state.tvm_face_to_cell = item.face_to_cell;
         }
         self.pl_state.tvm_data = Some(tvm_data);
@@ -1793,12 +1803,10 @@ pub(crate) fn pl_collect_scene_items(
         .collect_render_items(&app.pl_state.selection);
     // TVM boundary surface rendered as an opaque mesh alongside the scene nodes.
     if let Some(tvm_mesh_id) = app.pl_state.tvm_mesh_id {
-        let mut tvm_item = SceneRenderItem::default();
-        tvm_item.mesh_id = tvm_mesh_id;
+        let mut tvm_item = SceneRenderItem::new(tvm_mesh_id, app.pl_state.tvm_material);
         tvm_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
         tvm_item.settings.pick_id = PickId(11);
         tvm_item.settings.selected = app.pl_state.selection.contains(11);
-        tvm_item.material = Material::flat(Colour::linear_rgb(0.72, 0.42, 0.04));
         tvm_item.settings.unlit = false;
         items.push(tvm_item);
     }

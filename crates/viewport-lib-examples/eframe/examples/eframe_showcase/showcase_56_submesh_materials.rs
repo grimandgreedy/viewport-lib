@@ -20,10 +20,11 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::{edit_material, upload_material};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
-    AlphaMode, LightKind, LightSource, LightingSettings, Material, MeshData, MeshId,
+    AlphaMode, LightKind, LightSource, LightingSettings, Material, MaterialId, MeshData, MeshId,
     SceneRenderItem, TextureId, ViewportRenderer, primitives,
 };
 
@@ -42,15 +43,16 @@ const MAT_GLASS: u32 = 4;
 pub(crate) struct SubmeshState {
     pub built: bool,
     pub mesh_id: MeshId,
-    /// Distinct material ids in range order, as returned by
-    /// `sort_triangles_into_submeshes`.
-    pub range_ids: Vec<u32>,
-    pub checker_tex: Option<TextureId>,
-    pub glass_tex: Option<TextureId>,
+    /// One material per range, in the material id order
+    /// `sort_triangles_into_submeshes` returned.
+    pub range_materials: Vec<MaterialId>,
+    /// The item's single material, drawn when per-range materials are off.
+    pub fallback_material: MaterialId,
+    /// The body's material, edited live by the metallic slider.
+    pub metal_material: MaterialId,
 
     // Controls.
     pub per_range: bool,
-    pub metallic: f32,
     pub spin: bool,
     pub angle: f32,
 }
@@ -60,11 +62,10 @@ impl Default for SubmeshState {
         Self {
             built: false,
             mesh_id: MeshId::INVALID,
-            range_ids: Vec::new(),
-            checker_tex: None,
-            glass_tex: None,
+            range_materials: Vec::new(),
+            fallback_material: MaterialId::DEFAULT,
+            metal_material: MaterialId::DEFAULT,
             per_range: true,
-            metallic: 0.9,
             spin: true,
             angle: 0.0,
         }
@@ -204,12 +205,26 @@ pub(crate) fn build_submesh_scene(app: &mut App, renderer: &mut ViewportRenderer
         )
         .ok();
 
+    let range_materials: Vec<MaterialId> = range_ids
+        .iter()
+        .map(|&id| upload_material(renderer, material_for(id, checker_tex, glass_tex)))
+        .collect();
+    let metal_material = range_ids
+        .iter()
+        .position(|&id| id == MAT_METAL)
+        .map_or(MaterialId::DEFAULT, |i| range_materials[i]);
+    // The single-material fallback look, and the whole look when per-range
+    // materials are toggled off.
+    let mut fallback = Material::default();
+    fallback.base_colour = Colour::linear_rgb(0.4, 0.4, 0.45);
+    fallback.roughness = 0.5;
+
     app.submesh_state = SubmeshState {
         built: true,
         mesh_id,
-        range_ids,
-        checker_tex,
-        glass_tex,
+        range_materials,
+        fallback_material: upload_material(renderer, fallback),
+        metal_material,
         ..SubmeshState::default()
     };
 }
@@ -218,12 +233,12 @@ pub(crate) fn build_submesh_scene(app: &mut App, renderer: &mut ViewportRenderer
 // Frame data
 // ---------------------------------------------------------------------------
 
-fn material_for(state: &SubmeshState, id: u32) -> Material {
+fn material_for(id: u32, checker_tex: Option<TextureId>, glass_tex: Option<TextureId>) -> Material {
     let mut m = Material::default();
     match id {
         MAT_METAL => {
             m.base_colour = Colour::linear_rgb(0.75, 0.77, 0.8);
-            m.metallic = state.metallic;
+            m.metallic = 0.9;
             m.roughness = 0.35;
         }
         MAT_PLASTIC => {
@@ -233,12 +248,12 @@ fn material_for(state: &SubmeshState, id: u32) -> Material {
         }
         MAT_CHECKER => {
             m.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
-            m.texture_id = state.checker_tex;
+            m.texture_id = checker_tex;
             m.roughness = 0.7;
         }
         MAT_GLASS => {
             m.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
-            m.texture_id = state.glass_tex;
+            m.texture_id = glass_tex;
             m.alpha_mode = AlphaMode::Blend;
             m.roughness = 0.1;
             m.specular = 0.9;
@@ -253,15 +268,10 @@ pub(crate) fn submesh_scene_items(app: &App) -> Vec<SceneRenderItem> {
     if !s.built {
         return vec![];
     }
-    let mut item = SceneRenderItem::default();
-    item.mesh_id = s.mesh_id;
+    let mut item = SceneRenderItem::new(s.mesh_id, s.fallback_material);
     item.model = glam::Mat4::from_rotation_z(s.angle).to_cols_array_2d();
-    // The single-material fallback look, and the whole look when per-range
-    // materials are toggled off.
-    item.material.base_colour = Colour::linear_rgb(0.4, 0.4, 0.45);
-    item.material.roughness = 0.5;
     if s.per_range {
-        item.submesh_materials = Some(s.range_ids.iter().map(|&id| material_for(s, id)).collect());
+        item.submesh_materials = Some(s.range_materials.clone());
     }
     vec![item]
 }
@@ -296,10 +306,12 @@ pub(crate) fn submesh_lighting() -> LightingSettings {
 // Controls
 // ---------------------------------------------------------------------------
 
-pub(crate) fn controls_submesh(app: &mut App, ui: &mut egui::Ui) {
+pub(crate) fn controls_submesh(app: &mut App, ui: &mut egui::Ui, frame: &crate::eframe::Frame) {
     let s = &mut app.submesh_state;
     ui.checkbox(&mut s.per_range, "Per-range materials");
-    ui.add(egui::Slider::new(&mut s.metallic, 0.0..=1.0).text("body metallic"));
+    edit_material(frame, s.metal_material, |m| {
+        ui.add(egui::Slider::new(&mut m.metallic, 0.0..=1.0).text("body metallic"));
+    });
     ui.checkbox(&mut s.spin, "Spin");
     ui.separator();
     ui.label("One mesh, one item, four material ranges:");
@@ -462,8 +474,8 @@ impl crate::Showcase for ScSubmeshMaterials {
         &self,
         app: &mut crate::App,
         ui: &mut crate::eframe::egui::Ui,
-        _frame: &crate::eframe::Frame,
+        frame: &crate::eframe::Frame,
     ) {
-        controls_submesh(app, ui)
+        controls_submesh(app, ui, frame)
     }
 }

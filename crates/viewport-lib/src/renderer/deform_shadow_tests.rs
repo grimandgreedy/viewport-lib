@@ -6,8 +6,8 @@
 //! pass the result is a shadow that never moves while the lit mesh animates perfectly.
 //!
 //! `shadow_point.wgsl` was in exactly that state: the contract, the context and both hook calls
-//! were present, the pipeline carried the deform bind group, and the composition list did not name
-//! it, so every hook call stayed an identity pass-through. These tests hold both shadow pipelines
+//! were present and the composition list did not name it, so every hook call stayed an identity
+//! pass-through. These tests hold both shadow pipelines
 //! to the rule the mesh pipelines already follow. Skips when no wgpu adapter is available.
 
 use super::ViewportRenderer;
@@ -68,10 +68,6 @@ fn both_shadow_pipelines_follow_a_registered_deformer() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
-    if !renderer.resources().deform.enabled {
-        eprintln!("skipping: device has too few bind groups for the deform path");
-        return;
-    }
 
     // Registered before any shadow is cast: nothing to rebuild, nothing built.
     renderer

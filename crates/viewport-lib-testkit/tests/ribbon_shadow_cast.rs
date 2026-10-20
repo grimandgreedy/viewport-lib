@@ -24,7 +24,11 @@ fn ground(h: &mut Harness) -> SceneRenderItem {
         .expect("upload ground");
     let mut ground = SceneRenderItem::default();
     ground.mesh_id = ground_id;
-    ground.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
+    ground.material = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
+        .expect("material upload");
     ground
 }
 

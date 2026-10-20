@@ -34,9 +34,9 @@ use viewport_lib::picking::screen_to_ray;
 use viewport_lib::vplg::volume::grid::VolumeData;
 use viewport_lib::vplg::volume::marching_cubes::extract_isosurface;
 use viewport_lib::{
-    Aabb, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Material, MouseButton,
-    OrbitCameraController, PickAccelerator, Scene, SceneFrame, SceneRenderItem, ScrollUnits,
-    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, wgpu,
+    Aabb, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Material, MaterialId,
+    MouseButton, OrbitCameraController, PickAccelerator, Scene, SceneFrame, SceneRenderItem,
+    ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, wgpu,
 };
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent};
@@ -401,15 +401,16 @@ async fn build_state(window: Arc<Window>) -> State {
         .expect("upload extracted surface");
     results.pass("extracted surface uploaded to the GPU");
 
-    let mut item = SceneRenderItem::default();
-    item.mesh_id = mesh_id;
-    item.material = Material::from_colour(Colour::linear_rgb(0.35, 0.72, 0.95));
-    let scene_items = vec![item];
+    let material = renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.35, 0.72, 0.95)))
+        .expect("upload material");
+    let scene_items = vec![SceneRenderItem::new(mesh_id, material)];
 
     // Step 3: the pick accelerator builds a BVH over the scene, which is the
     // other CPU path a consumer hits on the first click.
     let mut scene = Scene::new();
-    scene.add(Some(mesh_id), glam::Mat4::IDENTITY, Material::default());
+    scene.add(Some(mesh_id), glam::Mat4::IDENTITY, MaterialId::DEFAULT);
     scene.update_transforms();
 
     let bounds = Aabb::from_positions(&mesh.positions);

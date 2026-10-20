@@ -77,10 +77,11 @@ impl App {
                 m.texture_id = Some(percy_tex);
                 m.ambient = 0.9;
                 m.diffuse = 0.4;
-                m
+                // The plane is seen from both sides.
+                m.backface_policy = vpl::BackfacePolicy::Identical;
+                res.upload_material(m).expect("material upload")
             },
         );
-        // (two-sided set in build_frame_data via texture_state.plane_node)
 
         // --- Checkerboard on a sphere ---
         let checker = make_checkerboard(256, 8, [220, 220, 220, 255], [40, 40, 40, 255]);
@@ -108,7 +109,7 @@ impl App {
                 m.diffuse = 0.8;
                 m.specular = 0.4;
                 m.shininess = 32.0;
-                m
+                res.upload_material(m).expect("material upload")
             },
         );
 
@@ -136,7 +137,7 @@ impl App {
                 m.texture_id = Some(gradient_tex);
                 m.ambient = 0.3;
                 m.diffuse = 0.8;
-                m
+                res.upload_material(m).expect("material upload")
             },
         );
 
@@ -167,7 +168,7 @@ impl App {
                 m.diffuse = 0.8;
                 m.specular = 0.6;
                 m.shininess = 64.0;
-                m
+                res.upload_material(m).expect("material upload")
             },
         );
 
@@ -281,17 +282,10 @@ pub(crate) fn scene(
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        let mut items = app
+        let items = app
             .texture_state
             .scene
             .collect_render_items(&vpl::Selection::new());
-        let plane_node = app.texture_state.plane_node;
-        if let Some(item) = items
-            .iter_mut()
-            .find(|i| i.settings.pick_id == vpl::PickId(plane_node))
-        {
-            item.material.backface_policy = vpl::BackfacePolicy::Identical;
-        }
         let sg = app.texture_state.scene.version();
         let lighting = {
             let mut _t = vpl::LightingSettings::default();

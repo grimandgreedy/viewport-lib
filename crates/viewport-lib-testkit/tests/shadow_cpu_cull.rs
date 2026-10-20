@@ -50,10 +50,19 @@ fn render(indirect: bool) -> Option<Vec<u8>> {
         .upload_mesh_data(&device, &viewport_lib::primitives::icosphere(6.0, 3))
         .expect("ball");
 
+    let ground_material = renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
+        .expect("material upload");
+    let ball_material = renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.8, 0.3, 0.3)))
+        .expect("material upload");
+
     let mut items = Vec::new();
     let mut ground = SceneRenderItem::default();
     ground.mesh_id = ground_id;
-    ground.material = Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7));
+    ground.material = ground_material;
     items.push(ground);
     for i in 0..24 {
         let ang = i as f32 * 0.7;
@@ -66,7 +75,7 @@ fn render(indirect: bool) -> Option<Vec<u8>> {
             12.0 + (i % 3) as f32 * 6.0,
         ))
         .to_cols_array_2d();
-        ball.material = Material::from_colour(Colour::linear_rgb(0.8, 0.3, 0.3));
+        ball.material = ball_material;
         items.push(ball);
     }
 

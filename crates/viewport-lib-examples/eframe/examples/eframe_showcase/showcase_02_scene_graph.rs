@@ -3,9 +3,10 @@
 use crate::App;
 use crate::eframe;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use vpl::{Material, ViewportRenderer, scene::Scene, selection::Selection};
+use vpl::{Material, MaterialId, ViewportRenderer, scene::Scene, selection::Selection};
 
 // ---------------------------------------------------------------------------
 // State
@@ -19,6 +20,10 @@ pub(crate) struct SgState {
     pub outline_width: f32,
     pub layer_b: Option<vpl::scene::LayerId>,
     pub layer_b_visible: bool,
+    /// The "Cycle Material" presets, uploaded once at build.
+    pub presets: Vec<(MaterialId, vpl::ItemSettings)>,
+    /// Material for boxes added with "Add Child to Selected".
+    pub child_material: MaterialId,
     pub built: bool,
 }
 
@@ -32,6 +37,8 @@ impl Default for SgState {
             outline_width: 4.0,
             layer_b: None,
             layer_b_visible: true,
+            presets: Vec::new(),
+            child_material: MaterialId::DEFAULT,
             built: false,
         }
     }
@@ -48,6 +55,19 @@ impl App {
         self.sg_state.layer_b_visible = true;
         self.sg_state.selection.clear();
 
+        if self.sg_state.presets.is_empty() {
+            self.sg_state.presets = (0..4)
+                .map(|i| {
+                    let (mat, app_s) = material_preset(i);
+                    (upload_material(renderer, mat), app_s)
+                })
+                .collect();
+            self.sg_state.child_material = upload_material(
+                renderer,
+                Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05)),
+            );
+        }
+
         let positions = [
             [-1.5, -1.5, 0.0],
             [1.5, -1.5, 0.0],
@@ -63,7 +83,10 @@ impl App {
         for (i, (pos, colour)) in positions.iter().zip(&colours).enumerate() {
             let mesh = self.upload_box(renderer);
             let transform = glam::Mat4::from_translation(glam::Vec3::from(*pos));
-            let mat = Material::from_colour(Colour::from_linear_rgb_array(*colour));
+            let mat = upload_material(
+                renderer,
+                Material::from_colour(Colour::from_linear_rgb_array(*colour)),
+            );
             let name = format!("Box {}", i + 1);
             let id = self
                 .sg_state
@@ -90,9 +113,10 @@ pub(crate) fn controls_scene_graph(app: &mut App, ui: &mut egui::Ui, frame: &efr
     ui.label(format!("Nodes: {nodes}  Selected: {sel}"));
     ui.separator();
 
-    if ui.button("Cycle Material").clicked() {
+    if ui.button("Cycle Material").clicked() && !app.sg_state.presets.is_empty() {
         app.sg_state.material_cycle += 1;
-        let (mat, app_s) = material_preset(app.sg_state.material_cycle);
+        let n = app.sg_state.presets.len();
+        let (mat, app_s) = app.sg_state.presets[app.sg_state.material_cycle % n];
         for &id in app.sg_state.selection.iter() {
             app.sg_state.scene.set_material(id, mat);
             app.sg_state.scene.set_appearance(id, app_s);
@@ -149,7 +173,7 @@ pub(crate) fn controls_scene_graph(app: &mut App, ui: &mut egui::Ui, frame: &efr
                 "Child",
                 Some(mesh),
                 local,
-                Material::from_colour(Colour::linear_rgb(0.75, 0.28, 0.05)),
+                app.sg_state.child_material,
             );
             app.sg_state.scene.set_parent(child_id, Some(parent_id));
             app.sg_state.selection.select_one(child_id);

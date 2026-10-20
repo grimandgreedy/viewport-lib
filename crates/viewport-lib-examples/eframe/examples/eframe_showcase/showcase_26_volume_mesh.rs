@@ -27,6 +27,7 @@
 use crate::App;
 use crate::eframe;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
@@ -34,6 +35,7 @@ use vpl::{
     ColourmapId, FrameData, LightingSettings, SceneRenderItem, ViewportRenderer, VolumeMeshData,
     VolumeMeshItem, VolumeTransparency,
 };
+use vpl::{Material, MaterialId};
 
 // ---------------------------------------------------------------------------
 // State
@@ -59,6 +61,8 @@ pub(crate) struct VmState {
     pub clip_azimuth: f32,
     /// CPU-clipped volume mesh item; allocated lazily on first clip.
     pub clipped_item: Option<VolumeMeshItem>,
+    /// Two-sided material shared by every volume mesh item.
+    pub material: MaterialId,
     /// Transparent-mode items per cell type, uploaded with projected-tet data
     /// at startup. Each carries both the boundary surface and the tet
     /// decomposition, so toggling transparency on or off is just a field flip.
@@ -99,6 +103,7 @@ impl Default for VmState {
             clip_elevation: 0.0,
             clip_azimuth: 0.0,
             clipped_item: None,
+            material: MaterialId::DEFAULT,
             tet_transparent_item: None,
             hex_transparent_item: None,
             tet_small_transparent_item: None,
@@ -722,12 +727,17 @@ impl App {
         let hex_positions = cube_sphere_vertex_positions();
         let positions = sphere_vertex_positions();
 
+        let mut two_sided = Material::default();
+        two_sided.backface_policy = BackfacePolicy::Identical;
+        let material = upload_material(renderer, two_sided);
+        self.vm_state.material = material;
+
         let mut upload = |data: &VolumeMeshData| -> VolumeMeshItem {
             let mut item = renderer
                 .resources_mut()
                 .upload_volume_mesh(&self.device, data)
                 .expect("vm upload");
-            item.material.backface_policy = BackfacePolicy::Identical;
+            item.material = material;
             item
         };
 
@@ -766,7 +776,7 @@ impl App {
                 .upload_volume_mesh_with_transparency(&self.device, data, attr)
                 .ok()
                 .map(|mut item| {
-                    item.material.backface_policy = BackfacePolicy::Identical;
+                    item.material = material;
                     item
                 })
         };
@@ -1149,7 +1159,7 @@ pub(crate) fn vm_collect_scene_items(
                             &data,
                             &clip_planes,
                         ) {
-                            item.material.backface_policy = vpl::BackfacePolicy::Identical;
+                            item.material = app.vm_state.material;
                             app.vm_state.clipped_item = Some(item);
                         }
                     }

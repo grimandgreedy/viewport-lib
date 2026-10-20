@@ -50,10 +50,10 @@ fn post_effect_ctx<'a>(
     }
 }
 
-/// Encode one non-instanced mesh item's draws: bind the object (group 1),
-/// material plugin (group 3), and deform (group 2) groups, pick the pipeline,
-/// and draw. `obj_bg_override` is the item's per-item bind group when one was
-/// prepared; `None` falls back to the mesh's shared object bind group. `hdr`
+/// Encode one non-instanced mesh item's draws: bind the object (group 1) and
+/// material plugin (group 2) groups, pick the pipeline, and draw. `obj_override` is the item's per-item bind group and the record
+/// buffer it binds, when one was prepared; `None` falls back to the mesh's
+/// shared object bind group and template record. `hdr`
 /// selects the material-plugin pipeline family and `family` the built-in
 /// one. A draw whose pipeline is still compiling is skipped. Shared by the
 /// HDR scene pass and the HDR/LDR foreground passes; group 0 must already be
@@ -70,9 +70,9 @@ pub(super) fn draw_mesh_item(
     resources: &DeviceResources,
     render_pass: &mut crate::gpu::RenderPass<'_>,
     item: &SceneRenderItem,
-    obj_bg_override: Option<&crate::gpu::BindGroup>,
+    obj_override: Option<(&crate::gpu::BindGroup, &crate::gpu::Buffer)>,
     // Object-data element index the whole-mesh draw selects with
-    // @builtin(instance_index). Must be 0 when `obj_bg_override` is None (the
+    // @builtin(instance_index). Must be 0 when `obj_override` is None (the
     // mesh's single-element fallback buffer).
     obj_index: u32,
     wireframe_mode: bool,
@@ -87,16 +87,37 @@ pub(super) fn draw_mesh_item(
     let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
         return;
     };
-    let obj_bg = obj_bg_override.unwrap_or(&mesh.object_bind_group);
+    let (obj_bg, records) =
+        obj_override.unwrap_or((&mesh.object_bind_group, &mesh.object_uniform_buf));
     render_pass.set_bind_group(1, obj_bg, &[]);
-    let plug = resources.material_plugin_draw(item.material.shading_plugin);
+    render_pass.set_vertex_buffer(1, records.slice(..));
+    // A prepared record carries the mesh's base vertex and draws from the
+    // whole slab chunk; the template record carries 0 and draws the mesh's
+    // own slice. Either way the record's `vertex_base` is the base drawn with.
+    let (vertices, indices, base_vertex, first_index) = if obj_override.is_some() {
+        (
+            resources
+                .geometry
+                .vertex_chunk_slice(mesh.vertex_span.chunk),
+            resources.geometry.index_chunk_slice(mesh.index_span.chunk),
+            resources.geometry.base_vertex(mesh.vertex_span),
+            resources.geometry.first_index(mesh.index_span),
+        )
+    } else {
+        (
+            resources.geometry.vertex_slice(mesh.vertex_span),
+            resources.geometry.index_slice(mesh.index_span),
+            0,
+            0,
+        )
+    };
+    let material = resources.material_or_default(item.material);
+    let plug =
+        resources.material_plugin_draw(material.shading_plugin, &material.plugin_textures, false);
     if let Some((_, mat_bg)) = plug {
         bind_material_group!(render_pass, mat_bg);
     }
 
-    let deform_bg = resources
-        .deform
-        .instance_bind_group_for(item.mesh_id, item.deform_instance);
     let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
         matches!(
             a.kind,
@@ -106,31 +127,34 @@ pub(super) fn draw_mesh_item(
                 | crate::resources::AttributeKind::Corner
         )
     });
-    let item_key = PipelineKey::two_sided(item.material.is_two_sided());
+    let item_key = PipelineKey::two_sided(material.is_two_sided());
     if wireframe_mode || item.settings.wireframe {
         if let Some(edge_buf) = &mesh.edge_index_buffer {
             let Some(wf_pl) = family.wireframe() else {
                 return;
             };
             render_pass.set_pipeline(wf_pl);
-            bind_deform_group!(render_pass, resources, deform_bg);
-            render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
+            render_pass.set_vertex_buffer(0, vertices);
             render_pass.set_index_buffer(edge_buf.slice(..), crate::gpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..mesh.edge_index_count, 0, obj_index..obj_index + 1);
+            render_pass.draw_indexed(
+                0..mesh.edge_index_count,
+                base_vertex,
+                obj_index..obj_index + 1,
+            );
         }
     } else if is_face_attr {
         if let Some(ref fvb) = mesh.face_vertex_buffer {
             let pl = if let Some((pp, _)) = plug {
                 if item.settings.opacity < 1.0 {
-                    if hdr {
-                        pp.hdr_transparent()
-                    } else {
-                        pp.ldr_transparent()
-                    }
-                } else if hdr {
-                    pp.hdr_opaque(item_key)
+                    pp.transparent(hdr, crate::renderer::pipeline_key::FeatureSet::UNIVERSAL)
+                        .pipeline
                 } else {
-                    pp.ldr_opaque(item_key)
+                    pp.opaque(
+                        hdr,
+                        item_key,
+                        crate::renderer::pipeline_key::FeatureSet::UNIVERSAL,
+                    )
+                    .pipeline
                 }
             } else if item.settings.opacity < 1.0 {
                 family.transparent()
@@ -142,7 +166,6 @@ pub(super) fn draw_mesh_item(
                 return;
             };
             render_pass.set_pipeline(pl);
-            bind_deform_group!(render_pass, resources, deform_bg);
             render_pass.set_vertex_buffer(0, fvb.slice(..));
             render_pass.draw(0..mesh.index_count, obj_index..obj_index + 1);
         }
@@ -150,35 +173,33 @@ pub(super) fn draw_mesh_item(
         let ranges =
             crate::renderer::prepare::active_submesh_materials(item, mesh).zip(submesh_bgs);
         if let Some((mats, bgs)) = ranges {
-            bind_deform_group!(render_pass, resources, deform_bg);
-            render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-            render_pass.set_index_buffer(
-                resources.geometry.index_slice(mesh.index_span),
-                crate::gpu::IndexFormat::Uint32,
-            );
+            render_pass.set_vertex_buffer(0, vertices);
+            render_pass.set_index_buffer(indices, crate::gpu::IndexFormat::Uint32);
             for (r, (mat, range)) in mats.iter().zip(&mesh.submeshes).enumerate() {
+                let mat = resources.material_or_default(*mat);
                 let is_trans = item.settings.opacity < 1.0 || mat.is_blend();
                 if let Some(want) = submesh_transparent {
                     if is_trans != want {
                         continue;
                     }
                 }
-                let plug_r = resources.material_plugin_draw(mat.shading_plugin);
+                let plug_r =
+                    resources.material_plugin_draw(mat.shading_plugin, &mat.plugin_textures, false);
                 let range_key = PipelineKey::two_sided(mat.is_two_sided());
                 // A range draws two-sided when its own material or the item's
                 // says so.
                 let builtin_key = PipelineKey::two_sided(item_key.two_sided || range_key.two_sided);
                 let pl = if let Some((pp, _)) = plug_r {
                     if is_trans {
-                        if hdr {
-                            pp.hdr_transparent()
-                        } else {
-                            pp.ldr_transparent()
-                        }
-                    } else if hdr {
-                        pp.hdr_opaque(range_key)
+                        pp.transparent(hdr, crate::renderer::pipeline_key::FeatureSet::UNIVERSAL)
+                            .pipeline
                     } else {
-                        pp.ldr_opaque(range_key)
+                        pp.opaque(
+                            hdr,
+                            range_key,
+                            crate::renderer::pipeline_key::FeatureSet::UNIVERSAL,
+                        )
+                        .pipeline
                     }
                 } else if is_trans {
                     family.transparent()
@@ -203,24 +224,25 @@ pub(super) fn draw_mesh_item(
                 if let Some((_, mat_bg)) = plug_r {
                     bind_material_group!(render_pass, mat_bg);
                 }
+                let first = first_index + range.first_index;
                 render_pass.draw_indexed(
-                    range.first_index..range.first_index + range.index_count,
-                    0,
+                    first..first + range.index_count,
+                    base_vertex,
                     inst..inst + 1,
                 );
             }
         } else {
             let pl = if let Some((pp, _)) = plug {
                 if item.settings.opacity < 1.0 {
-                    if hdr {
-                        pp.hdr_transparent()
-                    } else {
-                        pp.ldr_transparent()
-                    }
-                } else if hdr {
-                    pp.hdr_opaque(item_key)
+                    pp.transparent(hdr, crate::renderer::pipeline_key::FeatureSet::UNIVERSAL)
+                        .pipeline
                 } else {
-                    pp.ldr_opaque(item_key)
+                    pp.opaque(
+                        hdr,
+                        item_key,
+                        crate::renderer::pipeline_key::FeatureSet::UNIVERSAL,
+                    )
+                    .pipeline
                 }
             } else if item.settings.opacity < 1.0 {
                 family.transparent()
@@ -231,22 +253,22 @@ pub(super) fn draw_mesh_item(
                 return;
             };
             render_pass.set_pipeline(pl);
-            bind_deform_group!(render_pass, resources, deform_bg);
-            render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-            render_pass.set_index_buffer(
-                resources.geometry.index_slice(mesh.index_span),
-                crate::gpu::IndexFormat::Uint32,
+            render_pass.set_vertex_buffer(0, vertices);
+            render_pass.set_index_buffer(indices, crate::gpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(
+                first_index..first_index + mesh.index_count,
+                base_vertex,
+                obj_index..obj_index + 1,
             );
-            render_pass.draw_indexed(0..mesh.index_count, 0, obj_index..obj_index + 1);
         }
     }
     if item.show_normals {
         if let (Some(nl_buf), Some(wf_pl)) = (&mesh.normal_line_buffer, family.wireframe()) {
             if mesh.normal_line_count > 0 {
                 render_pass.set_pipeline(wf_pl);
-                bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
                 render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, nl_buf.slice(..));
+                render_pass.set_vertex_buffer(1, mesh.normal_uniform_buf.slice(..));
                 render_pass.draw(0..mesh.normal_line_count, 0..1);
             }
         }
@@ -390,14 +412,14 @@ impl ViewportRenderer {
             {
                 res.ensure_hdr_mesh_pipelines(device);
             }
-            // Instanced batches and explicit mesh instances draw with the HDR
-            // instanced set. Prepare has normally built it; this covers a
-            // frame prepared for a direct paint and then rendered here.
+            // Batches and explicit mesh instances draw with the HDR mesh
+            // family and its culled twin. Prepare has normally built them;
+            // this covers a frame prepared for a direct paint and then
+            // rendered here.
             if (self.instancing.use_instancing && !self.instancing.batches.is_empty())
                 || !self.mesh_instance_gpu_data.is_empty()
             {
-                res.ensure_instanced_pipelines(device);
-                res.ensure_hdr_instanced_pipelines(device);
+                res.ensure_hdr_mesh_pipelines(device);
                 res.ensure_hdr_cull_pipelines(device);
             }
         }
@@ -543,7 +565,7 @@ impl ViewportRenderer {
                 if self.instancing.use_instancing
                     && self.instancing.batches.iter().any(|b| b.is_transparent)
                 {
-                    self.resources.ensure_oit_instanced_pipeline(device);
+                    self.resources.ensure_oit_mesh_pipelines(device);
                     self.resources.ensure_oit_cull_pipelines(device);
                 }
                 let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
@@ -769,777 +791,161 @@ impl ViewportRenderer {
                 .filter(|_| self.viewport_slots[vp_idx].draw_skybox)
                 .map(|b| &b.bind_group);
 
-            let use_instancing = self.instancing.use_instancing;
             let batches = &self.instancing.batches;
 
-            if !scene_items.is_empty() {
-                if use_instancing && !batches.is_empty() {
-                    let excluded_items: Vec<(usize, &SceneRenderItem)> = scene_items
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, item)| {
-                            // The per-object set is exactly the visible items that were
-                            // not admitted to an instanced batch. Reuse `is_instanceable`
-                            // (the single source of truth used in prepare) instead of
-                            // re-listing its conditions, so this filter cannot drift from
-                            // it -- a past drift dropped position-override items
-                            // from the scene pass entirely.
-                            !item.settings.hidden
-                                && resources.mesh_store.get(item.mesh_id).is_some()
-                                && !crate::renderer::prepare::is_instanceable(item, resources)
-                        })
-                        .collect();
-
-                    // Separate opaque and transparent batches.
-                    // Carry the global batch index (position in `batches`) alongside each batch
-                    // so draw_indexed_indirect can compute the correct buffer offset.
-                    let mut opaque_batches: Vec<(usize, &InstancedBatch)> = Vec::new();
-                    let mut transparent_batches: Vec<(usize, &InstancedBatch)> = Vec::new();
-                    for (batch_global_idx, batch) in batches.iter().enumerate() {
-                        if batch.is_transparent {
-                            transparent_batches.push((batch_global_idx, batch));
-                        } else {
-                            opaque_batches.push((batch_global_idx, batch));
-                        }
-                    }
-
-                    if !opaque_batches.is_empty() && !frame.viewport.wireframe_mode {
-                        let use_indirect = self.instancing.gpu_culling_enabled
-                            && resources.cull.hdr.is_some()
-                            && cull0.indirect_args_buf.is_some();
-
-                        // Early-Z fast path: when no clip object can discard a
-                        // fragment this frame, opaque batches without alpha-mask
-                        // instances draw with the discard-free pipeline twin so
-                        // hidden fragments are depth-rejected before shading.
-                        let clipping_active = frame
-                            .effects
-                            .clip
-                            .objects
-                            .iter()
-                            .any(|o| o.enabled && o.clip_geometry);
-
-                        if use_indirect {
-                            if let Some(indirect_buf) = &cull0.indirect_args_buf {
-                                bind_deform_group!(
-                                    render_pass,
-                                    resources,
-                                    &resources.deform.dummy_bind_group
-                                );
-                                // Geometry lives in the shared slab, so the chunk
-                                // buffers bind once and each batch's indirect args
-                                // carry the mesh's base_vertex / first_index (written
-                                // by the cull kernel). Consecutive batches that share
-                                // the pipeline variant, the instance+texture bind
-                                // group, and the slab chunk form a run drawn with one
-                                // multi_draw_indexed_indirect where the backend
-                                // supports it; runs break on a global-index gap (a
-                                // transparent batch sits between two opaque ones) so a
-                                // multi-draw never sweeps in an entry the CPU skipped.
-                                let multi_draw = self.instancing.multi_draw_active();
-                                // GPU-driven submission: when the compaction pass
-                                // precomputed draw groups (bindless + native
-                                // multi-draw-count), issue one
-                                // multi_draw_indexed_indirect_count per group and
-                                // skip the CPU run-forming entirely.
-                                let mut did_groups = false;
-                                if !self.instancing.draw_groups.is_empty() {
-                                    if let (Some(compacted), Some(counts)) = (
-                                        cull0.compacted_args_buf.as_ref(),
-                                        cull0.draw_counts_buf.as_ref(),
-                                    ) {
-                                        let mut cur_pipe: Option<(bool, bool)> = None;
-                                        let mut cur_chunks: Option<(u32, u32)> = None;
-                                        for group in self.instancing.draw_groups.iter() {
-                                            // The group carries its pipeline
-                                            // selectors and geometry chunk, so no
-                                            // per-group batch / mesh-store lookup
-                                            // is needed (the count path draws every
-                                            // batch's args from the compacted
-                                            // buffer the GPU wrote).
-                                            let pipe_key = (group.two_sided, group.no_discard);
-                                            if cur_pipe != Some(pipe_key) {
-                                                let key = PipelineKey {
-                                                    two_sided: group.two_sided,
-                                                    no_discard_eligible: group.no_discard,
-                                                    ..PipelineKey::default()
-                                                };
-                                                // Still compiling: the group waits a frame.
-                                                let Some(pl) = resources.cull.hdr_opaque(key)
-                                                else {
-                                                    cur_pipe = None;
-                                                    continue;
-                                                };
-                                                render_pass.set_pipeline(pl);
-                                                cur_pipe = Some(pipe_key);
-                                            }
-                                            let chunks = (group.vertex_chunk, group.index_chunk);
-                                            if cur_chunks != Some(chunks) {
-                                                // The colour bind group carries this
-                                                // chunk's uv1 buffer, so rebind group 1
-                                                // whenever the slab chunk changes.
-                                                let Some(bg) = cull0
-                                                    .bindless_cull_bind_groups
-                                                    .get(&resources.uv1_chunk_key(chunks.0))
-                                                else {
-                                                    continue;
-                                                };
-                                                render_pass.set_bind_group(1, bg, &[]);
-                                                render_pass.set_vertex_buffer(
-                                                    0,
-                                                    resources.geometry.vertex_chunk_slice(chunks.0),
-                                                );
-                                                render_pass.set_index_buffer(
-                                                    resources.geometry.index_chunk_slice(chunks.1),
-                                                    crate::gpu::IndexFormat::Uint32,
-                                                );
-                                                cur_chunks = Some(chunks);
-                                            }
-                                            render_pass.multi_draw_indexed_indirect_count(
-                                                compacted,
-                                                group.arg_base as u64 * 20,
-                                                counts,
-                                                group.count_index as u64 * 4,
-                                                group.size,
-                                            );
-                                            self.frame_main_draw_commands
-                                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                        }
-                                        did_groups = true;
-                                    }
-                                }
-                                let mut cur_pipe: Option<(bool, bool)> = None;
-                                let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
-                                let mut cur_chunks: Option<(u32, u32)> = None;
-                                let mut run_start: u64 = 0;
-                                let mut run_len: u32 = 0;
-                                for (batch_global_idx, batch) in opaque_batches
-                                    .iter()
-                                    .take(if did_groups { 0 } else { usize::MAX })
-                                {
-                                    // Plugin batches draw in the dedicated plugin
-                                    // sub-loop below; skipping here breaks the
-                                    // current run on the global-index gap, exactly
-                                    // as an interleaved transparent batch does.
-                                    if batch.shading_plugin.is_some() {
-                                        continue;
-                                    }
-                                    let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
-                                        continue;
-                                    };
-                                    let mat_key = (
-                                        batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        batch
-                                            .metallic_roughness_id
-                                            .map(|t| t.raw())
-                                            .unwrap_or(u64::MAX),
-                                        batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                                    );
-                                    let Some(inst_tex_bg) =
-                                        resources.instanced_cull_colour_bind_group(cull0, mat_key)
-                                    else {
-                                        continue;
-                                    };
-                                    let no_discard = !clipping_active && !batch.has_alpha_mask;
-                                    let pipe_key = (batch.two_sided, no_discard);
-                                    let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                                    let bg_ptr = inst_tex_bg as *const crate::gpu::BindGroup;
-                                    let g = *batch_global_idx as u64;
-                                    if run_len > 0
-                                        && g == run_start + run_len as u64
-                                        && cur_pipe == Some(pipe_key)
-                                        && cur_bg == Some(bg_ptr)
-                                        && cur_chunks == Some(chunks)
-                                    {
-                                        run_len += 1;
-                                        continue;
-                                    }
-                                    if run_len > 0 {
-                                        let dc = crate::renderer::render::emit_indirect_run(
-                                            &mut render_pass,
-                                            indirect_buf,
-                                            run_start,
-                                            run_len,
-                                            multi_draw,
-                                        );
-                                        self.frame_main_draw_commands
-                                            .fetch_add(dc, std::sync::atomic::Ordering::Relaxed);
-                                        run_len = 0;
-                                    }
-                                    if cur_pipe != Some(pipe_key) {
-                                        let key = PipelineKey {
-                                            two_sided: batch.two_sided,
-                                            no_discard_eligible: no_discard,
-                                            ..PipelineKey::default()
-                                        };
-                                        // Still compiling: the batch waits a frame.
-                                        let Some(pl) = resources.cull.hdr_opaque(key) else {
-                                            cur_pipe = None;
-                                            continue;
-                                        };
-                                        render_pass.set_pipeline(pl);
-                                        cur_pipe = Some(pipe_key);
-                                    }
-                                    if cur_bg != Some(bg_ptr) {
-                                        render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                        cur_bg = Some(bg_ptr);
-                                    }
-                                    if cur_chunks != Some(chunks) {
-                                        render_pass.set_vertex_buffer(
-                                            0,
-                                            resources.geometry.vertex_chunk_slice(chunks.0),
-                                        );
-                                        render_pass.set_index_buffer(
-                                            resources.geometry.index_chunk_slice(chunks.1),
-                                            crate::gpu::IndexFormat::Uint32,
-                                        );
-                                        self.frame_main_buffer_binds
-                                            .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
-                                        cur_chunks = Some(chunks);
-                                    }
-                                    run_start = g;
-                                    run_len = 1;
-                                }
-                                if run_len > 0 {
-                                    let dc = crate::renderer::render::emit_indirect_run(
-                                        &mut render_pass,
-                                        indirect_buf,
-                                        run_start,
-                                        run_len,
-                                        multi_draw,
-                                    );
-                                    self.frame_main_draw_commands
-                                        .fetch_add(dc, std::sync::atomic::Ordering::Relaxed);
-                                }
-                            }
-                        } else if resources.instancing.hdr.is_some() {
-                            bind_deform_group!(
-                                render_pass,
-                                resources,
-                                &resources.deform.dummy_bind_group
-                            );
-                            let mut cur_pipe: Option<(bool, bool)> = None;
-                            let mut cur_chunks: Option<(u32, u32)> = None;
-                            for (_, batch) in &opaque_batches {
-                                // Plugin batches draw in the plugin sub-loop below.
-                                if batch.shading_plugin.is_some() {
-                                    continue;
-                                }
-                                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
-                                    continue;
-                                };
-                                let mat_key = (
-                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch
-                                        .metallic_roughness_id
-                                        .map(|t| t.raw())
-                                        .unwrap_or(u64::MAX),
-                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                                );
-                                let Some(inst_tex_bg) =
-                                    resources.instanced_colour_bind_group(mat_key)
-                                else {
-                                    continue;
-                                };
-                                let no_discard = !clipping_active && !batch.has_alpha_mask;
-                                if cur_pipe != Some((batch.two_sided, no_discard)) {
-                                    let key = PipelineKey {
-                                        two_sided: batch.two_sided,
-                                        no_discard_eligible: no_discard,
-                                        ..PipelineKey::default()
-                                    };
-                                    // Still compiling: the batch waits a frame.
-                                    let Some(pl) = resources.instancing.hdr_opaque(key) else {
-                                        cur_pipe = None;
-                                        continue;
-                                    };
-                                    render_pass.set_pipeline(pl);
-                                    cur_pipe = Some((batch.two_sided, no_discard));
-                                }
-                                render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                                if cur_chunks != Some(chunks) {
-                                    render_pass.set_vertex_buffer(
-                                        0,
-                                        resources.geometry.vertex_chunk_slice(chunks.0),
-                                    );
-                                    render_pass.set_index_buffer(
-                                        resources.geometry.index_chunk_slice(chunks.1),
-                                        crate::gpu::IndexFormat::Uint32,
-                                    );
-                                    self.frame_main_buffer_binds
-                                        .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
-                                    cur_chunks = Some(chunks);
-                                }
-                                let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                                let first_index = resources.geometry.first_index(mesh.index_span);
-                                render_pass.draw_indexed(
-                                    first_index..first_index + mesh.index_count,
-                                    base_vertex,
-                                    batch.instance_offset
-                                        ..batch.instance_offset + batch.instance_count,
-                                );
-                                self.frame_main_draw_commands
-                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            }
-                        }
-
-                        // Material-plugin opaque batches: one instanced call each,
-                        // through the plugin's composed instanced pipeline plus its
-                        // group-3 params bind. The loops above skip plugin batches
-                        // (they sit outside GPU-cull / count-multi-draw run-forming),
-                        // so this covers them whether or not culling drew the rest.
-                        if opaque_batches
-                            .iter()
-                            .any(|(_, b)| b.shading_plugin.is_some())
-                        {
-                            bind_deform_group!(
-                                render_pass,
-                                resources,
-                                &resources.deform.dummy_bind_group
-                            );
-                            // When GPU culling ran this frame, a plugin batch draws
-                            // its culled instances from the cull-written indirect
-                            // args through the plugin's `vs_main_cull` pipeline; the
-                            // cull kernel wrote args + visibility for every batch,
-                            // including plugin ones (they are only excluded from the
-                            // count-multi-draw compaction, not the cull). Otherwise
-                            // it draws every instance directly.
-                            let plugin_indirect = (self.instancing.gpu_culling_enabled
-                                && resources.cull.hdr.is_some())
-                            .then(|| cull0.indirect_args_buf.as_ref())
-                            .flatten();
-                            let mut cur_chunks: Option<(u32, u32)> = None;
-                            for (batch_global_idx, batch) in &opaque_batches {
-                                if batch.shading_plugin.is_none() {
-                                    continue;
-                                }
-                                let Some((plug_pipes, mat_bg)) =
-                                    resources.material_plugin_instanced_draw(batch.shading_plugin)
-                                else {
-                                    continue;
-                                };
-                                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
-                                    continue;
-                                };
-                                let mat_key = (
-                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch
-                                        .metallic_roughness_id
-                                        .map(|t| t.raw())
-                                        .unwrap_or(u64::MAX),
-                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                                );
-                                let no_discard = !clipping_active && !batch.has_alpha_mask;
-                                let key = PipelineKey {
-                                    two_sided: batch.two_sided,
-                                    no_discard_eligible: no_discard,
-                                    ..PipelineKey::default()
-                                };
-                                // Geometry chunk binds once per change; both draw
-                                // paths read the same slab chunk.
-                                let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                                if cur_chunks != Some(chunks) {
-                                    render_pass.set_vertex_buffer(
-                                        0,
-                                        resources.geometry.vertex_chunk_slice(chunks.0),
-                                    );
-                                    render_pass.set_index_buffer(
-                                        resources.geometry.index_chunk_slice(chunks.1),
-                                        crate::gpu::IndexFormat::Uint32,
-                                    );
-                                    self.frame_main_buffer_binds
-                                        .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
-                                    cur_chunks = Some(chunks);
-                                }
-                                let culled = plugin_indirect
-                                    .filter(|_| plug_pipes.has_cull())
-                                    .and_then(|indirect_buf| {
-                                        resources
-                                            .instanced_cull_colour_bind_group(cull0, mat_key)
-                                            .map(|bg| (indirect_buf, bg))
-                                    });
-                                if let Some((indirect_buf, cull_bg)) = culled {
-                                    let Some(pl) = plug_pipes.cull(key) else {
-                                        continue;
-                                    };
-                                    render_pass.set_pipeline(pl);
-                                    render_pass.set_bind_group(1, cull_bg, &[]);
-                                    bind_material_group!(render_pass, mat_bg);
-                                    render_pass.draw_indexed_indirect(
-                                        indirect_buf,
-                                        *batch_global_idx as u64 * 20,
-                                    );
-                                } else {
-                                    let Some(inst_tex_bg) =
-                                        resources.instanced_colour_bind_group(mat_key)
-                                    else {
-                                        continue;
-                                    };
-                                    let Some(pl) = plug_pipes.hdr_opaque(key) else {
-                                        continue;
-                                    };
-                                    render_pass.set_pipeline(pl);
-                                    render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                    bind_material_group!(render_pass, mat_bg);
-                                    let base_vertex =
-                                        resources.geometry.base_vertex(mesh.vertex_span);
-                                    let first_index =
-                                        resources.geometry.first_index(mesh.index_span);
-                                    render_pass.draw_indexed(
-                                        first_index..first_index + mesh.index_count,
-                                        base_vertex,
-                                        batch.instance_offset
-                                            ..batch.instance_offset + batch.instance_count,
-                                    );
-                                }
-                                self.frame_main_draw_commands
-                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            }
-                        }
-                    }
-
-                    // NOTE: transparent_batches are now rendered in the OIT pass below,
-                    // not in the HDR scene pass. This block intentionally left empty.
-                    let _ = &transparent_batches; // suppress unused warning
-
-                    if frame.viewport.wireframe_mode {
-                        if let Some(hdr_wf) = resources.scene.hdr_wireframe() {
-                            let mut wf_idx = 0usize;
-                            for item in scene_items {
-                                if item.settings.hidden {
-                                    continue;
-                                }
-                                let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
-                                    continue;
-                                };
-                                render_pass.set_pipeline(hdr_wf);
-                                bind_deform_group!(
-                                    render_pass,
-                                    resources,
-                                    resources.deform.instance_bind_group_for(
-                                        item.mesh_id,
-                                        item.deform_instance,
-                                    )
-                                );
-                                let bg = self
-                                    .mesh_uniforms
-                                    .wireframe_bind_groups
-                                    .get(wf_idx)
-                                    .unwrap_or(&mesh.object_bind_group);
-                                render_pass.set_bind_group(1, bg, &[]);
-                                render_pass.set_vertex_buffer(
-                                    0,
-                                    resources.geometry.vertex_slice(mesh.vertex_span),
-                                );
-                                if let Some(edge_buf) = &mesh.edge_index_buffer {
-                                    render_pass.set_index_buffer(
-                                        edge_buf.slice(..),
-                                        crate::gpu::IndexFormat::Uint32,
-                                    );
-                                    render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
-                                }
-                                wf_idx += 1;
-                            }
-                        }
-                    } else if resources.scene.hdr.is_some() {
-                        // Clip geometry disables the discard-free early-Z twin
-                        // (the clip discards would be stripped). Computed here
-                        // because this per-object branch is the `else` of the
-                        // instanced path where the same check lives.
-                        let clipping_active = frame
-                            .effects
-                            .clip
-                            .objects
-                            .iter()
-                            .any(|o| o.enabled && o.clip_geometry);
-                        // Only opaque excluded items are drawn in the scene pass; transparent
-                        // excluded items go to the OIT pass below. LDR draws all excluded
-                        // items inline (including transparent ones) using the transparent
-                        // pipeline -- an intentional divergence since HDR uses OIT for
-                        // transparency throughout.
-                        for (item_idx, item) in
-                            excluded_items.iter().copied().filter(|(_, item)| {
-                                crate::renderer::prepare::has_opaque_draws(item, resources)
-                            })
-                        {
-                            let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
-                                continue;
-                            };
-                            if item.settings.wireframe {
-                                let obj_bg = self
-                                    .mesh_uniforms
-                                    .bind_groups
-                                    .get(item_idx)
-                                    .and_then(|opt| opt.as_ref());
-                                draw_mesh_item(
-                                    resources,
-                                    &mut render_pass,
-                                    item,
-                                    obj_bg,
-                                    obj_bg
-                                        .map_or(0, |_| self.mesh_uniforms.object_indices[item_idx]),
-                                    true,
-                                    true,
-                                    &resources.scene.hdr_family(),
-                                    None,
-                                    None,
-                                    Some(false),
-                                );
-                                continue;
-                            }
-                            let plug = resources.material_plugin_draw(item.material.shading_plugin);
-                            // Early-Z fast path: a plain-opaque, single-material,
-                            // non-scalar item in a frame with no clip geometry can
-                            // never hit a `discard`, so draw it with the
-                            // discard-free twin and let hidden fragments be
-                            // depth-rejected before shading. Alpha-mask and
-                            // submesh-material draws keep the discarding pipeline.
-                            // Material-plugin items are just as eligible: their
-                            // `hdr_opaque` set carries the same discard-free twin.
+            if !scene_items.is_empty() && !batches.is_empty() {
+                let clipping_active = DeviceResources::clipping_active(frame);
+                // Under GPU culling the culled batches draw from this
+                // viewport's cull-written indirect args and the rest directly.
+                let use_indirect = self.instancing.gpu_culling_enabled
+                    && resources.cull.hdr.is_some()
+                    && cull0.indirect_args_buf.is_some();
+                // A cached bundle holds the opaque batches this pass draws
+                // directly; under GPU culling, only those the cull does not
+                // draw.
+                let bundle_hit = self.per_object_bundle.as_ref().filter(|pb| {
+                    pb.hdr && pb.direct_only == use_indirect && pb.camera_bg == *camera_bg
+                });
+                if use_indirect {
+                    let multi_draw = self.instancing.multi_draw_active();
+                    // GPU-driven submission: when the compaction pass formed
+                    // draw groups (bindless + native multi-draw-count), one
+                    // multi_draw_indexed_indirect_count per group; the batches
+                    // left out of the groups take the run path below.
+                    let mut grouped = false;
+                    if let (false, Some(compacted), Some(counts), Some(words)) = (
+                        self.instancing.draw_groups.is_empty(),
+                        cull0.compacted_args_buf.as_ref(),
+                        cull0.draw_counts_buf.as_ref(),
+                        cull0.words_slice(),
+                    ) {
+                        grouped = true;
+                        render_pass.set_vertex_buffer(1, words);
+                        let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
+                        let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
+                        let mut cur_chunks: Option<(u32, u32)> = None;
+                        for group in &self.instancing.draw_groups {
                             let key = PipelineKey {
-                                two_sided: item.material.is_two_sided(),
-                                no_discard_eligible: !clipping_active
-                                    && !resources.force_po_discard
-                                    && matches!(
-                                        item.material.alpha_mode,
-                                        crate::scene::material::AlphaMode::Opaque
-                                    )
-                                    && item.active_attribute.is_none()
-                                    && item.submesh_materials.is_none()
-                                    && !resources
-                                        .deform
-                                        .may_discard(item.mesh_id, item.deform_instance),
+                                two_sided: group.two_sided,
+                                no_discard_eligible: group.no_discard,
                                 ..PipelineKey::default()
                             };
-                            let pipeline = if let Some((pp, _)) = plug {
-                                pp.hdr_opaque(key)
-                            } else {
-                                resources.scene.hdr_opaque(key)
-                            };
-                            let Some(pipeline) = pipeline else {
+                            // Still compiling: the group waits a frame.
+                            let Some(pl) = resources
+                                .cull
+                                .hdr_opaque_features(key, group.features, group.bindless)
+                                .pipeline
+                            else {
                                 continue;
                             };
-                            render_pass.set_pipeline(pipeline);
-                            bind_deform_group!(
-                                render_pass,
-                                resources,
-                                resources
-                                    .deform
-                                    .instance_bind_group_for(item.mesh_id, item.deform_instance,)
-                            );
-                            // A per-item slot draws with the shared material bind
-                            // group at object_indices[item_idx]; a None slot uses
-                            // the mesh's single-element buffer at instance 0.
-                            let (obj_bg, obj_inst) = match self
-                                .mesh_uniforms
-                                .bind_groups
-                                .get(item_idx)
-                                .and_then(|opt| opt.as_ref())
-                            {
-                                Some(bg) => (bg, self.mesh_uniforms.object_indices[item_idx]),
-                                None => (&mesh.object_bind_group, 0),
+                            let Some(bg) = cull0.object_cull_bind_groups.get(&group.bind_key)
+                            else {
+                                continue;
                             };
-                            render_pass.set_bind_group(1, obj_bg, &[]);
-                            if let Some((_, mat_bg)) = plug {
-                                bind_material_group!(render_pass, mat_bg);
+                            if cur_pipe != Some(pl as *const _) {
+                                render_pass.set_pipeline(pl);
+                                cur_pipe = Some(pl as *const _);
                             }
-                            render_pass.set_vertex_buffer(
-                                0,
-                                resources.geometry.vertex_slice(mesh.vertex_span),
-                            );
-                            let ranges =
-                                crate::renderer::prepare::active_submesh_materials(item, mesh)
-                                    .zip(self.mesh_uniforms.submesh_bind_groups.get(&item_idx));
-                            if let Some((mats, bgs)) = ranges {
-                                // One draw per opaque-material range; blend
-                                // ranges go to the OIT pass with the other
-                                // transparent excluded items.
-                                render_pass.set_index_buffer(
-                                    resources.geometry.index_slice(mesh.index_span),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                for (r, (mat, range)) in
-                                    mats.iter().zip(&mesh.submeshes).enumerate()
-                                {
-                                    if mat.is_blend() {
-                                        continue;
-                                    }
-                                    let plug_r = resources.material_plugin_draw(mat.shading_plugin);
-                                    let range_key = PipelineKey::two_sided(mat.is_two_sided());
-                                    let pl = if let Some((pp, _)) = plug_r {
-                                        pp.hdr_opaque(range_key)
-                                    } else {
-                                        resources.scene.hdr_opaque(range_key)
-                                    };
-                                    let Some(pl) = pl else {
-                                        continue;
-                                    };
-                                    render_pass.set_pipeline(pl);
-                                    let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
-                                        Some(rbg) => (
-                                            rbg,
-                                            self.mesh_uniforms
-                                                .submesh_indices
-                                                .get(&item_idx)
-                                                .and_then(|v| v.get(r))
-                                                .copied()
-                                                .unwrap_or(0),
-                                        ),
-                                        None => (obj_bg, obj_inst),
-                                    };
-                                    render_pass.set_bind_group(1, bg, &[]);
-                                    if let Some((_, mat_bg)) = plug_r {
-                                        bind_material_group!(render_pass, mat_bg);
-                                    }
-                                    render_pass.draw_indexed(
-                                        range.first_index..range.first_index + range.index_count,
-                                        0,
-                                        inst..inst + 1,
-                                    );
-                                }
-                            } else {
-                                render_pass.set_index_buffer(
-                                    resources.geometry.index_slice(mesh.index_span),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                render_pass.draw_indexed(
-                                    0..mesh.index_count,
+                            if cur_bg != Some(bg as *const _) {
+                                render_pass.set_bind_group(1, bg, &[]);
+                                cur_bg = Some(bg as *const _);
+                            }
+                            let chunks = (group.vertex_chunk, group.index_chunk);
+                            if cur_chunks != Some(chunks) {
+                                render_pass.set_vertex_buffer(
                                     0,
-                                    obj_inst..obj_inst + 1,
+                                    resources.geometry.vertex_chunk_slice(chunks.0),
                                 );
+                                render_pass.set_index_buffer(
+                                    resources.geometry.index_chunk_slice(chunks.1),
+                                    crate::gpu::IndexFormat::Uint32,
+                                );
+                                self.frame_main_buffer_binds
+                                    .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
+                                cur_chunks = Some(chunks);
                             }
+                            render_pass.multi_draw_indexed_indirect_count(
+                                compacted,
+                                group.arg_base as u64 * 20,
+                                counts,
+                                group.count_index as u64 * 4,
+                                group.size,
+                            );
+                            self.frame_main_draw_commands
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
+                    let (commands, binds) = crate::renderer::types::draw_culled_batches(
+                        resources,
+                        cull0,
+                        &mut render_pass,
+                        batches,
+                        crate::renderer::types::CulledPass::Opaque { clipping_active },
+                        multi_draw,
+                        |b| grouped && b.draws_grouped(),
+                    );
+                    self.frame_main_draw_commands
+                        .fetch_add(commands, std::sync::atomic::Ordering::Relaxed);
+                    self.frame_main_buffer_binds
+                        .fetch_add(binds, std::sync::atomic::Ordering::Relaxed);
+                }
+                if let Some(pb) = bundle_hit {
+                    render_pass.execute_bundles(std::iter::once(&pb.bundle));
+                    // Bundle execution resets all render-pass state; restore
+                    // the camera bind group for the draws below.
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                }
 
-                    // Normal-line overlays for instanced items with show_normals set.
-                    // Instanced batch draws skip per-item logic, so these are drawn
-                    // here after all batches finish. The wireframe pipeline is asked
-                    // for by the first item that needs it, so a frame without
-                    // normals never builds it.
-                    {
-                        for item in scene_items
-                            .iter()
-                            .filter(|i| i.show_normals && !i.settings.hidden)
-                        {
-                            let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
-                                continue;
-                            };
-                            if let (Some(nl_buf), Some(hdr_wf)) =
-                                (&mesh.normal_line_buffer, resources.scene.hdr_wireframe())
-                            {
-                                if mesh.normal_line_count > 0 {
-                                    render_pass.set_pipeline(hdr_wf);
-                                    bind_deform_group!(
-                                        render_pass,
-                                        resources,
-                                        &resources.deform.dummy_bind_group
-                                    );
-                                    render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
-                                    render_pass.set_vertex_buffer(0, nl_buf.slice(..));
-                                    render_pass.draw(0..mesh.normal_line_count, 0..1);
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // Per-object path.
-                    let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
-                    let dist_from_eye = |entry: &(usize, &SceneRenderItem)| -> f32 {
-                        let item = entry.1;
-                        let pos =
-                            glam::Vec3::new(item.model[3][0], item.model[3][1], item.model[3][2]);
-                        (pos - eye).length()
+                // Every opaque batch neither path above drew, then the normal
+                // lines, which overlay everything.
+                if resources.scene.hdr.is_some() {
+                    let hdr_family = resources.scene.hdr_family();
+                    let hdr_bindless_family = resources.scene.hdr_bindless_family();
+                    let batch_pass = crate::renderer::types::BatchPass::Colour {
+                        family: &hdr_family,
+                        bindless_family: &hdr_bindless_family,
+                        hdr: true,
+                        clipping_active,
                     };
-
-                    // When prepare cached an HDR render bundle for this item
-                    // set and this pass's camera bind group, replay it instead
-                    // of encoding one draw per opaque item. Bundled draws run
-                    // in submission order rather than the front-to-back sort
-                    // below: encode savings traded against early-z, the same
-                    // trade the LDR bundle makes. Transparent items are routed
-                    // to the OIT pass either way.
-                    let bundle_hit = self
-                        .per_object_bundle
-                        .as_ref()
-                        .filter(|pb| pb.hdr && pb.camera_bg == *camera_bg);
-
-                    let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
-                    let mut transparent: Vec<(usize, &SceneRenderItem)> = Vec::new();
-                    for (idx, item) in scene_items.iter().enumerate() {
-                        if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none()
+                    let mut batch_bound = crate::renderer::types::BatchBound::default();
+                    let batch_bgs = &self.mesh_uniforms.material_bind_groups;
+                    for batch in batches {
+                        if batch.is_transparent
+                            || matches!(batch.draw, crate::renderer::types::DrawKind::NormalLines)
+                            || (use_indirect && batch.draws_culled())
+                            || bundle_hit.is_some()
                         {
                             continue;
                         }
-                        // A per-submesh-material item can hold both opaque and
-                        // blend ranges, so it may appear in both lists: its
-                        // opaque ranges draw here, its blend ranges in OIT.
-                        if crate::renderer::prepare::has_transparent_draws(item, resources) {
-                            transparent.push((idx, item));
-                        }
-                        if bundle_hit.is_none()
-                            && crate::renderer::prepare::has_opaque_draws(item, resources)
-                        {
-                            opaque.push((idx, item));
-                        }
-                    }
-                    opaque.sort_by(|a, b| {
-                        dist_from_eye(a)
-                            .partial_cmp(&dist_from_eye(b))
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                    transparent.sort_by(|a, b| {
-                        dist_from_eye(b)
-                            .partial_cmp(&dist_from_eye(a))
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-
-                    if let Some(pb) = bundle_hit {
-                        render_pass.execute_bundles(std::iter::once(&pb.bundle));
-                        // Bundle execution resets all render-pass state;
-                        // restore the camera bind group for the draws below.
-                        render_pass.set_bind_group(0, camera_bg, &[]);
-                    }
-
-                    let per_item_bgs = &self.mesh_uniforms.bind_groups;
-
-                    // NOTE: only opaque items are drawn here. Transparent items are
-                    // routed to the OIT pass below.
-                    let _ = &transparent; // suppress unused warning
-                    if resources.scene.hdr.is_some() {
-                        let family = resources.scene.hdr_family();
-                        for (item_idx, item) in &opaque {
-                            let obj_bg = per_item_bgs.get(*item_idx).and_then(|opt| opt.as_ref());
-                            draw_mesh_item(
-                                resources,
-                                &mut render_pass,
-                                item,
-                                obj_bg,
-                                obj_bg.map_or(0, |_| self.mesh_uniforms.object_indices[*item_idx]),
-                                frame.viewport.wireframe_mode,
-                                true,
-                                &family,
-                                self.mesh_uniforms
-                                    .submesh_bind_groups
-                                    .get(item_idx)
-                                    .map(|v| v.as_slice()),
-                                self.mesh_uniforms
-                                    .submesh_indices
-                                    .get(item_idx)
-                                    .map(|v| v.as_slice()),
-                                Some(false),
-                            );
+                        if crate::renderer::types::draw_batch(
+                            resources,
+                            batch_bgs,
+                            &mut render_pass,
+                            batch,
+                            &batch_pass,
+                            &mut batch_bound,
+                        ) {
+                            self.frame_main_draw_commands
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
+                    for batch in batches {
+                        if !matches!(batch.draw, crate::renderer::types::DrawKind::NormalLines) {
+                            continue;
+                        }
+                        crate::renderer::types::draw_batch(
+                            resources,
+                            batch_bgs,
+                            &mut render_pass,
+                            batch,
+                            &batch_pass,
+                            &mut batch_bound,
+                        );
+                    }
+                    self.frame_main_buffer_binds.fetch_add(
+                        batch_bound.buffer_binds,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
                 }
             }
 
@@ -1575,12 +981,10 @@ impl ViewportRenderer {
                     {
                         if let Some(mesh) = resources.mesh_store.get(*mesh_id) {
                             render_pass.set_pipeline(hdr_wf);
-                            bind_deform_group!(
-                                render_pass,
-                                resources,
-                                &resources.deform.dummy_bind_group
-                            );
                             render_pass.set_bind_group(1, tvm_bg, &[]);
+                            if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
+                                render_pass.set_vertex_buffer(1, records.slice(..));
+                            }
                             render_pass.set_vertex_buffer(
                                 0,
                                 resources.geometry.vertex_slice(mesh.vertex_span),
@@ -1907,7 +1311,6 @@ impl ViewportRenderer {
     }
 
     fn hdr_oit(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
-        let resources = &self.resources;
         let device = ctx.device;
         let queue = ctx.queue;
         let frame = ctx.frame;
@@ -1921,21 +1324,8 @@ impl ViewportRenderer {
         // Completely skipped when no transparent items exist (zero overhead).
         // -----------------------------------------------------------------------
         let has_transparent = if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
-                // Transparent instanced batches go through OIT. Transparent excluded items
-                // (two-sided, active-attribute, matcap) are not in any instanced batch, so
-                // they must also be checked here -- otherwise the OIT pass is skipped and
-                // those items are invisible.
+                // Every transparent item is in a blended batch, which goes through OIT.
                 self.instancing.batches.iter().any(|b| b.is_transparent)
-                    || scene_items.iter().any(|i| {
-                        // A transparent item that is not instanceable is drawn per-object
-                        // in the OIT pass below; if any exists the pass must run.
-                        !i.settings.hidden
-                            && crate::renderer::prepare::has_transparent_draws(i, &self.resources)
-                            && !crate::renderer::prepare::is_instanceable(
-                                i,
-                                &self.resources
-                            )
-                    })
             } else {
                 scene_items.iter().any(|i| {
                     !i.settings.hidden
@@ -2018,176 +1408,58 @@ impl ViewportRenderer {
 
                 oit_pass.set_bind_group(0, camera_bg, &[]);
 
-                if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
+                if !self.instancing.batches.is_empty() {
                     // This viewport's own cull outputs.
                     let cull0 = &self.viewport_slots[vp_idx].cull;
+                    let resources = &self.resources;
+                    let batches = &self.instancing.batches;
                     let use_indirect_oit = self.instancing.gpu_culling_enabled
-                        && self.resources.cull.oit.is_some()
+                        && resources.cull.oit.is_some()
                         && cull0.indirect_args_buf.is_some();
 
                     if use_indirect_oit {
-                        if let Some(indirect_buf) = &cull0.indirect_args_buf {
-                            bind_deform_group!(
-                                oit_pass,
-                                self.resources,
-                                &self.resources.deform.dummy_bind_group
-                            );
-                            // GPU-driven submission: iterate the precomputed
-                            // transparent groups and issue one
-                            // multi_draw_indexed_indirect_count per group over the
-                            // shared compacted args + counts, skipping the CPU
-                            // run-forming below. Active only under the same
-                            // bindless + native-multi-draw gate as the opaque path.
-                            let mut did_oit_groups = false;
-                            if !self.instancing.oit_draw_groups.is_empty() {
-                                if let (Some(compacted), Some(counts)) = (
-                                    cull0.compacted_args_buf.as_ref(),
-                                    cull0.draw_counts_buf.as_ref(),
-                                ) {
-                                    let mut cur_two_sided: Option<bool> = None;
-                                    let mut cur_chunks: Option<(u32, u32)> = None;
-                                    for group in self.instancing.oit_draw_groups.iter() {
-                                        // Pipeline selector and geometry chunk come
-                                        // from the group itself; the per-batch args
-                                        // are drawn from the compacted buffer, so no
-                                        // batch / mesh-store lookup is needed here.
-                                        if cur_two_sided != Some(group.two_sided) {
-                                            // Still compiling: the group waits a frame.
-                                            let Some(pl) = self
-                                                .resources
-                                                .cull
-                                                .oit(PipelineKey::two_sided(group.two_sided))
-                                            else {
-                                                cur_two_sided = None;
-                                                continue;
-                                            };
-                                            oit_pass.set_pipeline(pl);
-                                            cur_two_sided = Some(group.two_sided);
-                                        }
-                                        let chunks = (group.vertex_chunk, group.index_chunk);
-                                        if cur_chunks != Some(chunks) {
-                                            // The colour bind group carries this
-                                            // chunk's uv1 buffer, so rebind group 1
-                                            // whenever the slab chunk changes.
-                                            let Some(bg) = cull0
-                                                .bindless_cull_bind_groups
-                                                .get(&resources.uv1_chunk_key(chunks.0))
-                                            else {
-                                                continue;
-                                            };
-                                            oit_pass.set_bind_group(1, bg, &[]);
-                                            oit_pass.set_vertex_buffer(
-                                                0,
-                                                resources.geometry.vertex_chunk_slice(chunks.0),
-                                            );
-                                            oit_pass.set_index_buffer(
-                                                resources.geometry.index_chunk_slice(chunks.1),
-                                                crate::gpu::IndexFormat::Uint32,
-                                            );
-                                            cur_chunks = Some(chunks);
-                                        }
-                                        oit_pass.multi_draw_indexed_indirect_count(
-                                            compacted,
-                                            group.arg_base as u64 * 20,
-                                            counts,
-                                            group.count_index as u64 * 4,
-                                            group.size,
-                                        );
-                                        self.frame_main_draw_commands
-                                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                    }
-                                    did_oit_groups = true;
-                                }
-                            }
-                            // Transparent batches pick the OIT pipeline by their
-                            // two-sidedness, so a run collapses when the pipeline,
-                            // bind group, and slab chunk hold across consecutive
-                            // global indices (see the opaque path). Skipped when the
-                            // group path above already submitted the draws.
-                            let multi_draw = self.instancing.multi_draw_active();
+                        // GPU-driven submission: one
+                        // multi_draw_indexed_indirect_count per precomputed
+                        // transparent group, as on the opaque path; the batches
+                        // left out of the groups take the run path below.
+                        let mut grouped = false;
+                        if let (false, Some(compacted), Some(counts), Some(words)) = (
+                            self.instancing.oit_draw_groups.is_empty(),
+                            cull0.compacted_args_buf.as_ref(),
+                            cull0.draw_counts_buf.as_ref(),
+                            cull0.words_slice(),
+                        ) {
+                            grouped = true;
+                            oit_pass.set_vertex_buffer(1, words);
+                            let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
                             let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
                             let mut cur_chunks: Option<(u32, u32)> = None;
-                            let mut cur_two_sided: Option<bool> = None;
-                            let mut run_start: u64 = 0;
-                            let mut run_len: u32 = 0;
-                            // `take(0)` when the group path already drew, so the
-                            // CPU run-forming is skipped without duplicating draws.
-                            let cpu_run_limit = if did_oit_groups { 0 } else { usize::MAX };
-                            for (batch_global_idx, batch) in self
-                                .instancing
-                                .batches
-                                .iter()
-                                .enumerate()
-                                .take(cpu_run_limit)
-                            {
-                                // Plugin transparent batches draw in the plugin OIT
-                                // sub-loop below; skipping breaks the run on the
-                                // global-index gap like an opaque batch does.
-                                if !batch.is_transparent || batch.shading_plugin.is_some() {
-                                    continue;
-                                }
-                                let Some(mesh) = self.resources.mesh_store.get(batch.mesh_id)
+                            for group in &self.instancing.oit_draw_groups {
+                                // Still compiling: the group waits a frame.
+                                let Some(pl) = resources
+                                    .cull
+                                    .oit_features(
+                                        PipelineKey::two_sided(group.two_sided),
+                                        group.features,
+                                        group.bindless,
+                                    )
+                                    .pipeline
                                 else {
                                     continue;
                                 };
-                                let mat_key = (
-                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    batch
-                                        .metallic_roughness_id
-                                        .map(|t| t.raw())
-                                        .unwrap_or(u64::MAX),
-                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    self.resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                                );
-                                let Some(inst_tex_bg) = self
-                                    .resources
-                                    .instanced_cull_colour_bind_group(cull0, mat_key)
+                                let Some(bg) = cull0.object_cull_bind_groups.get(&group.bind_key)
                                 else {
                                     continue;
                                 };
-                                let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                                let bg_ptr = inst_tex_bg as *const crate::gpu::BindGroup;
-                                let g = batch_global_idx as u64;
-                                if run_len > 0
-                                    && g == run_start + run_len as u64
-                                    && cur_bg == Some(bg_ptr)
-                                    && cur_chunks == Some(chunks)
-                                    && cur_two_sided == Some(batch.two_sided)
-                                {
-                                    run_len += 1;
-                                    continue;
-                                }
-                                if run_len > 0 {
-                                    let dc = crate::renderer::render::emit_indirect_run(
-                                        &mut oit_pass,
-                                        indirect_buf,
-                                        run_start,
-                                        run_len,
-                                        multi_draw,
-                                    );
-                                    self.frame_main_draw_commands
-                                        .fetch_add(dc, std::sync::atomic::Ordering::Relaxed);
-                                    run_len = 0;
-                                }
-                                if cur_two_sided != Some(batch.two_sided) {
-                                    // Still compiling: the batch waits a frame.
-                                    let Some(pl) = self
-                                        .resources
-                                        .cull
-                                        .oit(PipelineKey::two_sided(batch.two_sided))
-                                    else {
-                                        cur_two_sided = None;
-                                        continue;
-                                    };
+                                if cur_pipe != Some(pl as *const _) {
                                     oit_pass.set_pipeline(pl);
-                                    cur_two_sided = Some(batch.two_sided);
+                                    cur_pipe = Some(pl as *const _);
                                 }
-                                if cur_bg != Some(bg_ptr) {
-                                    oit_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                    cur_bg = Some(bg_ptr);
+                                if cur_bg != Some(bg as *const _) {
+                                    oit_pass.set_bind_group(1, bg, &[]);
+                                    cur_bg = Some(bg as *const _);
                                 }
+                                let chunks = (group.vertex_chunk, group.index_chunk);
                                 if cur_chunks != Some(chunks) {
                                     oit_pass.set_vertex_buffer(
                                         0,
@@ -2201,429 +1473,58 @@ impl ViewportRenderer {
                                         .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
                                     cur_chunks = Some(chunks);
                                 }
-                                run_start = g;
-                                run_len = 1;
-                            }
-                            if run_len > 0 {
-                                let dc = crate::renderer::render::emit_indirect_run(
-                                    &mut oit_pass,
-                                    indirect_buf,
-                                    run_start,
-                                    run_len,
-                                    multi_draw,
+                                oit_pass.multi_draw_indexed_indirect_count(
+                                    compacted,
+                                    group.arg_base as u64 * 20,
+                                    counts,
+                                    group.count_index as u64 * 4,
+                                    group.size,
                                 );
                                 self.frame_main_draw_commands
-                                    .fetch_add(dc, std::sync::atomic::Ordering::Relaxed);
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
-                    } else if self.resources.oit.instanced.is_some() {
-                        bind_deform_group!(
-                            oit_pass,
-                            self.resources,
-                            &self.resources.deform.dummy_bind_group
+                        let (commands, binds) = crate::renderer::types::draw_culled_batches(
+                            resources,
+                            cull0,
+                            &mut oit_pass,
+                            batches,
+                            crate::renderer::types::CulledPass::Oit,
+                            self.instancing.multi_draw_active(),
+                            |b| grouped && b.draws_grouped(),
                         );
-                        let mut cur_chunks: Option<(u32, u32)> = None;
-                        let mut cur_two_sided: Option<bool> = None;
-                        for batch in &self.instancing.batches {
-                            // Plugin transparent batches draw in the plugin OIT
-                            // sub-loop below.
-                            if !batch.is_transparent || batch.shading_plugin.is_some() {
-                                continue;
-                            }
-                            let Some(mesh) = self.resources.mesh_store.get(batch.mesh_id) else {
-                                continue;
-                            };
-                            let mat_key = (
-                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch
-                                    .metallic_roughness_id
-                                    .map(|t| t.raw())
-                                    .unwrap_or(u64::MAX),
-                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                self.resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                            );
-                            let Some(inst_tex_bg) =
-                                self.resources.instanced_colour_bind_group(mat_key)
-                            else {
-                                continue;
-                            };
-                            if cur_two_sided != Some(batch.two_sided) {
-                                // Still compiling: the batch waits a frame.
-                                let Some(pl) = self
-                                    .resources
-                                    .oit
-                                    .instanced(PipelineKey::two_sided(batch.two_sided))
-                                else {
-                                    cur_two_sided = None;
-                                    continue;
-                                };
-                                oit_pass.set_pipeline(pl);
-                                cur_two_sided = Some(batch.two_sided);
-                            }
-                            oit_pass.set_bind_group(1, inst_tex_bg, &[]);
-                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                            if cur_chunks != Some(chunks) {
-                                oit_pass.set_vertex_buffer(
-                                    0,
-                                    resources.geometry.vertex_chunk_slice(chunks.0),
-                                );
-                                oit_pass.set_index_buffer(
-                                    resources.geometry.index_chunk_slice(chunks.1),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                self.frame_main_buffer_binds
-                                    .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
-                                cur_chunks = Some(chunks);
-                            }
-                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                            let first_index = resources.geometry.first_index(mesh.index_span);
-                            oit_pass.draw_indexed(
-                                first_index..first_index + mesh.index_count,
-                                base_vertex,
-                                batch.instance_offset..batch.instance_offset + batch.instance_count,
-                            );
-                            self.frame_main_draw_commands
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
+                        self.frame_main_draw_commands
+                            .fetch_add(commands, std::sync::atomic::Ordering::Relaxed);
+                        self.frame_main_buffer_binds
+                            .fetch_add(binds, std::sync::atomic::Ordering::Relaxed);
                     }
 
-                    // Material-plugin transparent batches: one instanced OIT call
-                    // each, through the plugin's composed instanced OIT pipeline
-                    // plus its group-3 params bind. The OIT loops above skip plugin
-                    // batches, so this covers them under both the culled and direct
-                    // transparent paths.
-                    if self
-                        .instancing
-                        .batches
-                        .iter()
-                        .any(|b| b.is_transparent && b.shading_plugin.is_some())
-                    {
-                        bind_deform_group!(oit_pass, resources, &resources.deform.dummy_bind_group);
-                        // As on the opaque plugin path: a plugin batch draws its
-                        // culled instances from the cull-written indirect args
-                        // through the plugin's `vs_main_cull` OIT pipeline when
-                        // culling ran, else every instance directly.
-                        let plugin_indirect = (self.instancing.gpu_culling_enabled
-                            && resources.cull.hdr.is_some())
-                        .then(|| cull0.indirect_args_buf.as_ref())
-                        .flatten();
-                        let mut cur_chunks: Option<(u32, u32)> = None;
-                        for (batch_global_idx, batch) in self.instancing.batches.iter().enumerate()
-                        {
-                            if !batch.is_transparent || batch.shading_plugin.is_none() {
+                    // Every blended batch the cull did not draw: the per-object
+                    // OIT pipelines, by instance range.
+                    if resources.oit.pipeline.is_some() {
+                        let batch_pass = crate::renderer::types::BatchPass::Oit;
+                        let mut batch_bound = crate::renderer::types::BatchBound::default();
+                        let batch_bgs = &self.mesh_uniforms.material_bind_groups;
+                        for batch in batches {
+                            if !batch.is_transparent || (use_indirect_oit && batch.draws_culled()) {
                                 continue;
                             }
-                            let Some((plug_pipes, mat_bg)) =
-                                resources.material_plugin_instanced_draw(batch.shading_plugin)
-                            else {
-                                continue;
-                            };
-                            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
-                                continue;
-                            };
-                            let mat_key = (
-                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                batch
-                                    .metallic_roughness_id
-                                    .map(|t| t.raw())
-                                    .unwrap_or(u64::MAX),
-                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                resources.uv1_chunk_key(mesh.vertex_span.chunk),
-                            );
-                            let key = PipelineKey {
-                                two_sided: batch.two_sided,
-                                ..PipelineKey::default()
-                            };
-                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
-                            if cur_chunks != Some(chunks) {
-                                oit_pass.set_vertex_buffer(
-                                    0,
-                                    resources.geometry.vertex_chunk_slice(chunks.0),
-                                );
-                                oit_pass.set_index_buffer(
-                                    resources.geometry.index_chunk_slice(chunks.1),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                self.frame_main_buffer_binds
-                                    .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
-                                cur_chunks = Some(chunks);
+                            if crate::renderer::types::draw_batch(
+                                resources,
+                                batch_bgs,
+                                &mut oit_pass,
+                                batch,
+                                &batch_pass,
+                                &mut batch_bound,
+                            ) {
+                                self.frame_main_draw_commands
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }
-                            let culled = plugin_indirect
-                                .filter(|_| plug_pipes.has_cull())
-                                .and_then(|indirect_buf| {
-                                    resources
-                                        .instanced_cull_colour_bind_group(cull0, mat_key)
-                                        .map(|bg| (indirect_buf, bg))
-                                });
-                            if let Some((indirect_buf, cull_bg)) = culled {
-                                let Some(pl) = plug_pipes.oit_cull(key) else {
-                                    continue;
-                                };
-                                oit_pass.set_pipeline(pl);
-                                oit_pass.set_bind_group(1, cull_bg, &[]);
-                                bind_material_group!(oit_pass, mat_bg);
-                                oit_pass.draw_indexed_indirect(
-                                    indirect_buf,
-                                    batch_global_idx as u64 * 20,
-                                );
-                            } else {
-                                let Some(inst_tex_bg) =
-                                    resources.instanced_colour_bind_group(mat_key)
-                                else {
-                                    continue;
-                                };
-                                let Some(pl) = plug_pipes.oit(key) else {
-                                    continue;
-                                };
-                                oit_pass.set_pipeline(pl);
-                                oit_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                bind_material_group!(oit_pass, mat_bg);
-                                let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                                let first_index = resources.geometry.first_index(mesh.index_span);
-                                oit_pass.draw_indexed(
-                                    first_index..first_index + mesh.index_count,
-                                    base_vertex,
-                                    batch.instance_offset
-                                        ..batch.instance_offset + batch.instance_count,
-                                );
-                            }
-                            self.frame_main_draw_commands
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
-                    }
-
-                    // Transparent excluded items (two-sided, active attribute, matcap) are not
-                    // in any instanced batch, so the instanced OIT loop above skips them.
-                    // Render them here individually so they are not invisible at opacity < 1.
-                    if self.resources.oit.pipeline.is_some() {
-                        for (item_idx, item) in scene_items.iter().enumerate() {
-                            if item.settings.hidden
-                                || !crate::renderer::prepare::has_transparent_draws(
-                                    item,
-                                    &self.resources,
-                                )
-                            {
-                                continue;
-                            }
-                            // Instanceable transparent items go through the instanced OIT
-                            // path; only the per-object (non-instanceable) ones draw here.
-                            if crate::renderer::prepare::is_instanceable(item, &self.resources) {
-                                continue;
-                            }
-                            let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
-                                continue;
-                            };
-                            let deform_bg = self
-                                .resources
-                                .deform
-                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
-                            let (obj_bg, obj_inst) = match self
-                                .mesh_uniforms
-                                .bind_groups
-                                .get(item_idx)
-                                .and_then(|opt| opt.as_ref())
-                            {
-                                Some(bg) => (bg, self.mesh_uniforms.object_indices[item_idx]),
-                                None => (&mesh.object_bind_group, 0),
-                            };
-                            bind_deform_group!(oit_pass, self.resources, deform_bg);
-                            oit_pass.set_vertex_buffer(
-                                0,
-                                resources.geometry.vertex_slice(mesh.vertex_span),
-                            );
-                            oit_pass.set_index_buffer(
-                                resources.geometry.index_slice(mesh.index_span),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
-                            if let Some((mats, bgs)) =
-                                crate::renderer::prepare::active_submesh_materials(item, mesh)
-                                    .zip(self.mesh_uniforms.submesh_bind_groups.get(&item_idx))
-                            {
-                                // Blend-material ranges only; the item's opaque
-                                // ranges drew in the scene pass.
-                                for (r, (mat, range)) in
-                                    mats.iter().zip(&mesh.submeshes).enumerate()
-                                {
-                                    if item.settings.opacity >= 1.0 && !mat.is_blend() {
-                                        continue;
-                                    }
-                                    let range_key = PipelineKey::two_sided(mat.is_two_sided());
-                                    match self.resources.material_plugin_draw(mat.shading_plugin) {
-                                        Some((pp, mat_bg)) => {
-                                            let Some(pl) = pp.oit(range_key) else {
-                                                continue;
-                                            };
-                                            oit_pass.set_pipeline(pl);
-                                            bind_material_group!(oit_pass, mat_bg);
-                                        }
-                                        // Two-sided per-range material draws back
-                                        // faces through the cull-none OIT pipeline.
-                                        None => {
-                                            let Some(pl) = self.resources.oit.per_object(range_key)
-                                            else {
-                                                continue;
-                                            };
-                                            oit_pass.set_pipeline(pl);
-                                        }
-                                    }
-                                    let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
-                                        Some(rbg) => (
-                                            rbg,
-                                            self.mesh_uniforms
-                                                .submesh_indices
-                                                .get(&item_idx)
-                                                .and_then(|v| v.get(r))
-                                                .copied()
-                                                .unwrap_or(obj_inst),
-                                        ),
-                                        None => (obj_bg, obj_inst),
-                                    };
-                                    oit_pass.set_bind_group(1, bg, &[]);
-                                    oit_pass.draw_indexed(
-                                        range.first_index..range.first_index + range.index_count,
-                                        0,
-                                        inst..inst + 1,
-                                    );
-                                }
-                                continue;
-                            }
-                            let item_key = PipelineKey::two_sided(item.material.is_two_sided());
-                            match self
-                                .resources
-                                .material_plugin_draw(item.material.shading_plugin)
-                            {
-                                Some((pp, mat_bg)) => {
-                                    let Some(pl) = pp.oit(item_key) else {
-                                        continue;
-                                    };
-                                    oit_pass.set_pipeline(pl);
-                                    bind_material_group!(oit_pass, mat_bg);
-                                }
-                                // Select the two-sided OIT pipeline for a
-                                // non-`Cull` material so its back faces draw.
-                                None => {
-                                    let Some(pl) = self.resources.oit.per_object(item_key) else {
-                                        continue;
-                                    };
-                                    oit_pass.set_pipeline(pl);
-                                }
-                            }
-                            oit_pass.set_bind_group(1, obj_bg, &[]);
-                            oit_pass.draw_indexed(0..mesh.index_count, 0, obj_inst..obj_inst + 1);
-                        }
-                    }
-                } else if self.resources.oit.pipeline.is_some() {
-                    for (item_idx, item) in scene_items.iter().enumerate() {
-                        if item.settings.hidden
-                            || !crate::renderer::prepare::has_transparent_draws(
-                                item,
-                                &self.resources,
-                            )
-                        {
-                            continue;
-                        }
-                        let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
-                            continue;
-                        };
-                        let deform_bg = self
-                            .resources
-                            .deform
-                            .instance_bind_group_for(item.mesh_id, item.deform_instance);
-                        let (obj_bg, obj_inst) = match self
-                            .mesh_uniforms
-                            .bind_groups
-                            .get(item_idx)
-                            .and_then(|opt| opt.as_ref())
-                        {
-                            Some(bg) => (bg, self.mesh_uniforms.object_indices[item_idx]),
-                            None => (&mesh.object_bind_group, 0),
-                        };
-                        bind_deform_group!(oit_pass, self.resources, deform_bg);
-                        oit_pass.set_vertex_buffer(
-                            0,
-                            resources.geometry.vertex_slice(mesh.vertex_span),
+                        self.frame_main_buffer_binds.fetch_add(
+                            batch_bound.buffer_binds,
+                            std::sync::atomic::Ordering::Relaxed,
                         );
-                        oit_pass.set_index_buffer(
-                            resources.geometry.index_slice(mesh.index_span),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        if let Some((mats, bgs)) =
-                            crate::renderer::prepare::active_submesh_materials(item, mesh)
-                                .zip(self.mesh_uniforms.submesh_bind_groups.get(&item_idx))
-                        {
-                            // Blend-material ranges only; the item's opaque
-                            // ranges drew in the scene pass.
-                            for (r, (mat, range)) in mats.iter().zip(&mesh.submeshes).enumerate() {
-                                if item.settings.opacity >= 1.0 && !mat.is_blend() {
-                                    continue;
-                                }
-                                let range_key = PipelineKey::two_sided(mat.is_two_sided());
-                                match self.resources.material_plugin_draw(mat.shading_plugin) {
-                                    Some((pp, mat_bg)) => {
-                                        let Some(pl) = pp.oit(range_key) else {
-                                            continue;
-                                        };
-                                        oit_pass.set_pipeline(pl);
-                                        bind_material_group!(oit_pass, mat_bg);
-                                    }
-                                    // Two-sided per-range material draws back
-                                    // faces through the cull-none OIT pipeline.
-                                    None => {
-                                        let Some(pl) = self.resources.oit.per_object(range_key)
-                                        else {
-                                            continue;
-                                        };
-                                        oit_pass.set_pipeline(pl);
-                                    }
-                                }
-                                let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
-                                    Some(rbg) => (
-                                        rbg,
-                                        self.mesh_uniforms
-                                            .submesh_indices
-                                            .get(&item_idx)
-                                            .and_then(|v| v.get(r))
-                                            .copied()
-                                            .unwrap_or(obj_inst),
-                                    ),
-                                    None => (obj_bg, obj_inst),
-                                };
-                                oit_pass.set_bind_group(1, bg, &[]);
-                                oit_pass.draw_indexed(
-                                    range.first_index..range.first_index + range.index_count,
-                                    0,
-                                    inst..inst + 1,
-                                );
-                            }
-                            continue;
-                        }
-                        let item_key = PipelineKey::two_sided(item.material.is_two_sided());
-                        match self
-                            .resources
-                            .material_plugin_draw(item.material.shading_plugin)
-                        {
-                            Some((pp, mat_bg)) => {
-                                let Some(pl) = pp.oit(item_key) else {
-                                    continue;
-                                };
-                                oit_pass.set_pipeline(pl);
-                                bind_material_group!(oit_pass, mat_bg);
-                            }
-                            // Select the two-sided OIT pipeline for a non-`Cull`
-                            // material so its back faces draw.
-                            None => {
-                                let Some(pl) = self.resources.oit.per_object(item_key) else {
-                                    continue;
-                                };
-                                oit_pass.set_pipeline(pl);
-                            }
-                        }
-                        oit_pass.set_bind_group(1, obj_bg, &[]);
-                        oit_pass.draw_indexed(0..mesh.index_count, 0, obj_inst..obj_inst + 1);
                     }
                 }
 
@@ -2862,7 +1763,9 @@ impl ViewportRenderer {
             if (item.settings.visibility_mask & frame.camera.cull_mask) == 0 {
                 continue;
             }
-            if item.settings.opacity < 1.0 || item.material.is_blend() {
+            if item.settings.opacity < 1.0
+                || resources.material_or_default(item.material).is_blend()
+            {
                 transparent.push((idx, item));
             } else {
                 opaque.push((idx, item));
@@ -2912,7 +1815,7 @@ impl ViewportRenderer {
             let obj_bg = slot
                 .foreground_objects
                 .get(*idx)
-                .and_then(|e| e.bind_group.as_ref());
+                .and_then(|e| e.bind_group.as_ref().map(|bg| (bg, &e.uniform_buf)));
             draw_mesh_item(
                 resources,
                 &mut render_pass,
@@ -3418,14 +2321,6 @@ impl ViewportRenderer {
                 if !slot.xray_object_buffers.is_empty() {
                     overlay_pass.set_pipeline(self.resources.outline.xray_pipeline());
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
-                    // The x-ray pipeline shares the outline layout, so group 2 is
-                    // part of it whenever deformers are enabled. X-ray draws the
-                    // undeformed mesh, so the dummy group is what it wants.
-                    bind_deform_group!(
-                        overlay_pass,
-                        self.resources,
-                        &self.resources.deform.dummy_bind_group
-                    );
                     for (mesh_id, xray) in &slot.xray_object_buffers {
                         let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
                             continue;

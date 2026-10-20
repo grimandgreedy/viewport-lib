@@ -121,7 +121,11 @@ fn bench_upload(c: &mut Criterion) {
 /// Build a scene of `count` cubes. When `instanced` they share one mesh and
 /// material (one batch); otherwise each carries a styled back-face policy that
 /// forces the per-object path.
-fn cube_scene(mesh: MeshId, count: usize, instanced: bool) -> Vec<SceneRenderItem> {
+fn cube_scene(
+    mesh: MeshId,
+    material: viewport_lib::MaterialId,
+    count: usize,
+) -> Vec<SceneRenderItem> {
     let side = (count as f64).cbrt().ceil() as i32;
     let mut items = Vec::with_capacity(count);
     'outer: for x in 0..side {
@@ -131,12 +135,7 @@ fn cube_scene(mesh: MeshId, count: usize, instanced: bool) -> Vec<SceneRenderIte
                 it.mesh_id = mesh;
                 it.model = Mat4::from_translation(Vec3::new(x as f32, y as f32, z as f32) * 1.5)
                     .to_cols_array_2d();
-                it.material = Material::pbr(Colour::linear_rgb(0.7, 0.6, 0.5), 0.2, 0.5);
-                if !instanced {
-                    // A styled back-face policy defeats batching, forcing the
-                    // per-object path (uniform write + bind-group build each).
-                    it.material.backface_policy = BackfacePolicy::Tint(0.4);
-                }
+                it.material = material;
                 items.push(it);
                 if items.len() == count {
                     break 'outer;
@@ -167,7 +166,18 @@ fn bench_prepare(c: &mut Criterion) {
     for &count in &[1usize, 100, 1_000] {
         for &instanced in &[true, false] {
             let label = if instanced { "instanced" } else { "per_object" };
-            let items = cube_scene(cube, count, instanced);
+            let mut material = Material::pbr(Colour::linear_rgb(0.7, 0.6, 0.5), 0.2, 0.5);
+            if !instanced {
+                // A styled back-face policy defeats batching, forcing the
+                // per-object path (uniform write + bind-group build each).
+                material.backface_policy = BackfacePolicy::Tint(0.4);
+            }
+            let material = harness
+                .renderer
+                .resources_mut()
+                .upload_material(material)
+                .expect("material upload");
+            let items = cube_scene(cube, material, count);
             g.throughput(Throughput::Elements(count as u64));
             g.bench_with_input(BenchmarkId::new(label, count), &items, |b, items| {
                 b.iter(|| {
@@ -205,11 +215,7 @@ fn bench_pick(c: &mut Criterion) {
             for y in 0..side {
                 for z in 0..side {
                     let m = Mat4::from_translation(Vec3::new(x as f32, y as f32, z as f32) * 2.0);
-                    scene.add(
-                        Some(mesh_id),
-                        m,
-                        Material::pbr(Colour::linear_rgb(0.6, 0.6, 0.6), 0.0, 0.5),
-                    );
+                    scene.add(Some(mesh_id), m, viewport_lib::MaterialId::DEFAULT);
                     n += 1;
                     if n == count {
                         break 'outer;

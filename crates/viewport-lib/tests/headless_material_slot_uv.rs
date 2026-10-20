@@ -41,23 +41,23 @@ fn render_emissive_box(
     frame.viewport.show_axes_indicator = false;
     frame.effects.lighting.lights = vec![];
     frame.effects.lighting.hemisphere_intensity = 0.0;
-    frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
+    frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     // Large enough that the measured centre of the frame is all cube.
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).to_cols_array_2d();
-    item.material.shading_model = ShadingModel::Pbr;
-    item.material.base_colour = Colour::linear_rgb(0.0, 0.0, 0.0);
-    item.material.emissive = Colour::linear_rgb(1.0, 1.0, 1.0);
-    item.material.emissive_texture_id = Some(emissive_tex);
-    item.material.alpha_mode = alpha_mode;
+    let mut m = Material::default();
+    m.shading_model = ShadingModel::Pbr;
+    m.base_colour = Colour::linear_rgb(0.0, 0.0, 0.0);
+    m.emissive = Colour::linear_rgb(1.0, 1.0, 1.0);
+    m.emissive_texture_id = Some(emissive_tex);
+    m.alpha_mode = alpha_mode;
     if alpha_mode == AlphaMode::Blend {
-        item.material.base_colour = Colour::linear(0.0, 0.0, 0.0, 0.8);
+        m.base_colour = Colour::linear(0.0, 0.0, 0.0, 0.8);
     }
-    item.material = item
-        .material
-        .with_texture_transform(TextureSlot::Emissive, transform);
+    m = m.with_texture_transform(TextureSlot::Emissive, transform);
+    item.material = upload_material(&mut renderer, m);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let (w, h) = (64u32, 64u32);

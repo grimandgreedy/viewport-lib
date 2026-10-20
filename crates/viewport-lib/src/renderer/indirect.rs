@@ -58,6 +58,9 @@ pub(super) struct MainCullExtras<'a> {
     /// `!0` (and the default) keeps everything; only consulted when
     /// `instance_data` is `Some`.
     pub(super) cull_mask: u32,
+    /// Start of the visibility buffer's words region in u32s, where the cull
+    /// copies each survivor's record words. 0 for none; needs `instance_data`.
+    pub(super) words_base: u32,
 }
 
 /// Per-batch group assignment for GPU draw-list compaction: which pipeline group
@@ -121,7 +124,7 @@ pub(super) struct CullResources {
     /// pyramid (shadow, single-mesh, or occlusion disabled). Keeps the bind
     /// group layout satisfied; never sampled because `do_occlusion` is 0.
     fallback_hiz_view: crate::gpu::TextureView,
-    /// One 144-byte `InstanceData` slot bound at binding 8 when a dispatch does
+    /// One `InstanceData` slot bound at binding 8 when a dispatch does
     /// not run the layer-mask reject (shadow, single-mesh, plugin submissions).
     /// Keeps the bind group layout satisfied; never read because `do_mask_cull`
     /// is 0.
@@ -415,7 +418,9 @@ impl CullResources {
             compact_enabled: u32::from(plan_fits),
             plan_cap,
             chunk_cap,
-            _pad: [0; 1],
+            words_base: extras
+                .filter(|e| e.instance_data.is_some())
+                .map_or(0, |e| e.words_base),
         };
         queue.write_buffer(
             frustum_buf,

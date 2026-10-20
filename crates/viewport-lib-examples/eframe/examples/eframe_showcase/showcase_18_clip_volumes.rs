@@ -15,13 +15,14 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::volume::VolumeItem;
 use vpl::{
     AlphaMode, BackfacePolicy, BuiltinColourmap, ClipObject, ColourmapId, FrameData, Gizmo,
-    ItemSettings, LightKind, LightSource, LightingSettings, Material, MeshId, SceneRenderItem,
-    ViewportRenderer, VolumeId, scene::Scene, selection::Selection,
+    ItemSettings, LightKind, LightSource, LightingSettings, Material, MaterialId, MeshId,
+    SceneRenderItem, ViewportRenderer, VolumeId, scene::Scene, selection::Selection,
 };
 
 /// Colour for the clip-object outlines and the plane fill.
@@ -100,6 +101,8 @@ pub(crate) struct ClipVolState {
     pub volume_id: Option<VolumeId>,
     /// Unit quad mesh reused for every plane's translucent fill (placed per-frame).
     pub fill_mesh_id: Option<MeshId>,
+    /// Translucent unlit material for the plane fills.
+    pub fill_material: MaterialId,
     pub clips: Vec<ActiveClip>,
     pub show_overlay: bool,
     /// Gizmo retained for main.rs compatibility (not used for clip editing).
@@ -118,6 +121,7 @@ impl Default for ClipVolState {
             scene_mode: SceneMode::Mesh,
             volume_id: None,
             fill_mesh_id: None,
+            fill_material: MaterialId::DEFAULT,
             clips: vec![ActiveClip::Plane {
                 elevation: 0.0,
                 azimuth: 0.0,
@@ -156,7 +160,9 @@ impl App {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.72, 0.30, 0.06));
                 m.roughness = 0.35;
                 m.metallic = 0.15;
-                m
+                // Cross-sections show the interior, so draw both sides.
+                m.backface_policy = BackfacePolicy::Identical;
+                upload_material(renderer, m)
             });
 
         // Capsule standing upright through the torus hole.
@@ -172,7 +178,8 @@ impl App {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.12, 0.34, 0.78));
                 m.roughness = 0.25;
                 m.metallic = 0.35;
-                m
+                m.backface_policy = BackfacePolicy::Identical;
+                upload_material(renderer, m)
             });
 
         // Volume: a density field approximating the same torus + capsule shapes.
@@ -195,6 +202,10 @@ impl App {
             .upload_mesh_data(&self.device, &fill_mesh)
             .expect("clipvol fill quad mesh");
         self.clipvol_state.fill_mesh_id = Some(fill_id);
+        let mut fill_material = Material::from_colour(Colour::from_linear_rgb_array(CLIP_COLOUR));
+        fill_material.alpha_mode = AlphaMode::Blend;
+        fill_material.backface_policy = BackfacePolicy::Identical;
+        self.clipvol_state.fill_material = upload_material(renderer, fill_material);
 
         self.clipvol_state.built = true;
     }
@@ -570,10 +581,6 @@ impl App {
                 let center = (glam::Vec3::from(normal).normalize_or_zero() * -distance).to_array();
                 let model =
                     vpl::clip_plane::visual::plane_fill_transform(center, normal, PLANE_EXTENT);
-                let mut material =
-                    Material::from_colour(Colour::from_linear_rgb_array(CLIP_COLOUR));
-                material.alpha_mode = AlphaMode::Blend;
-                material.backface_policy = BackfacePolicy::Identical;
                 let mut settings = ItemSettings::default();
                 settings.unlit = true;
                 settings.opacity = 0.15;
@@ -583,7 +590,7 @@ impl App {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = mesh_id;
                 item.model = model;
-                item.material = material;
+                item.material = self.clipvol_state.fill_material;
                 item.settings = settings;
                 out.push(item);
             }
@@ -600,14 +607,9 @@ pub(crate) fn clipvol_collect_scene_items(
     app: &mut App,
 ) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
     let mut items = if app.clipvol_state.scene_mode == SceneMode::Mesh {
-        let mut items = app
-            .clipvol_state
+        app.clipvol_state
             .scene
-            .collect_render_items(&Selection::new());
-        for item in items.iter_mut() {
-            item.material.backface_policy = BackfacePolicy::Identical;
-        }
-        items
+            .collect_render_items(&Selection::new())
     } else {
         Vec::new()
     };

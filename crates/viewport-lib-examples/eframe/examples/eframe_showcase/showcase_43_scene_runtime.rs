@@ -17,8 +17,8 @@ use crate::eframe::egui;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
-    Aabb, CameraFollow, FixedTimestep, Material, MeshId, RuntimeFrameContext, RuntimePlugin,
-    RuntimeStepContext, SceneRenderItem, ViewportRuntime,
+    Aabb, CameraFollow, FixedTimestep, Material, MaterialId, MeshId, RuntimeFrameContext,
+    RuntimePlugin, RuntimeStepContext, SceneRenderItem, ViewportRuntime,
     camera::Camera,
     plugins::animation::{AnimationPlugin, AnimationTrack, Keyframe},
     plugins::physics_lite::{PhysicsBody, PhysicsLitePlugin},
@@ -28,6 +28,7 @@ use vpl::{
 };
 
 use crate::App;
+use crate::shared::upload_material;
 
 // ---------------------------------------------------------------------------
 // Demo selector
@@ -97,6 +98,10 @@ pub(crate) struct RtDemoState {
     pub selection: Selection,
     pub runtime: ViewportRuntime,
     pub mesh_id: Option<MeshId>,
+    /// One material per body colour, shared by both demos.
+    pub body_materials: Vec<MaterialId>,
+    /// Material for the keyframe-animated sphere.
+    pub anim_material: MaterialId,
     pub sim_fps: f32,
     pub interpolate: bool,
     // Demo selector
@@ -119,6 +124,8 @@ impl Default for RtDemoState {
             selection: Selection::new(),
             runtime: ViewportRuntime::new().with_fixed_timestep(FixedTimestep::new(60.0)),
             mesh_id: None,
+            body_materials: Vec::new(),
+            anim_material: MaterialId::DEFAULT,
             sim_fps: 45.0,
             interpolate: true,
             demo: RuntimeDemo::Orbit,
@@ -143,19 +150,10 @@ fn populate_orbit(app: &mut App) {
     let Some(mesh_id) = app.rt_state.mesh_id else {
         return;
     };
-    let colours: [[f32; 3]; 5] = [
-        [0.65, 0.09, 0.07],
-        [0.05, 0.35, 0.65],
-        [0.15, 0.55, 0.12],
-        [0.72, 0.42, 0.04],
-        [0.38, 0.12, 0.62],
-    ];
-    for colour in &colours {
-        app.rt_state.scene.add(
-            Some(mesh_id),
-            glam::Mat4::IDENTITY,
-            Material::from_colour(Colour::from_linear_rgb_array(*colour)),
-        );
+    for &mat in &app.rt_state.body_materials {
+        app.rt_state
+            .scene
+            .add(Some(mesh_id), glam::Mat4::IDENTITY, mat);
     }
     app.rt_state.runtime = ViewportRuntime::new()
         .with_fixed_timestep(FixedTimestep::new(app.rt_state.sim_fps))
@@ -176,13 +174,6 @@ fn populate_simulation(app: &mut App) {
     };
     let scene = &mut app.rt_state.scene;
 
-    let body_colours: [[f32; 3]; 5] = [
-        [0.65, 0.09, 0.07],
-        [0.05, 0.35, 0.65],
-        [0.15, 0.55, 0.12],
-        [0.72, 0.42, 0.04],
-        [0.38, 0.12, 0.62],
-    ];
     let body_starts: [(f32, f32, f32); 5] = [
         (0.0, 0.0, 5.0),
         (1.5, -1.0, 7.0),
@@ -205,14 +196,10 @@ fn populate_simulation(app: &mut App) {
     let mut physics = PhysicsLitePlugin::new().with_gravity(glam::Vec3::new(0.0, 0.0, -9.81));
 
     let mut node_ids = Vec::new();
-    for (i, colour) in body_colours.iter().enumerate() {
+    for (i, &mat) in app.rt_state.body_materials.iter().enumerate() {
         let (x, y, z) = body_starts[i];
         let pos = glam::Vec3::new(x, y, z);
-        let id = scene.add(
-            Some(mesh_id),
-            glam::Mat4::from_translation(pos),
-            Material::from_colour(Colour::from_linear_rgb_array(*colour)),
-        );
+        let id = scene.add(Some(mesh_id), glam::Mat4::from_translation(pos), mat);
         node_ids.push(id);
         let (vx, vy, vz) = body_velocities[i];
         physics.add_body(
@@ -227,7 +214,7 @@ fn populate_simulation(app: &mut App) {
     let anim_id = app.rt_state.scene.add(
         Some(mesh_id),
         glam::Mat4::IDENTITY,
-        Material::from_colour(Colour::linear_rgb(0.55, 0.55, 0.55)),
+        app.rt_state.anim_material,
     );
     app.rt_state.anim_node_id = Some(anim_id);
 
@@ -269,6 +256,26 @@ pub(crate) fn build_rt_demo_scene(app: &mut App, renderer: &mut vpl::ViewportRen
         .upload_mesh_data(&app.device, &sphere)
         .expect("rt demo sphere upload");
     app.rt_state.mesh_id = Some(mesh_id);
+    let colours: [[f32; 3]; 5] = [
+        [0.65, 0.09, 0.07],
+        [0.05, 0.35, 0.65],
+        [0.15, 0.55, 0.12],
+        [0.72, 0.42, 0.04],
+        [0.38, 0.12, 0.62],
+    ];
+    app.rt_state.body_materials = colours
+        .iter()
+        .map(|c| {
+            upload_material(
+                renderer,
+                Material::from_colour(Colour::from_linear_rgb_array(*c)),
+            )
+        })
+        .collect();
+    app.rt_state.anim_material = upload_material(
+        renderer,
+        Material::from_colour(Colour::linear_rgb(0.55, 0.55, 0.55)),
+    );
     populate_orbit(app);
     app.rt_state.active_demo = RuntimeDemo::Orbit;
     app.rt_state.built = true;

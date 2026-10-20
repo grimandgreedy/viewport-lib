@@ -17,6 +17,7 @@
 use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
@@ -190,7 +191,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
                 m.roughness = 0.9;
-                m
+                upload_material(renderer, m)
             },
         );
 
@@ -206,7 +207,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
                 m.roughness = 0.8;
-                m
+                upload_material(renderer, m)
             },
         );
 
@@ -228,7 +229,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.85, 0.22, 0.18));
                 m.roughness = 0.3;
-                m
+                upload_material(renderer, m)
             },
         );
         self.aux_state.scene.add_named(
@@ -238,7 +239,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.95, 0.55, 0.10));
                 m.roughness = 0.5;
-                m
+                upload_material(renderer, m)
             },
         );
 
@@ -250,7 +251,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.15, 0.65, 0.80));
                 m.roughness = 0.3;
-                m
+                upload_material(renderer, m)
             },
         );
         self.aux_state.scene.add_named(
@@ -260,7 +261,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.55, 0.20, 0.80));
                 m.roughness = 0.5;
-                m
+                upload_material(renderer, m)
             },
         );
 

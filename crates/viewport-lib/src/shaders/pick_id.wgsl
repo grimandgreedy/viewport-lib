@@ -37,15 +37,16 @@ struct ClipVolumeUB {
     volumes: array<ClipVolumeEntry, 4>,
 };
 
-// Per-instance pick data: model matrix + object_id.
-// Stored in a separate compact storage buffer (not reusing the 128-byte InstanceData).
+// Per-instance pick data: model matrix, object_id and the deform table the
+// item's colour draw reads (a word of the bound sidecar chunk, 0 for none).
+// Stored in a separate compact storage buffer, not the colour pass's records.
 struct PickInstance {
     model_c0: vec4<f32>,
     model_c1: vec4<f32>,
     model_c2: vec4<f32>,
     model_c3: vec4<f32>,
     object_id: u32,
-    _pad0: u32,
+    deform_table: u32,
     _pad1: u32,
     _pad2: u32,
 };
@@ -53,6 +54,8 @@ struct PickInstance {
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
 @group(1) @binding(0) var<storage, read> pick_instances: array<PickInstance>;
+// The sidecar chunk holding the drawn mesh's record, for its deform data.
+@group(1) @binding(1) var<storage, read> sidecar_pool: array<u32>;
 
 // #include "helpers/clip_volume_test.wgsl"
 
@@ -79,6 +82,7 @@ struct VertexOut {
 fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     let inst = pick_instances[idx];
     let model = mat4x4<f32>(inst.model_c0, inst.model_c1, inst.model_c2, inst.model_c3);
+    deform_table = inst.deform_table;
     var dv = DeformVertex(in.position, vec3<f32>(0.0, 0.0, 1.0), in.vertex_index);
     let dctx = DeformContext(model, model[3].xyz, 0.0, deform_bound_flags(), 0u);
     dv = viewport_deform_object_space(dv, dctx);

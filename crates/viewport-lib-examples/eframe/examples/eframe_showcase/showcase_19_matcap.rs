@@ -9,6 +9,7 @@ use crate::App;
 use crate::eframe;
 use crate::eframe::egui;
 use crate::geometry::make_uv_sphere;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{BuiltinMatcap, MatcapId, Material, NodeId, ViewportRenderer, scene::Scene};
@@ -108,7 +109,7 @@ impl App {
                 *label,
                 Some(sphere_id),
                 glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)),
-                mat,
+                upload_material(renderer, mat),
             );
             self.matcap_state.builtin_node_ids[i] = node_id;
         }
@@ -134,7 +135,7 @@ impl App {
             {
                 let mut m = Material::default();
                 m.shading_model = vpl::ShadingModel::Matcap(custom_id);
-                m
+                upload_material(renderer, m)
             },
         );
         self.matcap_state.custom_node = Some(custom_node);
@@ -155,12 +156,17 @@ impl App {
             )
             .expect("custom matcap re-upload");
         self.matcap_state.custom_id = Some(id);
-        if let Some(node_id) = self.matcap_state.custom_node {
-            self.matcap_state.scene.set_material(node_id, {
-                let mut m = Material::default();
-                m.shading_model = vpl::ShadingModel::Matcap(id);
-                m
-            });
+        if let Some(node) = self
+            .matcap_state
+            .custom_node
+            .and_then(|n| self.matcap_state.scene.node(n))
+        {
+            let mut m = Material::default();
+            m.shading_model = vpl::ShadingModel::Matcap(id);
+            renderer
+                .resources_mut()
+                .replace_material(node.material(), m)
+                .expect("custom matcap material");
         }
     }
 
@@ -171,15 +177,21 @@ impl App {
                 continue;
             }
             let matcap_id = renderer.resources().builtin_matcap_id(*preset);
-            self.matcap_state
+            let Some(node) = self
+                .matcap_state
                 .scene
-                .set_material(self.matcap_state.builtin_node_ids[i], {
-                    let mut m = Material::from_colour(Colour::from_linear_rgb_array(
-                        self.matcap_state.blendable_colour,
-                    ));
-                    m.shading_model = vpl::ShadingModel::Matcap(matcap_id);
-                    m
-                });
+                .node(self.matcap_state.builtin_node_ids[i])
+            else {
+                continue;
+            };
+            let mut m = Material::from_colour(Colour::from_linear_rgb_array(
+                self.matcap_state.blendable_colour,
+            ));
+            m.shading_model = vpl::ShadingModel::Matcap(matcap_id);
+            renderer
+                .resources_mut()
+                .replace_material(node.material(), m)
+                .expect("blendable matcap material");
         }
     }
 }

@@ -1,15 +1,16 @@
 //! CPU cost of `prepare` on a scene the GPU barely notices: 10,000 small
-//! per-object items rendered at 64 x 64, so the frame time is the CPU side.
+//! items of one mesh in distinct colours rendered at 64 x 64, so the frame
+//! time is the CPU side.
 //! Ignored by default; run with
-//! `cargo test --release -p viewport-lib --lib per_object_prepare_timing -- --ignored --nocapture`.
+//! `cargo test --release -p viewport-lib --lib prepare_timing_10k -- --ignored --nocapture`.
 
 use crate::Colour;
 use crate::renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission};
-use crate::{Camera, Material, ViewportRenderer};
+use crate::{Camera, ViewportRenderer};
 
 #[test]
 #[ignore]
-fn per_object_prepare_timing() {
+fn prepare_timing_10k() {
     let Some((device, queue)) = crate::resources::test_support::try_make_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -20,7 +21,6 @@ fn per_object_prepare_timing() {
         .resources_mut()
         .upload_mesh_data(&device, &crate::geometry::primitives::cube(0.4))
         .unwrap();
-    // A per-material sampler keeps every item off the instanced path.
     let items: Vec<SceneRenderItem> = (0..10_000)
         .map(|i| {
             let mut item = SceneRenderItem::default();
@@ -28,9 +28,7 @@ fn per_object_prepare_timing() {
             let (x, y) = ((i % 100) as f32, (i / 100) as f32);
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x - 50.0, y - 50.0, 0.0))
                 .to_cols_array_2d();
-            item.material =
-                Material::from_colour(Colour::linear_rgb((i % 7) as f32 / 7.0, 0.5, 0.5))
-                    .with_sampler(crate::TextureSlot::Albedo, crate::SamplerKey::default());
+            item.settings.colour = Some(Colour::linear_rgb((i % 7) as f32 / 7.0, 0.5, 0.5));
             item
         })
         .collect();
@@ -64,9 +62,8 @@ fn per_object_prepare_timing() {
     let stats = renderer.last_frame_stats();
     println!("last frame breakdown: {:?}", stats.prepare_breakdown);
     println!(
-        "10k per-object items: prepare p50 {:.3} ms, uniforms p50 {:.3} ms ({} per-object items)",
+        "10k items: prepare p50 {:.3} ms, uniforms p50 {:.3} ms",
         p50(&mut prepare),
         p50(&mut uniforms),
-        stats.per_object_items,
     );
 }

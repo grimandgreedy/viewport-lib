@@ -33,16 +33,11 @@ impl ViewportRenderer {
             &self.resources,
             &mut *render_pass,
             frame,
-            self.instancing.use_instancing,
             &self.instancing.batches,
             camera_bg,
             grid_bg,
             vp_slot,
-            &self.mesh_uniforms.wireframe_bind_groups,
-            &self.mesh_uniforms.bind_groups,
-            &self.mesh_uniforms.submesh_bind_groups,
-            &self.mesh_uniforms.object_indices,
-            &self.mesh_uniforms.submesh_indices,
+            &self.mesh_uniforms.material_bind_groups,
             &self.prepared_surfaces,
             self.per_object_bundle.as_ref()
         );
@@ -57,12 +52,10 @@ impl ViewportRenderer {
                         self.resources.scene.wireframe(),
                     ) {
                         render_pass.set_pipeline(wf);
-                        bind_deform_group!(
-                            render_pass,
-                            self.resources,
-                            &self.resources.deform.dummy_bind_group
-                        );
                         render_pass.set_bind_group(1, tvm_bg, &[]);
+                        if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
+                            render_pass.set_vertex_buffer(1, records.slice(..));
+                        }
                         render_pass.set_vertex_buffer(
                             0,
                             self.resources.geometry.vertex_slice(mesh.vertex_span),

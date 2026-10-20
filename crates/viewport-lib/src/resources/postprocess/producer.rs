@@ -544,7 +544,8 @@ impl PostProducer for crate::resources::gpu::exposure::ExposureResources {
     ) {
         let exposure = inputs.exposure;
 
-        // Manual / PhysicalCamera: write the exposure state buffer directly.
+        // Passthrough / Manual / PhysicalCamera: write the exposure state buffer
+        // directly.
         if let Some(mult) = exposure.manual_multiplier() {
             let ev_used = exposure.base_ev100().unwrap_or(0.0) - exposure.compensation;
             let state = crate::resources::gpu::exposure::ExposureState {
@@ -574,7 +575,7 @@ impl PostProducer for crate::resources::gpu::exposure::ExposureResources {
             min_ev: auto.min_ev,
             max_ev: auto.max_ev.max(auto.min_ev),
             compensation: exposure.compensation,
-            exposure_boost: viewport_lib_types::effects::postprocess::INTERIM_EXPOSURE_BOOST,
+            anchor_ev: viewport_lib_types::effects::postprocess::PASSTHROUGH_EV100,
             speed_up: auto.speed_up.max(0.0),
             speed_down: auto.speed_down.max(0.0),
             dt: auto.dt,
@@ -596,7 +597,7 @@ impl PostProducer for crate::resources::gpu::exposure::ExposureResources {
         inputs: &ProducerFrameInputs<'_>,
         _timing: &ProducerTiming<'_>,
     ) {
-        // Manual / PhysicalCamera resolved everything at upload.
+        // Passthrough / Manual / PhysicalCamera resolved everything at upload.
         if inputs.exposure.manual_multiplier().is_some() {
             return;
         }

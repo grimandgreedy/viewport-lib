@@ -54,11 +54,6 @@ fn build_everything(
     let res = &mut renderer.resources;
     res.ensure_hdr_pipelines(device, queue, FORMAT);
     res.ensure_ldr_mesh_pipelines(device);
-    res.ensure_instanced_pipelines(device);
-    res.ensure_ldr_instanced_pipelines(device);
-    res.ensure_hdr_instanced_pipelines(device);
-    res.ensure_oit_instanced_pipeline(device);
-    res.ensure_cull_instance_pipelines(device);
     res.ensure_hdr_cull_pipelines(device);
     res.ensure_oit_cull_pipelines(device);
     res.ensure_outline_pipelines(device);
@@ -88,7 +83,7 @@ fn cube_item(meshes: &Meshes, x: f32, colour: [f32; 3]) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = meshes.cube;
     item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
-    item.material = Material::from_colour(Colour::from_linear_rgb_array(colour));
+    item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
     item
 }
 
@@ -501,7 +496,9 @@ fn builtin_matcap_uploads_on_first_use() {
     let mut frame = base_frame(&meshes);
     let SurfaceSubmission::Flat(items) = &frame.scene.surfaces;
     let mut items: Vec<SceneRenderItem> = items.iter().cloned().collect();
-    items[0].material.shading_model = crate::ShadingModel::Matcap(normal);
+    let mut matcap = Material::default();
+    matcap.shading_model = crate::ShadingModel::Matcap(normal);
+    items[0].material = renderer.resources_mut().upload_material(matcap).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
     let first = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
     assert!(renderer.resources.content.matcaps_initialized);
@@ -521,7 +518,20 @@ fn builtin_matcap_uploads_on_first_use() {
 #[test]
 fn material_transforms_past_the_initial_capacity_draw_on_the_frame_that_grows_it() {
     const COUNT: usize = 200;
-    fn grid(meshes: &Meshes, texture: crate::TextureId, offsets: bool) -> FrameData {
+    /// `offsets` gives each item its own material; without it they share one.
+    fn grid(
+        renderer: &mut ViewportRenderer,
+        meshes: &Meshes,
+        texture: crate::TextureId,
+        offsets: bool,
+    ) -> FrameData {
+        let mut material = Material::default();
+        material.texture_id = Some(texture);
+        // Scale zero samples one texel, picked by the offset: the left (black)
+        // or right (white) half, distinct per item.
+        material.uv_scale = [0.0, 0.0];
+        material.uv_offset = [0.25, 0.5];
+        let shared = renderer.resources_mut().upload_material(material).unwrap();
         let mut frame = base_frame(meshes);
         frame.scene.surfaces = SurfaceSubmission::Flat(
             (0..COUNT)
@@ -534,16 +544,14 @@ fn material_transforms_past_the_initial_capacity_draw_on_the_frame_that_grows_it
                         0.0,
                     )) * glam::Mat4::from_scale(glam::Vec3::splat(0.18)))
                     .to_cols_array_2d();
-                    item.material.texture_id = Some(texture);
-                    // Scale zero samples one texel, picked by the offset: the
-                    // left (black) or right (white) half, distinct per item.
-                    item.material.uv_scale = [0.0, 0.0];
-                    if offsets {
+                    item.material = if offsets {
                         let half = if (i / 3) % 2 == 0 { 0.25 } else { 0.75 };
-                        item.material.uv_offset = [half + i as f32 * 0.0005, 0.5];
+                        let mut own = material;
+                        own.uv_offset = [half + i as f32 * 0.0005, 0.5];
+                        renderer.resources_mut().upload_material(own).unwrap()
                     } else {
-                        item.material.uv_offset = [0.25, 0.5];
-                    }
+                        shared
+                    };
                     item
                 })
                 .collect::<Vec<_>>()
@@ -576,12 +584,12 @@ fn material_transforms_past_the_initial_capacity_draw_on_the_frame_that_grows_it
         "the case needs more blocks than the buffer starts with"
     );
 
-    let mut warm = grid(&meshes, texture, false);
+    let mut warm = grid(&mut renderer, &meshes, texture, false);
     warm.scene.generation = 1;
     let without = renderer.render_offscreen(&device, &queue, &warm, SIZE, SIZE);
     assert_eq!(renderer.resources.material_gpu_capacity, initial);
 
-    let mut frame = grid(&meshes, texture, true);
+    let mut frame = grid(&mut renderer, &meshes, texture, true);
     frame.scene.generation = 2;
     let growing = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
     assert!(
@@ -593,13 +601,8 @@ fn material_transforms_past_the_initial_capacity_draw_on_the_frame_that_grows_it
     let mut fresh = ViewportRenderer::new(&device, FORMAT);
     let fresh_meshes = upload(&mut fresh, &device);
     let fresh_texture = halves(&mut fresh, &device, &queue);
-    let expected = fresh.render_offscreen(
-        &device,
-        &queue,
-        &grid(&fresh_meshes, fresh_texture, true),
-        SIZE,
-        SIZE,
-    );
+    let fresh_frame = grid(&mut fresh, &fresh_meshes, fresh_texture, true);
+    let expected = fresh.render_offscreen(&device, &queue, &fresh_frame, SIZE, SIZE);
     assert!(
         growing == expected,
         "the frame that grew the buffer drew differently from a renderer that never had the small one"

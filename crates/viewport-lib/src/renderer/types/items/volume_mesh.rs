@@ -71,9 +71,9 @@ pub struct VolumeMeshItem {
     pub model: [[f32; 4]; 4],
     /// Per-item render settings (visibility, opacity, pick identity, selection state).
     pub settings: ItemSettings,
-    /// Per-object material. Consumed only by the boundary-surface render path.
-    /// The projected-tet path uses the colourmap LUT and ignores [`Material`].
-    pub material: crate::scene::material::Material,
+    /// The boundary surface's material. Consumed only by the boundary-surface
+    /// render path; the projected-tet path uses the colourmap LUT and ignores it.
+    pub material: crate::resources::MaterialId,
     /// Named scalar or colour attribute to colour the boundary surface by.
     pub active_attribute: Option<crate::resources::AttributeRef>,
     /// Explicit scalar range `(min, max)`. `None` = use the range computed at upload.
@@ -107,7 +107,7 @@ impl VolumeMeshItem {
             volume_mesh_data: None,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             settings: ItemSettings::default(),
-            material: crate::scene::material::Material::default(),
+            material: crate::resources::MaterialId::DEFAULT,
             active_attribute: None,
             scalar_range: None,
             colourmap_id: None,
@@ -125,7 +125,7 @@ impl VolumeMeshItem {
             mesh_id: self.boundary_mesh_id,
             model: self.model,
             settings: self.settings,
-            material: self.material.clone(),
+            material: self.material,
             active_attribute: self.active_attribute.clone(),
             scalar_range: self.scalar_range,
             colourmap_id: self.colourmap_id,

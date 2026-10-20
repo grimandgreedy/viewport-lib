@@ -6,6 +6,7 @@
 use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
@@ -57,7 +58,10 @@ impl App {
                     "Marker",
                     Some(id),
                     glam::Mat4::from_translation(pos),
-                    Material::from_colour(Colour::from_linear_rgb_array(colour)),
+                    upload_material(
+                        renderer,
+                        Material::from_colour(Colour::from_linear_rgb_array(colour)),
+                    ),
                 );
             };
 

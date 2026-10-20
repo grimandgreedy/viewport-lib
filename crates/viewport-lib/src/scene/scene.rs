@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::interaction::select::selection::{NodeId, Selection};
 use crate::renderer::{PickId, SceneRenderItem};
+use crate::resources::MaterialId;
 use crate::resources::TextureId;
 use crate::resources::mesh::mesh_store::MeshId;
 use crate::scene::aabb::Aabb;
@@ -91,11 +92,11 @@ pub struct SceneNode {
     id: NodeId,
     name: String,
     mesh_id: Option<MeshId>,
-    material: Material,
+    material: MaterialId,
     /// One material per submesh range of the node's mesh, or `None` to draw
     /// the whole mesh with `material`. See
     /// [`SceneRenderItem::submesh_materials`](crate::renderer::SceneRenderItem::submesh_materials).
-    submesh_materials: Option<Vec<Material>>,
+    submesh_materials: Option<Vec<MaterialId>>,
     appearance: crate::scene::material::ItemSettings,
     visible: bool,
     show_normals: bool,
@@ -145,15 +146,15 @@ impl SceneNode {
         self.lod_group
     }
 
-    /// Material parameters (colour, shading, texture) for this node.
-    pub fn material(&self) -> &Material {
-        &self.material
+    /// The material this node draws with.
+    pub fn material(&self) -> MaterialId {
+        self.material
     }
 
     /// Per-submesh-range materials, or `None` when the node draws its whole
     /// mesh with [`material`](Self::material). Set via
     /// [`Scene::set_submesh_materials`].
-    pub fn submesh_materials(&self) -> Option<&[Material]> {
+    pub fn submesh_materials(&self) -> Option<&[MaterialId]> {
         self.submesh_materials.as_deref()
     }
 
@@ -238,16 +239,16 @@ impl ViewportObject for SceneNode {
         self.visible
     }
 
+    /// The node's `ItemSettings::colour`, or white. The material's own colour
+    /// lives in the material store, which a node does not reach.
     fn colour(&self) -> glam::Vec3 {
-        glam::Vec3::from(self.material.base_colour.to_linear_rgb())
+        self.appearance
+            .colour
+            .map_or(glam::Vec3::ONE, |c| glam::Vec3::from(c.to_linear_rgb()))
     }
 
     fn show_normals(&self) -> bool {
         self.show_normals
-    }
-
-    fn material(&self) -> Material {
-        self.material
     }
 }
 
@@ -394,7 +395,7 @@ impl Scene {
         &mut self,
         mesh_id: Option<MeshId>,
         transform: glam::Mat4,
-        material: Material,
+        material: MaterialId,
     ) -> NodeId {
         self.add_named("", mesh_id, transform, material)
     }
@@ -405,7 +406,7 @@ impl Scene {
         name: &str,
         mesh_id: Option<MeshId>,
         transform: glam::Mat4,
-        material: Material,
+        material: MaterialId,
     ) -> NodeId {
         let id = self.next_id;
         self.next_id += 1;
@@ -645,7 +646,7 @@ impl Scene {
     }
 
     /// Set node material.
-    pub fn set_material(&mut self, id: NodeId, material: Material) {
+    pub fn set_material(&mut self, id: NodeId, material: MaterialId) {
         if let Some(node) = self.nodes.get_mut(&id) {
             node.material = material;
         }
@@ -656,7 +657,7 @@ impl Scene {
     /// mesh's `MeshData::submeshes`. `None` (the default) draws the whole
     /// mesh with the node's single material, as does a count mismatch
     /// against the mesh's ranges.
-    pub fn set_submesh_materials(&mut self, id: NodeId, materials: Option<Vec<Material>>) {
+    pub fn set_submesh_materials(&mut self, id: NodeId, materials: Option<Vec<MaterialId>>) {
         if let Some(node) = self.nodes.get_mut(&id) {
             node.submesh_materials = materials;
         }
@@ -1068,6 +1069,7 @@ impl Scene {
                 deform_instance: node.deform_instance,
                 lod_group: node.lod_group,
                 indirect_light: node.indirect_light,
+                lightmap_placement: None,
             });
         }
         // Nodes live in a `HashMap`, whose iteration order is randomised per
@@ -1156,6 +1158,7 @@ impl Scene {
                     deform_instance: node.deform_instance,
                     lod_group: node.lod_group,
                     indirect_light: node.indirect_light,
+                    lightmap_placement: None,
                 });
             }
 
@@ -1214,6 +1217,7 @@ impl Scene {
                     deform_instance: node.deform_instance,
                     lod_group: node.lod_group,
                     indirect_light: node.indirect_light,
+                    lightmap_placement: None,
                 });
             }
 
@@ -1248,7 +1252,7 @@ impl Scene {
             id,
             name: String::new(),
             mesh_id: None,
-            material: crate::scene::material::Material::default(),
+            material: MaterialId::DEFAULT,
             submesh_materials: None,
             appearance: crate::scene::material::ItemSettings::default(),
             visible: true,
@@ -1337,13 +1341,19 @@ impl Scene {
     /// texture is still needed before calling
     /// [`free_texture`](crate::resources::DeviceResources::free_texture). It
     /// sees the scene only: a texture referenced solely by a decal, an overlay,
-    /// or a render item built outside the scene graph counts zero here.
-    pub fn texture_ref_count(&self, texture_id: TextureId) -> usize {
+    /// or a render item built outside the scene graph counts zero here. The
+    /// materials are read from `resources`, where they are stored.
+    pub fn texture_ref_count(
+        &self,
+        resources: &crate::resources::DeviceResources,
+        texture_id: TextureId,
+    ) -> usize {
         self.nodes
             .values()
             .filter(|n| {
                 std::iter::once(&n.material)
                     .chain(n.submesh_materials.iter().flatten())
+                    .filter_map(|id| resources.material(*id))
                     .any(|m| material_references_texture(m, texture_id))
             })
             .count()
@@ -1387,7 +1397,7 @@ mod tests {
         let id = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         assert_eq!(scene.node(id).unwrap().lod_group(), None);
 
@@ -1411,7 +1421,7 @@ mod tests {
         let id = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         // Nodes default to the global environment.
         let items = scene.collect_render_items(&Selection::new());
@@ -1431,7 +1441,7 @@ mod tests {
     #[test]
     fn test_add_and_remove() {
         let mut scene = Scene::new();
-        let id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         assert!(scene.node(id).is_some());
         assert_eq!(scene.node_count(), 1);
 
@@ -1444,9 +1454,9 @@ mod tests {
     #[test]
     fn test_remove_cascades_to_children() {
         let mut scene = Scene::new();
-        let parent = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let child1 = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let child2 = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let parent = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child1 = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child2 = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.set_parent(child1, Some(parent));
         scene.set_parent(child2, Some(parent));
 
@@ -1461,12 +1471,12 @@ mod tests {
     #[test]
     fn test_remove_many_clears_roots_and_descendants() {
         let mut scene = Scene::new();
-        let a = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let b = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let b_child = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let a = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let b = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let b_child = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.set_parent(b_child, Some(b));
         // A node left out of the batch survives.
-        let keep = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let keep = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
 
         let removed = scene.remove_many(&[a, b]);
         assert_eq!(removed.len(), 3);
@@ -1482,8 +1492,8 @@ mod tests {
     #[test]
     fn test_remove_many_dedups_overlapping_and_missing() {
         let mut scene = Scene::new();
-        let parent = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let child = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let parent = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.set_parent(child, Some(parent));
 
         // child is nested under parent, parent is listed twice, and 9999 is not
@@ -1498,9 +1508,9 @@ mod tests {
     #[test]
     fn test_remove_many_detaches_surviving_parent() {
         let mut scene = Scene::new();
-        let parent = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let child1 = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let child2 = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let parent = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child1 = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child2 = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.set_parent(child1, Some(parent));
         scene.set_parent(child2, Some(parent));
 
@@ -1512,7 +1522,7 @@ mod tests {
     #[test]
     fn test_remove_many_empty_is_noop() {
         let mut scene = Scene::new();
-        scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         let before = scene.version();
         let removed = scene.remove_many(&[]);
         assert!(removed.is_empty());
@@ -1526,12 +1536,12 @@ mod tests {
         let parent = scene.add(
             None,
             glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         let child = scene.add(
             None,
             glam::Mat4::from_translation(glam::Vec3::new(1.0, 0.0, 0.0)),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.set_parent(child, Some(parent));
         scene.update_transforms();
@@ -1547,12 +1557,12 @@ mod tests {
         let parent = scene.add(
             None,
             glam::Mat4::from_translation(glam::Vec3::new(1.0, 0.0, 0.0)),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         let child = scene.add(
             None,
             glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.set_parent(child, Some(parent));
         scene.update_transforms();
@@ -1584,7 +1594,7 @@ mod tests {
         let id = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.set_layer(id, layer);
         scene.set_layer_visible(layer, false);
@@ -1599,7 +1609,7 @@ mod tests {
         let id = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.set_visible(id, false);
 
@@ -1610,7 +1620,7 @@ mod tests {
     #[test]
     fn test_collect_skips_meshless_nodes() {
         let mut scene = Scene::new();
-        scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
 
         let items = scene.collect_render_items(&Selection::new());
         assert!(items.is_empty());
@@ -1622,7 +1632,7 @@ mod tests {
         let id = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
 
         let mut sel = Selection::new();
@@ -1636,8 +1646,8 @@ mod tests {
     #[test]
     fn test_unparent_makes_root() {
         let mut scene = Scene::new();
-        let parent = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let child = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let parent = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.set_parent(child, Some(parent));
         assert!(!scene.roots().contains(&child));
 
@@ -1653,13 +1663,13 @@ mod tests {
         let visible_id = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         // Object far behind camera : should be culled.
         let _behind = scene.add(
             Some(MeshId::from_index(1)),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 100.0)),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
 
         let sel = Selection::new();
@@ -1748,7 +1758,7 @@ mod tests {
         let node_id = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.set_layer(node_id, layer_id);
         scene.set_layer_locked(layer_id, true);
@@ -1797,7 +1807,7 @@ mod tests {
     fn test_add_to_group_and_remove_from_group() {
         let mut scene = Scene::new();
         let gid = scene.create_group("G");
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.add_to_group(node_id, gid);
         assert!(scene.get_group(gid).unwrap().members.contains(&node_id));
         scene.remove_from_group(node_id, gid);
@@ -1817,7 +1827,7 @@ mod tests {
         let mut scene = Scene::new();
         let g1 = scene.create_group("G1");
         let g2 = scene.create_group("G2");
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.add_to_group(node_id, g1);
         scene.add_to_group(node_id, g2);
         let groups = scene.node_groups(node_id);
@@ -1830,7 +1840,7 @@ mod tests {
     fn test_remove_node_cleans_up_group_membership() {
         let mut scene = Scene::new();
         let gid = scene.create_group("G");
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.add_to_group(node_id, gid);
         scene.remove(node_id);
         assert!(!scene.get_group(gid).unwrap().members.contains(&node_id));
@@ -1850,17 +1860,17 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.add(
             Some(MeshId::from_index(1)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         assert_eq!(scene.mesh_ref_count(MeshId::from_index(0)), 2);
         assert_eq!(scene.mesh_ref_count(MeshId::from_index(1)), 1);
@@ -1872,12 +1882,12 @@ mod tests {
         let node_a = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         assert_eq!(scene.mesh_ref_count(MeshId::from_index(0)), 2);
         scene.remove(node_a);
@@ -1896,10 +1906,10 @@ mod tests {
     #[test]
     fn test_walk_depth_first_order() {
         let mut scene = Scene::new();
-        let root = scene.add_named("root", None, glam::Mat4::IDENTITY, Material::default());
-        let child_a = scene.add_named("a", None, glam::Mat4::IDENTITY, Material::default());
-        let child_b = scene.add_named("b", None, glam::Mat4::IDENTITY, Material::default());
-        let grandchild = scene.add_named("a1", None, glam::Mat4::IDENTITY, Material::default());
+        let root = scene.add_named("root", None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child_a = scene.add_named("a", None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child_b = scene.add_named("b", None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let grandchild = scene.add_named("a1", None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.set_parent(child_a, Some(root));
         scene.set_parent(child_b, Some(root));
         scene.set_parent(grandchild, Some(child_a));
@@ -1945,13 +1955,13 @@ mod tests {
             scene.add(
                 Some(MeshId::from_index(0)),
                 glam::Mat4::IDENTITY,
-                Material::default(),
+                MaterialId::DEFAULT,
             );
         }
         // 500 culled nodes behind camera (z >> 300 far plane).
         for _ in 0..500 {
             let mat = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 9000.0));
-            scene.add(Some(MeshId::from_index(0)), mat, Material::default());
+            scene.add(Some(MeshId::from_index(0)), mat, MaterialId::DEFAULT);
         }
 
         assert!(scene.node_count() >= SPATIAL_THRESHOLD);
@@ -1987,7 +1997,7 @@ mod tests {
             let id = scene.add(
                 Some(MeshId::from_index(0)),
                 glam::Mat4::IDENTITY,
-                Material::default(),
+                MaterialId::DEFAULT,
             );
             ids.push(id);
         }
@@ -2021,7 +2031,7 @@ mod tests {
             let id = scene.add(
                 Some(MeshId::from_index(0)),
                 glam::Mat4::IDENTITY,
-                Material::default(),
+                MaterialId::DEFAULT,
             );
             ids.push(id);
         }
@@ -2039,8 +2049,35 @@ mod tests {
         assert_eq!(items2.len(), 450, "should have 450 after removing 150");
     }
 
+    /// Resources on a headless device, for the tests that store materials.
+    fn resources() -> Option<crate::resources::DeviceResources> {
+        let instance = crate::gpu::default_instance();
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+                #[cfg(wgpu30)]
+                apply_limit_buckets: false,
+            },
+        ))
+        .ok()?;
+        let (device, _queue) =
+            pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default()))
+                .ok()?;
+        Some(crate::resources::DeviceResources::new(
+            &device,
+            crate::gpu::TextureFormat::Rgba8UnormSrgb,
+            1,
+        ))
+    }
+
     #[test]
     fn texture_ref_count_sees_every_material_slot() {
+        let Some(mut res) = resources() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
         let tex = TextureId::from_raw(7);
         let other = TextureId::from_raw(8);
 
@@ -2058,18 +2095,23 @@ mod tests {
             let mut scene = Scene::new();
             let mut material = Material::default();
             set_slot(&mut material, tex);
+            let material = res.upload_material(material).unwrap();
             scene.add(Some(MeshId::from_index(0)), glam::Mat4::IDENTITY, material);
             assert_eq!(
-                scene.texture_ref_count(tex),
+                scene.texture_ref_count(&res, tex),
                 1,
                 "material slot {i} must be counted"
             );
-            assert_eq!(scene.texture_ref_count(other), 0);
+            assert_eq!(scene.texture_ref_count(&res, other), 0);
         }
     }
 
     #[test]
     fn texture_ref_count_covers_submesh_materials_and_counts_nodes_once() {
+        let Some(mut res) = resources() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
         let tex = TextureId::from_raw(7);
         let mut scene = Scene::new();
 
@@ -2078,15 +2120,17 @@ mod tests {
         let submeshed = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
-        scene.set_submesh_materials(submeshed, Some(vec![Material::textured(tex)]));
-        assert_eq!(scene.texture_ref_count(tex), 1);
+        let textured = res.upload_material(Material::textured(tex)).unwrap();
+        scene.set_submesh_materials(submeshed, Some(vec![textured]));
+        assert_eq!(scene.texture_ref_count(&res, tex), 1);
 
         // A node naming the texture in two slots counts once, not twice.
         let mut both = Material::textured(tex);
         both.emissive_texture_id = Some(tex);
+        let both = res.upload_material(both).unwrap();
         scene.add(Some(MeshId::from_index(0)), glam::Mat4::IDENTITY, both);
-        assert_eq!(scene.texture_ref_count(tex), 2);
+        assert_eq!(scene.texture_ref_count(&res, tex), 2);
     }
 }

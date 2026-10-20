@@ -14,11 +14,12 @@ use viewport_lib::Colour;
 
 use crate::eframe::egui;
 use vpl::{
-    Aabb, FrameStats, ItemSettings, Material, MeshId, SceneRenderItem, scene::Scene,
+    Aabb, FrameStats, ItemSettings, Material, MaterialId, MeshId, SceneRenderItem, scene::Scene,
     selection::Selection,
 };
 
 use crate::App;
+use crate::shared::upload_material;
 
 /// Number of distinct textures generated for the box grid. Each box picks one
 /// at random, so this is also the number of instanced batches the grid splits
@@ -71,13 +72,16 @@ impl Default for PerfState {
 
 /// Build the 125K-box scene on a background thread.
 ///
-/// The mesh is already uploaded on the main thread before this is called.
-/// `mesh_aabb` is passed in so the BVH closure doesn't need GPU access.
+/// The meshes and materials are already uploaded on the main thread before
+/// this is called. `flat` is shared by every box when the texture pool is
+/// empty, each box setting its own colour; otherwise each box picks one of the
+/// `textured` materials.
 /// `progress` is incremented every 10 000 objects so the main thread can
 /// display a live loading bar.
 pub(crate) fn build_perf_scene_threaded(
     meshes: Vec<(MeshId, Option<Aabb>)>,
-    texture_pool: Vec<vpl::TextureId>,
+    flat: MaterialId,
+    textured: Vec<MaterialId>,
     progress: &AtomicU32,
 ) -> Scene {
     let spacing = 2.5_f32;
@@ -104,21 +108,18 @@ pub(crate) fn build_perf_scene_threaded(
                 let transform = glam::Mat4::from_translation(pos);
                 // Cycle through the shapes (box, sphere, cylinder, spring).
                 let mesh = meshes[count as usize % meshes.len()].0;
-                let mat = if texture_pool.is_empty() {
+                let mut appearance = ItemSettings::default();
+                let mat = if textured.is_empty() {
                     // Pool size 0: fall back to the flat-colour boxes.
-                    Material::flat(Colour::from_linear_rgb_array(
+                    appearance.colour = Some(Colour::from_linear_rgb_array(
                         colours[count as usize % colours.len()],
-                    ))
+                    ));
+                    flat
                 } else {
-                    // Pick one pool texture at random. White base so the
-                    // texture colours show through unmodulated.
-                    let ti = hash_index(count, texture_pool.len());
-                    let mut m = Material::flat(Colour::linear_rgb(1.0, 1.0, 1.0));
-                    m.texture_id = Some(texture_pool[ti]);
-                    m
+                    // Pick one pool texture at random.
+                    textured[hash_index(count, textured.len())]
                 };
                 let id = scene.add(Some(mesh), transform, mat);
-                let mut appearance = ItemSettings::default();
                 appearance.unlit = false;
                 scene.set_appearance(id, appearance);
                 count += 1;
@@ -472,13 +473,23 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
                 .expect("perf texture upload")
         })
         .collect();
+    let flat = upload_material(renderer, Material::flat(Colour::linear_rgb(1.0, 1.0, 1.0)));
+    // White base so the texture colours show through unmodulated.
+    let textured: Vec<MaterialId> = texture_pool
+        .iter()
+        .map(|&tex| {
+            let mut m = Material::flat(Colour::linear_rgb(1.0, 1.0, 1.0));
+            m.texture_id = Some(tex);
+            upload_material(renderer, m)
+        })
+        .collect();
 
     let progress = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
     let progress_clone = std::sync::Arc::clone(&progress);
     let (tx, rx) = std::sync::mpsc::channel();
 
     std::thread::spawn(move || {
-        let result = build_perf_scene_threaded(meshes, texture_pool, &progress_clone);
+        let result = build_perf_scene_threaded(meshes, flat, textured, &progress_clone);
         let _ = tx.send(result);
     });
 

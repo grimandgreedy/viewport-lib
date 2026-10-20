@@ -14,6 +14,7 @@
 use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
@@ -207,7 +208,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.28, 0.28, 0.3));
                 m.roughness = 0.95;
-                m
+                upload_material(renderer, m)
             },
         );
 
@@ -216,6 +217,11 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere_mesh)
             .expect("sl sphere");
+        let sphere_mat = {
+            let mut m = Material::from_colour(Colour::linear_rgb(0.88, 0.88, 0.9));
+            m.roughness = 0.3;
+            upload_material(renderer, m)
+        };
         for row in 0..3i32 {
             for col in 0..3i32 {
                 let x = (col - 1) as f32 * 4.5;
@@ -224,11 +230,7 @@ impl App {
                     &format!("Sphere {row}{col}"),
                     Some(sphere_id),
                     glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.7)),
-                    {
-                        let mut m = Material::from_colour(Colour::linear_rgb(0.88, 0.88, 0.9));
-                        m.roughness = 0.3;
-                        m
-                    },
+                    sphere_mat,
                 );
             }
         }
@@ -254,7 +256,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.10, 0.10, 0.11));
                 m.roughness = 0.95;
-                m
+                upload_material(renderer, m)
             },
         );
 
@@ -265,6 +267,11 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &pillar_mesh)
             .expect("sl stress pillar");
+        let pillar_mat = {
+            let mut m = Material::from_colour(Colour::linear_rgb(0.85, 0.85, 0.9));
+            m.roughness = 0.6;
+            upload_material(renderer, m)
+        };
         for row in -4..=4i32 {
             for col in -4..=4i32 {
                 let x = col as f32 * 3.0;
@@ -273,11 +280,7 @@ impl App {
                     &format!("Pillar {row}{col}"),
                     Some(pillar_id),
                     glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.8)),
-                    {
-                        let mut m = Material::from_colour(Colour::linear_rgb(0.85, 0.85, 0.9));
-                        m.roughness = 0.6;
-                        m
-                    },
+                    pillar_mat,
                 );
             }
         }

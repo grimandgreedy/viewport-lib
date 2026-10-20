@@ -2,7 +2,7 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
-use vpl::{Camera, KeyCode, MeshId, ViewportRenderer};
+use vpl::{Camera, KeyCode, Material, MaterialId, MeshId, ViewportRenderer};
 
 use crate::{App, ShowcaseMode};
 
@@ -17,6 +17,47 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &self.box_mesh_data)
             .expect("box mesh upload")
+    }
+}
+
+/// Upload a material and return its id. Call once at build time and keep the id.
+pub(crate) fn upload_material(renderer: &mut ViewportRenderer, material: Material) -> MaterialId {
+    renderer
+        .resources_mut()
+        .upload_material(material)
+        .expect("material upload")
+}
+
+/// Edit an uploaded material in place from a controls panel. `edit` gets the
+/// current values; if it changes them, every item holding `id` draws the new
+/// values next frame.
+pub(crate) fn edit_material(
+    frame: &crate::eframe::Frame,
+    id: MaterialId,
+    edit: impl FnOnce(&mut Material),
+) {
+    // A showcase holds the default id until it is built; never edit the
+    // default material through it.
+    if id == MaterialId::DEFAULT {
+        return;
+    }
+    let Some(rs) = frame.wgpu_render_state() else {
+        return;
+    };
+    let mut guard = rs.renderer.write();
+    let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() else {
+        return;
+    };
+    let resources = renderer.resources_mut();
+    let Some(old) = resources.material(id).copied() else {
+        return;
+    };
+    let mut mat = old;
+    edit(&mut mat);
+    if mat != old {
+        resources
+            .replace_material(id, mat)
+            .expect("material id is live");
     }
 }
 

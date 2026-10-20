@@ -8,6 +8,10 @@ pub(crate) mod fallbacks;
 mod ibl_compute;
 /// Built-in matcap texture data (procedurally generated).
 pub mod matcap_data;
+/// Slotted material storage with generational ids.
+pub(crate) mod material_store;
+/// Material upload, replace and free.
+pub(crate) mod materials;
 /// Slotted texture storage with generational ids.
 pub(crate) mod texture_store;
 pub(crate) mod textures;

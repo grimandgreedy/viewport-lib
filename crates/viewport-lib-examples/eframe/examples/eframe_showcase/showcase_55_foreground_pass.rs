@@ -25,6 +25,7 @@
 use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
@@ -50,6 +51,7 @@ pub(crate) struct ForegroundState {
     pub built: bool,
     pub scene: Scene,
     pub cube_mesh: vpl::MeshId,
+    pub cube_materials: [vpl::MaterialId; 3],
     pub track: CameraTrack,
     pub track_t: f64,
     pub playing: bool,
@@ -76,6 +78,7 @@ impl Default for ForegroundState {
             built: false,
             scene: Scene::new(),
             cube_mesh: vpl::MeshId::INVALID,
+            cube_materials: [vpl::MaterialId::DEFAULT; 3],
             track: CameraTrack::new(),
             track_t: 0.0,
             playing: true,
@@ -134,7 +137,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.82, 0.82, 0.86));
                 m.roughness = 0.9;
-                m
+                upload_material(renderer, m)
             },
         );
 
@@ -165,7 +168,7 @@ impl App {
             let mat = {
                 let mut m = Material::pbr(Colour::from_linear_rgb_array(*colour), 0.05, 0.45);
                 m.roughness = 0.4;
-                m
+                upload_material(renderer, m)
             };
             if *is_sphere {
                 self.fg_state.scene.add_named(
@@ -193,6 +196,12 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &make_box_with_uvs(0.34, 0.34, 0.34))
             .expect("fg cube");
+        self.fg_state.cube_materials = CUBE_COLOURS.map(|c| {
+            upload_material(
+                renderer,
+                Material::pbr(Colour::from_linear_rgb_array(c), 0.1, 0.35),
+            )
+        });
 
         self.fg_state.track = build_orbit_track();
         self.fg_state.track_t = 0.0;
@@ -298,10 +307,8 @@ pub(crate) fn configure_frame(app: &App, fd: &mut vpl::FrameData) {
         let spin = glam::Mat4::from_rotation_y(t + i as f32 * 1.3)
             * glam::Mat4::from_rotation_x(t * 0.6 + i as f32);
         let model = c2w * glam::Mat4::from_translation(glam::Vec3::from_array(*off)) * spin;
-        let mut item = SceneRenderItem::default();
-        item.mesh_id = app.fg_state.cube_mesh;
+        let mut item = SceneRenderItem::new(app.fg_state.cube_mesh, app.fg_state.cube_materials[i]);
         item.model = model.to_cols_array_2d();
-        item.material = Material::pbr(Colour::from_linear_rgb_array(CUBE_COLOURS[i]), 0.1, 0.35);
         item.settings.unlit = app.fg_state.unlit;
         cubes.push(item);
     }

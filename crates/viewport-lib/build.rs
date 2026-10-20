@@ -92,26 +92,16 @@ fn main() {
             .unwrap_or_else(|e| panic!("build.rs: failed to write {}: {}", out_path.display(), e));
     }
 
-    // For shaders that include deform.wgsl, produce a _noop variant where that
-    // include is replaced with deform_noop.wgsl. These are loaded at runtime by
-    // ViewportGpuResources::new when the device reports max_bind_groups < 3.
-    // All of them live in src/shaders/.
+    // The shaders that include deform.wgsl, which the runtime composes
+    // registered deformer bodies into. All of them live in src/shaders/.
     let deform_shaders = [
         "mesh.wgsl",
-        "mesh_instanced.wgsl",
-        "mesh_instanced_oit.wgsl",
         "mesh_oit.wgsl",
         "outline_mask.wgsl",
         "pick_id.wgsl",
         "shadow.wgsl",
         "shadow_point.wgsl",
     ];
-    // The same list the runtime composes deformer bodies into
-    // (`mesh_sidecar::registry::MESH_FAMILY_SHADERS`, which includes this file). One list, because
-    // the two questions have one answer: a shader that includes the deform contract needs both a
-    // noop variant for limited devices and its hooks composed on a full one. They were separate,
-    // and `shadow_point.wgsl` sat on this one and not the other, so point-light shadows rasterised
-    // the bind pose of every GPU-skinned character.
     let mut names = String::from("&[\n");
     for name in &deform_shaders {
         writeln!(&mut names, "    \"{name}\",").unwrap();
@@ -120,26 +110,6 @@ fn main() {
     let names_path = PathBuf::from(&out_dir).join("deform_shaders.rs");
     fs::write(&names_path, names)
         .unwrap_or_else(|e| panic!("build.rs: failed to write {}: {}", names_path.display(), e));
-
-    for name in &deform_shaders {
-        let src_path = shaders_dir.join(name);
-        let raw = fs::read_to_string(&src_path)
-            .unwrap_or_else(|e| panic!("build.rs: failed to read {}: {}", src_path.display(), e));
-        let raw_noop = raw.replace(
-            "// #include \"helpers/deform.wgsl\"",
-            "// #include \"helpers/deform_noop.wgsl\"",
-        );
-        let preprocessed = resolve_includes(&raw_noop, &[&shaders_dir], name);
-        let preprocessed = if is_ios {
-            patch_for_ios(&preprocessed)
-        } else {
-            preprocessed
-        };
-        let noop_name = name.replace(".wgsl", "_noop.wgsl");
-        let out_path = PathBuf::from(&out_dir).join(&noop_name);
-        fs::write(&out_path, finish(preprocessed))
-            .unwrap_or_else(|e| panic!("build.rs: failed to write {}: {}", out_path.display(), e));
-    }
 
     // The helpers `plugin_api::shared_wgsl` publishes as string constants go
     // through OUT_DIR too, so they get the same treatment as the shaders.

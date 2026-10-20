@@ -16,6 +16,7 @@
 
 use crate::App;
 use crate::eframe::egui;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::scatter_volume::{
@@ -306,7 +307,7 @@ impl App {
             "Floor",
             Some(floor_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.1)),
-            floor_mat,
+            upload_material(renderer, floor_mat),
         );
 
         // Tall pillars marching down +X to give depth-cueing reference points.
@@ -315,7 +316,10 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &pillar)
             .expect("svol pillar upload");
-        let pillar_mat = Material::from_colour(Colour::linear_rgb(0.55, 0.50, 0.42));
+        let pillar_mat = upload_material(
+            renderer,
+            Material::from_colour(Colour::linear_rgb(0.55, 0.50, 0.42)),
+        );
         for i in 0..6 {
             let x = -6.0 + i as f32 * 2.5;
             for side in [-1.0_f32, 1.0] {
@@ -323,7 +327,7 @@ impl App {
                     "Pillar",
                     Some(pillar_id),
                     glam::Mat4::from_translation(glam::Vec3::new(x, side * 2.5, 1.5)),
-                    pillar_mat.clone(),
+                    pillar_mat,
                 );
             }
         }
@@ -340,7 +344,7 @@ impl App {
             "Reference sphere",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 1.5)),
-            hot_mat,
+            upload_material(renderer, hot_mat),
         );
 
         self.svol_state.fire_ramp_id = renderer

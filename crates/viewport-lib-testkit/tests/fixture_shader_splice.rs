@@ -73,7 +73,11 @@ fn deformer_fixture_moves_the_mesh() {
     let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material = Material::from_colour(Colour::linear_rgb(0.9, 0.9, 0.9));
+    item.material = harness
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.9, 0.9, 0.9)))
+        .expect("material upload");
     item.settings.unlit = true;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
@@ -140,8 +144,13 @@ fn material_plugin_fixture_changes_shading() {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(1.5)).to_cols_array_2d();
-        item.material = Material::from_colour(Colour::linear_rgb(0.8, 0.1, 0.1));
-        item.material.shading_plugin = shading;
+        let mut red = Material::from_colour(Colour::linear_rgb(0.8, 0.1, 0.1));
+        red.shading_plugin = shading;
+        item.material = harness
+            .renderer
+            .resources_mut()
+            .upload_material(red)
+            .expect("material upload");
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         harness.render(&frame, SIZE, SIZE)
     };

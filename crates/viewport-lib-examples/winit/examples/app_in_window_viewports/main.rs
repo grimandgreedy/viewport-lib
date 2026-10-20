@@ -157,11 +157,15 @@ fn main() {
                         .resources_mut()
                         .upload_mesh_data(&device, &primitives::cube(1.0))
                         .unwrap();
-                    let node = left.session.scene_mut().add(
-                        Some(cube),
-                        glam::Mat4::IDENTITY,
-                        Material::from_colour(Colour::linear_rgb(0.12, 0.3, 0.7)),
-                    );
+                    let material = left
+                        .session
+                        .resources_mut()
+                        .upload_material(Material::from_colour(Colour::linear_rgb(0.12, 0.3, 0.7)))
+                        .unwrap();
+                    let node =
+                        left.session
+                            .scene_mut()
+                            .add(Some(cube), glam::Mat4::IDENTITY, material);
                     left.session.camera_mut().distance = 5.0;
                     panes.cube = Some(node);
                     panes.left = Some(left);
@@ -172,11 +176,15 @@ fn main() {
                         .resources_mut()
                         .upload_mesh_data(&device, &primitives::torus(0.6, 0.22, 32, 16))
                         .unwrap();
-                    right.session.scene_mut().add(
-                        Some(torus),
-                        glam::Mat4::IDENTITY,
-                        Material::from_colour(Colour::linear_rgb(0.1, 0.55, 0.2)),
-                    );
+                    let material = right
+                        .session
+                        .resources_mut()
+                        .upload_material(Material::from_colour(Colour::linear_rgb(0.1, 0.55, 0.2)))
+                        .unwrap();
+                    right
+                        .session
+                        .scene_mut()
+                        .add(Some(torus), glam::Mat4::IDENTITY, material);
                     right.session.camera_mut().distance = 5.0;
                     panes.right = Some(right);
                 }

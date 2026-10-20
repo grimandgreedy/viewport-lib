@@ -116,16 +116,13 @@ impl DeviceResources {
             &self.material.texture_array_view,
             &self.material.normal_map_view,
             &self.material.ao_map_view,
-            &self.material.sampler,
+            &self.material.mesh_sampler,
             &self.material.lut_sampler,
             &self.content.fallback_lut_view,
-            &self.content.fallback_scalar_buf,
+            self.sidecar.fallback(),
             &self.material.texture.view,
-            &self.content.fallback_face_colour_buf,
-            &self.content.fallback_warp_buf,
             &self.content.fallback_position_override_buf,
             &self.content.fallback_normal_override_buf,
-            &self.content.fallback_extension_attr_buf,
             &self.material.metallic_roughness_view,
             &self.material.emissive_view,
             &self.content.fallback_uv1_buf,
@@ -288,16 +285,13 @@ impl DeviceResources {
             &self.material.texture_array_view,
             &self.material.normal_map_view,
             &self.material.ao_map_view,
-            &self.material.sampler,
+            &self.material.mesh_sampler,
             &self.material.lut_sampler,
             &self.content.fallback_lut_view,
-            &self.content.fallback_scalar_buf,
+            self.sidecar.fallback(),
             &self.material.texture.view,
-            &self.content.fallback_face_colour_buf,
-            &self.content.fallback_warp_buf,
             &self.content.fallback_position_override_buf,
             &self.content.fallback_normal_override_buf,
-            &self.content.fallback_extension_attr_buf,
             &self.material.metallic_roughness_view,
             &self.material.emissive_view,
             &self.content.fallback_uv1_buf,
@@ -311,24 +305,7 @@ impl DeviceResources {
         mesh.cpu_normals = cpu_normals;
         mesh.cpu_indices = cpu_indices;
         mesh.submeshes = data.submeshes.clone();
-        let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_colour_bufs, vector_attr_bufs) =
-            Self::upload_attributes(
-                device,
-                &data.attributes,
-                &data.positions,
-                &data.normals,
-                &data.indices,
-                data.uvs.as_deref(),
-                tangent_slice,
-            );
-        mesh.attribute_buffers = attr_bufs;
-        mesh.attribute_ranges = attr_ranges;
-        mesh.face_vertex_buffer = face_vbuf;
-        mesh.face_attribute_buffers = face_attr_bufs;
-        mesh.face_colour_buffers = face_colour_bufs;
-        mesh.vector_attribute_buffers = vector_attr_bufs;
-        mesh.extension_attr_buffer =
-            Self::upload_extension_attributes(device, data, vertices.len());
+        self.attach_mesh_sidecar(device, &mut mesh, data, tangent_slice, vertices.len());
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
             + data.indices.len() * std::mem::size_of::<u32>())
             as u64;
@@ -507,16 +484,13 @@ impl DeviceResources {
                                 &resources.material.texture_array_view,
                                 &resources.material.normal_map_view,
                                 &resources.material.ao_map_view,
-                                &resources.material.sampler,
+                                &resources.material.mesh_sampler,
                                 &resources.material.lut_sampler,
                                 &resources.content.fallback_lut_view,
-                                &resources.content.fallback_scalar_buf,
+                                resources.sidecar.fallback(),
                                 &resources.material.texture.view,
-                                &resources.content.fallback_face_colour_buf,
-                                &resources.content.fallback_warp_buf,
                                 &resources.content.fallback_position_override_buf,
                                 &resources.content.fallback_normal_override_buf,
-                                &resources.content.fallback_extension_attr_buf,
                                 &resources.material.metallic_roughness_view,
                                 &resources.material.emissive_view,
                                 &resources.content.fallback_uv1_buf,
@@ -531,34 +505,13 @@ impl DeviceResources {
                             mesh.cpu_normals = cpu_normals;
                             mesh.cpu_indices = cpu_indices;
                             mesh.submeshes = data.submeshes.clone();
-                            let (
-                                attr_bufs,
-                                attr_ranges,
-                                face_vbuf,
-                                face_attr_bufs,
-                                face_colour_bufs,
-                                vector_attr_bufs,
-                            ) = DeviceResources::upload_attributes(
+                            resources.attach_mesh_sidecar(
                                 &device,
-                                &data.attributes,
-                                &data.positions,
-                                &data.normals,
-                                &data.indices,
-                                data.uvs.as_deref(),
+                                &mut mesh,
+                                &data,
                                 tangent_slice,
+                                data.positions.len(),
                             );
-                            mesh.attribute_buffers = attr_bufs;
-                            mesh.attribute_ranges = attr_ranges;
-                            mesh.face_vertex_buffer = face_vbuf;
-                            mesh.face_attribute_buffers = face_attr_bufs;
-                            mesh.face_colour_buffers = face_colour_bufs;
-                            mesh.vector_attribute_buffers = vector_attr_bufs;
-                            mesh.extension_attr_buffer =
-                                DeviceResources::upload_extension_attributes(
-                                    &device,
-                                    &data,
-                                    data.positions.len(),
-                                );
                             let mesh_id = resources.mesh_store.insert(mesh);
                             tracing::debug!(
                                 mesh_index = mesh_id.index(),
@@ -837,6 +790,8 @@ impl DeviceResources {
         // triggers the rebuild that actually swaps the fallback binding for
         // this buffer.
         mesh.position_override_gen = mesh.position_override_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
+        self.sidecar_dirty.push(mesh_id);
         Ok(())
     }
 
@@ -884,6 +839,8 @@ impl DeviceResources {
         mesh.position_override_slice = Some(slice);
         // See `set_position_override_buffer` for why only the gen moves.
         mesh.position_override_gen = mesh.position_override_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
+        self.sidecar_dirty.push(mesh_id);
         Ok(())
     }
 
@@ -912,6 +869,8 @@ impl DeviceResources {
         // See `set_position_override_buffer` for why this only bumps the gen
         // counter and not `last_tex_key.10`.
         mesh.normal_override_gen = mesh.normal_override_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
+        self.sidecar_dirty.push(mesh_id);
         Ok(())
     }
 
@@ -943,6 +902,8 @@ impl DeviceResources {
         mesh.normal_override_buffer = Some(buffer);
         mesh.normal_override_slice = Some(slice);
         mesh.normal_override_gen = mesh.normal_override_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
+        self.sidecar_dirty.push(mesh_id);
         Ok(())
     }
 
@@ -986,6 +947,8 @@ impl DeviceResources {
         mesh.position_override_buffer = None;
         mesh.position_override_slice = None;
         mesh.position_override_gen = mesh.position_override_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
+        self.sidecar_dirty.push(mesh_id);
         Ok(())
     }
 
@@ -1010,6 +973,8 @@ impl DeviceResources {
         mesh.normal_override_buffer = None;
         mesh.normal_override_slice = None;
         mesh.normal_override_gen = mesh.normal_override_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
+        self.sidecar_dirty.push(mesh_id);
         Ok(())
     }
 
@@ -1105,29 +1070,16 @@ impl DeviceResources {
                     index: mesh_id.index(),
                     count: store_len,
                 })?;
-        // Zero-pad / truncate UV1 to the vertex count. It rides the same vec4
-        // sidecar as the plugin vertex attribute (binding 15), so pack UV into
-        // .xy and the atlas page into .z (0 for single-page lightmaps); the shader
-        // reads .xy and selects the array layer from .z.
+        // Zero-pad / truncate UV1 to the vertex count, UV in .xy and the atlas
+        // page in .z (0 for single-page lightmaps); the shader reads .xy and
+        // selects the array layer from .z.
         let vertex_count = mesh.vertex_count().max(1);
         let mut values = vec![[0.0f32; 4]; vertex_count];
         for (i, (dst, src)) in values.iter_mut().zip(uv1.iter()).enumerate() {
             let page = pages.and_then(|p| p.get(i)).copied().unwrap_or(0) as f32;
             *dst = [src.x, src.y, page, 0.0];
         }
-        let uv1_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("lightmap_uv1_buf"),
-            size: (values.len() * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(
-            uv1_buffer.slice(..),
-            bytemuck::cast_slice(&values),
-        );
-        uv1_buffer.unmap();
         mesh.lightmap = Some(crate::resources::lightmap::MeshLightmap {
-            uv1_buffer,
             texture_id: crate::resources::lightmap::primary_texture(data),
             direction_texture_id: crate::resources::lightmap::secondary_texture(data),
             is_shadowmask: matches!(
@@ -1142,8 +1094,10 @@ impl DeviceResources {
             layer: 0,
         });
         // The gen bump forces the object bind-group rebuild that swaps the
-        // fallbacks at bindings 16/17 for this UV1 buffer and texture.
+        // fallback lightmap textures for the registered ones.
         mesh.lightmap_gen = mesh.lightmap_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
+        self.set_lightmap_uv_stream(device, mesh_id, Some(values));
         Ok(())
     }
 
@@ -1157,6 +1111,12 @@ impl DeviceResources {
     /// `scale_bias` maps its `[0, 1]` unwrap onto its sub-rect of that page
     /// (`lm_uv = uv1 * scale_bias.xy + scale_bias.zw`). This is the Unity/Unreal
     /// per-instance lightmap-index + `LightmapScaleBias` model.
+    ///
+    /// The placement given here is the mesh's default. A
+    /// [`SceneRenderItem`](crate::SceneRenderItem) that names one of the
+    /// frame's `lightmap_placements` draws its copy at that placement instead,
+    /// so repeated props upload one mesh and one unwrap, each copy in its own
+    /// rect of the atlas.
     ///
     /// `uv1` is the object's own unique unwrap in `[0, 1]`, exactly as for
     /// [`set_lightmap`](Self::set_lightmap); the sub-rect transform is applied in
@@ -1193,19 +1153,7 @@ impl DeviceResources {
         for (dst, src) in values.iter_mut().zip(uv1.iter()) {
             *dst = [src.x, src.y, 0.0, 0.0];
         }
-        let uv1_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("scene_lightmap_uv1_buf"),
-            size: (values.len() * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(
-            uv1_buffer.slice(..),
-            bytemuck::cast_slice(&values),
-        );
-        uv1_buffer.unmap();
         mesh.lightmap = Some(crate::resources::lightmap::MeshLightmap {
-            uv1_buffer,
             texture_id: radiance,
             direction_texture_id: None,
             is_shadowmask: false,
@@ -1214,6 +1162,8 @@ impl DeviceResources {
             layer,
         });
         mesh.lightmap_gen = mesh.lightmap_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
+        self.set_lightmap_uv_stream(device, mesh_id, Some(values));
         Ok(())
     }
 
@@ -1238,7 +1188,59 @@ impl DeviceResources {
                 })?;
         mesh.lightmap = None;
         mesh.lightmap_gen = mesh.lightmap_gen.wrapping_add(1);
+        self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
+        self.drop_lightmap_uv_stream(mesh_id);
         Ok(())
+    }
+
+    /// Replace the lightmap UV1 stream of `mesh_id`'s sidecar record (or drop
+    /// it with `None`). The record moves to fit, keeping its other streams.
+    fn set_lightmap_uv_stream(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        values: Option<Vec<[f32; 4]>>,
+    ) {
+        use crate::resources::mesh::sidecar_pool::{StreamData, StreamKind};
+        let Some(mesh) = self.mesh_store.get_mut(mesh_id) else {
+            return;
+        };
+        let add: Vec<StreamData> = values
+            .map(|v| StreamData::from_vec4(StreamKind::LightmapUv, "", &v))
+            .into_iter()
+            .collect();
+        mesh.sidecar = match mesh.sidecar.take() {
+            Some(old) => {
+                Some(
+                    self.sidecar
+                        .rebuild(device, old, |s| s.kind != StreamKind::LightmapUv, add),
+                )
+            }
+            None if !add.is_empty() => {
+                let header = Self::sidecar_header(&self.geometry, mesh);
+                Some(self.sidecar.build(device, header, add))
+            }
+            None => None,
+        };
+        // The record moved, and its deform tables name absolute words.
+        self.sync_deform_record(device, mesh_id, &[]);
+    }
+
+    /// Drop the lightmap UV1 stream from `mesh_id`'s record in place. The
+    /// stream's words stay allocated until the record next moves.
+    fn drop_lightmap_uv_stream(&mut self, mesh_id: crate::resources::mesh::mesh_store::MeshId) {
+        use crate::resources::mesh::sidecar_pool::StreamKind;
+        let Some(record) = self
+            .mesh_store
+            .get_mut(mesh_id)
+            .and_then(|m| m.sidecar.as_mut())
+        else {
+            return;
+        };
+        if record.drop_stream(StreamKind::LightmapUv) {
+            let record = record.clone();
+            self.sidecar.write_header(&record);
+        }
     }
 
     /// Write per-vertex colours into an uploaded mesh in place, starting at
@@ -1403,7 +1405,10 @@ impl DeviceResources {
                 && existing.index_count as usize == data.indices.len()
                 && data.attributes.is_empty()
                 && data.extension_attributes.is_none()
-                && existing.extension_attr_buffer.is_none();
+                && existing.sidecar.as_ref().map_or(true, |r| {
+                    r.first_of(crate::resources::mesh::sidecar_pool::StreamKind::Extension)
+                        .is_none()
+                });
 
             if in_place {
                 use bytemuck::cast_slice;
@@ -1481,16 +1486,13 @@ impl DeviceResources {
             &self.material.texture_array_view,
             &self.material.normal_map_view,
             &self.material.ao_map_view,
-            &self.material.sampler,
+            &self.material.mesh_sampler,
             &self.material.lut_sampler,
             &self.content.fallback_lut_view,
-            &self.content.fallback_scalar_buf,
+            self.sidecar.fallback(),
             &self.material.texture.view,
-            &self.content.fallback_face_colour_buf,
-            &self.content.fallback_warp_buf,
             &self.content.fallback_position_override_buf,
             &self.content.fallback_normal_override_buf,
-            &self.content.fallback_extension_attr_buf,
             &self.material.metallic_roughness_view,
             &self.material.emissive_view,
             &self.content.fallback_uv1_buf,
@@ -1512,24 +1514,6 @@ impl DeviceResources {
         }
         new_mesh.closed = mesh_is_closed(data.positions.iter().copied(), &data.indices);
         new_mesh.submeshes = data.submeshes.clone();
-        let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_colour_bufs, vector_attr_bufs) =
-            Self::upload_attributes(
-                device,
-                &data.attributes,
-                &data.positions,
-                &data.normals,
-                &data.indices,
-                data.uvs.as_deref(),
-                tangent_slice,
-            );
-        new_mesh.attribute_buffers = attr_bufs;
-        new_mesh.attribute_ranges = attr_ranges;
-        new_mesh.face_vertex_buffer = face_vbuf;
-        new_mesh.face_attribute_buffers = face_attr_bufs;
-        new_mesh.face_colour_buffers = face_colour_bufs;
-        new_mesh.vector_attribute_buffers = vector_attr_bufs;
-        new_mesh.extension_attr_buffer =
-            Self::upload_extension_attributes(device, data, vertices.len());
         // Content changed under a stable id: carry the old revision forward
         // plus one so content-keyed caches invalidate.
         new_mesh.content_rev = self
@@ -1550,10 +1534,23 @@ impl DeviceResources {
             new_mesh.position_override_gen = old.position_override_gen.wrapping_add(1);
             new_mesh.normal_override_gen = old.normal_override_gen.wrapping_add(1);
         }
+        // The old record goes with the old mesh; the new one carries the
+        // overrides just moved across.
+        if let Some(old) = self
+            .mesh_store
+            .get_mut(mesh_id)
+            .and_then(|old| old.sidecar.take())
+        {
+            self.sidecar.free(&old);
+        }
+        self.attach_mesh_sidecar(device, &mut new_mesh, data, tangent_slice, vertices.len());
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
             + data.indices.len() * std::mem::size_of::<u32>())
             as u64;
         let _ = self.mesh_store.replace(mesh_id, new_mesh);
+        // The fresh record holds the attributes only; the mesh's deform slots
+        // follow it there.
+        self.sync_deform_record(device, mesh_id, &[]);
         tracing::debug!(
             mesh_index = mesh_id.index(),
             vertices = data.positions.len(),
@@ -1610,13 +1607,16 @@ impl DeviceResources {
         // Return the mesh's slab windows to the free list before removing it.
         let spans = self
             .mesh_store
-            .get(id)
-            .map(|m| (m.vertex_span, m.index_span));
+            .get_mut(id)
+            .map(|m| (m.vertex_span, m.index_span, m.sidecar.take()));
         let removed = self.mesh_store.remove(id);
         if removed {
-            if let Some((vspan, ispan)) = spans {
+            if let Some((vspan, ispan, record)) = spans {
                 self.geometry.free_vertex(vspan);
                 self.geometry.free_index(ispan);
+                if let Some(record) = record {
+                    self.sidecar.free(&record);
+                }
             }
             self.resource_free_epoch += 1;
         }
@@ -1799,17 +1799,20 @@ impl DeviceResources {
                     index: mesh_id.index(),
                 })?;
 
-        let buffer = gpu_mesh.face_attribute_buffers.get(name).ok_or_else(|| {
-            crate::error::ViewportError::AttributeNotFound {
+        use crate::resources::mesh::sidecar_pool::StreamKind;
+        let (record, stream) = gpu_mesh
+            .sidecar
+            .as_ref()
+            .and_then(|r| Some((r.clone(), r.find(StreamKind::FaceScalar, name)?.clone())))
+            .ok_or_else(|| crate::error::ViewportError::AttributeNotFound {
                 mesh_id: mesh_id.index(),
                 name: name.to_string(),
-            }
-        })?;
+            })?;
 
-        // The per-face scalar buffer holds `3 * n_tris` f32 (each face scalar
+        // The per-face scalar stream holds `3 * n_tris` f32 (each face scalar
         // replicated to the three vertices of its triangle; see
         // `expand_face_scalars_to_3n`).
-        let n_tris = (buffer.size() / 4) as usize / 3;
+        let n_tris = stream.len as usize / 3;
         if face_to_cell.len() != n_tris {
             return Err(crate::error::ViewportError::AttributeLengthMismatch {
                 expected: n_tris,
@@ -1835,12 +1838,16 @@ impl DeviceResources {
             expanded.push(v);
         }
 
-        // Zero-copy in-place write via the wgpu staging belt.
-        queue.write_buffer(buffer, 0, bytemuck::cast_slice(&expanded));
-
-        // Recompute the scalar range so colourmap LUT mapping stays accurate.
         let range = if min > max { (0.0, 1.0) } else { (min, max) };
         gpu_mesh.attribute_ranges.insert(name.to_string(), range);
+        // In-place write into the mesh's sidecar record.
+        self.sidecar.write_stream_with(
+            queue,
+            &record,
+            &stream,
+            bytemuck::cast_slice(&expanded).to_vec(),
+        );
+        let gpu_mesh = self.mesh_store.get_mut(mesh_id).expect("checked above");
 
         // Force the attribute bind group to rebuild on next prepare() (the range
         // may have moved), matching `replace_attribute`.
@@ -2022,235 +2029,251 @@ impl DeviceResources {
         }
     }
 
-    /// Upload per-vertex, per-cell, per-face scalar, and per-face colour attributes to GPU buffers.
+    /// The mesh's sidecar streams, built from `MeshData::attributes` and
+    /// `MeshData::extension_attributes`, with the scalar range per attribute and
+    /// the non-indexed face vertex buffer that face attributes draw with.
     ///
-    /// Returns `(attribute_buffers, attribute_ranges, face_vertex_buffer, face_attribute_buffers,
-    /// face_colour_buffers)`.
-    ///
-    /// - `attribute_buffers`: per-vertex storage buffers for `Vertex` and `Cell` kinds.
-    /// - `attribute_ranges`: `(min, max)` per attribute name (all scalar kinds).
-    /// - `face_vertex_buffer`: non-indexed 3N-vertex buffer (built once if any `Face`/`FaceColour` attr exists).
-    /// - `face_attribute_buffers`: per-face scalar storage buffers (3N `f32` entries, replicated).
-    /// - `face_colour_buffers`: per-face colour storage buffers (3N `[f32;4]` entries, replicated).
-    /// Upload `MeshData::extension_attributes` to a per-mesh storage buffer
-    /// (one `vec4<f32>` per vertex, zero-padded / truncated to the vertex
-    /// count). `None` when the mesh declares no extension attributes.
-    pub(crate) fn upload_extension_attributes(
+    /// - `Vertex`, `Cell` and `Edge` attributes become per-vertex scalar streams
+    ///   (cell and edge values averaged to the vertices).
+    /// - `Face`, `Halfedge` and `Corner` attributes become per-corner scalar
+    ///   streams (3N entries), and `FaceColour` per-corner colour streams.
+    /// - `VertexVector` attributes become vector streams, 3 floats per vertex.
+    /// - The extension attribute is one `vec4` per vertex, zero-padded or
+    ///   truncated to `vertex_count`.
+    pub(crate) fn attribute_streams(
         device: &crate::gpu::Device,
         data: &MeshData,
-        vertex_count: usize,
-    ) -> Option<crate::gpu::Buffer> {
-        let attrs = data.extension_attributes.as_ref()?;
-        let mut values = vec![[0.0f32; 4]; vertex_count.max(1)];
-        for (dst, src) in values.iter_mut().zip(attrs.iter()) {
-            *dst = *src;
-        }
-        let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("extension_attr_buf"),
-            size: (values.len() * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(buf.slice(..), bytemuck::cast_slice(&values));
-        buf.unmap();
-        Some(buf)
-    }
-
-    fn upload_attributes(
-        device: &crate::gpu::Device,
-        attributes: &std::collections::HashMap<String, AttributeData>,
-        positions: &[[f32; 3]],
-        normals: &[[f32; 3]],
-        indices: &[u32],
-        uvs: Option<&[[f32; 2]]>,
         tangents: Option<&[[f32; 4]]>,
+        vertex_count: usize,
     ) -> (
-        std::collections::HashMap<String, crate::gpu::Buffer>,
+        Vec<crate::resources::mesh::sidecar_pool::StreamData>,
         std::collections::HashMap<String, (f32, f32)>,
         Option<crate::gpu::Buffer>,
-        std::collections::HashMap<String, crate::gpu::Buffer>,
-        std::collections::HashMap<String, crate::gpu::Buffer>,
-        std::collections::HashMap<String, crate::gpu::Buffer>,
     ) {
-        let mut bufs = std::collections::HashMap::new();
+        use crate::resources::mesh::sidecar_pool::{StreamData, StreamKind};
+        let positions = &data.positions;
+        let normals = &data.normals;
+        let indices = &data.indices;
+        let uvs = data.uvs.as_deref();
+        let mut streams = Vec::new();
         let mut ranges = std::collections::HashMap::new();
-        let mut face_attr_bufs: std::collections::HashMap<String, crate::gpu::Buffer> =
-            std::collections::HashMap::new();
-        let mut vector_attr_bufs: std::collections::HashMap<String, crate::gpu::Buffer> =
-            std::collections::HashMap::new();
-        let mut face_colour_bufs: std::collections::HashMap<String, crate::gpu::Buffer> =
-            std::collections::HashMap::new();
         let mut face_vbuf: Option<crate::gpu::Buffer> = None;
-
         let n_tris = indices.len() / 3;
+        let range_of = |v: &[f32]| {
+            (
+                v.iter().cloned().fold(f32::INFINITY, f32::min),
+                v.iter().cloned().fold(f32::NEG_INFINITY, f32::max),
+            )
+        };
+        let face_vertices = |face_vbuf: &mut Option<crate::gpu::Buffer>| {
+            if face_vbuf.is_none() {
+                *face_vbuf = Some(Self::build_face_vertex_buffer(
+                    device, positions, normals, indices, uvs, tangents,
+                ));
+            }
+        };
 
-        for (name, attr_data) in attributes {
-            match attr_data {
+        // Sorted by name so a mesh's stream table, and with it every
+        // instance's selection word, does not depend on hash order.
+        let mut names: Vec<&String> = data.attributes.keys().collect();
+        names.sort();
+        for name in names {
+            match &data.attributes[name] {
                 AttributeData::Vertex(v) => {
-                    let scalars = v.clone();
-                    if scalars.is_empty() {
+                    if v.is_empty() {
                         continue;
                     }
-                    let min = scalars.iter().cloned().fold(f32::INFINITY, f32::min);
-                    let max = scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                    let buf =
-                        Self::create_storage_buffer_f32(device, &format!("attr_{name}"), &scalars);
-                    bufs.insert(name.clone(), buf);
-                    ranges.insert(name.clone(), (min, max));
+                    ranges.insert(name.clone(), range_of(v));
+                    streams.push(
+                        StreamData::from_f32(StreamKind::Scalar, name.as_str(), v)
+                            .padded(vertex_count, false),
+                    );
                 }
                 AttributeData::Cell(c) => {
                     let scalars = expand_cell_to_vertex(c, positions, indices);
                     if scalars.is_empty() {
                         continue;
                     }
-                    let min = scalars.iter().cloned().fold(f32::INFINITY, f32::min);
-                    let max = scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                    let buf =
-                        Self::create_storage_buffer_f32(device, &format!("attr_{name}"), &scalars);
-                    bufs.insert(name.clone(), buf);
-                    ranges.insert(name.clone(), (min, max));
-                }
-                AttributeData::Face(f) => {
-                    // Build the shared face vertex buffer on first Face/FaceColour attribute.
-                    if face_vbuf.is_none() {
-                        face_vbuf = Some(Self::build_face_vertex_buffer(
-                            device, positions, normals, indices, uvs, tangents,
-                        ));
-                    }
-                    let expanded = expand_face_scalars_to_3n(f, n_tris);
-                    if expanded.is_empty() {
-                        continue;
-                    }
-                    let min = expanded.iter().cloned().fold(f32::INFINITY, f32::min);
-                    let max = expanded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                    let buf = Self::create_storage_buffer_f32(
-                        device,
-                        &format!("face_attr_{name}"),
-                        &expanded,
-                    );
-                    face_attr_bufs.insert(name.clone(), buf);
-                    ranges.insert(name.clone(), (min, max));
-                }
-                AttributeData::FaceColour(colours) => {
-                    // Build the shared face vertex buffer on first Face/FaceColour attribute.
-                    if face_vbuf.is_none() {
-                        face_vbuf = Some(Self::build_face_vertex_buffer(
-                            device, positions, normals, indices, uvs, tangents,
-                        ));
-                    }
-                    let expanded = expand_face_colours_to_3n(colours, n_tris);
-                    if expanded.is_empty() {
-                        continue;
-                    }
-                    let byte_len = std::mem::size_of::<[f32; 4]>() * expanded.len();
-                    let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                        label: Some(&format!("face_colour_{name}")),
-                        size: byte_len as u64,
-                        usage: crate::gpu::BufferUsages::STORAGE
-                            | crate::gpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: true,
-                    });
-                    crate::resources::builders::write_mapped(
-                        buf.slice(..),
-                        bytemuck::cast_slice(&expanded),
-                    );
-                    buf.unmap();
-                    face_colour_bufs.insert(name.clone(), buf);
+                    ranges.insert(name.clone(), range_of(&scalars));
+                    streams.push(StreamData::from_f32(
+                        StreamKind::Scalar,
+                        name.as_str(),
+                        &scalars,
+                    ));
                 }
                 AttributeData::Edge(e) => {
-                    // Average edge values to vertex values (each edge's scalar is
-                    // distributed to its two endpoint vertices).
+                    // Each edge's scalar is distributed to its two endpoints.
                     let scalars = expand_edge_to_vertex(e, positions, indices);
                     if scalars.is_empty() {
                         continue;
                     }
-                    let min = scalars.iter().cloned().fold(f32::INFINITY, f32::min);
-                    let max = scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                    let buf =
-                        Self::create_storage_buffer_f32(device, &format!("attr_{name}"), &scalars);
-                    bufs.insert(name.clone(), buf);
-                    ranges.insert(name.clone(), (min, max));
+                    ranges.insert(name.clone(), range_of(&scalars));
+                    streams.push(StreamData::from_f32(
+                        StreamKind::Scalar,
+                        name.as_str(),
+                        &scalars,
+                    ));
+                }
+                AttributeData::Face(f) => {
+                    face_vertices(&mut face_vbuf);
+                    let expanded = expand_face_scalars_to_3n(f, n_tris);
+                    if expanded.is_empty() {
+                        continue;
+                    }
+                    ranges.insert(name.clone(), range_of(&expanded));
+                    streams.push(StreamData::from_f32(
+                        StreamKind::FaceScalar,
+                        name.as_str(),
+                        &expanded,
+                    ));
                 }
                 AttributeData::Halfedge(h) | AttributeData::Corner(h) => {
-                    // Per-corner scalars: already 3*n_tris values (one per corner),
-                    // matching the face vertex buffer layout. Store directly.
-                    if face_vbuf.is_none() {
-                        face_vbuf = Some(Self::build_face_vertex_buffer(
-                            device, positions, normals, indices, uvs, tangents,
-                        ));
-                    }
+                    // Already one value per triangle corner, matching the face
+                    // vertex buffer layout.
+                    face_vertices(&mut face_vbuf);
                     if h.is_empty() {
                         continue;
                     }
-                    let expanded = h.as_slice();
-                    let min = expanded.iter().cloned().fold(f32::INFINITY, f32::min);
-                    let max = expanded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                    let buf = Self::create_storage_buffer_f32(
-                        device,
-                        &format!("face_attr_{name}"),
-                        &expanded,
+                    ranges.insert(name.clone(), range_of(h));
+                    streams.push(
+                        StreamData::from_f32(StreamKind::FaceScalar, name.as_str(), h)
+                            .padded(3 * n_tris, false),
                     );
-                    face_attr_bufs.insert(name.clone(), buf);
-                    ranges.insert(name.clone(), (min, max));
+                }
+                AttributeData::FaceColour(colours) => {
+                    face_vertices(&mut face_vbuf);
+                    let expanded = expand_face_colours_to_3n(colours, n_tris);
+                    if expanded.is_empty() {
+                        continue;
+                    }
+                    streams.push(StreamData::from_vec4(
+                        StreamKind::FaceColour,
+                        name.as_str(),
+                        &expanded,
+                    ));
                 }
                 AttributeData::VertexVector(v) => {
-                    // Flatten [f32; 3] -> [f32] with 12-byte per-vertex stride.
-                    // An item type binds it as a vertex buffer; the material warp
-                    // reads it as storage.
                     if v.is_empty() {
                         continue;
                     }
                     let flat: Vec<f32> = v.iter().flat_map(|&[x, y, z]| [x, y, z]).collect();
-                    let byte_len = (std::mem::size_of::<f32>() * flat.len()) as u64;
-                    let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                        label: Some(&format!("vec_attr_{name}")),
-                        size: byte_len,
-                        usage: crate::gpu::BufferUsages::VERTEX
-                            | crate::gpu::BufferUsages::STORAGE
-                            | crate::gpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: true,
-                    });
-                    crate::resources::builders::write_mapped(
-                        buf.slice(..),
-                        bytemuck::cast_slice(&flat),
+                    // A vertex past the end of a short warp draws unwarped.
+                    streams.push(
+                        StreamData::from_f32(StreamKind::Vector, name.as_str(), &flat)
+                            .padded(vertex_count, true),
                     );
-                    buf.unmap();
-                    vector_attr_bufs.insert(name.clone(), buf);
                 }
             }
         }
-        (
-            bufs,
-            ranges,
-            face_vbuf,
-            face_attr_bufs,
-            face_colour_bufs,
-            vector_attr_bufs,
-        )
+        if let Some(attrs) = data.extension_attributes.as_ref() {
+            let mut values = vec![[0.0f32; 4]; vertex_count.max(1)];
+            for (dst, src) in values.iter_mut().zip(attrs.iter()) {
+                *dst = *src;
+            }
+            streams.push(StreamData::from_vec4(StreamKind::Extension, "", &values));
+        }
+        (streams, ranges, face_vbuf)
     }
 
-    /// Allocate and fill a STORAGE buffer from a slice of `f32` values. It is
-    /// also a vertex buffer, so an item type can bind a per-vertex scalar
-    /// through `MeshDraw::bind_scalar_attribute`.
-    fn create_storage_buffer_f32(
+    /// The per-mesh words at the head of `mesh`'s sidecar record.
+    pub(crate) fn sidecar_header(
+        geometry: &crate::resources::mesh::geometry_slab::GeometrySlab,
+        mesh: &GpuMesh,
+    ) -> crate::resources::mesh::sidecar_pool::SidecarHeader {
+        let window = |slice: Option<OverrideBufferSlice>| {
+            slice.map_or((0, u32::MAX), |s| (s.base_element, s.element_count))
+        };
+        crate::resources::mesh::sidecar_pool::SidecarHeader {
+            // Draws that bind a mesh sub-slice see a mesh-local vertex index;
+            // the base recovers the whole-chunk index into the uv1 buffer.
+            uv1_base: if mesh.has_uv1 {
+                geometry.base_vertex(mesh.vertex_span) as u32
+            } else {
+                0
+            },
+            position_override: window(mesh.position_override_slice),
+            normal_override: window(mesh.normal_override_slice),
+        }
+    }
+
+    /// Give `mesh` a sidecar record holding `streams` and its current header,
+    /// freeing any record it had. A mesh with no streams, no second UV set
+    /// and no override keeps none and binds the pool's empty header.
+    pub(crate) fn assign_sidecar(
+        &mut self,
         device: &crate::gpu::Device,
-        label: &str,
-        data: &[f32],
-    ) -> crate::gpu::Buffer {
-        let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some(label),
-            size: (std::mem::size_of::<f32>() * data.len()) as u64,
-            // COPY_SRC so a deformer slot can take the attribute as its per-mesh
-            // source (`set_deform_slot_source_attribute`).
-            usage: crate::gpu::BufferUsages::STORAGE
-                | crate::gpu::BufferUsages::VERTEX
-                | crate::gpu::BufferUsages::COPY_DST
-                | crate::gpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(buf.slice(..), bytemuck::cast_slice(data));
-        buf.unmap();
-        buf
+        mesh: &mut GpuMesh,
+        streams: Vec<crate::resources::mesh::sidecar_pool::StreamData>,
+    ) {
+        if let Some(old) = mesh.sidecar.take() {
+            self.sidecar.free(&old);
+        }
+        let needs_record = !streams.is_empty()
+            || mesh.has_uv1
+            || mesh.position_override_buffer.is_some()
+            || mesh.normal_override_buffer.is_some();
+        if needs_record {
+            let header = Self::sidecar_header(&self.geometry, mesh);
+            mesh.sidecar = Some(self.sidecar.build(device, header, streams));
+        }
+    }
+
+    /// Build the mesh's attribute and extension streams from `data` and attach
+    /// them as its sidecar record.
+    pub(crate) fn attach_mesh_sidecar(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh: &mut GpuMesh,
+        data: &MeshData,
+        tangents: Option<&[[f32; 4]]>,
+        vertex_count: usize,
+    ) {
+        let (streams, ranges, face_vbuf) =
+            Self::attribute_streams(device, data, tangents, vertex_count);
+        mesh.attribute_ranges = ranges;
+        mesh.face_vertex_buffer = face_vbuf;
+        self.assign_sidecar(device, mesh, streams);
+    }
+
+    /// Refresh the record heads of meshes whose override windows changed, then
+    /// run the pool's queued work. Called from `process_uploads`.
+    pub(crate) fn flush_sidecars(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) {
+        for id in std::mem::take(&mut self.sidecar_dirty) {
+            self.refresh_sidecar_header(device, id);
+        }
+        self.sidecar.flush(device, queue);
+    }
+
+    /// Rewrite the head of `mesh_id`'s record after an override or vertex
+    /// span change, creating the record when the mesh had none.
+    pub(crate) fn refresh_sidecar_header(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+    ) {
+        let Some(mesh) = self.mesh_store.get(mesh_id) else {
+            return;
+        };
+        let header = Self::sidecar_header(&self.geometry, mesh);
+        let has_record = mesh.sidecar.is_some();
+        if has_record {
+            let mesh = self.mesh_store.get_mut(mesh_id).expect("checked above");
+            let record = mesh.sidecar.as_mut().expect("checked above");
+            if record.header != header {
+                record.header = header;
+                let record = record.clone();
+                self.sidecar.write_header(&record);
+            }
+        } else {
+            let record = self.sidecar.build(device, header, Vec::new());
+            if let Some(mesh) = self.mesh_store.get_mut(mesh_id) {
+                mesh.sidecar = Some(record);
+            }
+        }
     }
 
     /// Build a non-indexed 3N-vertex buffer: one vertex per triangle corner, geometry only.
@@ -2446,13 +2469,10 @@ impl DeviceResources {
         fallback_sampler: &crate::gpu::Sampler,
         lut_sampler: &crate::gpu::Sampler,
         fallback_lut_view: &crate::gpu::TextureView,
-        fallback_scalar_buf: &crate::gpu::Buffer,
+        fallback_sidecar_buf: &crate::gpu::Buffer,
         fallback_matcap_view: &crate::gpu::TextureView,
-        fallback_face_colour_buf: &crate::gpu::Buffer,
-        fallback_warp_buf: &crate::gpu::Buffer,
         fallback_position_override_buf: &crate::gpu::Buffer,
         fallback_normal_override_buf: &crate::gpu::Buffer,
-        fallback_extension_attr_buf: &crate::gpu::Buffer,
         fallback_metallic_roughness_view: &crate::gpu::TextureView,
         fallback_emissive_view: &crate::gpu::TextureView,
         fallback_uv1_buf: &crate::gpu::Buffer,
@@ -2470,13 +2490,10 @@ impl DeviceResources {
             fallback_sampler,
             lut_sampler,
             fallback_lut_view,
-            fallback_scalar_buf,
+            fallback_sidecar_buf,
             fallback_matcap_view,
-            fallback_face_colour_buf,
-            fallback_warp_buf,
             fallback_position_override_buf,
             fallback_normal_override_buf,
-            fallback_extension_attr_buf,
             fallback_metallic_roughness_view,
             fallback_emissive_view,
             fallback_uv1_buf,
@@ -2500,13 +2517,10 @@ impl DeviceResources {
         fallback_sampler: &crate::gpu::Sampler,
         lut_sampler: &crate::gpu::Sampler,
         fallback_lut_view: &crate::gpu::TextureView,
-        fallback_scalar_buf: &crate::gpu::Buffer,
+        fallback_sidecar_buf: &crate::gpu::Buffer,
         fallback_matcap_view: &crate::gpu::TextureView,
-        fallback_face_colour_buf: &crate::gpu::Buffer,
-        fallback_warp_buf: &crate::gpu::Buffer,
         fallback_position_override_buf: &crate::gpu::Buffer,
         fallback_normal_override_buf: &crate::gpu::Buffer,
-        fallback_extension_attr_buf: &crate::gpu::Buffer,
         fallback_metallic_roughness_view: &crate::gpu::TextureView,
         fallback_emissive_view: &crate::gpu::TextureView,
         fallback_uv1_buf: &crate::gpu::Buffer,
@@ -2547,13 +2561,10 @@ impl DeviceResources {
             fallback_sampler,
             lut_sampler,
             fallback_lut_view,
-            fallback_scalar_buf,
+            fallback_sidecar_buf,
             fallback_matcap_view,
-            fallback_face_colour_buf,
-            fallback_warp_buf,
             fallback_position_override_buf,
             fallback_normal_override_buf,
-            fallback_extension_attr_buf,
             fallback_metallic_roughness_view,
             fallback_emissive_view,
             fallback_uv1_buf,
@@ -2598,13 +2609,10 @@ impl DeviceResources {
         fallback_sampler: &crate::gpu::Sampler,
         lut_sampler: &crate::gpu::Sampler,
         fallback_lut_view: &crate::gpu::TextureView,
-        fallback_scalar_buf: &crate::gpu::Buffer,
+        fallback_sidecar_buf: &crate::gpu::Buffer,
         fallback_matcap_view: &crate::gpu::TextureView,
-        fallback_face_colour_buf: &crate::gpu::Buffer,
-        fallback_warp_buf: &crate::gpu::Buffer,
         fallback_position_override_buf: &crate::gpu::Buffer,
         fallback_normal_override_buf: &crate::gpu::Buffer,
-        fallback_extension_attr_buf: &crate::gpu::Buffer,
         fallback_metallic_roughness_view: &crate::gpu::TextureView,
         fallback_emissive_view: &crate::gpu::TextureView,
         fallback_uv1_buf: &crate::gpu::Buffer,
@@ -2617,74 +2625,35 @@ impl DeviceResources {
         use bytemuck::cast_slice;
 
         let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
-        let object_uniform = ObjectUniform {
+        let object_uniform = InstanceData {
             model: identity,
             colour: [1.0, 1.0, 1.0, 1.0],
-            selected: 0,
-            wireframe: 0,
-            ambient: 0.15,
-            diffuse: 0.75,
-            specular: 0.4,
-            shininess: 32.0,
-            has_texture: 0,
-            use_pbr: 0,
-            metallic: 0.0,
-            roughness: 0.5,
-            has_normal_map: 0,
-            has_ao_map: 0,
-            has_attribute: 0,
-            scalar_min: 0.0,
-            scalar_max: 1.0,
-            receive_shadows: 1,
-            nan_colour: [0.0, 0.0, 0.0, 0.0],
-            use_nan_colour: 0,
-            use_matcap: 0,
-            matcap_blendable: 0,
-            unlit: 0,
-            use_face_colour: 0,
-            uv_vis_mode: 0,
-            uv_vis_scale: 8.0,
-            backface_policy: 0,
-            backface_colour: [0.0; 4],
-            has_warp: 0,
-            warp_scale: 1.0,
-            has_position_override: 0,
-            has_normal_override: 0,
-            emissive: [0.0; 3],
-            use_flat: 0,
-            alpha_mode: 0,
-            alpha_cutoff: 0.5,
-            has_metallic_roughness_tex: 0,
-            has_emissive_tex: 0,
+            flags: crate::resources::mesh::instancing::instance_flags::RECEIVE_SHADOWS,
             material_id: 0,
-            uv1_base: 0,
-            mesh_closed: 0,
-            _pad_uv: 0,
-            deform_flags: 0,
-            normal_strength: 1.0,
-            ao_range: [0.0, 1.0],
-            metallic_range: [0.0, 1.0],
-            roughness_range: [0.0, 1.0],
-            position_override_base: 0,
-            position_override_len: u32::MAX,
-            normal_override_base: 0,
-            normal_override_len: u32::MAX,
-            has_light_probe: 0,
+            alpha_cutoff: 0.5,
             light_probe_index: 0,
-            lightmap_mode: 0,
-            lightmap_directional: 0,
-            lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
-            lightmap_index: 0,
-            has_shadowmask: 0,
-            ignore_clip: 0,
-            // Template uniform for mesh registration; real per-item masks are
+            custom_data_id: 0,
+            backface_pattern_scale: 0.0,
+            // Template record for mesh registration; real per-item masks are
             // written by the prepare path. `!0` = lit by every light.
             object_mask: !0,
+            sidecar_record: 0,
+            deform_flags: 0,
+            colour_stream: 0,
+            warp_scale: 1.0,
+            lightmap_layer: 0,
+            lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
+            warp_stream: 0,
+            lightmap_stream: 0,
+            vertex_base: 0,
+            deform_table: 0,
         };
         let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
-            size: std::mem::size_of::<ObjectUniform>() as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            size: std::mem::size_of::<InstanceData>() as u64,
+            usage: crate::gpu::BufferUsages::STORAGE
+                | crate::gpu::BufferUsages::VERTEX
+                | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -2723,19 +2692,11 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 6,
-                    resource: fallback_scalar_buf.as_entire_binding(),
+                    resource: fallback_sidecar_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 7,
                     resource: crate::gpu::BindingResource::TextureView(fallback_matcap_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 8,
-                    resource: fallback_face_colour_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 9,
-                    resource: fallback_warp_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 10,
@@ -2759,13 +2720,9 @@ impl DeviceResources {
                     binding: 14,
                     resource: fallback_normal_override_buf.as_entire_binding(),
                 },
-                crate::gpu::BindGroupEntry {
-                    binding: 15,
-                    resource: fallback_extension_attr_buf.as_entire_binding(),
-                },
                 // 17: lightmap texture (fallback 1x1). Bound for every mesh; the
                 // real texture is swapped in by the material bind-group rebuild
-                // once a lightmap is set. UV1 rides binding 15 above.
+                // once a lightmap is set. UV1 is a stream of the sidecar record.
                 crate::gpu::BindGroupEntry {
                     binding: 17,
                     resource: crate::gpu::BindingResource::TextureView(
@@ -2786,77 +2743,42 @@ impl DeviceResources {
                     binding: 19,
                     resource: fallback_uv1_buf.as_entire_binding(),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 15,
+                    resource: fallback_uv1_buf.as_entire_binding(),
+                },
             ],
         });
 
-        let normal_override_uniform = ObjectUniform {
+        let normal_override_uniform = InstanceData {
             model: identity,
             colour: [1.0, 1.0, 1.0, 1.0],
-            selected: 0,
-            wireframe: 0,
-            ambient: 0.15,
-            diffuse: 0.75,
-            specular: 0.4,
-            shininess: 32.0,
-            has_texture: 0,
-            use_pbr: 0,
-            metallic: 0.0,
-            roughness: 0.5,
-            has_normal_map: 0,
-            has_ao_map: 0,
-            has_attribute: 0,
-            scalar_min: 0.0,
-            scalar_max: 1.0,
-            receive_shadows: 1,
-            nan_colour: [0.0, 0.0, 0.0, 0.0],
-            use_nan_colour: 0,
-            use_matcap: 0,
-            matcap_blendable: 0,
-            unlit: 0,
-            use_face_colour: 0,
-            uv_vis_mode: 0,
-            uv_vis_scale: 8.0,
-            backface_policy: 0,
-            backface_colour: [0.0; 4],
-            has_warp: 0,
-            warp_scale: 1.0,
-            has_position_override: 0,
-            has_normal_override: 0,
-            emissive: [0.0; 3],
-            use_flat: 0,
-            alpha_mode: 0,
-            alpha_cutoff: 0.5,
-            has_metallic_roughness_tex: 0,
-            has_emissive_tex: 0,
+            flags: crate::resources::mesh::instancing::instance_flags::RECEIVE_SHADOWS,
             material_id: 0,
-            uv1_base: 0,
-            mesh_closed: 0,
-            _pad_uv: 0,
-            deform_flags: 0,
-            normal_strength: 1.0,
-            ao_range: [0.0, 1.0],
-            metallic_range: [0.0, 1.0],
-            roughness_range: [0.0, 1.0],
-            position_override_base: 0,
-            position_override_len: u32::MAX,
-            normal_override_base: 0,
-            normal_override_len: u32::MAX,
-            has_light_probe: 0,
+            alpha_cutoff: 0.5,
             light_probe_index: 0,
-            lightmap_mode: 0,
-            lightmap_directional: 0,
-            lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
-            lightmap_index: 0,
-            has_shadowmask: 0,
-            ignore_clip: 0,
-            // Template uniform for mesh registration; real per-item masks are
+            custom_data_id: 0,
+            backface_pattern_scale: 0.0,
+            // Template record for mesh registration; real per-item masks are
             // written by the prepare path. `!0` = lit by every light.
             object_mask: !0,
+            sidecar_record: 0,
+            deform_flags: 0,
+            colour_stream: 0,
+            warp_scale: 1.0,
+            lightmap_layer: 0,
+            lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
+            warp_stream: 0,
+            lightmap_stream: 0,
+            vertex_base: 0,
+            deform_table: 0,
         };
         let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),
-            size: std::mem::size_of::<ObjectUniform>() as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            size: std::mem::size_of::<InstanceData>() as u64,
+            usage: crate::gpu::BufferUsages::STORAGE
+                | crate::gpu::BufferUsages::VERTEX
+                | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -2895,19 +2817,11 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 6,
-                    resource: fallback_scalar_buf.as_entire_binding(),
+                    resource: fallback_sidecar_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 7,
                     resource: crate::gpu::BindingResource::TextureView(fallback_matcap_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 8,
-                    resource: fallback_face_colour_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 9,
-                    resource: fallback_warp_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 10,
@@ -2932,10 +2846,6 @@ impl DeviceResources {
                     resource: fallback_normal_override_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 15,
-                    resource: fallback_extension_attr_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
                     binding: 17,
                     resource: crate::gpu::BindingResource::TextureView(
                         fallback_lightmap_array_view,
@@ -2951,6 +2861,10 @@ impl DeviceResources {
                 // texture, so the zero fallback is always correct here.
                 crate::gpu::BindGroupEntry {
                     binding: 19,
+                    resource: fallback_uv1_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 15,
                     resource: fallback_uv1_buf.as_entire_binding(),
                 },
             ],
@@ -2969,7 +2883,6 @@ impl DeviceResources {
             normal_line_buffer: None,
             normal_line_count: 0,
             object_uniform_buf,
-            last_object_uniform: std::sync::Mutex::new(None),
             object_bind_group,
             last_tex_key: (
                 u64::MAX,
@@ -2991,17 +2904,13 @@ impl DeviceResources {
             cpu_positions: None,
             cpu_normals: None,
             cpu_indices: None,
-            attribute_buffers: std::collections::HashMap::new(),
             attribute_ranges: std::collections::HashMap::new(),
             face_vertex_buffer: None,
-            face_attribute_buffers: std::collections::HashMap::new(),
-            face_colour_buffers: std::collections::HashMap::new(),
-            vector_attribute_buffers: std::collections::HashMap::new(),
+            sidecar: None,
             position_override_buffer: None,
             position_override_slice: None,
             normal_override_buffer: None,
             normal_override_slice: None,
-            extension_attr_buffer: None,
             lightmap: None,
             has_uv1,
             lightmap_gen: 0,
@@ -4938,16 +4847,19 @@ impl crate::resources::DeviceResources {
                     index: mesh_id.index(),
                 })?;
 
-        // Find the existing attribute buffer.
-        let buffer = gpu_mesh.attribute_buffers.get(name).ok_or_else(|| {
-            crate::error::ViewportError::AttributeNotFound {
+        // Find the existing attribute stream.
+        use crate::resources::mesh::sidecar_pool::StreamKind;
+        let (record, stream) = gpu_mesh
+            .sidecar
+            .as_ref()
+            .and_then(|r| Some((r.clone(), r.find(StreamKind::Scalar, name)?.clone())))
+            .ok_or_else(|| crate::error::ViewportError::AttributeNotFound {
                 mesh_id: mesh_id.index(),
                 name: name.to_string(),
-            }
-        })?;
+            })?;
 
-        // Validate same topology (buffer size must match).
-        let expected_elems = (buffer.size() / 4) as usize;
+        // Validate same topology (the length uploaded must match).
+        let expected_elems = stream.given as usize;
         if data.len() != expected_elems {
             return Err(crate::error::ViewportError::AttributeLengthMismatch {
                 expected: expected_elems,
@@ -4955,8 +4867,18 @@ impl crate::resources::DeviceResources {
             });
         }
 
-        // Zero-copy in-place write via the wgpu staging belt.
-        queue.write_buffer(buffer, 0, bytemuck::cast_slice(data));
+        // In-place write into the mesh's sidecar record, padded as the upload
+        // was.
+        let words = crate::resources::mesh::sidecar_pool::StreamData::from_f32(
+            StreamKind::Scalar,
+            name,
+            data,
+        )
+        .padded(stream.len as usize, false)
+        .words;
+        self.sidecar
+            .write_stream_with(queue, &record, &stream, words);
+        let gpu_mesh = self.mesh_store.get_mut(mesh_id).expect("checked above");
 
         // Recompute scalar range so LUT mapping stays accurate.
         let (min, max) = data

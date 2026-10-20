@@ -56,11 +56,14 @@ impl Showcase for ObjectsShowcase {
             (sphere, Vec3::new(3.6, -0.8, 0.7), [0.38, 0.12, 0.62]),
         ];
         for (mesh, pos, colour) in objects {
-            ctx.session.scene_mut().add(
-                Some(mesh),
-                Mat4::from_translation(pos),
-                Material::from_colour(Colour::from_linear_rgb_array(colour)),
-            );
+            let material = ctx
+                .session
+                .resources_mut()
+                .upload_material(Material::from_colour(Colour::from_linear_rgb_array(colour)))
+                .unwrap();
+            ctx.session
+                .scene_mut()
+                .add(Some(mesh), Mat4::from_translation(pos), material);
         }
 
         // Outline the selected object so picking is visible (default white).

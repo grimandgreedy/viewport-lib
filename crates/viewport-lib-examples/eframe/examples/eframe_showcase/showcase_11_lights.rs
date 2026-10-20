@@ -8,6 +8,7 @@
 use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
+use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{LightKind, LightSource, Material, ViewportRenderer, scene::Scene};
@@ -70,7 +71,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.45, 0.45, 0.48));
                 m.roughness = 0.9;
-                m
+                upload_material(renderer, m)
             },
         );
 
@@ -94,7 +95,7 @@ impl App {
                     {
                         let mut m = Material::from_colour(Colour::linear_rgb(0.92, 0.92, 0.92));
                         m.roughness = 0.35;
-                        m
+                        upload_material(renderer, m)
                     },
                 );
             }
@@ -107,7 +108,10 @@ impl App {
             "Unlit Sphere",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(6.0, -6.0, 0.6)),
-            Material::from_colour(Colour::linear_rgb(0.12, 0.38, 0.82)),
+            upload_material(
+                renderer,
+                Material::from_colour(Colour::linear_rgb(0.12, 0.38, 0.82)),
+            ),
         );
         {
             let mut a = vpl::ItemSettings::default();
@@ -121,7 +125,7 @@ impl App {
             {
                 let mut m = Material::from_colour(Colour::linear_rgb(0.12, 0.38, 0.82));
                 m.roughness = 0.35;
-                m
+                upload_material(renderer, m)
             },
         );
 

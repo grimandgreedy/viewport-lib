@@ -33,8 +33,8 @@ use vpl::{
     AtlasViewerCorner, AutoExposure, BackfacePolicy, BuiltinMatcap, Candela, DebugOutputMode,
     DebugQuantity, DebugVis, DisplaySettings, EnvironmentBackground, EnvironmentIntensity,
     EnvironmentLighting, EnvironmentMapId, ExposureMode, ExposureReadback, ExposureSettings,
-    LightKind, LightSource, LightingSettings, Lumen, Lux, MatcapId, Material, MeshId, Modifiers,
-    OrbitCameraController, PipelineMode, SceneFrame, SceneRenderItem, ShadowDebugStats,
+    LightKind, LightSource, LightingSettings, Lumen, Lux, MatcapId, Material, MaterialId, MeshId,
+    Modifiers, OrbitCameraController, PipelineMode, SceneFrame, SceneRenderItem, ShadowDebugStats,
     ShadowFilter, ToneMapping, ViewportContext, ViewportEvent, ViewportId, ViewportInstance,
     primitives,
 };
@@ -253,7 +253,7 @@ struct App {
     // Scene selection
     tab: Tab,
 
-    // Mesh / texture / matcap IDs
+    // Mesh IDs
     m_ground: MeshId,
     m_sphere: MeshId,
     m_cube: MeshId,
@@ -265,21 +265,25 @@ struct App {
     m_rough: MeshId,
     m_cube2: MeshId,
     m_percy: MeshId,
-    tex_percy: vpl::TextureId,
-    matcap_clay: MatcapId,
-    matcap_ceramic: MatcapId,
+
+    // Material ids, uploaded once. `authored` keeps each material as written so
+    // the PBR toggle can rewrite its shading model in place.
+    mats: SceneMaterials,
+    authored: Vec<(MaterialId, Material)>,
+    // The shading model the uploaded materials were last written with.
+    mats_pbr: bool,
 
     // Light source parameters.
     // Stored per-kind so switching kinds does not lose previously entered values.
     light_kind: u8, // 0 = Directional, 1 = Point, 2 = Spot
     light_colour: [f32; 3],
     // Author intensity either in nominal units (the faithful "colour is data"
-    // scale, read directly at EV 0) or in real photometric units. The unit and
+    // scale, read directly at passthrough exposure) or in real photometric units. The unit and
     // slider range change with this toggle; the two regimes are what the exposure
     // controls exist to reconcile.
     photometric: bool,
     // Nominal-mode magnitudes: directional is a plain multiplier (~pi reads as a
-    // lit surface at EV 0); point/spot are candela.
+    // lit surface at passthrough exposure); point/spot are candela.
     dir_nominal: f32,
     point_candela: f32,
     spot_candela: f32,
@@ -302,7 +306,7 @@ struct App {
 
     // Display transform (HDR -> pixels): pipeline mode, exposure, tone map.
     hdr_pipeline: bool, // true = Hdr (exposure + tonemap), false = Direct passthrough
-    exposure_mode: u8,  // 0 = Manual, 1 = Physical camera, 2 = Automatic
+    exposure_mode: u8,  // 0 = Manual, 1 = Physical camera, 2 = Automatic, 3 = Passthrough
     manual_ev: f32,
     aperture: f32,
     shutter_denom: f32,
@@ -369,6 +373,21 @@ struct App {
     shadow_stats: Option<ShadowDebugStats>,
 }
 
+/// The material of every object in both tabs.
+struct SceneMaterials {
+    ground: MaterialId,
+    sphere: MaterialId,
+    cube: MaterialId,
+    torus: MaterialId,
+    ground2: MaterialId,
+    clay: MaterialId,
+    ceramic: MaterialId,
+    metal: MaterialId,
+    rough: MaterialId,
+    cube2: MaterialId,
+    percy: MaterialId,
+}
+
 /// App-owned offscreen render target displayed by egui as an image.
 struct Target {
     inner: vpl::OffscreenViewportTarget,
@@ -396,7 +415,63 @@ impl App {
         matcap_ceramic: MatcapId,
         env_id: EnvironmentMapId,
     ) -> Self {
-        Self {
+        let mut session = session;
+        let mut authored = Vec::new();
+        let mut upload = |m: Material| {
+            let id = session
+                .resources_mut()
+                .upload_material(m)
+                .expect("material");
+            authored.push((id, m));
+            id
+        };
+        let mats = SceneMaterials {
+            // Ground platform: light warm sand.
+            ground: upload({
+                let mut m = Material::from_colour(Colour::linear_rgb(0.88, 0.84, 0.76));
+                m.roughness = 0.85;
+                m.backface_policy = BackfacePolicy::Cull;
+                m
+            }),
+            sphere: upload(Material::from_colour(Colour::linear_rgb(0.78, 0.90, 0.80))),
+            cube: upload(Material::from_colour(Colour::linear_rgb(0.78, 0.83, 0.95))),
+            torus: upload(Material::from_colour(Colour::linear_rgb(0.95, 0.82, 0.74))),
+            // Ground platform for the materials tab: neutral light grey.
+            ground2: upload({
+                let mut m = Material::from_colour(Colour::linear_rgb(0.85, 0.85, 0.85));
+                m.roughness = 0.85;
+                m
+            }),
+            clay: upload({
+                let mut m = Material::from_colour(Colour::linear_rgb(0.92, 0.90, 0.88));
+                m.shading_model = vpl::ShadingModel::Matcap(matcap_clay);
+                m
+            }),
+            ceramic: upload({
+                let mut m = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
+                m.shading_model = vpl::ShadingModel::Matcap(matcap_ceramic);
+                m
+            }),
+            metal: upload(Material::pbr(
+                Colour::linear_rgb(0.95, 0.95, 0.93),
+                1.0,
+                0.08,
+            )),
+            rough: upload(Material::pbr(
+                Colour::linear_rgb(0.95, 0.95, 0.95),
+                0.0,
+                0.95,
+            )),
+            cube2: upload(Material::from_colour(Colour::linear_rgb(0.96, 0.94, 0.90))),
+            percy: upload({
+                let mut m = Material::default();
+                m.texture_id = Some(tex_percy);
+                m.backface_policy = BackfacePolicy::Cull;
+                m
+            }),
+        };
+
+        let mut app = Self {
             session,
             orbit: OrbitCameraController::new_stateless(),
             target: None,
@@ -413,13 +488,14 @@ impl App {
             m_rough,
             m_cube2,
             m_percy,
-            tex_percy,
-            matcap_clay,
-            matcap_ceramic,
+            mats,
+            authored,
+            // Not yet written for either model, so the first sync writes them.
+            mats_pbr: false,
             // Match showcase_27 defaults: a known-problematic setup useful for reproducing bugs.
             light_kind: 0,
             light_colour: [1.0, 0.97, 0.90],
-            // Nominal by default: the faithful "colour is data" regime at EV 0.
+            // Nominal by default: the faithful "colour is data" regime at passthrough exposure.
             photometric: false,
             dir_nominal: std::f32::consts::PI,
             point_candela: 40.0,
@@ -438,10 +514,10 @@ impl App {
             spot_range: 20.0,
             spot_inner_deg: 15.0,
             spot_outer_deg: 25.0,
-            // Display / exposure: neutral by default so the faithful lighting
-            // reads as authored (HDR pipeline, manual EV 0, KhronosNeutral).
+            // Display / exposure: passthrough by default so the faithful lighting
+            // reads as authored (HDR pipeline, no exposure scaling, KhronosNeutral).
             hdr_pipeline: true,
-            exposure_mode: 0,
+            exposure_mode: 3,
             manual_ev: 0.0,
             aperture: 16.0,
             shutter_denom: 125.0,
@@ -485,7 +561,10 @@ impl App {
             pbr_enabled: true,
             instancing_status: (false, 0),
             shadow_stats: None,
-        }
+        };
+        app.mats_pbr = !app.pbr_enabled;
+        app.sync_pbr_toggle();
+        app
     }
 
     /// Build the single light from the panel state, using the typed photometric
@@ -588,6 +667,7 @@ impl App {
     fn build_exposure(&self, dt: f32) -> ExposureSettings {
         let mode = match self.exposure_mode {
             0 => ExposureMode::Manual { ev: self.manual_ev },
+            3 => ExposureMode::Passthrough,
             1 => ExposureMode::PhysicalCamera {
                 aperture: self.aperture,
                 shutter: 1.0 / self.shutter_denom.max(1.0),
@@ -636,6 +716,7 @@ impl App {
     fn panel_ev(&self) -> Option<f32> {
         match self.exposure_mode {
             0 => Some(self.manual_ev),
+            3 => Some(viewport_lib::PASSTHROUGH_EV100),
             1 => {
                 let n = self.aperture;
                 let t = 1.0 / self.shutter_denom.max(1.0);
@@ -652,19 +733,28 @@ impl App {
         self.hdr_pipeline && self.exposure_mode == 2
     }
 
-    /// Force a lit material to the shading model selected by the PBR toggle.
-    /// Matcap materials keep their matcap; PBR and Phong swap.
-    fn apply_pbr_toggle(&self, m: &mut Material) {
-        match m.shading_model {
-            vpl::ShadingModel::Matcap(_) => {}
-            _ => {
+    /// Rewrite every lit material with the shading model selected by the PBR
+    /// toggle, when the toggle has changed. Matcap materials keep their matcap;
+    /// PBR and Phong swap. The ids stay the same, so the items need no change.
+    fn sync_pbr_toggle(&mut self) {
+        if self.mats_pbr == self.pbr_enabled {
+            return;
+        }
+        for (id, authored) in &self.authored {
+            let mut m = *authored;
+            if !matches!(m.shading_model, vpl::ShadingModel::Matcap(_)) {
                 m.shading_model = if self.pbr_enabled {
                     vpl::ShadingModel::Pbr
                 } else {
                     vpl::ShadingModel::Phong
                 };
             }
+            self.session
+                .resources_mut()
+                .replace_material(*id, m)
+                .expect("live material");
         }
+        self.mats_pbr = self.pbr_enabled;
     }
 
     fn build_basic_items(&self) -> Vec<SceneRenderItem> {
@@ -676,9 +766,7 @@ impl App {
             ground.mesh_id = self.m_ground;
             ground.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-            ground.material = Material::from_colour(Colour::linear_rgb(0.88, 0.84, 0.76));
-            ground.material.roughness = 0.85;
-            ground.material.backface_policy = BackfacePolicy::Cull;
+            ground.material = self.mats.ground;
             items.push(ground);
         }
 
@@ -687,7 +775,7 @@ impl App {
         sphere.mesh_id = self.m_sphere;
         sphere.model =
             glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).to_cols_array_2d();
-        sphere.material = Material::from_colour(Colour::linear_rgb(0.78, 0.90, 0.80));
+        sphere.material = self.mats.sphere;
         items.push(sphere);
 
         // Cube: light periwinkle. Flat faces isolate bias and gap artifacts.
@@ -695,7 +783,7 @@ impl App {
         cube.mesh_id = self.m_cube;
         cube.model =
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).to_cols_array_2d();
-        cube.material = Material::from_colour(Colour::linear_rgb(0.78, 0.83, 0.95));
+        cube.material = self.mats.cube;
         items.push(cube);
 
         // Torus: light peach. Mixed geometry useful for bright-spot test.
@@ -704,12 +792,8 @@ impl App {
         torus.mesh_id = self.m_torus;
         torus.model =
             glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).to_cols_array_2d();
-        torus.material = Material::from_colour(Colour::linear_rgb(0.95, 0.82, 0.74));
+        torus.material = self.mats.torus;
         items.push(torus);
-
-        for it in &mut items {
-            self.apply_pbr_toggle(&mut it.material);
-        }
         items
     }
 
@@ -722,8 +806,7 @@ impl App {
             ground.mesh_id = self.m_ground2;
             ground.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-            ground.material = Material::from_colour(Colour::linear_rgb(0.85, 0.85, 0.85));
-            ground.material.roughness = 0.85;
+            ground.material = self.mats.ground2;
             items.push(ground);
         }
 
@@ -733,8 +816,7 @@ impl App {
         clay.mesh_id = self.m_clay;
         clay.model =
             glam::Mat4::from_translation(glam::Vec3::new(-4.5, 2.5, 0.7)).to_cols_array_2d();
-        clay.material = Material::from_colour(Colour::linear_rgb(0.92, 0.90, 0.88));
-        clay.material.shading_model = vpl::ShadingModel::Matcap(self.matcap_clay);
+        clay.material = self.mats.clay;
         items.push(clay);
 
         // Ceramic matcap sphere (static): white base, high-contrast sheen.
@@ -743,8 +825,7 @@ impl App {
         ceramic.mesh_id = self.m_ceramic;
         ceramic.model =
             glam::Mat4::from_translation(glam::Vec3::new(-1.5, 2.5, 0.7)).to_cols_array_2d();
-        ceramic.material = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
-        ceramic.material.shading_model = vpl::ShadingModel::Matcap(self.matcap_ceramic);
+        ceramic.material = self.mats.ceramic;
         items.push(ceramic);
 
         // PBR metallic sphere: near-white, very smooth. Specular response reveals shadow
@@ -753,7 +834,7 @@ impl App {
         metal.mesh_id = self.m_metal;
         metal.model =
             glam::Mat4::from_translation(glam::Vec3::new(1.5, 2.5, 0.7)).to_cols_array_2d();
-        metal.material = Material::pbr(Colour::linear_rgb(0.95, 0.95, 0.93), 1.0, 0.08);
+        metal.material = self.mats.metal;
         items.push(metal);
 
         // PBR rough sphere: near-white diffuse. High roughness maximises shadow acne visibility.
@@ -761,7 +842,7 @@ impl App {
         rough.mesh_id = self.m_rough;
         rough.model =
             glam::Mat4::from_translation(glam::Vec3::new(4.5, 2.5, 0.7)).to_cols_array_2d();
-        rough.material = Material::pbr(Colour::linear_rgb(0.95, 0.95, 0.95), 0.0, 0.95);
+        rough.material = self.mats.rough;
         items.push(rough);
 
         // Plain diffuse cube: light cream. Flat surfaces at cardinal angles show cascade bands
@@ -770,7 +851,7 @@ impl App {
         cube.mesh_id = self.m_cube2;
         cube.model =
             glam::Mat4::from_translation(glam::Vec3::new(-3.5, -2.5, 0.6)).to_cols_array_2d();
-        cube.material = Material::from_colour(Colour::linear_rgb(0.96, 0.94, 0.90));
+        cube.material = self.mats.cube2;
         items.push(cube);
 
         // Percy photo plane: lying flat on the ground, slightly raised to avoid Z-fighting.
@@ -779,14 +860,8 @@ impl App {
         percy.mesh_id = self.m_percy;
         percy.model =
             glam::Mat4::from_translation(glam::Vec3::new(2.5, -2.5, 0.005)).to_cols_array_2d();
-        percy.material = Material::default();
-        percy.material.texture_id = Some(self.tex_percy);
-        percy.material.backface_policy = BackfacePolicy::Cull;
+        percy.material = self.mats.percy;
         items.push(percy);
-
-        for it in &mut items {
-            self.apply_pbr_toggle(&mut it.material);
-        }
         items
     }
 }
@@ -847,6 +922,8 @@ impl eframe::App for App {
                 );
                 self.target = Some(Target { inner, id });
             }
+            // Rewrite the materials if the PBR toggle changed since last frame.
+            self.sync_pbr_toggle();
             let target = self.target.as_ref().unwrap();
 
             // Feed input to the instance's own input pipeline via the egui adapter.
@@ -1073,7 +1150,7 @@ impl App {
                 ui.add_space(4.0);
                 ui.checkbox(&mut self.photometric, "Photometric units");
                 // Intensity in the unit that matches the kind and mode. Nominal is
-                // the faithful scale (reads at EV 0); photometric is real lux for
+                // the faithful scale (reads at passthrough exposure); photometric is real lux for
                 // directional and lumens for point/spot bulbs.
                 match (self.light_kind, self.photometric) {
                     (0, false) => {
@@ -1506,12 +1583,14 @@ impl App {
                 ui.add_space(4.0);
                 ui.label("Exposure mode:");
                 ui.horizontal(|ui| {
+                    ui.radio_value(&mut self.exposure_mode, 3, "Passthrough");
                     ui.radio_value(&mut self.exposure_mode, 0, "Manual");
                     ui.radio_value(&mut self.exposure_mode, 1, "Physical");
                     ui.radio_value(&mut self.exposure_mode, 2, "Auto");
                 });
 
                 match self.exposure_mode {
+                    3 => {}
                     0 => {
                         ui.add(egui::Slider::new(&mut self.manual_ev, -6.0..=16.0).text("EV100"));
                     }
@@ -1611,14 +1690,14 @@ impl App {
             });
     }
 
-    /// Faithful posture: nominal magnitudes at neutral EV 0 ("colour is data").
+    /// Faithful posture: nominal magnitudes at passthrough exposure ("colour is data").
     /// Mirrors `LightingPosture::Faithful` into the panel state.
     fn apply_posture_faithful(&mut self) {
         self.photometric = false;
         self.dir_nominal = std::f32::consts::PI;
         self.hemisphere_intensity = 1.5;
         self.hdr_pipeline = true;
-        self.exposure_mode = 0;
+        self.exposure_mode = 3;
         self.manual_ev = 0.0;
         self.exposure_compensation = 0.0;
         self.tone_mapping = ToneMapping::KhronosNeutral;
