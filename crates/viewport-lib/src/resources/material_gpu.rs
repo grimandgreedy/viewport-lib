@@ -139,6 +139,8 @@ pub(crate) mod item_flags {
     /// The material binds an emissive map; mirrors `scalars3.w` as a bit so a
     /// pipeline feature set can read it.
     pub(crate) const HAS_EMISSIVE_TEX: u32 = 1 << 5;
+    /// Some texture slot reads the second UV set.
+    pub(crate) const USES_UV1: u32 = 1 << 6;
 }
 
 /// The item-level and mesh-level shading facts that ride the material block
@@ -438,7 +440,8 @@ impl MaterialGpu {
                         | on(item.matcap == Some(true), f::MATCAP_BLENDABLE)
                         | on(directional, f::LIGHTMAP_DIRECTIONAL)
                         | on(shadowmask, f::HAS_SHADOWMASK)
-                        | on(resolved.live(Emissive), f::HAS_EMISSIVE_TEX),
+                        | on(resolved.live(Emissive), f::HAS_EMISSIVE_TEX)
+                        | on(xf.iter().any(|x| x.rot_tc[1] > 0.5), f::USES_UV1),
                     mode,
                     0,
                     0,
@@ -675,6 +678,22 @@ mod tests {
         assert_eq!(t.blocks().len(), 1);
         let block: [u8; MATERIAL_GPU_BYTES] = bytemuck::cast(t.blocks()[0]);
         assert_eq!(block, bytes(&Material::default(), false));
+    }
+
+    #[test]
+    fn a_slot_on_the_second_uv_set_flags_the_block() {
+        let flags = |m: &Material| {
+            MaterialGpu::from_material(m, false, all_live(m), &ItemShading::default()).item_flags[0]
+        };
+        assert_eq!(flags(&Material::default()) & item_flags::USES_UV1, 0);
+        let uv1 = Material::default().with_texture_transform(
+            TextureSlot::Normal,
+            UvTransform {
+                uv_set: 1,
+                ..UvTransform::default()
+            },
+        );
+        assert_ne!(flags(&uv1) & item_flags::USES_UV1, 0);
     }
 
     #[test]

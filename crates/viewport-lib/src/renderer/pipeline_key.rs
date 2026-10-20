@@ -108,6 +108,9 @@ impl FeatureSet {
     /// The emissive map: its slot lookup and sample. A material without one
     /// adds its emissive colour and custom data only.
     pub const EMISSIVE_MAP: u16 = 128;
+    /// The second UV set: the uv1 stream read and the per-slot choice between
+    /// the two sets. Off, every slot samples uv0.
+    pub const UV1: u16 = 1 << 8;
 
     /// Every feature compiled out.
     pub const NONE: Self = Self(0);
@@ -132,6 +135,7 @@ impl FeatureSet {
         (Self::MATCAP, "FEAT_MATCAP"),
         (Self::DEFORM, "FEAT_DEFORM"),
         (Self::EMISSIVE_MAP, "FEAT_EMISSIVE_MAP"),
+        (Self::UV1, "FEAT_UV1"),
     ];
 
     pub fn bits(self) -> u16 {
@@ -182,6 +186,7 @@ impl FeatureSet {
                 Self::EMISSIVE_MAP,
                 material_flags[0] & m::HAS_EMISSIVE_TEX != 0,
             )
+            .with(Self::UV1, material_flags[0] & m::USES_UV1 != 0)
     }
 
     /// The pipeline constants for this set: the features it leaves out set
