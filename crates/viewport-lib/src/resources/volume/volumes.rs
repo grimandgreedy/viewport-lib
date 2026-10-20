@@ -37,17 +37,23 @@ fn volume_bytes_per_texel(format: crate::gpu::TextureFormat) -> u32 {
     }
 }
 
-/// Encode a scalar field into the texel bytes for `format`: raw `f32` for
-/// `R32Float`, converted to `f16` for `R16Float`.
-fn encode_volume_texels(format: crate::gpu::TextureFormat, data: &[f32]) -> Vec<u8> {
+/// Encode a scalar field into the texel bytes for `format`: the field's own
+/// bytes for `R32Float`, borrowed rather than copied, and `f16` written
+/// straight into one byte vector for `R16Float`.
+fn encode_volume_texels(
+    format: crate::gpu::TextureFormat,
+    data: &[f32],
+) -> std::borrow::Cow<'_, [u8]> {
     match format {
-        crate::gpu::TextureFormat::R32Float => bytemuck::cast_slice(data).to_vec(),
+        crate::gpu::TextureFormat::R32Float => {
+            std::borrow::Cow::Borrowed(bytemuck::cast_slice(data))
+        }
         crate::gpu::TextureFormat::R16Float => {
-            let halves: Vec<u16> = data
-                .iter()
-                .map(|&v| half::f16::from_f32(v).to_bits())
-                .collect();
-            bytemuck::cast_slice(&halves).to_vec()
+            let mut bytes = vec![0u8; data.len() * 2];
+            for (dst, &v) in bytes.chunks_exact_mut(2).zip(data) {
+                dst.copy_from_slice(&half::f16::from_f32(v).to_bits().to_ne_bytes());
+            }
+            std::borrow::Cow::Owned(bytes)
         }
         other => panic!("unexpected direct-volume texture format {other:?}"),
     }
@@ -415,6 +421,21 @@ mod tests {
     use crate::DeviceResources;
 
     use crate::resources::UploadStatus;
+
+    #[test]
+    fn texel_encoding_borrows_full_precision_and_packs_half() {
+        let data = [0.0f32, 1.5, -2.25, 65504.0, 1.0e-3];
+        let full = super::encode_volume_texels(crate::gpu::TextureFormat::R32Float, &data);
+        assert!(matches!(full, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(&*full, bytemuck::cast_slice::<f32, u8>(&data));
+
+        let packed = super::encode_volume_texels(crate::gpu::TextureFormat::R16Float, &data);
+        let expected: Vec<u16> = data
+            .iter()
+            .map(|&v| half::f16::from_f32(v).to_bits())
+            .collect();
+        assert_eq!(&*packed, bytemuck::cast_slice::<u16, u8>(&expected));
+    }
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
         let instance = crate::gpu::default_instance();
