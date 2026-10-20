@@ -25,8 +25,9 @@ pub struct GpuMesh {
     /// `BackfacePolicy`, and its back faces (the inside, seen through a clip
     /// plane) shade as inside the solid's own shadow. The cull-none caster
     /// path is for surfaces that are genuinely open. The check runs on a
-    /// worker thread, so this reads `false` from upload until the next
-    /// `prepare` settles it.
+    /// worker thread and nothing waits for it, except a capture or an
+    /// offscreen render; until it lands a new mesh reads `false` and a
+    /// replaced one its previous value.
     pub closed: bool,
     /// The closed check still running for this mesh, if any.
     pub(crate) closed_check: Option<crate::resources::mesh::meshes::ClosedCheck>,

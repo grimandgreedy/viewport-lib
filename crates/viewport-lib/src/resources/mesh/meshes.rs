@@ -409,7 +409,10 @@ impl DeviceResources {
                 progress.set(0.1);
                 // The closed check runs beside the prep and the GPU fill; the
                 // mesh is assembled once it lands.
-                let closed_check = ClosedCheck::spawn(data.positions.clone(), data.indices.clone());
+                let mut closed_check = Some(ClosedCheck::spawn(
+                    data.positions.clone(),
+                    data.indices.clone(),
+                ));
                 let prep = DeviceResources::prep_mesh_data(&data, retain_cpu, false);
                 let aabb = crate::scene::aabb::Aabb::from_positions(&data.positions);
                 progress.set(0.5);
@@ -492,9 +495,7 @@ impl DeviceResources {
                         if voff < vsrc.len() || ioff < indices_bytes {
                             return Ok(crate::resources::upload_jobs::GpuStep::Continue);
                         }
-                        let Some(closed) = closed_check.try_get() else {
-                            return Ok(crate::resources::upload_jobs::GpuStep::Continue);
-                        };
+                        let closed_check = closed_check.take().expect("done reached once");
 
                         let (
                             data,
@@ -534,7 +535,7 @@ impl DeviceResources {
                                 aabb,
                                 data.uvs1.is_some(),
                             );
-                            mesh.closed = closed;
+                            mesh.closed_check = Some(closed_check);
                             mesh.cpu_positions = cpu_positions;
                             mesh.cpu_normals = cpu_normals;
                             mesh.cpu_indices = cpu_indices;
@@ -547,6 +548,7 @@ impl DeviceResources {
                                 data.positions.len(),
                             );
                             let mesh_id = resources.mesh_store.insert(mesh);
+                            resources.pending_closed_checks.push(mesh_id);
                             tracing::debug!(
                                 mesh_index = mesh_id.index(),
                                 vertices = data.positions.len(),
@@ -1546,6 +1548,7 @@ impl DeviceResources {
             new_mesh.cpu_normals = Some(data.normals.clone());
             new_mesh.cpu_indices = Some(data.indices.clone());
         }
+        new_mesh.closed = self.mesh_store.get(mesh_id).is_some_and(|old| old.closed);
         new_mesh.closed_check = Some(ClosedCheck::spawn(
             data.positions.clone(),
             data.indices.clone(),
@@ -3595,38 +3598,70 @@ impl DeviceResources {
     }
 }
 
-/// A `mesh_is_closed` answer computed on the thread pool, so an upload does not
-/// wait for it. The mesh reads as open until `DeviceResources` resolves it,
-/// which happens before the next frame reads `GpuMesh::closed`.
-pub(crate) struct ClosedCheck(std::sync::Arc<(std::sync::Mutex<Option<bool>>, std::sync::Condvar)>);
+enum CheckState {
+    Queued(Vec<[f32; 3]>, Vec<u32>),
+    Running,
+    Done(bool),
+}
+
+/// A `mesh_is_closed` answer computed on the background pool, so an upload
+/// does not wait for it. `DeviceResources::resolve_closed_checks` copies it
+/// onto the mesh once it lands. Dropped before a worker starts it, the check
+/// is skipped.
+pub(crate) struct ClosedCheck(std::sync::Arc<(std::sync::Mutex<CheckState>, std::sync::Condvar)>);
 
 impl ClosedCheck {
     pub(crate) fn spawn(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> Self {
-        let cell = std::sync::Arc::new((std::sync::Mutex::new(None), std::sync::Condvar::new()));
-        let worker = cell.clone();
-        crate::util::par::spawn(move || {
-            // A panic reads as open, the conservative answer.
-            let closed =
-                std::panic::catch_unwind(|| mesh_is_closed(positions.iter().copied(), &indices))
-                    .unwrap_or(false);
-            let (lock, ready) = &*worker;
-            *lock.lock().expect("closed check poisoned") = Some(closed);
-            ready.notify_all();
+        let cell = std::sync::Arc::new((
+            std::sync::Mutex::new(CheckState::Queued(positions, indices)),
+            std::sync::Condvar::new(),
+        ));
+        let worker = std::sync::Arc::downgrade(&cell);
+        crate::util::par::spawn_background(move || {
+            if let Some(cell) = worker.upgrade() {
+                Self::run(&cell);
+            }
         });
         Self(cell)
     }
 
-    /// The answer if the worker has finished.
-    pub(crate) fn try_get(&self) -> Option<bool> {
-        *self.0.0.lock().expect("closed check poisoned")
+    /// Run the check on this thread unless another has taken it.
+    fn run(cell: &(std::sync::Mutex<CheckState>, std::sync::Condvar)) {
+        let (lock, ready) = cell;
+        let (positions, indices) = {
+            let mut state = lock.lock().expect("closed check poisoned");
+            match std::mem::replace(&mut *state, CheckState::Running) {
+                CheckState::Queued(positions, indices) => (positions, indices),
+                other => {
+                    *state = other;
+                    return;
+                }
+            }
+        };
+        // A panic reads as open, the conservative answer.
+        let closed =
+            std::panic::catch_unwind(|| mesh_is_closed(positions.iter().copied(), &indices))
+                .unwrap_or(false);
+        *lock.lock().expect("closed check poisoned") = CheckState::Done(closed);
+        ready.notify_all();
     }
 
-    /// The answer, blocking until the worker has finished.
+    /// The answer if the check has finished.
+    pub(crate) fn try_get(&self) -> Option<bool> {
+        match *self.0.0.lock().expect("closed check poisoned") {
+            CheckState::Done(closed) => Some(closed),
+            _ => None,
+        }
+    }
+
+    /// The answer, running the check here if no worker has started it, else
+    /// blocking until the worker finishes.
     pub(crate) fn wait(&self) -> bool {
+        Self::run(&self.0);
         let (lock, ready) = &*self.0;
         let mut guard = lock.lock().expect("closed check poisoned");
         loop {
-            if let Some(closed) = *guard {
+            if let CheckState::Done(closed) = *guard {
                 return closed;
             }
             guard = ready.wait(guard).expect("closed check poisoned");
@@ -3635,16 +3670,42 @@ impl ClosedCheck {
 }
 
 impl DeviceResources {
-    /// Settle every closed check still running, so the frame about to be
-    /// prepared reads each mesh's real answer. Blocks only on checks that have
-    /// not finished yet.
+    /// Copy every finished closed check onto its mesh. During a capture or a
+    /// read-back call this waits for the ones still running, so the frame
+    /// handed back reads every real answer; a presented frame never waits,
+    /// and a mesh keeps its provisional value until a later call. An answer
+    /// that changes a mesh moves `mesh_sidecar_epoch`, so the instanced
+    /// batches repack the records that carry the flag.
     pub(crate) fn resolve_closed_checks(&mut self) {
-        for id in std::mem::take(&mut self.pending_closed_checks) {
-            if let Some(mesh) = self.mesh_store.get_mut(id) {
-                if let Some(check) = mesh.closed_check.take() {
-                    mesh.closed = check.wait();
-                }
-            }
+        if self.pending_closed_checks.is_empty() {
+            return;
+        }
+        let block = self.pipeline_compiler.reading_back();
+        let mut changed = false;
+        let mut pending = std::mem::take(&mut self.pending_closed_checks);
+        pending.retain(|&id| {
+            let Some(mesh) = self.mesh_store.get_mut(id) else {
+                return false;
+            };
+            let Some(check) = mesh.closed_check.as_ref() else {
+                return false;
+            };
+            let answer = if block {
+                Some(check.wait())
+            } else {
+                check.try_get()
+            };
+            let Some(closed) = answer else {
+                return true;
+            };
+            mesh.closed_check = None;
+            changed |= mesh.closed != closed;
+            mesh.closed = closed;
+            false
+        });
+        self.pending_closed_checks = pending;
+        if changed {
+            self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
         }
     }
 }
@@ -4611,6 +4672,7 @@ mod async_upload_tests {
         };
         let mut resources =
             DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let _read_back = resources.pipeline_compiler.blocking_scope();
         let cube = primitives::cube(1.0);
         let plane = primitives::grid_plane(1.0, 1.0, 4, 4);
 
@@ -4654,6 +4716,47 @@ mod async_upload_tests {
             assert!(mesh.closed_check.is_none(), "check still pending");
             assert_eq!(mesh.closed, closed);
         }
+    }
+
+    #[test]
+    fn a_background_check_lands_without_a_wait() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let cube = primitives::cube(1.0);
+        let id = resources.upload_mesh_data(&device, &cube).unwrap();
+        assert!(
+            !resources.mesh(id).unwrap().closed,
+            "open until the check lands"
+        );
+        let epoch = resources.mesh_sidecar_epoch;
+        let start = std::time::Instant::now();
+        while resources.mesh(id).unwrap().closed_check.is_some() {
+            assert!(start.elapsed().as_secs() < 10, "check never landed");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            resources.process_uploads(&device, &queue);
+        }
+        assert!(resources.mesh(id).unwrap().closed);
+        assert_ne!(resources.mesh_sidecar_epoch, epoch, "records not repacked");
+        assert!(resources.pending_closed_checks.is_empty());
+
+        // A topology change keeps the old answer until the new one lands.
+        let plane = primitives::grid_plane(1.0, 1.0, 4, 4);
+        resources
+            .replace_mesh_data(&device, &queue, id, &plane)
+            .unwrap();
+        assert!(resources.mesh(id).unwrap().closed);
+    }
+
+    #[test]
+    fn a_wait_runs_a_check_no_worker_has_started() {
+        let cube = primitives::cube(1.0);
+        let check = super::ClosedCheck::spawn(cube.positions.clone(), cube.indices.clone());
+        assert!(check.wait());
+        assert_eq!(check.try_get(), Some(true));
     }
 
     #[test]

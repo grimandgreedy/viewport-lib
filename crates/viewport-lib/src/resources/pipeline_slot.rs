@@ -160,6 +160,12 @@ impl PipelineCompiler {
         BlockingScope(Arc::clone(self))
     }
 
+    /// Whether a capture or a read-back call is running: a frame whose pixels
+    /// are handed back, so nothing it draws may be provisional.
+    pub(crate) fn reading_back(&self) -> bool {
+        self.capturing.load(Ordering::Relaxed) || self.blocking_scopes.load(Ordering::Relaxed) > 0
+    }
+
     /// Compiles handed to the workers that have not finished.
     pub(crate) fn pending(&self) -> usize {
         self.pending.count.load(Ordering::SeqCst)
