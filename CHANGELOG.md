@@ -85,6 +85,7 @@
 
 ### Changed
 
+- **Tube, streamtube and ribbon builds no longer slow with the strip count** - the node pick table walked every strip for every triangle; it now looks each segment's endpoints up in a table built once. A 1000-strip tube uploads, and an inline one rebuilds each frame, about five times faster.
 - **The emissive-map sample is compiled out of mesh batches whose material binds no emissive map** - it joins the per-batch shader features, so a batch without a map adds the material's emissive colour and custom data only; the full pipeline stands in while the reduced one compiles, and `FrameStats::feature_pipelines_built` counts it.
 - **`ItemSettings::force_per_object` and `FrameStats::per_object_items` are removed** - every mesh item draws in a batch through one set of shaders, so there is no per-object path to force or count. Delete any `force_per_object` assignment; read `instanced_batches` and `draw_calls` instead of `per_object_items`.
 - **Shadow casters draw through one shader** - every mesh batch casts through the cascade and point-light shadow shaders the per-object casters used, drawing from the cascade cull. Batches that used to cast whole into every point-light face are now culled per face.
