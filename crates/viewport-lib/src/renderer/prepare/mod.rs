@@ -806,6 +806,21 @@ impl ViewportRenderer {
         );
 
         self.prepare_clip_uniforms(queue, frame, viewport_fx);
+        if !matches!(
+            viewport_fx.ground_plane.mode,
+            crate::renderer::types::GroundPlaneMode::None
+        ) {
+            let slot = &mut self.viewport_slots[vp_idx];
+            let key = (
+                self.resources.shadow.map_view.clone(),
+                slot.ground_uniform_buf.clone(),
+            );
+            let resources = &self.resources;
+            let uniform_buf = &slot.ground_uniform_buf;
+            slot.ground_bind_group.get(key, || {
+                resources.create_ground_bind_group(device, uniform_buf)
+            });
+        }
         self.prepare_interaction_state(device, queue, frame, viewport_fx);
         Self::prepare_foreground_objects(
             &mut self.resources,

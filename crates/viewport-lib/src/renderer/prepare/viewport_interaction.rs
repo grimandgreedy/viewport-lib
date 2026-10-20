@@ -300,6 +300,13 @@ impl ViewportRenderer {
                     0,
                     bytemuck::cast_slice(&[gp_uniform]),
                 );
+                if let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) {
+                    queue.write_buffer(
+                        &slot.ground_uniform_buf,
+                        0,
+                        bytemuck::cast_slice(&[gp_uniform]),
+                    );
+                }
             }
         } // `resources` mutable borrow dropped here.
     }

@@ -2260,7 +2260,11 @@ impl ViewportRenderer {
                 occlusion_query_set: None,
             });
             gp_pass.set_pipeline(self.resources.ground.pipeline());
-            gp_pass.set_bind_group(0, &self.resources.ground.bind_group, &[]);
+            let ground_bg = self.viewport_slots[vp_idx]
+                .ground_bind_group
+                .current()
+                .unwrap_or(&self.resources.ground.bind_group);
+            gp_pass.set_bind_group(0, ground_bg, &[]);
             gp_pass.draw(0..3, 0..1);
         }
 

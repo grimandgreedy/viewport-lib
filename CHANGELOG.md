@@ -182,6 +182,9 @@
 ### Fixed
 
 - **Overlays in multi-viewport frames** - with `prepare_viewport` called for every viewport before any `render_viewport`, each viewport drew the overlays prepared for the last one, so the transform gizmo, the axes indicator and any labels or shapes showed the last viewport's placement and orientation everywhere. Each viewport now keeps its own overlay buffers.
+- **Ground plane in multi-viewport frames** - the ground plane drew every viewport with the camera of the last one prepared. Each viewport now has its own ground-plane uniform.
+- **`paint_viewport` draws overlays, selection outlines and sub-object highlights** - painting a viewport into a host-owned pass left out everything drawn after the scene: the gizmo, the axes indicator, overlays, the selection outline and the sub-object highlight. It now draws the same as `paint`.
+- **GPU picking in multi-viewport frames** - a pick clipped against the clip volumes of the last viewport prepared rather than the picked one, and item-type plugins picked with that viewport's camera. Both now use the viewport of the frame passed to the pick.
 - **Material plugin items vanished under the opaque bundle** - once 64 or more opaque batches engaged the cached render bundle, batches drawn with a material plugin were left out of both the bundle and the immediate draws. The bundle now records them with the rest.
 - **Shadows under background compilation** - an item drawn through a reduced or GPU-culled pipeline never cast a shadow while pipelines compiled in the background, because the shadow pass waited on a pipeline the draw never asked for.
 - **Material plugins draw on a device without deformers** - a material plugin's pipeline layouts carried the full deform group even where deformers are off, so on such a device every plugin draw failed validation, and on wgpu 29 and 30 the per-object layout went over the storage-buffer limit. Plugin layouts no longer carry a deform group at all.

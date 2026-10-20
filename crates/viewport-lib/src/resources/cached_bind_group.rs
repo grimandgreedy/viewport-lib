@@ -27,4 +27,9 @@ impl<K: PartialEq> CachedBindGroup<K> {
             }
         }
     }
+
+    /// The bind group built by the last `get`, if any.
+    pub(crate) fn current(&self) -> Option<&crate::gpu::BindGroup> {
+        self.entry.as_ref().map(|(_, bg)| bg)
+    }
 }

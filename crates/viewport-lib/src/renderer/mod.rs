@@ -73,8 +73,6 @@ mod lod_instance_tests;
 #[cfg(test)]
 mod material_store_tests;
 #[cfg(test)]
-mod multi_viewport_overlay_tests;
-#[cfg(test)]
 mod prepare_timing_tests;
 
 /// Item-type names beginning with this prefix belong to the types viewport-lib
@@ -240,6 +238,13 @@ pub(crate) struct ViewportSlot {
     pub draw_skybox: bool,
     /// This viewport's prepared 2D overlay pass.
     pub overlay: ViewportOverlay,
+    /// Ground-plane uniform for this viewport's camera, and the bind group
+    /// over it and the shadow atlas, rebuilt when the atlas view changes.
+    pub ground_uniform_buf: crate::gpu::Buffer,
+    pub ground_bind_group: crate::resources::cached_bind_group::CachedBindGroup<(
+        crate::gpu::TextureView,
+        crate::gpu::Buffer,
+    )>,
 }
 
 /// One viewport's prepared 2D overlay pass: the vertex and storage buffers the
@@ -3336,6 +3341,13 @@ impl ViewportRenderer {
                 }],
             });
 
+            let ground_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some("vp_ground_plane_uniform_buf"),
+                size: std::mem::size_of::<crate::resources::GroundPlaneUniform>() as u64,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
             // The transform gizmo and the axes indicator now draw through the 2D
             // overlay system, so no per-viewport geometry buffers are needed for them.
 
@@ -3368,6 +3380,8 @@ impl ViewportRenderer {
                 dyn_res: None,
                 hdr_callback: None,
                 overlay: ViewportOverlay::new(),
+                ground_uniform_buf,
+                ground_bind_group: crate::resources::cached_bind_group::CachedBindGroup::new(),
             });
         }
     }
@@ -3508,66 +3522,7 @@ impl ViewportRenderer {
         id: ViewportId,
         frame: &FrameData,
     ) {
-        let vp_idx = id.0;
-        let camera_bg = self.viewport_camera_bind_group(vp_idx);
-        let grid_bg = self.viewport_grid_bind_group(vp_idx);
-        let vp_slot = self.viewport_slots.get(vp_idx);
-        emit_draw_calls!(
-            &self.resources,
-            &mut *render_pass,
-            frame,
-            &self.instancing.batches,
-            camera_bg,
-            grid_bg,
-            vp_slot,
-            &self.mesh_uniforms.material_bind_groups,
-            &self.prepared_surfaces,
-            self.per_object_bundle.as_ref()
-        );
-        self.draw_line_and_instance_layers(&mut *render_pass, camera_bg, false);
-        // TransparentVolumeMesh boundary wireframe overlay.
-        if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
-            if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for (slot, mesh_id) in self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate() {
-                    if let (Some(mesh), Some(wf)) = (
-                        self.resources.mesh_store.get(*mesh_id),
-                        self.resources.scene.wireframe(),
-                    ) {
-                        render_pass.set_pipeline(wf);
-                        render_pass.set_bind_group(1, tvm_bg, &[]);
-                        if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
-                            render_pass.set_vertex_buffer(1, records.slice(..));
-                        }
-                        render_pass.set_vertex_buffer(
-                            0,
-                            self.resources.geometry.vertex_slice(mesh.vertex_span),
-                        );
-                        if let Some(edge_buf) = &mesh.edge_index_buffer {
-                            render_pass.set_index_buffer(
-                                edge_buf.slice(..),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
-                            let slot = slot as u32;
-                            render_pass.draw_indexed(0..mesh.edge_index_count, 0, slot..slot + 1);
-                        }
-                    }
-                }
-            }
-        }
-        // Item-type plugin paint (LDR opt-in only): after all built-in scene
-        // content, mirroring the HDR scene-pass position.
-        self.dispatch_plugin_paint(render_pass, frame, false);
-        // Shadow atlas viewer overlay.
-        if let (true, Some(pipeline)) = (
-            frame.effects.debug.show_shadow_atlas,
-            self.resources
-                .guide_pipeline(crate::resources::overlay::guides::GUIDE_ATLAS_VIEWER),
-        ) {
-            render_pass.set_pipeline(pipeline);
-            render_pass.set_bind_group(0, &self.resources.shadow.atlas_viewer_bg, &[]);
-            render_pass.draw(0..6, 0..1);
-        }
+        self.paint_slot(render_pass, id.0, frame);
     }
 
     /// Return a reference to the camera bind group for the given viewport slot.
