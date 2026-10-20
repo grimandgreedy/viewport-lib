@@ -108,6 +108,9 @@ impl FeatureSet {
     /// The emissive map: its slot lookup and sample. A material without one
     /// adds its emissive colour and custom data only.
     pub const EMISSIVE_MAP: u16 = 128;
+    /// Light-probe indirect diffuse. Off, the environment's specular is not
+    /// held past the ambient block for a probe to keep.
+    pub const LIGHT_PROBE: u16 = 1 << 10;
 
     /// Every feature compiled out.
     pub const NONE: Self = Self(0);
@@ -132,6 +135,7 @@ impl FeatureSet {
         (Self::MATCAP, "FEAT_MATCAP"),
         (Self::DEFORM, "FEAT_DEFORM"),
         (Self::EMISSIVE_MAP, "FEAT_EMISSIVE_MAP"),
+        (Self::LIGHT_PROBE, "FEAT_LIGHT_PROBE"),
     ];
 
     pub fn bits(self) -> u16 {
@@ -182,6 +186,7 @@ impl FeatureSet {
                 Self::EMISSIVE_MAP,
                 material_flags[0] & m::HAS_EMISSIVE_TEX != 0,
             )
+            .with(Self::LIGHT_PROBE, flag(f::HAS_LIGHT_PROBE))
     }
 
     /// The pipeline constants for this set: the features it leaves out set
@@ -197,5 +202,20 @@ impl FeatureSet {
     /// A label suffix naming the set, for the build log.
     pub fn label(self, base: &str) -> String {
         format!("{base}_feat{:02x}", self.0)
+    }
+}
+
+#[cfg(test)]
+mod feature_set_tests {
+    use super::FeatureSet;
+    use crate::resources::mesh::instancing::{InstanceData, instance_flags};
+
+    #[test]
+    fn only_a_record_with_a_light_probe_needs_the_probe_feature() {
+        let mut inst: InstanceData = bytemuck::Zeroable::zeroed();
+        assert!(!FeatureSet::of_record(&inst, [0; 4]).has(FeatureSet::LIGHT_PROBE));
+        inst.flags |= instance_flags::HAS_LIGHT_PROBE;
+        assert!(FeatureSet::of_record(&inst, [0; 4]).has(FeatureSet::LIGHT_PROBE));
+        assert!(FeatureSet::UNIVERSAL.has(FeatureSet::LIGHT_PROBE));
     }
 }

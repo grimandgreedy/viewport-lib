@@ -283,6 +283,7 @@ override FEAT_LIGHTMAP: bool = true;
 override FEAT_MATCAP: bool = true;
 override FEAT_DEFORM: bool = true;
 override FEAT_EMISSIVE_MAP: bool = true;
+override FEAT_LIGHT_PROBE: bool = true;
 @group(1) @binding(7) var matcap_texture: texture_2d<f32>;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
@@ -1344,7 +1345,7 @@ fn compute_lit(
         // sampled at the object position, replacing the global-IBL / hemisphere
         // diffuse above. SH probes carry diffuse only: with an environment, the
         // probe takes the diffuse weight and the environment's reflection stays.
-        if object.has_light_probe != 0u {
+        if FEAT_LIGHT_PROBE && object.has_light_probe != 0u {
             let probe = evaluate_object_indirect(object.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
             if lights_uniform.ibl_enabled != 0u {
                 ambient = probe * ambient_kd + ibl_specular;
@@ -1443,7 +1444,7 @@ fn compute_lit(
         dbg_direct_lum  = dot(direct_rgb, lum_weights);
         var hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
         // Light-probe objects take their indirect diffuse from the SH field.
-        if object.has_light_probe != 0u {
+        if FEAT_LIGHT_PROBE && object.has_light_probe != 0u {
             hemi_rgb = evaluate_object_indirect(object.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
         }
         // Baked lightmap: replace, add, or occlude the ambient term. Sample the
