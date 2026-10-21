@@ -700,6 +700,10 @@ pub struct DeviceResources {
     pub(crate) mesh_sidecar_epoch: u64,
     /// Meshes whose closed check is still running on a worker thread.
     pub(crate) pending_closed_checks: Vec<crate::resources::mesh::mesh_store::MeshId>,
+    /// Meshes whose closed check landed with a different answer since the
+    /// renderer last looked. The renderer repacks its instanced batches only
+    /// when one of them names such a mesh.
+    pub(crate) closed_flipped: Vec<crate::resources::mesh::mesh_store::MeshId>,
     /// Bumped whenever a material plugin's pipeline set is built or dropped,
     /// or one of its texture groups is built or evicted. A recorded render
     /// bundle that draws plugin batches keys on it.

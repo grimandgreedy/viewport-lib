@@ -1918,6 +1918,7 @@ impl DeviceResources {
             resource_view_epoch: 0,
             mesh_sidecar_epoch: 0,
             pending_closed_checks: Vec::new(),
+            closed_flipped: Vec::new(),
             material_plugin_epoch: 0,
             retain_mesh_cpu_geometry: true,
             occlusion_culling_enabled: false,

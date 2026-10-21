@@ -187,6 +187,18 @@ impl ViewportRenderer {
             }
         }
 
+        // A closed answer that landed since last frame changes the records of
+        // the batches drawing that mesh; repack only if a cached batch does.
+        let flipped = std::mem::take(&mut self.resources.closed_flipped);
+        if self
+            .instancing
+            .cached_batches
+            .iter()
+            .any(|b| flipped.contains(&b.mesh_id))
+        {
+            self.resources.mesh_sidecar_epoch = self.resources.mesh_sidecar_epoch.wrapping_add(1);
+        }
+
         // Run the mesh-family pipeline rebuild that deformer registration
         // deferred, before anything draws or builds against those pipelines.
         // A burst of registrations since the last frame costs one rebuild

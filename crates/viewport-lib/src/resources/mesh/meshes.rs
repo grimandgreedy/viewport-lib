@@ -535,7 +535,18 @@ impl DeviceResources {
                                 aabb,
                                 data.uvs1.is_some(),
                             );
-                            mesh.closed_check = Some(closed_check);
+                            // Usually landed by now, so the mesh starts with
+                            // its real answer and never repacks for it.
+                            let pending = match closed_check.try_get() {
+                                Some(closed) => {
+                                    mesh.closed = closed;
+                                    false
+                                }
+                                None => {
+                                    mesh.closed_check = Some(closed_check);
+                                    true
+                                }
+                            };
                             mesh.cpu_positions = cpu_positions;
                             mesh.cpu_normals = cpu_normals;
                             mesh.cpu_indices = cpu_indices;
@@ -548,7 +559,9 @@ impl DeviceResources {
                                 data.positions.len(),
                             );
                             let mesh_id = resources.mesh_store.insert(mesh);
-                            resources.pending_closed_checks.push(mesh_id);
+                            if pending {
+                                resources.pending_closed_checks.push(mesh_id);
+                            }
                             tracing::debug!(
                                 mesh_index = mesh_id.index(),
                                 vertices = data.positions.len(),
@@ -3673,16 +3686,16 @@ impl DeviceResources {
     /// Copy every finished closed check onto its mesh. During a capture or a
     /// read-back call this waits for the ones still running, so the frame
     /// handed back reads every real answer; a presented frame never waits,
-    /// and a mesh keeps its provisional value until a later call. An answer
-    /// that changes a mesh moves `mesh_sidecar_epoch`, so the instanced
-    /// batches repack the records that carry the flag.
+    /// and a mesh keeps its provisional value until a later call. A mesh
+    /// whose answer changes goes on `closed_flipped`, for the renderer to
+    /// repack the records that carry the flag.
     pub(crate) fn resolve_closed_checks(&mut self) {
         if self.pending_closed_checks.is_empty() {
             return;
         }
         let block = self.pipeline_compiler.reading_back();
-        let mut changed = false;
         let mut pending = std::mem::take(&mut self.pending_closed_checks);
+        let flipped = &mut self.closed_flipped;
         pending.retain(|&id| {
             let Some(mesh) = self.mesh_store.get_mut(id) else {
                 return false;
@@ -3699,14 +3712,13 @@ impl DeviceResources {
                 return true;
             };
             mesh.closed_check = None;
-            changed |= mesh.closed != closed;
-            mesh.closed = closed;
+            if mesh.closed != closed {
+                mesh.closed = closed;
+                flipped.push(id);
+            }
             false
         });
         self.pending_closed_checks = pending;
-        if changed {
-            self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
-        }
     }
 }
 
@@ -4732,7 +4744,6 @@ mod async_upload_tests {
             !resources.mesh(id).unwrap().closed,
             "open until the check lands"
         );
-        let epoch = resources.mesh_sidecar_epoch;
         let start = std::time::Instant::now();
         while resources.mesh(id).unwrap().closed_check.is_some() {
             assert!(start.elapsed().as_secs() < 10, "check never landed");
@@ -4740,7 +4751,7 @@ mod async_upload_tests {
             resources.process_uploads(&device, &queue);
         }
         assert!(resources.mesh(id).unwrap().closed);
-        assert_ne!(resources.mesh_sidecar_epoch, epoch, "records not repacked");
+        assert_eq!(resources.closed_flipped, [id]);
         assert!(resources.pending_closed_checks.is_empty());
 
         // A topology change keeps the old answer until the new one lands.
