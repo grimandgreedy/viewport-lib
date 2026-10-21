@@ -1583,7 +1583,7 @@ impl DeviceResources {
         let mut geometry =
             crate::resources::mesh::geometry_slab::GeometrySlab::new(device, geometry_chunk_bytes);
         geometry.dedicate_next_allocation();
-        let cube_mesh = Self::create_mesh(
+        let mut cube_mesh = Self::create_mesh(
             device,
             &mut geometry,
             &object_bgl,
@@ -1602,6 +1602,10 @@ impl DeviceResources {
             &fallback_emissive_texture_view,
             &fallback_uv1_buf,
             &cube_verts,
+            &cube_indices,
+        );
+        cube_mesh.closed = crate::resources::mesh::meshes::mesh_is_closed(
+            cube_verts.iter().map(|v| v.position),
             &cube_indices,
         );
         mark("geometry_slab_and_builtin_cube");
@@ -1913,6 +1917,8 @@ impl DeviceResources {
             resource_free_epoch: 0,
             resource_view_epoch: 0,
             mesh_sidecar_epoch: 0,
+            pending_closed_checks: Vec::new(),
+            closed_flipped: Vec::new(),
             material_plugin_epoch: 0,
             retain_mesh_cpu_geometry: true,
             occlusion_culling_enabled: false,

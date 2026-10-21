@@ -63,6 +63,8 @@ mod deform_shadow_tests;
 #[cfg(test)]
 mod deform_stats_tests;
 #[cfg(test)]
+mod closed_check_tests;
+#[cfg(test)]
 mod frame_reuse_tests;
 #[cfg(test)]
 mod hidden_tests;
