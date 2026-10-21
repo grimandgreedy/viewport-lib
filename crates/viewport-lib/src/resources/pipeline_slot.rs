@@ -465,7 +465,7 @@ impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, 
         feats: crate::renderer::pipeline_key::FeatureSet,
     ) -> Option<Option<&P>> {
         let f = self.features.as_deref()?;
-        let key = ((i as u32) << 8 | feats.bits() as u32) + 1;
+        let key = ((i as u32) << 16 | feats.bits() as u32) + 1;
         let find = |len: usize| {
             f.keys[..len]
                 .iter()
@@ -505,7 +505,7 @@ impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, 
         let Some(f) = self.features.as_deref() else {
             return false;
         };
-        let key = ((i as u32) << 8 | feats.bits() as u32) + 1;
+        let key = ((i as u32) << 16 | feats.bits() as u32) + 1;
         f.keys[..f.len.load(Ordering::Acquire)]
             .iter()
             .position(|k| k.load(Ordering::Acquire) == key)
