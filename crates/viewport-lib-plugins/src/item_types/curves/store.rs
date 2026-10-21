@@ -530,8 +530,8 @@ pub(super) fn build_streamtube(
                 &item.positions,
                 &item.strip_lengths,
             ),
-            tri_segment,
-            tri_strip,
+            tri_segment: tri_segment.into(),
+            tri_strip: tri_strip.into(),
             rebind: None,
             _uniform_buf: uniform_buf,
         }
@@ -860,8 +860,8 @@ pub(super) fn build_tube(
                 &item.positions,
                 &item.strip_lengths,
             ),
-            tri_segment,
-            tri_strip,
+            tri_segment: tri_segment.into(),
+            tri_strip: tri_strip.into(),
             rebind: None,
             _uniform_buf: uniform_buf,
         }
@@ -1200,8 +1200,8 @@ pub(super) fn build_ribbon(
                 &item.positions,
                 &item.strip_lengths,
             ),
-            tri_segment,
-            tri_strip,
+            tri_segment: tri_segment.into(),
+            tri_strip: tri_strip.into(),
             rebind: item.texture_id.map(|texture_id| RibbonRebind {
                 texture_id,
                 uniform: uniform_data,
@@ -1264,10 +1264,11 @@ pub(crate) struct StreamtubeGpuData {
     /// (the hit triangle) to the source curve segment, so a sub-object GPU pick
     /// resolves `SubObjectRef::Segment`. End/start cap triangles map to the last
     /// / first segment of their strip. Empty when the item is not pickable.
-    pub(crate) tri_segment: Vec<u32>,
+    /// Shared, so a reference draw clones a handle rather than the table.
+    pub(crate) tri_segment: std::sync::Arc<[u32]>,
     /// Per-triangle strip index, parallel to [`tri_segment`](Self::tri_segment),
     /// used to resolve `SubObjectRef::Strip`. Empty when not pickable.
-    pub(crate) tri_strip: Vec<u32>,
+    pub(crate) tri_strip: std::sync::Arc<[u32]>,
     /// What this batch needs to rebind itself when the streak texture in its
     /// bind group is freed or swapped. `None` for a tube, a streamtube, or an
     /// untextured ribbon: none of them binds a texture the host can free.
