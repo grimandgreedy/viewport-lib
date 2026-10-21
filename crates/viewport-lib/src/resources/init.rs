@@ -1575,14 +1575,11 @@ impl DeviceResources {
         // can reference the fallback texture views at creation time.
         // ------------------------------------------------------------------
         let (cube_verts, cube_indices) = build_unit_cube();
-        // Shared geometry slab; the fallback cube is its first allocation, in
-        // a small chunk of its own so the slab's first full chunk waits for an
-        // application mesh. Its write is recorded now and flushed at the first
-        // `process_uploads`.
+        // Shared geometry slab; the fallback cube is its first allocation. Its
+        // write is recorded now and flushed at the first `process_uploads`.
         mark("buffers_and_bind_groups");
         let mut geometry =
             crate::resources::mesh::geometry_slab::GeometrySlab::new(device, geometry_chunk_bytes);
-        geometry.dedicate_next_allocation();
         let mut cube_mesh = Self::create_mesh(
             device,
             &mut geometry,
