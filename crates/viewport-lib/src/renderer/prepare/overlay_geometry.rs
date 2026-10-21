@@ -253,6 +253,30 @@ pub(super) fn tessellate_ribbon(
     vp_w: f32,
     vp_h: f32,
 ) -> Vec<crate::resources::OverlayTextVertex> {
+    // A point that repeats the one before it is a segment of no length, and its
+    // normal is zero. At a corner that turns the joint into two square ends with
+    // nothing between them, so the outer corner is missing. It says nothing about
+    // the path, so it goes. A closed path whose last point repeats its first is the
+    // same case at the seam.
+    let same = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < 1e-4 && (a[1] - b[1]).abs() < 1e-4;
+    let repeats = points.windows(2).any(|w| same(w[0], w[1]))
+        || (closed && points.len() > 1 && same(points[0], points[points.len() - 1]));
+    let deduped: Vec<[f32; 2]>;
+    let points = if repeats {
+        let mut kept: Vec<[f32; 2]> = Vec::with_capacity(points.len());
+        for &p in points {
+            if kept.last().is_none_or(|&q| !same(p, q)) {
+                kept.push(p);
+            }
+        }
+        if closed && kept.len() > 1 && same(kept[0], kept[kept.len() - 1]) {
+            kept.pop();
+        }
+        deduped = kept;
+        &deduped[..]
+    } else {
+        points
+    };
     let n = points.len();
     if n < 2 || d_hi <= d_lo {
         return Vec::new();
@@ -897,6 +921,33 @@ mod stroke_tests {
         assert!(square.iter().all(|v| v.position[0].is_finite()));
         assert!(min_x(&square) < min_x(&butt));
         assert!(min_x(&round) < min_x(&butt));
+    }
+
+    #[test]
+    fn a_repeated_point_at_a_corner_keeps_the_corner() {
+        // Down, then the corner twice, then right: a stepped line reduced to pixel
+        // columns repeats its corners like this. The outer corner of a four-pixel
+        // stroke is at (48, 52), and a mitred joint reaches it.
+        let corner = |points: &[[f32; 2]]| {
+            tessellate_polyline(
+                points,
+                4.0,
+                false,
+                LineJoin::Mitre,
+                4.0,
+                PolylineCap::Butt,
+                WHITE,
+                100.0,
+                100.0,
+            )
+            .iter()
+            .any(|v| (v.position[0] - 48.0).abs() < 1e-3 && (v.position[1] - 52.0).abs() < 1e-3)
+        };
+        assert!(corner(&[[50.0, 10.0], [50.0, 50.0], [90.0, 50.0]]));
+        assert!(
+            corner(&[[50.0, 10.0], [50.0, 50.0], [50.0, 50.0], [90.0, 50.0]]),
+            "a repeated corner point leaves the outer corner unfilled"
+        );
     }
 
     #[test]
