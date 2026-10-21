@@ -111,6 +111,9 @@ impl FeatureSet {
     /// The second UV set: the uv1 stream read and the per-slot choice between
     /// the two sets. Off, every slot samples uv0.
     pub const UV1: u16 = 1 << 8;
+    /// The per-slot UV offset, scale and rotation. Off, every slot samples
+    /// the mesh UV as it is.
+    pub const UV_TRANSFORM: u16 = 1 << 9;
 
     /// Every feature compiled out.
     pub const NONE: Self = Self(0);
@@ -136,6 +139,7 @@ impl FeatureSet {
         (Self::DEFORM, "FEAT_DEFORM"),
         (Self::EMISSIVE_MAP, "FEAT_EMISSIVE_MAP"),
         (Self::UV1, "FEAT_UV1"),
+        (Self::UV_TRANSFORM, "FEAT_UV_TRANSFORM"),
     ];
 
     pub fn bits(self) -> u16 {
@@ -187,6 +191,7 @@ impl FeatureSet {
                 material_flags[0] & m::HAS_EMISSIVE_TEX != 0,
             )
             .with(Self::UV1, material_flags[0] & m::USES_UV1 != 0)
+            .with(Self::UV_TRANSFORM, material_flags[0] & m::UV_TRANSFORM != 0)
     }
 
     /// The pipeline constants for this set: the features it leaves out set
