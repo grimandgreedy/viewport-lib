@@ -1,0 +1,89 @@
+name: Software adapters
+
+# Runs the headless tests on the two CPU-only adapters: WARP (Direct3D 12) on a
+# Windows runner and lavapipe (Vulkan) on a Linux runner. Neither runner has a
+# GPU, so this is the only rendering test the Windows and Linux legs get in CI,
+# and it answers whether the renderer runs below the hardware floor at all.
+#
+# Manual only for now: start it from the Actions tab.
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Software rasterisers are slow enough that debug builds time out.
+  CARGO_PROFILE_RELEASE_DEBUG: 0
+  # Every headless test skips quietly when no adapter exists. This makes the
+  # gpu_available canary fail instead, so a runner with a broken adapter setup
+  # cannot report green while testing nothing.
+  VIEWPORT_REQUIRE_GPU: 1
+
+jobs:
+  warp:
+    name: WARP (DX12, Windows)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      # wgpu enumerates WARP as a CPU adapter and request_adapter falls back to
+      # it when the runner offers no hardware adapter. Pinning the backend
+      # keeps the GL path out of the picture.
+      WGPU_BACKEND: dx12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Adapter probe
+        run: cargo test --release -p viewport-lib --test gpu_available -- --nocapture
+
+      - name: Library headless tests
+        run: cargo test --release -p viewport-lib --tests
+
+      # --tests keeps the examples out of the build: they pull eframe, which
+      # the runner does not need.
+      - name: Testkit tests
+        working-directory: crates/viewport-lib-testkit
+        run: cargo test --release --tests
+
+      # There are no references blessed for this backend, so the gate writes a
+      # fresh set and passes. That makes this step a check that every catalogue
+      # scene renders through WARP, not a pixel comparison. The files are never
+      # committed from here.
+      - name: Catalogue scenes render
+        working-directory: crates/viewport-lib-testkit
+        run: |
+          cargo test --release --test snapshots
+          git status --short tests/snapshots/
+
+  lavapipe:
+    name: lavapipe (Vulkan, Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      WGPU_BACKEND: vulkan
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install lavapipe
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
+          vulkaninfo --summary
+
+      - name: Adapter probe
+        run: cargo test --release -p viewport-lib --test gpu_available -- --nocapture
+
+      - name: Library headless tests
+        run: cargo test --release -p viewport-lib --tests
+
+      - name: Testkit tests
+        working-directory: crates/viewport-lib-testkit
+        run: cargo test --release --tests
+
+      - name: Catalogue scenes render
+        working-directory: crates/viewport-lib-testkit
+        run: |
+          cargo test --release --test snapshots
+          git status --short tests/snapshots/

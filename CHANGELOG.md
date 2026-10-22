@@ -85,6 +85,7 @@
 
 ### Changed
 
+- **The wgpu legs name `dx12` beside `metal` and `vulkan`** - Direct3D 12 was only compiled in through wgpu's default features; it is now a stated backend on all three legs, so a Windows machine with no Vulkan driver (remote desktop, a virtual machine, an Intel integrated part) and WARP on a GPU-less runner get a device. No code change; `WGPU_BACKEND=dx12` pins it for a process.
 - **The emissive-map sample is compiled out of mesh batches whose material binds no emissive map** - it joins the per-batch shader features, so a batch without a map adds the material's emissive colour and custom data only; the full pipeline stands in while the reduced one compiles, and `FrameStats::feature_pipelines_built` counts it.
 - **`ItemSettings::force_per_object` and `FrameStats::per_object_items` are removed** - every mesh item draws in a batch through one set of shaders, so there is no per-object path to force or count. Delete any `force_per_object` assignment; read `instanced_batches` and `draw_calls` instead of `per_object_items`.
 - **Shadow casters draw through one shader** - every mesh batch casts through the cascade and point-light shadow shaders the per-object casters used, drawing from the cascade cull. Batches that used to cast whole into every point-light face are now culled per face.
