@@ -149,6 +149,8 @@ const MAT_MATCAP_BLENDABLE: u32 = 4u;
 const MAT_LIGHTMAP_DIRECTIONAL: u32 = 8u;
 const MAT_HAS_SHADOWMASK: u32 = 16u;
 const MAT_HAS_EMISSIVE_TEX: u32 = 32u;
+const MAT_USES_UV1: u32 = 64u;
+const MAT_UV_TRANSFORM: u32 = 128u;
 
 struct SlotUv {
     uv: vec2<f32>,
@@ -169,10 +171,15 @@ fn material_slot_uv(
     ddy1: vec2<f32>,
 ) -> SlotUv {
     let xf = material_gpu_buf[mid].xf[slot];
-    let use1 = xf.rot_tc.y > 0.5;
+    // Off when no slot of the batch's materials selects uv1.
+    let use1 = FEAT_UV1 && xf.rot_tc.y > 0.5;
     let uv = select(uv0, uv1, use1);
     let duvdx = select(ddx0, ddx1, use1);
     let duvdy = select(ddy0, ddy1, use1);
+    // Off when every slot of the batch's materials is at identity.
+    if !FEAT_UV_TRANSFORM {
+        return SlotUv(uv, duvdx, duvdy);
+    }
     let s = xf.offset_scale.zw;
     let o = xf.offset_scale.xy;
     let rot = xf.rot_tc.x;
@@ -248,6 +255,9 @@ override FEAT_LIGHTMAP: bool = true;
 override FEAT_MATCAP: bool = true;
 override FEAT_DEFORM: bool = true;
 override FEAT_EMISSIVE_MAP: bool = true;
+override FEAT_UV1: bool = true;
+override FEAT_UV_TRANSFORM: bool = true;
+override FEAT_LIGHT_PROBE: bool = true;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
 @group(1) @binding(12) var emissive_tex: texture_2d<f32>;
@@ -570,7 +580,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
     out.uv = in.uv;
     // Second UV set from the parallel uv1 stream. See mesh.wgsl:vs_body.
     out.uv1 = vec2<f32>(0.0);
-    if (inst_flags & INST_HAS_UV1) != 0u {
+    if FEAT_UV1 && (inst_flags & INST_HAS_UV1) != 0u {
         let uv1_len = arrayLength(&uv1_buf);
         out.uv1 = uv1_buf[min(in.vertex_index, max(uv1_len, 1u) - 1u)];
     }
@@ -1089,7 +1099,7 @@ fn compute_lit(
         }
         // Light-probe objects take their indirect diffuse from the SH field; with
         // an environment, its reflection stays.
-        if object.has_light_probe != 0u {
+        if FEAT_LIGHT_PROBE && object.has_light_probe != 0u {
             let probe = evaluate_object_indirect(object.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
             if lights_uniform.ibl_enabled != 0u {
                 ambient = probe * ambient_kd + ibl_specular;
@@ -1154,7 +1164,7 @@ fn compute_lit(
         dbg_direct_lum  = dot(direct_rgb, lum_weights);
         var hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
         // Light-probe objects take their indirect diffuse from the SH field.
-        if object.has_light_probe != 0u {
+        if FEAT_LIGHT_PROBE && object.has_light_probe != 0u {
             hemi_rgb = evaluate_object_indirect(object.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
         }
         // Baked lightmap: replace, add, or occlude the ambient term. Force the

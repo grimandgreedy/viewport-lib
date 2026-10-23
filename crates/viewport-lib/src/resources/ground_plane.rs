@@ -11,9 +11,7 @@ pub(crate) struct GroundPlaneResources {
     /// [`DeviceResources::ensure_ground_plane_pipeline`](crate::resources::DeviceResources::ensure_ground_plane_pipeline).
     pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
     /// Bind group layout for the ground plane (binding 0: uniform, 1: shadow
-    /// depth, 2: comparison sampler). The bind group is rebuilt from the live
-    /// layout inside `create_*`; this stored copy is currently unused.
-    #[allow(dead_code)]
+    /// depth, 2: comparison sampler, 3: shadow info).
     pub(crate) bgl: crate::gpu::BindGroupLayout,
     /// Uniform buffer for GroundPlaneUniform (256 bytes, written each frame in prepare()).
     pub(crate) uniform_buf: crate::gpu::Buffer,

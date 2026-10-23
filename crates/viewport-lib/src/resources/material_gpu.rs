@@ -39,6 +39,11 @@ impl TexTransformGpu {
         rot_tc: [0.0, 0.0, 0.0, 0.0],
     };
 
+    /// No offset, scale or rotation; the UV set does not count.
+    fn is_identity(&self) -> bool {
+        self.offset_scale == Self::IDENTITY.offset_scale && self.rot_tc[0] == 0.0
+    }
+
     fn from_transform(t: &crate::scene::material::UvTransform) -> TexTransformGpu {
         TexTransformGpu {
             offset_scale: [t.offset[0], t.offset[1], t.scale[0], t.scale[1]],
@@ -139,6 +144,10 @@ pub(crate) mod item_flags {
     /// The material binds an emissive map; mirrors `scalars3.w` as a bit so a
     /// pipeline feature set can read it.
     pub(crate) const HAS_EMISSIVE_TEX: u32 = 1 << 5;
+    /// Some texture slot reads the second UV set.
+    pub(crate) const USES_UV1: u32 = 1 << 6;
+    /// Some texture slot has an offset, scale or rotation.
+    pub(crate) const UV_TRANSFORM: u32 = 1 << 7;
 }
 
 /// The item-level and mesh-level shading facts that ride the material block
@@ -438,7 +447,9 @@ impl MaterialGpu {
                         | on(item.matcap == Some(true), f::MATCAP_BLENDABLE)
                         | on(directional, f::LIGHTMAP_DIRECTIONAL)
                         | on(shadowmask, f::HAS_SHADOWMASK)
-                        | on(resolved.live(Emissive), f::HAS_EMISSIVE_TEX),
+                        | on(resolved.live(Emissive), f::HAS_EMISSIVE_TEX)
+                        | on(xf.iter().any(|x| x.rot_tc[1] > 0.5), f::USES_UV1)
+                        | on(xf.iter().any(|x| !x.is_identity()), f::UV_TRANSFORM),
                     mode,
                     0,
                     0,
@@ -675,6 +686,48 @@ mod tests {
         assert_eq!(t.blocks().len(), 1);
         let block: [u8; MATERIAL_GPU_BYTES] = bytemuck::cast(t.blocks()[0]);
         assert_eq!(block, bytes(&Material::default(), false));
+    }
+
+    #[test]
+    fn a_slot_on_the_second_uv_set_flags_the_block() {
+        let flags = |m: &Material| {
+            MaterialGpu::from_material(m, false, all_live(m), &ItemShading::default()).item_flags[0]
+        };
+        assert_eq!(flags(&Material::default()) & item_flags::USES_UV1, 0);
+        let uv1 = Material::default().with_texture_transform(
+            TextureSlot::Normal,
+            UvTransform {
+                uv_set: 1,
+                ..UvTransform::default()
+            },
+        );
+        assert_ne!(flags(&uv1) & item_flags::USES_UV1, 0);
+    }
+
+    #[test]
+    fn only_a_moved_slot_flags_the_uv_transform() {
+        let flags = |m: &Material| {
+            MaterialGpu::from_material(m, false, all_live(m), &ItemShading::default()).item_flags[0]
+        };
+        assert_eq!(flags(&Material::default()) & item_flags::UV_TRANSFORM, 0);
+        let on_uv1 = Material::default().with_texture_transform(
+            TextureSlot::Normal,
+            UvTransform {
+                uv_set: 1,
+                ..UvTransform::default()
+            },
+        );
+        assert_eq!(flags(&on_uv1) & item_flags::UV_TRANSFORM, 0);
+        let rotated = Material::default().with_uv_rotation(0.3);
+        assert_ne!(flags(&rotated) & item_flags::UV_TRANSFORM, 0);
+        let tiled = Material::default().with_texture_transform(
+            TextureSlot::Emissive,
+            UvTransform {
+                scale: [2.0, 2.0],
+                ..UvTransform::default()
+            },
+        );
+        assert_ne!(flags(&tiled) & item_flags::UV_TRANSFORM, 0);
     }
 
     #[test]

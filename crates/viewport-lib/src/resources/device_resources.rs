@@ -698,6 +698,12 @@ pub struct DeviceResources {
     /// keys on it: those changes alter the instance records and the
     /// bind groups without a scene generation bump.
     pub(crate) mesh_sidecar_epoch: u64,
+    /// Meshes whose closed check is still running on a worker thread.
+    pub(crate) pending_closed_checks: Vec<crate::resources::mesh::mesh_store::MeshId>,
+    /// Meshes whose closed check landed with a different answer since the
+    /// renderer last looked. The renderer repacks its instanced batches only
+    /// when one of them names such a mesh.
+    pub(crate) closed_flipped: Vec<crate::resources::mesh::mesh_store::MeshId>,
     /// Bumped whenever a material plugin's pipeline set is built or dropped,
     /// or one of its texture groups is built or evicted. A recorded render
     /// bundle that draws plugin batches keys on it.
@@ -1590,24 +1596,20 @@ impl DeviceResources {
     /// them was replaced. The primary camera group, the ground plane, and the
     /// atlas debug viewer are the three that bind those views; the
     /// per-viewport camera groups live on the renderer and are rebuilt there.
-    fn rebuild_shadow_sampling_bind_groups(&mut self, device: &crate::gpu::Device) {
-        let camera_bg = self.create_camera_bind_group(
-            device,
-            &self.binds.camera_uniform_buf,
-            &self.binds.clip_planes_buf,
-            &self.shadow.info_buf,
-            &self.binds.clip_volume_buf,
-            "camera_bind_group",
-        );
-        self.binds.camera_bg = camera_bg;
-
-        let ground_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+    /// A ground-plane bind group over `uniform_buf` and the current shadow
+    /// atlas. Each viewport builds its own over its own uniform.
+    pub(crate) fn create_ground_bind_group(
+        &self,
+        device: &crate::gpu::Device,
+        uniform_buf: &crate::gpu::Buffer,
+    ) -> crate::gpu::BindGroup {
+        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("ground_plane_bind_group"),
             layout: &self.ground.bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.ground.uniform_buf.as_entire_binding(),
+                    resource: uniform_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 1,
@@ -1622,8 +1624,21 @@ impl DeviceResources {
                     resource: self.shadow.info_buf.as_entire_binding(),
                 },
             ],
-        });
-        self.ground.bind_group = ground_bg;
+        })
+    }
+
+    fn rebuild_shadow_sampling_bind_groups(&mut self, device: &crate::gpu::Device) {
+        let camera_bg = self.create_camera_bind_group(
+            device,
+            &self.binds.camera_uniform_buf,
+            &self.binds.clip_planes_buf,
+            &self.shadow.info_buf,
+            &self.binds.clip_volume_buf,
+            "camera_bind_group",
+        );
+        self.binds.camera_bg = camera_bg;
+
+        self.ground.bind_group = self.create_ground_bind_group(device, &self.ground.uniform_buf);
 
         let viewer_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("shadow_atlas_viewer_bg"),

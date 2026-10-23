@@ -68,8 +68,6 @@ pub(super) fn build_frame_with(
         .then(|| pick.node_bind_group(device, gpu_data.node_pick_buffer.as_ref()))
         .flatten();
     CurveFrame {
-        tri_segment: gpu_data.tri_segment.clone(),
-        tri_strip: gpu_data.tri_strip.clone(),
         gpu: gpu_data,
         instance_bind_group,
         node_bind_group,
@@ -237,6 +235,7 @@ pub(super) fn resolve_curve_sub_object(
     if mask.intersects(PickMask::STRIP) {
         return Some(SubObjectRef::Strip(
             entry
+                .gpu
                 .tri_strip
                 .get(primitive_index as usize)
                 .copied()
@@ -246,6 +245,7 @@ pub(super) fn resolve_curve_sub_object(
     if mask.intersects(PickMask::SEGMENT) {
         return Some(SubObjectRef::Segment(
             entry
+                .gpu
                 .tri_segment
                 .get(primitive_index as usize)
                 .copied()

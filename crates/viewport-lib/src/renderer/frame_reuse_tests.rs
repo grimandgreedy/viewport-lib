@@ -22,8 +22,15 @@ struct Bound {
 fn bound(renderer: &ViewportRenderer) -> Bound {
     let slot = &renderer.viewport_slots[0];
     Bound {
-        label: renderer.label_gpu_data.as_ref().unwrap().bind_group.clone(),
-        shape_shadow: renderer
+        label: slot
+            .overlay
+            .label_gpu_data
+            .as_ref()
+            .unwrap()
+            .bind_group
+            .clone(),
+        shape_shadow: slot
+            .overlay
             .overlay_shape_gpu_data
             .as_ref()
             .and_then(|d| d.shadow_bind_group.clone())

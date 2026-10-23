@@ -964,3 +964,52 @@ fn a_warmed_ribbon_type_builds_nothing_on_its_first_frame() {
         "the first ribbon frames built pipelines after the warm-up: {builds:?}"
     );
 }
+
+/// Two references to one stored tube pick as two items, each resolving its own
+/// segment from the stored tables, whichever order they are submitted in.
+#[test]
+fn two_references_to_one_tube_pick_their_own_segments() {
+    let _serial = serial();
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    let (positions, strip_lengths) = spine();
+    let mut tube = TubeItem::default();
+    tube.positions = positions;
+    tube.strip_lengths = strip_lengths;
+    tube.radius = 0.5;
+    let source = renderer.upload(&device, &queue, &tube).unwrap();
+
+    let at = |z: f32, id: u64| {
+        let mut r = TubeRefItem::new(source);
+        r.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z)).to_cols_array_2d();
+        r.settings.pick_id = PickId(id);
+        r
+    };
+    for (generation, refs) in [
+        (1, [at(0.0, 81), at(100.0, 82)]),
+        (2, [at(100.0, 82), at(0.0, 81)]),
+    ] {
+        let mut frame = curve_frame();
+        frame.scene.generation = generation;
+        frame.scene.items_mut::<TubeRefItem>().extend(refs);
+        let _ = renderer.pass().prepare(&device, &queue, &frame);
+        let hit = renderer
+            .pick_object(
+                PickBackend::Gpu,
+                glam::Vec2::new(32.0, 32.0),
+                &frame,
+                &device,
+                &queue,
+                PickMask::SEGMENT,
+            )
+            .expect("the reference at the origin should be hit");
+        assert_eq!(hit.id, 81);
+        match hit.sub_object {
+            Some(SubObjectRef::Segment(s)) => assert!(s < 2, "segment {s} out of range"),
+            other => panic!("expected a Segment sub-object, got {other:?}"),
+        }
+    }
+}

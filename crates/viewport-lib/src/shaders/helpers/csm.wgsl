@@ -65,6 +65,56 @@ fn shadow_tap_dir(i: u32, use_vogel8: bool) -> vec2<f32> {
     return POISSON_DISK[i];
 }
 
+// Contact rule. When the surface recorded at the receiver's own texel
+// sits only a few texel-depths in front of it, the receiver is touching
+// its occluder: a wall under the ceiling it meets, a floor under the
+// object resting on it. The filter footprint then straddles the occluder
+// itself, and taps on the far side of the contact line read the
+// occluder's back face where it continues beyond the corner, deeper than
+// the receiver plane and so "lit". That is a leak, not a penumbra: the
+// occluder's front face, which the cull-front caster pass never records,
+// is what blocks those taps. A receiver in contact takes the centre tap
+// alone (the hardware 2x2 compare) instead of the filtered average, so
+// the filter never reaches across the contact line. Shadow edges away
+// from contact are untouched: their occluder is far in front of the
+// receiver.
+//
+// The margins are in texel-depths, so they scale with the cascade like
+// the rest of the bias. The occluder has to be at least one texel in
+// front of the receiver's own unbiased depth, which keeps the rule off a
+// lit face's own silhouette edge (a cube's edge, a cylinder's rim, a thin
+// slab's far edge), where the texel straddling the edge records the far
+// side at the receiver's depth give or take its quantisation. Six
+// texel-depths covers a caster the light grazes at 75 degrees across the
+// 1.5-texel PCF radius. One-sided receivers under a directional light
+// only: cull-none casters record both faces and cannot leak this way,
+// and the perspective matrices of point and spot lights do not map
+// texels to depth like this.
+//
+// It runs after the filter, and only for a penumbra result: the leak
+// shows as a partly lit average, and a fully lit or fully shadowed
+// fragment, most of a scene, then skips the extra shadow-map load.
+fn csm_contact(
+    filtered: f32,
+    atlas_uv: vec2<f32>,
+    biased_depth: f32,
+    surface_depth: f32,
+    texel_depth: f32,
+    contact_rule: bool,
+) -> f32 {
+    if !contact_rule || filtered <= 0.0 || filtered >= 1.0 {
+        return filtered;
+    }
+    let centre_coords = vec2<i32>(atlas_uv * shadow_atlas.atlas_size);
+    let centre_depth = textureLoad(shadow_map, centre_coords, 0);
+    let in_front = surface_depth - centre_depth;
+    let occludes = centre_depth < biased_depth;
+    if occludes && in_front > 1.0 * texel_depth && in_front < 6.0 * texel_depth {
+        return textureSampleCompareLevel(shadow_map, shadow_sampler, atlas_uv, biased_depth);
+    }
+    return filtered;
+}
+
 fn sample_shadow_csm(
     world_pos: vec3<f32>,
     eye_pos: vec3<f32>,
@@ -72,7 +122,7 @@ fn sample_shadow_csm(
     light_dir: vec3<f32>,
     // 1 when the receiver is a styled back-face policy on an open mesh, the
     // cull-none caster path. Two-sided receivers need a much smaller bias
-    // floor and skip the contact rule; see the comments below. The per-object
+    // floor and skip the contact rule; see `csm_contact`. The per-object
     // path derives it from the object uniform, the instanced path from bit 2
     // of the instance's receive_shadows word.
     receiver_two_sided: u32,
@@ -182,43 +232,6 @@ fn sample_shadow_csm(
         return ShadowSample(s, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     }
 
-    // Contact rule. When the surface recorded at the receiver's own texel
-    // sits only a few texel-depths in front of it, the receiver is touching
-    // its occluder: a wall under the ceiling it meets, a floor under the
-    // object resting on it. The filter footprint then straddles the occluder
-    // itself, and taps on the far side of the contact line read the
-    // occluder's back face where it continues beyond the corner, deeper than
-    // the receiver plane and so "lit". That is a leak, not a penumbra: the
-    // occluder's front face, which the cull-front caster pass never records,
-    // is what blocks those taps. A receiver in contact takes the centre tap
-    // alone (the hardware 2x2 compare) instead of the filtered average, so
-    // the filter never reaches across the contact line. Shadow edges away
-    // from contact are untouched: their occluder is far in front of the
-    // receiver.
-    //
-    // The margins are in texel-depths, so they scale with the cascade like
-    // the rest of the bias. The occluder has to be at least one texel in
-    // front of the receiver's own unbiased depth, which keeps the rule off a
-    // lit face's own silhouette edge (a cube's edge, a cylinder's rim, a thin
-    // slab's far edge), where the texel straddling the edge records the far
-    // side at the receiver's depth give or take its quantisation. Six
-    // texel-depths covers a caster the light grazes at 75 degrees across the
-    // 1.5-texel PCF radius. One-sided receivers under a directional light
-    // only: cull-none casters record both faces and cannot leak this way,
-    // and the perspective matrices of point and spot lights do not map
-    // texels to depth like this.
-    if primary_light_type == 0u && receiver_two_sided == 0u {
-        let centre_coords = vec2<i32>(atlas_uv * shadow_atlas.atlas_size);
-        let centre_depth = textureLoad(shadow_map, centre_coords, 0);
-        let texel_depth = texel_world * length(vp_row2);
-        let in_front = surface_depth - centre_depth;
-        let occludes = centre_depth < biased_depth;
-        if occludes && in_front > 1.0 * texel_depth && in_front < 6.0 * texel_depth {
-            let s = textureSampleCompareLevel(shadow_map, shadow_sampler, atlas_uv, biased_depth);
-            return ShadowSample(s, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
-        }
-    }
-
     // Receiver-plane depth bias: tilt the comparison reference for each filter
     // tap to follow the receiver surface's depth gradient in light space. With
     // a flat reference, taps on the up-slope side of a tilted receiver read as
@@ -254,6 +267,8 @@ fn sample_shadow_csm(
     let cos_r = cos(rot);
 
     let tier = shadow_atlas.shadow_filter;
+    let contact_rule = primary_light_type == 0u && receiver_two_sided == 0u;
+    let texel_depth = texel_world * length(vp_row2);
     if tier == 1u || tier == 4u {
         // PCSS: the blocker search estimates the occluder distance per
         // fragment and widens the filter with it (contact hardening). The
@@ -292,7 +307,8 @@ fn sample_shadow_csm(
                 + clamp(dot(depth_grad, clamped_uv - atlas_uv), -0.005, 0.005);
             shadow += textureSampleCompareLevel(shadow_map, shadow_sampler, clamped_uv, tap_depth);
         }
-        return ShadowSample(shadow / f32(filter_taps), cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
+        let filtered = csm_contact(shadow / f32(filter_taps), atlas_uv, biased_depth, surface_depth, texel_depth, contact_rule);
+        return ShadowSample(filtered, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     }
 
     // PCF: fixed-radius rotated Poisson disk. The default is 8 taps; the
@@ -311,5 +327,6 @@ fn sample_shadow_csm(
             + clamp(dot(depth_grad, clamped_uv - atlas_uv), -0.005, 0.005);
         shadow += textureSampleCompareLevel(shadow_map, shadow_sampler, clamped_uv, tap_depth);
     }
-    return ShadowSample(shadow / f32(taps), cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
+    let filtered = csm_contact(shadow / f32(taps), atlas_uv, biased_depth, surface_depth, texel_depth, contact_rule);
+    return ShadowSample(filtered, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
 }

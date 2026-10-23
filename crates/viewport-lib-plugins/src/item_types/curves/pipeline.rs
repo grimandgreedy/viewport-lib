@@ -481,9 +481,6 @@ pub(super) struct CurveFrame {
     pub(super) outlined: bool,
     /// The item's settings, for the surface mask.
     pub(super) settings: viewport_lib::ItemSettings,
-    /// Per-triangle segment and strip tables, for `resolve_sub_object`.
-    pub(super) tri_segment: Vec<u32>,
-    pub(super) tri_strip: Vec<u32>,
 }
 
 /// Draw one item's mesh, solid or wireframe, into `pass`. The pipeline and

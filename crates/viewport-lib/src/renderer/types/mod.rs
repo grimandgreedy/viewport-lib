@@ -841,7 +841,10 @@ macro_rules! emit_draw_calls {
             crate::renderer::types::GroundPlaneMode::None
         ) {
             render_pass.set_pipeline(resources.ground.pipeline());
-            render_pass.set_bind_group(0, &resources.ground.bind_group, &[]);
+            let ground_bg = _vp_slot
+                .and_then(|s| s.ground_bind_group.current())
+                .unwrap_or(&resources.ground.bind_group);
+            render_pass.set_bind_group(0, ground_bg, &[]);
             render_pass.draw(0..3, 0..1);
             render_pass.set_bind_group(0, camera_bg, &[]);
         }

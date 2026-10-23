@@ -10,6 +10,18 @@ impl ViewportRenderer {
         render_pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
+        self.paint_slot(render_pass, frame.camera.viewport_index, frame);
+    }
+
+    /// Paint viewport slot `vp_idx` into a host-owned render pass. Shared by
+    /// `paint_to` and `paint_viewport_to`, so a viewport painted through the
+    /// multi-viewport API draws everything a single viewport does.
+    pub(crate) fn paint_slot<'rp>(
+        &self,
+        render_pass: &mut crate::gpu::RenderPass<'rp>,
+        vp_idx: usize,
+        frame: &FrameData,
+    ) {
         // The foreground pass needs its own cleared depth attachment, which a
         // host-owned render pass cannot provide (attachments are fixed at
         // begin_render_pass). Warn once instead of silently drawing nothing.
@@ -25,7 +37,6 @@ impl ViewportRenderer {
                  owned-encoder render path."
             );
         }
-        let vp_idx = frame.camera.viewport_index;
         let camera_bg = self.viewport_camera_bind_group(vp_idx);
         let grid_bg = self.viewport_grid_bind_group(vp_idx);
         let vp_slot = self.viewport_slots.get(vp_idx);
@@ -111,7 +122,8 @@ impl ViewportRenderer {
                 }
             }
         }
-        emit_overlay_2d!(self, render_pass);
+        let ov = &self.viewport_slots[vp_idx].overlay;
+        emit_overlay_2d!(self, ov, render_pass);
         // Shadow atlas viewer overlay.
         if let (true, Some(pipeline)) = (
             frame.effects.debug.show_shadow_atlas,

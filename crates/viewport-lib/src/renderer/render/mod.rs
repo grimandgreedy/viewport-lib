@@ -57,9 +57,9 @@ pub(crate) fn emit_indirect_run(
 /// The overlay pipelines are format-neutral (no separate LDR/HDR variant), so
 /// this is shared verbatim across paths.
 macro_rules! emit_overlay_2d_hardcoded {
-    ($this:ident, $render_pass:ident) => {{
+    ($this:ident, $ov:ident, $render_pass:ident) => {{
         // SDF overlay shapes (drawn before rects and labels).
-        if let Some(ref sd) = $this.overlay_shape_gpu_data {
+        if let Some(ref sd) = $ov.overlay_shape_gpu_data {
             if sd.vertex_count > 0 {
                 if let Some(pipeline) = &$this.resources.overlay_shape.pipeline {
                     if let (Some(vbuf), Some(shadow_bg)) = (&sd.vertex_buf, &sd.shadow_bind_group) {
@@ -86,7 +86,7 @@ macro_rules! emit_overlay_2d_hardcoded {
             }
         }
         // Overlay labels, glyph runs, and polylines (merged text batch).
-        if let Some(ref ld) = $this.label_gpu_data {
+        if let Some(ref ld) = $ov.label_gpu_data {
             if let Some(pipeline) = &$this.resources.overlay_text.pipeline {
                 $render_pass.set_pipeline(pipeline);
                 $render_pass.set_bind_group(0, &ld.bind_group, &[]);
@@ -104,7 +104,7 @@ macro_rules! emit_overlay_2d_hardcoded {
 /// changes between consecutive segments, so runs of the same pipeline (the usual
 /// case) stay batched.
 macro_rules! emit_overlay_2d_ordered {
-    ($this:ident, $render_pass:ident) => {{
+    ($this:ident, $ov:ident, $render_pass:ident) => {{
         use crate::renderer::overlay_draw_order::OverlayDrawSource;
         // Which pipeline is currently bound, so same-pipeline segments avoid a
         // redundant set_pipeline.
@@ -116,13 +116,13 @@ macro_rules! emit_overlay_2d_ordered {
             Text,
         }
         let mut last_pipe = LastPipe::None;
-        for seg in &$this.overlay_draw_segments {
+        for seg in &$ov.overlay_draw_segments {
             match seg.source {
                 OverlayDrawSource::Shape {
                     vertex_start,
                     vertex_count,
                 } => {
-                    if let Some(ref sd) = $this.overlay_shape_gpu_data {
+                    if let Some(ref sd) = $ov.overlay_shape_gpu_data {
                         if let (Some(pipeline), Some(vbuf), Some(shadow_bg)) = (
                             &$this.resources.overlay_shape.pipeline,
                             &sd.vertex_buf,
@@ -143,7 +143,7 @@ macro_rules! emit_overlay_2d_ordered {
                     vertex_start,
                     vertex_count,
                 } => {
-                    if let Some(ref sd) = $this.overlay_shape_gpu_data {
+                    if let Some(ref sd) = $ov.overlay_shape_gpu_data {
                         if let (Some(pipeline), Some(clip_bg), Some(batch)) = (
                             &$this.resources.overlay_shape.tex_pipeline,
                             sd.tex_clip_bind_group.as_ref(),
@@ -166,7 +166,7 @@ macro_rules! emit_overlay_2d_ordered {
                 } => {
                     if let (Some(pipeline), Some(td)) = (
                         &$this.resources.overlay_text.pipeline,
-                        $this.label_gpu_data.as_ref(),
+                        $ov.label_gpu_data.as_ref(),
                     ) {
                         if last_pipe != LastPipe::Text {
                             $render_pass.set_pipeline(pipeline);
@@ -184,8 +184,8 @@ macro_rules! emit_overlay_2d_ordered {
                     // per-frame instance slot.
                     if let (Some(pipeline), Some(td), Some(rd)) = (
                         &$this.resources.overlay_text.pipeline,
-                        $this.label_gpu_data.as_ref(),
-                        $this.overlay_retained_draws.get(draw_index as usize),
+                        $ov.label_gpu_data.as_ref(),
+                        $ov.overlay_retained_draws.get(draw_index as usize),
                     ) {
                         if last_pipe != LastPipe::Text {
                             $render_pass.set_pipeline(pipeline);
@@ -203,7 +203,7 @@ macro_rules! emit_overlay_2d_ordered {
                     // per-frame instance.
                     if let (Some(pipeline), Some(rd)) = (
                         &$this.resources.overlay_shape.pipeline,
-                        $this.overlay_retained_shape_draws.get(draw_index as usize),
+                        $ov.overlay_retained_shape_draws.get(draw_index as usize),
                     ) {
                         if last_pipe != LastPipe::Shape {
                             $render_pass.set_pipeline(pipeline);
@@ -223,11 +223,11 @@ macro_rules! emit_overlay_2d_ordered {
 /// Emit the 2D overlay draw calls. Dispatches to the fixed-order fast path when
 /// no overlay uses `z_order`, or the sorted segment walk when one does.
 macro_rules! emit_overlay_2d {
-    ($this:ident, $render_pass:ident) => {{
-        if $this.overlay_uses_zorder {
-            emit_overlay_2d_ordered!($this, $render_pass);
+    ($this:ident, $ov:ident, $render_pass:ident) => {{
+        if $ov.overlay_uses_zorder {
+            emit_overlay_2d_ordered!($this, $ov, $render_pass);
         } else {
-            emit_overlay_2d_hardcoded!($this, $render_pass);
+            emit_overlay_2d_hardcoded!($this, $ov, $render_pass);
         }
     }};
 }
@@ -392,7 +392,8 @@ impl ViewportRenderer {
                     }
                 }
             }
-            emit_overlay_2d!(self, render_pass);
+            let ov = &self.viewport_slots[vp_idx].overlay;
+            emit_overlay_2d!(self, ov, render_pass);
         }
 
         true
@@ -1432,8 +1433,10 @@ impl ViewportRenderer {
     }
 
     /// Returns true if the current frame has overlay shapes that need backdrop blur.
-    fn has_backdrop_blur_shapes(&self) -> bool {
-        self.overlay_shape_gpu_data
+    fn has_backdrop_blur_shapes(&self, vp_idx: usize) -> bool {
+        self.viewport_slots[vp_idx]
+            .overlay
+            .overlay_shape_gpu_data
             .as_ref()
             .map_or(false, |sd| sd.blur_vertex_count > 0)
     }
@@ -1443,8 +1446,9 @@ impl ViewportRenderer {
         &'rp self,
         render_pass: &mut crate::gpu::RenderPass<'rp>,
         blur_bind_group: &'rp crate::gpu::BindGroup,
+        vp_idx: usize,
     ) {
-        if let Some(ref sd) = self.overlay_shape_gpu_data {
+        if let Some(ref sd) = self.viewport_slots[vp_idx].overlay.overlay_shape_gpu_data {
             if sd.blur_vertex_count > 0 {
                 if let (Some(pipeline), Some(clip_bg), Some(vbuf)) = (
                     &self.resources.overlay_shape.tex_pipeline,

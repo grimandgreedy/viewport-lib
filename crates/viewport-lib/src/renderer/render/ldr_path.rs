@@ -62,7 +62,7 @@ impl ViewportRenderer {
         });
 
         let use_dyn_res = self.current_render_scale < 1.0 - 0.001;
-        let needs_blur = self.has_backdrop_blur_shapes();
+        let needs_blur = self.has_backdrop_blur_shapes(vp_idx);
 
         if use_dyn_res {
             let sw = ((w as f32 * self.current_render_scale) as u32).max(1);
@@ -203,7 +203,8 @@ impl ViewportRenderer {
             // When blur backdrops are needed, skip overlays here. They'll
             // be drawn in a second pass after the blur is applied.
             if !needs_blur {
-                emit_overlay_2d!(self, render_pass);
+                let ov = &self.viewport_slots[vp_idx].overlay;
+                emit_overlay_2d!(self, ov, render_pass);
             }
         }
         // -- End of scene render pass (dropped above). ---
@@ -373,7 +374,8 @@ impl ViewportRenderer {
         // Backdrop blur: capture scene, run blur, then draw overlays in a
         // second render pass so blur shapes can sample the blurred result.
         if needs_blur {
-            let spread = self
+            let spread = self.viewport_slots[vp_idx]
+                .overlay
                 .overlay_shape_gpu_data
                 .as_ref()
                 .map(|d| d.max_blur_radius)
@@ -435,9 +437,10 @@ impl ViewportRenderer {
                         occlusion_query_set: None,
                     });
                 // Draw blur backdrop shapes first.
-                self.draw_blur_shapes(&mut overlay_pass, &blur_bg);
+                self.draw_blur_shapes(&mut overlay_pass, &blur_bg, vp_idx);
                 // Then normal shapes.
-                emit_overlay_2d!(self, overlay_pass);
+                let ov = &self.viewport_slots[vp_idx].overlay;
+                emit_overlay_2d!(self, ov, overlay_pass);
             }
         }
 

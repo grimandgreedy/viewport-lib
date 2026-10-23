@@ -915,6 +915,14 @@ impl ViewportRenderer {
         });
         queue.write_buffer(&pick_camera_buf, 0, camera_bytes);
 
+        // The picked viewport's clip volumes, not whichever viewport was
+        // prepared last.
+        let clip_volume_buf = self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .map_or(&self.resources.binds.clip_volume_buf, |slot| {
+                &slot.clip_volume_buf
+            });
         let pick_camera_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("pick_camera_bg"),
             layout: self
@@ -930,7 +938,7 @@ impl ViewportRenderer {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 6,
-                    resource: self.resources.binds.clip_volume_buf.as_entire_binding(),
+                    resource: clip_volume_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 23,
@@ -1058,10 +1066,14 @@ impl ViewportRenderer {
         }
 
         // Item-type plugins render their own pick-ids last. They build their
-        // pipelines against the full shared group-0 layout, so bind the full
-        // camera bind group before handing them the pass.
+        // pipelines against the full shared group-0 layout, so bind the picked
+        // viewport's full camera bind group before handing them the pass.
         if draw_set.has_plugin_pick {
-            pick_pass.set_bind_group(0, &self.resources.binds.camera_bg, &[]);
+            pick_pass.set_bind_group(
+                0,
+                self.viewport_camera_bind_group(frame.camera.viewport_index),
+                &[],
+            );
             self.dispatch_plugin_pick(pick_pass, frame, draw_set.mask);
         }
     }

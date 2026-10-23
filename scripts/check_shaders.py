@@ -106,7 +106,7 @@ async function main() {
 // A mesh shader's feature constants resolve when a pipeline is created, so
 // build its pipelines with every feature on and with every feature off.
 async function checkFeaturePipelines(device, module, name, code) {
-  const feats = [...code.matchAll(/override (FEAT_[A-Z_]+)/g)].map((m) => m[1]);
+  const feats = [...code.matchAll(/override (FEAT_[A-Z0-9_]+)/g)].map((m) => m[1]);
   const oit = code.includes("fn fs_oit_main");
   const targets = oit
     ? [{ format: "rgba16float" }, { format: "r8unorm" }]

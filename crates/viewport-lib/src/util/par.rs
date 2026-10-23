@@ -36,6 +36,26 @@ mod imp {
         rayon::spawn(work);
     }
 
+    /// Run `work` on a small pool of its own, returning immediately. For long
+    /// work nothing waits on soon, so it does not hold up the parallel
+    /// sections of a frame on the main pool.
+    pub fn spawn_background<F: FnOnce() + Send + 'static>(work: F) {
+        static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
+        let pool = POOL.get_or_init(|| {
+            let threads =
+                std::thread::available_parallelism().map_or(1, |n| (n.get() / 4).clamp(1, 4));
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .thread_name(|i| format!("vpl-background-{i}"))
+                .build()
+                .ok()
+        });
+        match pool {
+            Some(pool) => pool.spawn(work),
+            None => rayon::spawn(work),
+        }
+    }
+
     /// Whether the calling target can actually run work off the calling thread.
     pub const fn is_threaded() -> bool {
         true
@@ -57,6 +77,11 @@ mod imp {
     /// not at all. Callers that care about blocking should check
     /// [`is_threaded`] and split the work themselves.
     pub fn spawn<F: FnOnce() + Send + 'static>(work: F) {
+        work();
+    }
+
+    /// Run `work` now, as [`spawn`] does here.
+    pub fn spawn_background<F: FnOnce() + Send + 'static>(work: F) {
         work();
     }
 
