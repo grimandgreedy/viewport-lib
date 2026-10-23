@@ -220,57 +220,50 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
 ///
 /// Calling this links every type into the binary, shaders included. Register
 /// only the types you draw instead and the linker leaves the rest out.
+///
+/// A type whose requirements the device does not meet is left out rather than
+/// failing the rest.
 pub fn install(
     renderer: &mut viewport_lib::renderer::ViewportRenderer,
     device: &viewport_lib::gpu::Device,
 ) {
+    // A type the device cannot run is declined and left out; the rest still
+    // register. `renderer.has_item_type_plugin(name)` says which are there.
+    let mut register = |plugin: Box<dyn viewport_lib::plugin_api::ItemTypePlugin>| {
+        let _ = renderer.with_item_type_plugin(device, plugin);
+    };
     // Registration order is draw order, and it is the order the renderer used
     // when these types were built into it. Keep it.
-    renderer.with_item_type_plugin(device, Box::new(decal::DecalPlugin::default()));
+    register(Box::new(decal::DecalPlugin::default()));
     // After decals, so a decal on a flow surface takes the streaks too.
-    renderer.with_item_type_plugin(device, Box::new(surface_lic::SurfaceLicPlugin::default()));
+    register(Box::new(surface_lic::SurfaceLicPlugin::default()));
     // Draws in the scene pass, so the decals and streaks above, which run
     // after it, land over the lines.
-    renderer.with_item_type_plugin(
-        device,
-        Box::new(surface_contour::SurfaceContourPlugin::default()),
-    );
-    renderer.with_item_type_plugin(device, Box::new(image_slice::ImageSlicePlugin::default()));
-    renderer.with_item_type_plugin(
-        device,
-        Box::new(volume_surface_slice::VolumeSurfaceSlicePlugin::default()),
-    );
-    renderer.with_item_type_plugin(device, Box::new(point_cloud::PointCloudPlugin::default()));
-    renderer.with_item_type_plugin(
-        device,
-        Box::new(gaussian_splat::GaussianSplatPlugin::default()),
-    );
-    renderer.with_item_type_plugin(device, Box::new(gpu_implicit::GpuImplicitPlugin::default()));
-    renderer.with_item_type_plugin(
-        device,
-        Box::new(gpu_marching_cubes::GpuMarchingCubesPlugin::default()),
-    );
-    renderer.with_item_type_plugin(device, Box::new(volume::VolumePlugin::default()));
-    renderer.with_item_type_plugin(device, Box::new(curves::StreamtubePlugin::default()));
-    renderer.with_item_type_plugin(device, Box::new(curves::TubePlugin::default()));
-    renderer.with_item_type_plugin(device, Box::new(tensor_field::TensorFieldPlugin::default()));
-    renderer.with_item_type_plugin(device, Box::new(vector_field::VectorFieldPlugin::default()));
-    renderer.with_item_type_plugin(device, Box::new(curves::RibbonPlugin::default()));
-    renderer.with_item_type_plugin(
-        device,
-        Box::new(external_instances::ExternalInstancesPlugin::default()),
-    );
-    renderer.with_item_type_plugin(device, Box::new(sprite::SpritePlugin::default()));
-    renderer.with_item_type_plugin(
-        device,
-        Box::new(gpu_particles::GpuParticlesPlugin::default()),
-    );
+    register(Box::new(surface_contour::SurfaceContourPlugin::default()));
+    register(Box::new(image_slice::ImageSlicePlugin::default()));
+    register(Box::new(
+        volume_surface_slice::VolumeSurfaceSlicePlugin::default(),
+    ));
+    register(Box::new(point_cloud::PointCloudPlugin::default()));
+    register(Box::new(gaussian_splat::GaussianSplatPlugin::default()));
+    register(Box::new(gpu_implicit::GpuImplicitPlugin::default()));
+    register(Box::new(
+        gpu_marching_cubes::GpuMarchingCubesPlugin::default(),
+    ));
+    register(Box::new(volume::VolumePlugin::default()));
+    register(Box::new(curves::StreamtubePlugin::default()));
+    register(Box::new(curves::TubePlugin::default()));
+    register(Box::new(tensor_field::TensorFieldPlugin::default()));
+    register(Box::new(vector_field::VectorFieldPlugin::default()));
+    register(Box::new(curves::RibbonPlugin::default()));
+    register(Box::new(
+        external_instances::ExternalInstancesPlugin::default(),
+    ));
+    register(Box::new(sprite::SpritePlugin::default()));
+    register(Box::new(gpu_particles::GpuParticlesPlugin::default()));
     // Scatter composites over the finished scene, so it registers after every
     // type whose pixels it absorbs.
-    renderer.with_item_type_plugin(
-        device,
-        Box::new(scatter_volume::ScatterVolumePlugin::default()),
-    );
+    register(Box::new(scatter_volume::ScatterVolumePlugin::default()));
 }
 
 #[cfg(feature = "gpu")]

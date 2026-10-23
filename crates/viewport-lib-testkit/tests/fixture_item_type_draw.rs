@@ -58,7 +58,8 @@ fn triangle_fixture_draws_into_the_scene_pass() {
     );
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
 
     let frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     let empty = harness.render(&frame, SIZE, SIZE);
@@ -121,7 +122,8 @@ fn triangle_fixture_agrees_with_the_renderer_sample_count() {
     );
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
 
     log.assert_take(&[&format!("init_gpu:samples={sample_count}")]);
 }
@@ -151,7 +153,8 @@ fn triangle_fixture_is_dispatched_by_the_shadow_pass() {
         );
         harness
             .renderer
-            .with_item_type_plugin(&harness.device, Box::new(plugin));
+            .with_item_type_plugin(&harness.device, Box::new(plugin))
+            .unwrap();
 
         let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
         frame.scene.lights = vec![LightSource::directional_lux(
@@ -203,7 +206,8 @@ fn triangle_fixture_draws_into_the_pick_pass() {
     );
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
 
     let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     frame
@@ -263,7 +267,8 @@ fn triangle_fixture_draws_from_the_encode_hook() {
     );
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
 
     let frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     let empty = harness.render(&frame, SIZE, SIZE);
@@ -322,7 +327,8 @@ fn a_hidden_item_draws_nothing_from_the_encode_hook() {
     );
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
 
     let frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     let empty = harness.render(&frame, SIZE, SIZE);
@@ -366,7 +372,8 @@ fn triangle_fixture_draws_from_the_depth_read_pass() {
     );
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
 
     let frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     let empty = harness.render(&frame, SIZE, SIZE);
@@ -413,7 +420,8 @@ fn every_draw_hook_survives_supersampling() {
     );
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
 
     // Each hook draws its triangle in its own third of the frame: depth-read on
     // the left, opaque in the middle, encode on the right.

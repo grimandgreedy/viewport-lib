@@ -61,11 +61,8 @@ fn main() {
         println!("cargo:rerun-if-changed={}", path.display());
     }
 
-    let is_ios = std::env::var("CARGO_CFG_TARGET_OS")
-        .map(|v| v == "ios")
-        .unwrap_or(false);
-    // Stripping runs last, after include resolution and the iOS patch, both of
-    // which match on comments or indentation.
+    // Stripping runs last, after include resolution, which matches on
+    // comments.
     let minify = minify_wgsl::enabled();
     let finish = |source: String| {
         if minify {
@@ -82,11 +79,6 @@ fn main() {
         // src/shaders/ (where the shared helpers/ directives point).
         let own_dir = src_path.parent().unwrap_or(&shaders_dir);
         let preprocessed = resolve_includes(&raw, &[own_dir, &shaders_dir], name);
-        let preprocessed = if is_ios {
-            patch_for_ios(&preprocessed)
-        } else {
-            preprocessed
-        };
         let out_path = PathBuf::from(&out_dir).join(name);
         fs::write(&out_path, finish(preprocessed))
             .unwrap_or_else(|e| panic!("build.rs: failed to write {}: {}", out_path.display(), e));
@@ -173,21 +165,6 @@ fn collect_wgsl_recursive(dir: &Path, out: &mut Vec<(String, PathBuf)>) {
             }
         }
     }
-}
-
-// On iOS, Metal does not support cube array textures. Replace the binding type
-// with texture_depth_2d_array (which IS supported) and stub out point shadow
-// sampling to always return 1.0 (unshadowed), since cube-direction-to-face
-// conversion would be needed for real sampling and point shadows are rarely
-// used in mobile scenes.
-fn patch_for_ios(source: &str) -> String {
-    let s = source.replace("texture_depth_cube_array", "texture_depth_2d_array");
-    // The textureSampleCompare call for point shadows takes a vec3 direction and
-    // an array index -- neither is valid for texture_depth_2d_array. Stub it out.
-    s.replace(
-        "    return textureSampleCompareLevel(\n        point_shadow_cube_tex,\n        shadow_sampler,\n        dir,\n        light.point_shadow_slot,\n        normalised,\n    );",
-        "    return 1.0;",
-    )
 }
 
 fn resolve_includes(source: &str, search_dirs: &[&Path], shader_name: &str) -> String {

@@ -1567,13 +1567,15 @@ mod tests {
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         let calls = std::sync::Arc::new(PluginCalls::default());
-        renderer.with_item_type_plugin(
-            &device,
-            Box::new(MockPlugin {
-                calls: calls.clone(),
-                draws_ldr: false,
-            }),
-        );
+        renderer
+            .with_item_type_plugin(
+                &device,
+                Box::new(MockPlugin {
+                    calls: calls.clone(),
+                    draws_ldr: false,
+                }),
+            )
+            .unwrap();
 
         let mut fd = empty_frame();
         // Route through the HDR path so the opaque plugin paint dispatch runs.
@@ -1644,13 +1646,15 @@ mod tests {
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         let calls = std::sync::Arc::new(PluginCalls::default());
-        renderer.with_item_type_plugin(
-            &device,
-            Box::new(MockPlugin {
-                calls: calls.clone(),
-                draws_ldr: false,
-            }),
-        );
+        renderer
+            .with_item_type_plugin(
+                &device,
+                Box::new(MockPlugin {
+                    calls: calls.clone(),
+                    draws_ldr: false,
+                }),
+            )
+            .unwrap();
 
         let mut fd = empty_frame();
         fd.effects.display.mode = crate::renderer::types::PipelineMode::Direct;
@@ -1688,13 +1692,15 @@ mod tests {
         );
 
         // Re-register as an opted-in plugin: paint now runs.
-        renderer.with_item_type_plugin(
-            &device,
-            Box::new(MockPlugin {
-                calls: calls.clone(),
-                draws_ldr: true,
-            }),
-        );
+        renderer
+            .with_item_type_plugin(
+                &device,
+                Box::new(MockPlugin {
+                    calls: calls.clone(),
+                    draws_ldr: true,
+                }),
+            )
+            .unwrap();
         let cmd = renderer.render(&device, &queue, &view, &fd);
         queue.submit(std::iter::once(cmd));
         assert!(

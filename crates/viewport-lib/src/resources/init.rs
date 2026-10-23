@@ -69,6 +69,7 @@ impl DeviceResources {
     ) -> Self {
         Self::new_configured(
             device,
+            crate::capabilities::Capabilities::from_device(device, None),
             target_format,
             sample_count,
             pipeline_cache_data,
@@ -76,10 +77,11 @@ impl DeviceResources {
         )
     }
 
-    /// The constructor behind the public ones, with the geometry store's
-    /// first chunk size (`None` for the default).
+    /// The constructor behind the public ones, with the device's capabilities
+    /// and the geometry store's first chunk size (`None` for the default).
     pub(crate) fn new_configured(
         device: &crate::gpu::Device,
+        capabilities: crate::capabilities::Capabilities,
         target_format: crate::gpu::TextureFormat,
         sample_count: u32,
         pipeline_cache_data: Option<&[u8]>,
@@ -304,20 +306,17 @@ impl DeviceResources {
                 },
                 count: None,
             },
-            // Binding 17: point-light shadow depth array.
-            // iOS Metal does not support cube array textures, so on that
-            // target the shader uses texture_depth_2d_array and we bind a
-            // D2Array view instead.
+            // Binding 17: point-light shadow depth array. A device without
+            // cube-array textures binds a D2Array view, and the shaders are
+            // adapted to match (see `builders::adapt_wgsl`).
             crate::gpu::BindGroupLayoutEntry {
                 binding: 17,
                 visibility: crate::gpu::ShaderStages::FRAGMENT,
                 ty: crate::gpu::BindingType::Texture {
                     sample_type: crate::gpu::TextureSampleType::Depth,
-                    view_dimension: if cfg!(target_os = "ios") {
-                        crate::gpu::TextureViewDimension::D2Array
-                    } else {
-                        crate::gpu::TextureViewDimension::CubeArray
-                    },
+                    view_dimension: crate::resources::shadow::point_shadow_view_dimension(
+                        capabilities.cube_array_textures,
+                    ),
                     multisampled: false,
                 },
                 count: None,
@@ -793,7 +792,12 @@ impl DeviceResources {
         // light at all. `ensure_point_shadow_cubes` swaps in the full array the
         // first time a frame queues point-shadow faces.
         let (point_shadow_cube_texture, point_shadow_cube_view, point_shadow_face_views) =
-            crate::resources::shadow::create_point_cube_array(device, 1, 1);
+            crate::resources::shadow::create_point_cube_array(
+                device,
+                1,
+                1,
+                capabilities.cube_array_textures,
+            );
 
         // The directional atlas and the point-shadow cube array are placeholders
         // at this point; both are promoted on the first frame that needs them.
@@ -1709,6 +1713,7 @@ impl DeviceResources {
                 crate::resources::pipeline_slot::initial_policy(),
             ));
         let resources = Self {
+            capabilities,
             target_format,
             sample_count,
             debug_vis_shaders: false,

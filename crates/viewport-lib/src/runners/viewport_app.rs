@@ -924,7 +924,7 @@ impl AppHandler {
         let cache_data = super::load_pipeline_cache(self.config.pipeline_cache_path.as_deref());
         let mut session = ViewportInstance::with_config(
             &gpu.device,
-            &super::runner_renderer_config(&self.config.renderer, format, cache_data),
+            &super::runner_renderer_config(&self.config.renderer, format, cache_data, &gpu.adapter),
         );
         marks.mark("renderer");
         factory(&mut session, &gpu.device);

@@ -51,21 +51,27 @@ fn a_plugins_own_content_lands_in_the_renderers_resident_bytes() {
         "the built-in item types store through DeviceResources, which counts them already"
     );
 
-    renderer.with_item_type_plugin(&device, Box::new(SilentPlugin));
-    renderer.with_item_type_plugin(
-        &device,
-        Box::new(AccountingPlugin {
-            name: "accounting_a",
-            bytes: 4096,
-        }),
-    );
-    renderer.with_item_type_plugin(
-        &device,
-        Box::new(AccountingPlugin {
-            name: "accounting_b",
-            bytes: 1024,
-        }),
-    );
+    renderer
+        .with_item_type_plugin(&device, Box::new(SilentPlugin))
+        .unwrap();
+    renderer
+        .with_item_type_plugin(
+            &device,
+            Box::new(AccountingPlugin {
+                name: "accounting_a",
+                bytes: 4096,
+            }),
+        )
+        .unwrap();
+    renderer
+        .with_item_type_plugin(
+            &device,
+            Box::new(AccountingPlugin {
+                name: "accounting_b",
+                bytes: 1024,
+            }),
+        )
+        .unwrap();
 
     let after = renderer.resident_bytes();
     assert_eq!(
@@ -81,13 +87,15 @@ fn a_plugins_own_content_lands_in_the_renderers_resident_bytes() {
 
     // Re-registering under an existing name replaces that plugin, so its
     // figure is replaced too rather than being counted twice.
-    renderer.with_item_type_plugin(
-        &device,
-        Box::new(AccountingPlugin {
-            name: "accounting_a",
-            bytes: 16,
-        }),
-    );
+    renderer
+        .with_item_type_plugin(
+            &device,
+            Box::new(AccountingPlugin {
+                name: "accounting_a",
+                bytes: 16,
+            }),
+        )
+        .unwrap();
     assert_eq!(renderer.resident_bytes().plugin_bytes, 16 + 1024);
 
     // The resources-level call cannot see the registry, so it still reports
@@ -116,14 +124,18 @@ fn the_per_plugin_breakdown_names_every_registered_type() {
         "nothing has been uploaded yet"
     );
 
-    renderer.with_item_type_plugin(&device, Box::new(SilentPlugin));
-    renderer.with_item_type_plugin(
-        &device,
-        Box::new(AccountingPlugin {
-            name: "accounting_a",
-            bytes: 4096,
-        }),
-    );
+    renderer
+        .with_item_type_plugin(&device, Box::new(SilentPlugin))
+        .unwrap();
+    renderer
+        .with_item_type_plugin(
+            &device,
+            Box::new(AccountingPlugin {
+                name: "accounting_a",
+                bytes: 4096,
+            }),
+        )
+        .unwrap();
 
     let rows: Vec<_> = renderer.plugin_resident_bytes().collect();
     assert!(

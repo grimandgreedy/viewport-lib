@@ -1436,8 +1436,16 @@ impl crate::resources::DeviceResources {
                     layout,
                     target_format: self.target_format,
                     sample_count: self.sample_count,
-                    mesh: LazyModule::new(format!("material_plugin_{name}_mesh{suffix}"), mesh),
-                    oit_module: LazyModule::new(format!("material_plugin_{name}_oit{suffix}"), oit),
+                    mesh: LazyModule::new(
+                        format!("material_plugin_{name}_mesh{suffix}"),
+                        crate::resources::builders::adapt_wgsl(mesh, &self.capabilities)
+                            .into_owned(),
+                    ),
+                    oit_module: LazyModule::new(
+                        format!("material_plugin_{name}_oit{suffix}"),
+                        crate::resources::builders::adapt_wgsl(oit, &self.capabilities)
+                            .into_owned(),
+                    ),
                 },
                 std::sync::Arc::clone(&self.pipeline_compiler),
             )

@@ -200,6 +200,15 @@ pub trait GpuPlugin: Send + 'static {
         std::any::type_name::<Self>()
     }
 
+    /// What the plugin needs from the device. Checked before the first
+    /// `init_gpu`: a plugin whose requirements the device does not meet is
+    /// removed and reported by
+    /// [`ViewportRuntime::declined_gpu_plugins`](super::ViewportRuntime::declined_gpu_plugins).
+    /// Defaults to the full tier.
+    fn requires(&self) -> crate::capabilities::Requirements {
+        crate::capabilities::Requirements::full_tier()
+    }
+
     /// Build pipelines, persistent buffers, and bind group layouts.
     ///
     /// Called once before the plugin's first `pre_prepare`. If a new GPU

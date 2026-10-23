@@ -110,6 +110,7 @@ impl DeviceResources {
         SharedBindings {
             group0_layout: &self.binds.camera_bgl,
             sample_count: self.sample_count,
+            capabilities: &self.capabilities,
         }
     }
 

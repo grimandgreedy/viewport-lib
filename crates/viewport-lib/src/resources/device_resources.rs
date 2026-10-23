@@ -427,6 +427,8 @@ pub struct ContentResources {
 /// by `ViewportRenderer` during prepare() and paint().
 #[allow(dead_code)]
 pub struct DeviceResources {
+    /// What the device can do, read once at construction.
+    pub(crate) capabilities: crate::capabilities::Capabilities,
     /// Swapchain texture format; all pipelines are compiled for this format.
     pub(crate) target_format: crate::gpu::TextureFormat,
     /// MSAA sample count used by all render pipelines.
@@ -848,6 +850,7 @@ impl ViewportCullState {
         device: &crate::gpu::Device,
         instance_count: u32,
         batch_count: u32,
+        indirect_execution: bool,
     ) {
         // Visibility buffer, sized like the shared AABB buffer.
         let max_instances = (device.limits().max_storage_buffer_binding_size as usize)
@@ -885,10 +888,9 @@ impl ViewportCullState {
                 usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
-            // iOS Metal and Android (emulator and older devices) do not
-            // reliably support INDIRECT_EXECUTION. Leave these as None so the
-            // renderer falls back to direct draw calls.
-            if cfg!(not(any(target_os = "ios", target_os = "android"))) {
+            // Without indirect execution these stay None and the renderer
+            // falls back to direct draw calls.
+            if indirect_execution {
                 self.indirect_args_buf =
                     Some(device.create_buffer(&crate::gpu::BufferDescriptor {
                         label: Some("indirect_args_buf"),
@@ -1008,6 +1010,7 @@ impl ShadowCullState {
         device: &crate::gpu::Device,
         instance_count: u32,
         batch_count: u32,
+        indirect_execution: bool,
     ) {
         let max_instances = (device.limits().max_storage_buffer_binding_size as usize)
             / std::mem::size_of::<InstanceAabb>();
@@ -1044,7 +1047,7 @@ impl ShadowCullState {
                 usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
-            if cfg!(not(any(target_os = "ios", target_os = "android"))) {
+            if indirect_execution {
                 for i in 0..4 {
                     self.shadow_indirect_bufs[i] =
                         Some(device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -1577,6 +1580,7 @@ impl DeviceResources {
             device,
             crate::renderer::POINT_SHADOW_FACE_SIZE,
             crate::renderer::MAX_POINT_SHADOW_LIGHTS,
+            self.capabilities.cube_array_textures,
         );
         self.shadow.point_cube_texture = texture;
         self.shadow.point_cube_view = cube_view;
@@ -1796,12 +1800,13 @@ impl DeviceResources {
         source: &str,
     ) -> crate::resources::pipeline_slot::LazyModule {
         use std::hash::{Hash, Hasher};
+        let source = crate::resources::builders::adapt_wgsl(source, &self.capabilities);
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         source.hash(&mut hasher);
         let key = (source.len(), hasher.finish());
         let cell =
             std::sync::Arc::clone(self.shader_modules.lock().unwrap().entry(key).or_default());
-        crate::resources::pipeline_slot::LazyModule::new(device, label, source, cell)
+        crate::resources::pipeline_slot::LazyModule::new(device, label, &source, cell)
     }
 
     /// Record a lazy pipeline build for `FrameStats::pipelines_built_this_frame`.

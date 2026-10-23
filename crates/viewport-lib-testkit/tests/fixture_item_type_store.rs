@@ -23,7 +23,8 @@ fn a_host_uploads_into_a_plugin_owned_store() {
     };
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(StoringItemTypePlugin::default()));
+        .with_item_type_plugin(&harness.device, Box::new(StoringItemTypePlugin::default()))
+        .unwrap();
 
     let baseline = harness.renderer.resident_bytes().plugin_bytes;
 
@@ -74,7 +75,8 @@ fn a_host_uploads_into_a_plugin_owned_store_off_thread() {
     };
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(StoringItemTypePlugin::default()));
+        .with_item_type_plugin(&harness.device, Box::new(StoringItemTypePlugin::default()))
+        .unwrap();
 
     let host = harness
         .renderer
@@ -130,7 +132,8 @@ fn a_failing_upload_job_surfaces_its_error() {
     };
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(StoringItemTypePlugin::default()));
+        .with_item_type_plugin(&harness.device, Box::new(StoringItemTypePlugin::default()))
+        .unwrap();
 
     let host = harness
         .renderer

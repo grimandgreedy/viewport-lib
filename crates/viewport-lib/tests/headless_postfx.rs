@@ -573,7 +573,9 @@ fn fs() -> @location(0) vec4<f32> {
     let pipeline = renderer
         .resources()
         .build_foreground_pipeline(&device, &opts);
-    renderer.with_item_type_plugin(&device, Box::new(FgPlugin { pipeline }));
+    renderer
+        .with_item_type_plugin(&device, Box::new(FgPlugin { pipeline }))
+        .unwrap();
 
     let mut frame = foreground_frame();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
@@ -918,10 +920,12 @@ fn post_effect_producer_lifecycle() {
 
     let log = Arc::new(Mutex::new(Vec::new()));
     let enabled = Arc::new(AtomicBool::new(true));
-    let id = renderer.add_post_effect_producer(Box::new(Probe {
-        log: log.clone(),
-        enabled: enabled.clone(),
-    }));
+    let id = renderer
+        .add_post_effect_producer(Box::new(Probe {
+            log: log.clone(),
+            enabled: enabled.clone(),
+        }))
+        .unwrap();
 
     let size = 64u32;
     let frame = tonemap_frame(size, [0.3, 0.3, 0.3, 1.0]);
@@ -1041,9 +1045,11 @@ fn post_effect_producer_fills_slot() {
             .upload_mesh_data(&device, &quad_mesh())
             .unwrap();
         if with_producer {
-            renderer.add_post_effect_producer(Box::new(GreyAo {
-                views: std::collections::HashMap::new(),
-            }));
+            renderer
+                .add_post_effect_producer(Box::new(GreyAo {
+                    views: std::collections::HashMap::new(),
+                }))
+                .unwrap();
         }
         let mut frame = tonemap_frame(size, [0.1, 0.1, 0.1, 1.0]);
         let mut item = SceneRenderItem::default();
@@ -1228,15 +1234,17 @@ fn fs_main(in: ViewportPostVsOut) -> @location(0) vec4<f32> {
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             });
-            renderer.add_post_effect_stage(
-                Box::new(Invert {
-                    pipeline,
-                    bgl,
-                    sampler,
-                    per_viewport: std::collections::HashMap::new(),
-                }),
-                viewport_lib::plugin_api::post_effect::stage_order::EXTERNAL_DEFAULT,
-            );
+            renderer
+                .add_post_effect_stage(
+                    Box::new(Invert {
+                        pipeline,
+                        bgl,
+                        sampler,
+                        per_viewport: std::collections::HashMap::new(),
+                    }),
+                    viewport_lib::plugin_api::post_effect::stage_order::EXTERNAL_DEFAULT,
+                )
+                .unwrap();
         }
         let mut frame = tonemap_frame(size, [0.1, 0.1, 0.1, 1.0]);
         let mut item = SceneRenderItem::default();

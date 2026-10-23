@@ -196,9 +196,23 @@ pub struct SharedBindings<'a> {
     /// `render_pick`, and `outline_mask` pipelines use `sample_count: 1`
     /// regardless of this value.
     pub sample_count: u32,
+    /// What the device can do. Read it in `init_gpu` to pick a path the
+    /// device supports.
+    pub capabilities: &'a crate::capabilities::Capabilities,
 }
 
 impl<'a> SharedBindings<'a> {
+    /// Adapt a shader source that includes the shared group-0 declarations to
+    /// this device, before handing it to `create_shader_module`.
+    ///
+    /// On a device without cube-array textures binding 17 is a
+    /// `texture_depth_2d_array`, so a source declaring it
+    /// `texture_depth_cube_array` would not match the layout. Modules built
+    /// through `DeviceResources::lazy_module` are adapted already.
+    pub fn adapt_wgsl<'s>(&self, source: &'s str) -> std::borrow::Cow<'s, str> {
+        crate::resources::builders::adapt_wgsl(source, self.capabilities)
+    }
+
     /// Binding indices inside group 0. Stable across releases: additive
     /// changes only. See [`shared_wgsl::SHARED_BINDINGS_WGSL`] for the WGSL
     /// declarations.

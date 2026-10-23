@@ -1318,6 +1318,7 @@ impl ViewportRenderer {
             // prepare()-only callers still see the previous frame's value until
             // paint_to()/render() updates it.
             effects_throttled: self.degradation_effects_throttled,
+            tier: self.resources.capabilities.tier(),
             ..self.last_stats
         };
         self.last_stats = stats;

@@ -46,6 +46,13 @@ pub struct RendererConfig {
     /// `dev-knobs` feature is on. A smaller first
     /// chunk suits an application with little geometry. Default `None`.
     pub geometry_chunk_bytes: Option<u64>,
+    /// The adapter's downlevel capabilities
+    /// (`adapter.get_downlevel_capabilities()`). A device cannot report these,
+    /// so without them the renderer assumes compute, storage buffers in both
+    /// stages, cube-array textures and indirect execution are present wherever
+    /// the limits allow. Pass them on wgpu's GL backend and on older Metal
+    /// devices, where that assumption does not hold. Default `None`.
+    pub downlevel_capabilities: Option<crate::gpu::DownlevelCapabilities>,
 }
 
 impl RendererConfig {
@@ -57,6 +64,7 @@ impl RendererConfig {
             pipeline_cache_data: None,
             pipeline_compilation: None,
             geometry_chunk_bytes: None,
+            downlevel_capabilities: None,
         }
     }
 
@@ -87,6 +95,13 @@ impl RendererConfig {
     /// Set the size of the geometry store's first chunk, in bytes.
     pub fn with_geometry_chunk_bytes(mut self, bytes: u64) -> Self {
         self.geometry_chunk_bytes = Some(bytes);
+        self
+    }
+
+    /// Pass the adapter's downlevel capabilities, so the renderer's
+    /// [`Capabilities`](crate::Capabilities) read them rather than assume them.
+    pub fn with_downlevel_capabilities(mut self, caps: crate::gpu::DownlevelCapabilities) -> Self {
+        self.downlevel_capabilities = Some(caps);
         self
     }
 }

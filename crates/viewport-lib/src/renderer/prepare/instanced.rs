@@ -1337,7 +1337,12 @@ impl ViewportRenderer {
         if hdr_family {
             resources.ensure_hdr_cull_pipelines(device);
         }
-        cull_state.ensure_outputs(device, instance_count, batch_count);
+        cull_state.ensure_outputs(
+            device,
+            instance_count,
+            batch_count,
+            resources.capabilities.indirect_execution,
+        );
         // Drop cull bind groups whose binding-0 instance storage buffer was
         // rebuilt this frame; `ensure_outputs` already handles a resized vis
         // buffer. These bind groups also sample the albedo/normal/ao views

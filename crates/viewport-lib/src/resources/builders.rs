@@ -36,6 +36,35 @@ pub fn wgsl_module<'a>(
     module
 }
 
+/// Adapt a shader source to the device it is compiled for.
+///
+/// On a device without cube-array textures the point-light shadow array is
+/// declared `texture_depth_2d_array` to match the `D2Array` view binding 17
+/// carries there, and the point-shadow sample between the
+/// `BEGIN_POINT_SHADOW_SAMPLE` / `END_POINT_SHADOW_SAMPLE` markers returns 1.0
+/// (unshadowed). Every other source, and every source on a device with cube
+/// arrays, comes back unchanged.
+pub fn adapt_wgsl<'a>(
+    source: impl Into<std::borrow::Cow<'a, str>>,
+    caps: &crate::capabilities::Capabilities,
+) -> std::borrow::Cow<'a, str> {
+    let source = source.into();
+    const CUBE: &str = "texture_depth_cube_array";
+    if caps.cube_array_textures || !source.contains(CUBE) {
+        return source;
+    }
+    let mut out = source.replace(CUBE, "texture_depth_2d_array");
+    const BEGIN: &str = "// BEGIN_POINT_SHADOW_SAMPLE";
+    const END: &str = "// END_POINT_SHADOW_SAMPLE";
+    while let Some(start) = out.find(BEGIN) {
+        let Some(len) = out[start..].find(END) else {
+            break;
+        };
+        out.replace_range(start..start + len + END.len(), "return 1.0;");
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// Prepend the module directive `@builtin(primitive_index)` needs on the
 /// active wgpu leg: naga 29 requires `enable primitive_index;` before any
 /// declaration, naga 27 rejects the directive. Only for sources compiled on a

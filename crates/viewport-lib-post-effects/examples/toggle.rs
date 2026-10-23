@@ -107,10 +107,14 @@ fn main() -> eframe::Result {
             });
             session
                 .renderer_mut()
-                .add_post_effect_producer(Box::new(cs));
+                .add_post_effect_producer(Box::new(cs))
+                .unwrap();
             let (stages, vfx_handle) = vfx_stack();
             for (stage, order) in stages {
-                session.renderer_mut().add_post_effect_stage(stage, order);
+                session
+                    .renderer_mut()
+                    .add_post_effect_stage(stage, order)
+                    .unwrap();
             }
             {
                 let mut s = vfx_handle.lock().unwrap();

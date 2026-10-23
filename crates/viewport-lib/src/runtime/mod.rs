@@ -1527,6 +1527,9 @@ pub struct ViewportRuntime {
     mode: SceneRuntimeMode,
     plugins: Vec<Box<dyn RuntimePlugin>>,
     gpu_plugins: Vec<Box<dyn GpuPlugin>>,
+    /// GPU plugins removed because the device did not meet their
+    /// requirements, as `ViewportError::PluginUnsupported`.
+    declined_gpu_plugins: Vec<crate::ViewportError>,
     /// False until every registered GPU plugin has had `init_gpu` called.
     /// Cleared again when a new GPU plugin is registered.
     gpu_initialized: bool,
@@ -1559,6 +1562,7 @@ impl ViewportRuntime {
             mode: SceneRuntimeMode::default(),
             plugins: Vec::new(),
             gpu_plugins: Vec::new(),
+            declined_gpu_plugins: Vec::new(),
             gpu_initialized: false,
             fixed_timestep: None,
             snapshots: TransformSnapshotTable::new(),
@@ -1729,6 +1733,24 @@ impl ViewportRuntime {
         ctx: &GpuFrameContext<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         if !self.gpu_initialized {
+            let caps = crate::capabilities::Capabilities::from_device(device, None);
+            let declined = &mut self.declined_gpu_plugins;
+            self.gpu_plugins.retain(|p| {
+                let missing = caps.missing_requirements(&p.requires());
+                if missing.is_empty() {
+                    return true;
+                }
+                tracing::warn!(
+                    plugin = p.type_name(),
+                    missing = %missing.join(", "),
+                    "GPU plugin declined: the device does not meet its requirements"
+                );
+                declined.push(crate::ViewportError::PluginUnsupported {
+                    type_name: p.type_name().to_owned(),
+                    missing,
+                });
+                false
+            });
             for p in self.gpu_plugins.iter_mut() {
                 p.init_gpu(device);
             }
@@ -1748,6 +1770,13 @@ impl ViewportRuntime {
         }
         self.stats.pre_prepare_ms = timings;
         out
+    }
+
+    /// GPU plugins removed at their first `pre_prepare` because the device did
+    /// not meet their [`requires`](GpuPlugin::requires), one
+    /// `ViewportError::PluginUnsupported` each.
+    pub fn declined_gpu_plugins(&self) -> &[crate::ViewportError] {
+        &self.declined_gpu_plugins
     }
 
     /// Run every registered GPU plugin's `post_paint` in ascending priority

@@ -361,7 +361,13 @@ async fn build_state(window: Arc<Window>) -> State {
     };
     surface.configure(&device, &surface_config);
 
-    let mut renderer = ViewportRenderer::new(&device, format);
+    // The device cannot report the downlevel flags (cube-array textures for
+    // point shadows, indirect execution), so hand the renderer the adapter's.
+    let mut renderer = ViewportRenderer::with_config(
+        &device,
+        &viewport_lib::RendererConfig::new(format)
+            .with_downlevel_capabilities(adapter.get_downlevel_capabilities()),
+    );
     let res = renderer.resources_mut();
     let m_sphere = res
         .upload_mesh_data(&device, &primitives::sphere(0.6, 24, 12))

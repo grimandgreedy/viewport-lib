@@ -103,10 +103,14 @@ pub(crate) fn runner_renderer_config(
     base: &crate::RendererConfig,
     format: crate::gpu::TextureFormat,
     cache_data: Option<Vec<u8>>,
+    adapter: &crate::gpu::Adapter,
 ) -> crate::RendererConfig {
     let mut config = base.clone().with_target_format(format).with_sample_count(1);
     if cache_data.is_some() {
         config.pipeline_cache_data = cache_data;
+    }
+    if config.downlevel_capabilities.is_none() {
+        config.downlevel_capabilities = Some(adapter.get_downlevel_capabilities());
     }
     config
 }
@@ -176,27 +180,16 @@ impl ViewportInstance {
                     missing.join("; ")
                 );
             }
-
-            // Below MIN the renderer cannot build the mesh pipeline layouts and
-            // asserts at construction, so surface the actionable guidance here
-            // first rather than leaving it to a panic deep in bring-up. Every
-            // built-in feature fits in MIN, so there is no lower tier to report.
-            let available = device.limits().max_storage_buffers_per_shader_stage;
-            let minimum = ViewportRenderer::MIN_STORAGE_BUFFERS_PER_STAGE;
-            if available < minimum {
-                tracing::warn!(
-                    "ViewportInstance: device max_storage_buffers_per_shader_stage is {} but \
-                     the base mesh path needs {}; renderer construction will fail. Pass \
-                     ViewportRenderer::recommended_device_limits(adapter) as required_limits in \
-                     your device descriptor.",
-                    available,
-                    minimum,
-                );
-            }
         }
         warn_missing_device_capabilities(device);
 
         let mut renderer = ViewportRenderer::with_config(device, config);
+        tracing::info!(
+            target: "viewport_lib::init",
+            tier = %renderer.tier(),
+            downlevel_known = renderer.capabilities().downlevel_known,
+            "ViewportInstance: renderer tier"
+        );
         renderer.set_cpu_pick_cache(true);
         let defaults = InteractionFrame::default();
         Self {
@@ -467,8 +460,8 @@ impl ViewportInstance {
         &mut self,
         device: &crate::gpu::Device,
         plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
-    ) {
-        self.renderer.with_item_type_plugin(device, plugin);
+    ) -> Result<(), crate::ViewportError> {
+        self.renderer.with_item_type_plugin(device, plugin)
     }
 
     /// Borrow a registered item-type plugin back as its concrete type.

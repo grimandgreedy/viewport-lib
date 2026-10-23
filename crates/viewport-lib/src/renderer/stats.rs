@@ -640,6 +640,9 @@ pub struct FrameStats {
     /// in LOD groups or the `min_screen_size` thresholds never trigger, and the
     /// triangle count is not coming down.
     pub lod_items_reduced: u32,
+    /// The tier the renderer runs at on its device. The same every frame; here
+    /// so a recorded frame says what device class produced it.
+    pub tier: crate::capabilities::Tier,
 }
 
 #[cfg(test)]

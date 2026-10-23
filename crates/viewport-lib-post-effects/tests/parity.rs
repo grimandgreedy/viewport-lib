@@ -154,7 +154,7 @@ fn contact_shadow_parity() {
         let items = contact_shadow_items(&mut renderer, &device);
         if variant == Variant::External {
             let (effect, _handle) = ContactShadowEffect::new(settings);
-            renderer.add_post_effect_producer(Box::new(effect));
+            renderer.add_post_effect_producer(Box::new(effect)).unwrap();
         }
         let mut frame = contact_shadow_frame(light_direction);
         let cs = &mut frame.effects.post_process.contact_shadows;
@@ -201,7 +201,7 @@ fn vfx_stack_chains() {
         if register {
             let (stages, settings) = vfx_stack();
             for (stage, order) in stages {
-                renderer.add_post_effect_stage(stage, order);
+                renderer.add_post_effect_stage(stage, order).unwrap();
             }
             {
                 let mut s = settings.lock().unwrap();

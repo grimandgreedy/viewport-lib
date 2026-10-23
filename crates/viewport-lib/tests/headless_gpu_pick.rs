@@ -1106,7 +1106,9 @@ fn gpu_pick_returns_plugin_item_id() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    renderer.with_item_type_plugin(&device, Box::new(MockPickPlugin::new()));
+    renderer
+        .with_item_type_plugin(&device, Box::new(MockPickPlugin::new()))
+        .unwrap();
 
     let mut frame = plugin_pick_frame();
     frame
@@ -1135,7 +1137,9 @@ fn gpu_pick_skips_hidden_plugin_item() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    renderer.with_item_type_plugin(&device, Box::new(MockPickPlugin::new()));
+    renderer
+        .with_item_type_plugin(&device, Box::new(MockPickPlugin::new()))
+        .unwrap();
 
     let mut frame = plugin_pick_frame();
     let mut coll = MockPickCollection::new(PickId(321));
@@ -1380,7 +1384,9 @@ fn sub_pick_setup(
 ) {
     let last_world = std::sync::Arc::new(std::sync::Mutex::new(None));
     let mut renderer = ViewportRenderer::new(device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    renderer.with_item_type_plugin(device, Box::new(SubPickPlugin::new(last_world.clone())));
+    renderer
+        .with_item_type_plugin(device, Box::new(SubPickPlugin::new(last_world.clone())))
+        .unwrap();
     let mut frame = plugin_pick_frame();
     frame
         .scene
@@ -1474,7 +1480,9 @@ fn gpu_pick_plugin_without_hook_stays_object_level() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    renderer.with_item_type_plugin(&device, Box::new(MockPickPlugin::new()));
+    renderer
+        .with_item_type_plugin(&device, Box::new(MockPickPlugin::new()))
+        .unwrap();
 
     let mut frame = plugin_pick_frame();
     frame

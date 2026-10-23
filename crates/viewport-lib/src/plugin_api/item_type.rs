@@ -821,6 +821,17 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// second plugin with the same name replaces the first.
     fn type_name(&self) -> &'static str;
 
+    /// What the plugin needs from the device. Checked at registration: a
+    /// plugin whose requirements the renderer's
+    /// [`Capabilities`](crate::Capabilities) do not meet is declined with
+    /// [`ViewportError::PluginUnsupported`](crate::ViewportError::PluginUnsupported).
+    /// Defaults to the full tier, so a plugin that binds more storage buffers
+    /// than [`Requirements::full_tier`](crate::Requirements::full_tier) names,
+    /// or more bind groups, should say so.
+    fn requires(&self) -> crate::capabilities::Requirements {
+        crate::capabilities::Requirements::full_tier()
+    }
+
     /// Build pipelines, persistent buffers, and bind group layouts. Called
     /// once when the plugin is registered with a renderer that has a
     /// device.

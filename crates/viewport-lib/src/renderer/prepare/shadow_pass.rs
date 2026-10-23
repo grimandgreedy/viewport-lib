@@ -165,9 +165,12 @@ impl ViewportRenderer {
             if gpu_cull || cpu_cull {
                 let instance_count = instancing.cached_instance_count as u32;
                 let batch_count = instancing.batches.len() as u32;
-                instancing
-                    .shadow_cull
-                    .ensure_outputs(device, instance_count, batch_count);
+                instancing.shadow_cull.ensure_outputs(
+                    device,
+                    instance_count,
+                    batch_count,
+                    resources.capabilities.indirect_execution,
+                );
                 // The caster groups bind the instance buffer and each batch's
                 // textures, so they drop when the buffer is rebuilt, on a
                 // replace (which swaps a view under a live id), and on a free

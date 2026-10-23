@@ -130,14 +130,27 @@ pub(crate) fn create_atlas_texture(
     (texture, view)
 }
 
+/// The view dimension binding 17 samples the point-light shadow array through:
+/// `CubeArray`, or `D2Array` on a device without cube-array textures.
+pub(crate) fn point_shadow_view_dimension(
+    cube_array_textures: bool,
+) -> crate::gpu::TextureViewDimension {
+    if cube_array_textures {
+        crate::gpu::TextureViewDimension::CubeArray
+    } else {
+        crate::gpu::TextureViewDimension::D2Array
+    }
+}
+
 /// Create the point-light cube array for `lights` cubes of `face_size` square,
-/// with the `CubeArray` sampling view and one 2D view per face for the depth
-/// passes. Called at 1x1x1 cube for the placeholder and at
-/// `POINT_SHADOW_FACE_SIZE` / `MAX_POINT_SHADOW_LIGHTS` when promoted.
+/// with the sampling view (see [`point_shadow_view_dimension`]) and one 2D view
+/// per face for the depth passes. Called at 1x1x1 cube for the placeholder and
+/// at `POINT_SHADOW_FACE_SIZE` / `MAX_POINT_SHADOW_LIGHTS` when promoted.
 pub(crate) fn create_point_cube_array(
     device: &crate::gpu::Device,
     face_size: u32,
     lights: u32,
+    cube_array_textures: bool,
 ) -> (
     crate::gpu::Texture,
     crate::gpu::TextureView,
@@ -161,13 +174,7 @@ pub(crate) fn create_point_cube_array(
     });
     let cube_view = texture.create_view(&crate::gpu::TextureViewDescriptor {
         label: Some("point_shadow_cube_view"),
-        // iOS Metal does not support CubeArray views. Use D2Array instead;
-        // the shader is patched at build time to match.
-        dimension: Some(if cfg!(target_os = "ios") {
-            crate::gpu::TextureViewDimension::D2Array
-        } else {
-            crate::gpu::TextureViewDimension::CubeArray
-        }),
+        dimension: Some(point_shadow_view_dimension(cube_array_textures)),
         aspect: crate::gpu::TextureAspect::DepthOnly,
         base_array_layer: 0,
         array_layer_count: Some(layers),

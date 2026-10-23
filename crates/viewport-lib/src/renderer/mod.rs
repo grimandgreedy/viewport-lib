@@ -773,11 +773,12 @@ impl ViewportRenderer {
     pub const REQUIRED_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
 
     /// The storage-buffer floor in one shader stage, wgpu's default. A device
-    /// below it cannot render the mesh path at all and [`new`](Self::new)
-    /// rejects it. The `raytrace` path tracer's compute layouts bind at most
+    /// below it is under [`Tier::Full`](crate::Tier::Full) and
+    /// [`new`](Self::new) rejects it. The `raytrace` path tracer's compute layouts bind at most
     /// eight, so a build with that feature runs on default limits too, as do
     /// per-vertex deformers, whose data lives in the mesh's sidecar record.
-    pub const MIN_STORAGE_BUFFERS_PER_STAGE: u32 = 8;
+    pub const MIN_STORAGE_BUFFERS_PER_STAGE: u32 =
+        crate::capabilities::Tier::FULL_STORAGE_BUFFERS_PER_STAGE;
 
     /// The device limits viewport-lib runs best with, above wgpu's defaults.
     ///
@@ -910,51 +911,72 @@ impl ViewportRenderer {
 
     /// Create a renderer from a [`RendererConfig`]. Call once at application
     /// startup.
+    ///
+    /// # Panics
+    ///
+    /// When the device is below the tier the renderer can be built on, with
+    /// the message [`try_with_config`](Self::try_with_config) returns as an
+    /// error.
     pub fn with_config(device: &crate::gpu::Device, config: &RendererConfig) -> Self {
+        match Self::try_with_config(device, config) {
+            Ok(renderer) => renderer,
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    /// Create a renderer from a [`RendererConfig`], or return
+    /// [`ViewportError::DeviceUnsupported`](crate::ViewportError::DeviceUnsupported)
+    /// naming what the device lacks.
+    ///
+    /// The renderer reads the device's [`Capabilities`](crate::Capabilities)
+    /// once here and needs [`Tier::Full`](crate::Tier::Full): storage buffers in
+    /// the vertex and fragment stages, eight per stage, and compute. Pass
+    /// [`recommended_device_limits`](Self::recommended_device_limits) as the
+    /// device's `required_limits` to get them where the adapter has them, and
+    /// the adapter's downlevel capabilities through
+    /// [`RendererConfig::with_downlevel_capabilities`] so they are read rather
+    /// than assumed.
+    pub fn try_with_config(
+        device: &crate::gpu::Device,
+        config: &RendererConfig,
+    ) -> Result<Self, crate::ViewportError> {
         let target_format = config.target_format;
         let sample_count = config.sample_count;
-        // Fail early with an actionable message rather than a cryptic wgpu
-        // validation panic deep in mesh-pipeline-layout creation. This is the
-        // base lit mesh path's floor; optional features that need more storage
-        // buffers (per-vertex deformers, the raytrace path tracer) gate on the
-        // device providing the headroom rather than asserting it here, so they
-        // degrade instead of crashing.
-        let available = device.limits().max_storage_buffers_per_shader_stage;
-        assert!(
-            available >= Self::MIN_STORAGE_BUFFERS_PER_STAGE,
-            "the renderer needs max_storage_buffers_per_shader_stage >= {}, but the device was \
-             created with {}. Pass ViewportRenderer::recommended_device_limits(&adapter) as \
-             required_limits in the DeviceDescriptor (or request a higher limit).",
-            Self::MIN_STORAGE_BUFFERS_PER_STAGE,
-            available,
+        let capabilities = crate::capabilities::Capabilities::from_device(
+            device,
+            config.downlevel_capabilities.as_ref(),
         );
-        let gpu_culling_supported = device
-            .features()
-            .contains(crate::gpu::Features::INDIRECT_FIRST_INSTANCE);
-        let multi_draw_supported = device
-            .features()
-            .contains(crate::gpu::Features::MULTI_DRAW_INDIRECT_COUNT);
-        // Bindless material textures activate only when the device enabled the
-        // whole texture-array feature set AND granted enough binding-array
-        // elements for the texture array (both are needed to build the layout).
-        // Modern Metal (Apple Silicon, argument buffers Tier 2), Vulkan, and DX12
-        // qualify; a device that enabled the feature but not the element limit,
-        // or WebGPU, stays on the per-batch binding rather than crashing.
-        use crate::resources::mesh::instanced_bindless::{
-            BINDLESS_TEXTURE_CAPACITY, MaterialTextureBinding,
-        };
-        let material_texture_binding = if device
-            .features()
-            .contains(crate::gpu::BINDLESS_TEXTURE_FEATURES)
-            && device.limits().max_binding_array_elements_per_shader_stage
-                >= BINDLESS_TEXTURE_CAPACITY
-        {
+        // Every scene resource is built at construction, so the floor is the
+        // full tier. Refusing here gives an actionable message rather than a
+        // wgpu validation panic deep in layout creation.
+        let missing = capabilities.missing_for(crate::capabilities::Tier::Full);
+        if !missing.is_empty() {
+            return Err(crate::ViewportError::DeviceUnsupported {
+                reason: format!(
+                    "the device is on the {} tier and the renderer needs the full tier; it \
+                     lacks {}. Pass ViewportRenderer::recommended_device_limits(&adapter) as \
+                     required_limits in the DeviceDescriptor if the adapter offers more.",
+                    capabilities.tier(),
+                    missing.join(", "),
+                ),
+            });
+        }
+        let gpu_culling_supported = capabilities.indirect_first_instance;
+        let multi_draw_supported = capabilities.multi_draw_indirect_count;
+        // Bindless material textures need the whole texture-array feature set
+        // and enough binding-array elements for the texture array. Modern Metal
+        // (Apple Silicon, argument buffers Tier 2), Vulkan, and DX12 qualify; a
+        // device that enabled the feature but not the element limit, or WebGPU,
+        // stays on the per-batch binding.
+        use crate::resources::mesh::instanced_bindless::MaterialTextureBinding;
+        let material_texture_binding = if capabilities.bindless {
             MaterialTextureBinding::Bindless
         } else {
             MaterialTextureBinding::PerBatch
         };
         let mut resources = DeviceResources::new_configured(
             device,
+            capabilities,
             target_format,
             sample_count,
             config.pipeline_cache_data.as_deref(),
@@ -1037,7 +1059,17 @@ impl ViewportRenderer {
             last_cluster_stats: None,
         };
         renderer.register_internal_item_plugins(device);
-        renderer
+        Ok(renderer)
+    }
+
+    /// What the device can do, as read at construction.
+    pub fn capabilities(&self) -> &crate::capabilities::Capabilities {
+        &self.resources.capabilities
+    }
+
+    /// The tier the renderer runs at on its device.
+    pub fn tier(&self) -> crate::capabilities::Tier {
+        self.resources.capabilities.tier()
     }
 
     /// Access the underlying GPU resources (e.g. for mesh uploads).
@@ -1840,6 +1872,14 @@ impl ViewportRenderer {
     /// [`SceneFrame::submit_plugin_items`](crate::renderer::SceneFrame::submit_plugin_items)
     /// has populated a collection under the same name.
     ///
+    /// # Errors
+    ///
+    /// [`ViewportError::PluginUnsupported`](crate::ViewportError::PluginUnsupported)
+    /// when the device does not meet the plugin's
+    /// [`requires`](crate::plugin_api::ItemTypePlugin::requires). The plugin is
+    /// dropped without `init_gpu` running, and anything registered under the
+    /// same name before stays.
+    ///
     /// # Panics
     ///
     /// If a type the renderer installed itself already answers to
@@ -1853,14 +1893,37 @@ impl ViewportRenderer {
         &mut self,
         device: &crate::gpu::Device,
         plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
-    ) {
+    ) -> Result<(), crate::ViewportError> {
         let name = plugin.type_name();
         assert!(
             !self.renderer_owned_type_names.contains(&name),
             "item type name {name:?} is taken by a type the renderer installed itself. \
              Register under a prefix of your own."
         );
+        self.check_plugin_requirements(name, &plugin.requires())?;
         self.register_item_type_plugin(device, plugin);
+        Ok(())
+    }
+
+    /// `Err(PluginUnsupported)` naming what the device lacks for
+    /// `requirements`, or `Ok` when it meets them.
+    fn check_plugin_requirements(
+        &self,
+        type_name: &str,
+        requirements: &crate::capabilities::Requirements,
+    ) -> Result<(), crate::ViewportError> {
+        let missing = self
+            .resources
+            .capabilities
+            .missing_requirements(requirements);
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(crate::ViewportError::PluginUnsupported {
+                type_name: type_name.to_owned(),
+                missing,
+            })
+        }
     }
 
     /// [`with_item_type_plugin`](Self::with_item_type_plugin) without the
@@ -1871,11 +1934,17 @@ impl ViewportRenderer {
     /// door is known to be wide enough for everything an item type needs; what
     /// they cannot also do is pass a guard that exists to stop anything else
     /// taking their names.
+    /// A type whose requirements the device does not meet is skipped: the
+    /// renderer's own types are not the caller's to handle.
     pub(crate) fn install_item_type_plugin(
         &mut self,
         device: &crate::gpu::Device,
         plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
     ) {
+        if let Err(e) = self.check_plugin_requirements(plugin.type_name(), &plugin.requires()) {
+            tracing::debug!(target: "viewport_lib::init", "{e}");
+            return;
+        }
         self.renderer_owned_type_names.insert(plugin.type_name());
         self.register_item_type_plugin(device, plugin);
     }
@@ -1974,11 +2043,15 @@ impl ViewportRenderer {
     /// `prepare` and `encode` per viewport while `enabled` returns true.
     /// Producers run after the built-in effects, in registration order.
     ///
-    /// Returns an id for [`remove_post_effect_producer`](Self::remove_post_effect_producer).
+    /// Returns an id for [`remove_post_effect_producer`](Self::remove_post_effect_producer),
+    /// or [`ViewportError::PluginUnsupported`](crate::ViewportError::PluginUnsupported)
+    /// when the device does not meet the producer's
+    /// [`requires`](crate::plugin_api::PostEffectProducer::requires).
     pub fn add_post_effect_producer(
         &mut self,
         producer: Box<dyn crate::plugin_api::PostEffectProducer>,
-    ) -> crate::plugin_api::PostEffectProducerId {
+    ) -> Result<crate::plugin_api::PostEffectProducerId, crate::ViewportError> {
+        self.check_plugin_requirements(producer.type_name(), &producer.requires())?;
         self.next_post_effect_producer_id += 1;
         let id = crate::plugin_api::PostEffectProducerId(self.next_post_effect_producer_id);
         self.post_effect_producers
@@ -1987,7 +2060,7 @@ impl ViewportRenderer {
                 gpu_ready: false,
                 producer,
             });
-        id
+        Ok(id)
     }
 
     /// Unregister a post-effect producer. Unknown ids are ignored.
@@ -2008,12 +2081,16 @@ impl ViewportRenderer {
     /// targets; each HDR frame then runs `prepare` and `encode` per viewport
     /// while `enabled` returns true.
     ///
-    /// Returns an id for [`remove_post_effect_stage`](Self::remove_post_effect_stage).
+    /// Returns an id for [`remove_post_effect_stage`](Self::remove_post_effect_stage),
+    /// or [`ViewportError::PluginUnsupported`](crate::ViewportError::PluginUnsupported)
+    /// when the device does not meet the stage's
+    /// [`requires`](crate::plugin_api::PostEffectStage::requires).
     pub fn add_post_effect_stage(
         &mut self,
         stage: Box<dyn crate::plugin_api::PostEffectStage>,
         order: i32,
-    ) -> crate::plugin_api::PostEffectStageId {
+    ) -> Result<crate::plugin_api::PostEffectStageId, crate::ViewportError> {
+        self.check_plugin_requirements(stage.type_name(), &stage.requires())?;
         self.next_post_effect_stage_id += 1;
         let id = crate::plugin_api::PostEffectStageId(self.next_post_effect_stage_id);
         self.post_effect_stages.push(RegisteredPostEffectStage {
@@ -2022,7 +2099,7 @@ impl ViewportRenderer {
             gpu_ready: false,
             stage,
         });
-        id
+        Ok(id)
     }
 
     /// Unregister a post-effect stage. Unknown ids are ignored.

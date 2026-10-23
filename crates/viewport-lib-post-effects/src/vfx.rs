@@ -17,7 +17,7 @@
 //! ```ignore
 //! let (stages, settings) = vfx_stack();
 //! for (stage, order) in stages {
-//!     renderer.add_post_effect_stage(stage, order);
+//!     renderer.add_post_effect_stage(stage, order)?;
 //! }
 //! settings.lock().unwrap().depth_fog.enabled = true;
 //! ```

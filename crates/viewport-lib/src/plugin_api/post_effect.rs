@@ -166,6 +166,17 @@ pub trait PostEffectProducer: Send + Sync + 'static {
     /// Stable identifying name, used in diagnostics and pass labels.
     fn type_name(&self) -> &'static str;
 
+    /// What the producer needs from the device. Checked at registration: a
+    /// producer whose requirements the renderer's
+    /// [`Capabilities`](crate::Capabilities) do not meet is declined with
+    /// [`ViewportError::PluginUnsupported`](crate::ViewportError::PluginUnsupported).
+    /// Defaults to the full tier, so a producer that binds more storage buffers
+    /// than [`Requirements::full_tier`](crate::Requirements::full_tier) names,
+    /// or more bind groups, should say so.
+    fn requires(&self) -> crate::capabilities::Requirements {
+        crate::capabilities::Requirements::full_tier()
+    }
+
     /// The composite input this producer fills. Declared once; a producer
     /// contributes to exactly one slot.
     fn slot(&self) -> PostEffectSlot;
@@ -246,6 +257,17 @@ pub trait PostEffectProducer: Send + Sync + 'static {
 pub trait PostEffectStage: Send + Sync + 'static {
     /// Stable identifying name, used in diagnostics and pass labels.
     fn type_name(&self) -> &'static str;
+
+    /// What the stage needs from the device. Checked at registration: a
+    /// stage whose requirements the renderer's
+    /// [`Capabilities`](crate::Capabilities) do not meet is declined with
+    /// [`ViewportError::PluginUnsupported`](crate::ViewportError::PluginUnsupported).
+    /// Defaults to the full tier, so a stage that binds more storage buffers
+    /// than [`Requirements::full_tier`](crate::Requirements::full_tier) names,
+    /// or more bind groups, should say so.
+    fn requires(&self) -> crate::capabilities::Requirements {
+        crate::capabilities::Requirements::full_tier()
+    }
 
     /// Whether the stage runs this frame. Stages carry their own settings;
     /// the host mutates them through its own handle to the stage's state.

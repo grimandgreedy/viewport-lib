@@ -25,7 +25,8 @@ fn harness() -> Option<Harness> {
     let plugin = ConformanceItemTypePlugin::new(harness.renderer.resources(), &harness.device);
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
     Some(harness)
 }
 
