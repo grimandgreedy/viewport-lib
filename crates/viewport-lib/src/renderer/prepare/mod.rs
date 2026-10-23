@@ -820,6 +820,21 @@ impl ViewportRenderer {
         );
 
         self.prepare_clip_uniforms(queue, frame, viewport_fx);
+        if !matches!(
+            viewport_fx.ground_plane.mode,
+            crate::renderer::types::GroundPlaneMode::None
+        ) {
+            let slot = &mut self.viewport_slots[vp_idx];
+            let key = (
+                self.resources.shadow.map_view.clone(),
+                slot.ground_uniform_buf.clone(),
+            );
+            let resources = &self.resources;
+            let uniform_buf = &slot.ground_uniform_buf;
+            slot.ground_bind_group.get(key, || {
+                resources.create_ground_bind_group(device, uniform_buf)
+            });
+        }
         self.prepare_interaction_state(device, queue, frame, viewport_fx);
         Self::prepare_foreground_objects(
             &mut self.resources,
@@ -846,16 +861,24 @@ impl ViewportRenderer {
         // their own z_order and are separate draws), so force the ordered path
         // whenever any are present, even if no immediate item sets a z_order.
         let overlay_start = web_time::Instant::now();
-        self.overlay_uses_zorder =
+        // Each viewport keeps its own overlay buffers: the split API prepares
+        // every viewport before rendering any, so a shared set would leave each
+        // viewport drawing the last one's overlays.
+        let mut ov = std::mem::replace(
+            &mut self.viewport_slots[vp_idx].overlay,
+            crate::renderer::ViewportOverlay::new(),
+        );
+        ov.overlay_uses_zorder =
             frame.overlays.uses_nonzero_z_order() || !frame.overlays.retained.is_empty();
-        self.overlay_draw_segments.clear();
-        self.overlay_retained_draws.clear();
-        self.overlay_retained_shape_draws.clear();
-        self.overlay_instances_ready = false;
+        ov.overlay_draw_segments.clear();
+        ov.overlay_retained_draws.clear();
+        ov.overlay_retained_shape_draws.clear();
+        ov.overlay_instances_ready = false;
         self.overlay_retained_counters = Default::default();
-        self.prepare_overlay_labels(device, queue, frame);
-        self.prepare_overlay_shapes(device, queue, frame);
-        self.finalize_overlay_draw_order(frame);
+        self.prepare_overlay_labels(device, queue, frame, &mut ov);
+        self.prepare_overlay_shapes(device, queue, frame, &mut ov);
+        Self::finalize_overlay_draw_order(&mut ov);
+        self.viewport_slots[vp_idx].overlay = ov;
         self.prepare_breakdown.overlay_ms = overlay_start.elapsed().as_secs_f32() * 1000.0;
         // Publish the retained counters here rather than in the stats assembly:
         // the split API reaches this phase through `prepare_viewport` without

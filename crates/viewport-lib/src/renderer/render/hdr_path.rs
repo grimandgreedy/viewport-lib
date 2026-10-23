@@ -2260,7 +2260,11 @@ impl ViewportRenderer {
                 occlusion_query_set: None,
             });
             gp_pass.set_pipeline(self.resources.ground.pipeline());
-            gp_pass.set_bind_group(0, &self.resources.ground.bind_group, &[]);
+            let ground_bg = self.viewport_slots[vp_idx]
+                .ground_bind_group
+                .current()
+                .unwrap_or(&self.resources.ground.bind_group);
+            gp_pass.set_bind_group(0, ground_bg, &[]);
             gp_pass.draw(0..3, 0..1);
         }
 
@@ -2352,13 +2356,16 @@ impl ViewportRenderer {
         let w = ctx.w;
         let h = ctx.h;
         // Overlay shapes and the merged text batch (HDR path): drawn last.
-        let has_overlay = self.overlay_shape_gpu_data.is_some() || self.label_gpu_data.is_some();
+        let has_overlay = {
+            let ov = &self.viewport_slots[vp_idx].overlay;
+            ov.overlay_shape_gpu_data.is_some() || ov.label_gpu_data.is_some()
+        };
 
         // HDR backdrop blur: the tonemapped scene is on an intermediate so we
         // can sample it for the blur. When blur is needed we redirect the
         // tonemapped output to a managed intermediate, blur it, then draw
         // overlays there and blit to output_view at the end.
-        let needs_hdr_blur = self.has_backdrop_blur_shapes();
+        let needs_hdr_blur = self.has_backdrop_blur_shapes(vp_idx);
         let hdr_blur_bg: Option<crate::gpu::BindGroup> = if needs_hdr_blur && has_overlay {
             self.ensure_backdrop_blur_state(device, w.max(1), h.max(1));
             // Blit output_view content to the intermediate so we have a
@@ -2374,7 +2381,8 @@ impl ViewportRenderer {
             // format of the blur textures. This looks acceptable in practice.
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             let source = &slot_hdr.hdr_view;
-            let spread = self
+            let spread = self.viewport_slots[vp_idx]
+                .overlay
                 .overlay_shape_gpu_data
                 .as_ref()
                 .map(|d| d.max_blur_radius)
@@ -2417,9 +2425,10 @@ impl ViewportRenderer {
             });
             // Blur backdrop shapes drawn first (behind normal shapes).
             if let Some(ref bg) = hdr_blur_bg {
-                self.draw_blur_shapes(&mut overlay_pass, bg);
+                self.draw_blur_shapes(&mut overlay_pass, bg, vp_idx);
             }
-            emit_overlay_2d!(self, overlay_pass);
+            let ov = &self.viewport_slots[vp_idx].overlay;
+            emit_overlay_2d!(self, ov, overlay_pass);
         }
     }
 }

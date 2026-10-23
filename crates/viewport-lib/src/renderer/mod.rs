@@ -238,6 +238,83 @@ pub(crate) struct ViewportSlot {
     pub skybox: Option<crate::resources::material::environment::SkyboxBinding>,
     /// Whether this viewport draws a skybox this frame.
     pub draw_skybox: bool,
+    /// This viewport's prepared 2D overlay pass.
+    pub overlay: ViewportOverlay,
+    /// Ground-plane uniform for this viewport's camera, and the bind group
+    /// over it and the shadow atlas, rebuilt when the atlas view changes.
+    pub ground_uniform_buf: crate::gpu::Buffer,
+    pub ground_bind_group: crate::resources::cached_bind_group::CachedBindGroup<(
+        crate::gpu::TextureView,
+        crate::gpu::Buffer,
+    )>,
+}
+
+/// One viewport's prepared 2D overlay pass: the vertex and storage buffers the
+/// overlay prepare writes and the draw lists the paint walks. Kept per viewport
+/// so `prepare_viewport` for one viewport does not overwrite the overlays
+/// (gizmo, axes indicator, labels) prepared for another before it renders.
+pub(crate) struct ViewportOverlay {
+    /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
+    pub label_gpu_data: Option<crate::resources::LabelGpuData>,
+    /// Per-frame SDF overlay shape GPU data, rebuilt in prepare(), consumed in paint().
+    pub overlay_shape_gpu_data: Option<crate::resources::OverlayShapeGpuData>,
+    /// Per-frame ordered overlay draw list. The overlay prepare passes record one
+    /// segment per contiguous draw, tagged with `z_order` and family rank; the
+    /// emit path walks them in sorted order so `z_order` composes across overlay
+    /// families. Rebuilt each frame, allocation reused.
+    pub overlay_draw_segments: Vec<overlay_draw_order::OverlayDrawSegment>,
+    /// Set when any overlay item this frame carries a non-zero `z_order`. When
+    /// false, the segment list is left empty and the emit path uses its fixed
+    /// family order, so scenes that never touch `z_order` pay nothing.
+    pub overlay_uses_zorder: bool,
+    /// Persistent grow-on-demand vertex buffers for the overlay pass. The prepare
+    /// passes write their per-frame geometry into these in place instead of
+    /// allocating a fresh buffer every frame; each grows only when a frame needs
+    /// more room. One per fixed stream (text, solid shapes, blur) plus a pool for
+    /// the variable number of per-texture shape batches.
+    pub overlay_text_vbuf: overlay_buffers::GrowBuffer,
+    pub overlay_shape_vbuf: overlay_buffers::GrowBuffer,
+    pub overlay_shape_blur_vbuf: overlay_buffers::GrowBuffer,
+    pub overlay_shape_tex_vbufs: Vec<overlay_buffers::GrowBuffer>,
+    /// Per-frame viewport-size uniform (logical `[w, h, 0, 0]`) shared by the
+    /// overlay pipelines. Overlay vertices are stored in local logical pixels; the
+    /// overlay vertex shaders read this to map them to NDC, so overlay geometry is
+    /// independent of the viewport size (a resize rewrites this uniform, not the
+    /// vertices). Created once and overwritten each frame.
+    pub overlay_viewport_buf: Option<crate::gpu::Buffer>,
+    /// Per-frame retained overlay text-stream draws, one per submitted
+    /// `RetainedOverlay` that resolved to a live compiled group with text-pipeline
+    /// geometry. Referenced by `OverlayDrawSource::Retained { draw_index }`.
+    pub overlay_retained_draws: Vec<overlay_buffers::RetainedDraw>,
+    /// Per-frame retained overlay shape-stream draws (SDF shapes), referenced by
+    /// `OverlayDrawSource::RetainedShape { draw_index }`.
+    pub overlay_retained_shape_draws: Vec<overlay_buffers::RetainedShapeDraw>,
+    /// The overlay pass's clip, instance and shadow-layer storage buffers and
+    /// the bind groups over them, reused across frames.
+    pub overlay_bindings: overlay_buffers::OverlayBindings,
+    /// Set once the label prepare has written the overlay instances this frame,
+    /// so the shape prepare reuses it instead of building an identity-only fallback.
+    pub overlay_instances_ready: bool,
+}
+
+impl ViewportOverlay {
+    pub(crate) fn new() -> Self {
+        Self {
+            label_gpu_data: None,
+            overlay_shape_gpu_data: None,
+            overlay_text_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_label_vbuf"),
+            overlay_shape_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_shape_vbuf"),
+            overlay_shape_blur_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_shape_blur_vbuf"),
+            overlay_shape_tex_vbufs: Vec::new(),
+            overlay_viewport_buf: None,
+            overlay_retained_draws: Vec::new(),
+            overlay_retained_shape_draws: Vec::new(),
+            overlay_bindings: overlay_buffers::OverlayBindings::new(),
+            overlay_instances_ready: false,
+            overlay_draw_segments: Vec::new(),
+            overlay_uses_zorder: false,
+        }
+    }
 }
 
 /// Renderer wrapping all GPU resources and providing `prepare()` and `paint()` methods.
@@ -395,47 +472,6 @@ pub struct ViewportRenderer {
     surface_mask: surface_mask::SurfaceMaskState,
     /// Per-frame mesh-instance batches, rebuilt in prepare(), consumed in paint().
     mesh_instance_gpu_data: Vec<crate::resources::MeshInstanceGpuData>,
-    /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
-    label_gpu_data: Option<crate::resources::LabelGpuData>,
-    /// Per-frame SDF overlay shape GPU data, rebuilt in prepare(), consumed in paint().
-    overlay_shape_gpu_data: Option<crate::resources::OverlayShapeGpuData>,
-    /// Per-frame ordered overlay draw list. The overlay prepare passes record one
-    /// segment per contiguous draw, tagged with `z_order` and family rank; the
-    /// emit path walks them in sorted order so `z_order` composes across overlay
-    /// families. Rebuilt each frame, allocation reused.
-    overlay_draw_segments: Vec<overlay_draw_order::OverlayDrawSegment>,
-    /// Set when any overlay item this frame carries a non-zero `z_order`. When
-    /// false, the segment list is left empty and the emit path uses its fixed
-    /// family order, so scenes that never touch `z_order` pay nothing.
-    overlay_uses_zorder: bool,
-    /// Persistent grow-on-demand vertex buffers for the overlay pass. The prepare
-    /// passes write their per-frame geometry into these in place instead of
-    /// allocating a fresh buffer every frame; each grows only when a frame needs
-    /// more room. One per fixed stream (text, solid shapes, blur) plus a pool for
-    /// the variable number of per-texture shape batches.
-    overlay_text_vbuf: overlay_buffers::GrowBuffer,
-    overlay_shape_vbuf: overlay_buffers::GrowBuffer,
-    overlay_shape_blur_vbuf: overlay_buffers::GrowBuffer,
-    overlay_shape_tex_vbufs: Vec<overlay_buffers::GrowBuffer>,
-    /// Per-frame viewport-size uniform (logical `[w, h, 0, 0]`) shared by the
-    /// overlay pipelines. Overlay vertices are stored in local logical pixels; the
-    /// overlay vertex shaders read this to map them to NDC, so overlay geometry is
-    /// independent of the viewport size (a resize rewrites this uniform, not the
-    /// vertices). Created once and overwritten each frame.
-    overlay_viewport_buf: Option<crate::gpu::Buffer>,
-    /// Per-frame retained overlay text-stream draws, one per submitted
-    /// `RetainedOverlay` that resolved to a live compiled group with text-pipeline
-    /// geometry. Referenced by `OverlayDrawSource::Retained { draw_index }`.
-    overlay_retained_draws: Vec<overlay_buffers::RetainedDraw>,
-    /// Per-frame retained overlay shape-stream draws (SDF shapes), referenced by
-    /// `OverlayDrawSource::RetainedShape { draw_index }`.
-    overlay_retained_shape_draws: Vec<overlay_buffers::RetainedShapeDraw>,
-    /// The overlay pass's clip, instance and shadow-layer storage buffers and
-    /// the bind groups over them, reused across frames.
-    overlay_bindings: overlay_buffers::OverlayBindings,
-    /// Set once the label prepare has written the overlay instances this frame,
-    /// so the shape prepare reuses it instead of building an identity-only fallback.
-    overlay_instances_ready: bool,
     /// Retained-overlay counters for the frame being prepared. Reset at the start
     /// of the overlay phase and published into `FrameStats` at the end of it.
     overlay_retained_counters: OverlayRetainedCounters,
@@ -939,20 +975,7 @@ impl ViewportRenderer {
             mesh_instance_gpu_data: Vec::new(),
             direct_paint: true,
             surface_mask: surface_mask::SurfaceMaskState::new(),
-            label_gpu_data: None,
-            overlay_shape_gpu_data: None,
-            overlay_text_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_label_vbuf"),
-            overlay_shape_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_shape_vbuf"),
-            overlay_shape_blur_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_shape_blur_vbuf"),
-            overlay_shape_tex_vbufs: Vec::new(),
-            overlay_viewport_buf: None,
             overlay_retained_counters: OverlayRetainedCounters::default(),
-            overlay_retained_draws: Vec::new(),
-            overlay_retained_shape_draws: Vec::new(),
-            overlay_bindings: overlay_buffers::OverlayBindings::new(),
-            overlay_instances_ready: false,
-            overlay_draw_segments: Vec::new(),
-            overlay_uses_zorder: false,
             backdrop_blur_state: None,
             viewport_slots: Vec::new(),
             mesh_uniforms: PerObjectState::new(),
@@ -3320,6 +3343,13 @@ impl ViewportRenderer {
                 }],
             });
 
+            let ground_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some("vp_ground_plane_uniform_buf"),
+                size: std::mem::size_of::<crate::resources::GroundPlaneUniform>() as u64,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
             // The transform gizmo and the axes indicator now draw through the 2D
             // overlay system, so no per-viewport geometry buffers are needed for them.
 
@@ -3351,6 +3381,9 @@ impl ViewportRenderer {
                 draw_skybox: false,
                 dyn_res: None,
                 hdr_callback: None,
+                overlay: ViewportOverlay::new(),
+                ground_uniform_buf,
+                ground_bind_group: crate::resources::cached_bind_group::CachedBindGroup::new(),
             });
         }
     }
@@ -3491,66 +3524,7 @@ impl ViewportRenderer {
         id: ViewportId,
         frame: &FrameData,
     ) {
-        let vp_idx = id.0;
-        let camera_bg = self.viewport_camera_bind_group(vp_idx);
-        let grid_bg = self.viewport_grid_bind_group(vp_idx);
-        let vp_slot = self.viewport_slots.get(vp_idx);
-        emit_draw_calls!(
-            &self.resources,
-            &mut *render_pass,
-            frame,
-            &self.instancing.batches,
-            camera_bg,
-            grid_bg,
-            vp_slot,
-            &self.mesh_uniforms.material_bind_groups,
-            &self.prepared_surfaces,
-            self.per_object_bundle.as_ref()
-        );
-        self.draw_line_and_instance_layers(&mut *render_pass, camera_bg, false);
-        // TransparentVolumeMesh boundary wireframe overlay.
-        if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
-            if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for (slot, mesh_id) in self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate() {
-                    if let (Some(mesh), Some(wf)) = (
-                        self.resources.mesh_store.get(*mesh_id),
-                        self.resources.scene.wireframe(),
-                    ) {
-                        render_pass.set_pipeline(wf);
-                        render_pass.set_bind_group(1, tvm_bg, &[]);
-                        if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
-                            render_pass.set_vertex_buffer(1, records.slice(..));
-                        }
-                        render_pass.set_vertex_buffer(
-                            0,
-                            self.resources.geometry.vertex_slice(mesh.vertex_span),
-                        );
-                        if let Some(edge_buf) = &mesh.edge_index_buffer {
-                            render_pass.set_index_buffer(
-                                edge_buf.slice(..),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
-                            let slot = slot as u32;
-                            render_pass.draw_indexed(0..mesh.edge_index_count, 0, slot..slot + 1);
-                        }
-                    }
-                }
-            }
-        }
-        // Item-type plugin paint (LDR opt-in only): after all built-in scene
-        // content, mirroring the HDR scene-pass position.
-        self.dispatch_plugin_paint(render_pass, frame, false);
-        // Shadow atlas viewer overlay.
-        if let (true, Some(pipeline)) = (
-            frame.effects.debug.show_shadow_atlas,
-            self.resources
-                .guide_pipeline(crate::resources::overlay::guides::GUIDE_ATLAS_VIEWER),
-        ) {
-            render_pass.set_pipeline(pipeline);
-            render_pass.set_bind_group(0, &self.resources.shadow.atlas_viewer_bg, &[]);
-            render_pass.draw(0..6, 0..1);
-        }
+        self.paint_slot(render_pass, id.0, frame);
     }
 
     /// Return a reference to the camera bind group for the given viewport slot.
