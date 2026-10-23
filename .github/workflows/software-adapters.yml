@@ -1,0 +1,203 @@
+name: Software adapters
+
+# Every platform the library claims that a runner can exercise without real
+# hardware. Three software adapters run the headless tests: WARP (Direct3D 12)
+# on Windows, lavapipe (Vulkan) on Linux, and llvmpipe (GL) on Linux. Beside
+# them: the wasm compile check, the web smoke page in headless Chrome, and the
+# Android and iOS compile checks. None of it gates anything: the workflow runs
+# only when started by hand from the Actions tab, and a job that is expected to
+# fail says so on the job. A platform with no job here is a platform nobody is
+# testing, which is how a backend quietly stops working.
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Software rasterisers are slow enough that debug builds time out.
+  CARGO_PROFILE_RELEASE_DEBUG: 0
+  # Every headless test skips quietly when no adapter exists. This makes the
+  # gpu_available canary fail instead, so a runner with a broken adapter setup
+  # cannot report green while testing nothing.
+  VIEWPORT_REQUIRE_GPU: 1
+
+jobs:
+  warp:
+    name: WARP (DX12, Windows)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      # wgpu enumerates WARP as a CPU adapter and request_adapter falls back to
+      # it when the runner offers no hardware adapter. Pinning the backend
+      # keeps the GL path out of the picture.
+      WGPU_BACKEND: dx12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Adapter probe
+        run: cargo test --release -p viewport-lib --test gpu_available -- --nocapture
+
+      - name: Library headless tests
+        run: cargo test --release -p viewport-lib --tests
+
+      # --tests keeps the examples out of the build: they pull eframe, which
+      # the runner does not need.
+      - name: Testkit tests
+        working-directory: crates/viewport-lib-testkit
+        run: cargo test --release --tests
+
+      # There are no references blessed for this backend, so the gate writes a
+      # fresh set and passes. That makes this step a check that every catalogue
+      # scene renders through WARP, not a pixel comparison. The files are never
+      # committed from here.
+      - name: Catalogue scenes render
+        working-directory: crates/viewport-lib-testkit
+        run: |
+          cargo test --release --test snapshots
+          git status --short tests/snapshots/
+
+  lavapipe:
+    name: lavapipe (Vulkan, Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      WGPU_BACKEND: vulkan
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install lavapipe
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
+          vulkaninfo --summary
+
+      - name: Adapter probe
+        run: cargo test --release -p viewport-lib --test gpu_available -- --nocapture
+
+      - name: Library headless tests
+        run: cargo test --release -p viewport-lib --tests
+
+      - name: Testkit tests
+        working-directory: crates/viewport-lib-testkit
+        run: cargo test --release --tests
+
+      - name: Catalogue scenes render
+        working-directory: crates/viewport-lib-testkit
+        run: |
+          cargo test --release --test snapshots
+          git status --short tests/snapshots/
+
+  llvmpipe-gl:
+    name: llvmpipe (GL, Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Expected to fail until the overlay family stops binding storage buffers:
+    # wgpu's GL backend on llvmpipe reports a GL 4.5 context, which clears the
+    # storage floor, but naga's GLSL writer has never seen these shaders. Kept
+    # so the failure list is in the log rather than unknown.
+    continue-on-error: true
+    env:
+      WGPU_BACKEND: gl
+      LIBGL_ALWAYS_SOFTWARE: 1
+      EGL_PLATFORM: surfaceless
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Mesa GL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1-mesa-dri libgles2 mesa-utils
+          eglinfo -B || true
+
+      - name: Adapter probe
+        run: cargo test --release -p viewport-lib --test gpu_available -- --nocapture
+
+      - name: Library headless tests
+        run: cargo test --release -p viewport-lib --tests
+
+      - name: Testkit tests
+        working-directory: crates/viewport-lib-testkit
+        run: cargo test --release --tests
+
+      - name: Catalogue scenes render
+        working-directory: crates/viewport-lib-testkit
+        run: |
+          cargo test --release --test snapshots
+          git status --short tests/snapshots/
+
+  wasm-check:
+    name: wasm compile check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+
+      # The script defaults to a macOS rustup toolchain path; point it at the
+      # runner's instead.
+      - name: Check the library crates and web examples for wasm32
+        run: VPL_WASM_TOOLCHAIN="$(rustc --print sysroot)" scripts/build_web.sh --check
+
+  web-smoke:
+    name: Web smoke page (headless Chrome)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+
+      # wasm-bindgen-cli has to match the wasm-bindgen crate in the lockfile.
+      - name: Install wasm-bindgen-cli at the lockfile version
+        run: |
+          ver=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
+          echo "wasm-bindgen $ver"
+          cargo install wasm-bindgen-cli --version "$ver" --locked
+
+      # Builds the smoke example, serves it, loads it in headless Chrome and
+      # reads the page's report. This is the WebGPU path; a second run with
+      # WebGPU unavailable belongs here once the bring-up can fall back to GL.
+      - name: Run the smoke page
+        run: |
+          VPL_WASM_TOOLCHAIN="$(rustc --print sysroot)" \
+          VPL_CHROME="$(command -v google-chrome)" \
+          scripts/check_web.sh
+
+  mobile-check:
+    name: Mobile compile check (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: aarch64-linux-android
+            flag: --android
+          - os: macos-latest
+            target: aarch64-apple-ios-sim
+            flag: --ios
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/viewport-lib-examples/mobile
+
+      # A compile check only: cargo check does not link, so no NDK or Xcode
+      # project is needed. Deploying to a device is a hand step (see the
+      # crate's README).
+      - name: Check the mobile example
+        run: VPL_MOBILE_TOOLCHAIN="$(rustc --print sysroot)" scripts/check_mobile.sh ${{ matrix.flag }}
