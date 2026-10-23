@@ -88,34 +88,51 @@ impl PipelineKey {
 /// a family are built universal, and a draw whose set is not built yet draws
 /// the universal member while it compiles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
-pub(crate) struct FeatureSet(u8);
+pub(crate) struct FeatureSet(u16);
 
 impl FeatureSet {
     /// The mesh's sidecar record: the override windows and every stream read.
-    pub const RECORD: u8 = 1;
+    pub const RECORD: u16 = 1;
     /// The scalar or face-colour stream, the LUT and NaN colour, face colours.
-    pub const COLOUR_STREAM: u8 = 2;
+    pub const COLOUR_STREAM: u16 = 2;
     /// The warp stream.
-    pub const WARP: u8 = 4;
+    pub const WARP: u16 = 4;
     /// The position and normal override buffers.
-    pub const OVERRIDES: u8 = 8;
+    pub const OVERRIDES: u16 = 8;
     /// Lightmap UVs and sampling, the shadowmask, the subtractive mode.
-    pub const LIGHTMAP: u8 = 16;
+    pub const LIGHTMAP: u16 = 16;
     /// Matcap shading.
-    pub const MATCAP: u8 = 32;
+    pub const MATCAP: u16 = 32;
     /// The deformer hooks.
-    pub const DEFORM: u8 = 64;
+    pub const DEFORM: u16 = 64;
     /// The emissive map: its slot lookup and sample. A material without one
     /// adds its emissive colour and custom data only.
-    pub const EMISSIVE_MAP: u8 = 128;
+    pub const EMISSIVE_MAP: u16 = 128;
+    /// The second UV set: the uv1 stream read and the per-slot choice between
+    /// the two sets. Off, every slot samples uv0.
+    pub const UV1: u16 = 1 << 8;
+    /// The per-slot UV offset, scale and rotation. Off, every slot samples
+    /// the mesh UV as it is.
+    pub const UV_TRANSFORM: u16 = 1 << 9;
+    /// Light-probe indirect diffuse. Off, the environment's specular is not
+    /// held past the ambient block for a probe to keep.
+    pub const LIGHT_PROBE: u16 = 1 << 10;
 
     /// Every feature compiled out.
     pub const NONE: Self = Self(0);
     /// Every feature compiled in: the eager pipelines.
-    pub const UNIVERSAL: Self = Self(255);
+    pub const UNIVERSAL: Self = {
+        let mut all = 0;
+        let mut i = 0;
+        while i < Self::CONSTANTS.len() {
+            all |= Self::CONSTANTS[i].0;
+            i += 1;
+        }
+        Self(all)
+    };
 
     /// The WGSL constant each bit sets.
-    const CONSTANTS: [(u8, &'static str); 8] = [
+    const CONSTANTS: &'static [(u16, &'static str)] = &[
         (Self::RECORD, "FEAT_RECORD"),
         (Self::COLOUR_STREAM, "FEAT_COLOUR_STREAM"),
         (Self::WARP, "FEAT_WARP"),
@@ -124,17 +141,20 @@ impl FeatureSet {
         (Self::MATCAP, "FEAT_MATCAP"),
         (Self::DEFORM, "FEAT_DEFORM"),
         (Self::EMISSIVE_MAP, "FEAT_EMISSIVE_MAP"),
+        (Self::UV1, "FEAT_UV1"),
+        (Self::UV_TRANSFORM, "FEAT_UV_TRANSFORM"),
+        (Self::LIGHT_PROBE, "FEAT_LIGHT_PROBE"),
     ];
 
-    pub fn bits(self) -> u8 {
+    pub fn bits(self) -> u16 {
         self.0
     }
 
-    pub fn has(self, bit: u8) -> bool {
+    pub fn has(self, bit: u16) -> bool {
         self.0 & bit != 0
     }
 
-    pub fn with(self, bit: u8, on: bool) -> Self {
+    pub fn with(self, bit: u16, on: bool) -> Self {
         if on { Self(self.0 | bit) } else { self }
     }
 
@@ -174,6 +194,9 @@ impl FeatureSet {
                 Self::EMISSIVE_MAP,
                 material_flags[0] & m::HAS_EMISSIVE_TEX != 0,
             )
+            .with(Self::UV1, material_flags[0] & m::USES_UV1 != 0)
+            .with(Self::UV_TRANSFORM, material_flags[0] & m::UV_TRANSFORM != 0)
+            .with(Self::LIGHT_PROBE, flag(f::HAS_LIGHT_PROBE))
     }
 
     /// The pipeline constants for this set: the features it leaves out set
@@ -189,5 +212,20 @@ impl FeatureSet {
     /// A label suffix naming the set, for the build log.
     pub fn label(self, base: &str) -> String {
         format!("{base}_feat{:02x}", self.0)
+    }
+}
+
+#[cfg(test)]
+mod feature_set_tests {
+    use super::FeatureSet;
+    use crate::resources::mesh::instancing::{InstanceData, instance_flags};
+
+    #[test]
+    fn only_a_record_with_a_light_probe_needs_the_probe_feature() {
+        let mut inst: InstanceData = bytemuck::Zeroable::zeroed();
+        assert!(!FeatureSet::of_record(&inst, [0; 4]).has(FeatureSet::LIGHT_PROBE));
+        inst.flags |= instance_flags::HAS_LIGHT_PROBE;
+        assert!(FeatureSet::of_record(&inst, [0; 4]).has(FeatureSet::LIGHT_PROBE));
+        assert!(FeatureSet::UNIVERSAL.has(FeatureSet::LIGHT_PROBE));
     }
 }

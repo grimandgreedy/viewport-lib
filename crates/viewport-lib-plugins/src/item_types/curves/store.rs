@@ -530,8 +530,8 @@ pub(super) fn build_streamtube(
                 &item.positions,
                 &item.strip_lengths,
             ),
-            tri_segment,
-            tri_strip,
+            tri_segment: tri_segment.into(),
+            tri_strip: tri_strip.into(),
             rebind: None,
             _uniform_buf: uniform_buf,
         }
@@ -860,8 +860,8 @@ pub(super) fn build_tube(
                 &item.positions,
                 &item.strip_lengths,
             ),
-            tri_segment,
-            tri_strip,
+            tri_segment: tri_segment.into(),
+            tri_strip: tri_strip.into(),
             rebind: None,
             _uniform_buf: uniform_buf,
         }
@@ -1200,8 +1200,8 @@ pub(super) fn build_ribbon(
                 &item.positions,
                 &item.strip_lengths,
             ),
-            tri_segment,
-            tri_strip,
+            tri_segment: tri_segment.into(),
+            tri_strip: tri_strip.into(),
             rebind: item.texture_id.map(|texture_id| RibbonRebind {
                 texture_id,
                 uniform: uniform_data,
@@ -1264,10 +1264,11 @@ pub(crate) struct StreamtubeGpuData {
     /// (the hit triangle) to the source curve segment, so a sub-object GPU pick
     /// resolves `SubObjectRef::Segment`. End/start cap triangles map to the last
     /// / first segment of their strip. Empty when the item is not pickable.
-    pub(crate) tri_segment: Vec<u32>,
+    /// Shared, so a reference draw clones a handle rather than the table.
+    pub(crate) tri_segment: std::sync::Arc<[u32]>,
     /// Per-triangle strip index, parallel to [`tri_segment`](Self::tri_segment),
     /// used to resolve `SubObjectRef::Strip`. Empty when not pickable.
-    pub(crate) tri_strip: Vec<u32>,
+    pub(crate) tri_strip: std::sync::Arc<[u32]>,
     /// What this batch needs to rebind itself when the streak texture in its
     /// bind group is freed or swapped. `None` for a tube, a streamtube, or an
     /// untextured ribbon: none of them binds a texture the host can free.
@@ -1294,35 +1295,41 @@ pub(crate) struct NodePairRaw {
     pub(crate) i1: u32,
 }
 
-/// Global node indices of a segment's two endpoints, accounting for multi-strip
-/// layout (each strip of `slen` nodes owns `slen - 1` segments). Mirrors the
-/// picking helper `segment_node_indices`, replicated here to keep the upload path
-/// independent of the picking module.
-fn node_endpoints(seg: u32, strip_lengths: &[u32], n_positions: usize) -> (usize, usize) {
-    if strip_lengths.is_empty() {
-        let a = seg as usize;
-        if a + 1 < n_positions {
-            return (a, a + 1);
-        }
-        return (0, 0);
-    }
-    let mut node_off = 0usize;
-    let mut seg_off = 0u32;
+/// The first control point of each segment, in segment order across strips,
+/// so the per-triangle build looks a segment's endpoints up instead of walking
+/// the strips for every triangle. Empty when there are no strip lengths: a
+/// single strip, where segment `s` starts at point `s`.
+fn segment_first_nodes(strip_lengths: &[u32]) -> Vec<u32> {
+    let mut first = Vec::new();
+    let mut node_off = 0u32;
     for &slen in strip_lengths {
-        let slen = slen as usize;
-        let segs = slen.saturating_sub(1) as u32;
-        if seg < seg_off + segs {
-            let k = (seg - seg_off) as usize;
-            let a = node_off + k;
-            if a + 1 < n_positions {
-                return (a, a + 1);
-            }
-            return (0, 0);
+        for k in 0..slen.saturating_sub(1) {
+            first.push(node_off + k);
         }
-        seg_off += segs;
         node_off += slen;
     }
-    (0, 0)
+    first
+}
+
+/// Global indices of the two control points a segment joins, or `(0, 0)` for a
+/// segment index past the end. `first_nodes` comes from `segment_first_nodes`.
+/// Mirrors the picking helper `segment_node_indices`, replicated here to keep
+/// the upload path independent of the picking module.
+fn node_endpoints(
+    seg: u32,
+    strip_lengths: &[u32],
+    first_nodes: &[u32],
+    n_positions: usize,
+) -> (usize, usize) {
+    let a = if strip_lengths.is_empty() {
+        Some(seg as usize)
+    } else {
+        first_nodes.get(seg as usize).map(|&a| a as usize)
+    };
+    match a {
+        Some(a) if a + 1 < n_positions => (a, a + 1),
+        _ => (0, 0),
+    }
 }
 
 /// Build the per-triangle node payload buffer for the POLY_NODE pick pipeline.
@@ -1338,10 +1345,11 @@ fn build_node_pick_buffer(
     if tri_segment.is_empty() || positions.is_empty() {
         return None;
     }
+    let first_nodes = segment_first_nodes(strip_lengths);
     let payload: Vec<NodePairRaw> = tri_segment
         .iter()
         .map(|&seg| {
-            let (a, b) = node_endpoints(seg, strip_lengths, positions.len());
+            let (a, b) = node_endpoints(seg, strip_lengths, &first_nodes, positions.len());
             NodePairRaw {
                 p0: positions[a],
                 i0: a as u32,
@@ -1381,5 +1389,52 @@ impl viewport_lib::resources::handle::GpuByteSize for StreamtubeGpuData {
             + self.edge_index_buffer.size()
             + self._uniform_buf.size()
             + self.node_pick_buffer.as_ref().map_or(0, |b| b.size())
+    }
+}
+
+#[cfg(test)]
+mod node_endpoint_tests {
+    use super::{node_endpoints, segment_first_nodes};
+
+    /// The strip walk the table replaces, kept as the reference.
+    fn walk(seg: u32, strip_lengths: &[u32], n_positions: usize) -> (usize, usize) {
+        if strip_lengths.is_empty() {
+            let a = seg as usize;
+            return if a + 1 < n_positions {
+                (a, a + 1)
+            } else {
+                (0, 0)
+            };
+        }
+        let (mut node_off, mut seg_off) = (0usize, 0u32);
+        for &slen in strip_lengths {
+            let segs = slen.saturating_sub(1);
+            if seg < seg_off + segs {
+                let a = node_off + (seg - seg_off) as usize;
+                return if a + 1 < n_positions {
+                    (a, a + 1)
+                } else {
+                    (0, 0)
+                };
+            }
+            seg_off += segs;
+            node_off += slen as usize;
+        }
+        (0, 0)
+    }
+
+    #[test]
+    fn the_table_gives_the_strip_walk_pairs() {
+        for strips in [&[][..], &[5], &[3, 1, 0, 4, 2], &[2, 2, 2]] {
+            let n: usize = strips.iter().map(|&s| s as usize).sum::<usize>().max(6);
+            let first = segment_first_nodes(strips);
+            for seg in 0..12 {
+                assert_eq!(
+                    node_endpoints(seg, strips, &first, n),
+                    walk(seg, strips, n),
+                    "strips {strips:?}, segment {seg}"
+                );
+            }
+        }
     }
 }

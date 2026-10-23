@@ -174,6 +174,8 @@ impl ViewportRenderer {
         // advance promotions: doing so drains the one-cycle promotion window a
         // consumer polls to fire a deferred bind, which strands the bind
         // permanently (the runner clears its `finished` table every call).
+        // A derivative render skips the drain but still reads `GpuMesh::closed`.
+        self.resources.resolve_closed_checks();
         if self.render_advances_state() {
             match self.upload_budget {
                 Some(d) => self.resources.process_uploads_with_budget(
@@ -183,6 +185,18 @@ impl ViewportRenderer {
                 ),
                 None => self.resources.process_uploads(device, queue),
             }
+        }
+
+        // A closed answer that landed since last frame changes the records of
+        // the batches drawing that mesh; repack only if a cached batch does.
+        let flipped = std::mem::take(&mut self.resources.closed_flipped);
+        if self
+            .instancing
+            .cached_batches
+            .iter()
+            .any(|b| flipped.contains(&b.mesh_id))
+        {
+            self.resources.mesh_sidecar_epoch = self.resources.mesh_sidecar_epoch.wrapping_add(1);
         }
 
         // Run the mesh-family pipeline rebuild that deformer registration

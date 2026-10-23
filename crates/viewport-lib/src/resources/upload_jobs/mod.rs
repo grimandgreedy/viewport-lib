@@ -1251,6 +1251,7 @@ impl super::DeviceResources {
         // drains the deferred sync writes.
         self.geometry.flush(queue);
         self.flush_sidecars(device, queue);
+        self.resolve_closed_checks();
     }
 
     /// Total wall-clock work duration for a completed job.

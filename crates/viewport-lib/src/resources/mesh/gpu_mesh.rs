@@ -24,8 +24,13 @@ pub struct GpuMesh {
     /// casts shadows through the cull-front pipeline whatever its
     /// `BackfacePolicy`, and its back faces (the inside, seen through a clip
     /// plane) shade as inside the solid's own shadow. The cull-none caster
-    /// path is for surfaces that are genuinely open.
+    /// path is for surfaces that are genuinely open. The check runs on a
+    /// worker thread and nothing waits for it, except a capture or an
+    /// offscreen render; until it lands a new mesh reads `false` and a
+    /// replaced one its previous value.
     pub closed: bool,
+    /// The closed check still running for this mesh, if any.
+    pub(crate) closed_check: Option<crate::resources::mesh::meshes::ClosedCheck>,
     /// Material ranges partitioning the index buffer, from
     /// `MeshData::submeshes`. Empty for single-material meshes, which draw
     /// the full `0..index_count` range.

@@ -160,6 +160,12 @@ impl PipelineCompiler {
         BlockingScope(Arc::clone(self))
     }
 
+    /// Whether a capture or a read-back call is running: a frame whose pixels
+    /// are handed back, so nothing it draws may be provisional.
+    pub(crate) fn reading_back(&self) -> bool {
+        self.capturing.load(Ordering::Relaxed) || self.blocking_scopes.load(Ordering::Relaxed) > 0
+    }
+
     /// Compiles handed to the workers that have not finished.
     pub(crate) fn pending(&self) -> usize {
         self.pending.count.load(Ordering::SeqCst)
@@ -459,7 +465,7 @@ impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, 
         feats: crate::renderer::pipeline_key::FeatureSet,
     ) -> Option<Option<&P>> {
         let f = self.features.as_deref()?;
-        let key = ((i as u32) << 8 | feats.bits() as u32) + 1;
+        let key = ((i as u32) << 16 | feats.bits() as u32) + 1;
         let find = |len: usize| {
             f.keys[..len]
                 .iter()
@@ -499,7 +505,7 @@ impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, 
         let Some(f) = self.features.as_deref() else {
             return false;
         };
-        let key = ((i as u32) << 8 | feats.bits() as u32) + 1;
+        let key = ((i as u32) << 16 | feats.bits() as u32) + 1;
         f.keys[..f.len.load(Ordering::Acquire)]
             .iter()
             .position(|k| k.load(Ordering::Acquire) == key)
