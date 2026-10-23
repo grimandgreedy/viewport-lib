@@ -16,10 +16,13 @@
 //! viewport-lib-examples-winit --example winit-web`): the web-only pieces are behind `cfg(target_arch = "wasm32")`
 //! and the native path keeps the usual `block_on` + `run_app` shape.
 //!
-//! Target WebGPU, not WebGL2. viewport-lib's lit mesh path binds storage
-//! buffers in the fragment stage and the HDR pipeline uses compute; neither
-//! exists on WebGL2. On WebGPU the storage-buffer count sits exactly at the
-//! spec baseline (8), which is what the base renderer needs.
+//! Bring-up tries WebGPU first and falls back to WebGL2 when the browser has no
+//! WebGPU adapter (`gpu::request_adapter_with_gl_fallback`). This scene needs
+//! WebGPU: the lit mesh path binds storage buffers in the fragment stage and
+//! the HDR pipeline uses compute, and WebGL2 has neither, so on the WebGL2 path
+//! the renderer refuses the device at construction. On WebGPU the
+//! storage-buffer count sits exactly at the spec baseline (8), which is what
+//! the base renderer needs.
 //!
 //! Build and serve (needs `wasm-bindgen-cli` and any static file server):
 //!
@@ -293,16 +296,33 @@ impl ApplicationHandler<State> for App {
 /// Build the GPU state and initial scene. Async so the web path can await the
 /// adapter and device; on desktop it is driven to completion with `block_on`.
 async fn build_state(window: Arc<Window>) -> State {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-    let surface = instance.create_surface(window.clone()).expect("surface");
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            ..Default::default()
-        })
-        .await
-        .expect("adapter (is WebGPU available in this browser?)");
+    // WebGPU when the browser has an adapter for it, WebGL2 otherwise. The
+    // instance is kept alive by the surface, so it is not stored.
+    #[cfg(target_arch = "wasm32")]
+    let (_instance, surface, adapter) = vpl::gpu::request_adapter_with_gl_fallback(
+        window.clone(),
+        wgpu::PowerPreference::HighPerformance,
+    )
+    .await
+    .expect("surface and adapter");
+    #[cfg(not(target_arch = "wasm32"))]
+    let (surface, adapter) = {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let surface = instance.create_surface(window.clone()).expect("surface");
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                ..Default::default()
+            })
+            .await
+            .expect("adapter");
+        (surface, adapter)
+    };
+    log_info(&format!(
+        "adapter backend: {:?}",
+        adapter.get_info().backend
+    ));
 
     let required_features = ViewportRenderer::recommended_device_features(&adapter);
     // WebGPU's default max_texture_dimension_2d is 8192, but the renderer's HDR
@@ -394,6 +414,13 @@ async fn build_state(window: Arc<Window>) -> State {
         spin_item: 1,
         start: Instant::now(),
     }
+}
+
+fn log_info(msg: &str) {
+    #[cfg(target_arch = "wasm32")]
+    log::info!("{msg}");
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("{msg}");
 }
 
 fn log_error(msg: &str) {

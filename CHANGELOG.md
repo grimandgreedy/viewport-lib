@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`gpu::request_adapter_with_gl_fallback`: WebGL2 when a browser has no WebGPU adapter** - returns an instance, surface and adapter, on WebGPU when the browser offers an adapter and on WebGL2 otherwise. Chromium on Linux exposes `navigator.gpu` and returns no adapter off its GPU allowlist, so a page that only asked for WebGPU drew nothing there. The wasm build now enables wgpu's `webgl` feature beside `webgpu`; one bundle serves both. wasm and the wgpu 27 leg only.
 - **`ViewportRenderer::set_mesh_universal` and `RenderDiagnostics::mesh_universal`** - draws every mesh batch with every shader feature compiled in, to compare against or measure the reduced pipelines. Off by default; `VIEWPORT_MESH_UNIVERSAL` sets it under `dev-knobs`.
 - **`FrameStats::feature_pipelines_built`, `feature_sets_capped` and `stand_in_draws`** - how many reduced mesh pipelines the scene has asked for, how many draws this frame stayed on the full pipeline because a family held its limit of 32, and how many drew on the full pipeline while their own was still compiling.
 - **Lightmap placement per draw** - `SceneRenderItem::lightmap_placement` (a `LightmapPlacementId` into the new `SceneFrame::lightmap_placements`, each a `LightmapPlacement` of atlas page and `scale_bias`) puts one draw of a lightmapped mesh in its own rect of a shared atlas, over the placement `set_scene_lightmap` registered. Copies of a baked prop share one mesh upload and one unwrap, and draws at different placements no longer split the material block.
@@ -85,6 +86,7 @@
 
 ### Changed
 
+- **`ViewportRenderer::recommended_device_limits` succeeds on a GL adapter** - it starts from wgpu's downlevel or WebGL2 defaults when the adapter cannot meet `Limits::default()`, rather than asking for compute and storage limits a GL adapter does not have and failing the device request. Adapters that meet the defaults get the same limits as before.
 - **The wgpu legs name `dx12` beside `metal` and `vulkan`** - Direct3D 12 was only compiled in through wgpu's default features; it is now a stated backend on all three legs, so a Windows machine with no Vulkan driver (remote desktop, a virtual machine, an Intel integrated part) and WARP on a GPU-less runner get a device. No code change; `WGPU_BACKEND=dx12` pins it for a process.
 - **The emissive-map sample is compiled out of mesh batches whose material binds no emissive map** - it joins the per-batch shader features, so a batch without a map adds the material's emissive colour and custom data only; the full pipeline stands in while the reduced one compiles, and `FrameStats::feature_pipelines_built` counts it.
 - **`ItemSettings::force_per_object` and `FrameStats::per_object_items` are removed** - every mesh item draws in a batch through one set of shaders, so there is no per-object path to force or count. Delete any `force_per_object` assignment; read `instanced_batches` and `draw_calls` instead of `per_object_items`.

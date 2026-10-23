@@ -752,7 +752,9 @@ impl ViewportRenderer {
     /// draw.
     ///
     /// Pass the result as `required_limits` in the `DeviceDescriptor`. It starts
-    /// from [`Limits::default`](crate::gpu::Limits::default) and raises the
+    /// from [`Limits::default`](crate::gpu::Limits::default), or from wgpu's
+    /// downlevel or WebGL2 defaults when the adapter cannot meet that (a GL
+    /// adapter has no compute and no storage buffers), and raises the
     /// storage-buffer count viewport-lib needs (clamped to what the adapter
     /// supports), plus `max_storage_buffer_binding_size` and `max_buffer_size` to
     /// the adapter maximum. The size raises matter for per-vertex deformers: a
@@ -764,7 +766,17 @@ impl ViewportRenderer {
     /// oversized buffer still cannot be bound.
     pub fn recommended_device_limits(adapter: &crate::gpu::Adapter) -> crate::gpu::Limits {
         let adapter_limits = adapter.limits();
-        let mut limits = crate::gpu::Limits::default();
+        // The largest of wgpu's three default sets the adapter can satisfy, so
+        // the request succeeds on a GL adapter too.
+        let mut limits = [
+            crate::gpu::Limits::default(),
+            crate::gpu::Limits::downlevel_defaults(),
+        ]
+        .into_iter()
+        .find(|l| l.check_limits(&adapter_limits))
+        .unwrap_or_else(|| {
+            crate::gpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter_limits.clone())
+        });
         limits.max_storage_buffers_per_shader_stage = limits
             .max_storage_buffers_per_shader_stage
             .max(Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE)
