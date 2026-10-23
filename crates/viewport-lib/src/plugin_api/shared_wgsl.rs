@@ -176,7 +176,7 @@ pub const SHARED_PBR_WGSL: &str =
 
 /// Fragment-output struct and packing helper for the OIT pass.
 ///
-/// A transparent plugin fragment shader returns [`OitOutput`] from its
+/// A transparent plugin fragment shader returns `OitOutput` from its
 /// `fs_main`. Use `viewport_oit_pack(color_premul, alpha, view_z)` to
 /// build the struct; the weight function matches the lib's built-in OIT
 /// pipelines so plugin transparents composite consistently with native

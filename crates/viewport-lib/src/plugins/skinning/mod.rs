@@ -291,7 +291,7 @@ impl SkinningPlugin {
     /// [`Self::attach_weights`] has not been called for `mesh_id`.
     ///
     /// `palette[i]` is the object-space skinning matrix for joint `i`
-    /// produced by [`crate::JointMatrices::compute`]: the joint's
+    /// produced by [`JointMatrices::compute`](crate::plugins::skeleton::JointMatrices::compute): the joint's
     /// skeleton-local transform multiplied by its inverse bind. The mesh's
     /// `object.model` is applied separately at draw time, so the palette
     /// composes with the scene node transform rather than replacing it.

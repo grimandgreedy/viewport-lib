@@ -1,8 +1,8 @@
 //! Body-attached third-person camera controller.
 //!
-//! [`ThirdPersonCameraController`] orbits a host-owned [`Camera`] around a
+//! [`ThirdPersonCameraController`] orbits a host-owned [`Camera`](crate::Camera) around a
 //! target point supplied each frame (typically a player body from physics).
-//! Look is driven from the resolved [`ActionFrame`] and held as
+//! Look is driven from the resolved [`ActionFrame`](crate::input::ActionFrame) and held as
 //! [`LookAngles`](crate::LookAngles): explicit `yaw` and `pitch`. A `distance`
 //! boom pulls the eye back behind the target along the look direction; a
 //! `height` offset raises the orbit pivot above the target's feet.

@@ -119,9 +119,10 @@ pub struct SceneNode {
     /// as the local-space template.
     pub light: Option<LightSource>,
     /// Where this node's indirect diffuse light comes from. Default:
-    /// [`IndirectLightSource::GlobalIbl`]. Set to
-    /// [`IndirectLightSource::LightProbe`] to sample the uploaded probe field at
-    /// the node's position instead of the global environment.
+    /// [`IndirectLightSource::GlobalIbl`](crate::IndirectLightSource::GlobalIbl).
+    /// Set to [`IndirectLightSource::LightProbe`](crate::IndirectLightSource::LightProbe)
+    /// to sample the uploaded probe field at the node's position instead of the
+    /// global environment.
     pub indirect_light: crate::renderer::IndirectLightSource,
 }
 

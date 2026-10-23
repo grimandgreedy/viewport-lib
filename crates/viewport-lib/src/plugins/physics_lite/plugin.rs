@@ -84,7 +84,7 @@ impl PhysicsBody {
 /// A plugin that integrates velocity, applies gravity, and reflects bodies off
 /// bounding box walls.
 ///
-/// Runs in the [`RuntimePhase::Simulate`] phase. Pairs well with
+/// Runs in the [`RuntimePhase::Simulate`](crate::RuntimePhase::Simulate) phase. Pairs well with
 /// [`crate::FixedTimestep`] for stable integration.
 ///
 /// World-bounds collisions produce [`ContactEvent`]s in [`crate::RuntimeOutput`]

@@ -383,16 +383,6 @@ impl DeviceResources {
         Some([size.width, size.height, size.depth_or_array_layers])
     }
 
-    /// Read-only borrow of the shared cached base mesh (vertex + index
-    /// buffers) for a glyph shape.
-    ///
-    /// `None` until the mesh has been built; use
-    /// [`ensure_glyph_base_mesh`](Self::ensure_glyph_base_mesh) to build it on
-    /// the spot instead. Vertices use the lib's full 64-byte `Vertex` layout,
-
-    /// Borrow the shared base mesh for a glyph shape, building and caching it
-    /// on the first call. Idempotent and cheap once cached, and callable from
-
     // ------------------------------------------------------------------
     // Pipeline builders
     // ------------------------------------------------------------------

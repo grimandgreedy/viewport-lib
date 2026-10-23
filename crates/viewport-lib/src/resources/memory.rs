@@ -1,6 +1,7 @@
 //! GPU memory accounting and the hardware VRAM budget query.
 
-/// Texture memory usage reported by [`DeviceResources::texture_memory_stats`].
+/// Texture memory usage reported by
+/// [`DeviceResources::texture_memory_stats`](crate::DeviceResources::texture_memory_stats).
 ///
 /// Counts bytes and textures uploaded via both the sync and async paths.
 /// Internal resources (shadow maps, colourmaps, post-process targets) are

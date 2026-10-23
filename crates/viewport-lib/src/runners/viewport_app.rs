@@ -7,7 +7,7 @@
 //! its frames independently. Windows can be opened and closed at runtime from a
 //! callback.
 //!
-//! A single-window app declares one [`window`](ViewportApp::window). See the
+//! A single-window app declares one [`window`](crate::runners::viewport_app::ViewportApp::window). See the
 //! runners module docs for the composable [`ViewportInstance`] you drive from your
 //! own loop.
 //!
@@ -25,6 +25,10 @@
 //! callback receives viewport-lib types. For direct winit access the runner does not
 //! model, reach the raw window with [`FrameCtx::raw_window`] or use the re-exported
 //! `viewport_lib::winit` so you never add a second, mismatched winit dependency.
+//!
+//! [`WindowId`]: crate::runners::viewport_app::WindowId
+//! [`WindowConfig`]: crate::runners::viewport_app::WindowConfig
+//! [`FrameCtx::raw_window`]: crate::runners::viewport_app::FrameCtx::raw_window
 
 use std::collections::HashMap;
 use std::sync::Arc;

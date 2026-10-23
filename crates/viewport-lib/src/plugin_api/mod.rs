@@ -132,6 +132,16 @@
 //! [`viewport_lib::wgpu`](crate::wgpu) rather than an external `wgpu` crate so a
 //! plugin follows whichever version the build chose; a plugin that names its own
 //! `wgpu` dependency is coupled to one version and must match the library's.
+//!
+//! [`OpaqueTargetDesc`]: crate::plugin_api::OpaqueTargetDesc
+//! [`ForegroundTargetDesc`]: crate::plugin_api::ForegroundTargetDesc
+//! [`OitTargetDesc`]: crate::plugin_api::OitTargetDesc
+//! [`DepthReadTargetDesc`]: crate::plugin_api::DepthReadTargetDesc
+//! [`MaskTargetDesc`]: crate::plugin_api::MaskTargetDesc
+//! [`PickTargetDesc`]: crate::plugin_api::PickTargetDesc
+//! [`ShadowTargetDesc`]: crate::plugin_api::ShadowTargetDesc
+//! [`SharedBindings`]: crate::plugin_api::SharedBindings
+//! [`shared_wgsl`]: crate::plugin_api::shared_wgsl
 
 pub mod builders;
 pub mod cull;

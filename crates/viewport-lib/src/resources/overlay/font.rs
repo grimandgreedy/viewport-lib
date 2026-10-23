@@ -204,7 +204,7 @@ pub(crate) struct GlyphQuad {
 /// UI (panel widths, right-aligned columns, per-row hit rectangles, vertical
 /// centring) before drawing the text with a `LabelItem`.
 ///
-/// [`LabelItem`]: crate::renderer::types::LabelItem
+/// [`LabelItem`]: crate::LabelItem
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextMetrics {
     /// Total advance width of the run in logical pixels. For multi-line text
@@ -1119,8 +1119,8 @@ impl GlyphAtlas {
 // FontError
 // ---------------------------------------------------------------------------
 
-/// Error returned by [`super::DeviceResources::upload_font`] and
-/// [`super::DeviceResources::upload_font_face`].
+/// Error returned by [`DeviceResources::upload_font`](crate::DeviceResources::upload_font)
+/// and [`DeviceResources::upload_font_face`](crate::DeviceResources::upload_font_face).
 #[derive(Debug, Clone, thiserror::Error)]
 #[non_exhaustive]
 pub enum FontError {
@@ -1219,7 +1219,7 @@ impl crate::resources::DeviceResources {
     /// This only reads font metrics: no glyphs are rasterized or uploaded, so it
     /// takes `&self` and needs no `device`.
     ///
-    /// [`LabelItem`]: crate::renderer::types::LabelItem
+    /// [`LabelItem`]: crate::LabelItem
     pub fn measure_overlay_text(
         &self,
         text: &str,
@@ -1241,7 +1241,7 @@ impl crate::resources::DeviceResources {
     /// This only reads font metrics: no glyphs are rasterized or uploaded, so it
     /// takes `&self` and needs no `device`.
     ///
-    /// [`LabelItem`]: crate::renderer::types::LabelItem
+    /// [`LabelItem`]: crate::LabelItem
     /// [`measure_overlay_text`]: Self::measure_overlay_text
     pub fn measure_overlay_text_wrapped(
         &self,

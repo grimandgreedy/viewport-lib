@@ -202,7 +202,7 @@ impl<'a> ItemCollections<'a> {
 /// The lib reads the collection through this trait object during prepare
 /// and paint; the plugin downcasts back to its concrete type inside
 /// [`ItemTypePlugin::prepare`] and [`ItemTypePlugin::paint`] using
-/// [`Any::downcast_ref`].
+/// [`Any::downcast_ref`](std::any::Any#method.downcast_ref).
 ///
 /// Implementations must be `Send + Sync` so the collection survives the
 /// `SceneFrame` lifetime (Frame submission may be moved across threads in
@@ -291,8 +291,6 @@ pub struct ItemFrameContext<'a> {
     /// [`has_texture`](crate::resources::DeviceResources::has_texture)),
     /// colourmap LUT views
     /// ([`colourmap_view`](crate::resources::DeviceResources::colourmap_view)),
-    /// the shared glyph base meshes
-    /// ([`glyph_base_mesh`](crate::resources::DeviceResources::glyph_base_mesh)),
     /// and the target descriptors and samplers the pipeline builders expose.
     /// Borrows taken from it must not outlive `prepare` / `cull`; bake what
     /// the draw hooks need into the plugin's own bind groups here.
@@ -750,28 +748,6 @@ pub struct PickPassContext<'a> {
     pub meshes: crate::resources::MeshDraw<'a>,
 }
 
-/// A new scene item category supplied by a plugin.
-///
-/// Implementations are stored on the renderer via
-/// [`ViewportRenderer::with_item_type_plugin`](crate::renderer::ViewportRenderer::with_item_type_plugin)
-/// keyed by [`type_name`](Self::type_name). The lib invokes
-/// [`init_gpu`](Self::init_gpu) once on registration, then
-/// [`prepare`](Self::prepare) and [`paint`](Self::paint) every frame
-/// against the collection submitted under the same name on
-/// [`SceneFrame`](crate::renderer::SceneFrame).
-///
-/// Beyond `init_gpu`, `prepare`, and `paint`, the trait exposes
-/// `paint_transparent`, `paint_depth_read`, `paint_foreground`,
-/// `outline_mask`, `cull`, `cast_shadow_pass`, and `pick` as default-empty
-/// hooks; implement the ones an item type needs.
-///
-/// Registration model: item-type plugins are singleton-by-type. The
-/// `type_name` is the identity scene items reference to route themselves to a
-/// renderer, so two plugins under the same name would be ambiguous and the
-/// second registration replaces the first. This behavior is frozen. Runtime
-/// and GPU plugins differ deliberately: they carry no external identity and
-/// are multi-instance. See [`RuntimePlugin`](crate::runtime::RuntimePlugin)
-/// and [`GpuPlugin`](crate::runtime::GpuPlugin).
 /// Upcast to [`Any`] so a host can downcast a registered
 /// [`ItemTypePlugin`] back to its concrete type.
 ///
@@ -815,6 +791,14 @@ impl<T: Any> AsAnyItemTypePlugin for T {
 /// `&Device` its hooks are given. Content shared with other item types
 /// (meshes, textures, volumes, colourmaps) stays with the library and is read
 /// through [`ItemFrameContext::resources`].
+///
+/// Registration model: item-type plugins are singleton-by-type. The
+/// `type_name` is the identity scene items reference to route themselves to a
+/// renderer, so two plugins under the same name would be ambiguous and the
+/// second registration replaces the first. This behaviour is frozen. Runtime
+/// and GPU plugins differ deliberately: they carry no external identity and
+/// are multi-instance. See [`RuntimePlugin`](crate::runtime::RuntimePlugin)
+/// and [`GpuPlugin`](crate::runtime::GpuPlugin).
 pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// Stable name used as the [`SceneFrame::plugin_items`](crate::renderer::SceneFrame::plugin_items)
     /// key. Each registered plugin must have a unique name; registering a

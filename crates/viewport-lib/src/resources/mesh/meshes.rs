@@ -646,8 +646,8 @@ impl DeviceResources {
     /// FACE, EDGE, and VERTEX picks after this call.
     ///
     /// `set_pickable(id, true)` is a no-op: CPU data is either already present
-    /// (the mesh was uploaded via [`upload_mesh_data`] or
-    /// [`upload_mesh_data_pickable`]) or it was freed and cannot be recovered
+    /// (the mesh was uploaded via [`upload_mesh_data`](Self::upload_mesh_data) or
+    /// [`upload_mesh_data_pickable`](Self::upload_mesh_data_pickable)) or it was freed and cannot be recovered
     /// without re-uploading.
     ///
     /// Has no effect if `mesh_id` is not found.
@@ -679,7 +679,7 @@ impl DeviceResources {
     ///
     /// The vertex count must match the original upload exactly. Use this for deforming meshes
     /// where topology is stable across frames: the index buffer, edge buffer, and bind groups
-    /// are all reused. Colour, UVs, and tangents are written as defaults (white, zero, [0,0,0,1]).
+    /// are all reused. Colour, UVs, and tangents are written as defaults (white, zero, `[0,0,0,1]`).
     ///
     /// The normal line visualization buffer is also updated in place if it was created at upload time.
     ///

@@ -911,7 +911,7 @@ impl ViewportRenderer {
         self.prepare_into(device, queue, frame, &mut sink)
     }
 
-    /// As [`prepare`](Self::prepare), but the prepare passes push their command
+    /// As `prepare`, but the prepare passes push their command
     /// buffers into a returned `Vec` rather than submitting them. The caller must
     /// submit the buffers, in order, on the device-driving thread. Intended for a
     /// render worker that encodes off-thread (see the `SubmitSink` docs for why

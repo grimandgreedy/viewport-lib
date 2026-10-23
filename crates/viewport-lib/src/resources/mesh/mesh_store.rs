@@ -2,7 +2,7 @@
 //!
 //! `MeshStore` manages GPU mesh lifetimes using a slot-based approach: removed
 //! meshes leave empty slots that are reused by subsequent inserts. Each slot
-//! carries a generation counter that is bumped on removal, and a [`MeshId`]
+//! carries a generation counter that is bumped on removal, and a [`MeshId`](crate::MeshId)
 //! captures the generation it was issued against. A lookup with a handle whose
 //! generation no longer matches the slot returns `None`, so a stale handle held
 //! across a remove-then-reinsert cannot silently alias the new mesh.

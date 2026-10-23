@@ -397,7 +397,7 @@ impl ViewportRenderer {
     /// The on-GPU counterpart of [`capture_equirect`](Self::capture_equirect):
     /// it renders the same six 90-degree faces from `position`, but keeps them
     /// in a GPU texture array and resolves them to equirect with a fragment
-    /// pass ([`cube_to_equirect.wgsl`]) instead of a CPU loop. The direction ->
+    /// pass (`cube_to_equirect.wgsl`) instead of a CPU loop. The direction ->
     /// UV mapping is identical, so the result samples the same as the CPU path
     /// and as an environment loaded from a file. The panorama is
     /// `2 * equirect_height` wide by `equirect_height` tall.
@@ -510,7 +510,7 @@ impl ViewportRenderer {
     ///
     /// Captures an equirect panorama at each position with
     /// [`capture_equirect`](Self::capture_equirect) and projects it to order-2
-    /// spherical harmonics, returning a [`LightProbeSet`] ready to sample. This
+    /// spherical harmonics, returning a [`LightProbeSet`](crate::resources::LightProbeSet) ready to sample. This
     /// is the generation half of the light-probe feature: run it once (at bake
     /// time, off the render loop) and keep the result to light dynamic objects
     /// by position.

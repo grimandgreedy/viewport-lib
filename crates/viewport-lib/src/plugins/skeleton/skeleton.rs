@@ -95,8 +95,8 @@ impl Skeleton {
 /// Per-frame local-space transforms for each joint.
 ///
 /// One `Affine3A` per joint, indexed in the same order as the parent
-/// [`Skeleton`]. Store this in [`super::resources::RuntimeResources`] so
-/// animation plugins can write it and [`super::plugins::SkeletonPlugin`] can
+/// [`Skeleton`]. Store this in [`RuntimeResources`](crate::RuntimeResources) so
+/// animation plugins can write it and [`SkeletonPlugin`](crate::plugins::skeleton::SkeletonPlugin) can
 /// read it in the same frame.
 #[derive(Clone)]
 pub struct Pose {

@@ -15,7 +15,7 @@ use crate::gpu::ShaderStages;
 /// `create_shader_module`, so a wgpu upgrade that changes shader-module
 /// construction only has to be audited here.
 ///
-/// `source` accepts a baked `&'static str` (via [`wgsl_source!`]) or an owned
+/// `source` accepts a baked `&'static str` (via `wgsl_source!`) or an owned
 /// `String` (a shader composed at runtime, e.g. by the deform registry).
 pub fn wgsl_module<'a>(
     device: &crate::gpu::Device,
@@ -786,7 +786,7 @@ pub(crate) fn surface_mask_depth_stencil() -> crate::gpu::DepthStencilState {
 /// Create a compute pipeline. Every compute pipeline in the crate has the same
 /// shape: a shader, its layout, and an entry point, with default compilation
 /// options, created against the device's pipeline cache when it has one (see
-/// [`device_pipeline_cache`]). This is the one place the crate calls
+/// `device_pipeline_cache`). This is the one place the crate calls
 /// `create_compute_pipeline`, so a wgpu upgrade only has to be audited here.
 pub fn compute_pipeline(
     device: &crate::gpu::Device,
@@ -1606,7 +1606,7 @@ mod strip_debug_vis_tests {
 
 /// Vertex buffer layout of the meshes in the shared arena.
 ///
-/// A plugin that draws a [`MeshId`](crate::resources::MeshId) through
+/// A plugin that draws a [`MeshId`](crate::MeshId) through
 /// [`MeshGeometry`](crate::resources::MeshGeometry) binds those buffers
 /// directly, so its pipeline has to declare the layout they were uploaded
 /// with. Locations 0 to 4 are position, normal, colour, uv and tangent.

@@ -853,10 +853,9 @@ impl DeviceResources {
     /// `wgpu::Buffer` instead of a CPU upload. The renderer copies the whole
     /// buffer into the slot's region of the packed deform buffer once per
     /// frame (in `prepare`), so a GPU-resident producer can feed the deformer
-    /// stack without a CPU round-trip. This is the deform-slot analogue of
-    /// [`set_mc_scalar_source_buffer`](Self::set_mc_scalar_source_buffer): it
-    /// copies, it does not bind a new buffer into the shader, so the deform
-    /// shader path is unchanged for every other consumer.
+    /// stack without a CPU round-trip. It copies rather than binding a new
+    /// buffer into the shader, so the deform shader path is unchanged for every
+    /// other consumer.
     ///
     /// The slot reads the copied data exactly as an attached slot does
     /// (`deform_read_f32(slot, vertex_index, component)`), so `buffer` must

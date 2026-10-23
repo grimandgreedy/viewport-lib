@@ -1686,7 +1686,7 @@ impl ViewportRenderer {
     /// for empty space). [`PickPoll::Idle`] means no pick is in flight.
     ///
     /// This never waits on the GPU queue, so unlike the blocking
-    /// [`pick_scene_gpu_masked`](Self::pick_scene_gpu_masked) it cannot stall the
+    /// [`pick_scene_gpu`](Self::pick_scene_gpu) it cannot stall the
     /// calling thread behind queued frames. It does assume the app keeps
     /// rendering (or otherwise polls the device); a caller that submits no other
     /// work between polls should use the blocking path instead.

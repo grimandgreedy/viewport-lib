@@ -1,7 +1,8 @@
 //! The `viewport-lib-vfx` kit rebuilt as a [`PostEffectStage`] stack:
 //! colour grade, depth fog, and edge detect as three chained display-space
 //! stages behind one settings handle. (The kit's fourth effect, bloom, is
-//! covered HDR-correctly by [`crate::BloomEffect`].)
+//! left to the built-in HDR bloom, configured through
+//! [`BloomSettings`](viewport_lib::BloomSettings).)
 //!
 //! The original kit could not compose back through `GpuPlugin::post_paint`,
 //! so it owned a parallel `VfxRenderer` with its own scene colour/depth

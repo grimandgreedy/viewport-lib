@@ -22,7 +22,7 @@ use crate::renderer::stats::{PerformancePolicy, RuntimeMode};
 /// - MSAA sample count and the GPU pipeline cache: construction-time, see
 ///   [`crate::RendererConfig`].
 /// - LOD groups: a registration API keyed by mesh, see
-///   [`crate::ViewportRenderer::register_lod_group`].
+///   [`crate::DeviceResources::register_lod_group`].
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]

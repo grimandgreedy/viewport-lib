@@ -8,13 +8,13 @@
 //!
 //! The new pipeline works like this:
 //!
-//! 1. Translate native events to [`ViewportEvent`]
-//! 2. Feed into [`OrbitCameraController`](crate::controllers::orbit::OrbitCameraController) (or lower-level [`ViewportInput`])
+//! 1. Translate native events to [`ViewportEvent`](crate::input::ViewportEvent)
+//! 2. Feed into [`OrbitCameraController`](crate::controllers::orbit::OrbitCameraController) (or lower-level [`ViewportInput`](crate::input::ViewportInput))
 //! 3. Call [`OrbitCameraController::apply_to_camera`](crate::controllers::orbit::OrbitCameraController::apply_to_camera) each frame
 //!
 //! # Legacy input system (compatibility)
 //!
-//! The older [`InputSystem`] / [`FrameInput`] query model remains available.
+//! The older [`InputSystem`](crate::input::InputSystem) / [`FrameInput`](crate::input::FrameInput) query model remains available.
 
 // The legacy query types below are deprecated but still defined and wired up
 // here; suppress the deprecation lint for their in-module use.

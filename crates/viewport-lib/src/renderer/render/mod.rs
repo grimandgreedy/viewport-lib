@@ -1015,7 +1015,7 @@ impl ViewportRenderer {
     ///
     /// Creates a temporary [`wgpu::Texture`] render target of the given dimensions,
     /// runs all render passes (shadow, scene, post-processing) into it via
-    /// [`render()`](Self::render), then copies the result back to CPU memory.
+    /// [`OwnedPath::render`](crate::OwnedPath::render), then copies the result back to CPU memory.
     ///
     /// No OS window or [`wgpu::Surface`] is required. The caller is responsible for
     /// initialising the wgpu adapter with `compatible_surface: None` and for

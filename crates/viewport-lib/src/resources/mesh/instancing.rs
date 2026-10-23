@@ -935,7 +935,7 @@ pub(crate) mod instance_flags {
 /// Per-instance GPU data for the object-ID pick pass.
 ///
 /// Stores only the model matrix and a sentinel object ID : none of the material
-/// fields needed by the full [`InstanceData`] struct.
+/// fields needed by the full `InstanceData` struct.
 ///
 /// Layout (80 bytes):
 /// - model_c0..model_c3: vec4<f32> x 4 = 64 bytes (model matrix, column-major)

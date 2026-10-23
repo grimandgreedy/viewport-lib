@@ -81,8 +81,9 @@ pub struct PostEffectStageId(pub(crate) u64);
 ///
 /// Stages run in ascending order of the `i32` key given at registration;
 /// stages sharing a key run in registration order, with built-in stages
-/// first. Keys below [`ANTI_ALIASING`] run before the built-in FXAA (still
-/// on tone-mapped LDR input); keys above run after it.
+/// first. Keys below [`ANTI_ALIASING`](stage_order::ANTI_ALIASING) run
+/// before the built-in FXAA (still on tone-mapped LDR input); keys above run
+/// after it.
 pub mod stage_order {
     /// The built-in FXAA stage's position in the chain.
     pub const ANTI_ALIASING: i32 = 0;

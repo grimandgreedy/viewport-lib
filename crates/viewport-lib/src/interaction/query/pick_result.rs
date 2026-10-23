@@ -1,5 +1,9 @@
 //! Result types shared by the CPU and GPU pick backends: [`PickHit`],
 //! [`GpuPickHit`], and [`PickRectResult`].
+//!
+//! [`PickHit`]: crate::PickHit
+//! [`GpuPickHit`]: crate::GpuPickHit
+//! [`PickRectResult`]: crate::PickRectResult
 
 use crate::interaction::select::sub_object::SubObjectRef;
 

@@ -112,13 +112,13 @@ pub use self::types::{
 /// An opaque handle to a per-viewport GPU state slot.
 ///
 /// Obtained from [`ViewportRenderer::create_viewport`] and passed to
-/// [`ViewportRenderer::prepare_viewport`], [`ViewportRenderer::paint_viewport`],
-/// and [`ViewportRenderer::render_viewport`].
+/// [`PassPath::prepare_viewport`], [`PassPath::paint_viewport`], and
+/// [`OwnedPath::render_viewport`].
 ///
 /// The slot index is managed internally. To bind a `ViewportId` to a camera frame,
 /// use [`CameraFrame::with_viewport_id`]. Single-viewport applications that use
-/// the legacy [`ViewportRenderer::prepare`] / [`ViewportRenderer::paint`] API do
-/// not need this type.
+/// [`PassPath::prepare`] / [`PassPath::paint`] or [`OwnedPath::render`] do not
+/// need this type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ViewportId(pub(crate) usize);
 
@@ -1312,7 +1312,7 @@ impl ViewportRenderer {
     /// viewports on different cameras occlusion can drop geometry that is visible
     /// in another viewport.
     ///
-    /// The breakdown is reported in [`FrameStats`]: `gpu_culled_total`,
+    /// The breakdown is reported in [`FrameStats`](crate::FrameStats): `gpu_culled_total`,
     /// `gpu_frustum_visible`, and `gpu_visible_instances` give the per-stage
     /// survivor counts.
     pub fn set_occlusion_culling(&mut self, enabled: bool) {
@@ -1411,10 +1411,10 @@ impl ViewportRenderer {
 
     /// Set the runtime mode controlling internal default behaviour.
     ///
-    /// - [`RuntimeMode::Interactive`]: full picking rate, full quality (default).
-    /// - [`RuntimeMode::Playback`]: picking throttled to reduce CPU overhead during animation.
-    /// - [`RuntimeMode::Paused`]: full picking rate, full quality.
-    /// - [`RuntimeMode::Capture`]: full quality, intended for screenshot/export workflows.
+    /// - [`RuntimeMode::Interactive`](crate::RuntimeMode::Interactive): full picking rate, full quality (default).
+    /// - [`RuntimeMode::Playback`](crate::RuntimeMode::Playback): picking throttled to reduce CPU overhead during animation.
+    /// - [`RuntimeMode::Paused`](crate::RuntimeMode::Paused): full picking rate, full quality.
+    /// - [`RuntimeMode::Capture`](crate::RuntimeMode::Capture): full quality, intended for screenshot/export workflows.
     pub fn set_runtime_mode(&mut self, mode: crate::renderer::stats::RuntimeMode) {
         self.runtime_mode = mode;
         // A capture must have every pipeline it binds, so compiles block
@@ -1517,7 +1517,7 @@ impl ViewportRenderer {
         self.performance_policy
     }
 
-    /// Apply a full [`RenderTuning`] set in one call: the persistent
+    /// Apply a full [`RenderTuning`](crate::RenderTuning) set in one call: the persistent
     /// performance/behaviour knobs (culling, occlusion, adaptive quality, render
     /// scale, runtime mode, upload budget, CPU pick cache, and the diagnostic
     /// overrides). Equivalent to calling the individual setters, and applies the
@@ -1544,7 +1544,7 @@ impl ViewportRenderer {
 
     /// Snapshot the current persistent tuning, so a consumer wanting to tune for
     /// performance can see every live lever in one place and diff it against
-    /// [`RenderTuning::default`]. `gpu_driven_culling` reflects the requested
+    /// [`RenderTuning::default`](crate::RenderTuning::default). `gpu_driven_culling` reflects the requested
     /// state, which is only actually active when
     /// [`is_gpu_culling_supported`](Self::is_gpu_culling_supported) is true.
     pub fn tuning(&self) -> crate::renderer::tuning::RenderTuning {
@@ -1582,7 +1582,8 @@ impl ViewportRenderer {
         );
     }
 
-    /// Set the target frame rate used to compute [`FrameStats::missed_budget`].
+    /// Set the target frame rate used to compute
+    /// [`FrameStats::missed_budget`](crate::FrameStats::missed_budget).
     ///
     /// Convenience wrapper that updates `performance_policy.target_fps`.
     pub fn set_target_fps(&mut self, fps: Option<f32>) {
@@ -1628,7 +1629,7 @@ impl ViewportRenderer {
     /// which changes more than this one choice.
     ///
     /// Call once, immediately after construction and before the first
-    /// [`prepare`](Self::prepare). There is no way back to bindless on the same
+    /// `prepare`. There is no way back to bindless on the same
     /// renderer: build another one.
     ///
     /// Expect fewer, larger instanced batches on the bindless path and more,
@@ -3484,9 +3485,9 @@ impl ViewportRenderer {
     /// Create a new viewport slot and return its handle.
     ///
     /// The returned [`ViewportId`] is stable for the lifetime of the renderer.
-    /// Pass it to [`prepare_viewport`](Self::prepare_viewport),
-    /// [`paint_viewport`](Self::paint_viewport), and
-    /// [`render_viewport`](Self::render_viewport) each frame.
+    /// Pass it to [`PassPath::prepare_viewport`] and
+    /// [`PassPath::paint_viewport`] (or [`OwnedPath::prepare_viewport`] and
+    /// [`OwnedPath::render_viewport`]) each frame.
     ///
     /// Also set the viewport slot on the camera frame when building the
     /// [`FrameData`] for this viewport:

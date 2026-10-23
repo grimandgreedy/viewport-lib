@@ -269,7 +269,7 @@ pub trait GpuPlugin: Send + 'static {
 
 /// Lets a plugin behind an `Arc<Mutex<P>>` register as a GPU plugin.
 ///
-/// The GPU-side counterpart to the same impl on [`RuntimePlugin`]. A feature
+/// The GPU-side counterpart to the same impl on [`RuntimePlugin`](crate::RuntimePlugin). A feature
 /// that implements both traits on one struct wraps it in `Arc<Mutex<..>>` and
 /// registers the same object into the runtime and GPU lists by cloning the
 /// `Arc`. `type_name` forwards to the inner plugin so `RuntimeStats` keys stay

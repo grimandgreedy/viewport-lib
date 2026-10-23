@@ -61,7 +61,7 @@ fn encode_volume_texels(
 
 impl DeviceResources {
     /// Upload a 3D scalar field to the GPU as a filterable 3D texture
-    /// ([`volume_texture_format`]: `R32Float` at full precision, or the
+    /// (`volume_texture_format`: `R32Float` at full precision, or the
     /// `R16Float` fallback), sampled with trilinear interpolation at draw time.
     ///
     /// `data` must be a flat array of `dims[0] * dims[1] * dims[2]` scalars in

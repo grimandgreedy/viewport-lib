@@ -124,7 +124,7 @@ impl LodGroup {
     ///
     /// This is [`level_for_size`](Self::level_for_size) plus hysteresis: a
     /// switch only happens once the size has moved past the current level's
-    /// boundary by [`LOD_HYSTERESIS`]. An object oscillating inside that margin
+    /// boundary by `LOD_HYSTERESIS`. An object oscillating inside that margin
     /// stays put.
     pub fn select(&self, screen_size: f32, current_level: usize) -> usize {
         let n = self.levels.len();

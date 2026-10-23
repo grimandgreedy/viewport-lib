@@ -11,7 +11,8 @@ use viewport_lib_types::render_item::SpriteBlend;
 ///
 /// All instances in a batch share the same `mesh_id`, `texture_id`, and
 /// `blend` mode. To mix meshes or blend modes, submit multiple
-/// [`MeshInstanceItem`] entries on [`SceneFrame::mesh_instances`].
+/// [`MeshInstanceItem`] entries on
+/// [`SceneFrame::mesh_instances`](crate::SceneFrame::mesh_instances).
 ///
 /// The fragment shader is the unlit instanced mesh shader (the same shader
 /// backing the scene-graph instanced path). Mesh particles do not receive

@@ -396,7 +396,7 @@ fn probe_scalar(hit: &mut PickHit, binding: &ProbeBinding<'_>) {
     }
 }
 
-/// Like [`pick_scene`] but also computes the scalar attribute value at the hit
+/// Like [`pick_scene_cpu`] but also computes the scalar attribute value at the hit
 /// point via barycentric interpolation (vertex attributes) or direct lookup
 /// (cell attributes).
 ///

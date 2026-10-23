@@ -16,13 +16,16 @@
 //! Plugin kinds currently shipped:
 //!
 //! - **Deformer plugins** register a per-vertex deformation body against
-//!   the mesh shader family. The only in-crate deformer is [`skinning`].
+//!   the mesh shader family. The only in-crate deformer is
+//!   [`skinning`](crate::plugins::skinning).
 //! - **Runtime plugins** implement
 //!   [`RuntimePlugin`](crate::RuntimePlugin) and are added to a
 //!   [`ViewportRuntime`](crate::ViewportRuntime) via
 //!   [`with_plugin`](crate::ViewportRuntime::with_plugin). The in-crate set
-//!   covers [`animation`], [`constraint`], [`physics_lite`], and the
-//!   [`skeleton`] family.
+//!   covers [`animation`](crate::plugins::animation),
+//!   [`constraint`](crate::plugins::constraint),
+//!   [`physics_lite`](crate::plugins::physics_lite), and the
+//!   [`skeleton`](crate::plugins::skeleton) family.
 
 pub mod animation;
 pub mod constraint;

@@ -62,7 +62,7 @@ impl<'r> OwnedPath<'r> {
     /// Multi-viewport: upload scene-level GPU data shared across all viewports.
     ///
     /// Call once per frame before any `prepare_viewport` or `render_viewport` calls.
-    /// Returns a [`ScenePreparedToken`] that must be passed to each `prepare_viewport`
+    /// Returns a `ScenePreparedToken` that must be passed to each `prepare_viewport`
     /// call in the same frame. The token may be borrowed multiple times for multi-viewport scenes.
     pub fn prepare_scene(
         &mut self,
@@ -80,7 +80,7 @@ impl<'r> OwnedPath<'r> {
     /// Multi-viewport: upload per-viewport GPU data for `id`.
     ///
     /// Call after `prepare_scene` and before `render_viewport`. The `_token` parameter
-    /// is a borrow of the [`ScenePreparedToken`] returned by `prepare_scene`; it enforces
+    /// is a borrow of the `ScenePreparedToken` returned by `prepare_scene`; it enforces
     /// that `prepare_scene` has been called earlier in the same frame.
     pub fn prepare_viewport(
         &mut self,
@@ -136,7 +136,7 @@ impl<'r> PassPath<'r> {
     /// Multi-viewport: upload scene-level GPU data shared across all viewports.
     ///
     /// Call once per frame before any `prepare_viewport` calls. Returns a
-    /// [`ScenePreparedToken`] that must be passed to each `prepare_viewport` call
+    /// `ScenePreparedToken` that must be passed to each `prepare_viewport` call
     /// in the same frame. The token may be borrowed multiple times for multi-viewport scenes.
     pub fn prepare_scene(
         &mut self,
@@ -154,7 +154,7 @@ impl<'r> PassPath<'r> {
     /// Multi-viewport: upload per-viewport GPU data for `id`.
     ///
     /// Call after `prepare_scene` and before `paint_viewport` or `prepare_hdr_viewport`.
-    /// The `_token` parameter is a borrow of the [`ScenePreparedToken`] returned by
+    /// The `_token` parameter is a borrow of the `ScenePreparedToken` returned by
     /// `prepare_scene`; it enforces that `prepare_scene` has been called earlier in the same frame.
     pub fn prepare_viewport(
         &mut self,
@@ -232,7 +232,7 @@ impl<'r> PassView<'r> {
         self.renderer.paint_hdr_blit(render_pass, frame);
     }
 
-    /// Like [`paint_hdr_blit`] but for render passes without a depth-stencil attachment.
+    /// Like [`paint_hdr_blit`](Self::paint_hdr_blit) but for render passes without a depth-stencil attachment.
     ///
     /// Use this when you create the blit render pass yourself (e.g. winit) and the pass
     /// has no depth attachment. The resulting blit is identical; only the pipeline variant

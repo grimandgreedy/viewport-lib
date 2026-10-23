@@ -309,7 +309,8 @@ pub struct GpuBreakdown {
     pub overlay_ms: f32,
 }
 
-/// Per-frame rendering statistics returned by [`crate::ViewportRenderer::prepare`].
+/// Per-frame rendering statistics for the last prepared frame, read back with
+/// [`ViewportRenderer::last_frame_stats`](crate::ViewportRenderer::last_frame_stats).
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FrameStats {

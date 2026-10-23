@@ -1,7 +1,7 @@
-//! Native-event translation into [`ViewportEvent`](super::ViewportEvent).
+//! Native-event translation into [`ViewportEvent`](crate::input::ViewportEvent).
 //!
 //! Each host framework delivers input as its own event type, but the mapping
-//! to [`ViewportEvent`](super::ViewportEvent) (buttons, wheel units,
+//! to [`ViewportEvent`](crate::input::ViewportEvent) (buttons, wheel units,
 //! modifiers, click-vs-drag) is otherwise identical, so it lives here once
 //! per framework instead of in every host application. These adapters are
 //! feature-gated per framework and can be used standalone, without any other

@@ -1,7 +1,7 @@
 //! Selection state: object multi-select and sub-object selection.
 //!
-//! [`selection::Selection`] tracks which objects are selected;
-//! [`sub_object::SubSelection`] tracks which faces, vertices, edges, or points
+//! [`selection::Selection`](crate::selection::Selection) tracks which objects are selected;
+//! [`sub_object::SubSelection`](crate::sub_object::SubSelection) tracks which faces, vertices, edges, or points
 //! within them are selected. Pick masks (`PickMask`) live under
 //! `crate::renderer::picking`, alongside the picker that owns them.
 
