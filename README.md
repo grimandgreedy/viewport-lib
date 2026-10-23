@@ -22,13 +22,13 @@
 - **Objects**:
     - Lib Items: tri-meshes, point volumes, scatter volumes, volume meshes (tet-, pyramid-, hex-meshes), point clouds, Gaussian splats, glyphs and tensor glyphs, polylines, tubes, ribbons, streamtubes, sprites, decals, implicit and marching-cubes surfaces.
     - Screen-space 2D Overlays: rectangles, circles, stars, arcs, text labels; support for colours, glow, textures, animations and much more.
-- **Lighting**: directional, point, and spot lights; cascaded, point-light, and contact shadows; image-based lighting from float, 8-bit or block-compressed environment maps, set by multiplier, EV or lux, with a background chosen per viewport; baked lightmaps.
-- **Materials & effects**: Blinn-Phong, and matcap shading; normal and AO maps, emissive, and transparency; bloom, SSAO, depth of field, and tone mapping; runtime WGSL shading hooks and GPU deformers
+- **Lighting**: photometric light units (lux, candela, lumens) with physical-camera and automatic exposure; cascaded, point-light, and contact shadows; image-based lighting; baked lightmaps.
+- **Materials & effects**: PBR metallic-roughness shading; bloom, SSAO, and depth of field.
 - **Camera & input**: built-in orbit, first-person, third-person, and turntable input controllers (or bring your own) with configurable bindings for mouse, keyboard, trackpad gestures, and touch (one finger orbits, two pan, pinch zooms); view presets and smooth animation; CPU and GPU picking down to faces, vertices, edges, and cells; rectangle selection and transform gizmos with snapping
 - **Sciviz**: scalar colouring with colourmaps, isolines, on-surface vector-field flow (LIC), clip planes, and volume slices
 - **Integration**: drop a viewport into any wgpu app (eframe/egui, winit, iced, Slint, bevy) through event adapters.
 - **Performance**: GPU-driven frustum culling and mesh instancing; async streaming uploads with VRAM budgeting; mipmapped and block-compressed textures.
-- **Extensibility**: plugins that hook into the frame loop for CPU simulation and animation, GPU compute and post-process passes, new item types with their own pipelines, per-vertex mesh deformation (animation, regular motion), and custom material shading.
+- **Extensibility**: plugins that hook into the frame loop for CPU simulation and animation, GPU compute and post-process passes, custom item types with their own pipelines, per-vertex mesh deformation (animation, regular motion), and custom material shading.
 
 
 ## Examples
