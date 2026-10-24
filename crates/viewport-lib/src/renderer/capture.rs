@@ -497,13 +497,19 @@ impl ViewportRenderer {
     /// Sampled by every lit mesh path: opaque and transparent, per-object and
     /// instanced.
     pub fn set_light_probes(&mut self, probes: crate::resources::LightProbeSet) {
-        self.resources.lighting.probes = Some(probes);
+        if !self.resources.scene_tier.is_built() {
+            return;
+        }
+        self.resources.scene_tier.lighting.probes = Some(probes);
     }
 
     /// Remove the uploaded light-probe field. Objects revert to global IBL /
     /// hemisphere ambient.
     pub fn clear_light_probes(&mut self) {
-        self.resources.lighting.probes = None;
+        if !self.resources.scene_tier.is_built() {
+            return;
+        }
+        self.resources.scene_tier.lighting.probes = None;
     }
 
     /// Bake SH light probes at the given world positions.
@@ -573,16 +579,22 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         volume: &crate::resources::LightProbeVolume,
     ) {
+        if !self.resources.scene_tier.is_built() {
+            return;
+        }
         let gpu = volume.to_gpu();
         self.replace_indirect_light_buffer(device, Some(&gpu));
-        self.resources.lighting.has_probe_volume = true;
+        self.resources.scene_tier.lighting.has_probe_volume = true;
     }
 
     /// Remove the uploaded probe volume. Objects that opted into it fall back to
     /// no indirect (a disabled header takes its place).
     pub fn clear_light_probe_volume(&mut self, device: &crate::gpu::Device) {
+        if !self.resources.scene_tier.is_built() {
+            return;
+        }
         self.replace_indirect_light_buffer(device, None);
-        self.resources.lighting.has_probe_volume = false;
+        self.resources.scene_tier.lighting.has_probe_volume = false;
     }
 
     /// Swap in an indirect-light buffer holding `volume`. The probe volume
@@ -600,9 +612,9 @@ impl ViewportRenderer {
             volume,
             self.resources.instance_custom_data_capacity,
         );
-        self.resources.lighting.indirect_buf = buffer;
-        self.resources.lighting.custom_data_base_bytes = custom_base;
-        self.resources.ibl.zones_dirty = true;
+        self.resources.scene_tier.lighting.indirect_buf = buffer;
+        self.resources.scene_tier.lighting.custom_data_base_bytes = custom_base;
+        self.resources.scene_tier.ibl.zones_dirty = true;
         self.resources.custom_data_written.clear();
         self.rebuild_camera_bind_groups(device);
     }

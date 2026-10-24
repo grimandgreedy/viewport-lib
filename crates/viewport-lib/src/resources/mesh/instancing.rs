@@ -383,8 +383,8 @@ impl DeviceResources {
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "hdr_cull_pipeline_layout",
-            &self.binds.camera_bgl,
-            &self.binds.object_bgl,
+            &self.scene_tier.binds.camera_bgl,
+            &self.scene_tier.binds.object_bgl,
         );
         let per_batch = ctx(layout, &source, "mesh_shader_hdr", self);
         let bindless = if self.bindless_textures() {
@@ -421,8 +421,8 @@ impl DeviceResources {
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "oit_cull_pipeline_layout",
-            &self.binds.camera_bgl,
-            &self.binds.object_bgl,
+            &self.scene_tier.binds.camera_bgl,
+            &self.scene_tier.binds.object_bgl,
         );
         let per_batch = crate::resources::postprocess::oit::OitContext {
             device: device.clone(),

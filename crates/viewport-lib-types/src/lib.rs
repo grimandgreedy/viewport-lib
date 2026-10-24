@@ -25,6 +25,7 @@ pub mod overlay;
 pub mod plugin;
 pub mod render_item;
 pub mod scene;
+pub mod tier;
 
 pub mod prelude {
     //! The types most code reaches for, in one glob import:

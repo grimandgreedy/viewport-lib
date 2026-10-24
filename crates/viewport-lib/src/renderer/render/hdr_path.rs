@@ -390,7 +390,8 @@ impl ViewportRenderer {
             // Manual and physical-camera exposure write the state buffer
             // directly; only automatic exposure dispatches the metering passes.
             if frame.effects.display.exposure.manual_multiplier().is_none() {
-                res.exposure
+                res.scene_tier
+                    .exposure
                     .ensure_pipelines(device, &res.pipeline_compiler);
             }
             let slot = &self.viewport_slots[vp_idx];
@@ -1013,7 +1014,7 @@ impl ViewportRenderer {
             if let Some(skybox_bg) = skybox_bg {
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 render_pass.set_bind_group(1, skybox_bg, &[]);
-                render_pass.set_pipeline(resources.ibl.skybox_pipeline());
+                render_pass.set_pipeline(resources.scene_tier.ibl.skybox_pipeline());
                 render_pass.draw(0..3, 0..1);
             }
 
@@ -1244,7 +1245,7 @@ impl ViewportRenderer {
                 ctx.device
                     .create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("plugin_depth_read_bg"),
-                        layout: &resources.material.depth_read_bgl,
+                        layout: &resources.scene_tier.material.depth_read_bgl,
                         entries: &[
                             crate::gpu::BindGroupEntry {
                                 binding: 0,
@@ -1253,7 +1254,7 @@ impl ViewportRenderer {
                             crate::gpu::BindGroupEntry {
                                 binding: 1,
                                 resource: crate::gpu::BindingResource::Sampler(
-                                    &resources.material.depth_read_sampler,
+                                    &resources.scene_tier.material.depth_read_sampler,
                                 ),
                             },
                         ],
@@ -1305,7 +1306,7 @@ impl ViewportRenderer {
             &mut pass,
             frame,
             depth_only_view,
-            &resources.material.depth_read_sampler,
+            &resources.scene_tier.material.depth_read_sampler,
             &depth_bg,
         );
     }
@@ -1674,7 +1675,7 @@ impl ViewportRenderer {
         {
             // Skipped while the pipeline is on a worker: the outline appears
             // a frame or two late.
-            if let Some(pipeline) = self.resources.outline.composite_hdr() {
+            if let Some(pipeline) = self.resources.scene_tier.outline.composite_hdr() {
                 let bg = &slot_hdr.outline_composite_bind_group;
                 let hdr_view = &slot_hdr.hdr_view;
                 let hdr_depth_view = &slot_hdr.hdr_depth_view;
@@ -2259,11 +2260,11 @@ impl ViewportRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            gp_pass.set_pipeline(self.resources.ground.pipeline());
+            gp_pass.set_pipeline(self.resources.scene_tier.ground.pipeline());
             let ground_bg = self.viewport_slots[vp_idx]
                 .ground_bind_group
                 .current()
-                .unwrap_or(&self.resources.ground.bind_group);
+                .unwrap_or(&self.resources.scene_tier.ground.bind_group);
             gp_pass.set_bind_group(0, ground_bg, &[]);
             gp_pass.draw(0..3, 0..1);
         }
@@ -2323,7 +2324,7 @@ impl ViewportRenderer {
                 }
 
                 if !slot.xray_object_buffers.is_empty() {
-                    overlay_pass.set_pipeline(self.resources.outline.xray_pipeline());
+                    overlay_pass.set_pipeline(self.resources.scene_tier.outline.xray_pipeline());
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
                     for (mesh_id, xray) in &slot.xray_object_buffers {
                         let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {

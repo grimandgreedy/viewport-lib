@@ -165,7 +165,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let m = &res.material;
+        let m = &res.scene_tier.material;
         assert!(
             !m.uploaded,
             "fallback pixels are uploaded lazily, not at new()"

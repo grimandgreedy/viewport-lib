@@ -559,13 +559,14 @@ impl ViewportRenderer {
             }
         }
         // Shadow atlas viewer overlay.
-        if let (true, Some(pipeline)) = (
+        if let (true, true, Some(pipeline)) = (
+            self.resources.scene_tier.is_built(),
             frame.effects.debug.show_shadow_atlas,
             self.resources
                 .guide_pipeline(crate::resources::overlay::guides::GUIDE_ATLAS_VIEWER),
         ) {
             render_pass.set_pipeline(pipeline);
-            render_pass.set_bind_group(0, &self.resources.shadow.atlas_viewer_bg, &[]);
+            render_pass.set_bind_group(0, &self.resources.scene_tier.shadow.atlas_viewer_bg, &[]);
             render_pass.draw(0..6, 0..1);
         }
     }
@@ -611,7 +612,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> Vec<crate::gpu::CommandBuffer> {
-        if frame.effects.display.is_hdr() {
+        if self.renders_hdr(frame) {
             let cb = self.prepare_hdr_callback(device, queue, frame);
             vec![cb]
         } else {
@@ -641,7 +642,7 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) {
         let vp_idx = frame.camera.viewport_index;
-        if frame.effects.display.is_hdr() {
+        if self.renders_hdr(frame) {
             if self
                 .viewport_slots
                 .get(vp_idx)
@@ -811,7 +812,7 @@ impl ViewportRenderer {
         let ssaa_factor = frame.effects.post_process.ssaa_factor.max(1);
         let needed = {
             use crate::resources::TargetGroups as G;
-            if frame.effects.display.is_hdr() {
+            if self.renders_hdr(frame) {
                 let pp = &frame.effects.post_process;
                 G::SCENE
                     | G::when(G::BLOOM, pp.bloom.enabled)
@@ -823,16 +824,20 @@ impl ViewportRenderer {
                 G::LDR_DEPTH
             }
         };
-        self.ensure_viewport_hdr(
-            device,
-            queue,
-            vp_idx,
-            w.max(1),
-            h.max(1),
-            ssaa_factor,
-            self.current_render_scale,
-            needed,
-        );
+        if self.resources.scene_tier.is_built() {
+            self.ensure_viewport_hdr(
+                device,
+                queue,
+                vp_idx,
+                w.max(1),
+                h.max(1),
+                ssaa_factor,
+                self.current_render_scale,
+                needed,
+            );
+        } else {
+            self.ensure_overlay_depth(device, vp_idx, w.max(1), h.max(1));
+        }
 
         // Lazy-initialize GPU timestamp resources on first render call when supported.
         if self.ts_query_set.is_none()
@@ -874,10 +879,15 @@ impl ViewportRenderer {
             self.ts_period = queue.get_timestamp_period();
         }
 
-        let cmd_buf = if !frame.effects.display.is_hdr() {
+        if frame.effects.display.is_hdr() && !self.renders_hdr(frame) {
+            self.last_stats.hdr_drawn_as_ldr = true;
+        }
+        let cmd_buf = if !self.renders_hdr(frame) {
             // The LDR path binds the LDR mesh family. Prepare has normally
             // built it; this covers a frame prepared for the other family.
-            if !scene_items.is_empty() || Self::has_mesh_content(frame) {
+            if self.resources.scene_tier.is_built()
+                && (!scene_items.is_empty() || Self::has_mesh_content(frame))
+            {
                 self.resources.ensure_ldr_mesh_pipelines(device);
             }
             self.render_frame_ldr(
@@ -936,6 +946,13 @@ impl ViewportRenderer {
             .load(std::sync::atomic::Ordering::Relaxed);
         self.last_stats.feature_pipelines_built = self.resources.feature_sets() as u32;
         cmd_buf
+    }
+
+    /// Whether `frame` draws through the HDR path. A frame that asks for it on
+    /// an overlay-only renderer draws through the LDR path instead, which is
+    /// all the overlay family needs.
+    pub(crate) fn renders_hdr(&self, frame: &FrameData) -> bool {
+        frame.effects.display.is_hdr() && self.resources.scene_tier.is_built()
     }
 
     /// Panic, naming both formats, when `output_view`'s texture cannot be drawn
@@ -1490,8 +1507,10 @@ impl crate::renderer::ViewportRenderer {
         // pipeline so they are always fully visible regardless of active clip volumes.
         // Items with wireframe=true use the thin 1px LineList pipeline instead, still
         // honouring skip_clip (see `PolylineKey`).
-        if !self.polyline_gpu_data.is_empty() && self.resources.polyline.pipelines.get().is_some() {
-            let polyline_pipelines = self.resources.polyline.pipelines.get();
+        if !self.polyline_gpu_data.is_empty()
+            && self.resources.scene_tier.polyline.pipelines.get().is_some()
+        {
+            let polyline_pipelines = self.resources.scene_tier.polyline.pipelines.get();
             for pl in self.polyline_gpu_data.iter() {
                 if pl.segment_count == 0 {
                     continue;

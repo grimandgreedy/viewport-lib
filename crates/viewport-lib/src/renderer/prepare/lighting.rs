@@ -442,7 +442,7 @@ impl ViewportRenderer {
                 let layer = fc.slot * 6 + fc.face;
                 let offset = layer as u64 * POINT_FACE_STRIDE;
                 queue.write_buffer(
-                    &resources.shadow.point_face_buf,
+                    &resources.scene_tier.shadow.point_face_buf,
                     offset,
                     bytemuck::cast_slice(&[entry]),
                 );
@@ -610,7 +610,7 @@ impl ViewportRenderer {
             // below, so it never misses a write.
             if LightingWrites::changed(&mut shadow.written.shadow_info, shadow_atlas_uniform) {
                 queue.write_buffer(
-                    &resources.shadow.info_buf,
+                    &resources.scene_tier.shadow.info_buf,
                     0,
                     bytemuck::cast_slice(&[shadow_atlas_uniform]),
                 );
@@ -636,7 +636,7 @@ impl ViewportRenderer {
 
         // Upload lights uniform.
         // IBL fields from environment map settings.
-        if resources.ibl.zones_dirty {
+        if resources.scene_tier.ibl.zones_dirty {
             crate::resources::material::environment::write_environment_zones(resources, queue);
         }
         let lit = scene_fx.environment.as_ref().filter(|env| {
@@ -652,7 +652,7 @@ impl ViewportRenderer {
                 Some(env) => (
                     1u32,
                     crate::resources::material::environment::environment_multiplier(
-                        &resources.ibl,
+                        &resources.scene_tier.ibl,
                         env.environment,
                         lighting.environment_intensity,
                     ),
@@ -693,13 +693,13 @@ impl ViewportRenderer {
             } else {
                 0.5
             },
-            env_zone_count: resources.ibl.env_zone_count,
+            env_zone_count: resources.scene_tier.ibl.env_zone_count,
             ibl_specular_scale,
-            custom_data_base: (resources.lighting.custom_data_base_bytes / 16) as u32,
+            custom_data_base: (resources.scene_tier.lighting.custom_data_base_bytes / 16) as u32,
         };
         if LightingWrites::changed(&mut shadow.written.lights, lights_uniform) {
             queue.write_buffer(
-                &resources.lighting.uniform_buf,
+                &resources.scene_tier.lighting.uniform_buf,
                 0,
                 bytemuck::cast_slice(&[lights_uniform]),
             );
@@ -711,7 +711,7 @@ impl ViewportRenderer {
             && LightingWrites::slice_changed(&mut shadow.written.light_storage, &lights_packed)
         {
             queue.write_buffer(
-                &resources.lighting.storage_buf,
+                &resources.scene_tier.lighting.storage_buf,
                 0,
                 bytemuck::cast_slice(&lights_packed),
             );
@@ -798,15 +798,16 @@ impl ViewportRenderer {
             // viewport whose light count never reaches the cluster threshold
             // composes neither compute pipeline. While they compile on a
             // worker the frame takes the per-light fallback.
-            if want_clusters || resources.clustered.grid_dirty() {
+            if want_clusters || resources.scene_tier.clustered.grid_dirty() {
                 if resources
+                    .scene_tier
                     .clustered
                     .ensure_pipelines(device, &resources.pipeline_compiler)
                 {
                     resources.camera_bind_groups_dirty = true;
                 }
             }
-            let use_clusters = want_clusters && resources.clustered.pipelines_ready();
+            let use_clusters = want_clusters && resources.scene_tier.clustered.pipelines_ready();
             let fallback_flag = if use_clusters { 0.0 } else { 1.0 };
             let grid_uniform = ClusterGridUniform {
                 dimensions: [
@@ -831,7 +832,10 @@ impl ViewportRenderer {
                 view: view_mat.to_cols_array_2d(),
             };
             if LightingWrites::changed(&mut shadow.written.cluster_grid, grid_uniform) {
-                resources.clustered.write_grid_uniform(queue, &grid_uniform);
+                resources
+                    .scene_tier
+                    .clustered
+                    .write_grid_uniform(queue, &grid_uniform);
             }
 
             // Build the view-space ActiveLight array. Order matches
@@ -877,6 +881,7 @@ impl ViewportRenderer {
                 .collect();
             if LightingWrites::slice_changed(&mut shadow.written.active_lights, &active_lights) {
                 resources
+                    .scene_tier
                     .clustered
                     .write_active_lights(queue, &active_lights);
             }
@@ -896,24 +901,28 @@ impl ViewportRenderer {
                 None
             };
             // Nothing to build and nothing to clear: no command buffer.
-            if build_count > 0 || resources.clustered.grid_dirty() {
+            if build_count > 0 || resources.scene_tier.clustered.grid_dirty() {
                 let mut encoder =
                     device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                         label: Some("cluster_frame_encoder"),
                     });
-                resources
-                    .clustered
-                    .dispatch_frame(&mut encoder, build_count, cluster_ts);
+                resources.scene_tier.clustered.dispatch_frame(
+                    &mut encoder,
+                    build_count,
+                    cluster_ts,
+                );
                 sink.push(encoder.finish());
             }
 
             // Optional host readback for the debug stats panel. Synchronous;
             // off by default.
             if frame.effects.debug.cluster_stats_request {
-                let stats =
-                    resources
-                        .clustered
-                        .read_stats(device, queue, active_count, !use_clusters);
+                let stats = resources.scene_tier.clustered.read_stats(
+                    device,
+                    queue,
+                    active_count,
+                    !use_clusters,
+                );
                 *last_cluster_stats = Some(stats);
             }
         }
@@ -926,7 +935,7 @@ impl ViewportRenderer {
             let m = cascade_view_projs[c].to_cols_array_2d();
             if LightingWrites::changed(&mut shadow.written.cascades[c], m) {
                 queue.write_buffer(
-                    &resources.shadow.uniform_buf,
+                    &resources.scene_tier.shadow.uniform_buf,
                     c as u64 * SHADOW_SLOT_STRIDE,
                     bytemuck::cast_slice(&m),
                 );

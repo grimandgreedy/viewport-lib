@@ -32,7 +32,7 @@ impl DeviceResources {
         // shaders.
         let base_src = crate::resources::mesh_sidecar::registry::compose_shader(
             include_str!(concat!(env!("OUT_DIR"), "/pick_id.wgsl")),
-            &self.deform.registrations,
+            &self.scene_tier.deform.registrations,
         );
         // The default fragment writes a constant `0u` into the primitive-id
         // channel. When the device supports SHADER_PRIMITIVE_INDEX, rewrite it to

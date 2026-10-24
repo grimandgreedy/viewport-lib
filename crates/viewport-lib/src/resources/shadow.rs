@@ -282,7 +282,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let shadow = &res.shadow;
+        let shadow = &res.scene_tier.shadow;
         assert!(shadow.atlas_size > 0, "atlas size must be recorded");
         assert_eq!(
             shadow.map_texture.width(),
@@ -329,8 +329,11 @@ mod tests {
         };
         assert!(res.ensure_shadow_atlas(&device), "first call allocates");
         assert!(!res.ensure_shadow_atlas(&device), "second call is a no-op");
-        assert_eq!(res.shadow.map_texture.width(), res.shadow.atlas_size);
-        assert!(res.shadow.atlas_allocated);
+        assert_eq!(
+            res.scene_tier.shadow.map_texture.width(),
+            res.scene_tier.shadow.atlas_size
+        );
+        assert!(res.scene_tier.shadow.atlas_allocated);
 
         assert!(
             res.ensure_point_shadow_cubes(&device),
@@ -341,14 +344,14 @@ mod tests {
             "second call is a no-op"
         );
         assert_eq!(
-            res.shadow.point_face_views.len(),
+            res.scene_tier.shadow.point_face_views.len(),
             (crate::renderer::MAX_POINT_SHADOW_LIGHTS * 6) as usize
         );
         assert_eq!(
-            res.shadow.point_cube_texture.width(),
+            res.scene_tier.shadow.point_cube_texture.width(),
             crate::renderer::POINT_SHADOW_FACE_SIZE
         );
-        assert!(res.shadow.point_cubes_allocated);
+        assert!(res.scene_tier.shadow.point_cubes_allocated);
     }
 
     /// Same completeness guarantee as `scene_pipelines::hdr_opaque_resolves_every_key_once_built`
@@ -367,8 +370,8 @@ mod tests {
             .set_policy(crate::resources::PipelineCompilation::Blocking);
         res.ensure_cascade_shadow_pipelines(&device);
         for key in crate::renderer::pipeline_key::PipelineKey::all() {
-            assert!(res.shadow.cascade(key).is_some());
-            assert!(res.shadow.cascade_culled(key).is_some());
+            assert!(res.scene_tier.shadow.cascade(key).is_some());
+            assert!(res.scene_tier.shadow.cascade_culled(key).is_some());
         }
     }
 }

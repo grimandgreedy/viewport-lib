@@ -184,6 +184,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         set: &PipelineSet,
     ) {
+        if !self.resources.scene_tier.is_built() {
+            return;
+        }
         let format = self.resources.target_format;
         let cull = self.instancing.gpu_culling_enabled;
         self.resources.flush_mesh_pipeline_rebuild(device);
@@ -269,24 +272,26 @@ impl ViewportRenderer {
                 r.ensure_ssaa_resolve_pipelines(device);
             }
             if set.auto_exposure {
-                r.exposure.ensure_pipelines(device, &r.pipeline_compiler);
-                r.exposure.request_all();
+                r.scene_tier
+                    .exposure
+                    .ensure_pipelines(device, &r.pipeline_compiler);
+                r.scene_tier.exposure.request_all();
             }
         }
         if set.shadows {
             r.ensure_cascade_shadow_pipelines(device);
             r.ensure_point_shadow_pipeline(device);
-            if let Some(f) = &r.shadow.pipeline {
+            if let Some(f) = &r.scene_tier.shadow.pipeline {
                 f.request_all();
             }
-            if let Some(f) = &r.shadow.point_pipeline {
+            if let Some(f) = &r.scene_tier.shadow.point_pipeline {
                 f.request_all();
             }
         }
         if set.outlines {
             r.ensure_outline_pipelines(device);
             r.ensure_outline_composite_pipelines(device);
-            if let Some(f) = &r.outline.composite {
+            if let Some(f) = &r.scene_tier.outline.composite {
                 f.request_all();
             }
         }
@@ -306,10 +311,13 @@ impl ViewportRenderer {
             r.ensure_shadow_atlas_viewer_pipeline(device);
         }
         if set.clustered_lighting {
-            if r.clustered.ensure_pipelines(device, &r.pipeline_compiler) {
+            if r.scene_tier
+                .clustered
+                .ensure_pipelines(device, &r.pipeline_compiler)
+            {
                 r.camera_bind_groups_dirty = true;
             }
-            r.clustered.request_all();
+            r.scene_tier.clustered.request_all();
         }
         if set.occlusion_culling {
             r.hiz_pipelines(device).request_all();

@@ -210,7 +210,7 @@ impl DeviceResources {
             &self.post.contact_shadow,
             &self.post.bloom,
             &self.post.dof,
-            &self.exposure,
+            &self.scene_tier.exposure,
         ]
     }
 
@@ -244,7 +244,7 @@ impl DeviceResources {
             return;
         }
         // --- Fallback textures (one-time uploads) ---
-        if !self.material.uploaded {
+        if self.scene_tier.is_built() && !self.scene_tier.material.uploaded {
             let upload = |tex: &crate::gpu::Texture, data: &[u8]| {
                 queue.write_texture(
                     crate::gpu::TexelCopyTextureInfo {
@@ -266,17 +266,24 @@ impl DeviceResources {
                     },
                 );
             };
-            upload(&self.material.normal_map, &[128u8, 128u8, 255u8, 255u8]);
-            upload(&self.material.ao_map, &[255u8, 255u8, 255u8, 255u8]);
             upload(
-                self.material
+                &self.scene_tier.material.normal_map,
+                &[128u8, 128u8, 255u8, 255u8],
+            );
+            upload(
+                &self.scene_tier.material.ao_map,
+                &[255u8, 255u8, 255u8, 255u8],
+            );
+            upload(
+                self.scene_tier
+                    .material
                     .texture
                     .texture
                     .as_ref()
                     .expect("fallback albedo texture is owned"),
                 &[255u8, 255u8, 255u8, 255u8],
             );
-            self.material.uploaded = true;
+            self.scene_tier.material.uploaded = true;
         }
 
         // --- Placeholder textures (one-time) ---
@@ -635,7 +642,9 @@ impl DeviceResources {
                 ],
             });
 
-        self.ensure_outline_composite_bgl(device);
+        if self.scene_tier.is_built() {
+            self.ensure_outline_composite_bgl(device);
+        }
 
         // --- SSAA resolve bind group layout ---
         let ssaa_resolve_bgl =
@@ -732,7 +741,9 @@ impl DeviceResources {
         self.post.pp_nearest_sampler = Some(nearest_sampler);
         self.post.fxaa.sampler = Some(fxaa_sampler);
         self.oit.composite_sampler = Some(oit_sampler);
-        self.outline.composite_sampler = Some(outline_sampler);
+        if self.scene_tier.is_built() {
+            self.scene_tier.outline.composite_sampler = Some(outline_sampler);
+        }
 
         self.post.tone_map_bgl = Some(tone_map_bgl);
         self.post.bloom.bgl = Some(bloom_bgl);
@@ -810,12 +821,13 @@ impl DeviceResources {
     /// The outline composite's bind group layout, shared by the three composite
     /// pipelines and by each viewport's composite bind group.
     fn ensure_outline_composite_bgl(&mut self, device: &crate::gpu::Device) {
-        if self.outline.composite_bgl.is_none() {
-            self.outline.composite_bgl = Some(crate::resources::builders::texture_sampler_bgl(
-                device,
-                "outline_composite_bgl",
-                crate::gpu::ShaderStages::FRAGMENT,
-            ));
+        if self.scene_tier.outline.composite_bgl.is_none() {
+            self.scene_tier.outline.composite_bgl =
+                Some(crate::resources::builders::texture_sampler_bgl(
+                    device,
+                    "outline_composite_bgl",
+                    crate::gpu::ShaderStages::FRAGMENT,
+                ));
         }
     }
 
@@ -824,12 +836,17 @@ impl DeviceResources {
     /// the HDR variant. Composed on the first frame that has a selection
     /// outline to draw, in either path; each is built when a pass binds it.
     pub(crate) fn ensure_outline_composite_pipelines(&mut self, device: &crate::gpu::Device) {
-        if self.outline.composite.is_some() {
+        if self.scene_tier.outline.composite.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
         self.ensure_outline_composite_bgl(device);
-        let bgl = self.outline.composite_bgl.clone().expect("just ensured");
+        let bgl = self
+            .scene_tier
+            .outline
+            .composite_bgl
+            .clone()
+            .expect("just ensured");
         let shader = self.shared_module(
             device,
             "outline_composite_shader",
@@ -840,7 +857,7 @@ impl DeviceResources {
             "outline_composite_layout",
             &[&bgl],
         );
-        self.outline.composite = Some(LazyFamily::new(
+        self.scene_tier.outline.composite = Some(LazyFamily::new(
             OutlineCompositeRecipe {
                 device: device.clone(),
                 layout,
@@ -866,7 +883,8 @@ impl DeviceResources {
     ) {
         self.ensure_hdr_infra(device, queue);
         self.ensure_tone_map_pipeline(device, output_format);
-        self.exposure
+        self.scene_tier
+            .exposure
             .ensure_pipelines(device, &self.pipeline_compiler);
         self.ensure_bloom_pipelines(device);
         self.ensure_ssao_pipelines(device);
@@ -1169,7 +1187,7 @@ impl DeviceResources {
         let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl"));
         let source = crate::resources::mesh_sidecar::registry::compose_shader(
             base,
-            &self.deform.registrations,
+            &self.scene_tier.deform.registrations,
         );
         crate::resources::builders::builtin_hook_env(crate::resources::builders::strip_debug_vis(
             source,
@@ -1192,8 +1210,8 @@ impl DeviceResources {
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "oit_pipeline_layout",
-            &self.binds.camera_bgl,
-            &self.binds.object_bgl,
+            &self.scene_tier.binds.camera_bgl,
+            &self.scene_tier.binds.object_bgl,
         );
         let bindless = if self.bindless_textures() {
             let shader = self.shared_module(
@@ -1693,6 +1711,7 @@ impl DeviceResources {
             .as_ref()
             .expect("ensure_hdr_infra not called");
         let outline_sampler = self
+            .scene_tier
             .outline
             .composite_sampler
             .as_ref()
@@ -1765,6 +1784,7 @@ impl DeviceResources {
             .as_ref()
             .expect("ensure_hdr_infra not called");
         let outline_composite_bgl = self
+            .scene_tier
             .outline
             .composite_bgl
             .as_ref()
@@ -2030,7 +2050,7 @@ impl DeviceResources {
             "outline_edge_uniform_buf",
             std::mem::size_of::<OutlineEdgeUniform>(),
         );
-        let outline_edge_bgl = &self.outline.edge_bgl;
+        let outline_edge_bgl = &self.scene_tier.outline.edge_bgl;
         let outline_edge_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("outline_edge_bg"),
             layout: outline_edge_bgl,
@@ -2246,7 +2266,7 @@ impl DeviceResources {
         // Auto-exposure compute bind group. Metering reads the sharp scene HDR
         // (`hdr_view`), never the DOF-blurred copy. The buffers are allocated
         // earlier so the tone-map bind group can bind `exposure_state_buf`.
-        let exposure_bind_group = self.exposure.create_bind_group(
+        let exposure_bind_group = self.scene_tier.exposure.create_bind_group(
             device,
             &hdr_view,
             &hdr_depth_only_view,

@@ -131,8 +131,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        assert!(res.lighting.probes.is_none());
-        assert!(!res.lighting.has_probe_volume);
+        assert!(res.scene_tier.lighting.probes.is_none());
+        assert!(!res.scene_tier.lighting.has_probe_volume);
     }
 
     /// Growing the custom-data region copies the regions before it across at

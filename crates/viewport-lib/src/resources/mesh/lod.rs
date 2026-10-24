@@ -259,6 +259,7 @@ impl crate::resources::DeviceResources {
         levels: &[MeshId],
         min_screen_sizes: &[f32],
     ) -> ViewportResult<LodGroupId> {
+        self.require_scene_tier()?;
         if levels.is_empty() {
             return Err(ViewportError::LodGroupEmpty);
         }
@@ -356,6 +357,7 @@ impl crate::resources::DeviceResources {
         id: LodGroupId,
         cull_below: Option<f32>,
     ) -> ViewportResult<()> {
+        self.require_scene_tier()?;
         match self.lod_groups.get_mut(id) {
             Some(group) => {
                 group.cull_below = cull_below;
@@ -370,7 +372,7 @@ impl crate::resources::DeviceResources {
     fn validate_lod_compatibility(&self, levels: &[MeshId]) -> ViewportResult<()> {
         let base = levels[0];
         let base_attrs = self.mesh_attribute_names(base);
-        let base_deformed = self.deform.meshes.contains_key(&base);
+        let base_deformed = self.scene_tier.deform.meshes.contains_key(&base);
         let base_submeshes = self.mesh_store.get(base).map_or(0, |m| m.submeshes.len());
 
         for (i, &mesh) in levels.iter().enumerate().skip(1) {
@@ -387,7 +389,7 @@ impl crate::resources::DeviceResources {
                     reason: format!("has attribute '{extra}' absent from level 0"),
                 });
             }
-            if self.deform.meshes.contains_key(&mesh) != base_deformed {
+            if self.scene_tier.deform.meshes.contains_key(&mesh) != base_deformed {
                 let reason = if base_deformed {
                     "level 0 has deformer data attached but this level does not"
                 } else {

@@ -581,6 +581,7 @@ impl crate::resources::DeviceResources {
         device: &crate::gpu::Device,
         desc: ShadingHookDesc,
     ) -> ViewportResult<ShadingHookId> {
+        self.require_scene_tier()?;
         // Hook pipelines carry a 3-group layout (group 2 holds the plugin's
         // textures), so custom shading needs three bind groups. iced's shared
         // device requests 2; fail here with a clear message instead of at
@@ -595,7 +596,11 @@ impl crate::resources::DeviceResources {
                 ),
             });
         }
-        validate_hook_name(&self.shade_hooks, &self.deform.registrations, desc.name)?;
+        validate_hook_name(
+            &self.shade_hooks,
+            &self.scene_tier.deform.registrations,
+            desc.name,
+        )?;
         let stored = StoredShadingHook::analyse(desc)?;
 
         for shader_name in SHADE_FAMILY_SHADERS {
@@ -604,7 +609,7 @@ impl crate::resources::DeviceResources {
                     reason: format!("internal: shader '{shader_name}' missing from shader catalog"),
                 });
             };
-            let with_deform = registry::compose_shader(base, &self.deform.registrations);
+            let with_deform = registry::compose_shader(base, &self.scene_tier.deform.registrations);
             let composed = compose_shade_shader(&with_deform, &stored).map_err(|reason| {
                 ViewportError::ShadeShaderInvalid {
                     reason: format!("{shader_name}: {reason}"),
@@ -646,7 +651,7 @@ impl crate::resources::DeviceResources {
     ) -> Option<String> {
         let hook = self.shade_hooks.get(id.0)?;
         let base = registry::lookup_source(shader_name)?;
-        let with_deform = registry::compose_shader(base, &self.deform.registrations);
+        let with_deform = registry::compose_shader(base, &self.scene_tier.deform.registrations);
         compose_shade_shader(&with_deform, hook).ok()
     }
 }
@@ -1051,6 +1056,7 @@ impl crate::resources::DeviceResources {
         device: &crate::gpu::Device,
         plugin: &dyn MaterialPlugin,
     ) -> ViewportResult<MaterialPluginId> {
+        self.require_scene_tier()?;
         if let Some(existing) = self.shading_hook_id_by_name(plugin.name()) {
             let id = existing.0 as u32;
             if self.material_plugins.contains_key(&id) {
@@ -1186,7 +1192,7 @@ impl crate::resources::DeviceResources {
                 let view = textures[t as usize]
                     .and_then(|id| self.content.textures.get(id))
                     .map(|tex| &tex.view)
-                    .unwrap_or(&self.material.texture.view);
+                    .unwrap_or(&self.scene_tier.material.texture.view);
                 entries.push(crate::gpu::BindGroupEntry {
                     binding: t + 1,
                     resource: crate::gpu::BindingResource::TextureView(view),
@@ -1405,8 +1411,8 @@ impl crate::resources::DeviceResources {
             device,
             label.as_str(),
             &[
-                &self.binds.camera_bgl,
-                &self.binds.object_bgl,
+                &self.scene_tier.binds.camera_bgl,
+                &self.scene_tier.binds.object_bgl,
                 &gpu.bind_group_layout,
             ],
         );
@@ -1420,8 +1426,8 @@ impl crate::resources::DeviceResources {
                 device,
                 format!("material_plugin_{name}_bindless_layout").as_str(),
                 &[
-                    &self.binds.camera_bgl,
-                    self.binds.object_bindless_bgl.as_ref().unwrap(),
+                    &self.scene_tier.binds.camera_bgl,
+                    self.scene_tier.binds.object_bindless_bgl.as_ref().unwrap(),
                     &gpu.bind_group_layout,
                 ],
             ))
@@ -1985,8 +1991,8 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             &device,
             "builtin_hook_test_layout",
-            &resources.binds.camera_bgl,
-            &resources.binds.object_bgl,
+            &resources.scene_tier.binds.camera_bgl,
+            &resources.scene_tier.binds.object_bgl,
         );
         let (_pipeline, captured) = crate::resources::builders::capture_validation(&device, || {
             crate::resources::mesh::mesh_pipelines::ldr_mesh_pipeline_with(
@@ -2125,8 +2131,8 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             &device,
             "shade_test_layout",
-            &resources.binds.camera_bgl,
-            &resources.binds.object_bgl,
+            &resources.scene_tier.binds.camera_bgl,
+            &resources.scene_tier.binds.object_bgl,
         );
         let (_pipeline, captured) = crate::resources::builders::capture_validation(&device, || {
             crate::resources::mesh::mesh_pipelines::ldr_mesh_pipeline_with(

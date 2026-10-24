@@ -27,6 +27,10 @@ impl ViewportRenderer {
         view_proj: glam::Mat4,
         mask: PickMask,
     ) -> PickRectResult {
+        // Nothing pickable is drawn without the scene resources.
+        if !self.resources.scene_tier.is_built() {
+            return PickRectResult::default();
+        }
         let mut result = PickRectResult::default();
 
         if !self.cpu_pick_cache_enabled {

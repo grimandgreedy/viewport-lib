@@ -151,7 +151,7 @@ pub(crate) fn build_instance_record(
         // The override windows stay in the mesh's sidecar record, read only
         // under their flags; the streams the item reads are resolved here.
         sidecar_record: record.map_or(0, |r| r.base_word()),
-        deform_flags: resources.deform.flag_bits(item.mesh_id),
+        deform_flags: resources.scene_tier.deform.flag_bits(item.mesh_id),
         colour_stream,
         warp_scale: item.warp_scale,
         lightmap_layer: placement.layer,
@@ -165,9 +165,11 @@ pub(crate) fn build_instance_record(
         } else {
             mesh.map_or(0, |m| resources.geometry.base_vertex(m.vertex_span) as u32)
         },
-        deform_table: resources
-            .deform
-            .table_word(item.mesh_id, item.deform_instance, record),
+        deform_table: resources.scene_tier.deform.table_word(
+            item.mesh_id,
+            item.deform_instance,
+            record,
+        ),
     }
 }
 
@@ -187,7 +189,12 @@ pub(super) fn prepare_light_probe_sh(
 ) -> Vec<Option<u32>> {
     use crate::renderer::IndirectLightSource;
     let mut indices = vec![None; scene_items.len()];
-    let probes = resources.lighting.probes.as_ref().filter(|p| !p.is_empty());
+    let probes = resources
+        .scene_tier
+        .lighting
+        .probes
+        .as_ref()
+        .filter(|p| !p.is_empty());
     let mut sh_gpu: Vec<[f32; 4]> = Vec::new();
     let mut count = 0u32;
     for (idx, item) in scene_items.iter().enumerate() {
@@ -215,7 +222,7 @@ pub(super) fn prepare_light_probe_sh(
     }
     if !sh_gpu.is_empty() {
         queue.write_buffer(
-            &resources.lighting.indirect_buf,
+            &resources.scene_tier.lighting.indirect_buf,
             0,
             bytemuck::cast_slice(&sh_gpu),
         );

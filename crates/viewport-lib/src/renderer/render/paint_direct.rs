@@ -37,6 +37,31 @@ impl ViewportRenderer {
                  owned-encoder render path."
             );
         }
+        if self.resources.scene_tier.is_built() {
+            self.paint_slot_scene(render_pass, vp_idx, frame);
+        }
+        let ov = &self.viewport_slots[vp_idx].overlay;
+        emit_overlay_2d!(self, ov, render_pass);
+        // Shadow atlas viewer overlay.
+        if let (true, true, Some(pipeline)) = (
+            self.resources.scene_tier.is_built(),
+            frame.effects.debug.show_shadow_atlas,
+            self.resources
+                .guide_pipeline(crate::resources::overlay::guides::GUIDE_ATLAS_VIEWER),
+        ) {
+            render_pass.set_pipeline(pipeline);
+            render_pass.set_bind_group(0, &self.resources.scene_tier.shadow.atlas_viewer_bg, &[]);
+            render_pass.draw(0..6, 0..1);
+        }
+    }
+
+    /// The scene half of `paint_slot`: everything drawn before the overlays.
+    fn paint_slot_scene<'rp>(
+        &self,
+        render_pass: &mut crate::gpu::RenderPass<'rp>,
+        vp_idx: usize,
+        frame: &FrameData,
+    ) {
         let camera_bg = self.viewport_camera_bind_group(vp_idx);
         let grid_bg = self.viewport_grid_bind_group(vp_idx);
         let vp_slot = self.viewport_slots.get(vp_idx);
@@ -121,18 +146,6 @@ impl ViewportRenderer {
                     render_pass.draw(0..6, 0..sub_hl.sprite_point_count);
                 }
             }
-        }
-        let ov = &self.viewport_slots[vp_idx].overlay;
-        emit_overlay_2d!(self, ov, render_pass);
-        // Shadow atlas viewer overlay.
-        if let (true, Some(pipeline)) = (
-            frame.effects.debug.show_shadow_atlas,
-            self.resources
-                .guide_pipeline(crate::resources::overlay::guides::GUIDE_ATLAS_VIEWER),
-        ) {
-            render_pass.set_pipeline(pipeline);
-            render_pass.set_bind_group(0, &self.resources.shadow.atlas_viewer_bg, &[]);
-            render_pass.draw(0..6, 0..1);
         }
     }
 }

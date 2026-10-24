@@ -590,6 +590,16 @@ pub enum ViewportError {
         missing: Vec<String>,
     },
 
+    /// The call needs a higher tier than the renderer runs at: scene content on
+    /// an overlay-only device.
+    #[error("this needs the {needed} tier and the renderer runs at the {have} tier")]
+    TierUnsupported {
+        /// The tier the call needs.
+        needed: crate::tier::Tier,
+        /// The tier the renderer runs at.
+        have: crate::tier::Tier,
+    },
+
     /// A LOD group id does not refer to a registered group.
     #[error("LOD group {index} is not registered")]
     LodGroupNotFound {

@@ -77,8 +77,15 @@ fn both_shadow_pipelines_follow_a_registered_deformer() {
     renderer
         .resources_mut()
         .flush_mesh_pipeline_rebuild(&device);
-    assert!(renderer.resources().shadow.pipeline.is_none());
-    assert!(renderer.resources().shadow.point_pipeline.is_none());
+    assert!(renderer.resources().scene_tier.shadow.pipeline.is_none());
+    assert!(
+        renderer
+            .resources()
+            .scene_tier
+            .shadow
+            .point_pipeline
+            .is_none()
+    );
 
     // First use builds both, from the composed source.
     renderer
@@ -99,8 +106,15 @@ fn both_shadow_pipelines_follow_a_registered_deformer() {
     renderer
         .resources_mut()
         .flush_mesh_pipeline_rebuild(&device);
-    assert!(renderer.resources().shadow.pipeline.is_some());
-    assert!(renderer.resources().shadow.point_pipeline.is_some());
+    assert!(renderer.resources().scene_tier.shadow.pipeline.is_some());
+    assert!(
+        renderer
+            .resources()
+            .scene_tier
+            .shadow
+            .point_pipeline
+            .is_some()
+    );
     assert!(
         renderer_built(&renderer) >= before + 2,
         "the second registration did not rebuild both shadow pipelines"

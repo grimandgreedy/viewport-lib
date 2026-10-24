@@ -8,13 +8,14 @@
 
 use viewport_lib::plugin_api::ItemTypePlugin;
 use viewport_lib::{Capabilities, Requirements, Tier, ViewportError, ViewportRenderer, wgpu};
+use viewport_lib_testkit::scenes::overlays;
 use viewport_lib_testkit::{DeviceProfile, Harness, catalogue, frame_for, headless_device_full};
 
 const W: u32 = 160;
 const H: u32 = 120;
 
 #[test]
-fn webgl2_profile_is_overlay_only_and_construction_says_so() {
+fn webgl2_profile_builds_an_overlay_only_renderer() {
     let Some(d) = headless_device_full(&DeviceProfile::downlevel_webgl2("tier-webgl2")) else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -32,16 +33,167 @@ fn webgl2_profile_is_overlay_only_and_construction_says_so() {
         Tier::OverlayOnly
     );
 
+    // Construction builds nothing the device cannot create: a layout over its
+    // limits would fail validation here, and validation failures panic.
     let config = viewport_lib::RendererConfig::new(Harness::DEFAULT_TARGET_FORMAT)
         .with_downlevel_capabilities(d.downlevel);
-    match ViewportRenderer::try_with_config(&d.device, &config) {
-        Err(ViewportError::DeviceUnsupported { reason }) => {
-            assert!(reason.contains("overlay-only"), "{reason}");
-            assert!(reason.contains("compute shaders"), "{reason}");
-        }
-        Err(other) => panic!("expected DeviceUnsupported, got {other}"),
-        Ok(_) => panic!("the renderer built on a WebGL2-limits device"),
+    let mut renderer = ViewportRenderer::try_with_config(&d.device, &config)
+        .expect("an overlay-only renderer builds on WebGL2 limits");
+    assert_eq!(renderer.tier(), Tier::OverlayOnly);
+    assert_scene_calls_refused(&mut renderer, &d.device, &d.queue);
+}
+
+/// The calls that add scene content say why they cannot.
+fn assert_scene_calls_refused(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) {
+    let refused = |e: ViewportError| {
+        assert!(
+            matches!(
+                e,
+                ViewportError::TierUnsupported {
+                    needed: Tier::Full,
+                    have: Tier::OverlayOnly
+                }
+            ),
+            "expected TierUnsupported, got {e}"
+        )
+    };
+    let mesh = viewport_lib::geometry::primitives::cube(1.0);
+    refused(
+        renderer
+            .resources_mut()
+            .upload_mesh_data(device, &mesh)
+            .unwrap_err(),
+    );
+    refused(
+        renderer
+            .with_item_type_plugin(device, Box::new(Modest))
+            .unwrap_err(),
+    );
+    assert!(!renderer.has_item_type_plugin("tier_test.modest"));
+    let image = viewport_lib::TextureData::srgb(1, 1, vec![255; 4]);
+    refused(
+        renderer
+            .resources_mut()
+            .upload_texture(device, queue, image)
+            .unwrap_err(),
+    );
+
+    // The renderer's own getters answer rather than reaching for resources
+    // that were never built.
+    assert_eq!(renderer.shadow_allocation_bytes(), 0);
+    let _ = renderer.resident_bytes();
+    assert!(renderer.cluster_stats().is_none());
+    let _ = renderer.shadow_debug_stats();
+    let _ = renderer.feature_set_violations();
+    assert_eq!(renderer.instanced_batch_count(), 0);
+    renderer.set_occlusion_culling(true);
+    renderer.enable_gpu_driven_culling();
+    assert_eq!(renderer.resources().registered_deformer_count(), 0);
+}
+
+/// A device with storage buffers and no compute. It lands on the overlay-only
+/// tier, and its overlay layouts (which still bind storage) build.
+fn no_compute_profile() -> DeviceProfile {
+    DeviceProfile::harness().without_downlevel(wgpu::DownlevelFlags::COMPUTE_SHADERS)
+}
+
+#[test]
+fn overlay_only_draws_overlays_as_the_full_tier_does() {
+    let Some(mut full) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let Some(mut overlay) = Harness::with_profile(&no_compute_profile()) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    assert_eq!(overlay.renderer.tier(), Tier::OverlayOnly);
+    assert_scene_calls_refused(&mut overlay.renderer, &overlay.device, &overlay.queue);
+    // No item type registers without the scene resources.
+    assert!(
+        !overlay
+            .renderer
+            .has_item_type_plugin("viewport_lib.point_cloud")
+    );
+
+    // Every overlay scene, then the shapes again with a filtered backdrop
+    // blur, which draws through its own pass.
+    let blurred = overlays::scenes()
+        .into_iter()
+        .find(|s| s.name == "overlay_shapes")
+        .unwrap();
+    let cases = overlays::scenes()
+        .into_iter()
+        .map(|s| (s, false))
+        .chain([(blurred, true)]);
+    for (scene, blur) in cases {
+        let camera = &scene.cameras[0].camera;
+        let with_blur = |frame: &mut viewport_lib::FrameData| {
+            if blur {
+                for shape in &mut frame.overlays.shapes {
+                    shape.style.backdrop = viewport_lib::BackdropEffects::default()
+                        .with_blur(4.0)
+                        .with_filters(1.0, 0.25, 0.0);
+                }
+            }
+        };
+        // The overlay scenes draw over a lit backdrop, which the overlay-only
+        // renderer leaves out; leave it out of the reference too.
+        let mut built = full.build_scene(&scene);
+        built.items.clear();
+        let mut frame = frame_for(&built, camera, [W as f32, H as f32]);
+        with_blur(&mut frame);
+        // The full tier on its LDR path is what the overlay-only renderer draws.
+        frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        let want = full.render(&frame, W, H);
+        assert!(
+            want.chunks_exact(4).any(|p| p != &want[..4]),
+            "{}: the reference draws nothing",
+            scene.name
+        );
+
+        let built = overlay.build_scene(&scene);
+        let mut frame = frame_for(&built, camera, [W as f32, H as f32]);
+        with_blur(&mut frame);
+        let got = overlay.render(&frame, W, H);
+        let stats = overlay.stats();
+        assert_eq!(stats.items_skipped_by_tier, 0, "{}", scene.name);
+        assert!(stats.hdr_drawn_as_ldr, "{}", scene.name);
+        let differing = want
+            .chunks_exact(4)
+            .zip(got.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(differing, 0, "{}: {differing} pixels differ", scene.name);
     }
+}
+
+#[test]
+fn overlay_only_skips_scene_content_and_counts_it() {
+    let Some(mut full) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let Some(mut overlay) = Harness::with_profile(&no_compute_profile()) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    // Items naming meshes the full renderer holds: the overlay-only renderer
+    // has none, and draws the frame without them.
+    let scene = &catalogue()[0];
+    let built = full.build_scene(scene);
+    let frame = frame_for(&built, &scene.cameras[0].camera, [W as f32, H as f32]);
+    assert!(!built.items.is_empty());
+    let pixels = overlay.render(&frame, W, H);
+    let stats = overlay.stats();
+    assert_eq!(stats.items_skipped_by_tier as usize, built.items.len());
+    assert_eq!(stats.tier, Tier::OverlayOnly);
+    // Nothing but the clear colour.
+    assert!(pixels.chunks_exact(4).all(|p| p == &pixels[..4]));
 }
 
 #[test]
@@ -139,6 +291,21 @@ fn a_plugin_the_device_cannot_run_is_declined() {
     assert!(!harness.renderer.has_item_type_plugin("tier_test.greedy"));
 }
 
+/// An item type that asks for nothing.
+struct Modest;
+
+impl ItemTypePlugin for Modest {
+    fn type_name(&self) -> &'static str {
+        "tier_test.modest"
+    }
+    fn requires(&self) -> Requirements {
+        Requirements::none()
+    }
+    fn init_gpu(&mut self, _: &wgpu::Device, _: &viewport_lib::plugin_api::SharedBindings<'_>) {
+        panic!("init_gpu ran on an overlay-only renderer");
+    }
+}
+
 struct GreedyGpu;
 
 impl viewport_lib::runtime::GpuPlugin for GreedyGpu {
@@ -167,4 +334,209 @@ fn a_gpu_plugin_the_device_cannot_run_is_declined() {
         runtime.declined_gpu_plugins(),
         [ViewportError::PluginUnsupported { type_name, .. }] if type_name == "tier_test.greedy_gpu"
     ));
+}
+
+/// Copy a `W`x`H` four-byte texture back to the CPU, rows padded to the copy
+/// alignment.
+fn read_back(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -> Vec<u8> {
+    let row = (W * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("tier_read_back"),
+        size: (row * H) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row),
+                rows_per_image: Some(H),
+            },
+        },
+        wgpu::Extent3d {
+            width: W,
+            height: H,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit([encoder.finish()]);
+    let slice = buffer.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    viewport_lib::gpu::mapped_range(slice).to_vec()
+}
+
+fn target(device: &wgpu::Device, format: wgpu::TextureFormat, label: &str) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: W,
+            height: H,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
+}
+
+/// Prepare through the split API, then draw once into a host-owned pass and
+/// once through `render_viewport`. Returns both images.
+fn draw_split(harness: &mut Harness, frame: &mut viewport_lib::FrameData) -> (Vec<u8>, Vec<u8>) {
+    let device = harness.device.clone();
+    let queue = harness.queue.clone();
+    let r = &mut harness.renderer;
+    let id = r.create_viewport(&device);
+    frame.camera.viewport_index = id.index();
+    let colour = target(&device, Harness::DEFAULT_TARGET_FORMAT, "tier_colour");
+    let depth = target(
+        &device,
+        wgpu::TextureFormat::Depth24PlusStencil8,
+        "tier_depth",
+    );
+    let (colour_view, depth_view) = (
+        colour.create_view(&Default::default()),
+        depth.create_view(&Default::default()),
+    );
+
+    let (scene_fx, _) = frame.effects.split();
+    let token = r.pass().prepare_scene(&device, &queue, frame, &scene_fx);
+    r.pass()
+        .prepare_viewport(&device, &queue, &token, id, frame);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("tier_host_pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &colour_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Store,
+                }),
+            }),
+            // The tail fields differ between the wgpu legs.
+            ..Default::default()
+        });
+        r.pass().paint_viewport(&mut rp, id, frame);
+    }
+    queue.submit([encoder.finish()]);
+    let painted = read_back(&device, &queue, &colour);
+
+    let owned = target(&device, Harness::DEFAULT_TARGET_FORMAT, "tier_owned");
+    let token = r.owned().prepare_scene(&device, &queue, frame, &scene_fx);
+    r.owned()
+        .prepare_viewport(&device, &queue, &token, id, frame);
+    let cmd = r.owned().render_viewport(
+        &device,
+        &queue,
+        &owned.create_view(&Default::default()),
+        id,
+        frame,
+    );
+    queue.submit([cmd]);
+    (painted, read_back(&device, &queue, &owned))
+}
+
+#[test]
+fn overlay_only_draws_through_the_split_and_host_pass_paths() {
+    let Some(mut full) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let Some(mut overlay) = Harness::with_profile(&no_compute_profile()) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let scene = overlays::scenes()
+        .into_iter()
+        .find(|s| s.name == "overlay_shapes")
+        .unwrap();
+    let camera = &scene.cameras[0].camera;
+    let mut built = full.build_scene(&scene);
+    built.items.clear();
+    let mut want_frame = frame_for(&built, camera, [W as f32, H as f32]);
+    want_frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+    let (want_painted, want_owned) = draw_split(&mut full, &mut want_frame);
+    assert!(
+        want_painted
+            .chunks_exact(4)
+            .any(|p| p != &want_painted[..4])
+    );
+
+    let built = overlay.build_scene(&scene);
+    let mut frame = frame_for(&built, camera, [W as f32, H as f32]);
+    let (painted, owned) = draw_split(&mut overlay, &mut frame);
+    assert!(painted == want_painted, "the host-pass paint differs");
+    assert!(owned == want_owned, "render_viewport differs");
+}
+
+/// Every scene item a frame submits, counted the way `FrameStats` counts what
+/// an overlay-only renderer skips.
+fn scene_items(frame: &viewport_lib::FrameData) -> usize {
+    let surfaces = match &frame.scene.surfaces {
+        viewport_lib::SurfaceSubmission::Flat(items) => items.len(),
+        _ => panic!("a surface submission this test does not count"),
+    };
+    let plugin_items: usize = frame
+        .scene
+        .plugin_items
+        .values()
+        .flatten()
+        .map(|c| c.len())
+        .sum();
+    surfaces
+        + frame.scene.volume_meshes.len()
+        + frame.scene.mesh_instances.len()
+        + frame.scene.foreground_items.len()
+        + plugin_items
+}
+
+#[test]
+fn overlay_only_renders_every_catalogue_scene_without_reaching_the_scene_tier() {
+    // The overlay-only renderer reads the scene tier through a slot that
+    // panics when a path is missing its tier check, so this is the sweep for
+    // such a path: every scene the catalogue has, scivis types included. The
+    // scenes are built on a full renderer, since their uploads are refused on
+    // the overlay-only one, and the frames handed across.
+    let Some(mut full) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let Some(mut overlay) = Harness::with_profile(&no_compute_profile()) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    assert_eq!(overlay.renderer.tier(), Tier::OverlayOnly);
+    for scene in catalogue() {
+        let built = full.build_scene(&scene);
+        let frame = frame_for(&built, &scene.cameras[0].camera, [W as f32, H as f32]);
+        let _ = overlay.render(&frame, W, H);
+        let stats = overlay.stats();
+        assert_eq!(
+            stats.items_skipped_by_tier as usize,
+            scene_items(&frame),
+            "{}",
+            scene.name
+        );
+    }
 }

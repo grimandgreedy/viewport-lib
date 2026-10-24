@@ -33,6 +33,10 @@ impl ViewportRenderer {
         view_proj: glam::Mat4,
         mask: PickMask,
     ) -> Option<PickHit> {
+        // Nothing pickable is drawn without the scene resources.
+        if !self.resources.scene_tier.is_built() {
+            return None;
+        }
         use crate::interaction::query::picking::{pick_transparent_volume_mesh_cpu, screen_to_ray};
         use parry3d::math::{Pose, Vector};
         use parry3d::query::{Ray, RayCast};

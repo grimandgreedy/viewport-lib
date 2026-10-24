@@ -175,6 +175,10 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> Option<PickHit> {
+        // Nothing pickable is drawn without the scene resources.
+        if !self.resources.scene_tier.is_built() {
+            return None;
+        }
         let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
         let view_proj = frame.camera.render_camera.view_proj();
         let hit = match self.resolve_pick_backend(backend, device, mask) {
@@ -397,6 +401,10 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> PickRectResult {
+        // Nothing pickable is drawn without the scene resources.
+        if !self.resources.scene_tier.is_built() {
+            return PickRectResult::default();
+        }
         match self.resolve_pick_backend(backend, device, mask) {
             PickBackend::Cpu => {
                 let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
@@ -435,6 +443,10 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> Option<SnapHit> {
+        // Nothing pickable is drawn without the scene resources.
+        if !self.resources.scene_tier.is_built() {
+            return None;
+        }
         self.snap_query_gpu(device, queue, cursor, radius_px, frame, mask)
     }
 }

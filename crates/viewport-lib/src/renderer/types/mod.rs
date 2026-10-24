@@ -464,6 +464,7 @@ pub(crate) fn opaque_key(
             && !batch.has_attribute
             && !matches!(batch.draw, DrawKind::Range(..))
             && !resources
+                .scene_tier
                 .deform
                 .may_discard(batch.mesh_id, batch.deform_instance),
         ..Default::default()
@@ -840,10 +841,10 @@ macro_rules! emit_draw_calls {
             frame.effects.ground_plane.mode,
             crate::renderer::types::GroundPlaneMode::None
         ) {
-            render_pass.set_pipeline(resources.ground.pipeline());
+            render_pass.set_pipeline(resources.scene_tier.ground.pipeline());
             let ground_bg = _vp_slot
                 .and_then(|s| s.ground_bind_group.current())
-                .unwrap_or(&resources.ground.bind_group);
+                .unwrap_or(&resources.scene_tier.ground.bind_group);
             render_pass.set_bind_group(0, ground_bg, &[]);
             render_pass.draw(0..3, 0..1);
             render_pass.set_bind_group(0, camera_bg, &[]);
@@ -970,7 +971,7 @@ macro_rules! emit_draw_calls {
         // X-ray pass: render selected objects as semi-transparent overlay through geometry.
         if let Some(slot) = _vp_slot {
             if !slot.xray_object_buffers.is_empty() {
-                render_pass.set_pipeline(resources.outline.xray_pipeline());
+                render_pass.set_pipeline(resources.scene_tier.outline.xray_pipeline());
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for (mesh_id, xray) in &slot.xray_object_buffers {
                     let Some(mesh) = resources.mesh_store.get(*mesh_id) else {
@@ -1008,7 +1009,10 @@ macro_rules! emit_outline_composite {
             {
                 let composite_bg = slot.hdr.as_ref().map(|h| &h.outline_composite_bind_group);
                 // Skipped while the pipeline is on a worker.
-                let pipeline = resources.outline.composite_ldr(resources.sample_count);
+                let pipeline = resources
+                    .scene_tier
+                    .outline
+                    .composite_ldr(resources.sample_count);
                 if let (Some(pipeline), Some(bg)) = (pipeline, composite_bg) {
                     render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(0, bg, &[]);

@@ -1217,7 +1217,8 @@ fn update_texture_view_reaches_the_screen() {
         .unwrap();
     let id = renderer
         .resources_mut()
-        .register_texture_view(&device, &view_a, 2, 2);
+        .register_texture_view(&device, &view_a, 2, 2)
+        .unwrap();
     let mat = upload_plane_material(&mut renderer, id);
     let items = vec![
         textured_plane(mesh, mat, -1.05),

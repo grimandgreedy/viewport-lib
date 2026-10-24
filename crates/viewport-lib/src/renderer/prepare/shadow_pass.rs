@@ -107,7 +107,7 @@ impl ViewportRenderer {
                 label: Some("shadow_clear_pass"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
-                    view: &resources.shadow.map_view,
+                    view: &resources.scene_tier.shadow.map_view,
                     depth_ops: Some(crate::gpu::Operations {
                         load: crate::gpu::LoadOp::Clear(1.0),
                         store: crate::gpu::StoreOp::Store,
@@ -300,7 +300,7 @@ impl ViewportRenderer {
                         color_attachments: &[],
                         depth_stencil_attachment: Some(
                             crate::gpu::RenderPassDepthStencilAttachment {
-                                view: &resources.shadow.map_view,
+                                view: &resources.scene_tier.shadow.map_view,
                                 depth_ops: Some(crate::gpu::Operations {
                                     load: crate::gpu::LoadOp::Clear(1.0),
                                     store: crate::gpu::StoreOp::Store,
@@ -383,7 +383,7 @@ impl ViewportRenderer {
                             );
                             bundle_enc.set_bind_group(
                                 0,
-                                &resources.shadow.bind_group,
+                                &resources.scene_tier.shadow.bind_group,
                                 &[cascade as u32 * 256],
                             );
                             let mut bound = BoundCaster::default();
@@ -400,7 +400,8 @@ impl ViewportRenderer {
                                 ) else {
                                     continue;
                                 };
-                                let Some(pipe) = resources.shadow.cascade_culled(c.key) else {
+                                let Some(pipe) = resources.scene_tier.shadow.cascade_culled(c.key)
+                                else {
                                     complete = false;
                                     continue;
                                 };
@@ -475,7 +476,7 @@ impl ViewportRenderer {
                         set_cascade_tile(&mut shadow_pass, cascade, tile_px, light.tile_size);
                         shadow_pass.set_bind_group(
                             0,
-                            &resources.shadow.bind_group,
+                            &resources.scene_tier.shadow.bind_group,
                             &[cascade as u32 * 256],
                         );
                         let mut bound = BoundCaster::default();
@@ -497,7 +498,8 @@ impl ViewportRenderer {
                                 continue;
                             };
                             // Still compiling: the batch casts next frame.
-                            let Some(pipe) = resources.shadow.cascade_culled(c.key) else {
+                            let Some(pipe) = resources.scene_tier.shadow.cascade_culled(c.key)
+                            else {
                                 continue;
                             };
                             if bound.pipeline != Some(c.key) {
@@ -538,7 +540,7 @@ impl ViewportRenderer {
                     set_cascade_tile(&mut shadow_pass, cascade, tile_px, light.tile_size);
                     shadow_pass.set_bind_group(
                         0,
-                        &resources.shadow.bind_group,
+                        &resources.scene_tier.shadow.bind_group,
                         &[cascade as u32 * 256],
                     );
 
@@ -574,7 +576,7 @@ impl ViewportRenderer {
                         }
                         let key = caster_key(resources, batch, mesh);
                         // Still compiling: the caster waits a frame.
-                        let Some(pl) = resources.shadow.cascade(key) else {
+                        let Some(pl) = resources.scene_tier.shadow.cascade(key) else {
                             continue;
                         };
                         if bound.pipeline != Some(key) {
@@ -624,7 +626,7 @@ impl ViewportRenderer {
                         );
                         shadow_pass.set_bind_group(
                             0,
-                            &resources.shadow.bind_group,
+                            &resources.scene_tier.shadow.bind_group,
                             &[cascade as u32 * 256],
                         );
                         let ctx = crate::plugin_api::ShadowCastContext {
@@ -666,7 +668,7 @@ impl ViewportRenderer {
         if lighting.shadows.enabled
             && !scene_items.is_empty()
             && !light.point_shadow_faces.is_empty()
-            && resources.shadow.point_pipeline.is_some()
+            && resources.scene_tier.shadow.point_pipeline.is_some()
         {
             // The batches that cast, each with its own bind group, drawn by
             // instance run.
@@ -697,7 +699,10 @@ impl ViewportRenderer {
                         mesh,
                         group1,
                         cutout: b.has_alpha_mask
-                            || resources.deform.may_discard(b.mesh_id, b.deform_instance),
+                            || resources
+                                .scene_tier
+                                .deform
+                                .may_discard(b.mesh_id, b.deform_instance),
                     })
                 })
                 .collect();
@@ -706,9 +711,9 @@ impl ViewportRenderer {
             // pipeline these casters need is still on a worker the whole block
             // waits rather than marking a cubemap up to date that was never
             // fully drawn.
-            let mut ready = resources.shadow.point(false).is_some();
+            let mut ready = resources.scene_tier.shadow.point(false).is_some();
             if casters.iter().any(|c| c.cutout) {
-                ready &= resources.shadow.point(true).is_some();
+                ready &= resources.scene_tier.shadow.point(true).is_some();
             }
 
             // Decide per pool slot whether its cubemap must re-render this
@@ -824,7 +829,7 @@ impl ViewportRenderer {
                 let last_face = rendered.len() - 1;
                 for (face_idx, fc) in rendered.iter().enumerate() {
                     let layer = fc.slot * 6 + fc.face;
-                    let view = &resources.shadow.point_face_views[layer as usize];
+                    let view = &resources.scene_tier.shadow.point_face_views[layer as usize];
                     // One slot spans all faces: begin on the first face pass, end
                     // on the last, so the readback sees the whole cubemap cost
                     // (up to casters x 6 depth passes) as one duration.
@@ -862,7 +867,11 @@ impl ViewportRenderer {
                         occlusion_query_set: None,
                     });
                     let dyn_offset = layer * POINT_FACE_STRIDE as u32;
-                    pass.set_bind_group(0, &resources.shadow.point_face_bind_group, &[dyn_offset]);
+                    pass.set_bind_group(
+                        0,
+                        &resources.scene_tier.shadow.point_face_bind_group,
+                        &[dyn_offset],
+                    );
 
                     let face_frustum =
                         crate::camera::frustum::Frustum::from_view_proj(&fc.view_proj);
@@ -876,7 +885,7 @@ impl ViewportRenderer {
                             continue;
                         }
                         if bound_cutout != Some(c.cutout) {
-                            let Some(pl) = resources.shadow.point(c.cutout) else {
+                            let Some(pl) = resources.scene_tier.shadow.point(c.cutout) else {
                                 continue;
                             };
                             pass.set_pipeline(pl);
@@ -906,7 +915,7 @@ impl ViewportRenderer {
                 target: "viewport_lib::shadow",
                 ms = shadow_start.elapsed().as_secs_f32() * 1000.0,
                 cascades = light.effective_cascade_count,
-                atlas = resources.shadow.atlas_size,
+                atlas = resources.scene_tier.shadow.atlas_size,
                 draws = last_stats.shadow_draw_calls,
                 point_faces = light.point_shadow_faces.len(),
                 "shadow pass encoded"
@@ -945,7 +954,11 @@ fn draw_shadow_cascades_multi_draw(
         else {
             continue;
         };
-        pass.set_bind_group(0, &resources.shadow.bind_group, &[cascade as u32 * 256]);
+        pass.set_bind_group(
+            0,
+            &resources.scene_tier.shadow.bind_group,
+            &[cascade as u32 * 256],
+        );
 
         let mut bound = BoundCaster::default();
         let mut run_start: u64 = 0;
@@ -962,9 +975,13 @@ fn draw_shadow_cascades_multi_draw(
             );
             // Still compiling (or not a culled caster): checked before the run
             // accounting so a skipped batch breaks the run like a gap.
-            let Some((c, pipe)) =
-                caster.and_then(|c| resources.shadow.cascade_culled(c.key).map(|p| (c, p)))
-            else {
+            let Some((c, pipe)) = caster.and_then(|c| {
+                resources
+                    .scene_tier
+                    .shadow
+                    .cascade_culled(c.key)
+                    .map(|p| (c, p))
+            }) else {
                 if run_len > 0 {
                     draw_cmds += crate::renderer::render::emit_indirect_run(
                         pass,
@@ -1128,6 +1145,7 @@ fn caster_key(
         two_sided: batch.two_sided && !mesh.closed,
         cutout: batch.has_alpha_mask
             || resources
+                .scene_tier
                 .deform
                 .may_discard(batch.mesh_id, batch.deform_instance),
         ..PipelineKey::default()

@@ -42,10 +42,10 @@ mod tests {
         // the camera BGL and the clip buffers are mutually consistent.
         let _bg = res.create_camera_bind_group(
             &device,
-            &res.binds.camera_uniform_buf,
-            &res.binds.clip_planes_buf,
-            &res.shadow.info_buf,
-            &res.binds.clip_volume_buf,
+            &res.scene_tier.binds.camera_uniform_buf,
+            &res.scene_tier.binds.clip_planes_buf,
+            &res.scene_tier.shadow.info_buf,
+            &res.scene_tier.binds.clip_volume_buf,
             "test_camera_bg",
         );
     }

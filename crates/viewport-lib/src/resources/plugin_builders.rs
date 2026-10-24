@@ -92,8 +92,8 @@ impl DeviceResources {
     /// or on another thread.
     pub fn pipeline_builder(&self) -> PipelineBuilder {
         PipelineBuilder {
-            camera_bgl: self.binds.camera_bgl.clone(),
-            shadow_camera_bgl: self.shadow.camera_bgl.clone(),
+            camera_bgl: self.scene_tier.binds.camera_bgl.clone(),
+            shadow_camera_bgl: self.scene_tier.shadow.camera_bgl.clone(),
             opaque: self.opaque_target_desc(),
             foreground: self.foreground_target_desc(),
             oit: self.oit_target_desc(),
@@ -108,7 +108,7 @@ impl DeviceResources {
     /// when building a plugin pipeline layout.
     pub fn shared_bindings(&self) -> SharedBindings<'_> {
         SharedBindings {
-            group0_layout: &self.binds.camera_bgl,
+            group0_layout: &self.scene_tier.binds.camera_bgl,
             sample_count: self.sample_count,
             capabilities: &self.capabilities,
         }
@@ -244,7 +244,7 @@ impl DeviceResources {
         &self,
         slot: crate::scene::material::TextureSlot,
     ) -> &crate::gpu::TextureView {
-        self.material.slot_view(slot)
+        self.scene_tier.material.slot_view(slot)
     }
 
     /// Shared linear-repeat sampler used by the lib's material pipelines.
@@ -252,7 +252,7 @@ impl DeviceResources {
     /// Use this when building a plugin bind group that samples user
     /// textures the same way `Material` does (linear filter, repeat wrap).
     pub fn material_sampler(&self) -> &crate::gpu::Sampler {
-        &self.material.sampler
+        &self.scene_tier.material.sampler
     }
 
     /// Non-filtering clamp sampler for the read-only-depth pass.
@@ -264,7 +264,7 @@ impl DeviceResources {
     /// [`DepthReadContext::scene_depth_bind_group`](crate::plugin_api::DepthReadContext::scene_depth_bind_group);
     /// use this only when building your own.
     pub fn depth_read_sampler(&self) -> &crate::gpu::Sampler {
-        &self.material.depth_read_sampler
+        &self.scene_tier.material.depth_read_sampler
     }
 
     /// Bind group layout for the read-only-depth pass: binding 0 is the scene
@@ -280,7 +280,7 @@ impl DeviceResources {
     /// group instead (see
     /// [`SHARED_DEPTH_READ_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_READ_WGSL)).
     pub fn depth_read_bind_group_layout(&self) -> &crate::gpu::BindGroupLayout {
-        &self.material.depth_read_bgl
+        &self.scene_tier.material.depth_read_bgl
     }
 
     /// Shared linear-clamp sampler used by the lib for colormap LUTs.
@@ -288,7 +288,7 @@ impl DeviceResources {
     /// Use this when sampling 1D LUT-style data (colourmaps, transfer
     /// functions) where the texture should not wrap.
     pub fn lut_sampler(&self) -> &crate::gpu::Sampler {
-        &self.material.lut_sampler
+        &self.scene_tier.material.lut_sampler
     }
 
     /// Comparison sampler used for PCF shadow filtering.
@@ -296,7 +296,7 @@ impl DeviceResources {
     /// Plugins that sample the shadow atlas directly (rather than through
     /// `viewport_sample_csm`) use this sampler when binding the atlas.
     pub fn shadow_filter_sampler(&self) -> &crate::gpu::Sampler {
-        &self.shadow.sampler
+        &self.scene_tier.shadow.sampler
     }
 
     /// Number of live user-uploaded textures.

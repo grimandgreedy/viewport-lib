@@ -301,7 +301,7 @@ impl DeviceResources {
         &self,
         device: &crate::gpu::Device,
     ) -> &PolylineVariantSet {
-        if let Some(set) = self.polyline.pipelines.get() {
+        if let Some(set) = self.scene_tier.polyline.pipelines.get() {
             return set;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
@@ -310,8 +310,8 @@ impl DeviceResources {
             layout: crate::resources::builders::standard_scene_layout(
                 device,
                 "polyline_pipeline_layout",
-                &self.binds.camera_bgl,
-                &self.polyline.bgl,
+                &self.scene_tier.binds.camera_bgl,
+                &self.scene_tier.polyline.bgl,
             ),
             shader: self.shared_module(
                 device,
@@ -321,8 +321,8 @@ impl DeviceResources {
             wf_layout: crate::resources::builders::standard_scene_layout(
                 device,
                 "polyline_wireframe_pipeline_layout",
-                &self.binds.camera_bgl,
-                &self.polyline.wireframe_bgl,
+                &self.scene_tier.binds.camera_bgl,
+                &self.scene_tier.polyline.wireframe_bgl,
             ),
             wf_shader: self.shared_module(
                 device,
@@ -332,7 +332,7 @@ impl DeviceResources {
             sample_count: self.sample_count,
             ldr_format: self.target_format,
         };
-        self.polyline.pipelines.get_or_init(|| {
+        self.scene_tier.polyline.pipelines.get_or_init(|| {
             PolylineVariantSet(std::sync::Arc::new(LazyFamily::new(
                 recipe,
                 std::sync::Arc::clone(&self.pipeline_compiler),
@@ -606,11 +606,11 @@ impl DeviceResources {
             .get(preset_id.0)
             .unwrap_or(&self.content.fallback_lut_view);
 
-        let lut_sampler = &self.material.lut_sampler;
+        let lut_sampler = &self.scene_tier.material.lut_sampler;
 
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("polyline_bind_group"),
-            layout: &self.polyline.bgl,
+            layout: &self.scene_tier.polyline.bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -630,7 +630,7 @@ impl DeviceResources {
         let wireframe_bind_group =
             Some(device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("polyline_wireframe_bind_group"),
-                layout: &self.polyline.wireframe_bgl,
+                layout: &self.scene_tier.polyline.wireframe_bgl,
                 entries: &[crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: vertex_buffer.as_entire_binding(),

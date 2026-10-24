@@ -62,7 +62,8 @@ pub use shadow_debug_stats::ShadowDebugStats;
 mod deform_shadow_tests;
 #[cfg(test)]
 mod deform_stats_tests;
-#[cfg(test)]
+// Reads a field that exists only with debug assertions on.
+#[cfg(all(test, debug_assertions))]
 mod closed_check_tests;
 #[cfg(test)]
 mod frame_reuse_tests;
@@ -247,6 +248,9 @@ pub(crate) struct ViewportSlot {
         crate::gpu::TextureView,
         crate::gpu::Buffer,
     )>,
+    /// The LDR pass's depth target on an overlay-only renderer, which builds
+    /// no `hdr` state to take it from.
+    pub overlay_depth: Option<crate::resources::postprocess::targets::DepthTarget>,
 }
 
 /// One viewport's prepared 2D overlay pass: the vertex and storage buffers the
@@ -929,11 +933,18 @@ impl ViewportRenderer {
     /// naming what the device lacks.
     ///
     /// The renderer reads the device's [`Capabilities`](crate::Capabilities)
-    /// once here and needs [`Tier::Full`](crate::Tier::Full): storage buffers in
-    /// the vertex and fragment stages, eight per stage, and compute. Pass
-    /// [`recommended_device_limits`](Self::recommended_device_limits) as the
-    /// device's `required_limits` to get them where the adapter has them, and
-    /// the adapter's downlevel capabilities through
+    /// once here. On [`Tier::Full`](crate::Tier::Full) (storage buffers in the
+    /// vertex and fragment stages, eight per stage, and compute) it draws
+    /// everything. On [`Tier::OverlayOnly`](crate::Tier::OverlayOnly) it
+    /// builds only the overlay family: scene content in a frame is skipped and
+    /// counted in [`FrameStats::items_skipped_by_tier`](crate::FrameStats::items_skipped_by_tier),
+    /// and the calls that add scene content return
+    /// [`ViewportError::TierUnsupported`](crate::ViewportError::TierUnsupported).
+    /// Below that it returns `DeviceUnsupported`.
+    ///
+    /// Pass [`recommended_device_limits`](Self::recommended_device_limits) as
+    /// the device's `required_limits` to get the full tier where the adapter
+    /// has it, and the adapter's downlevel capabilities through
     /// [`RendererConfig::with_downlevel_capabilities`] so they are read rather
     /// than assumed.
     pub fn try_with_config(
@@ -946,20 +957,27 @@ impl ViewportRenderer {
             device,
             config.downlevel_capabilities.as_ref(),
         );
-        // Every scene resource is built at construction, so the floor is the
-        // full tier. Refusing here gives an actionable message rather than a
-        // wgpu validation panic deep in layout creation.
-        let missing = capabilities.missing_for(crate::capabilities::Tier::Full);
-        if !missing.is_empty() {
+        let tier = capabilities.tier();
+        if tier == crate::capabilities::Tier::Unsupported {
             return Err(crate::ViewportError::DeviceUnsupported {
                 reason: format!(
-                    "the device is on the {} tier and the renderer needs the full tier; it \
-                     lacks {}. Pass ViewportRenderer::recommended_device_limits(&adapter) as \
-                     required_limits in the DeviceDescriptor if the adapter offers more.",
-                    capabilities.tier(),
-                    missing.join(", "),
+                    "the device lacks {}, which even overlays need",
+                    capabilities
+                        .missing_for(crate::capabilities::Tier::OverlayOnly)
+                        .join(", "),
                 ),
             });
+        }
+        if tier < crate::capabilities::Tier::Full {
+            tracing::info!(
+                target: "viewport_lib::init",
+                "the device is on the {tier} tier, so only overlays draw: it lacks {}. Pass \
+                 ViewportRenderer::recommended_device_limits(&adapter) as required_limits in \
+                 the DeviceDescriptor if the adapter offers more.",
+                capabilities
+                    .missing_for(crate::capabilities::Tier::Full)
+                    .join(", "),
+            );
         }
         let gpu_culling_supported = capabilities.indirect_first_instance;
         let multi_draw_supported = capabilities.multi_draw_indirect_count;
@@ -981,7 +999,7 @@ impl ViewportRenderer {
             sample_count,
             config.pipeline_cache_data.as_deref(),
             config.geometry_chunk_bytes,
-        );
+        )?;
         if let Some(policy) = config.pipeline_compilation {
             resources.pipeline_compiler.set_policy(policy);
         }
@@ -1062,6 +1080,12 @@ impl ViewportRenderer {
         Ok(renderer)
     }
 
+    /// `Err(TierUnsupported)` when the renderer was built without the scene
+    /// resources, for the calls that add scene content.
+    pub(crate) fn require_scene_tier(&self) -> Result<(), crate::ViewportError> {
+        self.resources.require_scene_tier()
+    }
+
     /// What the device can do, as read at construction.
     pub fn capabilities(&self) -> &crate::capabilities::Capabilities {
         &self.resources.capabilities
@@ -1093,7 +1117,10 @@ impl ViewportRenderer {
     /// cast), and the cube array by the first frame that queues point-shadow
     /// faces. Neither is released afterwards.
     pub fn shadow_allocation_bytes(&self) -> u64 {
-        let shadow = &self.resources.shadow;
+        if !self.resources.scene_tier.is_built() {
+            return 0;
+        }
+        let shadow = &self.resources.scene_tier.shadow;
         let texel = 4; // Depth32Float
         let atlas = shadow.map_texture.width() as u64 * shadow.map_texture.height() as u64 * texel;
         let cube = shadow.point_cube_texture.width() as u64
@@ -1913,6 +1940,9 @@ impl ViewportRenderer {
         type_name: &str,
         requirements: &crate::capabilities::Requirements,
     ) -> Result<(), crate::ViewportError> {
+        // Plugins draw into the scene passes and bind the scene layouts, so
+        // none registers on a renderer without them, whatever it asks for.
+        self.require_scene_tier()?;
         let missing = self
             .resources
             .capabilities
@@ -3308,12 +3338,15 @@ impl ViewportRenderer {
     /// `prepare` does this whenever a resource the groups bind was replaced, so
     /// it is only needed to see a change before the next `prepare`.
     pub fn rebuild_camera_bind_groups(&mut self, device: &crate::gpu::Device) {
-        self.resources.binds.camera_bg = self.resources.create_camera_bind_group(
+        if !self.resources.scene_tier.is_built() {
+            return;
+        }
+        self.resources.scene_tier.binds.camera_bg = self.resources.create_camera_bind_group(
             device,
-            &self.resources.binds.camera_uniform_buf,
-            &self.resources.binds.clip_planes_buf,
-            &self.resources.shadow.info_buf,
-            &self.resources.binds.clip_volume_buf,
+            &self.resources.scene_tier.binds.camera_uniform_buf,
+            &self.resources.scene_tier.binds.clip_planes_buf,
+            &self.resources.scene_tier.shadow.info_buf,
+            &self.resources.scene_tier.binds.clip_volume_buf,
             "camera_bind_group",
         );
 
@@ -3474,6 +3507,7 @@ impl ViewportRenderer {
                 overlay: ViewportOverlay::new(),
                 ground_uniform_buf,
                 ground_bind_group: crate::resources::cached_bind_group::CachedBindGroup::new(),
+                overlay_depth: None,
             });
         }
     }
@@ -3625,7 +3659,7 @@ impl ViewportRenderer {
         self.viewport_slots
             .get(viewport_index)
             .map(|slot| &slot.camera_bind_group)
-            .unwrap_or(&self.resources.binds.camera_bg)
+            .unwrap_or(&self.resources.scene_tier.binds.camera_bg)
     }
 
     /// Return a reference to the grid bind group for the given viewport slot.
@@ -3660,6 +3694,46 @@ impl ViewportRenderer {
                 .resources
                 .create_dyn_res_target(device, scaled_size, surface_size);
             self.viewport_slots[vp_idx].dyn_res = Some(target);
+        }
+    }
+
+    /// Ensure the overlay-only depth target for `viewport_index` is `w`x`h`.
+    pub(crate) fn ensure_overlay_depth(
+        &mut self,
+        device: &crate::gpu::Device,
+        viewport_index: usize,
+        w: u32,
+        h: u32,
+    ) {
+        let slot = &mut self.viewport_slots[viewport_index];
+        let current = slot
+            .overlay_depth
+            .as_ref()
+            .map(|d| (d.texture.width(), d.texture.height()));
+        if current != Some((w, h)) {
+            let alloc = crate::resources::postprocess::targets::ViewportTargetAllocator::new(
+                device, w, h, w, h, 1,
+            );
+            slot.overlay_depth = Some(alloc.depth(
+                "overlay_depth_texture",
+                crate::resources::postprocess::targets::TargetSize::Scene,
+            ));
+        }
+    }
+
+    /// The depth view the LDR pass draws against: the HDR state's on the full
+    /// tier, the overlay-only target below it.
+    pub(crate) fn ldr_depth_view(&self, vp_idx: usize) -> &crate::gpu::TextureView {
+        let slot = &self.viewport_slots[vp_idx];
+        match &slot.hdr {
+            Some(hdr) => &hdr.outline_depth_view,
+            None => {
+                &slot
+                    .overlay_depth
+                    .as_ref()
+                    .expect("ensure_overlay_depth must have been called")
+                    .view
+            }
         }
     }
 

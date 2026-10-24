@@ -80,14 +80,12 @@ impl ViewportRenderer {
         // When occlusion culling is on, keep the scene depth (instead of
         // discarding it) so it can be copied into the HiZ prev-depth target for
         // next frame's reprojection. The copy happens after the scene pass below.
-        let store_scene_depth = self.resources.occlusion_culling_enabled();
+        let store_scene_depth =
+            self.resources.occlusion_culling_enabled() && self.resources.scene_tier.is_built();
 
         {
             let slot = &self.viewport_slots[vp_idx];
-            let slot_hdr = slot
-                .hdr
-                .as_ref()
-                .expect("HDR state missing in LDR path; ensure_viewport_hdr must have been called");
+            let ldr_depth_view = self.ldr_depth_view(vp_idx);
             let camera_bg = &slot.camera_bind_group;
             let grid_bg = &slot.grid_bind_group;
             // Choose render target: dyn_res intermediate, backdrop intermediate, or output_view.
@@ -99,9 +97,9 @@ impl ViewportRenderer {
                 (&dr.colour_view, &dr.depth_view)
             } else if needs_blur {
                 let bs = self.backdrop_blur_state.as_ref().unwrap();
-                (&bs.intermediate_view, &slot_hdr.outline_depth_view)
+                (&bs.intermediate_view, ldr_depth_view)
             } else {
-                (output_view, &slot_hdr.outline_depth_view)
+                (output_view, ldr_depth_view)
             };
             let ts_writes = self.ts_query_set.as_ref().map(|qs| {
                 self.ts_written_mask.fetch_or(
@@ -147,59 +145,63 @@ impl ViewportRenderer {
                 timestamp_writes: ts_writes,
                 occlusion_query_set: None,
             });
-            emit_draw_calls!(
-                &self.resources,
-                &mut render_pass,
-                frame,
-                &self.instancing.batches,
-                camera_bg,
-                grid_bg,
-                Some(slot),
-                &self.mesh_uniforms.material_bind_groups,
-                scene_items,
-                self.per_object_bundle.as_ref()
-            );
-            self.draw_line_and_instance_layers(&mut render_pass, camera_bg, false);
-            // TransparentVolumeMesh boundary wireframe overlay.
-            if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
-                if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
-                    render_pass.set_bind_group(0, camera_bg, &[]);
-                    for (slot, mesh_id) in self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate()
-                    {
-                        if let (Some(mesh), Some(wf)) = (
-                            self.resources.mesh_store.get(*mesh_id),
-                            self.resources.scene.wireframe(),
-                        ) {
-                            render_pass.set_pipeline(wf);
-                            render_pass.set_bind_group(1, tvm_bg, &[]);
-                            if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
-                                render_pass.set_vertex_buffer(1, records.slice(..));
-                            }
-                            render_pass.set_vertex_buffer(
-                                0,
-                                self.resources.geometry.vertex_slice(mesh.vertex_span),
-                            );
-                            if let Some(edge_buf) = &mesh.edge_index_buffer {
-                                render_pass.set_index_buffer(
-                                    edge_buf.slice(..),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                let slot = slot as u32;
-                                render_pass.draw_indexed(
-                                    0..mesh.edge_index_count,
+            // Overlay-only renderers have no scene resources to draw with.
+            if self.resources.scene_tier.is_built() {
+                emit_draw_calls!(
+                    &self.resources,
+                    &mut render_pass,
+                    frame,
+                    &self.instancing.batches,
+                    camera_bg,
+                    grid_bg,
+                    Some(slot),
+                    &self.mesh_uniforms.material_bind_groups,
+                    scene_items,
+                    self.per_object_bundle.as_ref()
+                );
+                self.draw_line_and_instance_layers(&mut render_pass, camera_bg, false);
+                // TransparentVolumeMesh boundary wireframe overlay.
+                if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
+                    if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                        for (slot, mesh_id) in
+                            self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate()
+                        {
+                            if let (Some(mesh), Some(wf)) = (
+                                self.resources.mesh_store.get(*mesh_id),
+                                self.resources.scene.wireframe(),
+                            ) {
+                                render_pass.set_pipeline(wf);
+                                render_pass.set_bind_group(1, tvm_bg, &[]);
+                                if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
+                                    render_pass.set_vertex_buffer(1, records.slice(..));
+                                }
+                                render_pass.set_vertex_buffer(
                                     0,
-                                    slot..slot + 1,
+                                    self.resources.geometry.vertex_slice(mesh.vertex_span),
                                 );
+                                if let Some(edge_buf) = &mesh.edge_index_buffer {
+                                    render_pass.set_index_buffer(
+                                        edge_buf.slice(..),
+                                        crate::gpu::IndexFormat::Uint32,
+                                    );
+                                    let slot = slot as u32;
+                                    render_pass.draw_indexed(
+                                        0..mesh.edge_index_count,
+                                        0,
+                                        slot..slot + 1,
+                                    );
+                                }
                             }
                         }
                     }
                 }
+                // Item-type plugin paint (LDR opt-in only): after all built-in
+                // scene content, mirroring the HDR scene-pass position.
+                self.dispatch_plugin_paint(&mut render_pass, frame, false);
+                // Outline composite after all scene content.
+                emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             }
-            // Item-type plugin paint (LDR opt-in only): after all built-in
-            // scene content, mirroring the HDR scene-pass position.
-            self.dispatch_plugin_paint(&mut render_pass, frame, false);
-            // Outline composite after all scene content.
-            emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             // When blur backdrops are needed, skip overlays here. They'll
             // be drawn in a second pass after the blur is applied.
             if !needs_blur {
@@ -217,7 +219,7 @@ impl ViewportRenderer {
         // Item-type plugins are not dispatched on the LDR path (their
         // foreground pipelines target the HDR formats), so only the item
         // list gates this pass.
-        if !frame.scene.foreground_items.is_empty() {
+        if !frame.scene.foreground_items.is_empty() && self.resources.scene_tier.is_built() {
             let (fw, fh) = if use_dyn_res {
                 let dr = self.viewport_slots[vp_idx].dyn_res.as_ref().unwrap();
                 (dr.scaled_size[0], dr.scaled_size[1])
@@ -395,7 +397,6 @@ impl ViewportRenderer {
 
             // Second render pass for overlays (Load to preserve scene content).
             let slot = &self.viewport_slots[vp_idx];
-            let slot_hdr = slot.hdr.as_ref().unwrap();
             let overlay_colour_view: &crate::gpu::TextureView = if use_dyn_res {
                 &slot.dyn_res.as_ref().unwrap().colour_view
             } else {
@@ -404,7 +405,7 @@ impl ViewportRenderer {
             let overlay_depth_view: &crate::gpu::TextureView = if use_dyn_res {
                 &slot.dyn_res.as_ref().unwrap().depth_view
             } else {
-                &slot_hdr.outline_depth_view
+                self.ldr_depth_view(vp_idx)
             };
             {
                 let overlay_ts_writes =

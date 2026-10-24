@@ -143,7 +143,7 @@ impl PolylineGpu {
             PolylinePassRecipe {
                 device: device.clone(),
                 builder: resources.pipeline_builder(),
-                polyline_bgl: resources.polyline.bgl.clone(),
+                polyline_bgl: resources.scene_tier.polyline.bgl.clone(),
                 pick_id_bgl: pick_id_bgl.clone(),
                 pick_shader: resources.lazy_module(
                     device,
@@ -154,7 +154,7 @@ impl PolylineGpu {
                     device,
                     "polyline_outline_mask_pipeline_layout",
                     resources.shared_bindings().group0_layout,
-                    &resources.polyline.bgl,
+                    &resources.scene_tier.polyline.bgl,
                 ),
                 mask_shader: resources.lazy_module(
                     device,

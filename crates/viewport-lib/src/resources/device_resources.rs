@@ -419,6 +419,96 @@ pub struct ContentResources {
     pub(crate) colourmaps_initialized: bool,
 }
 
+/// The GPU resources the scene draws need and an overlay-only device cannot
+/// create: the bind group layouts with storage entries and the textures and
+/// compute state built with them. Built at construction on the full tier.
+pub(crate) struct SceneTier {
+    /// Camera uniform + group-0/1 bind groups and layouts, clip-plane and
+    /// clip-volume uniforms, and the debug-fragment sentinel.
+    /// See `resources::scene_bindings::SceneBindings`.
+    pub(crate) binds: crate::resources::scene_bindings::SceneBindings,
+    /// Scene lighting buffers, SH light-probe field, adaptive probe volume, and
+    /// the shared indirect-light buffer. See `resources::lighting::LightingResources`.
+    pub(crate) lighting: crate::resources::lighting::LightingResources,
+    /// Clustered-shading state: cluster grid, global light index list, and the
+    /// per-frame cluster build pipeline. Bindings 14/15/16 of the camera bind
+    /// group expose this state to every lit pipeline.
+    pub(crate) clustered: crate::resources::gpu::clustered::ClusteredResources,
+    /// Auto-exposure state: shared clear/build/resolve compute pipelines and the
+    /// bind group layout. Per-viewport histogram / adaptation buffers live on
+    /// `ViewportHdrState`.
+    pub(crate) exposure: crate::resources::gpu::exposure::ExposureResources,
+    /// Per-vertex deformation state: the header uniform (group 0 binding 23)
+    /// and the host copy of every mesh's slot data, which lives on the GPU in
+    /// the mesh's sidecar record.
+    pub(crate) deform: crate::resources::mesh_sidecar::deform::DeformationState,
+    /// Cascade shadow atlas, point-light shadow cube array, their depth passes,
+    /// and the atlas debug viewer. See `resources::shadow::ShadowResources`.
+    pub(crate) shadow: crate::resources::shadow::ShadowResources,
+    /// Fallback material textures (1x1 neutral maps), shared material / LUT /
+    /// depth-read samplers, and the texture-group and depth-read bind group
+    /// layouts. See `material::fallbacks::MaterialFallbacks`.
+    pub(crate) material: crate::resources::material::fallbacks::MaterialFallbacks,
+    /// Outline / x-ray pipelines, offscreen mask/composite targets, and layouts.
+    pub(crate) outline: OutlineResources,
+    /// Polyline pipelines and layouts.
+    pub(crate) polyline: crate::resources::scivis::polyline::PolylineResources,
+    /// Image-based-lighting views, fallbacks, owned array textures, environment
+    /// zone count, and the skybox pipeline. See `material::environment::IblResources`.
+    pub(crate) ibl: crate::resources::material::environment::IblResources,
+    /// Full-screen ground-plane pipeline, uniform, and bind group.
+    /// See `resources::ground_plane::GroundPlaneResources`.
+    pub(crate) ground: crate::resources::ground_plane::GroundPlaneResources,
+}
+
+/// The scene tier on [`DeviceResources`]. Derefs to it, and panics when it is
+/// absent: every path that reaches it is behind a tier check, so the panic is
+/// a missing check rather than a device problem.
+pub(crate) struct SceneTierSlot(Option<Box<SceneTier>>);
+
+impl SceneTierSlot {
+    pub(crate) fn new(tier: Option<Box<SceneTier>>) -> Self {
+        Self(tier)
+    }
+
+    pub(crate) fn is_built(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
+impl DeviceResources {
+    /// `Err(TierUnsupported)` when the scene resources were not built, for
+    /// the calls that add scene content.
+    pub(crate) fn require_scene_tier(&self) -> Result<(), crate::ViewportError> {
+        if self.scene_tier.is_built() {
+            Ok(())
+        } else {
+            Err(crate::ViewportError::TierUnsupported {
+                needed: crate::capabilities::Tier::Full,
+                have: self.capabilities.tier(),
+            })
+        }
+    }
+}
+
+impl std::ops::Deref for SceneTierSlot {
+    type Target = SceneTier;
+    #[track_caller]
+    fn deref(&self) -> &SceneTier {
+        self.0.as_deref().expect(SCENE_TIER_ABSENT)
+    }
+}
+
+impl std::ops::DerefMut for SceneTierSlot {
+    #[track_caller]
+    fn deref_mut(&mut self) -> &mut SceneTier {
+        self.0.as_deref_mut().expect(SCENE_TIER_ABSENT)
+    }
+}
+
+const SCENE_TIER_ABSENT: &str =
+    "scene resources used on an overlay-only renderer; this path is missing a tier check";
+
 /// Device-shared GPU resources: pipelines, layouts, samplers, fallbacks, LUTs,
 /// and the per-feature pipeline clusters (`volume`, `pt`, ...).
 /// Created once at init and shared across every viewport.
@@ -471,22 +561,6 @@ pub struct DeviceResources {
     /// wireframe) and their lazily-built HDR variants. See
     /// `resources::scene_pipelines::SceneCorePipelines`.
     pub(crate) scene: crate::resources::scene_pipelines::SceneCorePipelines,
-    // --- Scene bind plumbing (group 0/1: camera, per-object, clip) ---
-    /// Camera uniform + group-0/1 bind groups and layouts, clip-plane and
-    /// clip-volume uniforms, and the debug-fragment sentinel.
-    /// See `resources::scene_bindings::SceneBindings`.
-    pub(crate) binds: crate::resources::scene_bindings::SceneBindings,
-    /// Scene lighting buffers, SH light-probe field, adaptive probe volume, and
-    /// the shared indirect-light buffer. See `resources::lighting::LightingResources`.
-    pub(crate) lighting: crate::resources::lighting::LightingResources,
-    /// Clustered-shading state: cluster grid, global light index list, and the
-    /// per-frame cluster build pipeline. Bindings 14/15/16 of the camera bind
-    /// group expose this state to every lit pipeline.
-    pub(crate) clustered: crate::resources::gpu::clustered::ClusteredResources,
-    /// Auto-exposure state: shared clear/build/resolve compute pipelines and the
-    /// bind group layout. Per-viewport histogram / adaptation buffers live on
-    /// `ViewportHdrState`.
-    pub(crate) exposure: crate::resources::gpu::exposure::ExposureResources,
     /// Scene meshes (slotted storage with free-list removal).
     pub(crate) mesh_store: crate::resources::mesh::mesh_store::MeshStore,
     /// Shared vertex/index geometry buffers. Each mesh's `vertex_span` /
@@ -506,10 +580,6 @@ pub struct DeviceResources {
     /// Registered LOD groups. Each groups several meshes that are detail
     /// variants of one object; the renderer picks a level per frame.
     pub(crate) lod_groups: crate::resources::mesh::lod::LodGroupStore,
-    /// Per-vertex deformation state: the header uniform (group 0 binding 23)
-    /// and the host copy of every mesh's slot data, which lives on the GPU in
-    /// the mesh's sidecar record.
-    pub(crate) deform: crate::resources::mesh_sidecar::deform::DeformationState,
     /// Registered fragment shading hooks (`register_shading_hook`). Each
     /// entry composes its own lit-shader modules; the base pipelines are
     /// untouched by registrations.
@@ -522,11 +592,9 @@ pub struct DeviceResources {
     /// Sampled textures a material plugin can add in the fragment stage: the
     /// device's limit less what the per-object mesh layouts already bind there.
     pub(crate) plugin_texture_budget: u32,
-    // --- Shadow map resources ---
-    /// Cascade shadow atlas, point-light shadow cube array, their depth passes,
-    /// and the atlas debug viewer. See `resources::shadow::ShadowResources`.
-    pub(crate) shadow: crate::resources::shadow::ShadowResources,
-
+    /// The scene draws' layouts, bind groups and textures. Absent on a device
+    /// below the full tier, where only the overlay family draws.
+    pub(crate) scene_tier: SceneTierSlot,
     // --- Gizmo resources ---
 
     // --- Overlay guide resources (grid, axes, base overlay, constraint lines) ---
@@ -535,10 +603,6 @@ pub struct DeviceResources {
     pub(crate) guides: crate::resources::overlay::guides::OverlayGuideResources,
 
     // --- Texture system ---
-    /// Fallback material textures (1x1 neutral maps), shared material / LUT /
-    /// depth-read samplers, and the texture-group and depth-read bind group
-    /// layouts. See `material::fallbacks::MaterialFallbacks`.
-    pub(crate) material: crate::resources::material::fallbacks::MaterialFallbacks,
     /// Uploaded GPU assets and their handle registries (textures, geometry /
     /// scivis stores, colourmap and matcap tables, fallback LUT and attribute buffers).
     pub(crate) content: ContentResources,
@@ -559,10 +623,6 @@ pub struct DeviceResources {
     /// per-frame uniforms live on `ViewportHdrState`.
     pub(crate) post: crate::resources::postprocess::PostProcessResources,
 
-    // --- Outline & x-ray resources ---
-    /// Outline / x-ray pipelines, offscreen mask/composite targets, and layouts.
-    pub(crate) outline: OutlineResources,
-
     // --- Instancing and GPU-culling clusters ---
     /// Instanced-draw pipelines, shared instance storage buffer, and bind group cache.
     pub(crate) instancing: crate::resources::mesh::instancing::InstancingResources,
@@ -579,8 +639,6 @@ pub struct DeviceResources {
     /// Point-cloud render pipeline and bind group layout (lazy).
 
     // --- polyline / streamtube / ribbon rendering (lazily created) ---
-    /// Polyline pipelines and layouts.
-    pub(crate) polyline: crate::resources::scivis::polyline::PolylineResources,
     /// Streamtube pipelines and layout.
     /// Ribbon pipelines (one per blend) and layout.
 
@@ -596,16 +654,6 @@ pub struct DeviceResources {
     // --- Projected tetrahedra transparent volume rendering (lazily created) ---
     /// Projected-tetrahedra pipeline, layouts, and LUT bind group cache.
     pub(crate) pt: ProjectedTetResources,
-
-    // --- IBL / environment map resources ---
-    /// Image-based-lighting views, fallbacks, owned array textures, environment
-    /// zone count, and the skybox pipeline. See `material::environment::IblResources`.
-    pub(crate) ibl: crate::resources::material::environment::IblResources,
-
-    // --- Ground plane ---
-    /// Full-screen ground-plane pipeline, uniform, and bind group.
-    /// See `resources::ground_plane::GroundPlaneResources`.
-    pub(crate) ground: crate::resources::ground_plane::GroundPlaneResources,
 
     // --- External instance sets ---
     /// Consumer-buffer instanced mesh drawing (positions produced by the
@@ -1162,13 +1210,14 @@ impl DeviceResources {
                 .next_power_of_two()
                 .max(self.instance_custom_data_capacity * 2)
                 .min(crate::resources::custom_data::CUSTOM_DATA_CAPACITY);
-            self.lighting.indirect_buf = crate::resources::lighting::grow_indirect_light_buffer(
-                device,
-                queue,
-                &self.lighting.indirect_buf,
-                self.lighting.custom_data_base_bytes,
-                capacity,
-            );
+            self.scene_tier.lighting.indirect_buf =
+                crate::resources::lighting::grow_indirect_light_buffer(
+                    device,
+                    queue,
+                    &self.scene_tier.lighting.indirect_buf,
+                    self.scene_tier.lighting.custom_data_base_bytes,
+                    capacity,
+                );
             self.instance_custom_data_capacity = capacity;
             self.camera_bind_groups_dirty = true;
             self.custom_data_written.clear();
@@ -1181,8 +1230,8 @@ impl DeviceResources {
             return;
         }
         queue.write_buffer(
-            &self.lighting.indirect_buf,
-            self.lighting.custom_data_base_bytes,
+            &self.scene_tier.lighting.indirect_buf,
+            self.scene_tier.lighting.custom_data_base_bytes,
             data,
         );
         self.custom_data_written.clear();
@@ -1200,7 +1249,7 @@ impl DeviceResources {
     /// Build the ground-plane pipeline. Called by the prepare of the first frame
     /// whose `GroundPlaneMode` is not `None`. A no-op after that.
     pub(crate) fn ensure_ground_plane_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.ground.pipeline.is_some() {
+        if self.scene_tier.ground.pipeline.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
@@ -1212,7 +1261,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "ground_plane_pipeline_layout",
-            &[&self.ground.bgl],
+            &[&self.scene_tier.ground.bgl],
         );
         let pipeline = crate::resources::builders::render_pipeline(
             device,
@@ -1249,7 +1298,7 @@ impl DeviceResources {
                 cache: self.pipeline_cache.as_ref(),
             },
         );
-        self.ground.pipeline = Some(pipeline);
+        self.scene_tier.ground.pipeline = Some(pipeline);
     }
 
     /// Build the selection-outline mask-write and edge-detection pipelines.
@@ -1259,7 +1308,7 @@ impl DeviceResources {
     /// The mask pair runs the registered deformers, so `register_deformer`
     /// rebuilds it once it exists.
     pub(crate) fn ensure_outline_pipelines(&mut self, device: &crate::gpu::Device) {
-        if self.outline.mask_pipeline.is_some() {
+        if self.scene_tier.outline.mask_pipeline.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
@@ -1271,7 +1320,7 @@ impl DeviceResources {
             "outline_mask_shader",
             crate::resources::mesh_sidecar::registry::compose_shader(
                 mask_src,
-                &self.deform.registrations,
+                &self.scene_tier.deform.registrations,
             ),
         );
         let masks = crate::resources::mesh::mesh_pipelines::build_outline_mask_pipelines(
@@ -1291,7 +1340,7 @@ impl DeviceResources {
         let outline_edge_layout = crate::resources::builders::pipeline_layout(
             device,
             "outline_edge_layout",
-            &[&self.outline.edge_bgl],
+            &[&self.scene_tier.outline.edge_bgl],
         );
         let edge_pipeline = crate::resources::builders::render_pipeline(
             device,
@@ -1321,16 +1370,16 @@ impl DeviceResources {
                 cache: self.pipeline_cache.as_ref(),
             },
         );
-        self.outline.mask_pipeline = Some(masks.mask);
-        self.outline.mask_two_sided_pipeline = Some(masks.mask_two_sided);
-        self.outline.edge_pipeline = Some(edge_pipeline);
+        self.scene_tier.outline.mask_pipeline = Some(masks.mask);
+        self.scene_tier.outline.mask_two_sided_pipeline = Some(masks.mask_two_sided);
+        self.scene_tier.outline.edge_pipeline = Some(edge_pipeline);
     }
 
     /// Build the x-ray pipeline, which draws selected objects through their
     /// occluders. Called by the prepare of the first frame with an x-ray item.
     /// A no-op after that.
     pub(crate) fn ensure_xray_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.outline.xray_pipeline.is_some() {
+        if self.scene_tier.outline.xray_pipeline.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
@@ -1376,13 +1425,13 @@ impl DeviceResources {
                 cache: self.pipeline_cache.as_ref(),
             },
         );
-        self.outline.xray_pipeline = Some(pipeline);
+        self.scene_tier.outline.xray_pipeline = Some(pipeline);
     }
 
     /// Build the skybox pipeline. Called by the prepare of the first frame that
     /// draws one. A no-op after that.
     pub(crate) fn ensure_skybox_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.ibl.skybox_pipeline.is_some() {
+        if self.scene_tier.ibl.skybox_pipeline.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
@@ -1420,7 +1469,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "skybox_pipeline_layout",
-            &[&self.binds.camera_bgl, &skybox_bgl],
+            &[&self.scene_tier.binds.camera_bgl, &skybox_bgl],
         );
         let pipeline = crate::resources::builders::render_pipeline(
             device,
@@ -1454,14 +1503,17 @@ impl DeviceResources {
                 cache: self.pipeline_cache.as_ref(),
             },
         );
-        self.ibl.skybox_pipeline = Some(pipeline);
-        self.ibl.skybox_bgl = Some(skybox_bgl);
+        self.scene_tier.ibl.skybox_pipeline = Some(pipeline);
+        self.scene_tier.ibl.skybox_bgl = Some(skybox_bgl);
     }
 
     /// The layout the outline mask and x-ray pipelines share: camera and the
     /// outline group.
     fn outline_pipeline_layout(&self, device: &crate::gpu::Device) -> crate::gpu::PipelineLayout {
-        let bgls = [&self.binds.camera_bgl, &self.outline.bind_group_layout];
+        let bgls = [
+            &self.scene_tier.binds.camera_bgl,
+            &self.scene_tier.outline.bind_group_layout,
+        ];
         crate::resources::builders::pipeline_layout(device, "outline_pipeline_layout", &bgls)
     }
 
@@ -1472,7 +1524,7 @@ impl DeviceResources {
     /// The pass runs the registered deformers, so `register_deformer` rebuilds
     /// the set once it exists.
     pub(crate) fn ensure_cascade_shadow_pipelines(&mut self, device: &crate::gpu::Device) {
-        if self.shadow.pipeline.is_some() {
+        if self.scene_tier.shadow.pipeline.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
@@ -1482,10 +1534,13 @@ impl DeviceResources {
             "shadow_shader",
             crate::resources::mesh_sidecar::registry::compose_shader(
                 src,
-                &self.deform.registrations,
+                &self.scene_tier.deform.registrations,
             ),
         );
-        let bgls = [&self.shadow.camera_bgl, &self.binds.object_bgl];
+        let bgls = [
+            &self.scene_tier.shadow.camera_bgl,
+            &self.scene_tier.binds.object_bgl,
+        ];
         let layout =
             crate::resources::builders::pipeline_layout(device, "shadow_pipeline_layout", &bgls);
         // Keyed by facedness (cull-front for closed solids so a solid's own
@@ -1494,7 +1549,7 @@ impl DeviceResources {
         // larger caster-side bias) and cutout (a fragment stage that discards
         // below the caster's albedo alpha cutoff, for `AlphaMode::Mask`). Each
         // is built by the first caster that needs it.
-        self.shadow.pipeline = Some(crate::resources::pipeline_slot::LazyFamily::new(
+        self.scene_tier.shadow.pipeline = Some(crate::resources::pipeline_slot::LazyFamily::new(
             crate::resources::shadow::ShadowRecipe {
                 device: device.clone(),
                 layout,
@@ -1509,7 +1564,7 @@ impl DeviceResources {
     /// the point-shadow branch of the lighting prepare, the same point the cube
     /// array is allocated. A no-op once built.
     pub(crate) fn ensure_point_shadow_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.shadow.point_pipeline.is_some() {
+        if self.scene_tier.shadow.point_pipeline.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
@@ -1519,24 +1574,28 @@ impl DeviceResources {
             "shadow_point_shader",
             crate::resources::mesh_sidecar::registry::compose_shader(
                 src,
-                &self.deform.registrations,
+                &self.scene_tier.deform.registrations,
             ),
         );
-        let bgls = [&self.shadow.point_face_bgl, &self.binds.object_bgl];
+        let bgls = [
+            &self.scene_tier.shadow.point_face_bgl,
+            &self.scene_tier.binds.object_bgl,
+        ];
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "shadow_point_pipeline_layout",
             &bgls,
         );
-        self.shadow.point_pipeline = Some(crate::resources::pipeline_slot::LazyFamily::new(
-            crate::resources::shadow::ShadowRecipe {
-                device: device.clone(),
-                layout,
-                shader,
-            },
-            std::sync::Arc::clone(&self.pipeline_compiler),
-            crate::resources::shadow::build_point,
-        ));
+        self.scene_tier.shadow.point_pipeline =
+            Some(crate::resources::pipeline_slot::LazyFamily::new(
+                crate::resources::shadow::ShadowRecipe {
+                    device: device.clone(),
+                    layout,
+                    shader,
+                },
+                std::sync::Arc::clone(&self.pipeline_compiler),
+                crate::resources::shadow::build_point,
+            ));
     }
 
     /// Promote the cascade shadow atlas from its 1x1 placeholder to the full
@@ -1547,16 +1606,16 @@ impl DeviceResources {
     /// per-viewport camera bind groups it owns (this can only reach the ones
     /// hanging off `DeviceResources`).
     pub(crate) fn ensure_shadow_atlas(&mut self, device: &crate::gpu::Device) -> bool {
-        if self.shadow.atlas_allocated {
+        if self.scene_tier.shadow.atlas_allocated {
             return false;
         }
         let (texture, view) = crate::resources::shadow::create_atlas_texture(
             device,
             crate::resources::SHADOW_ATLAS_SIZE,
         );
-        self.shadow.map_texture = texture;
-        self.shadow.map_view = view;
-        self.shadow.atlas_allocated = true;
+        self.scene_tier.shadow.map_texture = texture;
+        self.scene_tier.shadow.map_view = view;
+        self.scene_tier.shadow.atlas_allocated = true;
         self.rebuild_shadow_sampling_bind_groups(device);
         tracing::debug!(
             target: "viewport_lib::init",
@@ -1573,7 +1632,7 @@ impl DeviceResources {
     /// Returns whether it allocated. See [`ensure_shadow_atlas`](Self::ensure_shadow_atlas)
     /// for why the caller cares.
     pub(crate) fn ensure_point_shadow_cubes(&mut self, device: &crate::gpu::Device) -> bool {
-        if self.shadow.point_cubes_allocated {
+        if self.scene_tier.shadow.point_cubes_allocated {
             return false;
         }
         let (texture, cube_view, face_views) = crate::resources::shadow::create_point_cube_array(
@@ -1582,10 +1641,10 @@ impl DeviceResources {
             crate::renderer::MAX_POINT_SHADOW_LIGHTS,
             self.capabilities.cube_array_textures,
         );
-        self.shadow.point_cube_texture = texture;
-        self.shadow.point_cube_view = cube_view;
-        self.shadow.point_face_views = face_views;
-        self.shadow.point_cubes_allocated = true;
+        self.scene_tier.shadow.point_cube_texture = texture;
+        self.scene_tier.shadow.point_cube_view = cube_view;
+        self.scene_tier.shadow.point_face_views = face_views;
+        self.scene_tier.shadow.point_cubes_allocated = true;
         self.rebuild_shadow_sampling_bind_groups(device);
         tracing::debug!(
             target: "viewport_lib::init",
@@ -1609,7 +1668,7 @@ impl DeviceResources {
     ) -> crate::gpu::BindGroup {
         device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("ground_plane_bind_group"),
-            layout: &self.ground.bgl,
+            layout: &self.scene_tier.ground.bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -1617,15 +1676,17 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: crate::gpu::BindingResource::TextureView(&self.shadow.map_view),
+                    resource: crate::gpu::BindingResource::TextureView(
+                        &self.scene_tier.shadow.map_view,
+                    ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&self.shadow.sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.scene_tier.shadow.sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,
-                    resource: self.shadow.info_buf.as_entire_binding(),
+                    resource: self.scene_tier.shadow.info_buf.as_entire_binding(),
                 },
             ],
         })
@@ -1634,37 +1695,40 @@ impl DeviceResources {
     fn rebuild_shadow_sampling_bind_groups(&mut self, device: &crate::gpu::Device) {
         let camera_bg = self.create_camera_bind_group(
             device,
-            &self.binds.camera_uniform_buf,
-            &self.binds.clip_planes_buf,
-            &self.shadow.info_buf,
-            &self.binds.clip_volume_buf,
+            &self.scene_tier.binds.camera_uniform_buf,
+            &self.scene_tier.binds.clip_planes_buf,
+            &self.scene_tier.shadow.info_buf,
+            &self.scene_tier.binds.clip_volume_buf,
             "camera_bind_group",
         );
-        self.binds.camera_bg = camera_bg;
+        self.scene_tier.binds.camera_bg = camera_bg;
 
-        self.ground.bind_group = self.create_ground_bind_group(device, &self.ground.uniform_buf);
+        self.scene_tier.ground.bind_group =
+            self.create_ground_bind_group(device, &self.scene_tier.ground.uniform_buf);
 
         let viewer_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("shadow_atlas_viewer_bg"),
-            layout: &self.shadow.atlas_viewer_bgl,
+            layout: &self.scene_tier.shadow.atlas_viewer_bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.shadow.atlas_viewer_buf.as_entire_binding(),
+                    resource: self.scene_tier.shadow.atlas_viewer_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: crate::gpu::BindingResource::TextureView(&self.shadow.map_view),
+                    resource: crate::gpu::BindingResource::TextureView(
+                        &self.scene_tier.shadow.map_view,
+                    ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
                     resource: crate::gpu::BindingResource::Sampler(
-                        &self.shadow.atlas_depth_sampler,
+                        &self.scene_tier.shadow.atlas_depth_sampler,
                     ),
                 },
             ],
         });
-        self.shadow.atlas_viewer_bg = viewer_bg;
+        self.scene_tier.shadow.atlas_viewer_bg = viewer_bg;
 
         // The per-viewport camera groups bind the same views and live on the
         // renderer; flag them for rebuild there.
@@ -1680,30 +1744,47 @@ impl DeviceResources {
         clip_volume_buf: &crate::gpu::Buffer,
         label: &str,
     ) -> crate::gpu::BindGroup {
+        // Overlay-only: viewport slots still hold a camera group, which no
+        // overlay pipeline binds, so an empty one stands in for it.
+        if !self.scene_tier.is_built() {
+            let layout = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some(label),
+                entries: &[],
+            });
+            return device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                label: Some(label),
+                layout: &layout,
+                entries: &[],
+            });
+        }
         let irr = self
+            .scene_tier
             .ibl
             .irradiance_view
             .as_ref()
-            .unwrap_or(&self.ibl.fallback_array_view);
+            .unwrap_or(&self.scene_tier.ibl.fallback_array_view);
         let spec = self
+            .scene_tier
             .ibl
             .prefiltered_view
             .as_ref()
-            .unwrap_or(&self.ibl.fallback_array_view);
+            .unwrap_or(&self.scene_tier.ibl.fallback_array_view);
         let brdf = self
+            .scene_tier
             .ibl
             .brdf_lut_view
             .as_ref()
-            .unwrap_or(&self.ibl.fallback_brdf_view);
+            .unwrap_or(&self.scene_tier.ibl.fallback_brdf_view);
         let skybox = self
+            .scene_tier
             .ibl
             .skybox_view
             .as_ref()
-            .unwrap_or(&self.ibl.fallback_view);
+            .unwrap_or(&self.scene_tier.ibl.fallback_view);
 
         device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some(label),
-            layout: &self.binds.camera_bgl,
+            layout: &self.scene_tier.binds.camera_bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -1711,15 +1792,17 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: crate::gpu::BindingResource::TextureView(&self.shadow.map_view),
+                    resource: crate::gpu::BindingResource::TextureView(
+                        &self.scene_tier.shadow.map_view,
+                    ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&self.shadow.sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.scene_tier.shadow.sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,
-                    resource: self.lighting.uniform_buf.as_entire_binding(),
+                    resource: self.scene_tier.lighting.uniform_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 4,
@@ -1747,7 +1830,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 10,
-                    resource: crate::gpu::BindingResource::Sampler(&self.ibl.sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.scene_tier.ibl.sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 11,
@@ -1755,25 +1838,29 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 13,
-                    resource: self.lighting.storage_buf.as_entire_binding(),
+                    resource: self.scene_tier.lighting.storage_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 14,
-                    resource: self.clustered.grid_uniform_buf.as_entire_binding(),
+                    resource: self
+                        .scene_tier
+                        .clustered
+                        .grid_uniform_buf
+                        .as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 15,
-                    resource: self.clustered.cluster_buf.as_entire_binding(),
+                    resource: self.scene_tier.clustered.cluster_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 17,
                     resource: crate::gpu::BindingResource::TextureView(
-                        &self.shadow.point_cube_view,
+                        &self.scene_tier.shadow.point_cube_view,
                     ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 18,
-                    resource: self.lighting.indirect_buf.as_entire_binding(),
+                    resource: self.scene_tier.lighting.indirect_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 21,
@@ -1781,7 +1868,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 23,
-                    resource: self.deform.header_buffer.as_entire_binding(),
+                    resource: self.scene_tier.deform.header_buffer.as_entire_binding(),
                 },
             ],
         })

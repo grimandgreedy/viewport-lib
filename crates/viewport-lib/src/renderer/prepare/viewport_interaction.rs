@@ -95,12 +95,12 @@ impl ViewportRenderer {
                 }
                 // Also write to shared buffers for legacy single-viewport callers.
                 queue.write_buffer(
-                    &resources.binds.clip_planes_buf,
+                    &resources.scene_tier.binds.clip_planes_buf,
                     0,
                     bytemuck::cast_slice(&[clip_uniform]),
                 );
                 queue.write_buffer(
-                    &resources.binds.clip_volume_buf,
+                    &resources.scene_tier.binds.clip_volume_buf,
                     0,
                     bytemuck::cast_slice(&[clip_vols_uniform]),
                 );
@@ -116,7 +116,7 @@ impl ViewportRenderer {
             }
             // Write to shared buffer for legacy single-viewport callers.
             queue.write_buffer(
-                &resources.binds.camera_uniform_buf,
+                &resources.scene_tier.binds.camera_uniform_buf,
                 0,
                 bytemuck::cast_slice(&[camera_uniform]),
             );
@@ -296,7 +296,7 @@ impl ViewportRenderer {
                     colour2: gp.tile_colour2.to_linear_rgba(),
                 };
                 queue.write_buffer(
-                    &resources.ground.uniform_buf,
+                    &resources.scene_tier.ground.uniform_buf,
                     0,
                     bytemuck::cast_slice(&[gp_uniform]),
                 );
@@ -368,8 +368,8 @@ impl ViewportRenderer {
                     has_position_override: if override_buf.is_some() { 1 } else { 0 },
                     position_override_base: override_slice.map_or(0, |s| s.base_element),
                     position_override_len: override_slice.map_or(u32::MAX, |s| s.element_count),
-                    deform_flags: resources.deform.flag_bits(item.mesh_id),
-                    deform_table: resources.deform.table_word(
+                    deform_flags: resources.scene_tier.deform.flag_bits(item.mesh_id),
+                    deform_table: resources.scene_tier.deform.table_word(
                         item.mesh_id,
                         item.deform_instance,
                         mesh.and_then(|m| m.sidecar.as_ref()),
@@ -380,7 +380,7 @@ impl ViewportRenderer {
                     old_outlines.next(),
                     device,
                     queue,
-                    &resources.outline.bind_group_layout,
+                    &resources.scene_tier.outline.bind_group_layout,
                     uniform,
                     override_buf.unwrap_or(&resources.content.fallback_position_override_buf),
                     resources
@@ -420,7 +420,7 @@ impl ViewportRenderer {
                     old_outlines.next(),
                     device,
                     queue,
-                    &resources.outline.bind_group_layout,
+                    &resources.scene_tier.outline.bind_group_layout,
                     uniform,
                     &resources.content.fallback_position_override_buf,
                     resources.sidecar.fallback(),
@@ -460,7 +460,7 @@ impl ViewportRenderer {
                     old_xray.next(),
                     device,
                     queue,
-                    &resources.outline.bind_group_layout,
+                    &resources.scene_tier.outline.bind_group_layout,
                     uniform,
                     &resources.content.fallback_position_override_buf,
                     resources.sidecar.fallback(),
@@ -731,9 +731,9 @@ impl ViewportRenderer {
                         continue;
                     };
                     let pipeline: &crate::gpu::RenderPipeline = if outlined.two_sided {
-                        self.resources.outline.mask_two_sided_pipeline()
+                        self.resources.scene_tier.outline.mask_two_sided_pipeline()
                     } else {
-                        self.resources.outline.mask_pipeline()
+                        self.resources.scene_tier.outline.mask_pipeline()
                     };
                     pass.set_pipeline(pipeline);
                     pass.set_bind_group(1, &outlined.mask.bind_group, &[]);
@@ -772,7 +772,7 @@ impl ViewportRenderer {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                pass.set_pipeline(self.resources.outline.edge_pipeline());
+                pass.set_pipeline(self.resources.scene_tier.outline.edge_pipeline());
                 pass.set_bind_group(0, edge_bg, &[]);
                 pass.draw(0..3, 0..1);
             }

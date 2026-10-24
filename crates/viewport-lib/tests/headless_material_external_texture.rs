@@ -76,7 +76,7 @@ fn register_update_free_semantics() {
     let (_t2, v2) = solid_srgb_texture(&device, &queue, 4, [40, 50, 60, 255]);
 
     // Register an external view, then re-point it in place.
-    let ext = res.register_texture_view(&device, &v1, 4, 4);
+    let ext = res.register_texture_view(&device, &v1, 4, 4).unwrap();
     assert!(
         res.update_texture_view(&device, ext, &v2, 4, 4),
         "update_texture_view should re-point an external id"
@@ -117,7 +117,8 @@ fn external_view_is_sampled_by_a_material() {
     let (_src, view) = solid_srgb_texture(&device, &queue, 4, [0, 0, 255, 255]);
     let tex = renderer
         .resources_mut()
-        .register_texture_view(&device, &view, 4, 4);
+        .register_texture_view(&device, &view, 4, 4)
+        .unwrap();
 
     let mesh = renderer
         .resources_mut()

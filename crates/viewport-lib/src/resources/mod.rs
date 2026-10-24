@@ -39,7 +39,7 @@ mod pick_pipelines;
 pub(crate) mod pipeline_slot;
 pub use pipeline_slot::PipelineCompilation;
 mod plugin_builders;
-mod postprocess;
+pub(crate) mod postprocess;
 pub(crate) use postprocess::TargetGroups;
 /// A GPU readback that can be polled instead of waited on.
 #[cfg(any(feature = "raytrace", feature = "bake"))]
