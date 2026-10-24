@@ -801,8 +801,8 @@ impl ViewportRenderer {
     /// downlevel or WebGL2 defaults when the adapter cannot meet that (a GL
     /// adapter has no compute and no storage buffers), and raises the
     /// storage-buffer count viewport-lib needs (clamped to what the adapter
-    /// supports), plus `max_storage_buffer_binding_size` and `max_buffer_size` to
-    /// the adapter maximum. The size raises matter for per-vertex deformers: a
+    /// supports), plus `max_storage_buffer_binding_size`, `max_buffer_size` and
+    /// the inter-stage limit to the adapter maximum. The size raises matter for per-vertex deformers: a
     /// large mesh with many morph targets produces a deform-slot storage buffer
     /// past the default 128 MiB binding cap, which the default limits cannot bind.
     /// Consumers that already request `adapter.limits()` (the device's full
@@ -838,6 +838,19 @@ impl ViewportRenderer {
         // (Metal, Vulkan and DX12 all report far more than 16).
         limits.max_sampled_textures_per_shader_stage =
             adapter_limits.max_sampled_textures_per_shader_stage;
+        // The overlay shape shader passes 46 inter-stage components (15
+        // variables), past wgpu's WebGL2 default of 31 components. Every WebGL2
+        // device has 60, and the adapter reports what it has.
+        #[cfg(wgpu27)]
+        {
+            limits.max_inter_stage_shader_components =
+                adapter_limits.max_inter_stage_shader_components;
+        }
+        #[cfg(any(wgpu29, wgpu30))]
+        {
+            limits.max_inter_stage_shader_variables =
+                adapter_limits.max_inter_stage_shader_variables;
+        }
         // The bindless material path binds one texture array; its element count
         // (a binding-array limit that defaults to 0) must be requested alongside
         // the feature or the layout is invalid. Only ask for it when the adapter

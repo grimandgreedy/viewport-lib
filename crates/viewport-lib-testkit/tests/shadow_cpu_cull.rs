@@ -12,7 +12,7 @@ use viewport_lib::{
 use viewport_lib_testkit::{meshes, orbit_camera};
 
 fn device_with(indirect: bool) -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::default_instance();
+    let instance = wgpu::instance_from_env();
     let adapter = pollster::block_on(instance.request_adapter(
         &viewport_lib::gpu::headless_adapter_options(wgpu::PowerPreference::HighPerformance),
     ))

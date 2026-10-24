@@ -10,6 +10,9 @@
 # The page posts its report back to the server as soon as it has one, so the
 # check waits for an actual result rather than for a guessed number of seconds.
 #
+# The page runs twice: on WebGPU, and with WebGPU unavailable so it comes up on
+# WebGL2, where the renderer builds only its overlay family.
+#
 # Chrome is found at the usual macOS and Linux locations, or set VPL_CHROME.
 # Needs the same wasm toolchain and wasm-bindgen as scripts/build_web.sh.
 set -euo pipefail
@@ -41,4 +44,9 @@ fi
 "$repo_root/scripts/build_web.sh" --check
 "$repo_root/scripts/build_web.sh" --release "$example"
 
-exec python3 "$repo_root/scripts/check_web.py" "$example_dir" "$chrome"
+# Once on WebGPU, then again with WebGPU unavailable, which is the WebGL2
+# fallback and the overlay-only renderer.
+status=0
+python3 "$repo_root/scripts/check_web.py" "$example_dir" "$chrome" webgpu || status=1
+python3 "$repo_root/scripts/check_web.py" "$example_dir" "$chrome" webgl2 || status=1
+exit "$status"

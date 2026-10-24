@@ -845,7 +845,7 @@ mod tests {
     use crate::gpu;
 
     fn headless_device() -> Option<(gpu::Device, gpu::Queue)> {
-        let instance = gpu::default_instance();
+        let instance = gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(&gpu::RequestAdapterOptions {
             power_preference: gpu::PowerPreference::LowPower,
             compatible_surface: None,

@@ -1417,7 +1417,7 @@ mod tests {
     }
 
     fn headless_instance() -> Option<ViewportInstance> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

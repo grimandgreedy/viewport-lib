@@ -209,7 +209,8 @@ pub struct HeadlessDevice {
 /// Like [`headless_device_with_info`], also returning the downlevel
 /// capabilities the renderer should read.
 pub fn headless_device_full(profile: &DeviceProfile) -> Option<HeadlessDevice> {
-    let instance = wgpu::default_instance();
+    // From the environment, so `WGPU_BACKEND=gl` puts a run on the GL backend.
+    let instance = wgpu::instance_from_env();
     let adapter = pollster::block_on(
         instance.request_adapter(&wgpu::headless_adapter_options(profile.power_preference)),
     )

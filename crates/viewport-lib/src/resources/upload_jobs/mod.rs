@@ -2118,7 +2118,7 @@ mod tests {
         crate::gpu::Queue,
         super::super::DeviceResources,
     )> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,
@@ -2348,7 +2348,7 @@ mod tests {
     /// builds without a GPU should pass the CPU-only tests above and skip
     /// the GPU-gated one.
     fn with_test_gpu<F: FnOnce(&crate::gpu::Device, &crate::gpu::Queue)>(f: F) {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = match pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

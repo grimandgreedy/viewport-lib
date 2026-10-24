@@ -2052,7 +2052,7 @@ mod tests {
 
     /// Resources on a headless device, for the tests that store materials.
     fn resources() -> Option<crate::resources::DeviceResources> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

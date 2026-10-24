@@ -20,7 +20,8 @@
 //! WebGPU adapter (`gpu::request_adapter_with_gl_fallback`). This scene needs
 //! WebGPU: the lit mesh path binds storage buffers in the fragment stage and
 //! the HDR pipeline uses compute, and WebGL2 has neither, so on the WebGL2 path
-//! the renderer refuses the device at construction. On WebGPU the
+//! the renderer builds at the overlay-only tier and this scene's mesh upload
+//! fails. `web-scivis-smoke` is the example that handles that tier. On WebGPU the
 //! storage-buffer count sits exactly at the spec baseline (8), which is what
 //! the base renderer needs.
 //!
