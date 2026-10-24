@@ -109,6 +109,7 @@ impl DeviceResources {
     pub fn shared_bindings(&self) -> SharedBindings<'_> {
         SharedBindings {
             group0_layout: &self.scene_tier.binds.camera_bgl,
+            shadow_group0_layout: &self.scene_tier.shadow.camera_bgl,
             sample_count: self.sample_count,
             capabilities: &self.capabilities,
         }

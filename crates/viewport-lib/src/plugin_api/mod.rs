@@ -189,6 +189,12 @@ pub struct SharedBindings<'a> {
     /// The group-0 `BindGroupLayout`. Pass by reference when calling
     /// `device.create_pipeline_layout`.
     pub group0_layout: &'a crate::gpu::BindGroupLayout,
+    /// The shadow pass's group-0 `BindGroupLayout`: the cascade light
+    /// matrix the lib binds before calling
+    /// [`cast_shadow_pass`](crate::plugin_api::ItemTypePlugin::cast_shadow_pass).
+    /// List it as group 0 of a shadow pipeline layout instead of building a
+    /// copy, which stops matching when the lib adds a binding to that group.
+    pub shadow_group0_layout: &'a crate::gpu::BindGroupLayout,
     /// MSAA sample count of the renderer's HDR scene target, as configured by
     /// [`ViewportRenderer::with_sample_count`](crate::renderer::ViewportRenderer::with_sample_count)
     /// (1 when MSAA is off).
