@@ -58,14 +58,20 @@ pub(crate) fn emit_indirect_run(
 /// this is shared verbatim across paths.
 macro_rules! emit_overlay_2d_hardcoded {
     ($this:ident, $ov:ident, $render_pass:ident) => {{
+        // The per-draw instance stream the text and shape pipelines read at
+        // vertex slot 1. Immediate draws take slot 0, the identity.
+        let instances = $ov.overlay_bindings.instances.buffer();
         // SDF overlay shapes (drawn before rects and labels).
         if let Some(ref sd) = $ov.overlay_shape_gpu_data {
             if sd.vertex_count > 0 {
                 if let Some(pipeline) = &$this.resources.overlay_shape.pipeline {
-                    if let (Some(vbuf), Some(shadow_bg)) = (&sd.vertex_buf, &sd.shadow_bind_group) {
+                    if let (Some(vbuf), Some(shadow_bg), Some(inst)) =
+                        (&sd.vertex_buf, &sd.shadow_bind_group, instances)
+                    {
                         $render_pass.set_pipeline(pipeline);
                         $render_pass.set_bind_group(0, shadow_bg, &[]);
                         $render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                        $render_pass.set_vertex_buffer(1, inst.slice(..));
                         $render_pass.draw(0..sd.vertex_count, 0..1);
                     }
                 }
@@ -87,10 +93,13 @@ macro_rules! emit_overlay_2d_hardcoded {
         }
         // Overlay labels, glyph runs, and polylines (merged text batch).
         if let Some(ref ld) = $ov.label_gpu_data {
-            if let Some(pipeline) = &$this.resources.overlay_text.pipeline {
+            if let (Some(pipeline), Some(inst)) =
+                (&$this.resources.overlay_text.pipeline, instances)
+            {
                 $render_pass.set_pipeline(pipeline);
                 $render_pass.set_bind_group(0, &ld.bind_group, &[]);
                 $render_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
+                $render_pass.set_vertex_buffer(1, inst.slice(..));
                 $render_pass.draw(0..ld.vertex_count, 0..1);
             }
         }
@@ -116,6 +125,9 @@ macro_rules! emit_overlay_2d_ordered {
             Text,
         }
         let mut last_pipe = LastPipe::None;
+        // The per-draw instance stream the text and shape pipelines read at
+        // vertex slot 1: slot 0 is the identity, retained groups their own.
+        let instances = $ov.overlay_bindings.instances.buffer();
         for seg in &$ov.overlay_draw_segments {
             match seg.source {
                 OverlayDrawSource::Shape {
@@ -123,10 +135,11 @@ macro_rules! emit_overlay_2d_ordered {
                     vertex_count,
                 } => {
                     if let Some(ref sd) = $ov.overlay_shape_gpu_data {
-                        if let (Some(pipeline), Some(vbuf), Some(shadow_bg)) = (
+                        if let (Some(pipeline), Some(vbuf), Some(shadow_bg), Some(inst)) = (
                             &$this.resources.overlay_shape.pipeline,
                             &sd.vertex_buf,
                             &sd.shadow_bind_group,
+                            instances,
                         ) {
                             if last_pipe != LastPipe::Shape {
                                 $render_pass.set_pipeline(pipeline);
@@ -134,6 +147,7 @@ macro_rules! emit_overlay_2d_ordered {
                             }
                             $render_pass.set_bind_group(0, shadow_bg, &[]);
                             $render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                            $render_pass.set_vertex_buffer(1, inst.slice(..));
                             $render_pass.draw(vertex_start..vertex_start + vertex_count, 0..1);
                         }
                     }
@@ -164,9 +178,10 @@ macro_rules! emit_overlay_2d_ordered {
                     vertex_start,
                     vertex_count,
                 } => {
-                    if let (Some(pipeline), Some(td)) = (
+                    if let (Some(pipeline), Some(td), Some(inst)) = (
                         &$this.resources.overlay_text.pipeline,
                         $ov.label_gpu_data.as_ref(),
+                        instances,
                     ) {
                         if last_pipe != LastPipe::Text {
                             $render_pass.set_pipeline(pipeline);
@@ -174,18 +189,19 @@ macro_rules! emit_overlay_2d_ordered {
                         }
                         $render_pass.set_bind_group(0, &td.bind_group, &[]);
                         $render_pass.set_vertex_buffer(0, td.vertex_buf.slice(..));
+                        $render_pass.set_vertex_buffer(1, inst.slice(..));
                         $render_pass.draw(vertex_start..vertex_start + vertex_count, 0..1);
                     }
                 }
                 OverlayDrawSource::Retained { draw_index } => {
                     // A retained group draws through the text pipeline, sharing its
-                    // bind group (atlas, clip, viewport, instances) with the
-                    // immediate text batch, from its own cached buffer and
-                    // per-frame instance slot.
-                    if let (Some(pipeline), Some(td), Some(rd)) = (
+                    // bind group (atlas, clip, viewport) with the immediate text
+                    // batch, from its own cached buffer and per-frame instance slot.
+                    if let (Some(pipeline), Some(td), Some(rd), Some(inst)) = (
                         &$this.resources.overlay_text.pipeline,
                         $ov.label_gpu_data.as_ref(),
                         $ov.overlay_retained_draws.get(draw_index as usize),
+                        instances,
                     ) {
                         if last_pipe != LastPipe::Text {
                             $render_pass.set_pipeline(pipeline);
@@ -193,6 +209,7 @@ macro_rules! emit_overlay_2d_ordered {
                         }
                         $render_pass.set_bind_group(0, &td.bind_group, &[]);
                         $render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
+                        $render_pass.set_vertex_buffer(1, inst.slice(..));
                         $render_pass
                             .draw(0..rd.vertex_count, rd.instance_index..rd.instance_index + 1);
                     }
@@ -201,9 +218,10 @@ macro_rules! emit_overlay_2d_ordered {
                     // A retained group's SDF shape stream, through the shape
                     // pipeline, from its cached buffer, shadow bind group, and
                     // per-frame instance.
-                    if let (Some(pipeline), Some(rd)) = (
+                    if let (Some(pipeline), Some(rd), Some(inst)) = (
                         &$this.resources.overlay_shape.pipeline,
                         $ov.overlay_retained_shape_draws.get(draw_index as usize),
+                        instances,
                     ) {
                         if last_pipe != LastPipe::Shape {
                             $render_pass.set_pipeline(pipeline);
@@ -211,6 +229,7 @@ macro_rules! emit_overlay_2d_ordered {
                         }
                         $render_pass.set_bind_group(0, &rd.bind_group, &[]);
                         $render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
+                        $render_pass.set_vertex_buffer(1, inst.slice(..));
                         $render_pass
                             .draw(0..rd.vertex_count, rd.instance_index..rd.instance_index + 1);
                     }

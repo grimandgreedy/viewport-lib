@@ -945,6 +945,7 @@ impl ViewportRenderer {
         // what the overlay drew. Per viewport, like `overlay_ms` above.
         let overlay_counters = self.overlay_retained_counters;
         self.last_stats.overlay_retained_submitted = overlay_counters.submitted;
+        self.last_stats.clip_masks_dropped = overlay_counters.clip_masks_dropped;
         self.last_stats.overlay_retained_drawn = overlay_counters.drawn;
         self.last_stats.overlay_retained_reemitted = overlay_counters.reemitted;
         self.last_stats.overlay_retained_bytes =

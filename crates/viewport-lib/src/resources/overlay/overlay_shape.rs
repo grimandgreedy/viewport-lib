@@ -44,39 +44,14 @@ impl crate::resources::DeviceResources {
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
 
-        // Group 0: read-only storage buffers, binding 0 = stacked shadow layers,
-        // binding 1 = clip-mask shapes.
+        // Group 0: binding 0 = the stacked shadow layers (a data texture),
+        // binding 1 = the clip-mask shapes (a uniform array). No storage
+        // buffers, so the overlay family runs on devices without them.
         let shadow_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("overlay_shape_shadow_bgl"),
             entries: &[
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            std::num::NonZeroU64::new(
-                                std::mem::size_of::<OverlayShadowLayerGpu>() as u64
-                            )
-                            .unwrap(),
-                        ),
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            std::num::NonZeroU64::new(std::mem::size_of::<ClipShapeGpu>() as u64)
-                                .unwrap(),
-                        ),
-                    },
-                    count: None,
-                },
+                shadow_layer_entry(0),
+                clip_shapes_entry(1),
                 // binding 2: viewport-size uniform (logical w, h) for the
                 // vertex shader's local-pixel-to-NDC transform.
                 crate::gpu::BindGroupLayoutEntry {
@@ -84,18 +59,6 @@ impl crate::resources::DeviceResources {
                     visibility: crate::gpu::ShaderStages::VERTEX,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 3: per-draw instance data (translate, opacity), read in
-                // the vertex shader by instance index. Slot 0 is the identity.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -123,7 +86,15 @@ impl crate::resources::DeviceResources {
                 layout: &layout,
                 vertex_module: &shader,
                 vertex_entry: "vs_main",
-                vertex_buffers: &[OverlayShapeVertex::buffer_layout()],
+                // The per-draw instance (translate, opacity, clip, tint, group
+                // transform) is a second, per-instance stream. Slot 0 is the
+                // identity immediate draws use.
+                vertex_buffers: &[
+                    OverlayShapeVertex::buffer_layout(),
+                    crate::resources::OverlayInstance::buffer_layout(
+                        &crate::resources::overlay::geometry::SHAPE_INSTANCE_ATTRIBUTES,
+                    ),
+                ],
                 primitive: crate::gpu::PrimitiveState {
                     topology: crate::gpu::PrimitiveTopology::TriangleList,
                     ..Default::default()
@@ -181,25 +152,13 @@ impl crate::resources::DeviceResources {
         let sampler =
             crate::resources::builders::clamp_linear_sampler(device, "overlay_shape_tex_sampler");
 
-        // Group 1: the clip-mask storage buffer, so a textured shape honours
-        // `with_clip` the same way a solid shape does, plus the shared
-        // shadow-layer buffer.
+        // Group 1: the clip-mask shapes, so a textured shape honours
+        // `with_clip` the same way a solid shape does, plus the shared shadow
+        // layers.
         let clip_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("overlay_shape_tex_clip_bgl"),
             entries: &[
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            std::num::NonZeroU64::new(std::mem::size_of::<ClipShapeGpu>() as u64)
-                                .unwrap(),
-                        ),
-                    },
-                    count: None,
-                },
+                clip_shapes_entry(0),
                 // binding 1: viewport-size uniform (logical w, h) for the
                 // vertex shader's local-pixel-to-NDC transform.
                 crate::gpu::BindGroupLayoutEntry {
@@ -212,23 +171,9 @@ impl crate::resources::DeviceResources {
                     },
                     count: None,
                 },
-                // binding 2: the stacked shadow layers, the same buffer the
+                // binding 2: the stacked shadow layers, the same texture the
                 // solid pass reads, so a textured shape takes the same layers.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            std::num::NonZeroU64::new(
-                                std::mem::size_of::<OverlayShadowLayerGpu>() as u64
-                            )
-                            .unwrap(),
-                        ),
-                    },
-                    count: None,
-                },
+                shadow_layer_entry(2),
             ],
         });
 
@@ -669,7 +614,137 @@ impl crate::resources::DeviceResources {
     }
 }
 
-/// One stacked shadow layer as uploaded to the shadow storage buffer.
+/// Clip-mask shapes a frame can hold. The shaders declare a uniform array this
+/// long, which at 64 bytes an entry fills the 16 KiB uniform binding every tier
+/// has. A frame's later masks are dropped and counted in
+/// `FrameStats::clip_masks_dropped`.
+pub(crate) const MAX_OVERLAY_CLIP_SHAPES: usize = 256;
+
+/// The clip uniform's size: `MAX_OVERLAY_CLIP_SHAPES` entries.
+pub(crate) const CLIP_UNIFORM_BYTES: u64 =
+    (MAX_OVERLAY_CLIP_SHAPES * std::mem::size_of::<ClipShapeGpu>()) as u64;
+
+/// Shadow layers per row of the shadow-layer texture. Each layer is
+/// `SHADOW_LAYER_TEXELS` `Rgba32Float` texels side by side, so a row is 768
+/// texels wide, inside every tier's texture limit. The shaders hold the same
+/// constant.
+pub(crate) const SHADOW_LAYERS_PER_ROW: u32 = 256;
+
+/// Texels one shadow layer takes: `colour`, `params`, `params2`.
+const SHADOW_LAYER_TEXELS: u32 = 3;
+
+/// Layout entry for the shadow-layer texture, read with `textureLoad`.
+fn shadow_layer_entry(binding: u32) -> crate::gpu::BindGroupLayoutEntry {
+    crate::gpu::BindGroupLayoutEntry {
+        binding,
+        visibility: crate::gpu::ShaderStages::FRAGMENT,
+        ty: crate::gpu::BindingType::Texture {
+            sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+            view_dimension: crate::gpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+/// Layout entry for the clip-shape uniform array.
+pub(crate) fn clip_shapes_entry(binding: u32) -> crate::gpu::BindGroupLayoutEntry {
+    crate::gpu::BindGroupLayoutEntry {
+        binding,
+        visibility: crate::gpu::ShaderStages::FRAGMENT,
+        ty: crate::gpu::BindingType::Buffer {
+            ty: crate::gpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: std::num::NonZeroU64::new(CLIP_UNIFORM_BYTES),
+        },
+        count: None,
+    }
+}
+
+/// The clip uniform as bound: exactly the array the shaders declare.
+pub(crate) fn clip_binding(buf: &crate::gpu::Buffer) -> crate::gpu::BindingResource<'_> {
+    crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
+        buffer: buf,
+        offset: 0,
+        size: std::num::NonZeroU64::new(CLIP_UNIFORM_BYTES),
+    })
+}
+
+/// `layers` (at least one) as shadow-layer texels, padded to whole rows, and
+/// the row count.
+pub(crate) fn shadow_layer_texels(layers: &[OverlayShadowLayerGpu]) -> (Vec<u8>, u32) {
+    let rows = (layers.len() as u32).div_ceil(SHADOW_LAYERS_PER_ROW).max(1);
+    let mut texels = bytemuck::cast_slice::<_, u8>(layers).to_vec();
+    let row_bytes = (SHADOW_LAYERS_PER_ROW * SHADOW_LAYER_TEXELS * 16) as usize;
+    texels.resize(rows as usize * row_bytes, 0);
+    (texels, rows)
+}
+
+/// A shadow-layer texture `rows` rows high.
+pub(crate) fn create_shadow_layer_texture(
+    device: &crate::gpu::Device,
+    rows: u32,
+) -> crate::gpu::Texture {
+    device.create_texture(&crate::gpu::TextureDescriptor {
+        label: Some("overlay_shadow_layers"),
+        size: crate::gpu::Extent3d {
+            width: SHADOW_LAYERS_PER_ROW * SHADOW_LAYER_TEXELS,
+            height: rows,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: crate::gpu::TextureDimension::D2,
+        format: crate::gpu::TextureFormat::Rgba32Float,
+        usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
+}
+
+/// Write `rows` rows of `texels` (from `shadow_layer_texels`) into `texture`.
+pub(crate) fn write_shadow_layer_texels(
+    queue: &crate::gpu::Queue,
+    texture: &crate::gpu::Texture,
+    texels: &[u8],
+    rows: u32,
+) {
+    let width = SHADOW_LAYERS_PER_ROW * SHADOW_LAYER_TEXELS;
+    queue.write_texture(
+        crate::gpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: crate::gpu::Origin3d::ZERO,
+            aspect: crate::gpu::TextureAspect::All,
+        },
+        texels,
+        crate::gpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(width * 16),
+            rows_per_image: Some(rows),
+        },
+        crate::gpu::Extent3d {
+            width,
+            height: rows,
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
+/// A shadow-layer texture holding `layers` (at least one), for a retained
+/// group compiled once. Returns the view and the bytes it holds.
+pub(crate) fn shadow_layer_texture(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    layers: &[OverlayShadowLayerGpu],
+) -> (crate::gpu::TextureView, u64) {
+    let (texels, rows) = shadow_layer_texels(layers);
+    let texture = create_shadow_layer_texture(device, rows);
+    write_shadow_layer_texels(queue, &texture, &texels, rows);
+    let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+    (view, texels.len() as u64)
+}
+
+/// One stacked shadow layer as uploaded to the shadow-layer texture.
 ///
 /// The solid overlay-shape shader reads a contiguous run of these per shape
 /// (outer layers first, then inner) starting at the vertex's `shadow_index`.
@@ -686,7 +761,7 @@ pub(crate) struct OverlayShadowLayerGpu {
     pub params2: [f32; 4],
 }
 
-/// One clip-mask shape as uploaded to the clip storage buffer, shared by the shape
+/// One clip-mask shape as uploaded to the clip uniform, shared by the shape
 /// and text pipelines. All geometry is in framebuffer pixels so the fragment shader
 /// can evaluate the mask's SDF directly against `clip_position.xy`. A vertex's
 /// `clip_index` selects its entry; `params.z` chains to a parent entry (or `-1`),
@@ -719,18 +794,17 @@ pub(crate) struct ClipShapeGpu {
 pub(crate) struct OverlayShapeVertex {
     /// NDC position (xy).
     pub position: [f32; 2],
-    /// Position relative to shape centre, in logical pixels.
+    /// Position relative to shape centre, in logical pixels. Read with
+    /// `half_size` as one attribute.
     pub local_pos: [f32; 2],
-    /// RGBA fill colour (pre-multiplied opacity).
-    pub fill_colour: [f32; 4],
     /// Half-extents of the shape bounding box in logical pixels.
     pub half_size: [f32; 2],
+    /// RGBA fill colour (pre-multiplied opacity).
+    pub fill_colour: [f32; 4],
     /// Shape-specific radii. For RoundedRect: [top-left, top-right,
     /// bottom-right, bottom-left]. For Rect: uniform radius in [0].
     /// Unused components are zero.
     pub radii: [f32; 4],
-    /// Encoded shape type: 0 = Rect/RoundedRect, 1 = Circle, 2 = Ellipse, 3 = Capsule.
-    pub shape_type: f32,
     /// RGBA end colour for linear gradient (equals fill_colour for solid fill).
     pub fill_colour2: [f32; 4],
     /// Gradient parameters: `[type, angle, stop_count, _pad]`.
@@ -738,20 +812,23 @@ pub(crate) struct OverlayShapeVertex {
     /// number of active gradient stops (0 for solid, 2..4 otherwise).
     pub gradient_params: [f32; 4],
     /// Shadow-layer index and counts: `[base_index, outer_count,
-    /// inner_count]`. The counts index into the shared shadow storage buffer
-    /// starting at `base_index`, outer layers first, then inner.
+    /// inner_count]`. The counts index into the shared shadow-layer texture
+    /// starting at `base_index`, outer layers first, then inner. Read with
+    /// `shape_type` as one attribute.
     pub shadow_index: [f32; 3],
-    /// Rotation and pivot: `[rotation_radians, pivot_x, pivot_y, _pad]`.
+    /// Encoded shape type: 0 = Rect/RoundedRect, 1 = Circle, 2 = Ellipse, 3 = Capsule.
+    pub shape_type: f32,
+    /// Rotation and pivot: `[rotation_radians, pivot_x, pivot_y]`.
     /// `local_pos` is rotated by `-rotation` around `pivot` (pixels from the
     /// shape centre) before SDF evaluation, so the shape rotates inside its
-    /// axis-aligned bounding box.
-    pub rotation_pivot: [f32; 4],
+    /// axis-aligned bounding box. Read with `clip_index` as one attribute.
+    pub rotation_pivot: [f32; 3],
+    /// Index into the clip-shape array, or `-1.0` for no clip. Selects the mask
+    /// (and its parent chain) that clips this shape by SDF.
+    pub clip_index: f32,
     /// Clip rectangle in framebuffer pixels (x0, y0, x1, y1). All-zero means
     /// no clipping. Fragments outside the rect are discarded.
     pub clip_rect: [f32; 4],
-    /// Index into the clip-shape storage buffer, or `-1.0` for no clip. Selects
-    /// the mask (and its parent chain) that clips this shape by SDF.
-    pub clip_index: f32,
     /// Third gradient colour stop. Unused for 2-stop and solid fills.
     pub stop_colour_c: [f32; 4],
     /// Fourth gradient colour stop. Unused for 2-stop and solid fills.
@@ -764,104 +841,48 @@ pub(crate) struct OverlayShapeVertex {
 }
 
 impl OverlayShapeVertex {
+    /// Twelve attributes: with the four of the instance stream that is the 16
+    /// WebGL2 allows, so fields that fit are paired into one attribute.
     pub fn buffer_layout() -> crate::gpu::VertexBufferLayout<'static> {
+        use std::mem::offset_of;
+        const ATTRIBUTES: [crate::gpu::VertexAttribute; 12] = {
+            let f2 = crate::gpu::VertexFormat::Float32x2;
+            let f4 = crate::gpu::VertexFormat::Float32x4;
+            const fn at(
+                offset: usize,
+                shader_location: u32,
+                format: crate::gpu::VertexFormat,
+            ) -> crate::gpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
+                    offset: offset as u64,
+                    shader_location,
+                    format,
+                }
+            }
+            // Offsets come from `offset_of!` so reordering fields cannot desync
+            // them from the struct.
+            [
+                at(offset_of!(OverlayShapeVertex, position), 0, f2),
+                // local_pos, half_size
+                at(offset_of!(OverlayShapeVertex, local_pos), 1, f4),
+                at(offset_of!(OverlayShapeVertex, fill_colour), 2, f4),
+                at(offset_of!(OverlayShapeVertex, radii), 3, f4),
+                at(offset_of!(OverlayShapeVertex, fill_colour2), 4, f4),
+                at(offset_of!(OverlayShapeVertex, gradient_params), 5, f4),
+                // shadow_index, shape_type
+                at(offset_of!(OverlayShapeVertex, shadow_index), 6, f4),
+                // rotation_pivot, clip_index
+                at(offset_of!(OverlayShapeVertex, rotation_pivot), 7, f4),
+                at(offset_of!(OverlayShapeVertex, clip_rect), 8, f4),
+                at(offset_of!(OverlayShapeVertex, stop_colour_c), 9, f4),
+                at(offset_of!(OverlayShapeVertex, stop_colour_d), 10, f4),
+                at(offset_of!(OverlayShapeVertex, stop_positions), 11, f4),
+            ]
+        };
         crate::gpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<OverlayShapeVertex>() as crate::gpu::BufferAddress,
             step_mode: crate::gpu::VertexStepMode::Vertex,
-            // Offsets come from `offset_of!` so reordering fields cannot desync
-            // them from the struct.
-            attributes: &[
-                // location 0: position vec2f
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, position) as u64,
-                    shader_location: 0,
-                    format: crate::gpu::VertexFormat::Float32x2,
-                },
-                // location 1: local_pos vec2f
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, local_pos) as u64,
-                    shader_location: 1,
-                    format: crate::gpu::VertexFormat::Float32x2,
-                },
-                // location 2: fill_colour vec4f
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, fill_colour) as u64,
-                    shader_location: 2,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 3: half_size vec2f
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, half_size) as u64,
-                    shader_location: 3,
-                    format: crate::gpu::VertexFormat::Float32x2,
-                },
-                // location 4: radii vec4f
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, radii) as u64,
-                    shader_location: 4,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 5: shape_type f32
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, shape_type) as u64,
-                    shader_location: 5,
-                    format: crate::gpu::VertexFormat::Float32,
-                },
-                // location 6: fill_colour2 vec4f (end colour for gradient)
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, fill_colour2) as u64,
-                    shader_location: 6,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 7: gradient_params vec4f (type, angle, stop_count, pad)
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, gradient_params) as u64,
-                    shader_location: 7,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 8: shadow_index vec3f (base_index, outer_ct, inner_ct)
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, shadow_index) as u64,
-                    shader_location: 8,
-                    format: crate::gpu::VertexFormat::Float32x3,
-                },
-                // location 9: rotation_pivot vec4f (rotation, pivot_x, pivot_y, pad)
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, rotation_pivot) as u64,
-                    shader_location: 9,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 10: clip_rect vec4f (x0, y0, x1, y1 in framebuffer pixels)
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, clip_rect) as u64,
-                    shader_location: 10,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 11: clip_index f32
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, clip_index) as u64,
-                    shader_location: 11,
-                    format: crate::gpu::VertexFormat::Float32,
-                },
-                // location 12: stop_colour_c vec4f
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, stop_colour_c) as u64,
-                    shader_location: 12,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 13: stop_colour_d vec4f
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, stop_colour_d) as u64,
-                    shader_location: 13,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 14: stop_positions vec4f (gradient stop positions)
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeVertex, stop_positions) as u64,
-                    shader_location: 14,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-            ],
+            attributes: &ATTRIBUTES,
         }
     }
 }
@@ -1176,19 +1197,20 @@ pub(crate) struct OverlayShapeGpuData {
     pub vertex_buf: Option<crate::gpu::Buffer>,
     /// Number of solid vertices. Zero when all shapes are textured.
     pub vertex_count: u32,
-    /// Bind group (group 0) holding the stacked shadow-layer storage buffer
-    /// for the solid pipeline. Present whenever `vertex_buf` is `Some`.
+    /// Bind group (group 0) holding the stacked shadow layers and the clip
+    /// shapes for the solid pipeline. Present whenever `vertex_buf` is `Some`.
     pub shadow_bind_group: Option<crate::gpu::BindGroup>,
-    /// Backing storage buffer for `shadow_bind_group`. Kept alive alongside it.
-    pub _shadow_buf: Option<crate::gpu::Buffer>,
-    /// Backing clip-shape storage buffer for `shadow_bind_group` (binding 1).
+    /// Backing shadow-layer texture for `shadow_bind_group`. Kept alive
+    /// alongside it.
+    pub _shadow_tex: Option<crate::gpu::TextureView>,
+    /// Backing clip-shape uniform for `shadow_bind_group` (binding 1).
     pub _clip_buf: Option<crate::gpu::Buffer>,
     /// One batch per unique texture, drawn after solid shapes.
     pub tex_batches: Vec<OverlayShapeTexBatch>,
     /// Clip-mask bind group (group 1) shared by every textured and blur draw.
     /// Present whenever the texture pipeline is used this frame.
     pub tex_clip_bind_group: Option<crate::gpu::BindGroup>,
-    /// Backing clip-shape storage buffer for `tex_clip_bind_group`. Kept alive
+    /// Backing clip-shape uniform for `tex_clip_bind_group`. Kept alive
     /// alongside it.
     pub _tex_clip_buf: Option<crate::gpu::Buffer>,
     /// Vertex buffer for backdrop-blur shapes (frosted glass). Uses the same
@@ -1201,4 +1223,57 @@ pub(crate) struct OverlayShapeGpuData {
     /// Maximum `backdrop_blur` value across all blur shapes this frame.
     /// Used as the spread parameter for the Gaussian blur passes.
     pub max_blur_radius: f32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shaders declare the clip array and the shadow-layer row width as
+    /// literals; they have to agree with the constants the buffers are sized by.
+    #[test]
+    fn shader_constants_match() {
+        let clip = format!("array<ClipShape, {MAX_OVERLAY_CLIP_SHAPES}>");
+        let row = format!("SHADOW_LAYERS_PER_ROW: i32 = {SHADOW_LAYERS_PER_ROW};");
+        for (name, src) in [
+            (
+                "overlay_shape",
+                crate::resources::builders::wgsl_source!("overlay_shape"),
+            ),
+            (
+                "overlay_shape_tex",
+                crate::resources::builders::wgsl_source!("overlay_shape_tex"),
+            ),
+            (
+                "overlay_text",
+                crate::resources::builders::wgsl_source!("overlay_text"),
+            ),
+        ] {
+            assert!(src.contains(&clip), "{name} does not declare {clip}");
+            if name != "overlay_text" {
+                assert!(src.contains(&row), "{name} does not declare {row}");
+            }
+        }
+        assert_eq!(CLIP_UNIFORM_BYTES, 16 << 10);
+    }
+
+    #[test]
+    fn shadow_layers_pad_to_whole_rows() {
+        let layer = OverlayShadowLayerGpu {
+            colour: [1.0; 4],
+            params: [2.0; 4],
+            params2: [3.0; 4],
+        };
+        let row_bytes = (SHADOW_LAYERS_PER_ROW * SHADOW_LAYER_TEXELS * 16) as usize;
+        let (texels, rows) = shadow_layer_texels(&[layer]);
+        assert_eq!((texels.len(), rows), (row_bytes, 1));
+        let many = vec![layer; SHADOW_LAYERS_PER_ROW as usize + 1];
+        let (texels, rows) = shadow_layer_texels(&many);
+        assert_eq!((texels.len(), rows), (2 * row_bytes, 2));
+        // Layer 256 opens the second row.
+        assert_eq!(
+            &texels[row_bytes..row_bytes + 48],
+            bytemuck::bytes_of(&layer)
+        );
+    }
 }

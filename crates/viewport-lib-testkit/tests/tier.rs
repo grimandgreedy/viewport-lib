@@ -103,11 +103,24 @@ fn no_compute_profile() -> DeviceProfile {
 
 #[test]
 fn overlay_only_draws_overlays_as_the_full_tier_does() {
+    assert_overlays_match_the_full_tier(&no_compute_profile());
+}
+
+/// The overlay family binds no storage buffer and no compute, so a device with
+/// WebGL2's limits draws every overlay scene exactly as the full tier does.
+#[test]
+fn webgl2_draws_overlays_as_the_full_tier_does() {
+    assert_overlays_match_the_full_tier(&DeviceProfile::downlevel_webgl2("tier-webgl2-overlays"));
+}
+
+/// Render every overlay scene on `profile` and on the full tier's LDR path, and
+/// require the same pixels.
+fn assert_overlays_match_the_full_tier(profile: &DeviceProfile) {
     let Some(mut full) = Harness::new() else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let Some(mut overlay) = Harness::with_profile(&no_compute_profile()) else {
+    let Some(mut overlay) = Harness::with_profile(profile) else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
@@ -459,11 +472,16 @@ fn draw_split(harness: &mut Harness, frame: &mut viewport_lib::FrameData) -> (Ve
 
 #[test]
 fn overlay_only_draws_through_the_split_and_host_pass_paths() {
+    assert_split_paths_match_the_full_tier(&no_compute_profile());
+    assert_split_paths_match_the_full_tier(&DeviceProfile::downlevel_webgl2("tier-webgl2-split"));
+}
+
+fn assert_split_paths_match_the_full_tier(profile: &DeviceProfile) {
     let Some(mut full) = Harness::new() else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let Some(mut overlay) = Harness::with_profile(&no_compute_profile()) else {
+    let Some(mut overlay) = Harness::with_profile(profile) else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
@@ -513,6 +531,11 @@ fn scene_items(frame: &viewport_lib::FrameData) -> usize {
 
 #[test]
 fn overlay_only_renders_every_catalogue_scene_without_reaching_the_scene_tier() {
+    sweep_catalogue(&no_compute_profile());
+    sweep_catalogue(&DeviceProfile::downlevel_webgl2("tier-webgl2-sweep"));
+}
+
+fn sweep_catalogue(profile: &DeviceProfile) {
     // The overlay-only renderer reads the scene tier through a slot that
     // panics when a path is missing its tier check, so this is the sweep for
     // such a path: every scene the catalogue has, scivis types included. The
@@ -522,7 +545,7 @@ fn overlay_only_renders_every_catalogue_scene_without_reaching_the_scene_tier() 
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let Some(mut overlay) = Harness::with_profile(&no_compute_profile()) else {
+    let Some(mut overlay) = Harness::with_profile(profile) else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };

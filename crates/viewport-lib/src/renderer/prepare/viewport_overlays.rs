@@ -459,6 +459,10 @@ fn emit_vector_shadow(
 /// same mask. A mask id is expected to be unique within a frame; if one is
 /// reused, the first mask with that id wins (both for the index and the bbox),
 /// which is why the bbox comes from here rather than a separate id-keyed map.
+///
+/// At most `MAX_OVERLAY_CLIP_SHAPES` masks are kept, the length of the shaders'
+/// uniform array. A later mask is dropped, as a culled one is, and counted in
+/// the last element of the result.
 fn build_clip_shapes(
     shapes: &[crate::renderer::types::OverlayShapeItem],
     ppp: f32,
@@ -469,7 +473,9 @@ fn build_clip_shapes(
     Vec<crate::resources::ClipShapeGpu>,
     std::collections::HashMap<u32, i32>,
     Vec<[f32; 4]>,
+    u32,
 ) {
+    let mut dropped = 0;
     // Collect masks in stable order, recording each id's index. Each mask
     // resolves its anchor to an effective top-left, the same way the draw loop
     // does, so corner- and world-anchored masks clip where they draw. A mask
@@ -490,6 +496,12 @@ fn build_clip_shapes(
             }
             if let std::collections::hash_map::Entry::Vacant(e) = index_of.entry(id) {
                 if let Some(tl) = s.resolve_top_left(viewport, view, proj) {
+                    if masks.len()
+                        == crate::resources::overlay::overlay_shape::MAX_OVERLAY_CLIP_SHAPES
+                    {
+                        dropped += 1;
+                        continue;
+                    }
                     e.insert(masks.len() as i32);
                     masks.push((s, tl));
                 }
@@ -535,7 +547,7 @@ fn build_clip_shapes(
             (tl[1] + s.size[1]) * ppp,
         ]);
     }
-    (out, index_of, bboxes)
+    (out, index_of, bboxes, dropped)
 }
 
 /// Written in place of an empty clip list, so the clip binding always has an
@@ -638,10 +650,10 @@ impl ViewportRenderer {
         }
     }
 
-    /// Ensure `overlay_instances_buf` holds at least the identity instance. The
+    /// Ensure the instance stream holds at least the identity instance. The
     /// label prepare fills it with the identity plus one slot per retained group;
     /// this fallback covers a frame with immediate shapes but no text or retained
-    /// groups, so the shape pipeline's binding is always satisfied.
+    /// groups, so the shape pipeline always has an instance stream to read.
     fn ensure_overlay_instances_default(
         ov: &mut crate::renderer::ViewportOverlay,
         device: &crate::gpu::Device,
@@ -711,8 +723,9 @@ impl ViewportRenderer {
                 // same registry, so a clipped item's `clip_rect` and `clip_index` always
                 // describe the same mask.
                 let overlay_time = frame.overlays.time;
-                let (clip_shapes, clip_index_of, clip_bboxes) =
+                let (clip_shapes, clip_index_of, clip_bboxes, clips_dropped) =
                     build_clip_shapes(&frame.overlays.shapes, ppp, [vp_w, vp_h], view, proj);
+                self.overlay_retained_counters.clip_masks_dropped = clips_dropped;
                 // Stamp an item's clip onto every vertex it emitted: the mask
                 // bbox and index when it names a mask, intersected with the
                 // item's own `clip_rect`. Both are framebuffer-pixel boxes, and
@@ -1364,7 +1377,7 @@ impl ViewportRenderer {
                 let mut pending_shapes: Vec<(
                     crate::gpu::Buffer,
                     u32,
-                    crate::gpu::Buffer,
+                    crate::gpu::TextureView,
                     u32,
                     i32,
                 )> = Vec::new();
@@ -1398,7 +1411,7 @@ impl ViewportRenderer {
                             Some(c) => {
                                 let text = (c.vertex_count > 0)
                                     .then(|| (c.vertex_buf.clone(), c.vertex_count));
-                                let shape = match (&c.shape_vertex_buf, &c.shadow_buf) {
+                                let shape = match (&c.shape_vertex_buf, &c.shadow_tex) {
                                     (Some(sv), Some(sh)) if c.shape_vertex_count > 0 => {
                                         Some((sv.clone(), c.shape_vertex_count, sh.clone()))
                                     }
@@ -1518,18 +1531,16 @@ impl ViewportRenderer {
                         queue,
                         clip_data(&clip_shapes),
                     );
-                    // Shared with the shape pass (immediate shapes read the
-                    // identity at slot 0; retained shape draws use their slot).
-                    let instances_buf = ov
-                        .overlay_bindings
+                    // The instance stream, shared with the shape pass (immediate
+                    // draws read the identity at slot 0; retained draws their own).
+                    ov.overlay_bindings
                         .instances
                         .write_changed(device, queue, &instances);
                     ov.overlay_instances_ready = true;
 
-                    // Finish retained shape-stream draws now that the instance
-                    // buffer exists: build each group's shape bind group (its shadow
-                    // buffer plus the shared clip / viewport / instances) and record
-                    // its draw + segment.
+                    // Finish retained shape-stream draws: build each group's shape
+                    // bind group (its shadow-layer texture plus the shared clip and
+                    // viewport) and record its draw + segment.
                     if pending_shapes.is_empty() {
                         ov.overlay_bindings.retained_shape_bgs.clear();
                     } else {
@@ -1544,7 +1555,7 @@ impl ViewportRenderer {
                                 let mut cached = previous.remove(&shbuf).unwrap_or_else(
                                     crate::resources::cached_bind_group::CachedBindGroup::new,
                                 );
-                                let key = [clip_buf.clone(), vp_buf.clone(), instances_buf.clone()];
+                                let key = [clip_buf.clone(), vp_buf.clone()];
                                 let bind_group = cached.get(key, || {
                                     device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                                         label: Some("overlay_retained_shape_bg"),
@@ -1552,19 +1563,19 @@ impl ViewportRenderer {
                                         entries: &[
                                             crate::gpu::BindGroupEntry {
                                                 binding: 0,
-                                                resource: shbuf.as_entire_binding(),
+                                                resource: crate::gpu::BindingResource::TextureView(
+                                                    &shbuf,
+                                                ),
                                             },
                                             crate::gpu::BindGroupEntry {
                                                 binding: 1,
-                                                resource: clip_buf.as_entire_binding(),
+                                                resource: crate::resources::overlay::overlay_shape::clip_binding(
+                                                    &clip_buf,
+                                                ),
                                             },
                                             crate::gpu::BindGroupEntry {
                                                 binding: 2,
                                                 resource: vp_buf.as_entire_binding(),
-                                            },
-                                            crate::gpu::BindGroupEntry {
-                                                binding: 3,
-                                                resource: instances_buf.as_entire_binding(),
                                             },
                                         ],
                                     })
@@ -1591,12 +1602,7 @@ impl ViewportRenderer {
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
                     let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
                     let atlas_view = &self.resources.content.glyph_atlas.view;
-                    let key = (
-                        atlas_view.clone(),
-                        clip_buf.clone(),
-                        vp_buf.clone(),
-                        instances_buf.clone(),
-                    );
+                    let key = (atlas_view.clone(), clip_buf.clone(), vp_buf.clone());
                     let bind_group = ov.overlay_bindings.label_bg.get(key, || {
                         device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                             label: Some("overlay_label_bg"),
@@ -1612,15 +1618,14 @@ impl ViewportRenderer {
                                 },
                                 crate::gpu::BindGroupEntry {
                                     binding: 2,
-                                    resource: clip_buf.as_entire_binding(),
+                                    resource:
+                                        crate::resources::overlay::overlay_shape::clip_binding(
+                                            &clip_buf,
+                                        ),
                                 },
                                 crate::gpu::BindGroupEntry {
                                     binding: 3,
                                     resource: vp_buf.as_entire_binding(),
-                                },
-                                crate::gpu::BindGroupEntry {
-                                    binding: 4,
-                                    resource: instances_buf.as_entire_binding(),
                                 },
                             ],
                         })
@@ -1630,7 +1635,6 @@ impl ViewportRenderer {
                         vertex_count: verts.len() as u32,
                         bind_group,
                         _clip_buf: clip_buf,
-                        _instances_buf: instances_buf,
                     });
                 }
             }
@@ -1735,8 +1739,9 @@ impl ViewportRenderer {
                 let ppp = frame.camera.pixels_per_point;
                 let view = &frame.camera.render_camera.view;
                 let proj = &frame.camera.render_camera.projection;
-                let (clip_shapes, clip_index_of, clip_bboxes) =
+                let (clip_shapes, clip_index_of, clip_bboxes, clips_dropped) =
                     build_clip_shapes(&frame.overlays.shapes, ppp, [vp_w, vp_h], view, proj);
+                self.overlay_retained_counters.clip_masks_dropped = clips_dropped;
 
                 for shape_orig in &sorted {
                     // Mask-only shapes contribute a clip rectangle but are
@@ -2364,7 +2369,6 @@ impl ViewportRenderer {
                             shape.transform.rotation,
                             shape.transform.pivot[0],
                             shape.transform.pivot[1],
-                            0.0,
                         ];
                         let solid_seg_start = solid_verts.len() as u32;
                         for (px, py, lx, ly) in corners_px {
@@ -2509,14 +2513,10 @@ impl ViewportRenderer {
                     None
                 };
 
-                // Build the shadow-layer storage buffer and its bind group.
-                // The solid pipeline layout always expects group 0, so we
-                // provide at least one (dummy) element even when no shape has
-                // shadows.
-                // One shadow-layer buffer per frame, read by all three shape
-                // pipelines. A layer is always present so the storage binding
-                // has something to point at.
-                let shadow_buf = if solid_vbuf.is_some() || has_tex || has_blur {
+                // One shadow-layer texture per frame, read by all three shape
+                // pipelines. A layer is always present, even when no shape has
+                // shadows, so the binding has something to point at.
+                let shadow_tex = if solid_vbuf.is_some() || has_tex || has_blur {
                     if shadow_layers.is_empty() {
                         shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
                             colour: [0.0; 4],
@@ -2533,52 +2533,46 @@ impl ViewportRenderer {
                     None
                 };
 
-                let (shadow_bind_group, shape_clip_buf) =
-                    if let (true, Some(buf)) = (solid_vbuf.is_some(), shadow_buf.as_ref()) {
-                        let clip_buf = ov.overlay_bindings.clip.write_changed(
-                            device,
-                            queue,
-                            clip_data(&clip_shapes),
-                        );
-                        let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
-                        let inst_buf = ov.overlay_bindings.instances.buffer().unwrap().clone();
-                        let key = [
-                            buf.clone(),
-                            clip_buf.clone(),
-                            vp_buf.clone(),
-                            inst_buf.clone(),
-                        ];
-                        let cache = &mut ov.overlay_bindings.shape_shadow_bg;
-                        let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
-                            cache.get(key, || {
-                                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                                    label: Some("overlay_shape_shadow_bg"),
-                                    layout: bgl,
-                                    entries: &[
-                                        crate::gpu::BindGroupEntry {
-                                            binding: 0,
-                                            resource: buf.as_entire_binding(),
-                                        },
-                                        crate::gpu::BindGroupEntry {
-                                            binding: 1,
-                                            resource: clip_buf.as_entire_binding(),
-                                        },
-                                        crate::gpu::BindGroupEntry {
-                                            binding: 2,
-                                            resource: vp_buf.as_entire_binding(),
-                                        },
-                                        crate::gpu::BindGroupEntry {
-                                            binding: 3,
-                                            resource: inst_buf.as_entire_binding(),
-                                        },
-                                    ],
-                                })
+                let (shadow_bind_group, shape_clip_buf) = if let (true, Some(shadow)) =
+                    (solid_vbuf.is_some(), shadow_tex.as_ref())
+                {
+                    let clip_buf = ov.overlay_bindings.clip.write_changed(
+                        device,
+                        queue,
+                        clip_data(&clip_shapes),
+                    );
+                    let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
+                    let key = (shadow.clone(), clip_buf.clone(), vp_buf.clone());
+                    let cache = &mut ov.overlay_bindings.shape_shadow_bg;
+                    let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
+                        cache.get(key, || {
+                            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                                label: Some("overlay_shape_shadow_bg"),
+                                layout: bgl,
+                                entries: &[
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: crate::gpu::BindingResource::TextureView(shadow),
+                                    },
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource:
+                                            crate::resources::overlay::overlay_shape::clip_binding(
+                                                &clip_buf,
+                                            ),
+                                    },
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 2,
+                                        resource: vp_buf.as_entire_binding(),
+                                    },
+                                ],
                             })
-                        });
-                        (bg, Some(clip_buf))
-                    } else {
-                        (None, None)
-                    };
+                        })
+                    });
+                    (bg, Some(clip_buf))
+                } else {
+                    (None, None)
+                };
 
                 let mut tex_batches = Vec::new();
                 // Maps a texture group index to its batch index in `tex_batches`
@@ -2682,8 +2676,8 @@ impl ViewportRenderer {
                             clip_data(&clip_shapes),
                         );
                         let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
-                        let shadow = shadow_buf.as_ref().unwrap();
-                        let key = [clip_buf.clone(), vp_buf.clone(), shadow.clone()];
+                        let shadow = shadow_tex.as_ref().unwrap();
+                        let key = (clip_buf.clone(), vp_buf.clone(), shadow.clone());
                         let bg = ov.overlay_bindings.tex_clip_bg.get(key, || {
                             device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                                 label: Some("overlay_shape_tex_clip_bg"),
@@ -2691,7 +2685,10 @@ impl ViewportRenderer {
                                 entries: &[
                                     crate::gpu::BindGroupEntry {
                                         binding: 0,
-                                        resource: clip_buf.as_entire_binding(),
+                                        resource:
+                                            crate::resources::overlay::overlay_shape::clip_binding(
+                                                &clip_buf,
+                                            ),
                                     },
                                     crate::gpu::BindGroupEntry {
                                         binding: 1,
@@ -2699,7 +2696,7 @@ impl ViewportRenderer {
                                     },
                                     crate::gpu::BindGroupEntry {
                                         binding: 2,
-                                        resource: shadow.as_entire_binding(),
+                                        resource: crate::gpu::BindingResource::TextureView(shadow),
                                     },
                                 ],
                             })
@@ -2723,7 +2720,7 @@ impl ViewportRenderer {
                         vertex_buf: solid_vbuf,
                         vertex_count: solid_verts.len() as u32,
                         shadow_bind_group,
-                        _shadow_buf: shadow_buf,
+                        _shadow_tex: shadow_tex,
                         _clip_buf: shape_clip_buf,
                         tex_batches,
                         tex_clip_bind_group,
@@ -2769,7 +2766,7 @@ mod clip_registry_tests {
         let child = OverlayShapeItem::new(OverlayShape::Circle, [110.0, 60.0], [80.0, 80.0])
             .provides_mask(20)
             .with_clip(10);
-        let (gpu, map, bboxes) = build_clip_shapes(
+        let (gpu, map, bboxes, _) = build_clip_shapes(
             &[parent, child],
             2.0,
             [1000.0, 1000.0],
@@ -2816,7 +2813,7 @@ mod clip_registry_tests {
             [50.0, 50.0],
         )
         .provides_mask(5);
-        let (gpu, map, bboxes) = build_clip_shapes(
+        let (gpu, map, bboxes, _) = build_clip_shapes(
             &[first, second],
             1.0,
             [1000.0, 1000.0],
@@ -2831,9 +2828,37 @@ mod clip_registry_tests {
     }
 
     #[test]
+    fn masks_past_the_limit_are_dropped_and_counted() {
+        let max = crate::resources::overlay::overlay_shape::MAX_OVERLAY_CLIP_SHAPES;
+        let masks: Vec<_> = (0..max as u32 + 3)
+            .map(|id| {
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: 0.0 },
+                    [0.0, 0.0],
+                    [10.0, 10.0],
+                )
+                .provides_mask(id)
+            })
+            .collect();
+        let (gpu, map, bboxes, dropped) = build_clip_shapes(
+            &masks,
+            1.0,
+            [1000.0, 1000.0],
+            &glam::Mat4::IDENTITY,
+            &glam::Mat4::IDENTITY,
+        );
+        assert_eq!(gpu.len(), max);
+        assert_eq!(bboxes.len(), max);
+        assert_eq!(dropped, 3);
+        // A dropped mask has no index, so an item naming it draws unclipped.
+        assert!(!map.contains_key(&(max as u32)));
+        assert_eq!(map[&(max as u32 - 1)], max as i32 - 1);
+    }
+
+    #[test]
     fn non_mask_shapes_are_ignored() {
         let drawn = OverlayShapeItem::new(OverlayShape::Circle, [0.0, 0.0], [10.0, 10.0]);
-        let (gpu, map, bboxes) = build_clip_shapes(
+        let (gpu, map, bboxes, _) = build_clip_shapes(
             &[drawn],
             1.0,
             [1000.0, 1000.0],
@@ -2863,7 +2888,7 @@ mod clip_registry_tests {
         .provides_mask(7);
         let analytic = OverlayShapeItem::new(OverlayShape::Circle, [10.0, 10.0], [40.0, 40.0])
             .provides_mask(8);
-        let (gpu, map, bboxes) = build_clip_shapes(
+        let (gpu, map, bboxes, _) = build_clip_shapes(
             &[vector, analytic],
             1.0,
             [1000.0, 1000.0],

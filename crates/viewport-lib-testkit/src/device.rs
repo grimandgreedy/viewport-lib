@@ -19,8 +19,8 @@ pub enum Limits {
     /// limits-following consumer requests, and what the renderer asserts it has.
     Recommended,
     /// `wgpu::Limits::downlevel_webgl2_defaults()`, with the adapter's own
-    /// texture size: no storage buffers and no compute, as a browser without
-    /// WebGPU gives. wgpu enforces requested limits whatever the hardware can
+    /// texture size and, on wgpu 27, GLES 3.0's 60 inter-stage components: no
+    /// storage buffers and no compute, as a browser without WebGPU gives. wgpu enforces requested limits whatever the hardware can
     /// do, so any adapter runs as that device class. The profile also strips
     /// the downlevel flags WebGL2 lacks (see [`WEBGL2_MISSING_DOWNLEVEL`]).
     DownlevelWebGl2,
@@ -229,7 +229,18 @@ pub fn headless_device_full(profile: &DeviceProfile) -> Option<HeadlessDevice> {
         Limits::WgpuDefault => wgpu::Limits::default(),
         Limits::Recommended => ViewportRenderer::recommended_device_limits(&adapter),
         Limits::DownlevelWebGl2 => {
-            wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
+            #[allow(unused_mut)]
+            let mut limits =
+                wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
+            // wgpu 27 counts inter-stage components, and its WebGL2 default of 31
+            // is a desktop GL 3.1 driver's. WebGL2 is GLES 3.0, which guarantees
+            // 60, and wgpu's GL backend reports the browser's own figure. 29 and
+            // 30 count variables, where the WebGL2 default (15) is GLES 3.0's.
+            #[cfg(feature = "wgpu27")]
+            {
+                limits.max_inter_stage_shader_components = 60;
+            }
+            limits
         }
     };
     if let Some(max) = profile.max_bind_groups {

@@ -591,6 +591,14 @@ pub struct FrameStats {
     /// Reported for the most recently prepared viewport, not summed across
     /// them, matching [`PrepareBreakdown::overlay_ms`].
     pub overlay_retained_submitted: u32,
+    /// Overlay clip masks this frame dropped because the frame already held
+    /// the most there is room for (256, a 16 KiB uniform array of masks). An
+    /// item clipped by a dropped mask draws unclipped, as it would with a mask
+    /// id no shape provides.
+    ///
+    /// Reported for the most recently prepared viewport, like
+    /// [`overlay_retained_submitted`](Self::overlay_retained_submitted).
+    pub clip_masks_dropped: u32,
     /// Retained overlay groups drawn from their compiled buffers this frame.
     ///
     /// Counts groups, not draws: a group carrying both text and SDF-shape

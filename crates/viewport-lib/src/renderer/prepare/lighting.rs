@@ -792,13 +792,18 @@ impl ViewportRenderer {
             // lookup-table indirection at that scale. A consumer-set debug
             // override also forces the fallback path so the two can be A/B'd
             // for correctness checks.
-            let want_clusters = !frame.effects.debug.force_cluster_fallback
+            // The cluster grid is built in compute; without it the frame shades
+            // every light directly and the grid is never read, so it needs no
+            // clear either.
+            let compute = resources.capabilities.compute;
+            let want_clusters = compute
+                && !frame.effects.debug.force_cluster_fallback
                 && active_count > crate::resources::gpu::clustered::SMALL_N_THRESHOLD;
             // The clear is owed only once a build has written the grid, so a
             // viewport whose light count never reaches the cluster threshold
             // composes neither compute pipeline. While they compile on a
             // worker the frame takes the per-light fallback.
-            if want_clusters || resources.scene_tier.clustered.grid_dirty() {
+            if compute && (want_clusters || resources.scene_tier.clustered.grid_dirty()) {
                 if resources
                     .scene_tier
                     .clustered
@@ -901,7 +906,7 @@ impl ViewportRenderer {
                 None
             };
             // Nothing to build and nothing to clear: no command buffer.
-            if build_count > 0 || resources.scene_tier.clustered.grid_dirty() {
+            if compute && (build_count > 0 || resources.scene_tier.clustered.grid_dirty()) {
                 let mut encoder =
                     device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                         label: Some("cluster_frame_encoder"),

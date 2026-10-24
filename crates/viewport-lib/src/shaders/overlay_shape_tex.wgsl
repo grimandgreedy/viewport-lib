@@ -70,7 +70,9 @@ struct ClipShape {
     pad:       vec2<f32>,
 }
 
-@group(1) @binding(0) var<storage, read> clip_shapes: array<ClipShape>;
+// A uniform array of the renderer's `MAX_OVERLAY_CLIP_SHAPES` (256 at 64 bytes
+// fills a 16 KiB uniform binding); a frame's later masks are dropped.
+@group(1) @binding(0) var<uniform> clip_shapes: array<ClipShape, 256>;
 
 // Viewport size in logical pixels (xy); zw padding. Maps local-pixel vertex
 // positions to NDC so overlay geometry is independent of the viewport size.
@@ -81,7 +83,21 @@ struct Viewport {
 @group(1) @binding(1) var<uniform> viewport: Viewport;
 
 // The stacked shadow layers, shared with the solid overlay-shape pass.
-@group(1) @binding(2) var<storage, read> shadow_layers: array<ShadowLayer>;
+@group(1) @binding(2) var shadow_layers: texture_2d<f32>;
+
+// The stacked shadow layers, as a data texture rather than a storage buffer so
+// the overlay family runs on devices without storage buffers. Layer `i` is
+// three `Rgba32Float` texels side by side, `SHADOW_LAYERS_PER_ROW` layers to a
+// row (the renderer's constant of the same name).
+const SHADOW_LAYERS_PER_ROW: i32 = 256;
+fn shadow_layer(i: i32) -> ShadowLayer {
+    let at = vec2<i32>((i % SHADOW_LAYERS_PER_ROW) * 3, i / SHADOW_LAYERS_PER_ROW);
+    return ShadowLayer(
+        textureLoad(shadow_layers, at, 0),
+        textureLoad(shadow_layers, at + vec2<i32>(1, 0), 0),
+        textureLoad(shadow_layers, at + vec2<i32>(2, 0), 0),
+    );
+}
 
 fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(px.x / viewport.size.x * 2.0 - 1.0, 1.0 - px.y / viewport.size.y * 2.0);
@@ -380,7 +396,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Stacked outer layers behind the fill, first layer furthest back.
     var shadow_col = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     for (var i = 0; i < outer_count; i = i + 1) {
-        let layer = shadow_layers[base_index + i];
+        let layer = shadow_layer(base_index + i);
         let sr = layer.params.x;
         let soff = layer.params.yz;
         let sspread = layer.params2.x;
@@ -519,7 +535,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Stacked inner layers over the textured fill.
     if (d < 0.0) {
         for (var j = 0; j < inner_count; j = j + 1) {
-            let layer = shadow_layers[base_index + outer_count + j];
+            let layer = shadow_layer(base_index + outer_count + j);
             let sr = layer.params.x;
             let soff = layer.params.yz;
             let sspread = layer.params2.x;

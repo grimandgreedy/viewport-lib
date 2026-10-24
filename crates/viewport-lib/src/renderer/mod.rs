@@ -373,6 +373,8 @@ pub(crate) struct OverlayRetainedCounters {
     pub submitted: u32,
     pub drawn: u32,
     pub reemitted: u32,
+    /// Clip masks past the frame's limit, dropped.
+    pub clip_masks_dropped: u32,
 }
 
 /// Whether a `render()` presents the frame the user sees, or is an auxiliary

@@ -800,7 +800,6 @@ fn emit_sdf_shape(
         shape.transform.rotation,
         shape.transform.pivot[0],
         shape.transform.pivot[1],
-        0.0,
     ];
     let half_size = [hw, hh];
     // Scale the quad about the pivot and leave `local_pos` in the shape's own
@@ -979,11 +978,11 @@ impl ViewportRenderer {
                 );
             }
         }
-        let (shape_vertex_buf, shadow_buf, shape_bytes) = if shape_verts.is_empty() {
+        let (shape_vertex_buf, shadow_tex, shape_bytes) = if shape_verts.is_empty() {
             (None, None, 0)
         } else {
-            // The shape pipeline layout always expects a shadow buffer; provide a
-            // dummy entry when no shape has shadows.
+            // The shape pipeline layout always expects a shadow-layer texture;
+            // provide a dummy entry when no shape has shadows.
             if shadow_layers.is_empty() {
                 shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
                     colour: [0.0; 4],
@@ -992,7 +991,6 @@ impl ViewportRenderer {
                 });
             }
             let sv_bytes = std::mem::size_of_val(&shape_verts[..]) as u64;
-            let sh_bytes = std::mem::size_of_val(&shadow_layers[..]) as u64;
             let sv = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("compiled_overlay_shape_vbuf"),
                 size: sv_bytes,
@@ -1000,13 +998,11 @@ impl ViewportRenderer {
                 mapped_at_creation: false,
             });
             queue.write_buffer(&sv, 0, bytemuck::cast_slice(&shape_verts));
-            let sh = device.create_buffer(&crate::gpu::BufferDescriptor {
-                label: Some("compiled_overlay_shadow_buf"),
-                size: sh_bytes,
-                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&sh, 0, bytemuck::cast_slice(&shadow_layers));
+            let (sh, sh_bytes) = crate::resources::overlay::overlay_shape::shadow_layer_texture(
+                device,
+                queue,
+                &shadow_layers,
+            );
             (Some(sv), Some(sh), sv_bytes + sh_bytes)
         };
 
@@ -1029,7 +1025,7 @@ impl ViewportRenderer {
                 shape_bytes,
                 shape_vertex_buf,
                 shape_vertex_count: shape_verts.len() as u32,
-                shadow_buf,
+                shadow_tex,
                 source,
                 anchor: None,
                 bounds: group_bounds(&verts, &shape_verts),
@@ -1114,7 +1110,7 @@ impl ViewportRenderer {
                 shape_bytes: 0,
                 shape_vertex_buf: None,
                 shape_vertex_count: 0,
-                shadow_buf: None,
+                shadow_tex: None,
                 source: Some(source),
                 anchor: Some(label.anchoring.origin),
                 bounds: group_bounds(&verts, &[]),
