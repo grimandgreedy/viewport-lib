@@ -166,6 +166,9 @@ impl ViewportRenderer {
     /// its `SHADER_PRIMITIVE_INDEX` requirement. A type the GPU pass has no
     /// pipeline for yet is simply not drawn, so it returns no hit rather than a
     /// wrong one.
+    ///
+    /// The forward tier has no GPU pick pass, so there every `backend` picks
+    /// the surfaces on the CPU, which needs the CPU pick cache on.
     pub fn pick_object(
         &mut self,
         backend: PickBackend,
@@ -175,13 +178,18 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> Option<PickHit> {
-        // Nothing pickable is drawn without the scene resources.
-        if !self.resources.scene_tier.is_built() {
+        // Nothing pickable is drawn on the overlay-only tier. The forward tier
+        // has no GPU pick pass, so it picks its surfaces on the CPU.
+        let backend = if self.resources.scene_tier.is_built() {
+            self.resolve_pick_backend(backend, device, mask)
+        } else if self.resources.forward_tier.is_some() {
+            PickBackend::Cpu
+        } else {
             return None;
-        }
+        };
         let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
         let view_proj = frame.camera.render_camera.view_proj();
-        let hit = match self.resolve_pick_backend(backend, device, mask) {
+        let hit = match backend {
             PickBackend::Cpu => self.pick(cursor, viewport_size, view_proj, mask),
             // `resolve_pick_backend` never returns `Auto`.
             _ => self.pick_object_gpu_blocking(device, queue, cursor, frame, mask),

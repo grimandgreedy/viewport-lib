@@ -80,29 +80,31 @@ fn assert_scene_calls_refused(
 ) {
     let have = renderer.tier();
     assert!(have < Tier::Full);
-    let refused = |e: ViewportError| {
-        assert!(
-            matches!(
-                e,
-                ViewportError::TierUnsupported { needed: Tier::Full, have: h } if h == have
-            ),
-            "expected TierUnsupported, got {e}"
-        )
-    };
+    // Meshes and textures upload wherever there is a lit group 0 to draw
+    // them with: the forward tier's basic mesh path.
     let mesh = viewport_lib::geometry::primitives::cube(1.0);
-    refused(
-        renderer
-            .resources_mut()
-            .upload_mesh_data(device, &mesh)
-            .unwrap_err(),
-    );
+    let mesh = renderer.resources_mut().upload_mesh_data(device, &mesh);
     let image = viewport_lib::TextureData::srgb(1, 1, vec![255; 4]);
-    refused(
-        renderer
-            .resources_mut()
-            .upload_texture(device, queue, image)
-            .unwrap_err(),
-    );
+    let texture = renderer
+        .resources_mut()
+        .upload_texture(device, queue, image);
+    if have == Tier::Forward {
+        mesh.expect("meshes upload on the forward tier");
+        texture.expect("textures upload on the forward tier");
+    } else {
+        for e in [
+            mesh.map(|_| ()).unwrap_err(),
+            texture.map(|_| ()).unwrap_err(),
+        ] {
+            assert!(
+                matches!(
+                    e,
+                    ViewportError::TierUnsupported { needed: Tier::Forward, have: h } if h == have
+                ),
+                "expected TierUnsupported, got {e}"
+            );
+        }
+    }
 
     // The renderer's own getters answer rather than reaching for resources
     // that were never built.
@@ -182,7 +184,8 @@ fn assert_overlays_match_the_full_tier(profile: &DeviceProfile) {
             }
         };
         // The overlay scenes draw over a lit backdrop, which the overlay-only
-        // renderer leaves out; leave it out of the reference too.
+        // renderer leaves out and the forward tier lights differently; leave
+        // it out of both.
         let mut built = full.build_scene(&scene);
         built.items.clear();
         let mut frame = frame_for(&built, camera, [W as f32, H as f32]);
@@ -196,7 +199,8 @@ fn assert_overlays_match_the_full_tier(profile: &DeviceProfile) {
             scene.name
         );
 
-        let built = overlay.build_scene(&scene);
+        let mut built = overlay.build_scene(&scene);
+        built.items.clear();
         let mut frame = frame_for(&built, camera, [W as f32, H as f32]);
         with_blur(&mut frame);
         let got = overlay.render(&frame, W, H);
@@ -218,7 +222,7 @@ fn overlay_only_skips_scene_content_and_counts_it() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let Some(mut overlay) = Harness::with_profile(&no_compute_profile()) else {
+    let Some(mut overlay) = Harness::with_profile(&overlay_only_profile()) else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
@@ -231,7 +235,7 @@ fn overlay_only_skips_scene_content_and_counts_it() {
     let pixels = overlay.render(&frame, W, H);
     let stats = overlay.stats();
     assert_eq!(stats.items_skipped_by_tier as usize, built.items.len());
-    assert_eq!(stats.tier, Tier::Forward);
+    assert_eq!(stats.tier, Tier::OverlayOnly);
     // Nothing but the clear colour.
     assert!(pixels.chunks_exact(4).all(|p| p == &pixels[..4]));
 }
@@ -689,16 +693,64 @@ fn assert_split_paths_match_the_full_tier(profile: &DeviceProfile) {
             .any(|p| p != &want_painted[..4])
     );
 
-    let built = overlay.build_scene(&scene);
+    let mut built = overlay.build_scene(&scene);
+    built.items.clear();
     let mut frame = frame_for(&built, camera, [W as f32, H as f32]);
     let (painted, owned) = draw_split(&mut overlay, &mut frame);
     assert!(painted == want_painted, "the host-pass paint differs");
     assert!(owned == want_owned, "render_viewport differs");
 }
 
-/// Every scene item a frame submits, counted the way `FrameStats` counts what
-/// an overlay-only renderer skips.
-fn scene_items(frame: &viewport_lib::FrameData) -> usize {
+/// A mesh on the forward tier draws through both halves of the split API: into
+/// a host-owned pass and through `render_viewport`.
+#[test]
+fn forward_meshes_draw_through_the_split_and_host_pass_paths() {
+    let Some(mut harness) =
+        Harness::with_profile(&DeviceProfile::downlevel_webgl2("tier-forward-split"))
+    else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let cube = viewport_lib::geometry::primitives::cube(2.0);
+    let mesh = harness
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(&harness.device, &cube)
+        .expect("meshes upload on the forward tier");
+    let mut item = viewport_lib::SceneRenderItem::default();
+    item.mesh_id = mesh;
+    item.settings.colour = Some(viewport_lib::Colour::linear_rgb(0.9, 0.3, 0.1));
+    let mut camera = viewport_lib::Camera::default();
+    camera.set_distance(6.0);
+    camera.set_aspect_ratio(W as f32, H as f32);
+    let mut frame = viewport_lib::FrameData::default();
+    frame.camera.render_camera = viewport_lib::RenderCamera::from_camera(&camera);
+    frame.camera.viewport_size = [W as f32, H as f32];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.scene.surfaces = viewport_lib::SurfaceSubmission::Flat(vec![item].into());
+
+    let (painted, owned) = draw_split(&mut harness, &mut frame);
+    // `read_back` keeps the copy's padded rows and the target's BGRA order.
+    assert_eq!(
+        Harness::DEFAULT_TARGET_FORMAT,
+        wgpu::TextureFormat::Bgra8UnormSrgb
+    );
+    let row = (W * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    for (name, pixels) in [("paint_viewport", &painted), ("render_viewport", &owned)] {
+        let i = ((H / 2) * row + (W / 2) * 4) as usize;
+        let centre = &pixels[i..i + 4];
+        assert!(
+            centre[2] as i32 > centre[0] as i32 + 40,
+            "{name}: the cube must cover the centre, got {centre:?}"
+        );
+    }
+}
+
+/// Every scene item a frame submits that a renderer at `tier` cannot draw,
+/// counted the way `FrameStats` counts what it skips: the forward tier draws
+/// the surfaces.
+fn scene_items(frame: &viewport_lib::FrameData, tier: Tier) -> usize {
     let surfaces = match &frame.scene.surfaces {
         viewport_lib::SurfaceSubmission::Flat(items) => items.len(),
         _ => panic!("a surface submission this test does not count"),
@@ -710,6 +762,7 @@ fn scene_items(frame: &viewport_lib::FrameData) -> usize {
         .flatten()
         .map(|c| c.len())
         .sum();
+    let surfaces = if tier == Tier::Forward { 0 } else { surfaces };
     surfaces
         + frame.scene.volume_meshes.len()
         + frame.scene.mesh_instances.len()
@@ -727,8 +780,9 @@ fn sweep_catalogue(profile: &DeviceProfile) {
     // The overlay-only renderer reads the scene tier through a slot that
     // panics when a path is missing its tier check, so this is the sweep for
     // such a path: every scene the catalogue has, scivis types included. The
-    // scenes are built on a full renderer, since their uploads are refused on
-    // the overlay-only one, and the frames handed across.
+    // scenes are built on a full renderer, since most of their uploads are refused on
+    // a renderer below the full tier, and the frames handed across. Their mesh
+    // ids name nothing on the second renderer, so its surfaces draw nothing.
     let Some(mut full) = Harness::new() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -745,7 +799,7 @@ fn sweep_catalogue(profile: &DeviceProfile) {
         let stats = overlay.stats();
         assert_eq!(
             stats.items_skipped_by_tier as usize,
-            scene_items(&frame),
+            scene_items(&frame, overlay.renderer.tier()),
             "{}",
             scene.name
         );

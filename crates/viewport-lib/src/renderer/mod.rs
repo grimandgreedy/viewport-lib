@@ -507,6 +507,8 @@ pub struct ViewportRenderer {
     /// this the draw path re-read the raw `frame.scene.surfaces`, discarding
     /// the LOD level swap and cull for every non-instanced item.
     prepared_surfaces: Vec<SceneRenderItem>,
+    /// The forward tier's mesh draws for the frame.
+    basic_mesh_draws: prepare::forward::BasicMeshDraws,
     /// How many of the items a frame renders came from `prepared_surfaces`:
     /// the render moves that list out while it draws, so the count is kept
     /// here for the code that compares against it.
@@ -1053,6 +1055,7 @@ impl ViewportRenderer {
             per_object_bundle: None,
             per_object_bundle_gate: Default::default(),
             prepared_surfaces: Vec::new(),
+            basic_mesh_draws: Default::default(),
             prepared_surface_count: 0,
             shadow: ShadowState::new(),
             runtime_mode: crate::renderer::stats::RuntimeMode::Interactive,

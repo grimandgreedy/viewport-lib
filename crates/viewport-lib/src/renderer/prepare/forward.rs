@@ -1,7 +1,29 @@
 //! Per-frame prepare on the forward tier: the lights header and capped light
-//! list of its group 0, and each viewport's camera and clip uniforms.
+//! list of its group 0, each viewport's camera and clip uniforms, and the
+//! basic mesh draws for the frame's surfaces.
 
 use super::*;
+use crate::resources::forward_mesh::{BASIC_INSTANCE_STRIDE, BasicInstance, BasicMeshKey};
+
+/// The forward tier's mesh draws for the frame, built in prepare and issued
+/// in the LDR pass: opaque draws first, then translucent ones back to front.
+#[derive(Default)]
+pub(crate) struct BasicMeshDraws {
+    instances: Option<crate::gpu::Buffer>,
+    capacity: usize,
+    bind_groups: Vec<crate::gpu::BindGroup>,
+    draws: Vec<BasicMeshDraw>,
+}
+
+struct BasicMeshDraw {
+    mesh_id: crate::resources::mesh::mesh_store::MeshId,
+    key: BasicMeshKey,
+    bind_group: usize,
+    instance: u32,
+    indices: std::ops::Range<u32>,
+    /// The scalar stream's sidecar chunk and byte range.
+    scalar: Option<(u32, std::ops::Range<u64>)>,
+}
 
 impl ViewportRenderer {
     /// Rank the frame's lights into the forward light list and write it with
@@ -91,5 +113,239 @@ impl ViewportRenderer {
         // term in [0, 1].
         let camera_uniform = frame.camera.render_camera.camera_uniform();
         queue.write_buffer(&slot.camera_buf, 0, bytemuck::cast_slice(&[camera_uniform]));
+    }
+
+    /// Build the frame's basic mesh draws: one instance record per drawn item
+    /// (or per material range), the group 1 bind groups they need, and the
+    /// pipeline variants.
+    pub(super) fn prepare_basic_meshes(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &FrameData,
+    ) {
+        let Some(forward) = self.resources.forward_tier.as_deref() else {
+            return;
+        };
+        let resources = &self.resources;
+        let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
+        let SurfaceSubmission::Flat(items) = &frame.scene.surfaces;
+
+        let mut records: Vec<BasicInstance> = Vec::new();
+        let mut opaque: Vec<BasicMeshDraw> = Vec::new();
+        let mut blended: Vec<(f32, BasicMeshDraw)> = Vec::new();
+        let mut bind_groups: Vec<crate::gpu::BindGroup> = Vec::new();
+        let mut bind_group_index: std::collections::HashMap<
+            (
+                Option<crate::resources::TextureId>,
+                Option<crate::resources::ColourmapId>,
+            ),
+            usize,
+        > = std::collections::HashMap::new();
+
+        for item in items.iter() {
+            if item.settings.hidden {
+                continue;
+            }
+            let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
+                continue;
+            };
+            let ranges: Vec<(std::ops::Range<u32>, crate::resources::MaterialId)> =
+                match active_submesh_materials(item, mesh) {
+                    Some(mats) => mesh
+                        .submeshes
+                        .iter()
+                        .zip(mats)
+                        .map(|(r, m)| (r.first_index..r.first_index + r.index_count, *m))
+                        .collect(),
+                    None => vec![(0..mesh.index_count, item.material)],
+                };
+
+            // Per-vertex scalars bind as a vertex stream. Face, corner and
+            // half-edge attributes need the per-face draw, which this path
+            // does not have; those items draw in their base colour.
+            let scalar = item.active_attribute.as_ref().and_then(|attr| {
+                use crate::resources::AttributeKind as K;
+                if !matches!(attr.kind, K::Vertex | K::Cell | K::Edge) {
+                    return None;
+                }
+                let record = mesh.sidecar.as_ref()?;
+                let stream = record.find(
+                    crate::resources::mesh::sidecar_pool::StreamKind::Scalar,
+                    &attr.name,
+                )?;
+                (stream.len as usize >= mesh.vertex_count())
+                    .then(|| (record.chunk(), record.byte_range(stream)))
+            });
+            let (scalar_min, scalar_max) = item
+                .active_attribute
+                .as_ref()
+                .and_then(|a| {
+                    item.scalar_range
+                        .or(mesh.attribute_ranges.get(&a.name).copied())
+                })
+                .unwrap_or((0.0, 1.0));
+            let lut = item
+                .colourmap_id
+                .filter(|id| id.0 < resources.content.colourmap_views.len());
+            let world_centre =
+                glam::Mat4::from_cols_array_2d(&item.model).transform_point3(mesh.aabb.center());
+
+            for (indices, material_id) in ranges {
+                let m = resources.material_or_default(material_id);
+                let albedo = m
+                    .texture_id
+                    .filter(|id| resources.content.textures.get(*id).is_some());
+                let bind_group = *bind_group_index.entry((albedo, lut)).or_insert_with(|| {
+                    let albedo_view = albedo
+                        .and_then(|id| resources.content.textures.get(id))
+                        .map_or(&forward.fallback_albedo_view, |t| &t.view);
+                    let lut_view = lut.map_or(&resources.content.fallback_lut_view, |id| {
+                        &resources.content.colourmap_views[id.0]
+                    });
+                    bind_groups.push(crate::resources::forward_mesh::forward_mesh_bind_group(
+                        device,
+                        forward,
+                        "basic_mesh_bind_group",
+                        albedo_view,
+                        lut_view,
+                    ));
+                    bind_groups.len() - 1
+                });
+
+                use crate::resources::forward_mesh::basic_flags as f;
+                let flag = |on: bool, bit: u32| if on { bit } else { 0 };
+                let mask_cutoff = match m.alpha_mode {
+                    crate::scene::material::AlphaMode::Mask(c) => Some(c),
+                    _ => None,
+                };
+                let flags = flag(item.settings.unlit, f::UNLIT)
+                    | flag(m.is_two_sided(), f::TWO_SIDED)
+                    | flag(mask_cutoff.is_some(), f::ALPHA_MASK)
+                    | flag(scalar.is_some(), f::HAS_SCALAR)
+                    | flag(item.nan_colour.is_some(), f::USE_NAN_COLOUR)
+                    | flag(item.settings.ignore_clip, f::IGNORE_CLIP);
+                let nan_colour = item.nan_colour.map_or(0, |c| {
+                    let [r, g, b, a] = c.to_linear_rgba();
+                    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+                    byte(r) | (byte(g) << 8) | (byte(b) << 16) | (byte(a) << 24)
+                });
+                let bc = item
+                    .settings
+                    .colour
+                    .unwrap_or(m.base_colour)
+                    .to_linear_rgb();
+                let e = m.emissive_nits();
+                let instance = records.len() as u32;
+                records.push(BasicInstance {
+                    model: item.model,
+                    base_colour: [bc[0], bc[1], bc[2], item.settings.opacity],
+                    emissive: [e[0], e[1], e[2], mask_cutoff.unwrap_or(0.5)],
+                    material: [m.metallic, m.roughness, scalar_min, scalar_max],
+                    params: [flags, nan_colour, 0, 0],
+                });
+                let blend = item.settings.opacity < 1.0 || m.is_blend();
+                let draw = BasicMeshDraw {
+                    mesh_id: item.mesh_id,
+                    key: BasicMeshKey {
+                        blend,
+                        two_sided: m.is_two_sided(),
+                        scalar: scalar.is_some(),
+                    },
+                    bind_group,
+                    instance,
+                    indices,
+                    scalar: scalar.clone(),
+                };
+                if blend {
+                    blended.push((world_centre.distance_squared(eye), draw));
+                } else {
+                    opaque.push(draw);
+                }
+            }
+        }
+
+        // Translucent draws composite back to front.
+        blended.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let mut draws = opaque;
+        draws.extend(blended.into_iter().map(|(_, d)| d));
+
+        let draws_state = &mut self.basic_mesh_draws;
+        if records.len() > draws_state.capacity {
+            let capacity = records.len().next_power_of_two();
+            draws_state.instances = Some(device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some("basic_mesh_instances"),
+                size: capacity as u64 * BASIC_INSTANCE_STRIDE,
+                usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            draws_state.capacity = capacity;
+        }
+        if let Some(buffer) = &draws_state.instances
+            && !records.is_empty()
+        {
+            queue.write_buffer(buffer, 0, bytemuck::cast_slice(&records));
+        }
+        draws_state.bind_groups = bind_groups;
+
+        let forward = self
+            .resources
+            .forward_tier
+            .as_deref_mut()
+            .expect("checked above");
+        let layouts = [&forward.camera_bgl, &forward.mesh_bgl];
+        for draw in &draws {
+            forward.mesh_pipelines.ensure(
+                device,
+                &self.resources.capabilities,
+                layouts,
+                self.resources.target_format,
+                draw.key,
+            );
+        }
+        self.basic_mesh_draws.draws = draws;
+    }
+
+    /// Issue the basic mesh draws into the LDR scene pass. `camera_bg` is the
+    /// viewport's group 0.
+    pub(crate) fn paint_basic_meshes(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        camera_bg: &crate::gpu::BindGroup,
+    ) {
+        let (Some(forward), Some(instances)) = (
+            self.resources.forward_tier.as_deref(),
+            self.basic_mesh_draws.instances.as_ref(),
+        ) else {
+            return;
+        };
+        pass.set_bind_group(0, camera_bg, &[]);
+        for draw in &self.basic_mesh_draws.draws {
+            let (Some(pipeline), Some(mesh)) = (
+                forward.mesh_pipelines.get(draw.key),
+                self.resources.mesh_store.get(draw.mesh_id),
+            ) else {
+                continue;
+            };
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(1, &self.basic_mesh_draws.bind_groups[draw.bind_group], &[]);
+            pass.set_vertex_buffer(0, self.resources.geometry.vertex_slice(mesh.vertex_span));
+            let offset = draw.instance as u64 * BASIC_INSTANCE_STRIDE;
+            pass.set_vertex_buffer(1, instances.slice(offset..offset + BASIC_INSTANCE_STRIDE));
+            if let Some((chunk, range)) = &draw.scalar {
+                pass.set_vertex_buffer(
+                    2,
+                    self.resources
+                        .sidecar
+                        .chunk_buffer(*chunk)
+                        .slice(range.clone()),
+                );
+            }
+            pass.set_index_buffer(
+                self.resources.geometry.index_slice(mesh.index_span),
+                crate::gpu::IndexFormat::Uint32,
+            );
+            pass.draw_indexed(draw.indices.clone(), 0, 0..1);
+        }
     }
 }

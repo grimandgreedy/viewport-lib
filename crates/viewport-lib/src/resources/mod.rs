@@ -12,6 +12,8 @@ pub(crate) mod custom_data;
 pub(crate) mod device_resources;
 /// A cheap hasher for the maps rebuilt or probed every frame.
 pub(crate) mod fast_hash;
+/// The basic mesh path the forward tier draws meshes with.
+pub(crate) mod forward_mesh;
 /// Group 0 on the forward tier.
 pub(crate) mod forward_tier;
 /// Group 0's bindings on every tier, declared once.

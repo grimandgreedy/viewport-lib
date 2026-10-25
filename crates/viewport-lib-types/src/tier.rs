@@ -10,16 +10,19 @@
 pub enum Tier {
     /// Below the overlay floor: no renderer can be built.
     Unsupported,
-    /// Storage buffers or compute are missing (WebGL2, GLES 3.0, many GLES 3.1
-    /// devices). The renderer builds only the overlay family and draws it on
-    /// the LDR path. Scene items are skipped, and the calls that add scene
+    /// Below the full tier, without the bind groups, sampled textures or
+    /// uniform blocks the forward tier needs (a device with two bind groups,
+    /// for example). The renderer builds only the overlay family and draws it
+    /// on the LDR path. Scene items are skipped, and the calls that add scene
     /// content return `ViewportError::TierUnsupported`.
     OverlayOnly,
     /// Below the full tier on storage buffers or compute, with the bind groups,
     /// textures and uniform blocks the forward group 0 needs (WebGL2 and most
-    /// GLES 3.x devices). Draws what the overlay-only tier draws, plus the item
-    /// types whose `requires()` accept this tier, lit by a capped light list
-    /// without shadows, image-based lighting or post effects.
+    /// GLES 3.x devices). Draws what the overlay-only tier draws, plus meshes
+    /// through a basic-lit path (base colour, vertex colour, an albedo
+    /// texture, colourmapped per-vertex scalars, alpha mask and blending) and
+    /// the item types whose `requires()` accept this tier, lit by a capped
+    /// light list without shadows, image-based lighting or post effects.
     Forward,
     /// Everything the renderer has, with the per-feature fallbacks that apply
     /// when an optional feature is missing. The default.

@@ -1,7 +1,7 @@
 use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
 
-mod forward;
+pub(crate) mod forward;
 mod instanced;
 pub(crate) use instanced::feature_set_violations as instanced_feature_set_violations;
 mod lighting;
@@ -190,10 +190,16 @@ impl ViewportRenderer {
                 None => self.resources.process_uploads(device, queue),
             }
         }
-        // The rest is the scene, which a renderer below the full tier does not
-        // draw. The forward tier lights its item types from its own group 0.
+        // The rest is the scene's full-tier work. The forward tier draws the
+        // surfaces through its basic mesh path and lights them and its item
+        // types from its own group 0.
         if !scene_tier {
-            self.prepare_forward_lights(queue, frame, scene_fx);
+            if let Some(forward) = self.resources.forward_tier.as_deref_mut() {
+                forward.write_fallbacks(queue);
+                self.resources.ensure_colourmaps_initialized(device, queue);
+                self.prepare_forward_lights(queue, frame, scene_fx);
+                self.prepare_basic_meshes(device, queue, frame);
+            }
             return;
         }
 
@@ -732,6 +738,12 @@ impl ViewportRenderer {
 
     /// Every scene item `frame` submits, for the count an overlay-only
     /// renderer reports as skipped.
+    fn surface_count(frame: &FrameData) -> u32 {
+        match &frame.scene.surfaces {
+            crate::renderer::SurfaceSubmission::Flat(items) => items.len() as u32,
+        }
+    }
+
     fn scene_item_count(frame: &FrameData) -> u32 {
         let surfaces = match &frame.scene.surfaces {
             crate::renderer::SurfaceSubmission::Flat(items) => items.len(),
@@ -1387,6 +1399,8 @@ impl ViewportRenderer {
             tier: self.resources.capabilities.tier(),
             items_skipped_by_tier: if self.resources.scene_tier.is_built() {
                 0
+            } else if self.resources.forward_tier.is_some() {
+                Self::scene_item_count(frame) - Self::surface_count(frame)
             } else {
                 Self::scene_item_count(frame)
             },

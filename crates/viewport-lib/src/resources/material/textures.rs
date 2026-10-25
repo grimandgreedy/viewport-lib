@@ -30,7 +30,7 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         data: TextureData,
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
-        self.require_scene_tier()?;
+        self.require_lit_group0()?;
         // Sync wrapper around the async path: build the job, drive it to
         // completion on the calling thread, and take the typed result. The
         // worker performs the same texture creation, sampler setup, and
@@ -53,7 +53,7 @@ impl DeviceResources {
         height: u32,
         rgba_data: &[u8],
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
-        self.require_scene_tier()?;
+        self.require_lit_group0()?;
         self.upload_texture(
             device,
             queue,
@@ -74,7 +74,7 @@ impl DeviceResources {
         height: u32,
         rgba_data: &[u8],
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
-        self.require_scene_tier()?;
+        self.require_lit_group0()?;
         self.upload_texture(
             device,
             queue,
@@ -95,7 +95,7 @@ impl DeviceResources {
         height: u32,
         rgba: &[f32],
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
-        self.require_scene_tier()?;
+        self.require_lit_group0()?;
         self.upload_texture(
             device,
             queue,
@@ -129,7 +129,7 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         data: TextureData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        self.require_scene_tier()?;
+        self.require_lit_group0()?;
         data.validate()?;
         let width = data.width();
         let height = data.height();
@@ -162,7 +162,7 @@ impl DeviceResources {
         height: u32,
         rgba: Vec<u8>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        self.require_scene_tier()?;
+        self.require_lit_group0()?;
         self.begin_upload_texture(device, queue, TextureData::normal_map(width, height, rgba))
     }
 
@@ -179,7 +179,7 @@ impl DeviceResources {
         height: u32,
         rgba: Vec<u8>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        self.require_scene_tier()?;
+        self.require_lit_group0()?;
         self.begin_upload_texture(device, queue, TextureData::linear(width, height, rgba))
     }
 
@@ -196,7 +196,7 @@ impl DeviceResources {
         height: u32,
         rgba: Vec<f32>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        self.require_scene_tier()?;
+        self.require_lit_group0()?;
         self.begin_upload_texture(device, queue, TextureData::hdr(width, height, rgba))
     }
 
@@ -343,7 +343,7 @@ impl DeviceResources {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
-        self.require_scene_tier()?;
+        self.require_lit_group0()?;
         let mut map = self
             .job_results
             .texture
@@ -384,7 +384,7 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         desc: CompressedTextureDesc<'_>,
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
-        self.require_scene_tier()?;
+        self.require_lit_group0()?;
         self.upload_texture(device, queue, desc.into_texture_data()?)
     }
 
@@ -407,7 +407,7 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         desc: CompressedTextureDesc<'_>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        self.require_scene_tier()?;
+        self.require_lit_group0()?;
         self.begin_upload_texture(device, queue, desc.into_texture_data()?)
     }
 
@@ -430,10 +430,21 @@ impl DeviceResources {
         // Clone the fallback views and the bind-group layout into the job
         // so its stages can build the GpuTexture and bind group without
         // touching `self`.
-        let bgl = self.scene_tier.material.texture_bgl.clone();
-        let fallback_albedo_view = self.scene_tier.material.texture.view.clone();
-        let fallback_normal_view = self.scene_tier.material.normal_map_view.clone();
-        let fallback_ao_view = self.scene_tier.material.ao_map_view.clone();
+        let (bgl, fallback_albedo_view, fallback_normal_view, fallback_ao_view) =
+            match self.forward_tier.as_deref() {
+                Some(forward) => (
+                    forward.texture_bgl.clone(),
+                    forward.fallback_albedo_view.clone(),
+                    forward.fallback_normal_view.clone(),
+                    forward.fallback_ao_view.clone(),
+                ),
+                None => (
+                    self.scene_tier.material.texture_bgl.clone(),
+                    self.scene_tier.material.texture.view.clone(),
+                    self.scene_tier.material.normal_map_view.clone(),
+                    self.scene_tier.material.ao_map_view.clone(),
+                ),
+            };
         let TextureUploadSpec {
             width,
             height,

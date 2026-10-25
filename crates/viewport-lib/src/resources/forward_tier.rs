@@ -1,6 +1,7 @@
 //! The resources behind group 0 on the forward tier: its own lights header
 //! and light list, and 1x1 placeholders for the shadow and IBL bindings,
-//! which are off on this tier. The layout and the bind group come from the
+//! which are off on this tier. Also the basic mesh path's group 1 layout,
+//! fallback textures and pipelines. The layout and the bind group come from the
 //! tier's `Group0Profile` (`resources::group0`), like the full tier's.
 
 use crate::resources::builders::LoggedAlloc;
@@ -30,6 +31,23 @@ pub(crate) struct ForwardTier {
     point_shadow_view: crate::gpu::TextureView,
     ibl_array_view: crate::gpu::TextureView,
     flat_view: crate::gpu::TextureView,
+    /// Group 1 of the basic mesh pipelines: albedo texture and sampler, then
+    /// the colourmap LUT and its sampler.
+    pub(crate) mesh_bgl: crate::gpu::BindGroupLayout,
+    /// The layout of the bind group every uploaded texture carries (albedo,
+    /// sampler, normal map, AO map), the same entries as the full tier's.
+    pub(crate) texture_bgl: crate::gpu::BindGroupLayout,
+    /// 1x1 white, flat-normal and white textures bound where a material slot
+    /// names no texture. Their texels are written on the first prepare.
+    pub(crate) fallback_albedo: crate::gpu::Texture,
+    pub(crate) fallback_albedo_view: crate::gpu::TextureView,
+    fallback_normal: crate::gpu::Texture,
+    pub(crate) fallback_normal_view: crate::gpu::TextureView,
+    fallback_ao: crate::gpu::Texture,
+    pub(crate) fallback_ao_view: crate::gpu::TextureView,
+    fallbacks_written: bool,
+    /// The basic mesh pipelines, built on first use.
+    pub(crate) mesh_pipelines: crate::resources::forward_mesh::BasicMeshPipelines,
 }
 
 impl ForwardTier {
@@ -86,6 +104,49 @@ impl ForwardTier {
                     ..Default::default()
                 })
         };
+        let fallback = |label| {
+            let texture = device.logged_texture(&crate::gpu::TextureDescriptor {
+                label: Some(label),
+                size: crate::gpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: crate::gpu::TextureDimension::D2,
+                format: crate::gpu::TextureFormat::Rgba8Unorm,
+                usage: crate::gpu::TextureUsages::TEXTURE_BINDING
+                    | crate::gpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+            (texture, view)
+        };
+        let (fallback_albedo, fallback_albedo_view) = fallback("forward_fallback_albedo");
+        let (fallback_normal, fallback_normal_view) = fallback("forward_fallback_normal");
+        let (fallback_ao, fallback_ao_view) = fallback("forward_fallback_ao");
+        use crate::resources::builders::{sampler_entry, texture_entry};
+        let fragment = crate::gpu::ShaderStages::FRAGMENT;
+        let mesh_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("forward_mesh_bgl"),
+            entries: &[
+                texture_entry(0, fragment),
+                sampler_entry(1, fragment),
+                texture_entry(2, fragment),
+                sampler_entry(3, fragment),
+            ],
+        });
+        let texture_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("forward_texture_bgl"),
+            entries: &[
+                texture_entry(0, fragment),
+                sampler_entry(1, fragment),
+                texture_entry(2, fragment),
+                texture_entry(3, fragment),
+            ],
+        });
+
         let point_dimension = profile.point_shadow_dimension;
         let point_layers = match point_dimension {
             crate::gpu::TextureViewDimension::CubeArray => 6,
@@ -140,7 +201,50 @@ impl ForwardTier {
                 1,
                 crate::gpu::TextureViewDimension::D2,
             ),
+            mesh_bgl,
+            texture_bgl,
+            fallback_albedo,
+            fallback_albedo_view,
+            fallback_normal,
+            fallback_normal_view,
+            fallback_ao,
+            fallback_ao_view,
+            fallbacks_written: false,
+            mesh_pipelines: Default::default(),
         }
+    }
+
+    /// Write the fallback textures' texels, once.
+    pub(crate) fn write_fallbacks(&mut self, queue: &crate::gpu::Queue) {
+        if self.fallbacks_written {
+            return;
+        }
+        for (texture, texel) in [
+            (&self.fallback_albedo, [255u8, 255, 255, 255]),
+            (&self.fallback_normal, [128, 128, 255, 255]),
+            (&self.fallback_ao, [255, 255, 255, 255]),
+        ] {
+            queue.write_texture(
+                crate::gpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: crate::gpu::Origin3d::ZERO,
+                    aspect: crate::gpu::TextureAspect::All,
+                },
+                &texel,
+                crate::gpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4),
+                    rows_per_image: Some(1),
+                },
+                crate::gpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        self.fallbacks_written = true;
     }
 
     /// What this tier's group 0 binds, around a viewport's own buffers.

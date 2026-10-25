@@ -339,12 +339,20 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(())
     }
 
-    /// The shared lighting sources a forward-tier item type composes, adapted
-    /// for that tier, translate to the GLSL ES 3.0 WebGL2 compiles.
+    /// The shared lighting sources a forward-tier item type composes and the
+    /// basic mesh shader, adapted for that tier, translate to the GLSL ES 3.0
+    /// WebGL2 compiles.
     #[cfg(wgpu27)]
     #[test]
     fn forward_shaders_translate_to_webgl2_glsl() {
-        for (name, src) in [("lit", lit_source()), ("bindings", bindings_source())] {
+        for (name, src) in [
+            ("lit", lit_source()),
+            ("bindings", bindings_source()),
+            (
+                "mesh_basic",
+                crate::resources::forward_mesh::MESH_BASIC_WGSL.to_string(),
+            ),
+        ] {
             let adapted = adapt_wgsl(src.as_str(), &forward_caps());
             if let Err(e) = translate_to_glsl(&adapted, 300, true) {
                 panic!("{name}: {e}");

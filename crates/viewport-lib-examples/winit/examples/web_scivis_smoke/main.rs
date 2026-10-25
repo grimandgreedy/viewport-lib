@@ -22,9 +22,10 @@
 //! the thing to go and fix. Click the surface to run a fresh pick at the cursor.
 //!
 //! On a browser with no WebGPU adapter the page comes up on WebGL2, where the
-//! renderer runs below the full tier. The CPU steps run the same; the mesh
-//! upload is expected to be refused, and an overlay frame drawn under error
-//! scopes checks the overlay shaders on the real GL driver. The first
+//! renderer runs at the forward tier. The CPU steps run the same; the surface
+//! draws through the basic mesh path, and a frame of it with the overlays,
+//! drawn under error scopes, checks both on the real GL driver. A tier
+//! without a lit group 0 refuses the upload. The first
 //! line names the API the page landed on, which is what `scripts/check_web.sh`
 //! reads to confirm each run took the path it asked for.
 //!
@@ -426,10 +427,11 @@ async fn build_state(window: Arc<Window>) -> State {
     let tier = renderer.tier();
     results.pass(format!("renderer built at the {tier:?} tier"));
 
-    // The full tier draws the surface. Below it the upload is refused, and the
-    // pick accelerator, which only needs a key per mesh, runs on a placeholder.
+    // The full and forward tiers draw the surface. Below them the upload is
+    // refused, and the pick accelerator, which only needs a key per mesh, runs
+    // on a placeholder.
     let mut scene_items = Vec::new();
-    let mesh_id = if tier >= Tier::Full {
+    let mesh_id = if tier >= Tier::Forward {
         let mesh_id = renderer
             .resources_mut()
             .upload_mesh_data(&device, &mesh)
@@ -452,10 +454,10 @@ async fn build_state(window: Arc<Window>) -> State {
         MeshId::INVALID
     };
 
-    // An overlay frame under error scopes: on WebGL2 this is the first time the
-    // overlay shaders meet the browser's GL driver. A GLSL compile or link
-    // failure is an internal error there, not a validation one, so both are
-    // watched.
+    // A frame of the surface and the overlays under error scopes: on WebGL2
+    // this is the first time their shaders meet the browser's GL driver. A
+    // GLSL compile or link failure is an internal error there, not a
+    // validation one, so both are watched.
     let probe = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("overlay probe"),
         size: wgpu::Extent3d {
@@ -475,7 +477,7 @@ async fn build_state(window: Arc<Window>) -> State {
     let validation = viewport_lib::gpu::push_error_scope(&device, wgpu::ErrorFilter::Validation);
     let mut probe_frame = FrameData::new(
         CameraFrame::from_camera(&Camera::default(), [256.0, 128.0]),
-        SceneFrame::default(),
+        SceneFrame::from_surface_items(scene_items.clone()),
     );
     probe_frame.overlays = tier_overlay(tier);
     let cmd = renderer
@@ -485,8 +487,8 @@ async fn build_state(window: Arc<Window>) -> State {
     let validation = validation.pop().await;
     let internal = internal.pop().await;
     match validation.or(internal) {
-        None => results.pass("overlay frame drawn with no GPU error"),
-        Some(e) => results.fail(format!("overlay frame: {e}")),
+        None => results.pass("surface and overlay frame drawn with no GPU error"),
+        Some(e) => results.fail(format!("surface and overlay frame: {e}")),
     }
 
     // Step 3: the pick accelerator builds a BVH over the scene, which is the

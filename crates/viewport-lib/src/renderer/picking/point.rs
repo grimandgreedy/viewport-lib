@@ -33,8 +33,9 @@ impl ViewportRenderer {
         view_proj: glam::Mat4,
         mask: PickMask,
     ) -> Option<PickHit> {
-        // Nothing pickable is drawn without the scene resources.
-        if !self.resources.scene_tier.is_built() {
+        // Nothing pickable is drawn on the overlay-only tier; the forward tier
+        // draws surfaces, which this path picks.
+        if !self.resources.scene_tier.is_built() && self.resources.forward_tier.is_none() {
             return None;
         }
         use crate::interaction::query::picking::{pick_transparent_volume_mesh_cpu, screen_to_ray};

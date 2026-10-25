@@ -145,7 +145,7 @@ impl ViewportRenderer {
                 timestamp_writes: ts_writes,
                 occlusion_query_set: None,
             });
-            // Overlay-only renderers have no scene resources to draw with.
+            // Below the full tier only the forward tier's basic meshes draw.
             if self.resources.scene_tier.is_built() {
                 emit_draw_calls!(
                     &self.resources,
@@ -201,6 +201,8 @@ impl ViewportRenderer {
                 self.dispatch_plugin_paint(&mut render_pass, frame, false);
                 // Outline composite after all scene content.
                 emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
+            } else {
+                self.paint_basic_meshes(&mut render_pass, camera_bg);
             }
             // When blur backdrops are needed, skip overlays here. They'll
             // be drawn in a second pass after the blur is applied.

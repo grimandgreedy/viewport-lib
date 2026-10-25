@@ -653,9 +653,11 @@ pub struct FrameStats {
     /// so a recorded frame says what device class produced it.
     pub tier: crate::capabilities::Tier,
     /// Scene items this frame that were not drawn because the renderer runs
-    /// below the full tier: surfaces, volume meshes, mesh instances,
-    /// foreground items and plugin items. Zero on the full tier. An
-    /// overlay-only renderer draws the overlays and ignores the scene.
+    /// below the full tier: volume meshes, mesh instances, foreground items
+    /// and plugin items, and on the overlay-only tier the surfaces too. Zero
+    /// on the full tier. The forward tier draws the surfaces through its basic
+    /// mesh path; an overlay-only renderer draws the overlays and ignores the
+    /// scene.
     pub items_skipped_by_tier: u32,
     /// Set when the frame asked for the HDR path and was drawn through the LDR
     /// path, which is what a renderer below the full tier does.
