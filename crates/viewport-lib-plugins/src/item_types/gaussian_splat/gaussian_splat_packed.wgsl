@@ -47,6 +47,7 @@ fn vs_packed(
             vec3<f32>(b.zw, c.x),
             c.yzw,
             splat_view_dir(pos_obj),
+            vec3<f32>(0.0),
         );
     }
     return project_splat(pos_obj, Sigma3d, colour, t0.w, vi);

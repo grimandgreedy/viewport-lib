@@ -1541,12 +1541,14 @@ impl ViewportRenderer {
 
     /// Enable or disable the CPU pick cache.
     ///
-    /// When enabled, `prepare()` retains a copy of the frame's pickable items so
-    /// `pick()` and `pick_rect()` can run later (e.g. on a mouse click) without the
-    /// scene data. This copies all inline point/field/curve geometry each frame, so it
-    /// is disabled by default: turn it on only when using the CPU `pick()`/`pick_rect()`
-    /// path. The GPU path (`pick_scene_gpu`) and the renderer-free
-    /// `interaction::picking` functions do not need it.
+    /// When enabled, `prepare()` retains a copy of the frame's surfaces and volume
+    /// meshes so `pick()` and `pick_rect()` can hit them later (e.g. on a mouse
+    /// click) without the scene data. Item types such as point clouds, fields and
+    /// curves keep their own pick state and answer without it. Copying the volume
+    /// meshes costs a clone of their face-to-cell maps each frame, so it is disabled by
+    /// default: turn it on only when using the CPU `pick()`/`pick_rect()` path. The
+    /// GPU path (`pick_scene_gpu`) and the renderer-free `interaction::picking`
+    /// functions do not need it.
     pub fn set_cpu_pick_cache(&mut self, enabled: bool) {
         if !enabled && self.cpu_pick_cache_enabled {
             self.clear_pick_cache();

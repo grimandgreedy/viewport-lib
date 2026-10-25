@@ -1316,9 +1316,9 @@ impl ViewportRenderer {
         self.degradation_effects_throttled =
             !in_capture && self.degradation_tier >= 3 && eff_allow_effects;
 
-        // Cache pickable items for the CPU pick path. Disabled by default: this copies
-        // all inline point/glyph/curve geometry each frame, so scenes that do not use
-        // renderer.pick()/pick_rect() leave it off (see set_cpu_pick_cache).
+        // Cache surfaces and volume meshes for the CPU pick path. Disabled by
+        // default, so scenes that do not use renderer.pick()/pick_rect() skip the
+        // copy (see set_cpu_pick_cache).
         if self.cpu_pick_cache_enabled {
             self.cache_pick_items(frame);
         }

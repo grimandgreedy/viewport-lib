@@ -253,10 +253,6 @@ impl ViewportRenderer {
             }
         }
 
-        // 6. Instance picks (INSTANCE or OBJECT) for fields and sprites.
-        let wants_instance = mask.intersects(PickMask::INSTANCE);
-        if wants_instance || wants_object {}
-
         // Consult registered item-type plugins after the built-in types.
         // Each plugin answers from state cached in its own prepare, the
         // same as the point pick.

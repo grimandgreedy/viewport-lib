@@ -286,10 +286,6 @@ impl ViewportRenderer {
             }
         }
 
-        // 6. Instance picks (INSTANCE or OBJECT fallback) for fields and sprites.
-        let wants_instance = mask.intersects(PickMask::INSTANCE);
-        if wants_instance || wants_object {}
-
         // Consult registered item-type plugins after the built-in pickers.
         // Each plugin returns its own closest hit; the router compares
         // by world-space ray t against the running best.

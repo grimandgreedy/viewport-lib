@@ -456,7 +456,7 @@ impl std::ops::DerefMut for SceneTierSlot {
 }
 
 const SCENE_TIER_ABSENT: &str =
-    "scene resources used on an overlay-only renderer; this path is missing a tier check";
+    "scene resources used on a renderer below the full tier; this path is missing a tier check";
 
 /// Device-shared GPU resources: pipelines, layouts, samplers, fallbacks, LUTs,
 /// and the per-feature pipeline clusters (`volume`, `pt`, ...).

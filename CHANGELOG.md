@@ -227,6 +227,9 @@
 
 ### Fixed
 
+- **Degree-3 Gaussian splat sets read their own SH coefficients** - the full-tier shader indexed every non-zero degree at the degree-1 stride, so each splat after the first was coloured from another splat's coefficients and the degree 2 and 3 terms were never evaluated. Sets loaded from 3DGS PLY files are degree 3. The shader now reads 48 coefficients a splat and evaluates all four bands; below the full tier a degree-3 set draws its DC and degree-1 terms.
+- **`DeviceResources::ensure_matcaps_initialized` is a no-op below the full tier** - it used to panic on a compatibility-tier renderer, which draws no matcaps. The panic for a scene-tier path missing its tier check now says "below the full tier" instead of "overlay-only".
+- **The CPU pick docs say what the CPU backend answers** - `set_cpu_pick_cache` no longer claims to copy point, glyph and curve geometry it never copied, and `PickBackend::Cpu` says an item drawn from an upload handle (`PointCloudRefItem` and the rest) is not hit there.
 - **`render` with `PipelineMode::Direct` draws the sub-object highlight** - the owned-encoder LDR path left `InteractionFrame::sub_selection` undrawn; `paint`, `paint_viewport` and the HDR path drew it.
 - **CPU picks no longer hit item types left out of the frame** - an item type whose items left the frame kept the last ones it was given, so `pick`, `pick_object` on the CPU backend and `pick_rect` could return an item no longer drawn. They now ask only the types that had items in the last prepare.
 - **The mesh shaders translate to GLSL** - the cascade shadow contact rule read the shadow atlas with `textureLoad`, which naga's GLSL writer rejects for depth textures, so no lit mesh could be drawn on wgpu's GL backend, desktop GL included. It now tests the receiver's texel with three compare taps at its centre, which gives the same result on every backend.

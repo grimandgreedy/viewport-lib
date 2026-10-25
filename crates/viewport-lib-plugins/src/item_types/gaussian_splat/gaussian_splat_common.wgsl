@@ -70,8 +70,9 @@ fn eval_sh0(dc: vec3<f32>) -> vec3<f32> {
 }
 
 // Evaluate degree-1 SH: the DC term and the three view-dependent terms, each
-// an RGB triple in coefficient order.
-fn eval_sh1(dc: vec3<f32>, c1: vec3<f32>, c2: vec3<f32>, c3: vec3<f32>, view_dir: vec3<f32>) -> vec3<f32> {
+// an RGB triple in coefficient order. `higher` is the sum of the degree 2 and
+// 3 terms, added before the clamp; zero for a degree-1 set.
+fn eval_sh1(dc: vec3<f32>, c1: vec3<f32>, c2: vec3<f32>, c3: vec3<f32>, view_dir: vec3<f32>, higher: vec3<f32>) -> vec3<f32> {
     let vx = view_dir.x; let vy = view_dir.y; let vz = view_dir.z;
     let sh0_c  =  0.28209479177;
     let sh1_c1 = -0.48860251190;
@@ -87,6 +88,7 @@ fn eval_sh1(dc: vec3<f32>, c1: vec3<f32>, c2: vec3<f32>, c3: vec3<f32>, view_dir
     col += sh1_c2 * vz * c2;
     // Y_{1, 1}: -sqrt(3/(4pi))*x
     col += sh1_c3 * vx * c3;
+    col += higher;
 
     return clamp(col + vec3<f32>(0.5), vec3<f32>(0.0), vec3<f32>(1.0));
 }

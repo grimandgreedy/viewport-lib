@@ -106,6 +106,23 @@ fn assert_scene_calls_refused(
         }
     }
 
+    // Matcaps draw on the full tier only: the built-ins are a no-op to
+    // initialise and an upload says why it is refused.
+    renderer
+        .resources_mut()
+        .ensure_matcaps_initialized(device, queue);
+    let matcap = viewport_lib::TextureData::linear(256, 256, vec![255; 256 * 256 * 4]);
+    match renderer
+        .resources_mut()
+        .upload_matcap(device, queue, matcap, false)
+    {
+        Err(ViewportError::TierUnsupported {
+            needed: Tier::Full,
+            have: h,
+        }) if h == have => {}
+        other => panic!("expected TierUnsupported, got {other:?}"),
+    }
+
     // The renderer's own getters answer rather than reaching for resources
     // that were never built.
     assert_eq!(renderer.shadow_allocation_bytes(), 0);

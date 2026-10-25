@@ -29,9 +29,11 @@ impl ViewportRenderer {
     /// Copy this frame's pickable items into the CPU pick caches so `pick()` and
     /// `pick_rect()` can run later (e.g. on a mouse click) without the scene data.
     ///
-    /// Called from `prepare()` only when the CPU pick cache is enabled. The mesh
-    /// entry is cheap (it holds a `mesh_id`), but the data primitives carry inline
-    /// geometry, so this is the per-frame cost that `set_cpu_pick_cache` controls.
+    /// Called from `prepare()` only when the CPU pick cache is enabled. It keeps
+    /// the surfaces and volume meshes; item types answer from what their own
+    /// `prepare` kept. A surface entry is cheap (it holds a `mesh_id`), while a
+    /// volume mesh clones its face-to-cell map, which is the per-frame cost that
+    /// `set_cpu_pick_cache` controls.
     pub(crate) fn cache_pick_items(&mut self, frame: &FrameData) {
         let surfaces = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
@@ -102,6 +104,15 @@ pub enum PickBackend {
     /// CPU ray-cast. Fills in sub-object identity (face, vertex, edge, cell, ...)
     /// per the mask, and reads the per-frame pick cache, which must be enabled
     /// with [`set_cpu_pick_cache`](ViewportRenderer::set_cpu_pick_cache).
+    ///
+    /// Answers only for geometry held in CPU memory: surfaces, volume meshes,
+    /// and item types submitted inline (a `PointCloudItem` with its positions,
+    /// a `VolumeItem` with `volume_data`). An item drawn from an upload handle,
+    /// such as a `PointCloudRefItem`, has no CPU copy and is never hit. The
+    /// [`Gpu`](Self::Gpu) backend answers for those;
+    /// [`pick_object_begin`](ViewportRenderer::pick_object_begin) is its form
+    /// for hosts that cannot wait on the queue. Below the full tier there is no
+    /// GPU pick pass, so every backend resolves to this one.
     Cpu,
     /// GPU object-id readback. Resolves sub-object identity from the pass's
     /// second channel: the hit instance (glyphs, sprites), segment (polylines),

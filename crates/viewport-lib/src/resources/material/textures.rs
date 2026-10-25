@@ -2202,14 +2202,14 @@ impl DeviceResources {
     /// Upload the eight built-in matcaps to the GPU if not already done.
     ///
     /// Called by `ViewportRenderer::prepare()` on the first frame whose scene
-    /// uses a matcap. Safe to call multiple times : no-op after first
-    /// invocation.
+    /// uses a matcap. Safe to call multiple times: a no-op after the first
+    /// call, and on a renderer below the full tier, which draws no matcaps.
     pub fn ensure_matcaps_initialized(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
     ) {
-        if self.content.matcaps_initialized {
+        if self.content.matcaps_initialized || !self.scene_tier.is_built() {
             return;
         }
         self.content.matcaps_initialized = true;
