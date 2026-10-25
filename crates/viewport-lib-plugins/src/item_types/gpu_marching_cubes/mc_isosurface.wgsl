@@ -40,18 +40,21 @@ struct IsoVertexOutput {
 
 // Corner `vi` (0-35) of the unit cube's twelve triangles, wound so the
 // outward faces are front-facing.
+//
+// Two triangles per face, as corner indices into the eight cube corners
+// (bit 0 = x, bit 1 = y, bit 2 = z), in face order -z, +z, -y, +y, -x, +x:
+//   0 2 3 0 3 1 | 4 5 7 4 7 6 | 0 1 5 0 5 4 | 2 6 7 2 7 3 | 0 4 6 0 6 2 | 1 3 7 1 7 5
+// packed three bits an index, ten indices a word. Selected arithmetically
+// rather than from a local array, which some GLES compilers (Adreno)
+// miscompile when it is indexed by the vertex index.
 fn cube_corner(vi: u32) -> vec3<f32> {
-    // Two triangles per face, as corner indices into the eight cube corners
-    // (bit 0 = x, bit 1 = y, bit 2 = z).
-    var faces = array<u32, 36>(
-        0u, 2u, 3u, 0u, 3u, 1u, // -z
-        4u, 5u, 7u, 4u, 7u, 6u, // +z
-        0u, 1u, 5u, 0u, 5u, 4u, // -y
-        2u, 6u, 7u, 2u, 7u, 3u, // +y
-        0u, 4u, 6u, 0u, 6u, 2u, // -x
-        1u, 3u, 7u, 1u, 7u, 5u, // +x
+    let word = vi / 10u;
+    let packed = select(
+        select(0x27b0b0d0u, 0x32945237u, word == 1u),
+        select(0x161a07d7u, 0x0002f3d9u, word == 3u),
+        word >= 2u,
     );
-    let c = faces[vi];
+    let c = (packed >> (3u * (vi % 10u))) & 7u;
     return vec3<f32>(f32(c & 1u), f32((c >> 1u) & 1u), f32((c >> 2u) & 1u));
 }
 
