@@ -752,6 +752,7 @@ fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec
         light.point_shadow_slot,
         normalised,
     );
+    // ALT(NO_CUBE_ARRAY): return 1.0;
     // END_POINT_SHADOW_SAMPLE
 }
 

@@ -159,7 +159,8 @@ dev-knobs = []
 # validate against the same front end the runtime uses.
 # Cargo does not allow optional dev-dependencies, so all three are always
 # compiled for a dev build; the test modules name the one matching the leg.
-naga = "27"
+# glsl-out: the GLSL translation tests in `resources::builders`.
+naga = { version = "27", features = ["wgsl-in", "glsl-out"] }
 naga29 = { package = "naga", version = "29" }
 naga30 = { package = "naga", version = "30" }
 # Blocks on the async device request in the headless integration tests.

@@ -20,9 +20,11 @@
 // helper can derive the view-space fragment position itself; consumers don't
 // have to extend their per-shader `Camera` struct to expose it.
 //
-// On the forward tier `builders::adapt_wgsl` makes the light list a uniform
-// array of FORWARD_MAX_LIGHTS and replaces the cluster lookups with the full
-// loop: that tier has no storage buffers and builds no clusters.
+// The BEGIN_/END_ regions carry an alternative on `// ALT(NAME):` lines, which
+// `builders::adapt_wgsl` swaps in where the device's group 0 needs it: the
+// light list as a uniform array of FORWARD_MAX_LIGHTS (UNIFORM), and the
+// cluster lookups walking every light where there are no clusters
+// (UNCLUSTERED).
 //
 // Consumers must:
 //   - Bind the `Lights` header uniform at `@group(0) @binding(3)`.
@@ -104,6 +106,7 @@ struct ClusterGrid {
 
 // BEGIN_LIGHT_LIST
 @group(0) @binding(13) var<storage, read> lights_storage:        array<SingleLight>;
+// ALT(UNIFORM): @group(0) @binding(13) var<uniform> lights_storage: array<SingleLight, 16>;
 // END_LIGHT_LIST
 @group(0) @binding(14) var<uniform>       cluster_grid_uniform:  ClusterGrid;
 // The cluster cells, four words each (offset, count, punctual_count,
@@ -207,6 +210,9 @@ fn cluster_light_range(world_pos: vec3<f32>, total_count: u32) -> LightRange {
         r.start = cluster_data[cid * 4u];
         r.count = cluster_data[cid * 4u + 1u];
     }
+    // ALT(UNCLUSTERED): r.fallback = true;
+    // ALT(UNCLUSTERED): r.start = 0u;
+    // ALT(UNCLUSTERED): r.count = total_count;
     // END_CLUSTER_LOOKUP
     return r;
 }
@@ -217,6 +223,7 @@ fn cluster_light_global(range: LightRange, j: u32) -> u32 {
     }
     // BEGIN_CLUSTER_INDEX
     return cluster_data[CLUSTER_INDEX_BASE + range.start + j];
+    // ALT(UNCLUSTERED): return j;
     // END_CLUSTER_INDEX
 }
 

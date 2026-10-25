@@ -38,74 +38,78 @@ pub fn wgsl_module<'a>(
 
 /// Adapt a shader source to the device it is compiled for.
 ///
-/// On a device without cube-array textures the point-light shadow array is
-/// declared `texture_depth_2d_array` to match the `D2Array` view binding 17
-/// carries there, and the point-shadow sample between the
-/// `BEGIN_POINT_SHADOW_SAMPLE` / `END_POINT_SHADOW_SAMPLE` markers returns 1.0
-/// (unshadowed). On a device whose shaders cannot load from depth textures
-/// (wgpu's GL backend) the PCSS blocker search between
-/// `BEGIN_PCSS_BLOCKER_SEARCH` / `END_PCSS_BLOCKER_SEARCH` is removed, and the
-/// PCSS tiers filter as PCF. On the forward tier, whose group 0 has no storage
-/// buffers, the light list between `BEGIN_LIGHT_LIST` / `END_LIGHT_LIST` is
-/// declared a uniform array of [`FORWARD_MAX_LIGHTS`](crate::resources::FORWARD_MAX_LIGHTS)
-/// and the cluster lookups between `BEGIN_CLUSTER_LOOKUP` / `BEGIN_CLUSTER_INDEX`
-/// and their ends walk every light instead. Every other source comes back
-/// unchanged.
+/// Shaders mark device-dependent code as a region, `// BEGIN_<REGION>` to
+/// `// END_<REGION>`, holding the default code and, on `// ALT(<NAME>): code`
+/// lines, the alternative. Where the device needs an alternative, the region
+/// is replaced by its `ALT(<NAME>)` lines' code; everywhere else the source is
+/// unchanged. The alternatives and the conditions:
+///
+/// - `POINT_SHADOW_SAMPLE` / `NO_CUBE_ARRAY`: no cube-array textures. The
+///   point-light shadow array is also declared `texture_depth_2d_array`, to
+///   match the `D2Array` view binding 17 carries there.
+/// - `PCSS_BLOCKER_SEARCH` / `NO_DEPTH_LOADS`: shaders cannot load from depth
+///   textures (wgpu's GL backend). The PCSS tiers filter as PCF.
+/// - `LIGHT_LIST` / `UNIFORM`: the group 0 profile holds the light list in a
+///   uniform array (the forward tier).
+/// - `CLUSTER_LOOKUP` and `CLUSTER_INDEX` / `UNCLUSTERED`: the group 0
+///   profile has no clusters, so the lighting loops walk every light.
 pub fn adapt_wgsl<'a>(
     source: impl Into<std::borrow::Cow<'a, str>>,
     caps: &crate::capabilities::Capabilities,
 ) -> std::borrow::Cow<'a, str> {
     let mut source = source.into();
-    const CUBE: &str = "texture_depth_cube_array";
-    if !caps.cube_array_textures && source.contains(CUBE) {
-        let mut out = source.replace(CUBE, "texture_depth_2d_array");
-        replace_regions(
-            &mut out,
-            "// BEGIN_POINT_SHADOW_SAMPLE",
-            "// END_POINT_SHADOW_SAMPLE",
-            "return 1.0;",
-        );
-        source = std::borrow::Cow::Owned(out);
+    let profile = crate::resources::group0::Group0Profile::for_caps(caps);
+    let mut picks: Vec<(&str, &str)> = Vec::new();
+    if !caps.cube_array_textures {
+        const CUBE: &str = "texture_depth_cube_array";
+        if source.contains(CUBE) {
+            source = std::borrow::Cow::Owned(source.replace(CUBE, "texture_depth_2d_array"));
+        }
+        picks.push(("POINT_SHADOW_SAMPLE", "NO_CUBE_ARRAY"));
     }
-    const LIGHT_LIST: &str = "// BEGIN_LIGHT_LIST";
-    if caps.tier() == crate::capabilities::Tier::Forward && source.contains(LIGHT_LIST) {
-        let mut out = source.into_owned();
-        let list = format!(
-            "@group(0) @binding(13) var<uniform> lights_storage: array<SingleLight, {}>;",
-            crate::resources::FORWARD_MAX_LIGHTS
-        );
-        replace_regions(&mut out, LIGHT_LIST, "// END_LIGHT_LIST", &list);
-        replace_regions(
-            &mut out,
-            "// BEGIN_CLUSTER_LOOKUP",
-            "// END_CLUSTER_LOOKUP",
-            "r.fallback = true;\n    r.start = 0u;\n    r.count = total_count;",
-        );
-        replace_regions(
-            &mut out,
-            "// BEGIN_CLUSTER_INDEX",
-            "// END_CLUSTER_INDEX",
-            "return j;",
-        );
-        source = std::borrow::Cow::Owned(out);
+    if !caps.depth_texture_loads {
+        picks.push(("PCSS_BLOCKER_SEARCH", "NO_DEPTH_LOADS"));
     }
-    const PCSS: &str = "// BEGIN_PCSS_BLOCKER_SEARCH";
-    if !caps.depth_texture_loads && source.contains(PCSS) {
-        let mut out = source.into_owned();
-        replace_regions(&mut out, PCSS, "// END_PCSS_BLOCKER_SEARCH", "");
-        source = std::borrow::Cow::Owned(out);
+    if let Some(profile) = profile {
+        if profile.uniform_light_list.is_some() {
+            picks.push(("LIGHT_LIST", "UNIFORM"));
+        }
+        if !profile.clusters {
+            picks.push(("CLUSTER_LOOKUP", "UNCLUSTERED"));
+            picks.push(("CLUSTER_INDEX", "UNCLUSTERED"));
+        }
+    }
+    for (region, alt) in picks {
+        let begin = format!("// BEGIN_{region}");
+        if source.contains(&begin) {
+            let mut out = source.into_owned();
+            select_alternative(&mut out, &begin, &format!("// END_{region}"), alt);
+            source = std::borrow::Cow::Owned(out);
+        }
     }
     source
 }
 
-/// Replace every `begin`..`end` region of `out`, markers included, with
-/// `with`.
-fn replace_regions(out: &mut String, begin: &str, end: &str, with: &str) {
+/// Replace every `begin`..`end` region of `out`, markers included, with the
+/// code on its `// ALT(<alt>):` lines.
+fn select_alternative(out: &mut String, begin: &str, end: &str, alt: &str) {
+    let tag = format!("// ALT({alt}):");
     while let Some(start) = out.find(begin) {
         let Some(len) = out[start..].find(end) else {
             break;
         };
-        out.replace_range(start..start + len + end.len(), with);
+        let region = &out[start..start + len];
+        let code: Vec<&str> = region
+            .lines()
+            .filter_map(|line| line.trim_start().strip_prefix(tag.as_str()))
+            .map(str::trim)
+            .collect();
+        debug_assert!(
+            region.contains(tag.as_str()),
+            "{begin} has no {tag} alternative"
+        );
+        let code = code.join("\n");
+        out.replace_range(start..start + len + end.len(), &code);
     }
 }
 
@@ -171,6 +175,194 @@ mod adapt_wgsl_tests {
             });
             if let Some(e) = pollster::block_on(scope.pop()) {
                 panic!("the GL-adapted mesh shader does not compile: {e}");
+            }
+        }
+    }
+
+    fn forward_caps() -> crate::capabilities::Capabilities {
+        let caps = crate::capabilities::Capabilities::from_parts(
+            &crate::gpu::Limits::downlevel_webgl2_defaults(),
+            crate::gpu::Features::empty(),
+            Some(crate::gpu::DownlevelFlags::empty()),
+        )
+        .with_backend(crate::gpu::Backend::Gl);
+        assert_eq!(caps.tier(), crate::capabilities::Tier::Forward);
+        caps
+    }
+
+    const LIT_BODY: &str = "
+@group(0) @binding(0) var<uniform> test_view_proj: mat4x4<f32>;
+@group(0) @binding(3) var<uniform> test_lights: Lights;
+struct TestOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world: vec3<f32>,
+};
+@vertex
+fn vs_main(@location(0) position: vec3<f32>) -> TestOut {
+    var out: TestOut;
+    out.clip = test_view_proj * vec4<f32>(position, 1.0);
+    out.world = position;
+    return out;
+}
+@fragment
+fn fs_main(in: TestOut) -> @location(0) vec4<f32> {
+    let lit = apply_scene_lighting(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0), false, in.world, test_lights);
+    return vec4<f32>(lit, 1.0);
+}
+";
+
+    const BINDINGS_BODY: &str = "
+@vertex
+fn vs_main(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {
+    return vec4<f32>(position, 1.0);
+}
+@fragment
+fn fs_main() -> @location(0) vec4<f32> {
+    var c = vec3<f32>(0.0);
+    for (var i = 0u; i < lights.count; i++) {
+        c += lights_storage[i].colour;
+    }
+    return vec4<f32>(c, 1.0);
+}
+";
+
+    fn lit_source() -> String {
+        format!(
+            "{}\n{LIT_BODY}",
+            crate::plugin_api::shared_wgsl::SHARED_SCENE_LIGHTING_WGSL
+        )
+    }
+
+    fn bindings_source() -> String {
+        format!(
+            "{}\n{BINDINGS_BODY}",
+            crate::plugin_api::shared_wgsl::SHARED_BINDINGS_WGSL
+        )
+    }
+
+    /// On the forward tier the light list is a uniform array and nothing
+    /// reads the cluster buffers; on the full tier both sources are kept.
+    #[test]
+    fn the_forward_tier_gets_the_uniform_light_list() {
+        for src in [lit_source(), bindings_source()] {
+            let forward = adapt_wgsl(src.as_str(), &forward_caps());
+            let list = format!(
+                "var<uniform> lights_storage: array<SingleLight, {}>;",
+                crate::resources::FORWARD_MAX_LIGHTS
+            );
+            assert!(forward.contains(&list), "the light list is not {list}");
+            assert!(!forward.contains("var<storage, read> lights_storage"));
+            assert!(!forward.contains("BEGIN_LIGHT_LIST"));
+            assert!(!forward.contains("cluster_data[cid"));
+            assert!(!forward.contains("cluster_data[CLUSTER_INDEX_BASE"));
+
+            let full = adapt_wgsl(src.as_str(), &caps(crate::gpu::Backend::Metal));
+            assert!(matches!(full, std::borrow::Cow::Borrowed(_)));
+        }
+    }
+
+    /// Every region carries the alternative each device condition can ask
+    /// for, so a missing `ALT` line fails here rather than at a device.
+    #[test]
+    fn every_region_carries_its_alternatives() {
+        let sources = [
+            MESH,
+            MESH_OIT,
+            crate::plugin_api::shared_wgsl::SHARED_SCENE_LIGHTING_WGSL,
+            crate::plugin_api::shared_wgsl::SHARED_BINDINGS_WGSL,
+            crate::plugin_api::shared_wgsl::SHARED_CSM_WGSL,
+        ];
+        let wants = [
+            ("POINT_SHADOW_SAMPLE", "NO_CUBE_ARRAY"),
+            ("PCSS_BLOCKER_SEARCH", "NO_DEPTH_LOADS"),
+            ("LIGHT_LIST", "UNIFORM"),
+            ("CLUSTER_LOOKUP", "UNCLUSTERED"),
+            ("CLUSTER_INDEX", "UNCLUSTERED"),
+        ];
+        for src in sources {
+            for (region, alt) in wants {
+                let begin = format!("// BEGIN_{region}");
+                let end = format!("// END_{region}");
+                let mut rest = src;
+                while let Some(start) = rest.find(&begin) {
+                    let len = rest[start..].find(&end).expect("an unterminated region");
+                    assert!(
+                        rest[start..start + len].contains(&format!("// ALT({alt}):")),
+                        "{begin} has no ALT({alt}) line"
+                    );
+                    rest = &rest[start + len..];
+                }
+            }
+        }
+    }
+
+    /// Translate every entry point of `src` with naga's GLSL writer, the
+    /// path wgpu's GL backend takes.
+    #[cfg(wgpu27)]
+    fn translate_to_glsl(src: &str, version: u16, is_webgl: bool) -> Result<(), String> {
+        let module = naga::front::wgsl::parse_str(src).map_err(|e| e.emit_to_string(src))?;
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .map_err(|e| format!("{e:?}"))?;
+        for ep in &module.entry_points {
+            let (module, info) = naga::back::pipeline_constants::process_overrides(
+                &module,
+                &info,
+                Some((ep.stage, ep.name.as_str())),
+                &Default::default(),
+            )
+            .map_err(|e| format!("{}: {e}", ep.name))?;
+            let options = naga::back::glsl::Options {
+                version: naga::back::glsl::Version::Embedded { version, is_webgl },
+                ..Default::default()
+            };
+            let pipeline = naga::back::glsl::PipelineOptions {
+                shader_stage: ep.stage,
+                entry_point: ep.name.clone(),
+                multiview: None,
+            };
+            let mut out = String::new();
+            naga::back::glsl::Writer::new(
+                &mut out,
+                &module,
+                &info,
+                &options,
+                &pipeline,
+                naga::proc::BoundsCheckPolicies::default(),
+            )
+            .and_then(|mut writer| writer.write())
+            .map_err(|e| format!("{}: {e}", ep.name))?;
+        }
+        Ok(())
+    }
+
+    /// The shared lighting sources a forward-tier item type composes, adapted
+    /// for that tier, translate to the GLSL ES 3.0 WebGL2 compiles.
+    #[cfg(wgpu27)]
+    #[test]
+    fn forward_shaders_translate_to_webgl2_glsl() {
+        for (name, src) in [("lit", lit_source()), ("bindings", bindings_source())] {
+            let adapted = adapt_wgsl(src.as_str(), &forward_caps());
+            if let Err(e) = translate_to_glsl(&adapted, 300, true) {
+                panic!("{name}: {e}");
+            }
+        }
+    }
+
+    /// The full tier's mesh shaders, adapted for a desktop GL device (cube
+    /// arrays, no depth-texture loads), translate to GLSL ES 3.2.
+    #[cfg(wgpu27)]
+    #[test]
+    fn gl_mesh_shaders_translate_to_glsl() {
+        let mut gl = caps(crate::gpu::Backend::Gl);
+        gl.cube_array_textures = true;
+        for (name, src) in [("mesh", MESH), ("mesh_oit", MESH_OIT)] {
+            let adapted = adapt_wgsl(src, &gl);
+            if let Err(e) = translate_to_glsl(&adapted, 320, false) {
+                panic!("{name}: {e}");
             }
         }
     }

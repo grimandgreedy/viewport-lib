@@ -493,7 +493,7 @@ impl DeviceResources {
     /// `Err(TierUnsupported)` when there is no lit group 0 for an item type
     /// to bind: the overlay-only tier.
     pub(crate) fn require_lit_group0(&self) -> Result<(), crate::ViewportError> {
-        if self.scene_tier.is_built() || self.forward_tier.is_some() {
+        if self.lit_group0_layouts().is_some() {
             Ok(())
         } else {
             Err(crate::ViewportError::TierUnsupported {
@@ -611,6 +611,9 @@ pub struct DeviceResources {
     /// Group 0 on the forward tier: built there in place of the scene tier,
     /// `None` on every other tier.
     pub(crate) forward_tier: Option<Box<crate::resources::forward_tier::ForwardTier>>,
+    /// Which form each group 0 binding takes here; `None` on the overlay-only
+    /// tier, which has no lit group 0.
+    pub(crate) group0_profile: Option<crate::resources::group0::Group0Profile>,
     // --- Gizmo resources ---
 
     // --- Overlay guide resources (grid, axes, base overlay, constraint lines) ---
@@ -1760,17 +1763,7 @@ impl DeviceResources {
         clip_volume_buf: &crate::gpu::Buffer,
         label: &str,
     ) -> crate::gpu::BindGroup {
-        if !self.scene_tier.is_built() {
-            if let Some(forward) = &self.forward_tier {
-                return forward.camera_bind_group(
-                    device,
-                    camera_buf,
-                    clip_planes_buf,
-                    shadow_info_buf,
-                    clip_volume_buf,
-                    label,
-                );
-            }
+        let Some(profile) = &self.group0_profile else {
             // Overlay-only: viewport slots still hold a camera group, which no
             // overlay pipeline binds, so an empty one stands in for it.
             let layout = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
@@ -1782,122 +1775,78 @@ impl DeviceResources {
                 layout: &layout,
                 entries: &[],
             });
-        }
-        let irr = self
-            .scene_tier
-            .ibl
-            .irradiance_view
-            .as_ref()
-            .unwrap_or(&self.scene_tier.ibl.fallback_array_view);
-        let spec = self
-            .scene_tier
-            .ibl
-            .prefiltered_view
-            .as_ref()
-            .unwrap_or(&self.scene_tier.ibl.fallback_array_view);
-        let brdf = self
-            .scene_tier
-            .ibl
-            .brdf_lut_view
-            .as_ref()
-            .unwrap_or(&self.scene_tier.ibl.fallback_brdf_view);
-        let skybox = self
-            .scene_tier
-            .ibl
-            .skybox_view
-            .as_ref()
-            .unwrap_or(&self.scene_tier.ibl.fallback_view);
+        };
+        let per_viewport = crate::resources::group0::PerViewport {
+            camera: camera_buf,
+            clip_planes: clip_planes_buf,
+            shadow_info: shadow_info_buf,
+            clip_volume: clip_volume_buf,
+        };
+        let (layout, res) = match &self.forward_tier {
+            Some(forward) => (&forward.camera_bgl, forward.group0_resources(per_viewport)),
+            None => (
+                &self.scene_tier.binds.camera_bgl,
+                self.scene_group0_resources(per_viewport),
+            ),
+        };
+        profile.bind_group(device, layout, &res, label)
+    }
 
-        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some(label),
-            layout: &self.scene_tier.binds.camera_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: camera_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::TextureView(
-                        &self.scene_tier.shadow.map_view,
-                    ),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&self.scene_tier.shadow.sampler),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.scene_tier.lighting.uniform_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 4,
-                    resource: clip_planes_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 5,
-                    resource: shadow_info_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 6,
-                    resource: clip_volume_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 7,
-                    resource: crate::gpu::BindingResource::TextureView(irr),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 8,
-                    resource: crate::gpu::BindingResource::TextureView(spec),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 9,
-                    resource: crate::gpu::BindingResource::TextureView(brdf),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 10,
-                    resource: crate::gpu::BindingResource::Sampler(&self.scene_tier.ibl.sampler),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 11,
-                    resource: crate::gpu::BindingResource::TextureView(skybox),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 13,
-                    resource: self.scene_tier.lighting.storage_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 14,
-                    resource: self
-                        .scene_tier
-                        .clustered
-                        .grid_uniform_buf
-                        .as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 15,
-                    resource: self.scene_tier.clustered.cluster_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 17,
-                    resource: crate::gpu::BindingResource::TextureView(
-                        &self.scene_tier.shadow.point_cube_view,
-                    ),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 18,
-                    resource: self.scene_tier.lighting.indirect_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 21,
-                    resource: self.material_gpu_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 23,
-                    resource: self.scene_tier.deform.header_buffer.as_entire_binding(),
-                },
-            ],
-        })
+    /// What the full tier's group 0 binds, around a viewport's own buffers.
+    fn scene_group0_resources<'a>(
+        &'a self,
+        per_viewport: crate::resources::group0::PerViewport<'a>,
+    ) -> crate::resources::group0::Group0Resources<'a> {
+        let tier = &*self.scene_tier;
+        let ibl = &tier.ibl;
+        crate::resources::group0::Group0Resources {
+            per_viewport,
+            shadow_atlas: &tier.shadow.map_view,
+            shadow_sampler: &tier.shadow.sampler,
+            lights_header: &tier.lighting.uniform_buf,
+            ibl_irradiance: ibl
+                .irradiance_view
+                .as_ref()
+                .unwrap_or(&ibl.fallback_array_view),
+            ibl_specular: ibl
+                .prefiltered_view
+                .as_ref()
+                .unwrap_or(&ibl.fallback_array_view),
+            brdf_lut: ibl
+                .brdf_lut_view
+                .as_ref()
+                .unwrap_or(&ibl.fallback_brdf_view),
+            ibl_sampler: &ibl.sampler,
+            skybox: ibl.skybox_view.as_ref().unwrap_or(&ibl.fallback_view),
+            light_list: &tier.lighting.storage_buf,
+            point_shadows: &tier.shadow.point_cube_view,
+            clusters: Some((
+                &tier.clustered.grid_uniform_buf,
+                &tier.clustered.cluster_buf,
+            )),
+            mesh_family: Some((
+                &tier.lighting.indirect_buf,
+                &self.material_gpu_buf,
+                &tier.deform.header_buffer,
+            )),
+        }
+    }
+
+    /// The lit group 0 layout and the shadow pass's group 0 layout, from
+    /// whichever tier built them. `None` on the overlay-only tier.
+    pub(crate) fn lit_group0_layouts(
+        &self,
+    ) -> Option<(&crate::gpu::BindGroupLayout, &crate::gpu::BindGroupLayout)> {
+        if let Some(forward) = &self.forward_tier {
+            Some((&forward.camera_bgl, &forward.shadow_camera_bgl))
+        } else if self.scene_tier.is_built() {
+            Some((
+                &self.scene_tier.binds.camera_bgl,
+                &self.scene_tier.shadow.camera_bgl,
+            ))
+        } else {
+            None
+        }
     }
 }
 

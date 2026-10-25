@@ -94,6 +94,7 @@ struct ClipVolumeUB {
 @group(0) @binding(11) var          skybox_tex:           texture_2d<f32>;
 // BEGIN_LIGHT_LIST
 @group(0) @binding(13) var<storage, read> lights_storage: array<SingleLight>;
+// ALT(UNIFORM): @group(0) @binding(13) var<uniform> lights_storage: array<SingleLight, 16>;
 // END_LIGHT_LIST
 @group(0) @binding(17) var          point_shadow_cube:    texture_depth_cube_array;
 

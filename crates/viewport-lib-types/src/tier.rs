@@ -40,7 +40,7 @@ impl Tier {
     /// and one more for its instances or picking.
     pub const FORWARD_BIND_GROUPS: u32 = 3;
     /// Sampled textures per stage the forward tier needs: WebGL2's 16. Its
-    /// group 0 binds 7 in the fragment stage.
+    /// group 0 binds 6 in the fragment stage.
     pub const FORWARD_SAMPLED_TEXTURES_PER_STAGE: u32 = 16;
     /// Uniform buffers per stage the forward tier needs: WebGL2's 11. Its
     /// group 0 binds 6 in the fragment stage.

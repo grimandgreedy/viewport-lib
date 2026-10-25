@@ -2,19 +2,21 @@
 //! list of its group 0, and each viewport's camera and clip uniforms.
 
 use super::*;
-use crate::resources::FORWARD_MAX_LIGHTS;
 
 impl ViewportRenderer {
     /// Rank the frame's lights into the forward light list and write it with
-    /// its header. Shadows, image-based lighting and debug views are off on
-    /// this tier, so the header carries only the count and the hemisphere.
+    /// its header. This tier's profile binds no shadow maps or environment,
+    /// and the debug views are off.
     pub(super) fn prepare_forward_lights(
         &mut self,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
         scene_fx: &SceneEffects<'_>,
     ) {
-        let Some(forward) = self.resources.forward_tier.as_deref() else {
+        let (Some(forward), Some(profile)) = (
+            self.resources.forward_tier.as_deref(),
+            self.resources.group0_profile.as_ref(),
+        ) else {
             return;
         };
         let lighting = scene_fx.lighting;
@@ -31,7 +33,9 @@ impl ViewportRenderer {
                 .chain(frame.scene.lights.iter())
                 .chain(plugin_lights.iter()),
             frame,
-            FORWARD_MAX_LIGHTS,
+            profile
+                .uniform_light_list
+                .unwrap_or(crate::resources::MAX_SCENE_LIGHTS),
         );
         self.last_frustum_culled_lights = ranked.frustum_culled;
         self.last_lights_dropped = ranked.dropped;
@@ -41,13 +45,12 @@ impl ViewportRenderer {
             .map(|l| lighting::build_single_light_uniform(l, glam::Vec3::ZERO, 0.0, false))
             .collect();
 
-        let mut header: crate::resources::LightsUniform = bytemuck::Zeroable::zeroed();
-        header.count = packed.len() as u32;
-        header.sky_colour = lighting.sky_colour.to_linear_rgb();
-        header.hemisphere_intensity = lighting.hemisphere_intensity;
-        header.ground_colour = lighting.ground_colour.to_linear_rgb();
-        header.debug_vis_scale = 1.0;
-        header.debug_vis_split_x = 0.5;
+        let header = lighting::lights_header(
+            lighting,
+            packed.len() as u32,
+            profile,
+            &lighting::HeaderExtras::default(),
+        );
         queue.write_buffer(
             &forward.lights_header_buf,
             0,

@@ -325,6 +325,7 @@ fn sample_shadow_csm(
         let filtered = csm_contact(shadow / f32(filter_taps), atlas_uv, biased_depth, surface_depth, texel_depth, contact_rule);
         return ShadowSample(filtered, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     }
+    // ALT(NO_DEPTH_LOADS):
     // END_PCSS_BLOCKER_SEARCH
 
     // PCF: fixed-radius rotated Poisson disk. The default is 8 taps; the

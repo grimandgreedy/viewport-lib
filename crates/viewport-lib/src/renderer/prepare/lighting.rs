@@ -422,28 +422,31 @@ impl ViewportRenderer {
         let keep_debug_block = debug_vis_mode != 0 || resources.force_debug_vis_shaders;
         resources.set_debug_vis_shaders(device, keep_debug_block);
 
-        let lights_uniform = LightsUniform {
-            count: light_count,
-            shadow_bias: lighting.shadows.bias,
-            shadows_enabled: if lighting.shadows.enabled { 1 } else { 0 },
-            debug_vis_mode,
-            sky_colour: lighting.sky_colour.to_linear_rgb(),
-            hemisphere_intensity: lighting.hemisphere_intensity,
-            ground_colour: lighting.ground_colour.to_linear_rgb(),
-            debug_vis_scale,
-            ibl_enabled,
-            ibl_intensity,
-            ibl_rotation,
-            ibl_diffuse_scale,
-            debug_vis_split_x: if frame.effects.debug.debug_vis.active {
-                frame.effects.debug.debug_vis.split_x.clamp(0.0, 1.0)
-            } else {
-                0.5
+        let lights_uniform = lights_header(
+            lighting,
+            light_count,
+            resources
+                .group0_profile
+                .as_ref()
+                .expect("the scene tier has a lit group 0"),
+            &HeaderExtras {
+                debug_vis_mode,
+                debug_vis_scale,
+                debug_vis_split_x: if frame.effects.debug.debug_vis.active {
+                    frame.effects.debug.debug_vis.split_x.clamp(0.0, 1.0)
+                } else {
+                    0.5
+                },
+                ibl_enabled,
+                ibl_intensity,
+                ibl_rotation,
+                ibl_diffuse_scale,
+                ibl_specular_scale,
+                env_zone_count: resources.scene_tier.ibl.env_zone_count,
+                custom_data_base: (resources.scene_tier.lighting.custom_data_base_bytes / 16)
+                    as u32,
             },
-            env_zone_count: resources.scene_tier.ibl.env_zone_count,
-            ibl_specular_scale,
-            custom_data_base: (resources.scene_tier.lighting.custom_data_base_bytes / 16) as u32,
-        };
+        );
         if LightingWrites::changed(&mut shadow.written.lights, lights_uniform) {
             queue.write_buffer(
                 &resources.scene_tier.lighting.uniform_buf,
@@ -980,5 +983,66 @@ pub(super) fn rank_lights<'a>(
         lights: out,
         frustum_culled,
         dropped,
+    }
+}
+
+/// The lights header fields that come from state only some group 0 profiles
+/// have: the environment, the debug views and the indirect-light offsets.
+pub(super) struct HeaderExtras {
+    pub(super) debug_vis_mode: u32,
+    pub(super) debug_vis_scale: f32,
+    pub(super) debug_vis_split_x: f32,
+    pub(super) ibl_enabled: u32,
+    pub(super) ibl_intensity: f32,
+    pub(super) ibl_rotation: f32,
+    pub(super) ibl_diffuse_scale: f32,
+    pub(super) ibl_specular_scale: f32,
+    pub(super) env_zone_count: u32,
+    pub(super) custom_data_base: u32,
+}
+
+impl Default for HeaderExtras {
+    /// Debug views off and no environment.
+    fn default() -> Self {
+        Self {
+            debug_vis_mode: 0,
+            debug_vis_scale: 1.0,
+            debug_vis_split_x: 0.5,
+            ibl_enabled: 0,
+            ibl_intensity: 0.0,
+            ibl_rotation: 0.0,
+            ibl_diffuse_scale: 0.0,
+            ibl_specular_scale: 0.0,
+            env_zone_count: 0,
+            custom_data_base: 0,
+        }
+    }
+}
+
+/// The lights header (group 0 binding 3) for `count` lights, on every tier.
+/// Shadows count as enabled only where the profile binds real shadow maps.
+pub(super) fn lights_header(
+    lighting: &LightingSettings,
+    count: u32,
+    profile: &crate::resources::group0::Group0Profile,
+    extras: &HeaderExtras,
+) -> LightsUniform {
+    LightsUniform {
+        count,
+        shadow_bias: lighting.shadows.bias,
+        shadows_enabled: u32::from(lighting.shadows.enabled && profile.shadows),
+        debug_vis_mode: extras.debug_vis_mode,
+        sky_colour: lighting.sky_colour.to_linear_rgb(),
+        hemisphere_intensity: lighting.hemisphere_intensity,
+        ground_colour: lighting.ground_colour.to_linear_rgb(),
+        debug_vis_scale: extras.debug_vis_scale,
+        ibl_enabled: if profile.ibl { extras.ibl_enabled } else { 0 },
+        ibl_intensity: extras.ibl_intensity,
+        ibl_rotation: extras.ibl_rotation,
+        ibl_diffuse_scale: extras.ibl_diffuse_scale,
+        debug_vis_split_x: extras.debug_vis_split_x,
+        env_zone_count: extras.env_zone_count,
+        ibl_specular_scale: extras.ibl_specular_scale,
+        custom_data_base: extras.custom_data_base,
     }
 }

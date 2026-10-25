@@ -1,16 +1,9 @@
-//! Group 0 on the forward tier: the camera, lights and clip uniforms every
-//! lit item type binds, without the storage buffers the full tier's group 0
-//! carries (light list, clusters, indirect light, material block).
-//!
-//! Binding numbers and types match the full tier's layout for every binding
-//! kept, so the shared WGSL declarations work unchanged on both tiers. The one
-//! difference a shader sees is the light list at binding 13: a uniform array
-//! of [`FORWARD_MAX_LIGHTS`] instead of a storage array, which
-//! `builders::adapt_wgsl` swaps in. Shadows and image-based lighting are off
-//! on this tier, so their bindings hold 1x1 placeholders.
+//! The resources behind group 0 on the forward tier: its own lights header
+//! and light list, and 1x1 placeholders for the shadow and IBL bindings,
+//! which are off on this tier. The layout and the bind group come from the
+//! tier's `Group0Profile` (`resources::group0`), like the full tier's.
 
-use crate::gpu::ShaderStages;
-use crate::resources::builders::{LoggedAlloc, sampler_entry, texture_entry, uniform_entry};
+use crate::resources::builders::LoggedAlloc;
 use crate::resources::{LightsUniform, SingleLightUniform};
 
 /// Lights the forward tier's light list holds. Lights past it are dropped in
@@ -39,75 +32,16 @@ pub(crate) struct ForwardTier {
 impl ForwardTier {
     pub(crate) fn new(
         device: &crate::gpu::Device,
-        caps: &crate::capabilities::Capabilities,
+        profile: &crate::resources::group0::Group0Profile,
     ) -> Self {
-        let both = ShaderStages::VERTEX | ShaderStages::FRAGMENT;
-        let fragment = ShaderStages::FRAGMENT;
-        let float_array = |binding| crate::gpu::BindGroupLayoutEntry {
-            binding,
-            visibility: fragment,
-            ty: crate::gpu::BindingType::Texture {
-                sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                view_dimension: crate::gpu::TextureViewDimension::D2Array,
-                multisampled: false,
-            },
-            count: None,
-        };
-        let depth = |binding, view_dimension| crate::gpu::BindGroupLayoutEntry {
-            binding,
-            visibility: fragment,
-            ty: crate::gpu::BindingType::Texture {
-                sample_type: crate::gpu::TextureSampleType::Depth,
-                view_dimension,
-                multisampled: false,
-            },
-            count: None,
-        };
         let camera_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("forward_camera_bgl"),
-            entries: &[
-                uniform_entry(0, both),
-                depth(1, crate::gpu::TextureViewDimension::D2),
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: fragment,
-                    ty: crate::gpu::BindingType::Sampler(
-                        crate::gpu::SamplerBindingType::Comparison,
-                    ),
-                    count: None,
-                },
-                uniform_entry(3, fragment),
-                uniform_entry(4, both),
-                uniform_entry(5, fragment),
-                uniform_entry(6, fragment),
-                float_array(7),
-                float_array(8),
-                texture_entry(9, fragment),
-                sampler_entry(10, fragment),
-                texture_entry(11, fragment),
-                uniform_entry(13, fragment),
-                depth(
-                    17,
-                    crate::resources::shadow::point_shadow_view_dimension(caps.cube_array_textures),
-                ),
-            ],
+            entries: &profile.layout_entries(),
         });
         let shadow_camera_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("forward_shadow_camera_bgl"),
-                entries: &[
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: ShaderStages::VERTEX,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: true,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    uniform_entry(23, ShaderStages::VERTEX),
-                ],
+                entries: &crate::resources::group0::shadow_layout_entries(),
             });
 
         let uniform = |label, size| {
@@ -122,9 +56,10 @@ impl ForwardTier {
             "forward_lights_header",
             std::mem::size_of::<LightsUniform>() as u64,
         );
+        let lights = profile.uniform_light_list.unwrap_or(FORWARD_MAX_LIGHTS);
         let light_list_buf = uniform(
             "forward_light_list",
-            (FORWARD_MAX_LIGHTS * std::mem::size_of::<SingleLightUniform>()) as u64,
+            (lights * std::mem::size_of::<SingleLightUniform>()) as u64,
         );
 
         let placeholder = |label, format, layers, dimension| {
@@ -148,9 +83,11 @@ impl ForwardTier {
                     ..Default::default()
                 })
         };
-        let point_dimension =
-            crate::resources::shadow::point_shadow_view_dimension(caps.cube_array_textures);
-        let point_layers = if caps.cube_array_textures { 6 } else { 1 };
+        let point_dimension = profile.point_shadow_dimension;
+        let point_layers = match point_dimension {
+            crate::gpu::TextureViewDimension::CubeArray => 6,
+            _ => 1,
+        };
         Self {
             camera_bgl,
             shadow_camera_bgl,
@@ -194,79 +131,25 @@ impl ForwardTier {
         }
     }
 
-    /// Group 0 for a viewport, over its own camera, clip and shadow-info
-    /// buffers.
-    pub(crate) fn camera_bind_group(
-        &self,
-        device: &crate::gpu::Device,
-        camera_buf: &crate::gpu::Buffer,
-        clip_planes_buf: &crate::gpu::Buffer,
-        shadow_info_buf: &crate::gpu::Buffer,
-        clip_volume_buf: &crate::gpu::Buffer,
-        label: &str,
-    ) -> crate::gpu::BindGroup {
-        use crate::gpu::{BindGroupEntry, BindingResource};
-        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some(label),
-            layout: &self.camera_bgl,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: camera_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: BindingResource::TextureView(&self.shadow_atlas_view),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: BindingResource::Sampler(&self.shadow_sampler),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: self.lights_header_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: clip_planes_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: shadow_info_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: clip_volume_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 7,
-                    resource: BindingResource::TextureView(&self.ibl_array_view),
-                },
-                BindGroupEntry {
-                    binding: 8,
-                    resource: BindingResource::TextureView(&self.ibl_array_view),
-                },
-                BindGroupEntry {
-                    binding: 9,
-                    resource: BindingResource::TextureView(&self.flat_view),
-                },
-                BindGroupEntry {
-                    binding: 10,
-                    resource: BindingResource::Sampler(&self.ibl_sampler),
-                },
-                BindGroupEntry {
-                    binding: 11,
-                    resource: BindingResource::TextureView(&self.flat_view),
-                },
-                BindGroupEntry {
-                    binding: 13,
-                    resource: self.light_list_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 17,
-                    resource: BindingResource::TextureView(&self.point_shadow_view),
-                },
-            ],
-        })
+    /// What this tier's group 0 binds, around a viewport's own buffers.
+    pub(crate) fn group0_resources<'a>(
+        &'a self,
+        per_viewport: crate::resources::group0::PerViewport<'a>,
+    ) -> crate::resources::group0::Group0Resources<'a> {
+        crate::resources::group0::Group0Resources {
+            per_viewport,
+            shadow_atlas: &self.shadow_atlas_view,
+            shadow_sampler: &self.shadow_sampler,
+            lights_header: &self.lights_header_buf,
+            ibl_irradiance: &self.ibl_array_view,
+            ibl_specular: &self.ibl_array_view,
+            brdf_lut: &self.flat_view,
+            ibl_sampler: &self.ibl_sampler,
+            skybox: &self.flat_view,
+            light_list: &self.light_list_buf,
+            point_shadows: &self.point_shadow_view,
+            clusters: None,
+            mesh_family: None,
+        }
     }
 }
