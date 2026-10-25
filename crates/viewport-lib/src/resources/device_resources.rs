@@ -389,8 +389,6 @@ pub(crate) struct SceneTier {
     pub(crate) material: crate::resources::material::fallbacks::MaterialFallbacks,
     /// Outline / x-ray pipelines, offscreen mask/composite targets, and layouts.
     pub(crate) outline: OutlineResources,
-    /// Polyline pipelines and layouts.
-    pub(crate) polyline: crate::resources::scivis::polyline::PolylineResources,
     /// Image-based-lighting views, fallbacks, owned array textures, environment
     /// zone count, and the skybox pipeline. See `material::environment::IblResources`.
     pub(crate) ibl: crate::resources::material::environment::IblResources,
@@ -550,6 +548,9 @@ pub struct DeviceResources {
     /// `None` on every other tier.
     pub(crate) compatibility_tier:
         Option<Box<crate::resources::compatibility_tier::CompatibilityTier>>,
+    /// The polyline line substrate's layout and pipelines, shared by both
+    /// tiers that draw a scene.
+    pub(crate) polyline: crate::resources::scivis::polyline::PolylineResources,
     /// The selection outline's edge and composite passes, shared by both
     /// tiers that draw a scene; built on the first frame with a selection.
     pub(crate) outline: Option<crate::resources::outline::OutlineShared>,

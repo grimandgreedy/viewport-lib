@@ -13,7 +13,7 @@ use viewport_lib::{
     Material, MaterialId, RenderCamera, SceneRenderItem, SurfaceSubmission, Tier,
 };
 use viewport_lib_testkit::golden::{self, Outcome, RgbaImage, Tolerance};
-use viewport_lib_testkit::{DeviceProfile, Harness};
+use viewport_lib_testkit::{DeviceProfile, Harness, catalogue, frame_for};
 
 const W: u32 = 256;
 const H: u32 = 192;
@@ -400,4 +400,74 @@ fn compatibility_tier_outlines_a_selected_mesh() {
         .count();
     assert_eq!(right_half_changed, 0, "the unselected cube is not outlined");
     check_golden(&harness, "outlined_mesh", pixels);
+}
+
+/// A wireframe surface draws its mesh's edges in flat grey through the basic
+/// mesh path, whether the item asks for it or the frame's global toggle does,
+/// and a translucent wireframe item draws its lines opaque, as on the full
+/// tier.
+#[test]
+fn compatibility_tier_draws_mesh_wireframes() {
+    let Some(mut harness) = forward_harness("compatibility-mesh-wireframe") else {
+        return;
+    };
+    let scene = catalogue()
+        .into_iter()
+        .find(|s| s.name == "primitives_trio")
+        .expect("primitives_trio is in the catalogue");
+    let built = harness.build_scene(&scene);
+    let camera = &scene.cameras[0].camera;
+    let draw = |harness: &mut Harness, edit: &dyn Fn(&mut FrameData)| {
+        let mut frame = frame_for(&built, camera, [W as f32, H as f32]);
+        edit(&mut frame);
+        let _ = render(harness, &frame);
+        render(harness, &frame)
+    };
+    let surfaces = |frame: &mut FrameData, f: &dyn Fn(&mut SceneRenderItem)| {
+        let SurfaceSubmission::Flat(items) = &frame.scene.surfaces else {
+            panic!("the catalogue submits flat surfaces");
+        };
+        let mut items = items.to_vec();
+        items.iter_mut().for_each(f);
+        frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+    };
+
+    let empty = draw(&mut harness, &|f| {
+        f.scene.surfaces = SurfaceSubmission::Flat(Vec::new().into())
+    });
+    let solid = draw(&mut harness, &|_| {});
+    let per_item = draw(&mut harness, &|f| {
+        surfaces(f, &|i| {
+            i.settings.wireframe = true;
+            i.settings.opacity = 0.4;
+        })
+    });
+    let global = draw(&mut harness, &|f| f.viewport.wireframe_mode = true);
+
+    let drawn = |pixels: &[u8]| -> Vec<[u8; 3]> {
+        pixels
+            .chunks_exact(4)
+            .zip(empty.chunks_exact(4))
+            .filter(|(a, b)| a[..3] != b[..3])
+            .map(|(a, _)| [a[0], a[1], a[2]])
+            .collect()
+    };
+    let solid_px = drawn(&solid).len();
+    for (label, pixels) in [("per item", &per_item), ("global", &global)] {
+        let px = drawn(pixels);
+        assert!(
+            px.len() > 200 && px.len() < solid_px,
+            "{label}: edges draw as lines, {} pixels vs {solid_px} solid",
+            px.len()
+        );
+        let grey = px
+            .iter()
+            .filter(|p| p[0].abs_diff(p[1]) < 8 && p[1].abs_diff(p[2]) < 8 && p[0] > 150)
+            .count();
+        assert!(
+            grey * 10 > px.len() * 8,
+            "{label}: the lines are opaque flat grey, {grey} of {}",
+            px.len()
+        );
+    }
 }

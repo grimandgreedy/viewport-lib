@@ -76,6 +76,7 @@ const BASIC_ALPHA_MASK: u32 = 4u;
 const BASIC_HAS_SCALAR: u32 = 8u;
 const BASIC_USE_NAN_COLOUR: u32 = 16u;
 const BASIC_IGNORE_CLIP: u32 = 32u;
+const BASIC_WIREFRAME: u32 = 64u;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -177,6 +178,12 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         if !clip_volume_test(in.world_pos) {
             discard;
         }
+    }
+
+    // Wireframe: the mesh's edges in flat grey, unlit, as the full tier
+    // draws them.
+    if (in.flags & BASIC_WIREFRAME) != 0u {
+        return vec4<f32>(0.75, 0.75, 0.75, 1.0);
     }
 
     let colour = in.colour * tex_colour;

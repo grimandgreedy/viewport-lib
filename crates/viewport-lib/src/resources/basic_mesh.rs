@@ -32,6 +32,7 @@ pub(crate) mod basic_flags {
     pub(crate) const HAS_SCALAR: u32 = 8;
     pub(crate) const USE_NAN_COLOUR: u32 = 16;
     pub(crate) const IGNORE_CLIP: u32 = 32;
+    pub(crate) const WIREFRAME: u32 = 64;
 }
 
 const INSTANCE_ATTRIBUTES: [crate::gpu::VertexAttribute; 8] = crate::gpu::vertex_attr_array![
@@ -60,6 +61,8 @@ pub(crate) struct BasicMeshKey {
     pub(crate) two_sided: bool,
     /// A per-vertex scalar stream at slot 2.
     pub(crate) scalar: bool,
+    /// The mesh's edges as a line list, for a wireframe item.
+    pub(crate) lines: bool,
 }
 
 /// The basic mesh pipelines, built the first time a draw needs each variant.
@@ -124,8 +127,12 @@ impl BasicMeshPipelines {
                     compilation_options: Default::default(),
                 }),
                 primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: (!key.two_sided).then_some(crate::gpu::Face::Back),
+                    topology: if key.lines {
+                        crate::gpu::PrimitiveTopology::LineList
+                    } else {
+                        crate::gpu::PrimitiveTopology::TriangleList
+                    },
+                    cull_mode: (!key.two_sided && !key.lines).then_some(crate::gpu::Face::Back),
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::depth_stencil(

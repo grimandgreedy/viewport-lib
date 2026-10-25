@@ -396,6 +396,18 @@ fn fs_main() -> @location(0) vec4<f32> {
                 "sub_highlight_sprite",
                 include_str!(concat!(env!("OUT_DIR"), "/sub_highlight_sprite.wgsl")).to_string(),
             ),
+            (
+                "polyline",
+                include_str!(concat!(env!("OUT_DIR"), "/polyline.wgsl")).to_string(),
+            ),
+            (
+                "polyline_wireframe",
+                include_str!(concat!(env!("OUT_DIR"), "/polyline_wireframe.wgsl")).to_string(),
+            ),
+            (
+                "polyline_outline_mask",
+                include_str!(concat!(env!("OUT_DIR"), "/polyline_outline_mask.wgsl")).to_string(),
+            ),
         ] {
             let adapted = adapt_wgsl(src.as_str(), &compatibility_caps());
             if let Err(e) = translate_to_glsl(&adapted, 300, true) {

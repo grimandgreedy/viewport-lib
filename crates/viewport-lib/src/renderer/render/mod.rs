@@ -1475,6 +1475,48 @@ impl ViewportRenderer {
 }
 
 impl crate::renderer::ViewportRenderer {
+    /// Draw the line substrate from the per-frame GPU data `prepare()` built:
+    /// item types' wireframe overlays, scatter and volume bounds, clip-object
+    /// outlines. On every tier with a lit group 0; nothing here binds storage.
+    ///
+    /// Each thick segment instance is drawn as 6 vertices (2 triangles) by
+    /// screen-space quad expansion. Items with `skip_clip` (clip object
+    /// wireframe overlays) use the clip-exempt pipeline so they stay fully
+    /// visible regardless of active clip volumes. Items with `wireframe` use
+    /// the thin 1px LineList pipeline over the same segment buffer, still
+    /// honouring `skip_clip` (see `PolylineKey`).
+    pub(crate) fn draw_line_substrate(
+        &self,
+        render_pass: &mut crate::gpu::RenderPass<'_>,
+        camera_bg: &crate::gpu::BindGroup,
+        is_hdr: bool,
+    ) {
+        let Some(pipelines) = self.resources.polyline.pipelines.get() else {
+            return;
+        };
+        for pl in self.polyline_gpu_data.iter() {
+            if pl.segment_count == 0 {
+                continue;
+            }
+            let key = crate::resources::PolylineKey {
+                skip_clip: pl.skip_clip,
+                wireframe: pl.wireframe,
+            };
+            let Some(pipeline) = pipelines.get(key, is_hdr) else {
+                continue;
+            };
+            render_pass.set_pipeline(pipeline);
+            render_pass.set_bind_group(0, camera_bg, &[]);
+            render_pass.set_vertex_buffer(0, pl.vertex_buffer.slice(..));
+            if pl.wireframe {
+                render_pass.draw(0..2, 0..pl.segment_count);
+            } else {
+                render_pass.set_bind_group(1, &pl.bind_group, &[]);
+                render_pass.draw(0..6, 0..pl.segment_count);
+            }
+        }
+    }
+
     /// Draw the line substrate and the mesh-instance batches from the per-frame
     /// GPU data `prepare()` built.
     ///
@@ -1492,45 +1534,7 @@ impl crate::renderer::ViewportRenderer {
         camera_bg: &crate::gpu::BindGroup,
         is_hdr: bool,
     ) {
-        // Polyline pass : screen-space thick lines via instanced quad expansion.
-        // Each segment instance is drawn as 6 vertices (2 triangles).
-        // Items with skip_clip=true (clip object wireframe overlays) use the clip-exempt
-        // pipeline so they are always fully visible regardless of active clip volumes.
-        // Items with wireframe=true use the thin 1px LineList pipeline instead, still
-        // honouring skip_clip (see `PolylineKey`).
-        if !self.polyline_gpu_data.is_empty()
-            && self.resources.scene_tier.polyline.pipelines.get().is_some()
-        {
-            let polyline_pipelines = self.resources.scene_tier.polyline.pipelines.get();
-            for pl in self.polyline_gpu_data.iter() {
-                if pl.segment_count == 0 {
-                    continue;
-                }
-                let key = crate::resources::PolylineKey {
-                    skip_clip: pl.skip_clip,
-                    wireframe: pl.wireframe,
-                };
-                if pl.wireframe {
-                    if let (Some(wf_pipeline), Some(wf_bg)) = (
-                        polyline_pipelines.and_then(|ps| ps.get(key, is_hdr)),
-                        pl.wireframe_bind_group.as_ref(),
-                    ) {
-                        render_pass.set_pipeline(wf_pipeline);
-                        render_pass.set_bind_group(0, camera_bg, &[]);
-                        render_pass.set_bind_group(1, wf_bg, &[]);
-                        render_pass.draw(0..2, 0..pl.segment_count);
-                    }
-                    continue;
-                }
-                if let Some(pipeline) = polyline_pipelines.and_then(|ps| ps.get(key, is_hdr)) {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(0, camera_bg, &[]);
-                    render_pass.set_bind_group(1, &pl.bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, pl.vertex_buffer.slice(..));
-                    render_pass.draw(0..6, 0..pl.segment_count);
-                }
-            }
-        }
+        self.draw_line_substrate(render_pass, camera_bg, is_hdr);
 
         // Mesh-instance pass: one draw call per host-built batch, routed by
         // blend mode, through the HDR mesh family's blended members.

@@ -491,6 +491,7 @@ fn compatibility_tier_registers_item_types_that_accept_it() {
                     true,
                 ),
                 (viewport_lib_plugins::item_types::sprite::TYPE_NAME, false),
+                ("vpl.polyline", true),
             ] {
                 assert_eq!(
                     harness.renderer.has_item_type_plugin(name),

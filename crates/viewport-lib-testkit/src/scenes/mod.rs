@@ -910,8 +910,23 @@ fn build_polyline(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
     pl.strip_lengths = vec![n as u32];
     pl.scalars = scalars;
     pl.line_width = 4.0;
+    pl.settings.pick_id = viewport_lib::PickId(1625);
+
+    // A second, selected strip beside the helix so the outline pass has
+    // coverage without ringing every turn of it.
+    let mut sel = PolylineItem::default();
+    sel.positions = (0..=24)
+        .map(|i| {
+            let t = i as f32 / 24.0 * std::f32::consts::TAU;
+            [2.4 + t.cos() * 0.4, 0.0, t.sin() * 0.4]
+        })
+        .collect();
+    sel.strip_lengths = vec![25];
+    sel.line_width = 8.0;
+    sel.default_colour = viewport_lib::Colour::srgb_rgb(0.85, 0.15, 0.15);
+    sel.settings.selected = true;
     BuiltScene {
-        polylines: vec![pl],
+        polylines: vec![pl, sel],
         lighting: rigs::from_above(),
         ..Default::default()
     }

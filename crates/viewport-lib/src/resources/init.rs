@@ -1511,11 +1511,6 @@ impl DeviceResources {
 
                 // `deform` is constructed earlier (before the mesh pipeline layout).
 
-                // Hoisted out of the struct literal below so each one is timed: both
-                // allocate GPU resources, and inside the literal they were invisible to
-                // the phase marks.
-                let polyline = crate::resources::scivis::polyline::PolylineResources::new(device);
-                mark("polyline_resources");
                 let scene_tier = crate::resources::device_resources::SceneTier {
                     deform,
                     binds: crate::resources::scene_bindings::SceneBindings {
@@ -1601,7 +1596,6 @@ impl DeviceResources {
                         mask_two_sided_pipeline: None,
                         xray_pipeline: None,
                     },
-                    polyline,
                     ibl: crate::resources::material::environment::IblResources {
                         irradiance_view: None,
                         prefiltered_view: None,
@@ -1658,6 +1652,7 @@ impl DeviceResources {
         };
         let resources = Self {
             compatibility_tier,
+            polyline: crate::resources::scivis::polyline::PolylineResources::new(device),
             outline: None,
             group0_profile,
             capabilities,

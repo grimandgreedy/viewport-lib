@@ -54,6 +54,8 @@ const SCENES: &[(&str, &str)] = &[
         "gaussian_splats",
         viewport_lib_plugins::item_types::gaussian_splat::TYPE_NAME,
     ),
+    // Polylines are core, registered by the renderer itself.
+    ("polyline", "vpl.polyline"),
 ];
 
 /// Compare against `<backend>-compatibility/<name>.png`, writing it when missing or
@@ -578,5 +580,70 @@ fn compatibility_splats_sort_for_the_eye_and_follow_writes() {
         reddish(one_way),
         reddish(other_way),
         "degree-1 colour follows the view: {one_way:?} vs {other_way:?}"
+    );
+}
+
+/// The line substrate draws below the full tier: an item type's wireframe
+/// overlay (a splat set's rings, uploaded through the substrate each frame)
+/// and a polyline drawn as thin wireframe lines through the LineList
+/// pipeline.
+#[test]
+fn compatibility_tier_draws_wireframe_overlays_and_thin_lines() {
+    let Some(mut harness) =
+        Harness::with_profile(&DeviceProfile::downlevel_webgl2("compatibility-wireframes"))
+    else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let scenes = catalogue();
+    let changed = |a: &[u8], b: &[u8]| {
+        a.chunks_exact(4)
+            .zip(b.chunks_exact(4))
+            .filter(|(a, b)| a[..3] != b[..3])
+            .count()
+    };
+    let mut render = |harness: &mut Harness,
+                      name: &str,
+                      edit: &dyn Fn(&mut viewport_lib_testkit::BuiltScene)| {
+        let scene = scenes
+            .iter()
+            .find(|s| s.name == name)
+            .expect("in the catalogue");
+        let mut built = harness.build_scene(scene);
+        edit(&mut built);
+        let frame = frame_for(&built, &scene.cameras[0].camera, [W as f32, H as f32]);
+        let _ = harness.render(&frame, W, H);
+        harness.render(&frame, W, H)
+    };
+
+    let empty = render(&mut harness, "gaussian_splats", &|b| {
+        b.gaussian_splats.clear()
+    });
+    let rings = render(&mut harness, "gaussian_splats", &|b| {
+        for item in &mut b.gaussian_splats {
+            item.settings.wireframe = true;
+            item.settings.selected = false;
+        }
+    });
+    let ring_pixels = changed(&empty, &rings);
+    assert!(
+        ring_pixels > 200,
+        "the splat rings draw through the line substrate, {ring_pixels} pixels"
+    );
+
+    let blank = render(&mut harness, "polyline", &|b| b.polylines.clear());
+    let thin = render(&mut harness, "polyline", &|b| {
+        b.polylines.truncate(1);
+        b.polylines[0].settings.wireframe = true;
+    });
+    let thick = render(&mut harness, "polyline", &|b| b.polylines.truncate(1));
+    let (thin_pixels, thick_pixels) = (changed(&blank, &thin), changed(&blank, &thick));
+    assert!(
+        thin_pixels > 200,
+        "thin wireframe lines draw, {thin_pixels} pixels"
+    );
+    assert!(
+        thin_pixels * 2 < thick_pixels,
+        "the wireframe pipeline draws 1px lines: {thin_pixels} vs {thick_pixels} pixels"
     );
 }

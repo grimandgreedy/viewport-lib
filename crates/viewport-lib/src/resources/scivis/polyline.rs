@@ -3,12 +3,12 @@ use crate::resources::pipeline_slot::LazyFamily;
 
 /// Polyline pipeline variant axes: clip-exemption and thin-wireframe vs
 /// thick-billboard geometry. The two axes select genuinely different shader
-/// modules and bind group layouts (wireframe reads segment data from a
-/// storage buffer with no vertex buffer; the thick path uses an instanced
-/// vertex buffer plus a texture+sampler bind group), unlike the mesh
-/// family's `PipelineKey` axes, which all reuse one shader/layout. `build`
-/// picks the shader/layout pair on `wireframe` and the fragment entry point
-/// on `skip_clip`.
+/// modules and layouts (wireframe reads only the segment endpoints from the
+/// instance buffer and binds nothing past group 0; the thick path reads the
+/// whole segment record plus a uniform, texture and sampler group), unlike
+/// the mesh family's `PipelineKey` axes, which all reuse one shader/layout.
+/// `build` picks the shader/layout pair on `wireframe` and the fragment entry
+/// point on `skip_clip`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct PolylineKey {
     pub skip_clip: bool,
@@ -138,6 +138,27 @@ fn pl_instance_layout() -> crate::gpu::VertexBufferLayout<'static> {
     }
 }
 
+/// The wireframe pipeline's view of the same segment records: the two
+/// endpoints only.
+fn pl_endpoint_layout() -> crate::gpu::VertexBufferLayout<'static> {
+    crate::gpu::VertexBufferLayout {
+        array_stride: 112,
+        step_mode: crate::gpu::VertexStepMode::Instance,
+        attributes: &[
+            crate::gpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: crate::gpu::VertexFormat::Float32x3,
+            }, // pos_a
+            crate::gpu::VertexAttribute {
+                offset: 12,
+                shader_location: 1,
+                format: crate::gpu::VertexFormat::Float32x3,
+            }, // pos_b
+        ],
+    }
+}
+
 /// Member index for `key` in one format: the key's slot, then LDR or HDR.
 fn polyline_index(key: PolylineKey, hdr: bool) -> usize {
     key.slot() * 2 + hdr as usize
@@ -153,6 +174,7 @@ fn build_polyline(r: &PolylineRecipe, i: usize) -> crate::gpu::RenderPipeline {
         "fs_main"
     };
     let instance_layout = [pl_instance_layout()];
+    let endpoint_layout = [pl_endpoint_layout()];
     let desc = if wireframe {
         crate::resources::builders::DualPipelineDesc {
             label: "polyline_wireframe_pipeline_variant",
@@ -160,7 +182,7 @@ fn build_polyline(r: &PolylineRecipe, i: usize) -> crate::gpu::RenderPipeline {
             shader: r.wf_shader.get(),
             vertex_entry: "vs_main",
             fragment_entry,
-            vertex_buffers: &[],
+            vertex_buffers: &endpoint_layout,
             blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
             topology: crate::gpu::PrimitiveTopology::LineList,
             cull_mode: None,
@@ -241,9 +263,11 @@ mod polyline_key_tests {
     }
 }
 
-/// Polyline (screen-space thick line) pipelines and their layouts.
+/// Polyline (screen-space thick line) pipelines and their layout.
 ///
-/// This is the shared line substrate: besides the polyline item type,
+/// Built on every tier with a lit group 0: nothing here binds storage, so the
+/// compatibility tier draws through the same pipelines. This is the shared
+/// line substrate: besides the polyline item type,
 /// scatter-volume bounds, volume bounding boxes, clip-object outlines and the
 /// splat and sprite wireframe overlays all render through it. The layouts are
 /// created up front because uploads bind against them; the pipelines are still
@@ -255,8 +279,6 @@ pub(crate) struct PolylineResources {
     pub(crate) pipelines: std::sync::OnceLock<PolylineVariantSet>,
     /// Bind group layout for polyline uniforms (group 1).
     pub(crate) bgl: crate::gpu::BindGroupLayout,
-    /// Bind group layout for the wireframe polyline pipeline (group 1).
-    pub(crate) wireframe_bgl: crate::gpu::BindGroupLayout,
 }
 
 impl PolylineResources {
@@ -267,24 +289,9 @@ impl PolylineResources {
             crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
             crate::gpu::ShaderStages::VERTEX,
         );
-        let wireframe_bgl =
-            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-                label: Some("polyline_wireframe_bgl"),
-                entries: &[crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
         Self {
             pipelines: std::sync::OnceLock::new(),
             bgl,
-            wireframe_bgl,
         }
     }
 }
@@ -301,7 +308,7 @@ impl DeviceResources {
         &self,
         device: &crate::gpu::Device,
     ) -> &PolylineVariantSet {
-        if let Some(set) = self.scene_tier.polyline.pipelines.get() {
+        if let Some(set) = self.polyline.pipelines.get() {
             return set;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
@@ -310,19 +317,18 @@ impl DeviceResources {
             layout: crate::resources::builders::standard_scene_layout(
                 device,
                 "polyline_pipeline_layout",
-                &self.scene_tier.binds.camera_bgl,
-                &self.scene_tier.polyline.bgl,
+                self.group0_layout(),
+                &self.polyline.bgl,
             ),
             shader: self.shared_module(
                 device,
                 "polyline_shader",
                 crate::resources::builders::wgsl_source!("polyline"),
             ),
-            wf_layout: crate::resources::builders::standard_scene_layout(
+            wf_layout: crate::resources::builders::pipeline_layout(
                 device,
                 "polyline_wireframe_pipeline_layout",
-                &self.scene_tier.binds.camera_bgl,
-                &self.scene_tier.polyline.wireframe_bgl,
+                &[self.group0_layout()],
             ),
             wf_shader: self.shared_module(
                 device,
@@ -332,7 +338,7 @@ impl DeviceResources {
             sample_count: self.sample_count,
             ldr_format: self.target_format,
         };
-        self.scene_tier.polyline.pipelines.get_or_init(|| {
+        self.polyline.pipelines.get_or_init(|| {
             PolylineVariantSet(std::sync::Arc::new(LazyFamily::new(
                 recipe,
                 std::sync::Arc::clone(&self.pipeline_compiler),
@@ -505,9 +511,7 @@ impl DeviceResources {
         let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("polyline_vertex_buf"),
             size: seg_bytes.len().max(112) as u64,
-            usage: crate::gpu::BufferUsages::VERTEX
-                | crate::gpu::BufferUsages::STORAGE
-                | crate::gpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         if !seg_bytes.is_empty() {
@@ -606,11 +610,11 @@ impl DeviceResources {
             .get(preset_id.0)
             .unwrap_or(&self.content.fallback_lut_view);
 
-        let lut_sampler = &self.scene_tier.material.lut_sampler;
+        let lut_sampler = self.lut_sampler();
 
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("polyline_bind_group"),
-            layout: &self.scene_tier.polyline.bgl,
+            layout: &self.polyline.bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -627,16 +631,6 @@ impl DeviceResources {
             ],
         });
 
-        let wireframe_bind_group =
-            Some(device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some("polyline_wireframe_bind_group"),
-                layout: &self.scene_tier.polyline.wireframe_bgl,
-                entries: &[crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: vertex_buffer.as_entire_binding(),
-                }],
-            }));
-
         PolylineGpuData {
             pick_id: item.settings.pick_id,
             strip_lengths: item.strip_lengths.clone(),
@@ -646,7 +640,6 @@ impl DeviceResources {
             _uniform_buf: uniform_buf,
             skip_clip: false,
             wireframe: false,
-            wireframe_bind_group,
         }
     }
 }
@@ -748,9 +741,7 @@ pub struct PolylineGpuData {
     /// When true, renders with the clip-exempt pipeline (no clip plane or clip volume test).
     /// Used for clip object wireframe overlays that must always be fully visible.
     pub(crate) skip_clip: bool,
-    /// When true, render as thin 1px lines using the wireframe pipeline instead of thick billboards.
+    /// When true, render as thin 1px lines using the wireframe pipeline
+    /// instead of thick billboards. Both read `vertex_buffer`.
     pub(crate) wireframe: bool,
-    /// Bind group for the wireframe pipeline (group 1: segment storage buffer).
-    /// None when the wireframe pipeline has not been created yet.
-    pub(crate) wireframe_bind_group: Option<crate::gpu::BindGroup>,
 }

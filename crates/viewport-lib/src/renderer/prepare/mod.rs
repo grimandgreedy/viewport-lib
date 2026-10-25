@@ -200,6 +200,10 @@ impl ViewportRenderer {
                 self.prepare_compatibility_lights(queue, frame, scene_fx);
                 self.prepare_basic_meshes(device, queue, frame);
             }
+            // Item-type wireframes fill the line substrate, as on the full
+            // tier below.
+            self.polyline_gpu_data.clear();
+            self.dispatch_plugin_wireframes(device, queue, frame);
             return;
         }
 

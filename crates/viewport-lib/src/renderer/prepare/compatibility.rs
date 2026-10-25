@@ -23,6 +23,8 @@ struct BasicMeshDraw {
     indices: std::ops::Range<u32>,
     /// The scalar stream's sidecar chunk and byte range.
     scalar: Option<(u32, std::ops::Range<u64>)>,
+    /// Draws the mesh's edge index buffer rather than its triangles.
+    edges: bool,
 }
 
 impl ViewportRenderer {
@@ -208,12 +210,23 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
+        if self.resources.compatibility_tier.is_none() {
+            return;
+        }
+        let SurfaceSubmission::Flat(items) = &frame.scene.surfaces;
+        // A wireframe item draws its mesh's edges, extracted on first use as
+        // on the full tier.
+        let wireframe = |item: &crate::SceneRenderItem| {
+            frame.viewport.wireframe_mode || item.settings.wireframe
+        };
+        for item in items.iter().filter(|i| !i.settings.hidden && wireframe(i)) {
+            self.resources.ensure_edge_indices(device, item.mesh_id);
+        }
         let Some(compat) = self.resources.compatibility_tier.as_deref() else {
             return;
         };
         let resources = &self.resources;
         let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
-        let SurfaceSubmission::Flat(items) = &frame.scene.surfaces;
 
         let mut records: Vec<BasicInstance> = Vec::new();
         let mut opaque: Vec<BasicMeshDraw> = Vec::new();
@@ -234,7 +247,14 @@ impl ViewportRenderer {
             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                 continue;
             };
-            let ranges: Vec<(std::ops::Range<u32>, crate::resources::MaterialId)> =
+            let edges = wireframe(item);
+            if edges && mesh.edge_index_buffer.is_none() {
+                // No retained indices to extract edges from.
+                continue;
+            }
+            let ranges: Vec<(std::ops::Range<u32>, crate::resources::MaterialId)> = if edges {
+                vec![(0..mesh.edge_index_count, item.material)]
+            } else {
                 match active_submesh_materials(item, mesh) {
                     Some(mats) => mesh
                         .submeshes
@@ -243,7 +263,8 @@ impl ViewportRenderer {
                         .map(|(r, m)| (r.first_index..r.first_index + r.index_count, *m))
                         .collect(),
                     None => vec![(0..mesh.index_count, item.material)],
-                };
+                }
+            };
 
             // Per-vertex scalars bind as a vertex stream. Face, corner and
             // half-edge attributes need the per-face draw, which this path
@@ -308,7 +329,8 @@ impl ViewportRenderer {
                     | flag(mask_cutoff.is_some(), f::ALPHA_MASK)
                     | flag(scalar.is_some(), f::HAS_SCALAR)
                     | flag(item.nan_colour.is_some(), f::USE_NAN_COLOUR)
-                    | flag(item.settings.ignore_clip, f::IGNORE_CLIP);
+                    | flag(item.settings.ignore_clip, f::IGNORE_CLIP)
+                    | flag(edges, f::WIREFRAME);
                 let nan_colour = item.nan_colour.map_or(0, |c| {
                     let [r, g, b, a] = c.to_linear_rgba();
                     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
@@ -328,18 +350,22 @@ impl ViewportRenderer {
                     material: [m.metallic, m.roughness, scalar_min, scalar_max],
                     params: [flags, nan_colour, 0, 0],
                 });
-                let blend = item.settings.opacity < 1.0 || m.is_blend();
+                // Edge lines draw opaque whatever the item's opacity, as on the
+                // full tier: a translucent wireframe item draws its lines.
+                let blend = !edges && (item.settings.opacity < 1.0 || m.is_blend());
                 let draw = BasicMeshDraw {
                     mesh_id: item.mesh_id,
                     key: BasicMeshKey {
                         blend,
                         two_sided: m.is_two_sided(),
-                        scalar: scalar.is_some(),
+                        scalar: scalar.is_some() && !edges,
+                        lines: edges,
                     },
                     bind_group,
                     instance,
                     indices,
-                    scalar: scalar.clone(),
+                    scalar: scalar.clone().filter(|_| !edges),
+                    edges,
                 };
                 if blend {
                     blended.push((world_centre.distance_squared(eye), draw));
@@ -400,6 +426,7 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) {
         self.paint_basic_meshes(pass, camera_bg);
+        self.draw_line_substrate(pass, camera_bg, false);
         if !self.item_type_plugins.is_empty() {
             pass.set_bind_group(0, camera_bg, &[]);
             self.dispatch_plugin_paint(pass, frame, false);
@@ -441,10 +468,12 @@ impl ViewportRenderer {
                         .slice(range.clone()),
                 );
             }
-            pass.set_index_buffer(
-                self.resources.geometry.index_slice(mesh.index_span),
-                crate::gpu::IndexFormat::Uint32,
-            );
+            let indices = match (&mesh.edge_index_buffer, draw.edges) {
+                (Some(edges), true) => edges.slice(..),
+                (None, true) => continue,
+                (_, false) => self.resources.geometry.index_slice(mesh.index_span),
+            };
+            pass.set_index_buffer(indices, crate::gpu::IndexFormat::Uint32);
             pass.draw_indexed(draw.indices.clone(), 0, 0..1);
         }
     }

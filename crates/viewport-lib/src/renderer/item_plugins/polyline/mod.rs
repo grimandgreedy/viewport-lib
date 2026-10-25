@@ -61,6 +61,10 @@ impl ItemTypePlugin for PolylinePlugin {
         TYPE_NAME
     }
 
+    fn requires(&self) -> crate::capabilities::Requirements {
+        crate::capabilities::Requirements::compatibility_tier()
+    }
+
     fn resident_bytes(&self) -> u64 {
         self.stored.allocated_bytes()
     }
@@ -174,10 +178,7 @@ impl ItemTypePlugin for PolylinePlugin {
             };
             pass.set_pipeline(pipeline);
             if gd.wireframe {
-                let Some(wf_bg) = gd.wireframe_bind_group.as_ref() else {
-                    continue;
-                };
-                pass.set_bind_group(1, wf_bg, &[]);
+                pass.set_vertex_buffer(0, gd.vertex_buffer.slice(..));
                 pass.draw(0..2, 0..gd.segment_count);
             } else {
                 pass.set_bind_group(1, &gd.bind_group, &[]);
