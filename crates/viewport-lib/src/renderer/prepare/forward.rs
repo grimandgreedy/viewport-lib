@@ -306,9 +306,25 @@ impl ViewportRenderer {
         self.basic_mesh_draws.draws = draws;
     }
 
+    /// The forward tier's scene content in the LDR scene pass: the basic mesh
+    /// draws, then the item types that registered on the tier, in the position
+    /// the full tier paints them. `camera_bg` is the viewport's group 0.
+    pub(crate) fn paint_forward_scene(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        camera_bg: &crate::gpu::BindGroup,
+        frame: &FrameData,
+    ) {
+        self.paint_basic_meshes(pass, camera_bg);
+        if !self.item_type_plugins.is_empty() {
+            pass.set_bind_group(0, camera_bg, &[]);
+            self.dispatch_plugin_paint(pass, frame, false);
+        }
+    }
+
     /// Issue the basic mesh draws into the LDR scene pass. `camera_bg` is the
     /// viewport's group 0.
-    pub(crate) fn paint_basic_meshes(
+    fn paint_basic_meshes(
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         camera_bg: &crate::gpu::BindGroup,

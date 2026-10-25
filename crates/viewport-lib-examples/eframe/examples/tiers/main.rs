@@ -130,8 +130,9 @@ impl Tab {
             }
             Tier::Forward => {
                 "No storage buffers or compute. Meshes draw through a basic-lit \
-                 path; item types that need the full tier are declined. Clicks \
-                 pick on the CPU; box selection is GPU only."
+                 path, and the item types that draw without storage buffers \
+                 register; the rest are declined. Clicks pick on the CPU; box \
+                 selection is GPU only."
             }
             _ => {
                 "Fewer than three bind groups: only overlays draw. Every scene \

@@ -105,7 +105,9 @@ impl ItemTypePlugin for VolumePlugin {
                 continue;
             }
             let wireframe = ctx.wireframe_mode || item.settings.wireframe;
-            self.frame.push(gpu.upload_item(
+            // An item whose volume does not resolve is skipped, as a stored
+            // curve reference that does not resolve is.
+            self.frame.extend(gpu.upload_item(
                 device,
                 queue,
                 ctx.resources,
@@ -154,6 +156,12 @@ impl ItemTypePlugin for VolumePlugin {
 
     fn draws_ldr(&self) -> bool {
         true
+    }
+
+    /// Draws without storage buffers or compute, so it also registers on the
+    /// forward tier.
+    fn requires(&self) -> viewport_lib::Requirements {
+        viewport_lib::Requirements::forward_tier()
     }
 
     fn outline_mask(

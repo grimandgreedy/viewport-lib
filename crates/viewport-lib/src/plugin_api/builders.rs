@@ -30,6 +30,10 @@ pub use crate::resources::device_resources::DualPipeline;
 /// pipeline declaring that layout.
 pub use crate::resources::Vertex;
 
+/// [`PluginResources::adapt_wgsl`](crate::plugin_api::PluginResources::adapt_wgsl)
+/// for a `Capabilities` you hold, with no renderer: to check how a shader
+/// adapts for a device class, such as a WebGL2 device, without one.
+pub use crate::resources::builders::adapt_wgsl;
 /// Prepend the `enable primitive_index;` directive when the active wgpu leg's
 /// shader front end requires it. Shaders using `@builtin(primitive_index)`
 /// pass their source through this before compiling.

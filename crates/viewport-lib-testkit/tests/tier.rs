@@ -466,12 +466,29 @@ fn forward_tier_registers_item_types_that_accept_it() {
                 Err(ViewportError::PluginUnsupported { .. }) => {}
                 other => panic!("expected PluginUnsupported, got {other:?}"),
             }
-            // Nothing the renderer ships with accepts the forward tier yet.
-            assert!(
-                !harness
-                    .renderer
-                    .has_item_type_plugin("viewport_lib.point_cloud")
-            );
+            // Of the built-in types, those that draw without storage buffers
+            // register here and the rest are declined.
+            for (name, registered) in [
+                (
+                    viewport_lib_plugins::item_types::gpu_implicit::TYPE_NAME,
+                    true,
+                ),
+                (viewport_lib_plugins::item_types::volume::TYPE_NAME, true),
+                (
+                    viewport_lib_plugins::item_types::curves::TUBE_TYPE_NAME,
+                    true,
+                ),
+                (
+                    viewport_lib_plugins::item_types::point_cloud::TYPE_NAME,
+                    false,
+                ),
+            ] {
+                assert_eq!(
+                    harness.renderer.has_item_type_plugin(name),
+                    registered,
+                    "{name}"
+                );
+            }
         }
     }
 }
@@ -801,10 +818,11 @@ fn forward_meshes_draw_through_the_split_and_host_pass_paths() {
     }
 }
 
-/// Every scene item a frame submits that a renderer at `tier` cannot draw,
+/// Every scene item a frame submits that `renderer` cannot draw at its tier,
 /// counted the way `FrameStats` counts what it skips: the forward tier draws
-/// the surfaces.
-fn scene_items(frame: &viewport_lib::FrameData, tier: Tier) -> usize {
+/// the surfaces and the items of the types registered on it.
+fn scene_items(frame: &viewport_lib::FrameData, renderer: &ViewportRenderer) -> usize {
+    let tier = renderer.tier();
     let surfaces = match &frame.scene.surfaces {
         viewport_lib::SurfaceSubmission::Flat(items) => items.len(),
         _ => panic!("a surface submission this test does not count"),
@@ -812,8 +830,9 @@ fn scene_items(frame: &viewport_lib::FrameData, tier: Tier) -> usize {
     let plugin_items: usize = frame
         .scene
         .plugin_items
-        .values()
-        .flatten()
+        .iter()
+        .filter(|(name, _)| tier != Tier::Forward || !renderer.has_item_type_plugin(name))
+        .flat_map(|(_, collections)| collections)
         .map(|c| c.len())
         .sum();
     let surfaces = if tier == Tier::Forward { 0 } else { surfaces };
@@ -853,7 +872,7 @@ fn sweep_catalogue(profile: &DeviceProfile) {
         let stats = overlay.stats();
         assert_eq!(
             stats.items_skipped_by_tier as usize,
-            scene_items(&frame, overlay.renderer.tier()),
+            scene_items(&frame, &overlay.renderer),
             "{}",
             scene.name
         );

@@ -574,6 +574,12 @@ impl ItemTypePlugin for RibbonPlugin {
         true
     }
 
+    /// Draws without storage buffers or compute, so it also registers on the
+    /// forward tier.
+    fn requires(&self) -> viewport_lib::Requirements {
+        viewport_lib::Requirements::forward_tier()
+    }
+
     fn paint_transparent(
         &self,
         pass: &mut viewport_lib::gpu::RenderPass<'_>,

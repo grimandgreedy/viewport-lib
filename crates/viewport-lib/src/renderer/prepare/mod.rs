@@ -736,14 +736,29 @@ impl ViewportRenderer {
             || !frame.scene.foreground_items.is_empty()
     }
 
-    /// Every scene item `frame` submits, for the count an overlay-only
-    /// renderer reports as skipped.
+    /// The surfaces `frame` submits, which the forward tier draws.
     fn surface_count(frame: &FrameData) -> u32 {
         match &frame.scene.surfaces {
             crate::renderer::SurfaceSubmission::Flat(items) => items.len() as u32,
         }
     }
 
+    /// The plugin items in `frame` that a registered item type paints on the
+    /// LDR path, which is every plugin item the forward tier draws.
+    fn ldr_plugin_item_count(&self, frame: &FrameData) -> u32 {
+        self.item_type_plugins
+            .iter()
+            .filter(|(_, plugin)| plugin.draws_ldr())
+            .map(|(name, _)| {
+                crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                    .map(|c| c.len())
+                    .sum::<usize>()
+            })
+            .sum::<usize>() as u32
+    }
+
+    /// Every scene item `frame` submits, for the count an overlay-only
+    /// renderer reports as skipped.
     fn scene_item_count(frame: &FrameData) -> u32 {
         let surfaces = match &frame.scene.surfaces {
             crate::renderer::SurfaceSubmission::Flat(items) => items.len(),
@@ -1400,7 +1415,9 @@ impl ViewportRenderer {
             items_skipped_by_tier: if self.resources.scene_tier.is_built() {
                 0
             } else if self.resources.forward_tier.is_some() {
-                Self::scene_item_count(frame) - Self::surface_count(frame)
+                Self::scene_item_count(frame)
+                    - Self::surface_count(frame)
+                    - self.ldr_plugin_item_count(frame)
             } else {
                 Self::scene_item_count(frame)
             },

@@ -40,7 +40,7 @@ impl ViewportRenderer {
         if self.resources.scene_tier.is_built() {
             self.paint_slot_scene(render_pass, vp_idx, frame);
         } else if let Some(slot) = self.viewport_slots.get(vp_idx) {
-            self.paint_basic_meshes(render_pass, &slot.camera_bind_group);
+            self.paint_forward_scene(render_pass, &slot.camera_bind_group, frame);
         }
         let ov = &self.viewport_slots[vp_idx].overlay;
         emit_overlay_2d!(self, ov, render_pass);
