@@ -127,9 +127,9 @@ fn item_type_fixture_receives_hidden_items() {
     );
 }
 
-/// The CPU pick router consults registered plugins after the built-in
-/// pickers, so a plugin that reports a hit is returned when nothing else is in
-/// the scene.
+/// The CPU pick router consults the registered plugins whose items were in
+/// the last frame prepared, after the built-in pickers, so a plugin that
+/// reports a hit is returned when nothing else is in the scene.
 #[test]
 fn item_type_fixture_is_consulted_by_cpu_pick() {
     let Some(mut harness) = Harness::new() else {
@@ -147,7 +147,10 @@ fn item_type_fixture_is_consulted_by_cpu_pick() {
             Box::new(LoggingItemTypePlugin::new(log.clone(), "probe_items").pickable()),
         )
         .unwrap();
-    let frame = probe_frame(SIZE, [0.1, 0.1, 0.1, 1.0]);
+    let mut frame = probe_frame(SIZE, [0.1, 0.1, 0.1, 1.0]);
+    frame
+        .scene
+        .submit_plugin_items("probe_items", CountedItemCollection::new(1));
     harness.render(&frame, SIZE, SIZE);
     log.clear();
 
