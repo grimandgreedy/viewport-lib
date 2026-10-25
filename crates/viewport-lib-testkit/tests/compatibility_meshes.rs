@@ -1,11 +1,11 @@
-//! Meshes on the forward tier: a lit, a textured and a colourmapped mesh drawn
+//! Meshes on the compatibility tier: a lit, a textured and a colourmapped mesh drawn
 //! through the basic mesh path on WebGL2 limits, with goldens of their own.
 //!
-//! The forward tier's frame does not match the full tier's (no shadows, IBL or
-//! PBR), so these references live in `tests/snapshots/<backend>-forward/` and
+//! The compatibility tier's frame does not match the full tier's (no shadows, IBL or
+//! PBR), so these references live in `tests/snapshots/<backend>-compatibility/` and
 //! are blessed the same way as the catalogue's:
 //!
-//!     BLESS=1 cargo test --test forward_meshes
+//!     BLESS=1 cargo test --test compatibility_meshes
 
 use std::path::Path;
 use viewport_lib::{
@@ -21,7 +21,7 @@ const BACKGROUND: [f32; 4] = [0.05, 0.05, 0.08, 1.0];
 
 fn forward_harness(label: &'static str) -> Option<Harness> {
     let harness = Harness::with_profile(&DeviceProfile::downlevel_webgl2(label))?;
-    assert_eq!(harness.renderer.tier(), Tier::Forward);
+    assert_eq!(harness.renderer.tier(), Tier::Compatibility);
     Some(harness)
 }
 
@@ -72,12 +72,12 @@ fn pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
     [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
 }
 
-/// Compare against `<backend>-forward/<name>.png`, writing it when missing or
+/// Compare against `<backend>-compatibility/<name>.png`, writing it when missing or
 /// under `BLESS`.
 fn check_golden(harness: &Harness, name: &str, pixels: Vec<u8>) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/snapshots")
-        .join(format!("{}-forward", harness.backend_dir_name()));
+        .join(format!("{}-compatibility", harness.backend_dir_name()));
     std::fs::create_dir_all(&dir).expect("create snapshot dir");
     let tolerances = golden::load_tolerances(&dir.join("tolerances.txt"));
     let tolerance = tolerances.get(name).copied().unwrap_or(Tolerance::EXACT);
@@ -96,8 +96,8 @@ fn check_golden(harness: &Harness, name: &str, pixels: Vec<u8>) {
 /// A lit sphere, an opaque cube and a smaller translucent cube between it
 /// and the camera, through which the opaque one shows.
 #[test]
-fn forward_tier_draws_lit_meshes() {
-    let Some(mut harness) = forward_harness("forward-lit") else {
+fn compatibility_tier_draws_lit_meshes() {
+    let Some(mut harness) = forward_harness("compatibility-lit") else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
@@ -148,8 +148,8 @@ fn forward_tier_draws_lit_meshes() {
 /// A cube with a two-colour checker albedo, 8 texels to a cell, shows both
 /// colours.
 #[test]
-fn forward_tier_draws_a_textured_mesh() {
-    let Some(mut harness) = forward_harness("forward-textured") else {
+fn compatibility_tier_draws_a_textured_mesh() {
+    let Some(mut harness) = forward_harness("compatibility-textured") else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
@@ -172,7 +172,7 @@ fn forward_tier_draws_a_textured_mesh() {
             &harness.queue,
             viewport_lib::TextureData::srgb(64, 64, rgba),
         )
-        .expect("textures upload on the forward tier");
+        .expect("textures upload on the compatibility tier");
     let cube = viewport_lib::geometry::primitives::cube(2.0);
     let cube = harness
         .renderer
@@ -204,8 +204,8 @@ fn forward_tier_draws_a_textured_mesh() {
 /// A sphere coloured by its height through viridis: the top reads yellow and
 /// the bottom purple.
 #[test]
-fn forward_tier_draws_a_colourmapped_mesh() {
-    let Some(mut harness) = forward_harness("forward-colourmap") else {
+fn compatibility_tier_draws_a_colourmapped_mesh() {
+    let Some(mut harness) = forward_harness("compatibility-colourmap") else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
@@ -257,8 +257,8 @@ fn forward_tier_draws_a_colourmapped_mesh() {
 /// Replacing a mesh works on the tier, in place and with a new topology, and
 /// the replacement draws.
 #[test]
-fn forward_tier_replaces_a_mesh() {
-    let Some(mut harness) = forward_harness("forward-replace") else {
+fn compatibility_tier_replaces_a_mesh() {
+    let Some(mut harness) = forward_harness("compatibility-replace") else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
@@ -267,11 +267,11 @@ fn forward_tier_replaces_a_mesh() {
     let mesh = resources.upload_mesh_data(&harness.device, &cube).unwrap();
     resources
         .replace_mesh_data(&harness.device, &harness.queue, mesh, &cube)
-        .expect("an in-place replace on the forward tier");
+        .expect("an in-place replace on the compatibility tier");
     let sphere = viewport_lib::geometry::primitives::sphere(1.5, 32, 16);
     resources
         .replace_mesh_data(&harness.device, &harness.queue, mesh, &sphere)
-        .expect("a replace with a new topology on the forward tier");
+        .expect("a replace with a new topology on the compatibility tier");
     let white = material(
         &mut harness,
         Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0)),
@@ -283,11 +283,11 @@ fn forward_tier_replaces_a_mesh() {
     assert_ne!(centre, corner, "the replaced mesh must draw");
 }
 
-/// The forward tier has no GPU pick pass, so a pick or a box select of any
+/// The compatibility tier has no GPU pick pass, so a pick or a box select of any
 /// backend finds the surface on the CPU, down to the face under the cursor.
 #[test]
-fn forward_tier_picks_a_surface_on_the_cpu() {
-    let Some(mut harness) = forward_harness("forward-pick") else {
+fn compatibility_tier_picks_a_surface_on_the_cpu() {
+    let Some(mut harness) = forward_harness("compatibility-pick") else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
@@ -354,8 +354,8 @@ fn forward_tier_picks_a_surface_on_the_cpu() {
 /// A selected sphere is outlined in the frame's outline colour, and only when
 /// the frame asks for outlines.
 #[test]
-fn forward_tier_outlines_a_selected_mesh() {
-    let Some(mut harness) = forward_harness("forward-outline") else {
+fn compatibility_tier_outlines_a_selected_mesh() {
+    let Some(mut harness) = forward_harness("compatibility-outline") else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };

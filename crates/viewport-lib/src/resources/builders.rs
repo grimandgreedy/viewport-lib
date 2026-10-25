@@ -50,7 +50,7 @@ pub fn wgsl_module<'a>(
 /// - `PCSS_BLOCKER_SEARCH` / `NO_DEPTH_LOADS`: shaders cannot load from depth
 ///   textures (wgpu's GL backend). The PCSS tiers filter as PCF.
 /// - `LIGHT_LIST` / `UNIFORM`: the group 0 profile holds the light list in a
-///   uniform array (the forward tier).
+///   uniform array (the compatibility tier).
 /// - `CLUSTER_LOOKUP` and `CLUSTER_INDEX` / `UNCLUSTERED`: the group 0
 ///   profile has no clusters, so the lighting loops walk every light.
 pub fn adapt_wgsl<'a>(
@@ -179,14 +179,14 @@ mod adapt_wgsl_tests {
         }
     }
 
-    fn forward_caps() -> crate::capabilities::Capabilities {
+    fn compatibility_caps() -> crate::capabilities::Capabilities {
         let caps = crate::capabilities::Capabilities::from_parts(
             &crate::gpu::Limits::downlevel_webgl2_defaults(),
             crate::gpu::Features::empty(),
             Some(crate::gpu::DownlevelFlags::empty()),
         )
         .with_backend(crate::gpu::Backend::Gl);
-        assert_eq!(caps.tier(), crate::capabilities::Tier::Forward);
+        assert_eq!(caps.tier(), crate::capabilities::Tier::Compatibility);
         caps
     }
 
@@ -240,21 +240,21 @@ fn fs_main() -> @location(0) vec4<f32> {
         )
     }
 
-    /// On the forward tier the light list is a uniform array and nothing
+    /// On the compatibility tier the light list is a uniform array and nothing
     /// reads the cluster buffers; on the full tier both sources are kept.
     #[test]
-    fn the_forward_tier_gets_the_uniform_light_list() {
+    fn the_compatibility_tier_gets_the_uniform_light_list() {
         for src in [lit_source(), bindings_source()] {
-            let forward = adapt_wgsl(src.as_str(), &forward_caps());
+            let compat = adapt_wgsl(src.as_str(), &compatibility_caps());
             let list = format!(
                 "var<uniform> lights_storage: array<SingleLight, {}>;",
-                crate::resources::FORWARD_MAX_LIGHTS
+                crate::resources::COMPATIBILITY_MAX_LIGHTS
             );
-            assert!(forward.contains(&list), "the light list is not {list}");
-            assert!(!forward.contains("var<storage, read> lights_storage"));
-            assert!(!forward.contains("BEGIN_LIGHT_LIST"));
-            assert!(!forward.contains("cluster_data[cid"));
-            assert!(!forward.contains("cluster_data[CLUSTER_INDEX_BASE"));
+            assert!(compat.contains(&list), "the light list is not {list}");
+            assert!(!compat.contains("var<storage, read> lights_storage"));
+            assert!(!compat.contains("BEGIN_LIGHT_LIST"));
+            assert!(!compat.contains("cluster_data[cid"));
+            assert!(!compat.contains("cluster_data[CLUSTER_INDEX_BASE"));
 
             let full = adapt_wgsl(src.as_str(), &caps(crate::gpu::Backend::Metal));
             assert!(matches!(full, std::borrow::Cow::Borrowed(_)));
@@ -339,7 +339,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(())
     }
 
-    /// The shared lighting sources a forward-tier item type composes, the
+    /// The shared lighting sources a compatibility-tier item type composes, the
     /// basic mesh shader and the selection outline's three, adapted for that
     /// tier, translate to the GLSL ES 3.0 WebGL2 compiles.
     #[cfg(wgpu27)]
@@ -350,7 +350,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             ("bindings", bindings_source()),
             (
                 "mesh_basic",
-                crate::resources::forward_mesh::MESH_BASIC_WGSL.to_string(),
+                crate::resources::basic_mesh::MESH_BASIC_WGSL.to_string(),
             ),
             (
                 "outline_mask_basic",
@@ -365,7 +365,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                 include_str!(concat!(env!("OUT_DIR"), "/outline_composite.wgsl")).to_string(),
             ),
         ] {
-            let adapted = adapt_wgsl(src.as_str(), &forward_caps());
+            let adapted = adapt_wgsl(src.as_str(), &compatibility_caps());
             if let Err(e) = translate_to_glsl(&adapted, 300, true) {
                 panic!("{name}: {e}");
             }

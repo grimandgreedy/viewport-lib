@@ -1,4 +1,4 @@
-//! The resources behind group 0 on the forward tier: its own lights header
+//! The resources behind group 0 on the compatibility tier: its own lights header
 //! and light list, and 1x1 placeholders for the shadow and IBL bindings,
 //! which are off on this tier. Also the basic mesh path's group 1 layout,
 //! fallback textures and pipelines. The layout and the bind group come from the
@@ -7,12 +7,12 @@
 use crate::resources::builders::LoggedAlloc;
 use crate::resources::{LightsUniform, SingleLightUniform};
 
-/// Lights the forward tier's light list holds. Lights past it are dropped in
+/// Lights the compatibility tier's light list holds. Lights past it are dropped in
 /// rank order and counted in `FrameStats::lights_dropped`.
-pub const FORWARD_MAX_LIGHTS: usize = 16;
+pub const COMPATIBILITY_MAX_LIGHTS: usize = 16;
 
-/// The resources behind group 0 on the forward tier.
-pub(crate) struct ForwardTier {
+/// The resources behind group 0 on the compatibility tier.
+pub(crate) struct CompatibilityTier {
     pub(crate) camera_bgl: crate::gpu::BindGroupLayout,
     /// The shadow pass's group 0, the same layout as the full tier's. No
     /// shadow pass runs on this tier; it exists so a plugin can build its
@@ -20,7 +20,7 @@ pub(crate) struct ForwardTier {
     pub(crate) shadow_camera_bgl: crate::gpu::BindGroupLayout,
     /// The lights header (binding 3).
     pub(crate) lights_header_buf: crate::gpu::Buffer,
-    /// The light list (binding 13), [`FORWARD_MAX_LIGHTS`] entries.
+    /// The light list (binding 13), [`COMPATIBILITY_MAX_LIGHTS`] entries.
     pub(crate) light_list_buf: crate::gpu::Buffer,
     /// The samplers plugins share, the same configuration as the full tier's.
     pub(crate) material_sampler: crate::gpu::Sampler,
@@ -47,21 +47,21 @@ pub(crate) struct ForwardTier {
     pub(crate) fallback_ao_view: crate::gpu::TextureView,
     fallbacks_written: bool,
     /// The basic mesh pipelines, built on first use.
-    pub(crate) mesh_pipelines: crate::resources::forward_mesh::BasicMeshPipelines,
+    pub(crate) mesh_pipelines: crate::resources::basic_mesh::BasicMeshPipelines,
     /// The selection mask pipelines, built on the first frame with a selection
     /// to outline.
-    pub(crate) outline_mask: Option<ForwardOutlineMask>,
+    pub(crate) outline_mask: Option<CompatibilityOutlineMask>,
 }
 
-/// The forward tier's selection mask pipelines and their group 1 layout: the
+/// The compatibility tier's selection mask pipelines and their group 1 layout: the
 /// outline uniform alone, with none of the full tier's storage bindings.
-pub(crate) struct ForwardOutlineMask {
+pub(crate) struct CompatibilityOutlineMask {
     pub(crate) bgl: crate::gpu::BindGroupLayout,
     pub(crate) mask: crate::gpu::RenderPipeline,
     pub(crate) mask_two_sided: crate::gpu::RenderPipeline,
 }
 
-impl ForwardTier {
+impl CompatibilityTier {
     pub(crate) fn new(
         device: &crate::gpu::Device,
         profile: &crate::resources::group0::Group0Profile,
@@ -85,10 +85,12 @@ impl ForwardTier {
             })
         };
         let lights_header_buf = uniform(
-            "forward_lights_header",
+            "compatibility_lights_header",
             std::mem::size_of::<LightsUniform>() as u64,
         );
-        let lights = profile.uniform_light_list.unwrap_or(FORWARD_MAX_LIGHTS);
+        let lights = profile
+            .uniform_light_list
+            .unwrap_or(COMPATIBILITY_MAX_LIGHTS);
         let light_list_buf = uniform(
             "forward_light_list",
             (lights * std::mem::size_of::<SingleLightUniform>()) as u64,
@@ -140,7 +142,7 @@ impl ForwardTier {
         use crate::resources::builders::{sampler_entry, texture_entry};
         let fragment = crate::gpu::ShaderStages::FRAGMENT;
         let mesh_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-            label: Some("forward_mesh_bgl"),
+            label: Some("basic_mesh_bgl"),
             entries: &[
                 texture_entry(0, fragment),
                 sampler_entry(1, fragment),

@@ -59,7 +59,7 @@ pub struct RendererConfig {
     /// Default `None`.
     pub backend: Option<crate::gpu::Backend>,
     /// The highest tier the renderer runs at, whatever the device offers.
-    /// `Some(Tier::Forward)` on a desktop GPU builds the renderer a WebGL2
+    /// `Some(Tier::Compatibility)` on a desktop GPU builds the renderer a WebGL2
     /// device gets, to see what that tier draws without one; see
     /// [`Capabilities::capped_at`](crate::Capabilities::capped_at) for what it
     /// does and does not model. Default `None`.

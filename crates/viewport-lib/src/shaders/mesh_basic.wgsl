@@ -7,7 +7,7 @@
 // clipping follow the full mesh shader's rules; shadows, IBL, PBR and the
 // material maps are absent.
 //
-// Group 0: the forward group 0. Only the camera, the lights header, the light
+// Group 0: the compatibility group 0. Only the camera, the lights header, the light
 //   list and the clip uniforms are read.
 // Group 1: albedo texture + sampler, colourmap LUT + sampler.
 

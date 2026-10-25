@@ -235,7 +235,7 @@ impl OutlineResources {
 /// layout. Both are lazily built: the mask pair by `ensure_outline_pipelines`
 /// on the first frame with a selection to outline, the x-ray pipeline by
 /// `ensure_xray_pipeline`. The edge and composite passes are shared with the
-/// forward tier (`resources::outline`).
+/// compatibility tier (`resources::outline`).
 pub(crate) struct OutlineResources {
     /// Group 1 layout for OutlineUniform (mask/xray pipelines).
     pub(crate) bind_group_layout: crate::gpu::BindGroupLayout,
@@ -435,7 +435,7 @@ impl DeviceResources {
             Ok(())
         } else {
             Err(crate::ViewportError::TierUnsupported {
-                needed: crate::capabilities::Tier::Forward,
+                needed: crate::capabilities::Tier::Compatibility,
                 have: self.capabilities.tier(),
             })
         }
@@ -546,9 +546,10 @@ pub struct DeviceResources {
     /// The scene draws' layouts, bind groups and textures. Absent on a device
     /// below the full tier, where only the overlay family draws.
     pub(crate) scene_tier: SceneTierSlot,
-    /// Group 0 on the forward tier: built there in place of the scene tier,
+    /// Group 0 on the compatibility tier: built there in place of the scene tier,
     /// `None` on every other tier.
-    pub(crate) forward_tier: Option<Box<crate::resources::forward_tier::ForwardTier>>,
+    pub(crate) compatibility_tier:
+        Option<Box<crate::resources::compatibility_tier::CompatibilityTier>>,
     /// The selection outline's edge and composite passes, shared by both
     /// tiers that draw a scene; built on the first frame with a selection.
     pub(crate) outline: Option<crate::resources::outline::OutlineShared>,
@@ -1682,8 +1683,8 @@ impl DeviceResources {
             shadow_info: shadow_info_buf,
             clip_volume: clip_volume_buf,
         };
-        let (layout, res) = match &self.forward_tier {
-            Some(forward) => (&forward.camera_bgl, forward.group0_resources(per_viewport)),
+        let (layout, res) = match &self.compatibility_tier {
+            Some(compat) => (&compat.camera_bgl, compat.group0_resources(per_viewport)),
             None => (
                 &self.scene_tier.binds.camera_bgl,
                 self.scene_group0_resources(per_viewport),
@@ -1737,8 +1738,8 @@ impl DeviceResources {
     pub(crate) fn lit_group0_layouts(
         &self,
     ) -> Option<(&crate::gpu::BindGroupLayout, &crate::gpu::BindGroupLayout)> {
-        if let Some(forward) = &self.forward_tier {
-            Some((&forward.camera_bgl, &forward.shadow_camera_bgl))
+        if let Some(compat) = &self.compatibility_tier {
+            Some((&compat.camera_bgl, &compat.shadow_camera_bgl))
         } else if self.scene_tier.is_built() {
             Some((
                 &self.scene_tier.binds.camera_bgl,

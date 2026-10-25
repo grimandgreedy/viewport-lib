@@ -57,18 +57,18 @@ impl crate::resources::DeviceResources {
                 outline.mask_two_sided_pipeline.as_ref()?,
             ))
         } else {
-            let mask = self.forward_tier.as_deref()?.outline_mask.as_ref()?;
+            let mask = self.compatibility_tier.as_deref()?.outline_mask.as_ref()?;
             Some((&mask.mask, &mask.mask_two_sided))
         }
     }
 
-    /// Build the forward tier's selection mask pipelines. A no-op once built,
-    /// and below the forward tier.
-    pub(crate) fn ensure_forward_outline_mask(&mut self, device: &crate::gpu::Device) {
-        let Some(forward) = self.forward_tier.as_deref() else {
+    /// Build the compatibility tier's selection mask pipelines. A no-op once built,
+    /// and below the compatibility tier.
+    pub(crate) fn ensure_compatibility_outline_mask(&mut self, device: &crate::gpu::Device) {
+        let Some(compat) = self.compatibility_tier.as_deref() else {
             return;
         };
-        if forward.outline_mask.is_some() {
+        if compat.outline_mask.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
@@ -85,7 +85,7 @@ impl crate::resources::DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "outline_mask_basic_layout",
-            &[&forward.camera_bgl, &bgl],
+            &[&compat.camera_bgl, &bgl],
         );
         let masks = crate::resources::mesh::mesh_pipelines::build_outline_mask_pipelines(
             device,
@@ -94,12 +94,14 @@ impl crate::resources::DeviceResources {
             crate::gpu::TextureFormat::R8Unorm,
             self.pipeline_cache.as_ref(),
         );
-        if let Some(forward) = self.forward_tier.as_deref_mut() {
-            forward.outline_mask = Some(crate::resources::forward_tier::ForwardOutlineMask {
-                bgl,
-                mask: masks.mask,
-                mask_two_sided: masks.mask_two_sided,
-            });
+        if let Some(compat) = self.compatibility_tier.as_deref_mut() {
+            compat.outline_mask = Some(
+                crate::resources::compatibility_tier::CompatibilityOutlineMask {
+                    bgl,
+                    mask: masks.mask,
+                    mask_two_sided: masks.mask_two_sided,
+                },
+            );
         }
     }
 
@@ -223,7 +225,7 @@ impl crate::resources::DeviceResources {
 ///
 /// The mask pass tests against a depth target of the same size. On the full
 /// tier that is the LDR scene depth the HDR state already holds; on the
-/// forward tier these targets own one.
+/// compatibility tier these targets own one.
 pub(crate) struct OutlineTargets {
     size: [u32; 2],
     _mask_texture: crate::gpu::Texture,

@@ -167,7 +167,7 @@ impl ViewportRenderer {
     /// pipeline for yet is simply not drawn, so it returns no hit rather than a
     /// wrong one.
     ///
-    /// The forward tier has no GPU pick pass, so there every `backend` picks
+    /// The compatibility tier has no GPU pick pass, so there every `backend` picks
     /// the surfaces on the CPU, which needs the CPU pick cache on.
     pub fn pick_object(
         &mut self,
@@ -178,11 +178,11 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> Option<PickHit> {
-        // Nothing pickable is drawn on the overlay-only tier. The forward tier
+        // Nothing pickable is drawn on the overlay-only tier. The compatibility tier
         // has no GPU pick pass, so it picks its surfaces on the CPU.
         let backend = if self.resources.scene_tier.is_built() {
             self.resolve_pick_backend(backend, device, mask)
-        } else if self.resources.forward_tier.is_some() {
+        } else if self.resources.compatibility_tier.is_some() {
             PickBackend::Cpu
         } else {
             return None;
@@ -400,7 +400,7 @@ impl ViewportRenderer {
     /// [`PickBackend::Gpu`]). `Cpu` is the same as calling
     /// [`pick_rect`](Self::pick_rect); `Auto` routes per query.
     ///
-    /// The forward tier has no GPU pick pass, so there every `backend` picks
+    /// The compatibility tier has no GPU pick pass, so there every `backend` picks
     /// on the CPU, which needs the CPU pick cache on.
     pub fn pick_rect_objects(
         &mut self,
@@ -412,11 +412,11 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> PickRectResult {
-        // Nothing pickable is drawn on the overlay-only tier. The forward tier
+        // Nothing pickable is drawn on the overlay-only tier. The compatibility tier
         // has no GPU pick pass, so it picks on the CPU.
         let backend = if self.resources.scene_tier.is_built() {
             self.resolve_pick_backend(backend, device, mask)
-        } else if self.resources.forward_tier.is_some() {
+        } else if self.resources.compatibility_tier.is_some() {
             PickBackend::Cpu
         } else {
             return PickRectResult::default();

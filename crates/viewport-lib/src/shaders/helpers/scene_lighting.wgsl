@@ -22,7 +22,7 @@
 //
 // The BEGIN_/END_ regions carry an alternative on `// ALT(NAME):` lines, which
 // `builders::adapt_wgsl` swaps in where the device's group 0 needs it: the
-// light list as a uniform array of FORWARD_MAX_LIGHTS (UNIFORM), and the
+// light list as a uniform array of COMPATIBILITY_MAX_LIGHTS (UNIFORM), and the
 // cluster lookups walking every light where there are no clusters
 // (UNCLUSTERED).
 //

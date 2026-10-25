@@ -1,7 +1,7 @@
 use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
 
-pub(crate) mod forward;
+pub(crate) mod compatibility;
 mod instanced;
 pub(crate) use instanced::feature_set_violations as instanced_feature_set_violations;
 mod lighting;
@@ -190,14 +190,14 @@ impl ViewportRenderer {
                 None => self.resources.process_uploads(device, queue),
             }
         }
-        // The rest is the scene's full-tier work. The forward tier draws the
+        // The rest is the scene's full-tier work. The compatibility tier draws the
         // surfaces through its basic mesh path and lights them and its item
         // types from its own group 0.
         if !scene_tier {
-            if let Some(forward) = self.resources.forward_tier.as_deref_mut() {
-                forward.write_fallbacks(queue);
+            if let Some(compat) = self.resources.compatibility_tier.as_deref_mut() {
+                compat.write_fallbacks(queue);
                 self.resources.ensure_colourmaps_initialized(device, queue);
-                self.prepare_forward_lights(queue, frame, scene_fx);
+                self.prepare_compatibility_lights(queue, frame, scene_fx);
                 self.prepare_basic_meshes(device, queue, frame);
             }
             return;
@@ -736,7 +736,7 @@ impl ViewportRenderer {
             || !frame.scene.foreground_items.is_empty()
     }
 
-    /// The surfaces `frame` submits, which the forward tier draws.
+    /// The surfaces `frame` submits, which the compatibility tier draws.
     fn surface_count(frame: &FrameData) -> u32 {
         match &frame.scene.surfaces {
             crate::renderer::SurfaceSubmission::Flat(items) => items.len() as u32,
@@ -744,7 +744,7 @@ impl ViewportRenderer {
     }
 
     /// The plugin items in `frame` that a registered item type paints on the
-    /// LDR path, which is every plugin item the forward tier draws.
+    /// LDR path, which is every plugin item the compatibility tier draws.
     fn ldr_plugin_item_count(&self, frame: &FrameData) -> u32 {
         self.item_type_plugins
             .iter()
@@ -846,8 +846,8 @@ impl ViewportRenderer {
         if self.resources.scene_tier.is_built() {
             self.prepare_viewport_scene(device, queue, frame, viewport_fx, sink);
         } else {
-            self.prepare_viewport_forward(queue, frame, viewport_fx);
-            self.prepare_forward_outlines(device, queue, frame, sink);
+            self.prepare_viewport_compatibility(queue, frame, viewport_fx);
+            self.prepare_compatibility_outlines(device, queue, frame, sink);
         }
         self.prepare_viewport_overlays(device, queue, frame);
         self.prepare_debug_buffer(frame);
@@ -1415,7 +1415,7 @@ impl ViewportRenderer {
             tier: self.resources.capabilities.tier(),
             items_skipped_by_tier: if self.resources.scene_tier.is_built() {
                 0
-            } else if self.resources.forward_tier.is_some() {
+            } else if self.resources.compatibility_tier.is_some() {
                 Self::scene_item_count(frame)
                     - Self::surface_count(frame)
                     - self.ldr_plugin_item_count(frame)

@@ -5,6 +5,10 @@ pub(crate) mod cached_bind_group;
 /// Opt-in record of what each pipeline and shader module cost to create, for
 /// attributing startup time. See [`builders::build_log`].
 pub use builders::build_log;
+/// The basic mesh path the compatibility tier draws meshes with.
+pub(crate) mod basic_mesh;
+/// Group 0 on the compatibility tier.
+pub(crate) mod compatibility_tier;
 /// A growable GPU buffer addressed in elements, with a ranged write.
 pub mod content_buffer;
 pub(crate) mod custom_data;
@@ -12,13 +16,9 @@ pub(crate) mod custom_data;
 pub(crate) mod device_resources;
 /// A cheap hasher for the maps rebuilt or probed every frame.
 pub(crate) mod fast_hash;
-/// The basic mesh path the forward tier draws meshes with.
-pub(crate) mod forward_mesh;
-/// Group 0 on the forward tier.
-pub(crate) mod forward_tier;
 /// Group 0's bindings on every tier, declared once.
 pub(crate) mod group0;
-pub use self::forward_tier::FORWARD_MAX_LIGHTS;
+pub use self::compatibility_tier::COMPATIBILITY_MAX_LIGHTS;
 /// GPU compute resources: clustered shading, hierarchical-Z, and dynamic resolution.
 pub mod gpu;
 /// Ground-plane pipeline, uniform, and bind group.

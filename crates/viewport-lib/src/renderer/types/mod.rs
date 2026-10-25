@@ -1011,7 +1011,7 @@ macro_rules! emit_outline_composite {
                     .outline_targets
                     .as_ref()
                     .map(|t| &t.composite_bind_group);
-                // The forward tier draws its scene pass single-sampled.
+                // The compatibility tier draws its scene pass single-sampled.
                 let samples = if resources.scene_tier.is_built() {
                     resources.sample_count
                 } else {

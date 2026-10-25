@@ -1,11 +1,11 @@
-//! The item types that register on the forward tier, drawn from their
+//! The item types that register on the compatibility tier, drawn from their
 //! catalogue scenes on WebGL2 limits, with goldens of their own.
 //!
-//! The references live beside the forward mesh goldens in
-//! `tests/snapshots/<backend>-forward/`, under the scene's name, and are
+//! The references live beside the compatibility mesh goldens in
+//! `tests/snapshots/<backend>-compatibility/`, under the scene's name, and are
 //! blessed the same way:
 //!
-//!     BLESS=1 cargo test --test forward_item_types
+//!     BLESS=1 cargo test --test compatibility_item_types
 
 use std::path::Path;
 use viewport_lib::Tier;
@@ -15,7 +15,7 @@ use viewport_lib_testkit::{DeviceProfile, Harness, catalogue, frame_for};
 const W: u32 = 256;
 const H: u32 = 192;
 
-/// The catalogue scenes of the types that draw on the forward tier, with the
+/// The catalogue scenes of the types that draw on the compatibility tier, with the
 /// type each one exercises.
 const SCENES: &[(&str, &str)] = &[
     (
@@ -40,12 +40,12 @@ const SCENES: &[(&str, &str)] = &[
     ),
 ];
 
-/// Compare against `<backend>-forward/<name>.png`, writing it when missing or
+/// Compare against `<backend>-compatibility/<name>.png`, writing it when missing or
 /// under `BLESS`.
 fn check_golden(harness: &Harness, name: &str, pixels: Vec<u8>) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/snapshots")
-        .join(format!("{}-forward", harness.backend_dir_name()));
+        .join(format!("{}-compatibility", harness.backend_dir_name()));
     std::fs::create_dir_all(&dir).expect("create snapshot dir");
     let tolerances = golden::load_tolerances(&dir.join("tolerances.txt"));
     let tolerance = tolerances.get(name).copied().unwrap_or(Tolerance::EXACT);
@@ -65,20 +65,20 @@ fn check_golden(harness: &Harness, name: &str, pixels: Vec<u8>) {
 /// differs from one with the type's items left out, the selected item is
 /// outlined, and a click or a box over a pickable item picks it on the CPU.
 #[test]
-fn forward_tier_draws_the_item_types_that_accept_it() {
+fn compatibility_tier_draws_the_item_types_that_accept_it() {
     let Some(mut harness) =
-        Harness::with_profile(&DeviceProfile::downlevel_webgl2("forward-item-types"))
+        Harness::with_profile(&DeviceProfile::downlevel_webgl2("compatibility-item-types"))
     else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    assert_eq!(harness.renderer.tier(), Tier::Forward);
+    assert_eq!(harness.renderer.tier(), Tier::Compatibility);
     harness.renderer.set_cpu_pick_cache(true);
     let scenes = catalogue();
     for (name, type_name) in SCENES {
         assert!(
             harness.renderer.has_item_type_plugin(type_name),
-            "{type_name} registers on the forward tier"
+            "{type_name} registers on the compatibility tier"
         );
         let scene = scenes
             .iter()

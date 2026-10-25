@@ -27,7 +27,7 @@ fn a_cpu_pick_ignores_item_types_left_out_of_the_frame() {
 
     let device = harness.device.clone();
     let queue = harness.queue.clone();
-    let mut pick = |harness: &mut Harness, frame: &viewport_lib::FrameData, at: glam::Vec2| {
+    let pick = |harness: &mut Harness, frame: &viewport_lib::FrameData, at: glam::Vec2| {
         harness
             .renderer
             .pick_object(

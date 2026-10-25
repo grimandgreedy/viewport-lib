@@ -1,7 +1,7 @@
 //! The picking scene on each device tier, side by side.
 //!
-//! One tab per tier: the full tier, the forward tier a WebGL2 or GLES device
-//! gets, and the overlay-only tier below it. Every tab holds its own renderer
+//! One tab per tier: the full tier, the compatibility tier a WebGL2 or GLES
+//! device gets, and the overlay-only tier below it. Every tab holds its own renderer
 //! on this machine's device, capped with `RendererConfig::with_max_tier`, and
 //! builds the same scene as the showcase's picking demo: one of every pickable
 //! item type. The panel says what each tier did with each of them: which item
@@ -16,6 +16,7 @@
 //! Run with: cargo run --release -p viewport-lib-examples-eframe --example tiers
 //!
 //! `VPL_TIER=<n>` opens on tab n (1-based) instead of the first.
+//! Cmd+[ and Cmd+] (Ctrl on Windows and Linux) step through the tabs.
 
 #[path = "../showcase/camera.rs"]
 mod camera;
@@ -39,7 +40,7 @@ use vpl::{
 
 use showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
-const TIERS: [Tier; 3] = [Tier::Full, Tier::Forward, Tier::OverlayOnly];
+const TIERS: [Tier; 3] = [Tier::Full, Tier::Compatibility, Tier::OverlayOnly];
 
 fn main() -> eframe::Result {
     eframe::run_native(
@@ -117,7 +118,7 @@ impl Tab {
     fn label(&self) -> &'static str {
         match self.tier {
             Tier::Full => "Full",
-            Tier::Forward => "Forward (WebGL2, GLES)",
+            Tier::Compatibility => "Compatibility (WebGL2, GLES)",
             _ => "Overlay-only",
         }
     }
@@ -128,7 +129,7 @@ impl Tab {
                 "Everything: storage buffers, compute, shadows, IBL, GPU picking \
                  with sub-object highlights."
             }
-            Tier::Forward => {
+            Tier::Compatibility => {
                 "No storage buffers or compute. Meshes draw through a basic-lit \
                  path, and the item types that draw without storage buffers \
                  register; the rest are declined. Clicks and box selection \
@@ -193,7 +194,7 @@ impl Tab {
         let drawn = |yes: bool| if yes { "drawn" } else { "skipped" };
         ui.label(format!(
             "meshes ({surfaces}): {}",
-            drawn(renderer_tier >= Tier::Forward)
+            drawn(renderer_tier >= Tier::Compatibility)
         ));
         ui.label(format!(
             "volume meshes ({volume_meshes}): {}",
@@ -290,6 +291,17 @@ impl App {
         let rs = frame.wgpu_render_state().expect("wgpu backend required");
         let dt = ctx.input(|i| i.stable_dt).min(0.1);
 
+        // Cmd+[ and Cmd+] (Ctrl on Windows and Linux) step through the tabs.
+        let n = self.tabs.len();
+        ctx.input_mut(|i| {
+            if i.consume_key(egui::Modifiers::COMMAND, egui::Key::OpenBracket) {
+                self.active = (self.active + n - 1) % n;
+            }
+            if i.consume_key(egui::Modifiers::COMMAND, egui::Key::CloseBracket) {
+                self.active = (self.active + 1) % n;
+            }
+        });
+
         top_panel(ui, "tiers", |ui| {
             ui.horizontal(|ui| {
                 ui.strong("Tier:");
@@ -298,6 +310,7 @@ impl App {
                         self.active = i;
                     }
                 }
+                ui.weak("Cmd+[ / Cmd+] to switch");
             });
         });
 

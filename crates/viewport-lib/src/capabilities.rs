@@ -149,7 +149,7 @@ impl Capabilities {
         self.indirect_first_instance = false;
         self.multi_draw_indirect_count = false;
         self.ray_query = false;
-        if tier < Tier::Forward {
+        if tier < Tier::Compatibility {
             self.bind_groups = self.bind_groups.min(Tier::BIND_GROUPS);
         }
         self
@@ -202,8 +202,8 @@ impl Capabilities {
     pub fn tier(&self) -> Tier {
         if self.full_tier_missing().is_empty() {
             Tier::Full
-        } else if self.forward_tier_missing().is_empty() {
-            Tier::Forward
+        } else if self.compatibility_tier_missing().is_empty() {
+            Tier::Compatibility
         } else if self.overlay_tier_missing().is_empty() {
             Tier::OverlayOnly
         } else {
@@ -217,7 +217,7 @@ impl Capabilities {
         match tier {
             Tier::Unsupported => Vec::new(),
             Tier::OverlayOnly => self.overlay_tier_missing(),
-            Tier::Forward => self.forward_tier_missing(),
+            Tier::Compatibility => self.compatibility_tier_missing(),
             _ => self.full_tier_missing(),
         }
     }
@@ -260,13 +260,13 @@ impl Capabilities {
         self.missing_requirements(&Requirements::full_tier())
     }
 
-    fn forward_tier_missing(&self) -> Vec<String> {
+    fn compatibility_tier_missing(&self) -> Vec<String> {
         let mut missing = self.overlay_tier_missing();
-        missing.extend(self.missing_requirements(&Requirements::forward_tier()));
-        if self.uniform_buffers_per_stage < Tier::FORWARD_UNIFORM_BUFFERS_PER_STAGE {
+        missing.extend(self.missing_requirements(&Requirements::compatibility_tier()));
+        if self.uniform_buffers_per_stage < Tier::COMPATIBILITY_UNIFORM_BUFFERS_PER_STAGE {
             missing.push(format!(
                 "{} uniform buffers per shader stage (the device has {})",
-                Tier::FORWARD_UNIFORM_BUFFERS_PER_STAGE,
+                Tier::COMPATIBILITY_UNIFORM_BUFFERS_PER_STAGE,
                 self.uniform_buffers_per_stage
             ));
         }
@@ -335,18 +335,18 @@ impl Requirements {
         }
     }
 
-    /// What the forward tier guarantees: no storage buffers, no compute, three
+    /// What the compatibility tier guarantees: no storage buffers, no compute, three
     /// bind groups and 16 sampled textures per stage. A plugin returning this
-    /// registers on the forward tier as well as the full one, and must then
+    /// registers on the compatibility tier as well as the full one, and must then
     /// draw without storage buffers or compute where the device has neither.
-    pub fn forward_tier() -> Self {
+    pub fn compatibility_tier() -> Self {
         Self {
             storage_buffers_per_stage: 0,
             vertex_storage: false,
             fragment_storage: false,
             compute: false,
-            bind_groups: Tier::FORWARD_BIND_GROUPS,
-            sampled_textures_per_stage: Tier::FORWARD_SAMPLED_TEXTURES_PER_STAGE,
+            bind_groups: Tier::COMPATIBILITY_BIND_GROUPS,
+            sampled_textures_per_stage: Tier::COMPATIBILITY_SAMPLED_TEXTURES_PER_STAGE,
         }
     }
 
@@ -396,7 +396,10 @@ mod tests {
     fn capping_lands_on_the_tier_asked_for() {
         let full = Capabilities::from_parts(&gpu::Limits::default(), gpu::Features::empty(), None);
         assert_eq!(full.tier(), Tier::Full);
-        assert_eq!(full.clone().capped_at(Tier::Forward).tier(), Tier::Forward);
+        assert_eq!(
+            full.clone().capped_at(Tier::Compatibility).tier(),
+            Tier::Compatibility
+        );
         assert_eq!(
             full.clone().capped_at(Tier::OverlayOnly).tier(),
             Tier::OverlayOnly
@@ -408,8 +411,8 @@ mod tests {
             gpu::Features::empty(),
             None,
         );
-        assert_eq!(webgl2.tier(), Tier::Forward);
-        assert_eq!(webgl2.clone().capped_at(Tier::Forward), webgl2);
+        assert_eq!(webgl2.tier(), Tier::Compatibility);
+        assert_eq!(webgl2.clone().capped_at(Tier::Compatibility), webgl2);
         assert_eq!(
             webgl2.capped_at(Tier::OverlayOnly).tier(),
             Tier::OverlayOnly
@@ -443,7 +446,7 @@ mod tests {
     #[test]
     fn webgl2_limits_are_forward() {
         let limits = gpu::Limits::downlevel_webgl2_defaults();
-        assert_eq!(tier_of(limits.clone(), None), Tier::Forward);
+        assert_eq!(tier_of(limits.clone(), None), Tier::Compatibility);
         // The adapter's compute flag survives a device created with WebGL2
         // limits; the zero workgroup limits are what rule compute out.
         let caps = Capabilities::from_parts(
@@ -452,7 +455,7 @@ mod tests {
             Some(gpu::DownlevelFlags::all()),
         );
         assert!(!caps.compute);
-        assert_eq!(caps.tier(), Tier::Forward);
+        assert_eq!(caps.tier(), Tier::Compatibility);
     }
 
     #[test]
@@ -464,7 +467,7 @@ mod tests {
         let caps = Capabilities::from_parts(&limits, gpu::Features::empty(), None);
         assert_eq!(caps.tier(), Tier::OverlayOnly);
         assert_eq!(
-            caps.missing_for(Tier::Forward),
+            caps.missing_for(Tier::Compatibility),
             vec!["3 bind groups (the device has 2)".to_owned()]
         );
     }
@@ -478,7 +481,7 @@ mod tests {
             Capabilities::from_parts(&gpu::Limits::default(), gpu::Features::empty(), Some(flags));
         assert!(!caps.vertex_storage);
         assert!(caps.fragment_storage);
-        assert_eq!(caps.tier(), Tier::Forward);
+        assert_eq!(caps.tier(), Tier::Compatibility);
         assert_eq!(
             caps.missing_for(Tier::Full),
             vec!["storage buffers in the vertex stage".to_owned()]
@@ -514,7 +517,7 @@ mod tests {
     #[test]
     fn tiers_order_by_capability() {
         assert!(Tier::Unsupported < Tier::OverlayOnly);
-        assert!(Tier::OverlayOnly < Tier::Forward);
-        assert!(Tier::Forward < Tier::Full);
+        assert!(Tier::OverlayOnly < Tier::Compatibility);
+        assert!(Tier::Compatibility < Tier::Full);
     }
 }

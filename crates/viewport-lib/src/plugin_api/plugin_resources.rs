@@ -50,7 +50,7 @@ pub trait PluginResources: sealed::Sealed {
 
     /// Adapt a source that includes the shared group 0 declarations to this
     /// device before compiling it: binding 17's texture type on a device
-    /// without cube arrays, and on the forward tier a uniform light list.
+    /// without cube arrays, and on the compatibility tier a uniform light list.
     /// Modules from [`lazy_module`](Self::lazy_module) are adapted already.
     fn adapt_wgsl<'s>(&self, source: &'s str) -> std::borrow::Cow<'s, str>;
 

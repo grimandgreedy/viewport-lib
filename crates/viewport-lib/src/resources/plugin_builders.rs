@@ -134,9 +134,9 @@ impl DeviceResources {
     ///
     /// On a device without cube-array textures binding 17 is a
     /// `texture_depth_2d_array`, so a source declaring it
-    /// `texture_depth_cube_array` would not match the layout. On the forward
+    /// `texture_depth_cube_array` would not match the layout. On the compatibility
     /// tier the light list at binding 13 is a uniform array of
-    /// [`FORWARD_MAX_LIGHTS`](crate::resources::FORWARD_MAX_LIGHTS) and the
+    /// [`COMPATIBILITY_MAX_LIGHTS`](crate::resources::COMPATIBILITY_MAX_LIGHTS) and the
     /// cluster lookups in `apply_scene_lighting` walk every light, since that
     /// tier's group 0 has no storage buffers. Modules built through
     /// [`lazy_module`](Self::lazy_module) are adapted already.
@@ -282,8 +282,8 @@ impl DeviceResources {
     /// Use this when building a plugin bind group that samples user
     /// textures the same way `Material` does (linear filter, repeat wrap).
     pub fn material_sampler(&self) -> &crate::gpu::Sampler {
-        match &self.forward_tier {
-            Some(forward) => &forward.material_sampler,
+        match &self.compatibility_tier {
+            Some(compat) => &compat.material_sampler,
             None => &self.scene_tier.material.sampler,
         }
     }
@@ -321,8 +321,8 @@ impl DeviceResources {
     /// Use this when sampling 1D LUT-style data (colourmaps, transfer
     /// functions) where the texture should not wrap.
     pub fn lut_sampler(&self) -> &crate::gpu::Sampler {
-        match &self.forward_tier {
-            Some(forward) => &forward.lut_sampler,
+        match &self.compatibility_tier {
+            Some(compat) => &compat.lut_sampler,
             None => &self.scene_tier.material.lut_sampler,
         }
     }
@@ -332,8 +332,8 @@ impl DeviceResources {
     /// Plugins that sample the shadow atlas directly (rather than through
     /// `viewport_sample_csm`) use this sampler when binding the atlas.
     pub fn shadow_filter_sampler(&self) -> &crate::gpu::Sampler {
-        match &self.forward_tier {
-            Some(forward) => &forward.shadow_sampler,
+        match &self.compatibility_tier {
+            Some(compat) => &compat.shadow_sampler,
             None => &self.scene_tier.shadow.sampler,
         }
     }
@@ -442,7 +442,7 @@ impl DeviceResources {
 
     /// Build an opaque pipeline for the LDR scene pass: the same as
     /// [`build_opaque_pipeline`](Self::build_opaque_pipeline) against
-    /// [`ldr_opaque_target_desc`](Self::ldr_opaque_target_desc). The forward
+    /// [`ldr_opaque_target_desc`](Self::ldr_opaque_target_desc). The compatibility
     /// tier draws only through this pass; on the full tier it is the pipeline
     /// a type that sets
     /// [`draws_ldr`](crate::plugin_api::ItemTypePlugin::draws_ldr) selects when

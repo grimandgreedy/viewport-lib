@@ -145,7 +145,7 @@ impl ViewportRenderer {
                 timestamp_writes: ts_writes,
                 occlusion_query_set: None,
             });
-            // Below the full tier only the forward tier's scene content draws.
+            // Below the full tier only the compatibility tier's scene content draws.
             if self.resources.scene_tier.is_built() {
                 emit_draw_calls!(
                     &self.resources,
@@ -202,7 +202,7 @@ impl ViewportRenderer {
                 // Outline composite after all scene content.
                 emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             } else {
-                self.paint_forward_scene(&mut render_pass, camera_bg, frame);
+                self.paint_compatibility_scene(&mut render_pass, camera_bg, frame);
                 emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             }
             // When blur backdrops are needed, skip overlays here. They'll

@@ -21,7 +21,7 @@ fn webgl2_profile_builds_a_forward_renderer() {
         return;
     };
     let caps = Capabilities::from_device(&d.device, Some(&d.downlevel));
-    assert_eq!(caps.tier(), Tier::Forward);
+    assert_eq!(caps.tier(), Tier::Compatibility);
     assert!(!caps.compute);
     assert!(!caps.vertex_storage && !caps.fragment_storage);
     assert!(!caps.cube_array_textures);
@@ -30,7 +30,7 @@ fn webgl2_profile_builds_a_forward_renderer() {
     // out, so the tier does not depend on the flags being passed.
     assert_eq!(
         Capabilities::from_device(&d.device, None).tier(),
-        Tier::Forward
+        Tier::Compatibility
     );
 
     // Construction builds nothing the device cannot create: a layout over its
@@ -38,12 +38,12 @@ fn webgl2_profile_builds_a_forward_renderer() {
     let config = viewport_lib::RendererConfig::new(Harness::DEFAULT_TARGET_FORMAT)
         .with_downlevel_capabilities(d.downlevel);
     let mut renderer = ViewportRenderer::try_with_config(&d.device, &config)
-        .expect("a forward renderer builds on WebGL2 limits");
-    assert_eq!(renderer.tier(), Tier::Forward);
+        .expect("a compatibility renderer builds on WebGL2 limits");
+    assert_eq!(renderer.tier(), Tier::Compatibility);
     assert_scene_calls_refused(&mut renderer, &d.device, &d.queue);
 }
 
-/// WebGL2's limits with two bind groups: below the forward tier, so only the
+/// WebGL2's limits with two bind groups: below the compatibility tier, so only the
 /// overlay family builds.
 fn overlay_only_profile() -> DeviceProfile {
     DeviceProfile::downlevel_webgl2("tier-overlay-only").max_bind_groups(2)
@@ -64,7 +64,7 @@ fn two_bind_groups_build_an_overlay_only_renderer() {
     // No item type registers without a lit group 0, whatever it asks for.
     match renderer.with_item_type_plugin(&d.device, Box::new(Modest)) {
         Err(ViewportError::TierUnsupported {
-            needed: Tier::Forward,
+            needed: Tier::Compatibility,
             have: Tier::OverlayOnly,
         }) => {}
         other => panic!("expected TierUnsupported, got {other:?}"),
@@ -81,16 +81,16 @@ fn assert_scene_calls_refused(
     let have = renderer.tier();
     assert!(have < Tier::Full);
     // Meshes and textures upload wherever there is a lit group 0 to draw
-    // them with: the forward tier's basic mesh path.
+    // them with: the compatibility tier's basic mesh path.
     let mesh = viewport_lib::geometry::primitives::cube(1.0);
     let mesh = renderer.resources_mut().upload_mesh_data(device, &mesh);
     let image = viewport_lib::TextureData::srgb(1, 1, vec![255; 4]);
     let texture = renderer
         .resources_mut()
         .upload_texture(device, queue, image);
-    if have == Tier::Forward {
-        mesh.expect("meshes upload on the forward tier");
-        texture.expect("textures upload on the forward tier");
+    if have == Tier::Compatibility {
+        mesh.expect("meshes upload on the compatibility tier");
+        texture.expect("textures upload on the compatibility tier");
     } else {
         for e in [
             mesh.map(|_| ()).unwrap_err(),
@@ -99,7 +99,7 @@ fn assert_scene_calls_refused(
             assert!(
                 matches!(
                     e,
-                    ViewportError::TierUnsupported { needed: Tier::Forward, have: h } if h == have
+                    ViewportError::TierUnsupported { needed: Tier::Compatibility, have: h } if h == have
                 ),
                 "expected TierUnsupported, got {e}"
             );
@@ -119,7 +119,7 @@ fn assert_scene_calls_refused(
     assert_eq!(renderer.resources().registered_deformer_count(), 0);
 }
 
-/// A device with storage buffers and no compute. It lands on the forward tier,
+/// A device with storage buffers and no compute. It lands on the compatibility tier,
 /// and its overlay layouts build.
 fn no_compute_profile() -> DeviceProfile {
     DeviceProfile::harness().without_downlevel(wgpu::DownlevelFlags::COMPUTE_SHADERS)
@@ -184,7 +184,7 @@ fn assert_overlays_match_the_full_tier(profile: &DeviceProfile) {
             }
         };
         // The overlay scenes draw over a lit backdrop, which the overlay-only
-        // renderer leaves out and the forward tier lights differently; leave
+        // renderer leaves out and the compatibility tier lights differently; leave
         // it out of both.
         let mut built = full.build_scene(&scene);
         built.items.clear();
@@ -350,7 +350,7 @@ impl ItemTypePlugin for Modest {
     }
 }
 
-/// An item type that accepts the forward tier and, in `init_gpu`, builds an
+/// An item type that accepts the compatibility tier and, in `init_gpu`, builds an
 /// LDR pipeline lit through the shared scene-lighting helper with the plugin
 /// pipeline builder, recording any validation error.
 #[derive(Default)]
@@ -390,7 +390,7 @@ impl ItemTypePlugin for ForwardLit {
         "tier_test.forward_lit"
     }
     fn requires(&self) -> Requirements {
-        Requirements::forward_tier()
+        Requirements::compatibility_tier()
     }
     fn init_gpu(
         &mut self,
@@ -433,13 +433,13 @@ impl ItemTypePlugin for ForwardLit {
     }
 }
 
-/// On the forward tier an item type that accepts it registers and builds a lit
-/// pipeline against the forward group 0; one that needs the full tier is
+/// On the compatibility tier an item type that accepts it registers and builds a lit
+/// pipeline against the compatibility group 0; one that needs the full tier is
 /// declined. The same plugin builds on the full tier too.
 #[test]
-fn forward_tier_registers_item_types_that_accept_it() {
+fn compatibility_tier_registers_item_types_that_accept_it() {
     for profile in [
-        DeviceProfile::downlevel_webgl2("tier-forward-plugin"),
+        DeviceProfile::downlevel_webgl2("tier-compatibility-plugin"),
         DeviceProfile::harness(),
     ] {
         let Some(mut harness) = Harness::with_profile(&profile) else {
@@ -458,7 +458,7 @@ fn forward_tier_registers_item_types_that_accept_it() {
         assert_eq!(plugin.built, Some(Ok(())), "{tier}");
         assert_eq!(plugin.full_tier_extras, Some(tier == Tier::Full), "{tier}");
 
-        if tier == Tier::Forward {
+        if tier == Tier::Compatibility {
             match harness
                 .renderer
                 .with_item_type_plugin(&harness.device, Box::new(Greedy))
@@ -510,12 +510,12 @@ fn uploads_to_a_declined_item_type_return_why_it_was_declined() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    assert_eq!(harness.renderer.tier(), Tier::Forward);
+    assert_eq!(harness.renderer.tier(), Tier::Compatibility);
     let declined = harness
         .renderer
         .item_type_declined(point_cloud::TYPE_NAME)
         .cloned()
-        .expect("point clouds are declined on the forward tier");
+        .expect("point clouds are declined on the compatibility tier");
 
     let mut cloud = PointCloudItem::default();
     cloud.positions = vec![[0.0, 0.0, 0.0]; 4];
@@ -547,20 +547,23 @@ fn uploads_to_a_declined_item_type_return_why_it_was_declined() {
     }
 }
 
-/// The forward light list holds `FORWARD_MAX_LIGHTS`, and the frame says how
+/// The compatibility tier's light list holds `COMPATIBILITY_MAX_LIGHTS`, and the frame says how
 /// many it left out. The full tier's holds all of them.
 #[test]
 fn forward_light_list_caps_and_counts_what_it_drops() {
-    let lights = viewport_lib::resources::FORWARD_MAX_LIGHTS + 4;
+    let lights = viewport_lib::resources::COMPATIBILITY_MAX_LIGHTS + 4;
     for (profile, dropped) in [
-        (DeviceProfile::downlevel_webgl2("tier-forward-lights"), 4),
+        (
+            DeviceProfile::downlevel_webgl2("tier-compatibility-lights"),
+            4,
+        ),
         (DeviceProfile::harness(), 0),
     ] {
         let Some(mut harness) = Harness::with_profile(&profile) else {
             eprintln!("skipping: no GPU adapter available");
             return;
         };
-        // Lights and no scene content: the forward tier has no meshes to draw
+        // Lights and no scene content: the compatibility tier has no meshes to draw
         // yet, and the cap does not depend on what they light.
         let mut frame = viewport_lib::FrameData::new(
             viewport_lib::CameraFrame::from_camera(
@@ -772,16 +775,16 @@ fn assert_split_paths_match_the_full_tier(profile: &DeviceProfile) {
     assert!(owned == want_owned, "render_viewport differs");
 }
 
-/// A mesh on the forward tier draws through both halves of the split API: into
+/// A mesh on the compatibility tier draws through both halves of the split API: into
 /// a host-owned pass and through `render_viewport`.
-/// A selected mesh on the forward tier is outlined through the host's own
+/// A selected mesh on the compatibility tier is outlined through the host's own
 /// pass (`paint_viewport`) and the owned-encoder path (`render_viewport`): the
 /// composite draws in both.
 #[test]
-fn forward_outlines_draw_through_the_split_and_host_pass_paths() {
-    let Some(mut harness) =
-        Harness::with_profile(&DeviceProfile::downlevel_webgl2("tier-forward-outline"))
-    else {
+fn compatibility_outlines_draw_through_the_split_and_host_pass_paths() {
+    let Some(mut harness) = Harness::with_profile(&DeviceProfile::downlevel_webgl2(
+        "tier-compatibility-outline",
+    )) else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
@@ -790,7 +793,7 @@ fn forward_outlines_draw_through_the_split_and_host_pass_paths() {
         .renderer
         .resources_mut()
         .upload_mesh_data(&harness.device, &cube)
-        .expect("meshes upload on the forward tier");
+        .expect("meshes upload on the compatibility tier");
     let mut item = viewport_lib::SceneRenderItem::default();
     item.mesh_id = mesh;
     item.settings.colour = Some(viewport_lib::Colour::linear_rgb(0.9, 0.3, 0.1));
@@ -829,7 +832,7 @@ fn forward_outlines_draw_through_the_split_and_host_pass_paths() {
 #[test]
 fn forward_meshes_draw_through_the_split_and_host_pass_paths() {
     let Some(mut harness) =
-        Harness::with_profile(&DeviceProfile::downlevel_webgl2("tier-forward-split"))
+        Harness::with_profile(&DeviceProfile::downlevel_webgl2("tier-compatibility-split"))
     else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -839,7 +842,7 @@ fn forward_meshes_draw_through_the_split_and_host_pass_paths() {
         .renderer
         .resources_mut()
         .upload_mesh_data(&harness.device, &cube)
-        .expect("meshes upload on the forward tier");
+        .expect("meshes upload on the compatibility tier");
     let mut item = viewport_lib::SceneRenderItem::default();
     item.mesh_id = mesh;
     item.settings.colour = Some(viewport_lib::Colour::linear_rgb(0.9, 0.3, 0.1));
@@ -871,7 +874,7 @@ fn forward_meshes_draw_through_the_split_and_host_pass_paths() {
 }
 
 /// Every scene item a frame submits that `renderer` cannot draw at its tier,
-/// counted the way `FrameStats` counts what it skips: the forward tier draws
+/// counted the way `FrameStats` counts what it skips: the compatibility tier draws
 /// the surfaces and the items of the types registered on it.
 fn scene_items(frame: &viewport_lib::FrameData, renderer: &ViewportRenderer) -> usize {
     let tier = renderer.tier();
@@ -883,11 +886,15 @@ fn scene_items(frame: &viewport_lib::FrameData, renderer: &ViewportRenderer) -> 
         .scene
         .plugin_items
         .iter()
-        .filter(|(name, _)| tier != Tier::Forward || !renderer.has_item_type_plugin(name))
+        .filter(|(name, _)| tier != Tier::Compatibility || !renderer.has_item_type_plugin(name))
         .flat_map(|(_, collections)| collections)
         .map(|c| c.len())
         .sum();
-    let surfaces = if tier == Tier::Forward { 0 } else { surfaces };
+    let surfaces = if tier == Tier::Compatibility {
+        0
+    } else {
+        surfaces
+    };
     surfaces
         + frame.scene.volume_meshes.len()
         + frame.scene.mesh_instances.len()

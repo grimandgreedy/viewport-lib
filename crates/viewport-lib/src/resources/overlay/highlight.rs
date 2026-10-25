@@ -668,7 +668,7 @@ pub(crate) struct OutlineObjectBuffers {
 /// when the position-override buffer or the sidecar chunk did.
 ///
 /// The full tier's layout also binds the position override and the sidecar
-/// chunk (`storage`); the forward tier's binds the uniform alone.
+/// chunk (`storage`); the compatibility tier's binds the uniform alone.
 pub(crate) struct OutlineBinding {
     pub bind_group: crate::gpu::BindGroup,
     buf: crate::gpu::Buffer,

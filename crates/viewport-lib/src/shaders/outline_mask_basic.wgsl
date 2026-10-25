@@ -1,4 +1,4 @@
-// outline_mask_basic.wgsl : the selection mask on the forward tier. Draws a
+// outline_mask_basic.wgsl : the selection mask on the compatibility tier. Draws a
 // selected mesh as white (r=1.0) into the R8 mask, as outline_mask.wgsl does,
 // without the position override and deformers, which bind storage buffers the
 // tier does not have.

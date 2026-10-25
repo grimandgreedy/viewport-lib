@@ -588,7 +588,7 @@ impl ViewportRenderer {
     ///
     /// 1. Selected surfaces and the plugins' selected items draw white into
     ///    the R8 mask, tested against a cleared depth target: the LDR scene
-    ///    depth on the full tier, the targets' own on the forward tier
+    ///    depth on the full tier, the targets' own on the compatibility tier
     ///    (`own_depth`).
     /// 2. A fullscreen pass finds the mask's boundary and writes an
     ///    anti-aliased ring of the frame's outline colour and width.

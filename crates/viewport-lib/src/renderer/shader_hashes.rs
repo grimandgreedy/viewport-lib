@@ -257,7 +257,7 @@ return a;
     }
 
     /// `adapt_wgsl` swaps in a region's `ALT` lines, so a minified source has
-    /// to keep them: the forward tier's light list comes from one.
+    /// to keep them: the compatibility tier's light list comes from one.
     #[test]
     fn alternatives_survive_minification() {
         use crate::plugin_api::shared_wgsl as s;

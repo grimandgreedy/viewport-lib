@@ -1,4 +1,4 @@
-//! The basic mesh path the forward tier draws `SceneRenderItem`s with: the
+//! The basic mesh path the compatibility tier draws `SceneRenderItem`s with: the
 //! per-instance record its vertex stage reads as a vertex stream, the
 //! pipeline variants and the mesh records its uploads build.
 
@@ -148,13 +148,13 @@ impl BasicMeshPipelines {
 pub(crate) const MESH_BASIC_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/mesh_basic.wgsl"));
 
 impl crate::resources::DeviceResources {
-    /// The mesh record for an upload on the forward tier: the geometry goes to
+    /// The mesh record for an upload on the compatibility tier: the geometry goes to
     /// the shared slab as on the full tier, and the object bind group is the
     /// basic mesh path's group 1 with the fallback albedo and LUT.
-    pub(crate) fn create_forward_mesh(
+    pub(crate) fn create_basic_mesh(
         device: &crate::gpu::Device,
         geometry: &mut crate::resources::mesh::geometry_slab::GeometrySlab,
-        forward: &crate::resources::forward_tier::ForwardTier,
+        compat: &crate::resources::compatibility_tier::CompatibilityTier,
         fallback_lut_view: &crate::gpu::TextureView,
         vertices: &[Vertex],
         indices: &[u32],
@@ -174,9 +174,9 @@ impl crate::resources::DeviceResources {
         let aabb = crate::scene::aabb::Aabb::from_positions(
             &vertices.iter().map(|v| v.position).collect::<Vec<_>>(),
         );
-        let mut mesh = Self::forward_mesh_from_spans(
+        let mut mesh = Self::basic_mesh_from_spans(
             device,
-            forward,
+            compat,
             fallback_lut_view,
             vertex_span,
             index_span,
@@ -188,12 +188,12 @@ impl crate::resources::DeviceResources {
         mesh
     }
 
-    /// [`create_forward_mesh`](Self::create_forward_mesh) around slab windows
+    /// [`create_basic_mesh`](Self::create_basic_mesh) around slab windows
     /// already filled, for the chunked upload.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn forward_mesh_from_spans(
+    pub(crate) fn basic_mesh_from_spans(
         device: &crate::gpu::Device,
-        forward: &crate::resources::forward_tier::ForwardTier,
+        compat: &crate::resources::compatibility_tier::CompatibilityTier,
         fallback_lut_view: &crate::gpu::TextureView,
         vertex_span: crate::resources::mesh::geometry_slab::SlabSpan,
         index_span: crate::resources::mesh::geometry_slab::SlabSpan,
@@ -212,11 +212,11 @@ impl crate::resources::DeviceResources {
             })
         };
         let bind_group = |label| {
-            forward_mesh_bind_group(
+            basic_mesh_bind_group(
                 device,
-                forward,
+                compat,
                 label,
-                &forward.fallback_albedo_view,
+                &compat.fallback_albedo_view,
                 fallback_lut_view,
             )
         };
@@ -233,16 +233,16 @@ impl crate::resources::DeviceResources {
 }
 
 /// The basic mesh path's group 1 for one albedo texture and LUT.
-pub(crate) fn forward_mesh_bind_group(
+pub(crate) fn basic_mesh_bind_group(
     device: &crate::gpu::Device,
-    forward: &crate::resources::forward_tier::ForwardTier,
+    compat: &crate::resources::compatibility_tier::CompatibilityTier,
     label: &str,
     albedo: &crate::gpu::TextureView,
     lut: &crate::gpu::TextureView,
 ) -> crate::gpu::BindGroup {
     device.create_bind_group(&crate::gpu::BindGroupDescriptor {
         label: Some(label),
-        layout: &forward.mesh_bgl,
+        layout: &compat.mesh_bgl,
         entries: &[
             crate::gpu::BindGroupEntry {
                 binding: 0,
@@ -250,7 +250,7 @@ pub(crate) fn forward_mesh_bind_group(
             },
             crate::gpu::BindGroupEntry {
                 binding: 1,
-                resource: crate::gpu::BindingResource::Sampler(&forward.material_sampler),
+                resource: crate::gpu::BindingResource::Sampler(&compat.material_sampler),
             },
             crate::gpu::BindGroupEntry {
                 binding: 2,
@@ -258,7 +258,7 @@ pub(crate) fn forward_mesh_bind_group(
             },
             crate::gpu::BindGroupEntry {
                 binding: 3,
-                resource: crate::gpu::BindingResource::Sampler(&forward.lut_sampler),
+                resource: crate::gpu::BindingResource::Sampler(&compat.lut_sampler),
             },
         ],
     })

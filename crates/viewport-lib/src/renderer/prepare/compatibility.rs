@@ -1,11 +1,11 @@
-//! Per-frame prepare on the forward tier: the lights header and capped light
+//! Per-frame prepare on the compatibility tier: the lights header and capped light
 //! list of its group 0, each viewport's camera and clip uniforms, and the
 //! basic mesh draws for the frame's surfaces.
 
 use super::*;
-use crate::resources::forward_mesh::{BASIC_INSTANCE_STRIDE, BasicInstance, BasicMeshKey};
+use crate::resources::basic_mesh::{BASIC_INSTANCE_STRIDE, BasicInstance, BasicMeshKey};
 
-/// The forward tier's mesh draws for the frame, built in prepare and issued
+/// The compatibility tier's mesh draws for the frame, built in prepare and issued
 /// in the LDR pass: opaque draws first, then translucent ones back to front.
 #[derive(Default)]
 pub(crate) struct BasicMeshDraws {
@@ -26,17 +26,17 @@ struct BasicMeshDraw {
 }
 
 impl ViewportRenderer {
-    /// Rank the frame's lights into the forward light list and write it with
+    /// Rank the frame's lights into the compatibility tier's light list and write it with
     /// its header. This tier's profile binds no shadow maps or environment,
     /// and the debug views are off.
-    pub(super) fn prepare_forward_lights(
+    pub(super) fn prepare_compatibility_lights(
         &mut self,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
         scene_fx: &SceneEffects<'_>,
     ) {
-        let (Some(forward), Some(profile)) = (
-            self.resources.forward_tier.as_deref(),
+        let (Some(compat), Some(profile)) = (
+            self.resources.compatibility_tier.as_deref(),
             self.resources.group0_profile.as_ref(),
         ) else {
             return;
@@ -74,24 +74,24 @@ impl ViewportRenderer {
             &lighting::HeaderExtras::default(),
         );
         queue.write_buffer(
-            &forward.lights_header_buf,
+            &compat.lights_header_buf,
             0,
             bytemuck::cast_slice(&[header]),
         );
         if !packed.is_empty() {
-            queue.write_buffer(&forward.light_list_buf, 0, bytemuck::cast_slice(&packed));
+            queue.write_buffer(&compat.light_list_buf, 0, bytemuck::cast_slice(&packed));
         }
     }
 
-    /// The viewport's camera and clip uniforms, which its forward group 0
+    /// The viewport's camera and clip uniforms, which its compatibility group 0
     /// binds.
-    pub(super) fn prepare_viewport_forward(
+    pub(super) fn prepare_viewport_compatibility(
         &mut self,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
         viewport_fx: &ViewportEffects<'_>,
     ) {
-        if self.resources.forward_tier.is_none() {
+        if self.resources.compatibility_tier.is_none() {
             return;
         }
         let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) else {
@@ -109,24 +109,24 @@ impl ViewportRenderer {
             0,
             bytemuck::cast_slice(&[clip_vols_uniform]),
         );
-        // The forward tier draws through the LDR path, which keeps the lit
+        // The compatibility tier draws through the LDR path, which keeps the lit
         // term in [0, 1].
         let camera_uniform = frame.camera.render_camera.camera_uniform();
         queue.write_buffer(&slot.camera_buf, 0, bytemuck::cast_slice(&[camera_uniform]));
     }
 
-    /// The forward tier's selection outline: a mask binding per selected
+    /// The compatibility tier's selection outline: a mask binding per selected
     /// surface, then the mask and edge passes into the viewport's outline
     /// targets, which hold their own depth since the tier has no LDR depth of
     /// its own at prepare time.
-    pub(super) fn prepare_forward_outlines(
+    pub(super) fn prepare_compatibility_outlines(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
         sink: &mut crate::renderer::SubmitSink,
     ) {
-        if self.resources.forward_tier.is_none() {
+        if self.resources.compatibility_tier.is_none() {
             return;
         }
         let vp_idx = frame.camera.viewport_index;
@@ -142,12 +142,12 @@ impl ViewportRenderer {
             frame.interaction.outline_selected && item.settings.selected && !item.settings.hidden
         };
         if items.iter().any(outlined) || self.any_plugin_item_selected(frame) {
-            self.resources.ensure_forward_outline_mask(device);
+            self.resources.ensure_compatibility_outline_mask(device);
         }
         let mut buffers = Vec::new();
         if let Some(mask) = self
             .resources
-            .forward_tier
+            .compatibility_tier
             .as_deref()
             .and_then(|f| f.outline_mask.as_ref())
         {
@@ -208,7 +208,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
-        let Some(forward) = self.resources.forward_tier.as_deref() else {
+        let Some(compat) = self.resources.compatibility_tier.as_deref() else {
             return;
         };
         let resources = &self.resources;
@@ -283,13 +283,13 @@ impl ViewportRenderer {
                 let bind_group = *bind_group_index.entry((albedo, lut)).or_insert_with(|| {
                     let albedo_view = albedo
                         .and_then(|id| resources.content.textures.get(id))
-                        .map_or(&forward.fallback_albedo_view, |t| &t.view);
+                        .map_or(&compat.fallback_albedo_view, |t| &t.view);
                     let lut_view = lut.map_or(&resources.content.fallback_lut_view, |id| {
                         &resources.content.colourmap_views[id.0]
                     });
-                    bind_groups.push(crate::resources::forward_mesh::forward_mesh_bind_group(
+                    bind_groups.push(crate::resources::basic_mesh::basic_mesh_bind_group(
                         device,
-                        forward,
+                        compat,
                         "basic_mesh_bind_group",
                         albedo_view,
                         lut_view,
@@ -297,7 +297,7 @@ impl ViewportRenderer {
                     bind_groups.len() - 1
                 });
 
-                use crate::resources::forward_mesh::basic_flags as f;
+                use crate::resources::basic_mesh::basic_flags as f;
                 let flag = |on: bool, bit: u32| if on { bit } else { 0 };
                 let mask_cutoff = match m.alpha_mode {
                     crate::scene::material::AlphaMode::Mask(c) => Some(c),
@@ -372,14 +372,14 @@ impl ViewportRenderer {
         }
         draws_state.bind_groups = bind_groups;
 
-        let forward = self
+        let compat = self
             .resources
-            .forward_tier
+            .compatibility_tier
             .as_deref_mut()
             .expect("checked above");
-        let layouts = [&forward.camera_bgl, &forward.mesh_bgl];
+        let layouts = [&compat.camera_bgl, &compat.mesh_bgl];
         for draw in &draws {
-            forward.mesh_pipelines.ensure(
+            compat.mesh_pipelines.ensure(
                 device,
                 &self.resources.capabilities,
                 layouts,
@@ -390,10 +390,10 @@ impl ViewportRenderer {
         self.basic_mesh_draws.draws = draws;
     }
 
-    /// The forward tier's scene content in the LDR scene pass: the basic mesh
+    /// The compatibility tier's scene content in the LDR scene pass: the basic mesh
     /// draws, then the item types that registered on the tier, in the position
     /// the full tier paints them. `camera_bg` is the viewport's group 0.
-    pub(crate) fn paint_forward_scene(
+    pub(crate) fn paint_compatibility_scene(
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         camera_bg: &crate::gpu::BindGroup,
@@ -413,8 +413,8 @@ impl ViewportRenderer {
         pass: &mut crate::gpu::RenderPass<'_>,
         camera_bg: &crate::gpu::BindGroup,
     ) {
-        let (Some(forward), Some(instances)) = (
-            self.resources.forward_tier.as_deref(),
+        let (Some(compat), Some(instances)) = (
+            self.resources.compatibility_tier.as_deref(),
             self.basic_mesh_draws.instances.as_ref(),
         ) else {
             return;
@@ -422,7 +422,7 @@ impl ViewportRenderer {
         pass.set_bind_group(0, camera_bg, &[]);
         for draw in &self.basic_mesh_draws.draws {
             let (Some(pipeline), Some(mesh)) = (
-                forward.mesh_pipelines.get(draw.key),
+                compat.mesh_pipelines.get(draw.key),
                 self.resources.mesh_store.get(draw.mesh_id),
             ) else {
                 continue;

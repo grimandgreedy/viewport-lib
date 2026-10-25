@@ -1649,15 +1649,15 @@ impl DeviceResources {
                 crate::resources::pipeline_slot::initial_policy(),
             ));
         let group0_profile = crate::resources::group0::Group0Profile::for_caps(&capabilities);
-        // The forward tier's group 0, where the scene tier was not built.
-        let forward_tier = match (&scene_tier, &group0_profile) {
+        // The compatibility tier's group 0, where the scene tier was not built.
+        let compatibility_tier = match (&scene_tier, &group0_profile) {
             (None, Some(profile)) => Some(Box::new(
-                crate::resources::forward_tier::ForwardTier::new(device, profile),
+                crate::resources::compatibility_tier::CompatibilityTier::new(device, profile),
             )),
             _ => None,
         };
         let resources = Self {
-            forward_tier,
+            compatibility_tier,
             outline: None,
             group0_profile,
             capabilities,

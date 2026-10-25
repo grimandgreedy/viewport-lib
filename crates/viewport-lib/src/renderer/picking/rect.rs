@@ -27,9 +27,9 @@ impl ViewportRenderer {
         view_proj: glam::Mat4,
         mask: PickMask,
     ) -> PickRectResult {
-        // Nothing pickable is drawn on the overlay-only tier; the forward tier
+        // Nothing pickable is drawn on the overlay-only tier; the compatibility tier
         // draws surfaces and item types, which this path picks.
-        if !self.resources.scene_tier.is_built() && self.resources.forward_tier.is_none() {
+        if !self.resources.scene_tier.is_built() && self.resources.compatibility_tier.is_none() {
             return PickRectResult::default();
         }
         let mut result = PickRectResult::default();

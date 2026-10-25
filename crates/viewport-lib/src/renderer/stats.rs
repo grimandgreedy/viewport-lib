@@ -656,7 +656,7 @@ pub struct FrameStats {
     /// below the full tier: volume meshes, mesh instances, foreground items
     /// and the items of item types that did not register, and on the
     /// overlay-only tier the surfaces and every plugin item too. Zero on the
-    /// full tier. The forward tier draws the surfaces through its basic mesh
+    /// full tier. The compatibility tier draws the surfaces through its basic mesh
     /// path and the items of the types that registered on it; an overlay-only
     /// renderer draws the overlays and ignores the scene.
     pub items_skipped_by_tier: u32,
@@ -665,8 +665,8 @@ pub struct FrameStats {
     pub hdr_drawn_as_ldr: bool,
     /// Lights left out of this frame's light list because it was full, after
     /// the frustum cull and ranked lowest first. The list holds 512 on the full
-    /// tier and [`FORWARD_MAX_LIGHTS`](crate::resources::FORWARD_MAX_LIGHTS) on
-    /// the forward tier.
+    /// tier and [`COMPATIBILITY_MAX_LIGHTS`](crate::resources::COMPATIBILITY_MAX_LIGHTS) on
+    /// the compatibility tier.
     pub lights_dropped: u32,
 }
 

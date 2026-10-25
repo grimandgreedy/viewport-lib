@@ -1,5 +1,5 @@
 //! The colour and selection mask shaders of the item types that register on
-//! the forward tier, adapted for that tier, translate to the GLSL ES 3.0
+//! the compatibility tier, adapted for that tier, translate to the GLSL ES 3.0
 //! WebGL2 compiles.
 //!
 //! naga's GLSL writer is the path wgpu's GL backend takes, and it rejects some
@@ -10,7 +10,7 @@
 
 use viewport_lib::{Capabilities, Tier, gpu};
 
-/// The shaders that draw on the forward tier: each type's colour shader and
+/// The shaders that draw on the compatibility tier: each type's colour shader and
 /// its selection mask. Their pick and shadow shaders run only on the full
 /// tier.
 const FORWARD_SHADERS: &[&str] = &[
@@ -30,7 +30,7 @@ fn webgl2_caps() -> Capabilities {
         Some(gpu::DownlevelFlags::empty()),
     )
     .with_backend(gpu::Backend::Gl);
-    assert_eq!(caps.tier(), Tier::Forward);
+    assert_eq!(caps.tier(), Tier::Compatibility);
     caps
 }
 
@@ -78,7 +78,7 @@ fn translate(src: &str) -> Result<(), String> {
 }
 
 #[test]
-fn forward_tier_shaders_translate_to_webgl2_glsl() {
+fn compatibility_tier_shaders_translate_to_webgl2_glsl() {
     let caps = webgl2_caps();
     let sources = viewport_lib_plugins::shader_sources();
     let mut failures = Vec::new();

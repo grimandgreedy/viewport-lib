@@ -431,12 +431,12 @@ impl DeviceResources {
         // so its stages can build the GpuTexture and bind group without
         // touching `self`.
         let (bgl, fallback_albedo_view, fallback_normal_view, fallback_ao_view) =
-            match self.forward_tier.as_deref() {
-                Some(forward) => (
-                    forward.texture_bgl.clone(),
-                    forward.fallback_albedo_view.clone(),
-                    forward.fallback_normal_view.clone(),
-                    forward.fallback_ao_view.clone(),
+            match self.compatibility_tier.as_deref() {
+                Some(compat) => (
+                    compat.texture_bgl.clone(),
+                    compat.fallback_albedo_view.clone(),
+                    compat.fallback_normal_view.clone(),
+                    compat.fallback_ao_view.clone(),
                 ),
                 None => (
                     self.scene_tier.material.texture_bgl.clone(),

@@ -110,11 +110,11 @@ impl DeviceResources {
         }
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
             + indices.len() * std::mem::size_of::<u32>()) as u64;
-        let mut mesh = if let Some(forward) = self.forward_tier.as_deref() {
-            Self::create_forward_mesh(
+        let mut mesh = if let Some(compat) = self.compatibility_tier.as_deref() {
+            Self::create_basic_mesh(
                 device,
                 &mut self.geometry,
-                forward,
+                compat,
                 &self.content.fallback_lut_view,
                 vertices,
                 indices,
@@ -304,11 +304,11 @@ impl DeviceResources {
         } = prep;
         let tangent_slice = data.tangents.as_deref().or(computed_tangents.as_deref());
 
-        let mut mesh = if let Some(forward) = self.forward_tier.as_deref() {
-            Self::create_forward_mesh(
+        let mut mesh = if let Some(compat) = self.compatibility_tier.as_deref() {
+            Self::create_basic_mesh(
                 device,
                 &mut self.geometry,
-                forward,
+                compat,
                 &self.content.fallback_lut_view,
                 &vertices,
                 &data.indices,
@@ -539,43 +539,43 @@ impl DeviceResources {
                             let tangent_slice =
                                 data.tangents.as_deref().or(computed_tangents.as_deref());
                             resources.frame_upload_bytes += upload_bytes;
-                            let mut mesh = if let Some(forward) = resources.forward_tier.as_deref()
-                            {
-                                DeviceResources::forward_mesh_from_spans(
-                                    &device,
-                                    forward,
-                                    &resources.content.fallback_lut_view,
-                                    vertex_span,
-                                    index_span,
-                                    data.indices.len() as u32,
-                                    aabb,
-                                    data.uvs1.is_some(),
-                                )
-                            } else {
-                                DeviceResources::create_mesh_from_buffers(
-                                    &device,
-                                    &resources.scene_tier.binds.object_bgl,
-                                    &resources.scene_tier.material.texture.view,
-                                    &resources.scene_tier.material.texture_array_view,
-                                    &resources.scene_tier.material.normal_map_view,
-                                    &resources.scene_tier.material.ao_map_view,
-                                    &resources.scene_tier.material.mesh_sampler,
-                                    &resources.scene_tier.material.lut_sampler,
-                                    &resources.content.fallback_lut_view,
-                                    resources.sidecar.fallback(),
-                                    &resources.scene_tier.material.texture.view,
-                                    &resources.content.fallback_position_override_buf,
-                                    &resources.content.fallback_normal_override_buf,
-                                    &resources.scene_tier.material.metallic_roughness_view,
-                                    &resources.scene_tier.material.emissive_view,
-                                    &resources.content.fallback_uv1_buf,
-                                    vertex_span,
-                                    index_span,
-                                    data.indices.len() as u32,
-                                    aabb,
-                                    data.uvs1.is_some(),
-                                )
-                            };
+                            let mut mesh =
+                                if let Some(compat) = resources.compatibility_tier.as_deref() {
+                                    DeviceResources::basic_mesh_from_spans(
+                                        &device,
+                                        compat,
+                                        &resources.content.fallback_lut_view,
+                                        vertex_span,
+                                        index_span,
+                                        data.indices.len() as u32,
+                                        aabb,
+                                        data.uvs1.is_some(),
+                                    )
+                                } else {
+                                    DeviceResources::create_mesh_from_buffers(
+                                        &device,
+                                        &resources.scene_tier.binds.object_bgl,
+                                        &resources.scene_tier.material.texture.view,
+                                        &resources.scene_tier.material.texture_array_view,
+                                        &resources.scene_tier.material.normal_map_view,
+                                        &resources.scene_tier.material.ao_map_view,
+                                        &resources.scene_tier.material.mesh_sampler,
+                                        &resources.scene_tier.material.lut_sampler,
+                                        &resources.content.fallback_lut_view,
+                                        resources.sidecar.fallback(),
+                                        &resources.scene_tier.material.texture.view,
+                                        &resources.content.fallback_position_override_buf,
+                                        &resources.content.fallback_normal_override_buf,
+                                        &resources.scene_tier.material.metallic_roughness_view,
+                                        &resources.scene_tier.material.emissive_view,
+                                        &resources.content.fallback_uv1_buf,
+                                        vertex_span,
+                                        index_span,
+                                        data.indices.len() as u32,
+                                        aabb,
+                                        data.uvs1.is_some(),
+                                    )
+                                };
                             // Usually landed by now, so the mesh starts with
                             // its real answer and never repacks for it.
                             let pending = match closed_check.try_get() {
@@ -1588,11 +1588,11 @@ impl DeviceResources {
             }
             bytemuck::cast_slice(&packed).to_vec()
         });
-        let mut new_mesh = if let Some(forward) = self.forward_tier.as_deref() {
-            Self::create_forward_mesh(
+        let mut new_mesh = if let Some(compat) = self.compatibility_tier.as_deref() {
+            Self::create_basic_mesh(
                 device,
                 &mut self.geometry,
-                forward,
+                compat,
                 &self.content.fallback_lut_view,
                 &vertices,
                 &data.indices,

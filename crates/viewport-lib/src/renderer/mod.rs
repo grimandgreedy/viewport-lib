@@ -517,8 +517,8 @@ pub struct ViewportRenderer {
     /// this the draw path re-read the raw `frame.scene.surfaces`, discarding
     /// the LOD level swap and cull for every non-instanced item.
     prepared_surfaces: Vec<SceneRenderItem>,
-    /// The forward tier's mesh draws for the frame.
-    basic_mesh_draws: prepare::forward::BasicMeshDraws,
+    /// The compatibility tier's mesh draws for the frame.
+    basic_mesh_draws: prepare::compatibility::BasicMeshDraws,
     /// How many of the items a frame renders came from `prepared_surfaces`:
     /// the render moves that list out while it draws, so the count is kept
     /// here for the code that compares against it.
@@ -1976,7 +1976,7 @@ impl ViewportRenderer {
 
     /// [`check_plugin_requirements`](Self::check_plugin_requirements) for an
     /// item type, which binds only group 0 of the scene layouts and so also
-    /// registers on the forward tier.
+    /// registers on the compatibility tier.
     fn check_item_type_requirements(
         &self,
         type_name: &str,

@@ -22,7 +22,7 @@
 //! the thing to go and fix. Click the surface to run a fresh pick at the cursor.
 //!
 //! On a browser with no WebGPU adapter the page comes up on WebGL2, where the
-//! renderer runs at the forward tier. The CPU steps run the same; the surface
+//! renderer runs at the compatibility tier. The CPU steps run the same; the surface
 //! draws through the basic mesh path, and a frame of it with the overlays,
 //! drawn under error scopes, checks both on the real GL driver. A tier
 //! without a lit group 0 refuses the upload. The first
@@ -427,11 +427,11 @@ async fn build_state(window: Arc<Window>) -> State {
     let tier = renderer.tier();
     results.pass(format!("renderer built at the {tier:?} tier"));
 
-    // The full and forward tiers draw the surface. Below them the upload is
+    // The full and compatibility tiers draw the surface. Below them the upload is
     // refused, and the pick accelerator, which only needs a key per mesh, runs
     // on a placeholder.
     let mut scene_items = Vec::new();
-    let mesh_id = if tier >= Tier::Forward {
+    let mesh_id = if tier >= Tier::Compatibility {
         let mesh_id = renderer
             .resources_mut()
             .upload_mesh_data(&device, &mesh)

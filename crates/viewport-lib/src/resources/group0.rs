@@ -47,8 +47,8 @@ impl Group0Profile {
                 ibl: true,
                 point_shadow_dimension,
             }),
-            crate::capabilities::Tier::Forward => Some(Self {
-                uniform_light_list: Some(crate::resources::FORWARD_MAX_LIGHTS),
+            crate::capabilities::Tier::Compatibility => Some(Self {
+                uniform_light_list: Some(crate::resources::COMPATIBILITY_MAX_LIGHTS),
                 clusters: false,
                 mesh_family: false,
                 shadows: false,
@@ -313,19 +313,19 @@ mod tests {
 
         let no_compute = gpu::DownlevelFlags::all() - gpu::DownlevelFlags::COMPUTE_SHADERS;
         let fragment_only = gpu::DownlevelFlags::all() - gpu::DownlevelFlags::VERTEX_STORAGE;
-        for forward in [
+        for compat in [
             profile(gpu::Limits::downlevel_webgl2_defaults(), None),
             profile(gpu::Limits::default(), Some(no_compute)),
             profile(gpu::Limits::default(), Some(fragment_only)),
         ] {
-            let forward = forward.unwrap();
+            let compat = compat.unwrap();
             assert_eq!(
-                forward.uniform_light_list,
-                Some(crate::resources::FORWARD_MAX_LIGHTS)
+                compat.uniform_light_list,
+                Some(crate::resources::COMPATIBILITY_MAX_LIGHTS)
             );
-            assert!(!forward.clusters && !forward.mesh_family && !forward.shadows && !forward.ibl);
+            assert!(!compat.clusters && !compat.mesh_family && !compat.shadows && !compat.ibl);
             assert_eq!(
-                bindings(&forward),
+                bindings(&compat),
                 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 17]
             );
         }
@@ -337,12 +337,12 @@ mod tests {
         assert_eq!(profile(two_groups, None), None);
     }
 
-    /// The forward group 0 fits the forward tier's guarantees: no storage
+    /// The compatibility group 0 fits the compatibility tier's guarantees: no storage
     /// buffers, 6 fragment textures and 6 fragment uniform blocks.
     #[test]
-    fn the_forward_group0_fits_the_forward_tier() {
-        let forward = profile(gpu::Limits::downlevel_webgl2_defaults(), None).unwrap();
-        let entries = forward.layout_entries();
+    fn the_compatibility_group0_fits_the_compatibility_tier() {
+        let compat = profile(gpu::Limits::downlevel_webgl2_defaults(), None).unwrap();
+        let entries = compat.layout_entries();
         let count = |pred: &dyn Fn(&BindingType) -> bool| {
             entries
                 .iter()
@@ -370,7 +370,7 @@ mod tests {
             )
         });
         assert_eq!((textures, uniforms), (6, 6));
-        assert!(textures <= Tier::FORWARD_SAMPLED_TEXTURES_PER_STAGE);
-        assert!(uniforms <= Tier::FORWARD_UNIFORM_BUFFERS_PER_STAGE);
+        assert!(textures <= Tier::COMPATIBILITY_SAMPLED_TEXTURES_PER_STAGE);
+        assert!(uniforms <= Tier::COMPATIBILITY_UNIFORM_BUFFERS_PER_STAGE);
     }
 }

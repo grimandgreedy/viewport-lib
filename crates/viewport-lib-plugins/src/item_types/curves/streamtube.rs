@@ -175,9 +175,9 @@ impl ItemTypePlugin for StreamtubePlugin {
     }
 
     /// Draws without storage buffers or compute, so it also registers on the
-    /// forward tier.
+    /// compatibility tier.
     fn requires(&self) -> viewport_lib::Requirements {
-        viewport_lib::Requirements::forward_tier()
+        viewport_lib::Requirements::compatibility_tier()
     }
 
     fn outline_mask(
