@@ -305,6 +305,47 @@ fn every_scene_builds_without_indirect_execution() {
     assert!(!harness.renderer.capabilities().indirect_execution);
 }
 
+/// Without direct depth sampling (wgpu's GL backend) plugins sample a copy of
+/// the scene depth: the depth-read pass and the encoder scopes. Every scene
+/// builds that way, and the soft sprites and decals, which read the copy, draw
+/// the same pixels as from the scene depth itself.
+#[test]
+fn every_scene_builds_without_direct_depth_sampling() {
+    let profile = DeviceProfile::high_performance("tier-no-direct-depth")
+        .with_recommended_features()
+        .without_downlevel(wgpu::DownlevelFlags::READ_ONLY_DEPTH_STENCIL);
+    let Some(mut copied) = render_catalogue(&profile) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    assert!(!copied.renderer.capabilities().direct_depth_sampling);
+    let Some(mut direct) = Harness::with_profile(
+        &DeviceProfile::high_performance("tier-direct-depth").with_recommended_features(),
+    ) else {
+        return;
+    };
+    // A device without it (GL) has no direct read to compare against.
+    if !direct.renderer.capabilities().direct_depth_sampling {
+        return;
+    }
+    for name in ["sprites_soft", "decals"] {
+        let scene = catalogue()
+            .into_iter()
+            .find(|s| s.name == name)
+            .expect("the scene is in the catalogue");
+        let mut draw = |harness: &mut Harness| {
+            let built = harness.build_scene(&scene);
+            let frame = frame_for(&built, &scene.cameras[0].camera, [W as f32, H as f32]);
+            let _ = harness.render(&frame, W, H);
+            harness.render(&frame, W, H)
+        };
+        assert!(
+            draw(&mut copied) == draw(&mut direct),
+            "{name} differs when it reads a copy of the scene depth"
+        );
+    }
+}
+
 #[test]
 fn the_tier_reaches_frame_stats() {
     let Some(mut harness) = Harness::new() else {

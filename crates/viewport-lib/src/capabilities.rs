@@ -60,6 +60,15 @@ pub struct Capabilities {
     /// [`RendererConfig::with_adapter`](crate::RendererConfig::with_adapter)
     /// and is otherwise assumed true.
     pub depth_texture_loads: bool,
+    /// The scene depth can be sampled through its own depth-aspect view while
+    /// the same texture is attached read-only
+    /// (`DownlevelFlags::READ_ONLY_DEPTH_STENCIL`) or its stencil aspect is
+    /// sampled too. Neither holds on wgpu's GL backend: a read-only attachment
+    /// counts as written there, and a depth-stencil texture samples one aspect
+    /// at a time. Without it the renderer hands plugins a copy of the scene
+    /// depth. Set from the backend the same way as
+    /// [`depth_texture_loads`](Self::depth_texture_loads).
+    pub direct_depth_sampling: bool,
     /// Indexed draws can start at a non-zero base vertex.
     pub base_vertex: bool,
     /// Indirect draws and dispatches run.
@@ -121,9 +130,11 @@ impl Capabilities {
     }
 
     /// These capabilities with what follows from running on `backend`: on
-    /// [`Backend::Gl`](gpu::Backend::Gl), no depth-texture loads.
+    /// [`Backend::Gl`](gpu::Backend::Gl), no depth-texture loads and no
+    /// direct depth sampling.
     pub fn with_backend(mut self, backend: gpu::Backend) -> Self {
         self.depth_texture_loads = backend != gpu::Backend::Gl;
+        self.direct_depth_sampling &= backend != gpu::Backend::Gl;
         self
     }
 
@@ -184,6 +195,7 @@ impl Capabilities {
             fragment_storage: storage > 0 && flag(gpu::DownlevelFlags::FRAGMENT_STORAGE),
             cube_array_textures: flag(gpu::DownlevelFlags::CUBE_ARRAY_TEXTURES),
             depth_texture_loads: true,
+            direct_depth_sampling: flag(gpu::DownlevelFlags::READ_ONLY_DEPTH_STENCIL),
             base_vertex: flag(gpu::DownlevelFlags::BASE_VERTEX),
             indirect_execution: flag(gpu::DownlevelFlags::INDIRECT_EXECUTION),
             downlevel_known: downlevel.is_some(),

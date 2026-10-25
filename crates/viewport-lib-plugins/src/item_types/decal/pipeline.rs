@@ -406,7 +406,7 @@ fn build(r: &DecalRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
 pub(crate) struct DecalGpu {
     pub(crate) pipelines: DecalPipelines,
     /// Group 1 of the decal pass: depth texture, stencil texture and the
-    /// nearest sampler the depth is read through.
+    /// nearest sampler both are read through.
     depth_bgl: viewport_lib::gpu::BindGroupLayout,
     depth_sampler: viewport_lib::gpu::Sampler,
     /// Group 2 of the decal pass: uniform buffer + albedo texture + sampler.

@@ -2297,6 +2297,8 @@ impl DeviceResources {
             tone_map_bg_views: None,
             dof_bg_foreground: None,
             depth_read_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
+            depth_read_copy: None,
+            depth_read_copy_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
             foreground_stamp_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
             tone_map_uniform_buf,
             exposure_state_buf,

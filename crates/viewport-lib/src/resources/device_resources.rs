@@ -91,6 +91,13 @@ pub(crate) struct ViewportHdrState {
     /// Scene depth + sampler, handed to plugins that draw in the depth-read pass.
     pub depth_read_bg:
         crate::resources::cached_bind_group::CachedBindGroup<crate::gpu::TextureView>,
+    /// A copy of the scene depth for the depth-read pass to sample, on a device
+    /// that cannot sample a depth attachment it binds read-only (wgpu's GL
+    /// backend). Allocated the first time that pass runs there.
+    pub(crate) depth_read_copy: Option<crate::resources::postprocess::targets::DepthTarget>,
+    /// The depth blit that fills `depth_read_copy` from the scene depth.
+    pub depth_read_copy_bg:
+        crate::resources::cached_bind_group::CachedBindGroup<crate::gpu::TextureView>,
     /// Foreground depth, read by the foreground depth stamp.
     pub foreground_stamp_bg:
         crate::resources::cached_bind_group::CachedBindGroup<crate::gpu::TextureView>,

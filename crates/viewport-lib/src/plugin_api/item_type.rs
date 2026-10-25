@@ -556,7 +556,11 @@ pub struct EncoderScopeContext<'a> {
     /// depth writes disabled.
     pub scene_depth: &'a crate::gpu::TextureView,
     /// Read-only depth-aspect view of the same target, for sampling scene
-    /// depth inside the effect's own shaders.
+    /// depth inside the effect's own shaders. Without
+    /// [`direct_depth_sampling`](crate::Capabilities::direct_depth_sampling)
+    /// (wgpu's GL backend) it is a copy of the scene depth taken at this
+    /// scope, a separate texture from the one
+    /// [`scene_stencil_only`](Self::scene_stencil_only) views.
     pub scene_depth_only: &'a crate::gpu::TextureView,
     /// The frame's effects settings (`EffectsFrame`), read-only. An item type
     /// with quality or mode knobs that live on the frame rather than on its
@@ -566,13 +570,18 @@ pub struct EncoderScopeContext<'a> {
     /// `texture_2d<u32>`. It holds the surface mask: for each pixel, the
     /// layers of the item that owns it.
     ///
-    /// A projection effect that lands only on some surfaces loads this at the
+    /// A projection effect that lands only on some surfaces reads this at the
     /// pixel and skips it when the value shares no bit with the effect's own
     /// mask, cut down with [`surface_mask_bits`]. The type has to name that mask
     /// in [`surface_mask_readers`](ItemTypePlugin::surface_mask_readers), or
     /// the items it would refuse are never stamped. Paired with
     /// [`scene_depth_only`](Self::scene_depth_only), which reconstructs the
     /// receiving surface's position.
+    ///
+    /// Read it with `stencil_texel` from
+    /// [`SHARED_DEPTH_TEXEL_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_TEXEL_WGSL)
+    /// and a non-filtering sampler, not `textureLoad`: on GL the stencil is an
+    /// integer texture that reads 0 unless a `NEAREST` sampler is bound.
     pub scene_stencil_only: &'a crate::gpu::TextureView,
     /// The frame's effects settings (`EffectsFrame`), read-only. An item type
     /// with quality or mode knobs that live on the frame rather than on its

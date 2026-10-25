@@ -2684,7 +2684,15 @@ impl ViewportRenderer {
             scene_colour: &slot_hdr.hdr_view,
             scene_colour_texture: &slot_hdr.hdr_texture,
             scene_depth: &slot_hdr.hdr_depth_view,
-            scene_depth_only: &slot_hdr.hdr_depth_only_view,
+            scene_depth_only: if self.resources.capabilities.direct_depth_sampling {
+                &slot_hdr.hdr_depth_only_view
+            } else {
+                // Taken by the caller just before this scope.
+                slot_hdr
+                    .depth_read_copy
+                    .as_ref()
+                    .map_or(&slot_hdr.hdr_depth_only_view, |c| &c.depth_only_view)
+            },
             scene_stencil_only: &slot_hdr.hdr_stencil_only_view,
             effects: &frame.effects,
             outline_colour: frame.interaction.outline_colour,

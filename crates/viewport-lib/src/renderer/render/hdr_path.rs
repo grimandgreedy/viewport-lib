@@ -606,37 +606,28 @@ impl ViewportRenderer {
         // Item-type plugins that composite onto the finished opaque surfaces:
         // decals stamp here, underneath the selection affordances and the
         // depth-read transparency that follow.
-        self.dispatch_plugin_encode(
+        self.encode_scope(
+            &ctx,
             &mut encoder,
-            frame,
             crate::plugin_api::EncoderScope::OnOpaqueSurfaces,
-            device,
-            queue,
-            vp_idx,
         );
         self.hdr_sub_highlight(&ctx, &mut encoder);
         self.hdr_depth_read_pass(&ctx, &mut encoder);
         // Item-type plugins that own passes rather than draws get the encoder
         // here, with the opaque image and final opaque depth in hand.
-        self.dispatch_plugin_encode(
+        self.encode_scope(
+            &ctx,
             &mut encoder,
-            frame,
             crate::plugin_api::EncoderScope::AfterOpaque,
-            device,
-            queue,
-            vp_idx,
         );
         self.hdr_oit(&ctx, &mut encoder);
         // The second scope: opaque plus resolved transparency, which is what a
         // volumetric effect composites over. The scatter-volume plugin encodes
         // its ray-march, temporal blend and composite here.
-        self.dispatch_plugin_encode(
+        self.encode_scope(
+            &ctx,
             &mut encoder,
-            frame,
             crate::plugin_api::EncoderScope::AfterTransparent,
-            device,
-            queue,
-            vp_idx,
         );
         self.hdr_outline_composite(&ctx, &mut encoder);
         self.hdr_foreground(&ctx, &mut encoder);
@@ -1234,13 +1225,26 @@ impl ViewportRenderer {
         if !self.any_plugin_draws_depth_read(frame) {
             return;
         }
+        // The depth plugins sample. Where a read-only depth attachment cannot
+        // also be sampled (wgpu's GL backend counts it as written), that is a
+        // copy taken just before the pass; elsewhere the scene depth itself.
+        let sample_view = if self.resources.capabilities.direct_depth_sampling {
+            self.viewport_slots[ctx.vp_idx]
+                .hdr
+                .as_ref()
+                .unwrap()
+                .hdr_depth_only_view
+                .clone()
+        } else {
+            self.copy_depth_for_read(ctx, encoder)
+        };
         // Prebuilt group handed to plugins that have a spare bind group. Plugins
         // at the four-group limit ignore it and bake the same depth-only view +
         // sampler into a group of their own.
         let depth_bg = {
             let resources = &self.resources;
             let hdr = self.viewport_slots[ctx.vp_idx].hdr.as_mut().unwrap();
-            let view = hdr.hdr_depth_only_view.clone();
+            let view = sample_view.clone();
             hdr.depth_read_bg.get(view.clone(), || {
                 ctx.device
                     .create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -1275,10 +1279,10 @@ impl ViewportRenderer {
         // choice correctly because it runs *before* the resolve.
         let colour_view = &slot_hdr.hdr_view;
         let depth_view = &slot_hdr.hdr_depth_view;
-        let depth_only_view = &slot_hdr.hdr_depth_only_view;
 
-        // Depth attachment read-only (`depth_ops: None`) so `depth_only_view`,
-        // a depth-aspect view of the same buffer, can be sampled in the pass.
+        // Depth attachment read-only (`depth_ops: None`) so `sample_view`, a
+        // depth-aspect view of the same buffer where the device allows it, can
+        // be sampled in the pass.
         let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
             #[cfg(any(wgpu29, wgpu30))]
             multiview_mask: None,
@@ -1305,10 +1309,131 @@ impl ViewportRenderer {
         self.dispatch_plugin_paint_depth_read(
             &mut pass,
             frame,
-            depth_only_view,
+            &sample_view,
             &resources.scene_tier.material.depth_read_sampler,
             &depth_bg,
         );
+    }
+
+    /// Hand the encoder to the plugins that encode at `scope`. Without direct
+    /// depth sampling their `scene_depth_only` is the depth-read copy, taken
+    /// here so it holds the depth as of this scope.
+    fn encode_scope(
+        &mut self,
+        ctx: &HdrFrameCtx,
+        encoder: &mut crate::gpu::CommandEncoder,
+        scope: crate::plugin_api::EncoderScope,
+    ) {
+        if !self.resources.capabilities.direct_depth_sampling
+            && self
+                .item_type_plugins
+                .values()
+                .any(|p| p.encoder_scopes().contains(&scope))
+        {
+            self.copy_depth_for_read(ctx, encoder);
+        }
+        self.dispatch_plugin_encode(encoder, ctx.frame, scope, ctx.device, ctx.queue, ctx.vp_idx);
+    }
+
+    /// Copy the scene depth into the viewport's depth-read copy with the depth
+    /// blit, and return the copy's depth-aspect view. For a device whose
+    /// read-only depth attachments cannot be sampled in the same pass.
+    fn copy_depth_for_read(
+        &mut self,
+        ctx: &HdrFrameCtx,
+        encoder: &mut crate::gpu::CommandEncoder,
+    ) -> crate::gpu::TextureView {
+        self.resources.ensure_depth_blit_pipeline(ctx.device);
+        let resources = &self.resources;
+        let hdr = self.viewport_slots[ctx.vp_idx].hdr.as_mut().unwrap();
+        let size = hdr.hdr_depth_texture.size();
+        if hdr
+            .depth_read_copy
+            .as_ref()
+            .is_none_or(|c| c.texture.size() != size)
+        {
+            let texture = ctx.device.create_texture(&crate::gpu::TextureDescriptor {
+                label: Some("depth_read_copy"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: crate::gpu::TextureDimension::D2,
+                format: hdr.hdr_depth_texture.format(),
+                usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                    | crate::gpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+            let depth_only_view = texture.create_view(&crate::gpu::TextureViewDescriptor {
+                aspect: crate::gpu::TextureAspect::DepthOnly,
+                ..Default::default()
+            });
+            hdr.depth_read_copy = Some(crate::resources::postprocess::targets::DepthTarget {
+                texture,
+                view,
+                depth_only_view,
+            });
+        }
+        let source = hdr.hdr_depth_only_view.clone();
+        let blit_bg = hdr.depth_read_copy_bg.get(source.clone(), || {
+            ctx.device
+                .create_bind_group(&crate::gpu::BindGroupDescriptor {
+                    label: Some("depth_read_copy_bg"),
+                    layout: resources
+                        .post
+                        .depth_blit_bgl
+                        .as_ref()
+                        .expect("ensure_hdr_infra not called"),
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: crate::gpu::BindingResource::TextureView(&source),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: crate::gpu::BindingResource::Sampler(
+                                resources
+                                    .post
+                                    .pp_nearest_sampler
+                                    .as_ref()
+                                    .expect("ensure_hdr_infra not called"),
+                            ),
+                        },
+                    ],
+                })
+        });
+        let copy = hdr.depth_read_copy.as_ref().unwrap();
+        {
+            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(any(wgpu29, wgpu30))]
+                multiview_mask: None,
+                label: Some("depth_read_copy_pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+                    view: &copy.view,
+                    depth_ops: Some(crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(1.0),
+                        store: crate::gpu::StoreOp::Store,
+                    }),
+                    stencil_ops: Some(crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(0),
+                        store: crate::gpu::StoreOp::Store,
+                    }),
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(
+                resources
+                    .post
+                    .depth_blit_pipeline
+                    .as_ref()
+                    .expect("built above"),
+            );
+            pass.set_bind_group(0, &blit_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        copy.depth_only_view.clone()
     }
 
     fn hdr_oit(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {

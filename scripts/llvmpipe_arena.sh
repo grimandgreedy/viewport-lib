@@ -11,13 +11,17 @@
 # 800x480 kiosk panel.
 #
 # Usage:
-#   scripts/llvmpipe_arena.sh [--backend gl|vulkan|both] [--cpus N] [--shell]
+#   scripts/llvmpipe_arena.sh [--backend gl|vulkan|both] [--cpus N] [--shell|--testkit]
 #
 #   --backend  which CPU renderer to time (default both)
 #   --cpus     cores the container is pinned to, and llvmpipe's thread count
 #              (default 4)
 #   --shell    open a shell in the container with Mesa installed and the GL
 #              environment set, instead of running anything
+#   --testkit  run the testkit's tier and snapshot suites on each backend
+#              instead of the arena. With no references for the backend the
+#              snapshot suite writes them to tests/snapshots/<backend>/, for
+#              looking at, not committing
 #
 # Needs Docker with arm64 Linux support (Docker Desktop or OrbStack on Apple
 # silicon run it natively). Path dependencies reach outside the vpl folder
@@ -32,12 +36,14 @@ set -euo pipefail
 backend="both"
 cpus=4
 shell=0
+testkit=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --backend) backend="$2"; shift 2 ;;
         --cpus) cpus="$2"; shift 2 ;;
         --shell) shell=1; shift ;;
-        -h|--help) sed -n 2,27p "$0"; exit 0 ;;
+        --testkit) testkit=1; shift ;;
+        -h|--help) sed -n 2,31p "$0"; exit 0 ;;
         *) echo "unknown arg: $1" >&2; exit 1 ;;
     esac
 done
@@ -91,6 +97,19 @@ if [ "$SHELL_ONLY" = 1 ]; then
     exec bash
 fi
 
+if [ "$TESTKIT" = 1 ]; then
+    cd "$VPL_ROOT/viewport-lib/crates/viewport-lib-testkit"
+    status=0
+    for b in $BACKENDS; do
+        (
+            if [ "$b" = gl ]; then gl_env; else vulkan_env; fi
+            echo "== testkit tier and snapshots on $b"
+            VPL_PIPELINE_COMPILATION=blocking cargo test --release --no-fail-fast --test tier --test snapshots
+        ) || status=1
+    done
+    exit "$status"
+fi
+
 cd "$VPL_ROOT/harness/viewport-lib-overlay-arena"
 echo "== building the arena (first run compiles the workspace for arm64 Linux)"
 cargo build --release --bins
@@ -127,5 +146,6 @@ exec docker run --rm "${tty_flags[@]}" \
     -e VPL_ROOT="$vpl_root" \
     -e BACKENDS="$backends" \
     -e SHELL_ONLY="$shell" \
+    -e TESTKIT="$testkit" \
     rust:latest \
     bash -c "$inner"

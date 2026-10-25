@@ -122,12 +122,13 @@ pub const SHARED_CSM_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/helper
 pub const SHARED_CLIP_VOLUME_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/clip_volume_test.wgsl"));
 
-/// Read one texel of a depth texture on every backend, GL included.
+/// Read one texel of a depth or stencil texture on every backend, GL included.
 ///
 /// Provides:
 ///
 /// ```ignore
 /// fn depth_texel(tex: texture_2d<f32>, samp: sampler, coord: vec2<i32>) -> f32;
+/// fn stencil_texel(tex: texture_2d<u32>, samp: sampler, coord: vec2<i32>) -> u32;
 /// ```
 ///
 /// Bind the depth view as `texture_2d<f32>` with an unfilterable-float layout
