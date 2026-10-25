@@ -40,12 +40,12 @@ if [ -z "$chrome" ]; then
 fi
 
 # Compile-check everything else for wasm first: the smoke example does not
-# reach the plugins or post-effects crates, or features it leaves off.
+# reach the post-effects crate, or features it leaves off.
 "$repo_root/scripts/build_web.sh" --check
 "$repo_root/scripts/build_web.sh" --release "$example"
 
 # Once on WebGPU, then again with WebGPU unavailable, which is the WebGL2
-# fallback and the overlay-only renderer.
+# fallback and the compatibility-tier renderer.
 status=0
 python3 "$repo_root/scripts/check_web.py" "$example_dir" "$chrome" webgpu || status=1
 python3 "$repo_root/scripts/check_web.py" "$example_dir" "$chrome" webgl2 || status=1

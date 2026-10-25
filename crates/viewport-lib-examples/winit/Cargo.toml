@@ -15,6 +15,8 @@ path = "src/lib.rs"
 # winit 0.30 serves every leg. `app` brings the built-in runners the app-* and
 # winit-minimal examples use.
 viewport-lib = { path = "../../viewport-lib", default-features = false, features = ["app"] }
+# The built-in item types, which `web-scivis-smoke` draws on each tier.
+viewport-lib-plugins = { path = "../../viewport-lib-plugins", default-features = false, features = ["item-types"] }
 glam = { workspace = true }
 winit = "0.30"
 pollster = "0.4"
@@ -28,9 +30,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # path-tracer examples build in a plain `cargo build --all-targets` instead of
 # being silently skipped.
 default = ["wgpu27", "raytrace", "raytrace-hardware"]
-wgpu27 = ["viewport-lib/wgpu27"]
-wgpu29 = ["viewport-lib/wgpu29"]
-wgpu30 = ["viewport-lib/wgpu30"]
+wgpu27 = ["viewport-lib/wgpu27", "viewport-lib-plugins/wgpu27"]
+wgpu29 = ["viewport-lib/wgpu29", "viewport-lib-plugins/wgpu29"]
+wgpu30 = ["viewport-lib/wgpu30", "viewport-lib-plugins/wgpu30"]
 raytrace = ["viewport-lib/raytrace"]
 raytrace-hardware = ["raytrace", "viewport-lib/raytrace-hardware"]
 
@@ -40,6 +42,7 @@ raytrace-hardware = ["raytrace", "viewport-lib/raytrace-hardware"]
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
 console_error_panic_hook = "0.1"
 console_log = "1"
 log = "0.4"
@@ -48,6 +51,7 @@ web-sys = { version = "0.3", features = [
     "Window",
     "Element",
     "HtmlCanvasElement",
+    "Location",
     "Node",
 ] }
 
@@ -82,8 +86,9 @@ name = "winit-web"
 path = "examples/winit_web/main.rs"
 required-features = ["wgpu27"]
 
-# The CPU-side web check: iso-surface extraction, BVH build, and a ray query,
-# run in a browser and reported on the page. Same command as winit-web, with
+# The web check: iso-surface extraction, BVH build, a ray query, and the
+# built-in item types drawn and read back, run in a browser and reported on the
+# page. Same command as winit-web, with
 # --example web-scivis-smoke.
 [[example]]
 name = "web-scivis-smoke"

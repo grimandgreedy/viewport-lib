@@ -17,6 +17,10 @@
 //!   3. Upload that surface, put it in a scene, build a pick accelerator over
 //!      it, and fire a ray down the view axis.
 //!   4. Draw the result, and report the extraction and pick outcomes.
+//!   5. Register the built-in item types and draw one item of each type the
+//!      tier runs, read back to check it covered pixels (`item_types.rs`), and
+//!      below the full tier time the Gaussian splat sort, which runs on the CPU
+//!      there.
 //!
 //! A green line per step means that path works in a browser. Anything else is
 //! the thing to go and fix. Click the surface to run a fresh pick at the cursor.
@@ -37,6 +41,8 @@ use std::sync::Arc;
 use viewport_lib::Colour;
 
 use web_time::Instant;
+
+mod item_types;
 
 use viewport_lib::picking::screen_to_ray;
 use viewport_lib::vplg::volume::grid::VolumeData;
@@ -489,6 +495,16 @@ async fn build_state(window: Arc<Window>) -> State {
     match validation.or(internal) {
         None => results.pass("surface and overlay frame drawn with no GPU error"),
         Some(e) => results.fail(format!("surface and overlay frame: {e}")),
+    }
+
+    if tier >= Tier::Compatibility {
+        let mut gpu = item_types::Gpu {
+            device: &device,
+            queue: &queue,
+            renderer: &mut renderer,
+            format,
+        };
+        item_types::check(&mut gpu, &mut results).await;
     }
 
     // Step 3: the pick accelerator builds a BVH over the scene, which is the
