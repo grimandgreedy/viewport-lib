@@ -47,7 +47,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "sub_highlight_layout",
-            &[&self.scene_tier.binds.camera_bgl, &bgl],
+            &[self.group0_layout(), &bgl],
         );
 
         let fill_shader = crate::resources::builders::wgsl_module(

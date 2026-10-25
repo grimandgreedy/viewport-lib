@@ -777,6 +777,110 @@ fn assert_split_paths_match_the_full_tier(profile: &DeviceProfile) {
 
 /// A mesh on the compatibility tier draws through both halves of the split API: into
 /// a host-owned pass and through `render_viewport`.
+/// Picked faces of a mesh and a picked voxel of a volume are highlighted on the
+/// compatibility tier, through the host's own pass and the owned-encoder
+/// path alike.
+#[test]
+fn compatibility_sub_object_highlights_draw_through_the_split_and_host_pass_paths() {
+    let Some(mut harness) = Harness::with_profile(&DeviceProfile::downlevel_webgl2(
+        "tier-compatibility-highlight",
+    )) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let cube = viewport_lib::geometry::primitives::cube(2.0);
+    let mesh = harness
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(&harness.device, &cube)
+        .expect("meshes upload on the compatibility tier");
+    let mut item = viewport_lib::SceneRenderItem::default();
+    item.mesh_id = mesh;
+    item.settings.colour = Some(viewport_lib::Colour::linear_rgb(0.9, 0.3, 0.1));
+    let mut camera = viewport_lib::Camera::default();
+    camera.set_distance(6.0);
+    camera.set_aspect_ratio(W as f32, H as f32);
+    let base = || {
+        let mut frame = viewport_lib::FrameData::default();
+        frame.camera.render_camera = viewport_lib::RenderCamera::from_camera(&camera);
+        frame.camera.viewport_size = [W as f32, H as f32];
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame.interaction.sub_highlight_face_fill_colour =
+            viewport_lib::Colour::linear(0.0, 1.0, 0.0, 1.0);
+        frame.interaction.sub_highlight_edge_colour =
+            viewport_lib::Colour::linear_rgb(0.0, 1.0, 0.0);
+        frame.interaction.sub_highlight_edge_width_px = 3.0;
+        frame
+    };
+    let green = |pixels: &[u8]| {
+        // `read_back` keeps the copy's padded rows and the target's BGRA order.
+        let row = (W * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) as usize;
+        (0..H as usize)
+            .flat_map(|y| (0..W as usize).map(move |x| y * row + x * 4))
+            .filter(|&i| {
+                let [b, g, r] = [pixels[i] as i32, pixels[i + 1] as i32, pixels[i + 2] as i32];
+                g > r + 100 && g > b + 100
+            })
+            .count()
+    };
+
+    // Every face of the cube.
+    let mut faces = viewport_lib::SubSelection::new();
+    for face in 0..(cube.indices.len() / 3) as u32 {
+        faces.add(1, viewport_lib::SubObjectRef::Face(face));
+    }
+    let mut frame = base();
+    frame.scene.surfaces = viewport_lib::SurfaceSubmission::Flat(vec![item].into());
+    frame.interaction.sub_selection = Some(viewport_lib::SubSelectionRef::new(
+        &faces,
+        [(1, (cube.positions.clone(), cube.indices.clone()))].into(),
+        [(1, glam::Mat4::IDENTITY)].into(),
+        Default::default(),
+    ));
+    let (painted, owned) = draw_split(&mut harness, &mut frame);
+    for (name, pixels) in [("paint_viewport", &painted), ("render_viewport", &owned)] {
+        let n = green(pixels);
+        assert!(
+            n > 500,
+            "{name}: the picked faces must be filled, {n} green pixels"
+        );
+    }
+
+    // One voxel of a 4 x 4 x 4 grid, drawn as its box's edges.
+    let mut voxels = viewport_lib::SubSelection::new();
+    voxels.add(2, viewport_lib::SubObjectRef::Voxel(0));
+    let mut frame = base();
+    frame.interaction.sub_selection = Some(
+        viewport_lib::SubSelectionRef::new(
+            &voxels,
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
+        .with_voxels(
+            [(
+                2,
+                viewport_lib::VolumeSelectionInfo {
+                    dims: [4, 4, 4],
+                    bbox_min: [-1.0, -1.0, -1.0],
+                    bbox_max: [1.0, 1.0, 1.0],
+                    model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                },
+            )]
+            .into(),
+        ),
+    );
+    let (painted, owned) = draw_split(&mut harness, &mut frame);
+    for (name, pixels) in [("paint_viewport", &painted), ("render_viewport", &owned)] {
+        let n = green(pixels);
+        assert!(
+            n > 30,
+            "{name}: the picked voxel must be outlined, {n} green pixels"
+        );
+    }
+}
+
 /// A selected mesh on the compatibility tier is outlined through the host's own
 /// pass (`paint_viewport`) and the owned-encoder path (`render_viewport`): the
 /// composite draws in both.

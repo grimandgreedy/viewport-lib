@@ -848,6 +848,7 @@ impl ViewportRenderer {
         } else {
             self.prepare_viewport_compatibility(queue, frame, viewport_fx);
             self.prepare_compatibility_outlines(device, queue, frame, sink);
+            self.prepare_sub_highlight(device, queue, frame);
         }
         self.prepare_viewport_overlays(device, queue, frame);
         self.prepare_debug_buffer(frame);

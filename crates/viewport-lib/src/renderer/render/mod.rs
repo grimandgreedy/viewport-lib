@@ -382,35 +382,7 @@ impl ViewportRenderer {
             // Outline composite after all scene content.
             emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             // Sub-object highlight (LDR path).
-            if let Some(sub_hl) = slot.sub_highlight.as_ref() {
-                if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
-                    &self.resources.sub_highlight.fill_ldr_pipeline,
-                    &self.resources.sub_highlight.edge_ldr_pipeline,
-                    &self.resources.sub_highlight.sprite_ldr_pipeline,
-                ) {
-                    if sub_hl.fill_vertex_count > 0 {
-                        render_pass.set_pipeline(fill_pl);
-                        render_pass.set_bind_group(0, camera_bg, &[]);
-                        render_pass.set_bind_group(1, &sub_hl.fill_bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, sub_hl.fill_vertex_buf.slice(..));
-                        render_pass.draw(0..sub_hl.fill_vertex_count, 0..1);
-                    }
-                    if sub_hl.edge_segment_count > 0 {
-                        render_pass.set_pipeline(edge_pl);
-                        render_pass.set_bind_group(0, camera_bg, &[]);
-                        render_pass.set_bind_group(1, &sub_hl.edge_bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, sub_hl.edge_vertex_buf.slice(..));
-                        render_pass.draw(0..6, 0..sub_hl.edge_segment_count);
-                    }
-                    if sub_hl.sprite_point_count > 0 {
-                        render_pass.set_pipeline(sprite_pl);
-                        render_pass.set_bind_group(0, camera_bg, &[]);
-                        render_pass.set_bind_group(1, &sub_hl.sprite_bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, sub_hl.sprite_vertex_buf.slice(..));
-                        render_pass.draw(0..6, 0..sub_hl.sprite_point_count);
-                    }
-                }
-            }
+            self.paint_ldr_sub_highlight(&mut render_pass, vp_idx, camera_bg);
             let ov = &self.viewport_slots[vp_idx].overlay;
             emit_overlay_2d!(self, ov, render_pass);
         }

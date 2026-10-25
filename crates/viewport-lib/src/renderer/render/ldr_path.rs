@@ -205,6 +205,8 @@ impl ViewportRenderer {
                 self.paint_compatibility_scene(&mut render_pass, camera_bg, frame);
                 emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             }
+            // The sub-object highlight, over the scene and the outline.
+            self.paint_ldr_sub_highlight(&mut render_pass, vp_idx, camera_bg);
             // When blur backdrops are needed, skip overlays here. They'll
             // be drawn in a second pass after the blur is applied.
             if !needs_blur {

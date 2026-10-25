@@ -340,8 +340,9 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     /// The shared lighting sources a compatibility-tier item type composes, the
-    /// basic mesh shader and the selection outline's three, adapted for that
-    /// tier, translate to the GLSL ES 3.0 WebGL2 compiles.
+    /// basic mesh shader, and the selection outline's and sub-object
+    /// highlight's shaders, adapted for that tier, translate to the GLSL ES 3.0
+    /// WebGL2 compiles.
     #[cfg(wgpu27)]
     #[test]
     fn forward_shaders_translate_to_webgl2_glsl() {
@@ -363,6 +364,18 @@ fn fs_main() -> @location(0) vec4<f32> {
             (
                 "outline_composite",
                 include_str!(concat!(env!("OUT_DIR"), "/outline_composite.wgsl")).to_string(),
+            ),
+            (
+                "sub_highlight_fill",
+                include_str!(concat!(env!("OUT_DIR"), "/sub_highlight_fill.wgsl")).to_string(),
+            ),
+            (
+                "sub_highlight_edge",
+                include_str!(concat!(env!("OUT_DIR"), "/sub_highlight_edge.wgsl")).to_string(),
+            ),
+            (
+                "sub_highlight_sprite",
+                include_str!(concat!(env!("OUT_DIR"), "/sub_highlight_sprite.wgsl")).to_string(),
             ),
         ] {
             let adapted = adapt_wgsl(src.as_str(), &compatibility_caps());
