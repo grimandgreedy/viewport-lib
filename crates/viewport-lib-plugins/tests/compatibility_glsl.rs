@@ -78,6 +78,56 @@ fn local_array_indexed_at_run_time(module: &naga::Module) -> Option<String> {
     None
 }
 
+/// The first function of `module` that samples or gathers a depth texture
+/// without a depth reference, as `` `function`: `texture` ``. naga declares
+/// every depth texture a `sampler2DShadow` in GLSL and emits the lookup with no
+/// reference value, which matches no GLSL overload, so the driver rejects the
+/// program although naga reports no error.
+fn depth_sampled_without_comparison(module: &naga::Module) -> Option<String> {
+    let functions = module
+        .functions
+        .iter()
+        .map(|(_, f)| f)
+        .chain(module.entry_points.iter().map(|ep| &ep.function));
+    for function in functions {
+        for (_, expr) in function.expressions.iter() {
+            let naga::Expression::ImageSample {
+                image,
+                depth_ref: None,
+                ..
+            } = expr
+            else {
+                continue;
+            };
+            let (ty, name) = match function.expressions[*image] {
+                naga::Expression::GlobalVariable(var) => {
+                    let var = &module.global_variables[var];
+                    (var.ty, var.name.clone())
+                }
+                naga::Expression::FunctionArgument(i) => {
+                    let arg = &function.arguments[i as usize];
+                    (arg.ty, arg.name.clone())
+                }
+                _ => continue,
+            };
+            if matches!(
+                module.types[ty].inner,
+                naga::TypeInner::Image {
+                    class: naga::ImageClass::Depth { .. },
+                    ..
+                }
+            ) {
+                return Some(format!(
+                    "`{}`: `{}`",
+                    function.name.as_deref().unwrap_or("?"),
+                    name.as_deref().unwrap_or("?")
+                ));
+            }
+        }
+    }
+    None
+}
+
 /// The entry points of `src` naga's GLSL writer cannot translate at `version`,
 /// as `(entry point, error)`. An error that is not about one entry point
 /// (parsing, validation, a uniform size) is the `Err`.
@@ -156,8 +206,22 @@ fn local_array_error(src: &str) -> Option<String> {
     })
 }
 
+/// A non-comparison sample of a depth texture in `src`, as an error.
+fn depth_sample_error(src: &str) -> Option<String> {
+    let module = naga::front::wgsl::parse_str(src).ok()?;
+    depth_sampled_without_comparison(&module).map(|at| {
+        format!(
+            "{at} samples a depth texture without a comparison, which GLSL has no \
+             lookup for; bind it as texture_2d<f32>"
+        )
+    })
+}
+
 fn translate(src: &str) -> Result<(), String> {
     if let Some(e) = local_array_error(src) {
+        return Err(e);
+    }
+    if let Some(e) = depth_sample_error(src) {
         return Err(e);
     }
     let version = naga::back::glsl::Version::Embedded {
@@ -198,6 +262,11 @@ const GL_KNOWN_FAILURES: &[&str] = &[
     "scatter_refraction.wgsl:fs_main",
     "scatter_temporal_resolve.wgsl:fs_main",
     "scatter_volume.wgsl:fs_main",
+    // A depth texture sampled without a comparison: naga emits a
+    // `sampler2DShadow` lookup with no reference, which no GLSL overload
+    // matches, and reports no error.
+    "sprite.wgsl:depth-sample",
+    "sprite_lit.wgsl:depth-sample",
     // A `@interpolate(linear)` varying, which GLSL ES has no qualifier for.
     "surface_contour.wgsl:fs_main",
     "surface_contour.wgsl:vs_main",
@@ -222,6 +291,9 @@ fn full_tier_shaders_translate_to_gl_glsl() {
     let mut failures = std::collections::BTreeMap::<String, String>::new();
     for (name, src) in viewport_lib_plugins::shader_sources() {
         let adapted = viewport_lib::plugin_api::builders::adapt_wgsl(src.as_str(), &caps);
+        if let Some(e) = depth_sample_error(&adapted) {
+            failures.insert(format!("{name}:depth-sample"), e);
+        }
         for version in versions {
             match glsl_failures(&adapted, version) {
                 Ok(eps) => {

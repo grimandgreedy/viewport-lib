@@ -352,6 +352,57 @@ fn fs_main() -> @location(0) vec4<f32> {
         None
     }
 
+    /// The first function of `module` that samples or gathers a depth texture
+    /// without a depth reference, as `` `function`: `texture` ``. naga declares
+    /// every depth texture a `sampler2DShadow` in GLSL and emits the lookup with no
+    /// reference value, which matches no GLSL overload, so the driver rejects the
+    /// program although naga reports no error.
+    #[cfg(wgpu27)]
+    fn depth_sampled_without_comparison(module: &naga::Module) -> Option<String> {
+        let functions = module
+            .functions
+            .iter()
+            .map(|(_, f)| f)
+            .chain(module.entry_points.iter().map(|ep| &ep.function));
+        for function in functions {
+            for (_, expr) in function.expressions.iter() {
+                let naga::Expression::ImageSample {
+                    image,
+                    depth_ref: None,
+                    ..
+                } = expr
+                else {
+                    continue;
+                };
+                let (ty, name) = match function.expressions[*image] {
+                    naga::Expression::GlobalVariable(var) => {
+                        let var = &module.global_variables[var];
+                        (var.ty, var.name.clone())
+                    }
+                    naga::Expression::FunctionArgument(i) => {
+                        let arg = &function.arguments[i as usize];
+                        (arg.ty, arg.name.clone())
+                    }
+                    _ => continue,
+                };
+                if matches!(
+                    module.types[ty].inner,
+                    naga::TypeInner::Image {
+                        class: naga::ImageClass::Depth { .. },
+                        ..
+                    }
+                ) {
+                    return Some(format!(
+                        "`{}`: `{}`",
+                        function.name.as_deref().unwrap_or("?"),
+                        name.as_deref().unwrap_or("?")
+                    ));
+                }
+            }
+        }
+        None
+    }
+
     /// The entry points of `src` naga's GLSL writer cannot translate at
     /// `version`, the path wgpu's GL backend takes, as `(entry point, error)`.
     /// An error that is not about one entry point (parsing, validation, a
@@ -504,6 +555,9 @@ fn fs_main() -> @location(0) vec4<f32> {
                 panic!("{name}: {e}");
             }
             let module = naga::front::wgsl::parse_str(&adapted).expect("parsed above");
+            if let Some(at) = depth_sampled_without_comparison(&module) {
+                panic!("{name}: {at} samples a depth texture without a comparison");
+            }
             if let Some(at) = local_array_indexed_at_run_time(&module) {
                 panic!(
                     "{name}: {at} is a function-local array indexed by a run-time value, \
@@ -536,6 +590,11 @@ fn fs_main() -> @location(0) vec4<f32> {
         // `textureNumLevels`, which GLSL ES has no counterpart for.
         "cull.wgsl:cull_instances",
         "ibl_prefilter.wgsl:cs_main",
+        // A depth texture sampled without a comparison: naga emits a
+        // `sampler2DShadow` lookup with no reference, which no GLSL overload
+        // matches, and reports no error.
+        "contact_shadow.wgsl:depth-sample",
+        "shadow_atlas_blit.wgsl:depth-sample",
         // `textureLoad` from a depth texture.
         "depth_blit.wgsl:fs_main",
         "dof.wgsl:fs_main",
@@ -564,6 +623,15 @@ fn fs_main() -> @location(0) vec4<f32> {
         ];
         let mut failures = std::collections::BTreeMap::new();
         for (name, src) in sources {
+            if let Some(at) = naga::front::wgsl::parse_str(&src)
+                .ok()
+                .and_then(|m| depth_sampled_without_comparison(&m))
+            {
+                failures.insert(
+                    format!("{name}:depth-sample"),
+                    format!("{at} samples a depth texture without a comparison"),
+                );
+            }
             for version in versions {
                 match glsl_failures(&src, version) {
                     Ok(eps) => {
