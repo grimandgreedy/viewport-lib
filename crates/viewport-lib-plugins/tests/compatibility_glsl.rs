@@ -41,6 +41,42 @@ fn webgl2_caps() -> Capabilities {
     caps
 }
 
+/// The first function-local array `module` indexes with a run-time value, as
+/// `` `function`: `array` ``. Adreno's GLES compiler miscompiles that pattern
+/// with no error (an isosurface whose box corners came from one drew nothing on
+/// an Adreno 650), so shaders that run below the full tier keep such tables at
+/// module scope as a `const`, or compute them.
+fn local_array_indexed_at_run_time(module: &naga::Module) -> Option<String> {
+    let functions = module
+        .functions
+        .iter()
+        .map(|(_, f)| f)
+        .chain(module.entry_points.iter().map(|ep| &ep.function));
+    for function in functions {
+        for (_, expr) in function.expressions.iter() {
+            let naga::Expression::Access { base, .. } = expr else {
+                continue;
+            };
+            let (array, name) = match function.expressions[*base] {
+                naga::Expression::LocalVariable(local) => {
+                    let local = &function.local_variables[local];
+                    (local.ty, local.name.clone())
+                }
+                naga::Expression::Compose { ty, .. } => (ty, None),
+                _ => continue,
+            };
+            if matches!(module.types[array].inner, naga::TypeInner::Array { .. }) {
+                return Some(format!(
+                    "`{}`: `{}`",
+                    function.name.as_deref().unwrap_or("?"),
+                    name.as_deref().unwrap_or("an array constructed in place")
+                ));
+            }
+        }
+    }
+    None
+}
+
 fn translate(src: &str) -> Result<(), String> {
     let module = naga::front::wgsl::parse_str(src).map_err(|e| e.emit_to_string(src))?;
     let info = naga::valid::Validator::new(
@@ -62,6 +98,12 @@ fn translate(src: &str) -> Result<(), String> {
                 ));
             }
         }
+    }
+    if let Some(at) = local_array_indexed_at_run_time(&module) {
+        return Err(format!(
+            "{at} is a function-local array indexed by a run-time value, which Adreno \
+             miscompiles; make it a module-scope const or compute it"
+        ));
     }
     for ep in &module.entry_points {
         let (module, info) = naga::back::pipeline_constants::process_overrides(

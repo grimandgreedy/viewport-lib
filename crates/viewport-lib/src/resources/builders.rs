@@ -315,6 +315,43 @@ fn fs_main() -> @location(0) vec4<f32> {
         }
     }
 
+    #[cfg(wgpu27)]
+    /// The first function-local array `module` indexes with a run-time value, as
+    /// `` `function`: `array` ``. Adreno's GLES compiler miscompiles that pattern
+    /// with no error (an isosurface whose box corners came from one drew nothing on
+    /// an Adreno 650), so shaders that run below the full tier keep such tables at
+    /// module scope as a `const`, or compute them.
+    fn local_array_indexed_at_run_time(module: &naga::Module) -> Option<String> {
+        let functions = module
+            .functions
+            .iter()
+            .map(|(_, f)| f)
+            .chain(module.entry_points.iter().map(|ep| &ep.function));
+        for function in functions {
+            for (_, expr) in function.expressions.iter() {
+                let naga::Expression::Access { base, .. } = expr else {
+                    continue;
+                };
+                let (array, name) = match function.expressions[*base] {
+                    naga::Expression::LocalVariable(local) => {
+                        let local = &function.local_variables[local];
+                        (local.ty, local.name.clone())
+                    }
+                    naga::Expression::Compose { ty, .. } => (ty, None),
+                    _ => continue,
+                };
+                if matches!(module.types[array].inner, naga::TypeInner::Array { .. }) {
+                    return Some(format!(
+                        "`{}`: `{}`",
+                        function.name.as_deref().unwrap_or("?"),
+                        name.as_deref().unwrap_or("an array constructed in place")
+                    ));
+                }
+            }
+        }
+        None
+    }
+
     /// Translate every entry point of `src` with naga's GLSL writer, the
     /// path wgpu's GL backend takes.
     #[cfg(wgpu27)]
@@ -373,9 +410,10 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     /// The shared lighting sources a compatibility-tier item type composes, the
-    /// basic mesh shader, and the selection outline's and sub-object
-    /// highlight's shaders, adapted for that tier, translate to the GLSL ES 3.0
-    /// WebGL2 compiles.
+    /// basic mesh shader, the selection outline's and sub-object highlight's
+    /// shaders, and the overlay family, adapted for that tier, translate to the
+    /// GLSL ES 3.0 WebGL2 compiles, with no function-local array indexed at
+    /// run time.
     #[cfg(wgpu27)]
     #[test]
     fn forward_shaders_translate_to_webgl2_glsl() {
@@ -422,10 +460,33 @@ fn fs_main() -> @location(0) vec4<f32> {
                 "polyline_outline_mask",
                 include_str!(concat!(env!("OUT_DIR"), "/polyline_outline_mask.wgsl")).to_string(),
             ),
+            (
+                "overlay_shape",
+                include_str!(concat!(env!("OUT_DIR"), "/overlay_shape.wgsl")).to_string(),
+            ),
+            (
+                "overlay_shape_tex",
+                include_str!(concat!(env!("OUT_DIR"), "/overlay_shape_tex.wgsl")).to_string(),
+            ),
+            (
+                "overlay_text",
+                include_str!(concat!(env!("OUT_DIR"), "/overlay_text.wgsl")).to_string(),
+            ),
+            (
+                "backdrop_blur",
+                include_str!(concat!(env!("OUT_DIR"), "/backdrop_blur.wgsl")).to_string(),
+            ),
         ] {
             let adapted = adapt_wgsl(src.as_str(), &compatibility_caps());
             if let Err(e) = translate_to_glsl(&adapted, 300, true) {
                 panic!("{name}: {e}");
+            }
+            let module = naga::front::wgsl::parse_str(&adapted).expect("parsed above");
+            if let Some(at) = local_array_indexed_at_run_time(&module) {
+                panic!(
+                    "{name}: {at} is a function-local array indexed by a run-time value, \
+                     which Adreno miscompiles; make it a module-scope const or compute it"
+                );
             }
         }
     }
