@@ -50,7 +50,8 @@ impl Harness {
     pub fn with_target_format(target_format: wgpu::TextureFormat) -> Option<Self> {
         let (device, queue, info) =
             crate::device::headless_device_with_info(&crate::device::DeviceProfile::harness())?;
-        let mut harness = Self::from_device(device, queue, target_format);
+        let backend = info.backend;
+        let mut harness = Self::build(device, queue, target_format, None, None, Some(backend));
         harness.adapter_info = Some(info);
         Some(harness)
     }
@@ -80,6 +81,7 @@ impl Harness {
             Self::DEFAULT_TARGET_FORMAT,
             None,
             Some(d.downlevel),
+            Some(d.info.backend),
         );
         harness.adapter_info = Some(d.info);
         Some(harness)
@@ -109,7 +111,14 @@ impl Harness {
         target_format: wgpu::TextureFormat,
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
-        Self::build(device, queue, target_format, pipeline_cache_data, None)
+        Self::build(
+            device,
+            queue,
+            target_format,
+            pipeline_cache_data,
+            None,
+            None,
+        )
     }
 
     fn build(
@@ -118,6 +127,7 @@ impl Harness {
         target_format: wgpu::TextureFormat,
         pipeline_cache_data: Option<&[u8]>,
         downlevel: Option<wgpu::DownlevelCapabilities>,
+        backend: Option<wgpu::Backend>,
     ) -> Self {
         // A test reads its frame back at once, so every pipeline has to be
         // there when the frame draws, whatever the platform's default.
@@ -127,6 +137,9 @@ impl Harness {
         if let Some(downlevel) = downlevel {
             config = config.with_downlevel_capabilities(downlevel);
         }
+        // wgpu 27 cannot read the backend from a device, and the GL backend's
+        // shaders cannot load from depth textures.
+        config.backend = backend;
         let mut renderer = ViewportRenderer::with_config(&device, &config);
         // The item types viewport-lib ships with live in their own crate and
         // register like any other plugin, so a harness that renders them has

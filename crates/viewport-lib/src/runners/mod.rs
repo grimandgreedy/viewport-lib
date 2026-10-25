@@ -112,6 +112,9 @@ pub(crate) fn runner_renderer_config(
     if config.downlevel_capabilities.is_none() {
         config.downlevel_capabilities = Some(adapter.get_downlevel_capabilities());
     }
+    if config.backend.is_none() {
+        config.backend = Some(adapter.get_info().backend);
+    }
     config
 }
 

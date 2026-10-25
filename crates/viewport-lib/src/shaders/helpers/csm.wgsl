@@ -10,6 +10,9 @@
 //   2 = hard: one hardware-compare tap (2x2 bilinear)
 //   3 = PCF high: 32 rotated Poisson taps (the former PCF default)
 //   4 = PCSS fast: 8-tap blocker search + 16-tap filter
+// The blocker search reads raw depths with `textureLoad`, which GL cannot,
+// so on GL the PCSS block is removed (`adapt_wgsl`) and tiers 1 and 4 run
+// the 8-tap PCF.
 
 const POISSON_DISK: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
     vec2<f32>(-0.94201624, -0.39906216), vec2<f32>( 0.94558609, -0.76890725),
@@ -93,7 +96,13 @@ fn shadow_tap_dir(i: u32, use_vogel8: bool) -> vec2<f32> {
 //
 // It runs after the filter, and only for a penumbra result: the leak
 // shows as a partly lit average, and a fully lit or fully shadowed
-// fragment, most of a scene, then skips the extra shadow-map load.
+// fragment, most of a scene, then skips the extra shadow-map taps.
+//
+// The stored depth at the receiver's texel is tested with three compare
+// taps at the texel centre rather than read with `textureLoad`, which
+// naga's GLSL writer rejects for depth textures. At the centre the
+// bilinear compare weights that texel alone, and `LessEqual` returns 1
+// where the reference is at or in front of the stored depth.
 fn csm_contact(
     filtered: f32,
     atlas_uv: vec2<f32>,
@@ -105,11 +114,16 @@ fn csm_contact(
     if !contact_rule || filtered <= 0.0 || filtered >= 1.0 {
         return filtered;
     }
-    let centre_coords = vec2<i32>(atlas_uv * shadow_atlas.atlas_size);
-    let centre_depth = textureLoad(shadow_map, centre_coords, 0);
-    let in_front = surface_depth - centre_depth;
-    let occludes = centre_depth < biased_depth;
-    if occludes && in_front > 1.0 * texel_depth && in_front < 6.0 * texel_depth {
+    let centre_uv = (floor(atlas_uv * shadow_atlas.atlas_size) + 0.5) / shadow_atlas.atlas_size;
+    // stored < biased_depth: the texel occludes the receiver.
+    let occludes = textureSampleCompareLevel(shadow_map, shadow_sampler, centre_uv, biased_depth) < 0.5;
+    // stored < surface - 1 texel-depth: more than one texel-depth in front.
+    let past_near = textureSampleCompareLevel(
+        shadow_map, shadow_sampler, centre_uv, surface_depth - 1.0 * texel_depth) < 0.5;
+    // stored >= surface - 6 texel-depths: no more than six in front.
+    let within_far = textureSampleCompareLevel(
+        shadow_map, shadow_sampler, centre_uv, surface_depth - 6.0 * texel_depth) >= 0.5;
+    if occludes && past_near && within_far {
         return textureSampleCompareLevel(shadow_map, shadow_sampler, atlas_uv, biased_depth);
     }
     return filtered;
@@ -269,6 +283,7 @@ fn sample_shadow_csm(
     let tier = shadow_atlas.shadow_filter;
     let contact_rule = primary_light_type == 0u && receiver_two_sided == 0u;
     let texel_depth = texel_world * length(vp_row2);
+    // BEGIN_PCSS_BLOCKER_SEARCH
     if tier == 1u || tier == 4u {
         // PCSS: the blocker search estimates the occluder distance per
         // fragment and widens the filter with it (contact hardening). The
@@ -310,6 +325,7 @@ fn sample_shadow_csm(
         let filtered = csm_contact(shadow / f32(filter_taps), atlas_uv, biased_depth, surface_depth, texel_depth, contact_rule);
         return ShadowSample(filtered, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     }
+    // END_PCSS_BLOCKER_SEARCH
 
     // PCF: fixed-radius rotated Poisson disk. The default is 8 taps; the
     // high tier is 32. The disk radius is 1.5 shadow texels for

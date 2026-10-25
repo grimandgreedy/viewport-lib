@@ -10,8 +10,10 @@ long enough for a cold GPU and short enough not to bore anyone. Chrome's
 WebGPU device finishes initialising before virtual time runs out varies between
 runs on the same machine.
 
-The second argument after the example directory and Chrome is the API the run
-expects, `webgpu` or `webgl2`. The `webgl2` run starts Chrome with its GPU
+An optional third argument after the example directory and Chrome is the API
+the run expects, `webgpu` or `webgl2`; without it the run uses the WebGPU
+switches and does not check which API the page landed on (the shader check
+reuses this script with a page of its own). The `webgl2` run starts Chrome with its GPU
 process off, which leaves `navigator.gpu` in place with no adapter behind it:
 the case Chromium on Linux hits. Chrome has renamed its WebGPU switches before,
 so the run does not trust the switch. The page names the API it landed on in its
@@ -81,11 +83,13 @@ class Harness(http.server.SimpleHTTPRequestHandler):
 
 def main() -> int:
     example_dir, chrome = sys.argv[1], sys.argv[2]
-    api = sys.argv[3] if len(sys.argv) > 3 else "webgpu"
-    if api not in APIS:
+    api = sys.argv[3] if len(sys.argv) > 3 else None
+    if api is not None and api not in APIS:
         print(f"unknown API {api!r}; expected one of {', '.join(APIS)}")
         return 2
-    expected_prefix, switches = APIS[api]
+    expected_prefix, switches = APIS[api or "webgpu"]
+    if api is None:
+        expected_prefix = None
 
     server = http.server.ThreadingHTTPServer(
         ("127.0.0.1", 0),
@@ -95,7 +99,8 @@ def main() -> int:
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     profile = tempfile.mkdtemp(prefix="vpl-web-check-")
-    print(f"loading the page in headless Chrome on port {port}, expecting {api} ...")
+    expecting = f", expecting {api}" if api else ""
+    print(f"loading the page in headless Chrome on port {port}{expecting} ...")
     browser = subprocess.Popen(
         [
             chrome,
@@ -122,7 +127,7 @@ def main() -> int:
 
         failed = 0
         first = " ".join(str(lines[0].get("text", "")).split())
-        if not first.startswith(expected_prefix):
+        if expected_prefix is not None and not first.startswith(expected_prefix):
             print(f"  FAIL expected the page on {api}, it reported: {first}")
             failed += 1
         for line in lines:

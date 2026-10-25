@@ -42,27 +42,111 @@ pub fn wgsl_module<'a>(
 /// declared `texture_depth_2d_array` to match the `D2Array` view binding 17
 /// carries there, and the point-shadow sample between the
 /// `BEGIN_POINT_SHADOW_SAMPLE` / `END_POINT_SHADOW_SAMPLE` markers returns 1.0
-/// (unshadowed). Every other source, and every source on a device with cube
-/// arrays, comes back unchanged.
+/// (unshadowed). On a device whose shaders cannot load from depth textures
+/// (wgpu's GL backend) the PCSS blocker search between
+/// `BEGIN_PCSS_BLOCKER_SEARCH` / `END_PCSS_BLOCKER_SEARCH` is removed, and the
+/// PCSS tiers filter as PCF. Every other source comes back unchanged.
 pub fn adapt_wgsl<'a>(
     source: impl Into<std::borrow::Cow<'a, str>>,
     caps: &crate::capabilities::Capabilities,
 ) -> std::borrow::Cow<'a, str> {
-    let source = source.into();
+    let mut source = source.into();
     const CUBE: &str = "texture_depth_cube_array";
-    if caps.cube_array_textures || !source.contains(CUBE) {
-        return source;
+    if !caps.cube_array_textures && source.contains(CUBE) {
+        let mut out = source.replace(CUBE, "texture_depth_2d_array");
+        replace_regions(
+            &mut out,
+            "// BEGIN_POINT_SHADOW_SAMPLE",
+            "// END_POINT_SHADOW_SAMPLE",
+            "return 1.0;",
+        );
+        source = std::borrow::Cow::Owned(out);
     }
-    let mut out = source.replace(CUBE, "texture_depth_2d_array");
-    const BEGIN: &str = "// BEGIN_POINT_SHADOW_SAMPLE";
-    const END: &str = "// END_POINT_SHADOW_SAMPLE";
-    while let Some(start) = out.find(BEGIN) {
-        let Some(len) = out[start..].find(END) else {
+    const PCSS: &str = "// BEGIN_PCSS_BLOCKER_SEARCH";
+    if !caps.depth_texture_loads && source.contains(PCSS) {
+        let mut out = source.into_owned();
+        replace_regions(&mut out, PCSS, "// END_PCSS_BLOCKER_SEARCH", "");
+        source = std::borrow::Cow::Owned(out);
+    }
+    source
+}
+
+/// Replace every `begin`..`end` region of `out`, markers included, with
+/// `with`.
+fn replace_regions(out: &mut String, begin: &str, end: &str, with: &str) {
+    while let Some(start) = out.find(begin) {
+        let Some(len) = out[start..].find(end) else {
             break;
         };
-        out.replace_range(start..start + len + END.len(), "return 1.0;");
+        out.replace_range(start..start + len + end.len(), with);
     }
-    std::borrow::Cow::Owned(out)
+}
+
+#[cfg(test)]
+mod adapt_wgsl_tests {
+    use super::adapt_wgsl;
+
+    fn caps(backend: crate::gpu::Backend) -> crate::capabilities::Capabilities {
+        crate::capabilities::Capabilities::from_parts(
+            &crate::gpu::Limits::default(),
+            crate::gpu::Features::empty(),
+            None,
+        )
+        .with_backend(backend)
+    }
+
+    const MESH: &str = include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"));
+    const MESH_OIT: &str = include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl"));
+
+    /// naga's GLSL writer rejects `textureLoad` from a depth texture, so the
+    /// mesh shaders as adapted for GL must not contain one.
+    #[test]
+    fn gl_mesh_shaders_do_not_load_the_shadow_atlas() {
+        for src in [MESH, MESH_OIT] {
+            assert!(src.contains("textureLoad(shadow_map"));
+            let gl = adapt_wgsl(src, &caps(crate::gpu::Backend::Gl));
+            assert!(!gl.contains("textureLoad(shadow_map"));
+            assert!(!gl.contains("BEGIN_PCSS_BLOCKER_SEARCH"));
+        }
+    }
+
+    #[test]
+    fn other_backends_keep_the_source() {
+        for backend in [crate::gpu::Backend::Metal, crate::gpu::Backend::Vulkan] {
+            let adapted = adapt_wgsl(MESH, &caps(backend));
+            assert!(matches!(adapted, std::borrow::Cow::Borrowed(_)));
+        }
+    }
+
+    /// The source left after the strip is still a valid module.
+    #[test]
+    fn gl_mesh_shader_still_compiles() {
+        let instance = crate::gpu::instance_from_env();
+        let Some(adapter) = pollster::block_on(instance.request_adapter(
+            &crate::gpu::headless_adapter_options(crate::gpu::PowerPreference::LowPower),
+        ))
+        .ok() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let Ok((device, _queue)) =
+            pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default()))
+        else {
+            eprintln!("skipping: no device");
+            return;
+        };
+        for src in [MESH, MESH_OIT] {
+            let gl = adapt_wgsl(src, &caps(crate::gpu::Backend::Gl));
+            let scope = crate::gpu::push_error_scope(&device, crate::gpu::ErrorFilter::Validation);
+            let _ = device.create_shader_module(crate::gpu::ShaderModuleDescriptor {
+                label: Some("gl-adapted mesh"),
+                source: crate::gpu::ShaderSource::Wgsl(gl.into_owned().into()),
+            });
+            if let Some(e) = pollster::block_on(scope.pop()) {
+                panic!("the GL-adapted mesh shader does not compile: {e}");
+            }
+        }
+    }
 }
 
 /// Prepend the module directive `@builtin(primitive_index)` needs on the

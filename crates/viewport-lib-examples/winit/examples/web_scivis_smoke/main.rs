@@ -420,8 +420,7 @@ async fn build_state(window: Arc<Window>) -> State {
     };
     surface.configure(&device, &surface_config);
 
-    let config = RendererConfig::new(format)
-        .with_downlevel_capabilities(adapter.get_downlevel_capabilities());
+    let config = RendererConfig::new(format).with_adapter(&adapter);
     let mut renderer = ViewportRenderer::try_with_config(&device, &config)
         .expect("the renderer refused the device");
     let tier = renderer.tier();

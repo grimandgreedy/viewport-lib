@@ -16,9 +16,9 @@ use crate::gpu;
 /// base vertex, indirect execution) come from the adapter. A `Device` cannot
 /// report them, so a renderer built from a device alone assumes them present,
 /// which holds on Vulkan, Metal, DX12 and WebGPU but not on every GL or older
-/// Metal device. Pass the adapter's flags with
-/// [`RendererConfig::with_downlevel_capabilities`](crate::RendererConfig::with_downlevel_capabilities)
-/// on those. [`downlevel_known`](Self::downlevel_known) says which case this is.
+/// Metal device. Pass the adapter with
+/// [`RendererConfig::with_adapter`](crate::RendererConfig::with_adapter) on
+/// those. [`downlevel_known`](Self::downlevel_known) says which case this is.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Capabilities {
@@ -49,6 +49,15 @@ pub struct Capabilities {
     /// Cube-array texture views exist. Without them point-light shadows are
     /// not sampled.
     pub cube_array_textures: bool,
+    /// Shaders can `textureLoad` a depth texture. naga's GLSL writer cannot
+    /// translate that, so this is false on wgpu's GL backend, where the PCSS
+    /// shadow filters fall back to PCF. It follows from the backend:
+    /// [`probe`](Self::probe) reads it from the adapter and
+    /// [`from_device`](Self::from_device) from the device on wgpu 29 and 30.
+    /// On wgpu 27 a device cannot report its backend, so it comes from
+    /// [`RendererConfig::with_adapter`](crate::RendererConfig::with_adapter)
+    /// and is otherwise assumed true.
+    pub depth_texture_loads: bool,
     /// Indexed draws can start at a non-zero base vertex.
     pub base_vertex: bool,
     /// Indirect draws and dispatches run.
@@ -83,11 +92,14 @@ impl Capabilities {
         device: &gpu::Device,
         downlevel: Option<&gpu::DownlevelCapabilities>,
     ) -> Self {
-        Self::from_parts(
+        let caps = Self::from_parts(
             &device.limits(),
             device.features(),
             downlevel.map(|d| d.flags),
-        )
+        );
+        #[cfg(any(wgpu29, wgpu30))]
+        let caps = caps.with_backend(device.adapter_info().backend);
+        caps
     }
 
     /// The capabilities an adapter offers, before a device exists.
@@ -103,6 +115,14 @@ impl Capabilities {
             adapter.features(),
             Some(adapter.get_downlevel_capabilities().flags),
         )
+        .with_backend(adapter.get_info().backend)
+    }
+
+    /// These capabilities with what follows from running on `backend`: on
+    /// [`Backend::Gl`](gpu::Backend::Gl), no depth-texture loads.
+    pub fn with_backend(mut self, backend: gpu::Backend) -> Self {
+        self.depth_texture_loads = backend != gpu::Backend::Gl;
+        self
     }
 
     /// The capabilities described by limits, features and downlevel flags you
@@ -132,6 +152,7 @@ impl Capabilities {
             vertex_storage: storage > 0 && flag(gpu::DownlevelFlags::VERTEX_STORAGE),
             fragment_storage: storage > 0 && flag(gpu::DownlevelFlags::FRAGMENT_STORAGE),
             cube_array_textures: flag(gpu::DownlevelFlags::CUBE_ARRAY_TEXTURES),
+            depth_texture_loads: true,
             base_vertex: flag(gpu::DownlevelFlags::BASE_VERTEX),
             indirect_execution: flag(gpu::DownlevelFlags::INDIRECT_EXECUTION),
             downlevel_known: downlevel.is_some(),

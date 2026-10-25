@@ -959,19 +959,21 @@ impl ViewportRenderer {
     ///
     /// Pass [`recommended_device_limits`](Self::recommended_device_limits) as
     /// the device's `required_limits` to get the full tier where the adapter
-    /// has it, and the adapter's downlevel capabilities through
-    /// [`RendererConfig::with_downlevel_capabilities`] so they are read rather
-    /// than assumed.
+    /// has it, and the adapter through [`RendererConfig::with_adapter`] so its
+    /// downlevel capabilities and backend are read rather than assumed.
     pub fn try_with_config(
         device: &crate::gpu::Device,
         config: &RendererConfig,
     ) -> Result<Self, crate::ViewportError> {
         let target_format = config.target_format;
         let sample_count = config.sample_count;
-        let capabilities = crate::capabilities::Capabilities::from_device(
+        let mut capabilities = crate::capabilities::Capabilities::from_device(
             device,
             config.downlevel_capabilities.as_ref(),
         );
+        if let Some(backend) = config.backend {
+            capabilities = capabilities.with_backend(backend);
+        }
         let tier = capabilities.tier();
         if tier == crate::capabilities::Tier::Unsupported {
             return Err(crate::ViewportError::DeviceUnsupported {

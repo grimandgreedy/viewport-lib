@@ -53,6 +53,11 @@ pub struct RendererConfig {
     /// the limits allow. Pass them on wgpu's GL backend and on older Metal
     /// devices, where that assumption does not hold. Default `None`.
     pub downlevel_capabilities: Option<crate::gpu::DownlevelCapabilities>,
+    /// The adapter's backend (`adapter.get_info().backend`). wgpu 29 and 30
+    /// read it from the device; on wgpu 27 a device cannot report it, so pass
+    /// it on the GL backend, whose shaders cannot load from depth textures.
+    /// Default `None`.
+    pub backend: Option<crate::gpu::Backend>,
 }
 
 impl RendererConfig {
@@ -65,6 +70,7 @@ impl RendererConfig {
             pipeline_compilation: None,
             geometry_chunk_bytes: None,
             downlevel_capabilities: None,
+            backend: None,
         }
     }
 
@@ -102,6 +108,14 @@ impl RendererConfig {
     /// [`Capabilities`](crate::Capabilities) read them rather than assume them.
     pub fn with_downlevel_capabilities(mut self, caps: crate::gpu::DownlevelCapabilities) -> Self {
         self.downlevel_capabilities = Some(caps);
+        self
+    }
+
+    /// Pass what the renderer reads from the adapter rather than assumes: its
+    /// downlevel capabilities and its backend.
+    pub fn with_adapter(mut self, adapter: &crate::gpu::Adapter) -> Self {
+        self.downlevel_capabilities = Some(adapter.get_downlevel_capabilities());
+        self.backend = Some(adapter.get_info().backend);
         self
     }
 }
