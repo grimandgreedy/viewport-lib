@@ -489,6 +489,19 @@ impl DeviceResources {
             })
         }
     }
+
+    /// `Err(TierUnsupported)` when there is no lit group 0 for an item type
+    /// to bind: the overlay-only tier.
+    pub(crate) fn require_lit_group0(&self) -> Result<(), crate::ViewportError> {
+        if self.scene_tier.is_built() || self.forward_tier.is_some() {
+            Ok(())
+        } else {
+            Err(crate::ViewportError::TierUnsupported {
+                needed: crate::capabilities::Tier::Forward,
+                have: self.capabilities.tier(),
+            })
+        }
+    }
 }
 
 impl std::ops::Deref for SceneTierSlot {
@@ -595,6 +608,9 @@ pub struct DeviceResources {
     /// The scene draws' layouts, bind groups and textures. Absent on a device
     /// below the full tier, where only the overlay family draws.
     pub(crate) scene_tier: SceneTierSlot,
+    /// Group 0 on the forward tier: built there in place of the scene tier,
+    /// `None` on every other tier.
+    pub(crate) forward_tier: Option<Box<crate::resources::forward_tier::ForwardTier>>,
     // --- Gizmo resources ---
 
     // --- Overlay guide resources (grid, axes, base overlay, constraint lines) ---
@@ -1744,9 +1760,19 @@ impl DeviceResources {
         clip_volume_buf: &crate::gpu::Buffer,
         label: &str,
     ) -> crate::gpu::BindGroup {
-        // Overlay-only: viewport slots still hold a camera group, which no
-        // overlay pipeline binds, so an empty one stands in for it.
         if !self.scene_tier.is_built() {
+            if let Some(forward) = &self.forward_tier {
+                return forward.camera_bind_group(
+                    device,
+                    camera_buf,
+                    clip_planes_buf,
+                    shadow_info_buf,
+                    clip_volume_buf,
+                    label,
+                );
+            }
+            // Overlay-only: viewport slots still hold a camera group, which no
+            // overlay pipeline binds, so an empty one stands in for it.
             let layout = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some(label),
                 entries: &[],

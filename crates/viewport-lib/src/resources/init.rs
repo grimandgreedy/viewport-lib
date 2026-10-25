@@ -1935,7 +1935,14 @@ impl DeviceResources {
             std::sync::Arc::new(crate::resources::pipeline_slot::PipelineCompiler::new(
                 crate::resources::pipeline_slot::initial_policy(),
             ));
+        let forward_tier = (capabilities.tier() == crate::capabilities::Tier::Forward).then(|| {
+            Box::new(crate::resources::forward_tier::ForwardTier::new(
+                device,
+                &capabilities,
+            ))
+        });
         let resources = Self {
+            forward_tier,
             capabilities,
             target_format,
             sample_count,

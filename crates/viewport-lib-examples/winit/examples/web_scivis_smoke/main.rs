@@ -22,7 +22,7 @@
 //! the thing to go and fix. Click the surface to run a fresh pick at the cursor.
 //!
 //! On a browser with no WebGPU adapter the page comes up on WebGL2, where the
-//! renderer runs at the overlay-only tier. The CPU steps run the same; the mesh
+//! renderer runs below the full tier. The CPU steps run the same; the mesh
 //! upload is expected to be refused, and an overlay frame drawn under error
 //! scopes checks the overlay shaders on the real GL driver. The first
 //! line names the API the page landed on, which is what `scripts/check_web.sh`

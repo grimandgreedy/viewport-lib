@@ -1,6 +1,7 @@
 use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
 
+mod forward;
 mod instanced;
 pub(crate) use instanced::feature_set_violations as instanced_feature_set_violations;
 mod lighting;
@@ -189,8 +190,10 @@ impl ViewportRenderer {
                 None => self.resources.process_uploads(device, queue),
             }
         }
-        // The rest is the scene, which an overlay-only renderer does not draw.
+        // The rest is the scene, which a renderer below the full tier does not
+        // draw. The forward tier lights its item types from its own group 0.
         if !scene_tier {
+            self.prepare_forward_lights(queue, frame, scene_fx);
             return;
         }
 
@@ -279,6 +282,7 @@ impl ViewportRenderer {
             &mut self.shadow,
             &mut self.last_cluster_stats,
             &mut self.last_frustum_culled_lights,
+            &mut self.last_lights_dropped,
             &self.viewport_slots,
             &self.item_type_plugins,
             plugin_frame_index,
@@ -814,6 +818,8 @@ impl ViewportRenderer {
         self.ensure_viewport_slot(device, frame.camera.viewport_index);
         if self.resources.scene_tier.is_built() {
             self.prepare_viewport_scene(device, queue, frame, viewport_fx, sink);
+        } else {
+            self.prepare_viewport_forward(queue, frame, viewport_fx);
         }
         self.prepare_viewport_overlays(device, queue, frame);
         self.prepare_debug_buffer(frame);
@@ -1385,6 +1391,7 @@ impl ViewportRenderer {
                 Self::scene_item_count(frame)
             },
             hdr_drawn_as_ldr: false,
+            lights_dropped: self.last_lights_dropped,
             ..self.last_stats
         };
         self.last_stats = stats;

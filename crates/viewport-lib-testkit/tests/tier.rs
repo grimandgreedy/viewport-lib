@@ -15,13 +15,13 @@ const W: u32 = 160;
 const H: u32 = 120;
 
 #[test]
-fn webgl2_profile_builds_an_overlay_only_renderer() {
+fn webgl2_profile_builds_a_forward_renderer() {
     let Some(d) = headless_device_full(&DeviceProfile::downlevel_webgl2("tier-webgl2")) else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
     let caps = Capabilities::from_device(&d.device, Some(&d.downlevel));
-    assert_eq!(caps.tier(), Tier::OverlayOnly);
+    assert_eq!(caps.tier(), Tier::Forward);
     assert!(!caps.compute);
     assert!(!caps.vertex_storage && !caps.fragment_storage);
     assert!(!caps.cube_array_textures);
@@ -30,7 +30,7 @@ fn webgl2_profile_builds_an_overlay_only_renderer() {
     // out, so the tier does not depend on the flags being passed.
     assert_eq!(
         Capabilities::from_device(&d.device, None).tier(),
-        Tier::OverlayOnly
+        Tier::Forward
     );
 
     // Construction builds nothing the device cannot create: a layout over its
@@ -38,9 +38,38 @@ fn webgl2_profile_builds_an_overlay_only_renderer() {
     let config = viewport_lib::RendererConfig::new(Harness::DEFAULT_TARGET_FORMAT)
         .with_downlevel_capabilities(d.downlevel);
     let mut renderer = ViewportRenderer::try_with_config(&d.device, &config)
-        .expect("an overlay-only renderer builds on WebGL2 limits");
+        .expect("a forward renderer builds on WebGL2 limits");
+    assert_eq!(renderer.tier(), Tier::Forward);
+    assert_scene_calls_refused(&mut renderer, &d.device, &d.queue);
+}
+
+/// WebGL2's limits with two bind groups: below the forward tier, so only the
+/// overlay family builds.
+fn overlay_only_profile() -> DeviceProfile {
+    DeviceProfile::downlevel_webgl2("tier-overlay-only").max_bind_groups(2)
+}
+
+#[test]
+fn two_bind_groups_build_an_overlay_only_renderer() {
+    let Some(d) = headless_device_full(&overlay_only_profile()) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let config = viewport_lib::RendererConfig::new(Harness::DEFAULT_TARGET_FORMAT)
+        .with_downlevel_capabilities(d.downlevel);
+    let mut renderer = ViewportRenderer::try_with_config(&d.device, &config)
+        .expect("an overlay-only renderer builds on WebGL2 limits with two bind groups");
     assert_eq!(renderer.tier(), Tier::OverlayOnly);
     assert_scene_calls_refused(&mut renderer, &d.device, &d.queue);
+    // No item type registers without a lit group 0, whatever it asks for.
+    match renderer.with_item_type_plugin(&d.device, Box::new(Modest)) {
+        Err(ViewportError::TierUnsupported {
+            needed: Tier::Forward,
+            have: Tier::OverlayOnly,
+        }) => {}
+        other => panic!("expected TierUnsupported, got {other:?}"),
+    }
+    assert!(!renderer.has_item_type_plugin("tier_test.modest"));
 }
 
 /// The calls that add scene content say why they cannot.
@@ -49,14 +78,13 @@ fn assert_scene_calls_refused(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
 ) {
+    let have = renderer.tier();
+    assert!(have < Tier::Full);
     let refused = |e: ViewportError| {
         assert!(
             matches!(
                 e,
-                ViewportError::TierUnsupported {
-                    needed: Tier::Full,
-                    have: Tier::OverlayOnly
-                }
+                ViewportError::TierUnsupported { needed: Tier::Full, have: h } if h == have
             ),
             "expected TierUnsupported, got {e}"
         )
@@ -68,12 +96,6 @@ fn assert_scene_calls_refused(
             .upload_mesh_data(device, &mesh)
             .unwrap_err(),
     );
-    refused(
-        renderer
-            .with_item_type_plugin(device, Box::new(Modest))
-            .unwrap_err(),
-    );
-    assert!(!renderer.has_item_type_plugin("tier_test.modest"));
     let image = viewport_lib::TextureData::srgb(1, 1, vec![255; 4]);
     refused(
         renderer
@@ -95,15 +117,20 @@ fn assert_scene_calls_refused(
     assert_eq!(renderer.resources().registered_deformer_count(), 0);
 }
 
-/// A device with storage buffers and no compute. It lands on the overlay-only
-/// tier, and its overlay layouts (which still bind storage) build.
+/// A device with storage buffers and no compute. It lands on the forward tier,
+/// and its overlay layouts build.
 fn no_compute_profile() -> DeviceProfile {
     DeviceProfile::harness().without_downlevel(wgpu::DownlevelFlags::COMPUTE_SHADERS)
 }
 
 #[test]
-fn overlay_only_draws_overlays_as_the_full_tier_does() {
+fn no_compute_draws_overlays_as_the_full_tier_does() {
     assert_overlays_match_the_full_tier(&no_compute_profile());
+}
+
+#[test]
+fn overlay_only_draws_overlays_as_the_full_tier_does() {
+    assert_overlays_match_the_full_tier(&overlay_only_profile());
 }
 
 /// The overlay family binds no storage buffer and no compute, so a device with
@@ -124,9 +151,9 @@ fn assert_overlays_match_the_full_tier(profile: &DeviceProfile) {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    assert_eq!(overlay.renderer.tier(), Tier::OverlayOnly);
     assert_scene_calls_refused(&mut overlay.renderer, &overlay.device, &overlay.queue);
-    // No item type registers without the scene resources.
+    // None of the renderer's own item types accepts a tier below the full one
+    // yet.
     assert!(
         !overlay
             .renderer
@@ -204,7 +231,7 @@ fn overlay_only_skips_scene_content_and_counts_it() {
     let pixels = overlay.render(&frame, W, H);
     let stats = overlay.stats();
     assert_eq!(stats.items_skipped_by_tier as usize, built.items.len());
-    assert_eq!(stats.tier, Tier::OverlayOnly);
+    assert_eq!(stats.tier, Tier::Forward);
     // Nothing but the clear colour.
     assert!(pixels.chunks_exact(4).all(|p| p == &pixels[..4]));
 }
@@ -316,6 +343,168 @@ impl ItemTypePlugin for Modest {
     }
     fn init_gpu(&mut self, _: &wgpu::Device, _: &viewport_lib::plugin_api::SharedBindings<'_>) {
         panic!("init_gpu ran on an overlay-only renderer");
+    }
+}
+
+/// An item type that accepts the forward tier and, in `init_gpu`, builds a
+/// pipeline lit through the shared scene-lighting helper against the shared
+/// group 0, recording any validation error.
+#[derive(Default)]
+struct ForwardLit {
+    built: Option<Result<(), String>>,
+}
+
+const FORWARD_LIT_BODY: &str = "
+@group(0) @binding(0) var<uniform> test_view_proj: mat4x4<f32>;
+@group(0) @binding(3) var<uniform> test_lights: Lights;
+
+struct TestOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world: vec3<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) position: vec3<f32>) -> TestOut {
+    var out: TestOut;
+    out.clip = test_view_proj * vec4<f32>(position, 1.0);
+    out.world = position;
+    return out;
+}
+
+@fragment
+fn fs_main(in: TestOut) -> @location(0) vec4<f32> {
+    let lit = apply_scene_lighting(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0), false, in.world, test_lights);
+    return vec4<f32>(lit, 1.0);
+}
+";
+
+impl ItemTypePlugin for ForwardLit {
+    fn type_name(&self) -> &'static str {
+        "tier_test.forward_lit"
+    }
+    fn requires(&self) -> Requirements {
+        Requirements::forward_tier()
+    }
+    fn init_gpu(
+        &mut self,
+        device: &wgpu::Device,
+        shared: &viewport_lib::plugin_api::SharedBindings<'_>,
+    ) {
+        let source = format!(
+            "{}\n{}",
+            viewport_lib::plugin_api::shared_wgsl::SHARED_SCENE_LIGHTING_WGSL,
+            FORWARD_LIT_BODY
+        );
+        let source = shared.adapt_wgsl(&source).into_owned();
+        let scope = viewport_lib::gpu::push_error_scope(device, wgpu::ErrorFilter::Validation);
+        use viewport_lib::plugin_api::builders;
+        let module = builders::wgsl_module(device, "forward_lit", source);
+        let layout = builders::pipeline_layout(device, "forward_lit", &[shared.group0_layout]);
+        let _ = builders::render_pipeline(
+            device,
+            builders::RenderPipelineDesc {
+                label: "forward_lit",
+                layout: &layout,
+                vertex_module: &module,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: 12,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                }],
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(Harness::DEFAULT_TARGET_FORMAT.into())],
+                }),
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                cache: None,
+            },
+        );
+        self.built = Some(match pollster::block_on(scope.pop()) {
+            None => Ok(()),
+            Some(e) => Err(e.to_string()),
+        });
+    }
+}
+
+/// On the forward tier an item type that accepts it registers and builds a lit
+/// pipeline against the forward group 0; one that needs the full tier is
+/// declined. The same plugin builds on the full tier too.
+#[test]
+fn forward_tier_registers_item_types_that_accept_it() {
+    for profile in [
+        DeviceProfile::downlevel_webgl2("tier-forward-plugin"),
+        DeviceProfile::harness(),
+    ] {
+        let Some(mut harness) = Harness::with_profile(&profile) else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let tier = harness.renderer.tier();
+        harness
+            .renderer
+            .with_item_type_plugin(&harness.device, Box::new(ForwardLit::default()))
+            .unwrap_or_else(|e| panic!("{tier}: {e}"));
+        let plugin = harness
+            .renderer
+            .item_type_plugin::<ForwardLit>("tier_test.forward_lit")
+            .expect("registered");
+        assert_eq!(plugin.built, Some(Ok(())), "{tier}");
+
+        if tier == Tier::Forward {
+            match harness
+                .renderer
+                .with_item_type_plugin(&harness.device, Box::new(Greedy))
+            {
+                Err(ViewportError::PluginUnsupported { .. }) => {}
+                other => panic!("expected PluginUnsupported, got {other:?}"),
+            }
+            // Nothing the renderer ships with accepts the forward tier yet.
+            assert!(
+                !harness
+                    .renderer
+                    .has_item_type_plugin("viewport_lib.point_cloud")
+            );
+        }
+    }
+}
+
+/// The forward light list holds `FORWARD_MAX_LIGHTS`, and the frame says how
+/// many it left out. The full tier's holds all of them.
+#[test]
+fn forward_light_list_caps_and_counts_what_it_drops() {
+    let lights = viewport_lib::resources::FORWARD_MAX_LIGHTS + 4;
+    for (profile, dropped) in [
+        (DeviceProfile::downlevel_webgl2("tier-forward-lights"), 4),
+        (DeviceProfile::harness(), 0),
+    ] {
+        let Some(mut harness) = Harness::with_profile(&profile) else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        // Lights and no scene content: the forward tier has no meshes to draw
+        // yet, and the cap does not depend on what they light.
+        let mut frame = viewport_lib::FrameData::new(
+            viewport_lib::CameraFrame::from_camera(
+                &viewport_lib::Camera::default(),
+                [W as f32, H as f32],
+            ),
+            viewport_lib::SceneFrame::default(),
+        );
+        // The default lighting carries a light of its own.
+        frame.effects.lighting.lights.clear();
+        frame.scene.lights = vec![viewport_lib::LightSource::default(); lights];
+        let _ = harness.render(&frame, W, H);
+        assert_eq!(
+            harness.stats().lights_dropped,
+            dropped,
+            "{}",
+            harness.renderer.tier()
+        );
     }
 }
 
@@ -549,7 +738,7 @@ fn sweep_catalogue(profile: &DeviceProfile) {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    assert_eq!(overlay.renderer.tier(), Tier::OverlayOnly);
+    assert!(overlay.renderer.tier() < Tier::Full);
     for scene in catalogue() {
         let built = full.build_scene(&scene);
         let frame = frame_for(&built, &scene.cameras[0].camera, [W as f32, H as f32]);

@@ -658,8 +658,13 @@ pub struct FrameStats {
     /// overlay-only renderer draws the overlays and ignores the scene.
     pub items_skipped_by_tier: u32,
     /// Set when the frame asked for the HDR path and was drawn through the LDR
-    /// path, which is what an overlay-only renderer does.
+    /// path, which is what a renderer below the full tier does.
     pub hdr_drawn_as_ldr: bool,
+    /// Lights left out of this frame's light list because it was full, after
+    /// the frustum cull and ranked lowest first. The list holds 512 on the full
+    /// tier and [`FORWARD_MAX_LIGHTS`](crate::resources::FORWARD_MAX_LIGHTS) on
+    /// the forward tier.
+    pub lights_dropped: u32,
 }
 
 #[cfg(test)]

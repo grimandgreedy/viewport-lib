@@ -45,7 +45,12 @@ pub fn wgsl_module<'a>(
 /// (unshadowed). On a device whose shaders cannot load from depth textures
 /// (wgpu's GL backend) the PCSS blocker search between
 /// `BEGIN_PCSS_BLOCKER_SEARCH` / `END_PCSS_BLOCKER_SEARCH` is removed, and the
-/// PCSS tiers filter as PCF. Every other source comes back unchanged.
+/// PCSS tiers filter as PCF. On the forward tier, whose group 0 has no storage
+/// buffers, the light list between `BEGIN_LIGHT_LIST` / `END_LIGHT_LIST` is
+/// declared a uniform array of [`FORWARD_MAX_LIGHTS`](crate::resources::FORWARD_MAX_LIGHTS)
+/// and the cluster lookups between `BEGIN_CLUSTER_LOOKUP` / `BEGIN_CLUSTER_INDEX`
+/// and their ends walk every light instead. Every other source comes back
+/// unchanged.
 pub fn adapt_wgsl<'a>(
     source: impl Into<std::borrow::Cow<'a, str>>,
     caps: &crate::capabilities::Capabilities,
@@ -59,6 +64,28 @@ pub fn adapt_wgsl<'a>(
             "// BEGIN_POINT_SHADOW_SAMPLE",
             "// END_POINT_SHADOW_SAMPLE",
             "return 1.0;",
+        );
+        source = std::borrow::Cow::Owned(out);
+    }
+    const LIGHT_LIST: &str = "// BEGIN_LIGHT_LIST";
+    if caps.tier() == crate::capabilities::Tier::Forward && source.contains(LIGHT_LIST) {
+        let mut out = source.into_owned();
+        let list = format!(
+            "@group(0) @binding(13) var<uniform> lights_storage: array<SingleLight, {}>;",
+            crate::resources::FORWARD_MAX_LIGHTS
+        );
+        replace_regions(&mut out, LIGHT_LIST, "// END_LIGHT_LIST", &list);
+        replace_regions(
+            &mut out,
+            "// BEGIN_CLUSTER_LOOKUP",
+            "// END_CLUSTER_LOOKUP",
+            "r.fallback = true;\n    r.start = 0u;\n    r.count = total_count;",
+        );
+        replace_regions(
+            &mut out,
+            "// BEGIN_CLUSTER_INDEX",
+            "// END_CLUSTER_INDEX",
+            "return j;",
         );
         source = std::borrow::Cow::Owned(out);
     }

@@ -107,9 +107,18 @@ impl DeviceResources {
     /// Group-0 bind layout shared by every scene pipeline. Use as group 0
     /// when building a plugin pipeline layout.
     pub fn shared_bindings(&self) -> SharedBindings<'_> {
+        let (group0_layout, shadow_group0_layout) = match &self.forward_tier {
+            Some(forward) if !self.scene_tier.is_built() => {
+                (&forward.camera_bgl, &forward.shadow_camera_bgl)
+            }
+            _ => (
+                &self.scene_tier.binds.camera_bgl,
+                &self.scene_tier.shadow.camera_bgl,
+            ),
+        };
         SharedBindings {
-            group0_layout: &self.scene_tier.binds.camera_bgl,
-            shadow_group0_layout: &self.scene_tier.shadow.camera_bgl,
+            group0_layout,
+            shadow_group0_layout,
             sample_count: self.sample_count,
             capabilities: &self.capabilities,
         }

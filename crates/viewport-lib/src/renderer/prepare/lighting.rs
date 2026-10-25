@@ -16,6 +16,7 @@ impl ViewportRenderer {
         shadow: &mut ShadowState,
         last_cluster_stats: &mut Option<crate::resources::gpu::clustered::ClusterStats>,
         last_frustum_culled_lights: &mut u32,
+        last_lights_dropped: &mut u32,
         viewport_slots: &[ViewportSlot],
         item_type_plugins: &crate::renderer::item_plugins::registry::ItemPluginRegistry,
         frame_index: u64,
@@ -47,273 +48,19 @@ impl ViewportRenderer {
             (glam::Vec3::ZERO, auto_extent)
         };
 
-        /// Build a light-space view-projection matrix for shadow mapping.
-        fn compute_shadow_matrix(
-            kind: &LightKind,
-            shadow_center: glam::Vec3,
-            shadow_extent: f32,
-        ) -> glam::Mat4 {
-            match kind {
-                LightKind::Directional { direction } => {
-                    let dir = glam::Vec3::from(*direction).normalize();
-                    let light_up = if dir.z.abs() > 0.99 {
-                        glam::Vec3::X
-                    } else {
-                        glam::Vec3::Z
-                    };
-                    let light_pos = shadow_center + dir * shadow_extent * 2.0;
-                    let light_view = glam::Mat4::look_at_rh(light_pos, shadow_center, light_up);
-                    let light_proj = glam::Mat4::orthographic_rh(
-                        -shadow_extent,
-                        shadow_extent,
-                        -shadow_extent,
-                        shadow_extent,
-                        0.01,
-                        shadow_extent * 5.0,
-                    );
-                    light_proj * light_view
-                }
-                LightKind::Point {
-                    position, range, ..
-                } => {
-                    let pos = glam::Vec3::from(*position);
-                    let to_center = (shadow_center - pos).normalize();
-                    let light_up = if to_center.z.abs() > 0.99 {
-                        glam::Vec3::X
-                    } else {
-                        glam::Vec3::Z
-                    };
-                    let light_view = glam::Mat4::look_at_rh(pos, shadow_center, light_up);
-                    let light_proj =
-                        glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, *range);
-                    light_proj * light_view
-                }
-                LightKind::Spot {
-                    position,
-                    direction,
-                    range,
-                    ..
-                } => {
-                    let pos = glam::Vec3::from(*position);
-                    let dir = glam::Vec3::from(*direction).normalize();
-                    let look_target = pos + dir;
-                    let up = if dir.z.abs() > 0.99 {
-                        glam::Vec3::X
-                    } else {
-                        glam::Vec3::Z
-                    };
-                    let light_view = glam::Mat4::look_at_rh(pos, look_target, up);
-                    let light_proj =
-                        glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, *range);
-                    light_proj * light_view
-                }
-                _ => unreachable!("unhandled LightKind variant"),
-            }
-        }
-
-        /// Convert a `LightSource` to `SingleLightUniform`, computing shadow matrix for lights[0].
-        fn build_single_light_uniform(
-            src: &LightSource,
-            shadow_center: glam::Vec3,
-            shadow_extent: f32,
-            compute_shadow: bool,
-        ) -> SingleLightUniform {
-            let shadow_mat = if compute_shadow {
-                compute_shadow_matrix(&src.kind, shadow_center, shadow_extent)
-            } else {
-                glam::Mat4::IDENTITY
-            };
-
-            match &src.kind {
-                LightKind::Directional { direction } => SingleLightUniform {
-                    light_view_proj: shadow_mat.to_cols_array_2d(),
-                    pos_or_dir: *direction,
-                    light_type: 0,
-                    colour: src.colour.to_linear_rgb(),
-                    intensity: src.intensity,
-                    range: 0.0,
-                    inner_angle: 0.0,
-                    outer_angle: 0.0,
-                    _pad_align: 0,
-                    spot_direction: [0.0, -1.0, 0.0],
-                    point_shadow_slot: -1,
-                    point_shadow_near: 0.1,
-                    radius: 0.0,
-                    channel_mask: src.channel_mask,
-                    _reserved: 0,
-                },
-                LightKind::Point {
-                    position,
-                    range,
-                    radius,
-                } => SingleLightUniform {
-                    light_view_proj: shadow_mat.to_cols_array_2d(),
-                    pos_or_dir: *position,
-                    light_type: 1,
-                    colour: src.colour.to_linear_rgb(),
-                    intensity: src.intensity,
-                    range: *range,
-                    inner_angle: 0.0,
-                    outer_angle: 0.0,
-                    _pad_align: 0,
-                    spot_direction: [0.0, -1.0, 0.0],
-                    point_shadow_slot: -1,
-                    point_shadow_near: 0.1,
-                    radius: *radius,
-                    channel_mask: src.channel_mask,
-                    _reserved: 0,
-                },
-                LightKind::Spot {
-                    position,
-                    direction,
-                    range,
-                    inner_angle,
-                    outer_angle,
-                    radius,
-                } => SingleLightUniform {
-                    light_view_proj: shadow_mat.to_cols_array_2d(),
-                    pos_or_dir: *position,
-                    light_type: 2,
-                    colour: src.colour.to_linear_rgb(),
-                    intensity: src.intensity,
-                    range: *range,
-                    inner_angle: *inner_angle,
-                    outer_angle: *outer_angle,
-                    _pad_align: 0,
-                    spot_direction: *direction,
-                    point_shadow_slot: -1,
-                    point_shadow_near: 0.1,
-                    radius: *radius,
-                    channel_mask: src.channel_mask,
-                    _reserved: 0,
-                },
-                _ => unreachable!("unhandled LightKind variant"),
-            }
-        }
-
-        // Lights contributed by item types. An emissive scatter volume becomes
-        // a virtual point light this way, so nearby opaque surfaces pick up
-        // warm illumination without the consumer authoring a matching light by
-        // hand. Appended after the consumer's own lights, and dropped like any
-        // other if the per-frame cap is hit.
-        let plugin_lights: Vec<LightSource> = {
-            let ctx = crate::plugin_api::LightContext {
-                resources,
-                camera: &frame.camera.render_camera,
-                frame_index,
-            };
-            item_type_plugins
+        let plugin_lights = collect_plugin_lights(resources, item_type_plugins, frame, frame_index);
+        let ranked = rank_lights(
+            lighting
+                .lights
                 .iter()
-                .filter_map(|(name, plugin)| {
-                    let items = crate::plugin_api::ItemCollections::new(
-                        crate::renderer::item_plugins::plugin_collections_slice(frame, name),
-                    );
-                    Some(plugin.contribute_lights(&items, &ctx))
-                })
-                .flatten()
-                .collect()
-        };
-        let raw_lights_unculled: Vec<&LightSource> = lighting
-            .lights
-            .iter()
-            .chain(frame.scene.lights.iter())
-            .chain(plugin_lights.iter())
-            .collect();
-
-        // CPU per-frame frustum cull. Sphere-vs-frustum for point lights,
-        // cone-vs-frustum for spot lights, trivial-true for directional.
-        // Dropping off-screen lights here keeps the cluster build pass and
-        // the per-fragment iteration both bounded by what is actually visible.
-        // Directional lights always survive : they affect every fragment.
-        let cull_frustum = crate::camera::frustum::Frustum::from_view_proj(
-            &frame.camera.render_camera.view_proj(),
+                .chain(frame.scene.lights.iter())
+                .chain(plugin_lights.iter()),
+            frame,
+            crate::resources::MAX_SCENE_LIGHTS,
         );
-        let mut frustum_culled = 0u32;
-        let raw_lights: Vec<&LightSource> = raw_lights_unculled
-            .into_iter()
-            .filter(|l| match l.kind {
-                LightKind::Directional { .. } => true,
-                LightKind::Point {
-                    position, range, ..
-                } => {
-                    let keep = !cull_frustum.cull_sphere(glam::Vec3::from(position), range);
-                    if !keep {
-                        frustum_culled += 1;
-                    }
-                    keep
-                }
-                LightKind::Spot {
-                    position,
-                    direction,
-                    range,
-                    outer_angle,
-                    ..
-                } => {
-                    let axis = glam::Vec3::from(direction).normalize_or_zero();
-                    if axis.length_squared() < 1e-8 {
-                        return true;
-                    }
-                    let keep = !cull_frustum.cull_cone(
-                        glam::Vec3::from(position),
-                        axis,
-                        outer_angle,
-                        range,
-                    );
-                    if !keep {
-                        frustum_culled += 1;
-                    }
-                    keep
-                }
-                _ => false,
-            })
-            .collect();
-        *last_frustum_culled_lights = frustum_culled;
-
-        // Rank the light array: first directional light pinned at slot 0 (the
-        // cascaded-shadow caster), the rest ordered by
-        // `importance * proximity_weight` descending (stable, so equal ranks
-        // keep submission order). The order does two jobs: over
-        // MAX_SCENE_LIGHTS the tail is dropped, and the cluster build keeps
-        // each cell's lights in array order, so a cluster that overflows its
-        // fixed slice drops the lowest-priority lights deterministically.
-        // Directional lights are treated as infinitely close
-        // (proximity_weight = 1). Shading itself is order-independent.
-        let combined_lights: Vec<&LightSource> = {
-            let camera_pos = glam::Vec3::from(frame.camera.render_camera.eye_position);
-            let directional_first = raw_lights
-                .iter()
-                .position(|l| matches!(l.kind, LightKind::Directional { .. }));
-            let mut out: Vec<&LightSource> = Vec::with_capacity(crate::resources::MAX_SCENE_LIGHTS);
-            if let Some(i) = directional_first {
-                out.push(raw_lights[i]);
-            }
-            let mut rest: Vec<(f32, &LightSource)> = raw_lights
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| Some(*i) != directional_first)
-                .map(|(_, l)| {
-                    let proximity = match l.kind {
-                        LightKind::Directional { .. } => 1.0,
-                        LightKind::Point {
-                            position, range, ..
-                        }
-                        | LightKind::Spot {
-                            position, range, ..
-                        } => {
-                            let d = (glam::Vec3::from(position) - camera_pos).length();
-                            // Light is fully relevant within `range`; fades to ~0 beyond 4x range.
-                            (range / (range + d.max(0.0))).clamp(0.0, 1.0)
-                        }
-                        _ => 1.0,
-                    };
-                    (l.importance.max(0.0) * proximity, *l)
-                })
-                .collect();
-            rest.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-            let take = crate::resources::MAX_SCENE_LIGHTS - out.len();
-            out.extend(rest.into_iter().take(take).map(|(_, l)| l));
-            out
-        };
+        *last_frustum_culled_lights = ranked.frustum_culled;
+        *last_lights_dropped = ranked.dropped;
+        let combined_lights = ranked.lights;
 
         let light_count = combined_lights.len() as u32;
 
@@ -953,5 +700,285 @@ impl ViewportRenderer {
             cascade_view_projs,
             effective_cascade_count,
         }
+    }
+}
+
+/// Build a light-space view-projection matrix for shadow mapping.
+fn compute_shadow_matrix(
+    kind: &LightKind,
+    shadow_center: glam::Vec3,
+    shadow_extent: f32,
+) -> glam::Mat4 {
+    match kind {
+        LightKind::Directional { direction } => {
+            let dir = glam::Vec3::from(*direction).normalize();
+            let light_up = if dir.z.abs() > 0.99 {
+                glam::Vec3::X
+            } else {
+                glam::Vec3::Z
+            };
+            let light_pos = shadow_center + dir * shadow_extent * 2.0;
+            let light_view = glam::Mat4::look_at_rh(light_pos, shadow_center, light_up);
+            let light_proj = glam::Mat4::orthographic_rh(
+                -shadow_extent,
+                shadow_extent,
+                -shadow_extent,
+                shadow_extent,
+                0.01,
+                shadow_extent * 5.0,
+            );
+            light_proj * light_view
+        }
+        LightKind::Point {
+            position, range, ..
+        } => {
+            let pos = glam::Vec3::from(*position);
+            let to_center = (shadow_center - pos).normalize();
+            let light_up = if to_center.z.abs() > 0.99 {
+                glam::Vec3::X
+            } else {
+                glam::Vec3::Z
+            };
+            let light_view = glam::Mat4::look_at_rh(pos, shadow_center, light_up);
+            let light_proj =
+                glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, *range);
+            light_proj * light_view
+        }
+        LightKind::Spot {
+            position,
+            direction,
+            range,
+            ..
+        } => {
+            let pos = glam::Vec3::from(*position);
+            let dir = glam::Vec3::from(*direction).normalize();
+            let look_target = pos + dir;
+            let up = if dir.z.abs() > 0.99 {
+                glam::Vec3::X
+            } else {
+                glam::Vec3::Z
+            };
+            let light_view = glam::Mat4::look_at_rh(pos, look_target, up);
+            let light_proj =
+                glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, *range);
+            light_proj * light_view
+        }
+        _ => unreachable!("unhandled LightKind variant"),
+    }
+}
+
+/// Convert a `LightSource` to `SingleLightUniform`, computing shadow matrix for lights[0].
+pub(super) fn build_single_light_uniform(
+    src: &LightSource,
+    shadow_center: glam::Vec3,
+    shadow_extent: f32,
+    compute_shadow: bool,
+) -> SingleLightUniform {
+    let shadow_mat = if compute_shadow {
+        compute_shadow_matrix(&src.kind, shadow_center, shadow_extent)
+    } else {
+        glam::Mat4::IDENTITY
+    };
+
+    match &src.kind {
+        LightKind::Directional { direction } => SingleLightUniform {
+            light_view_proj: shadow_mat.to_cols_array_2d(),
+            pos_or_dir: *direction,
+            light_type: 0,
+            colour: src.colour.to_linear_rgb(),
+            intensity: src.intensity,
+            range: 0.0,
+            inner_angle: 0.0,
+            outer_angle: 0.0,
+            _pad_align: 0,
+            spot_direction: [0.0, -1.0, 0.0],
+            point_shadow_slot: -1,
+            point_shadow_near: 0.1,
+            radius: 0.0,
+            channel_mask: src.channel_mask,
+            _reserved: 0,
+        },
+        LightKind::Point {
+            position,
+            range,
+            radius,
+        } => SingleLightUniform {
+            light_view_proj: shadow_mat.to_cols_array_2d(),
+            pos_or_dir: *position,
+            light_type: 1,
+            colour: src.colour.to_linear_rgb(),
+            intensity: src.intensity,
+            range: *range,
+            inner_angle: 0.0,
+            outer_angle: 0.0,
+            _pad_align: 0,
+            spot_direction: [0.0, -1.0, 0.0],
+            point_shadow_slot: -1,
+            point_shadow_near: 0.1,
+            radius: *radius,
+            channel_mask: src.channel_mask,
+            _reserved: 0,
+        },
+        LightKind::Spot {
+            position,
+            direction,
+            range,
+            inner_angle,
+            outer_angle,
+            radius,
+        } => SingleLightUniform {
+            light_view_proj: shadow_mat.to_cols_array_2d(),
+            pos_or_dir: *position,
+            light_type: 2,
+            colour: src.colour.to_linear_rgb(),
+            intensity: src.intensity,
+            range: *range,
+            inner_angle: *inner_angle,
+            outer_angle: *outer_angle,
+            _pad_align: 0,
+            spot_direction: *direction,
+            point_shadow_slot: -1,
+            point_shadow_near: 0.1,
+            radius: *radius,
+            channel_mask: src.channel_mask,
+            _reserved: 0,
+        },
+        _ => unreachable!("unhandled LightKind variant"),
+    }
+}
+
+/// Lights contributed by item types. An emissive scatter volume becomes a
+/// virtual point light this way, so nearby opaque surfaces pick up warm
+/// illumination without the consumer authoring a matching light by hand.
+/// Appended after the consumer's own lights, and dropped like any other if
+/// the per-frame cap is hit.
+pub(super) fn collect_plugin_lights(
+    resources: &DeviceResources,
+    item_type_plugins: &crate::renderer::item_plugins::registry::ItemPluginRegistry,
+    frame: &FrameData,
+    frame_index: u64,
+) -> Vec<LightSource> {
+    let ctx = crate::plugin_api::LightContext {
+        resources,
+        camera: &frame.camera.render_camera,
+        frame_index,
+    };
+    item_type_plugins
+        .iter()
+        .filter_map(|(name, plugin)| {
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            Some(plugin.contribute_lights(&items, &ctx))
+        })
+        .flatten()
+        .collect()
+}
+
+/// A frame's lights after the frustum cull and the cap, in upload order.
+pub(super) struct RankedLights<'a> {
+    pub(super) lights: Vec<&'a LightSource>,
+    /// Point and spot lights the frustum cull removed.
+    pub(super) frustum_culled: u32,
+    /// Lights that survived the cull but fell past the cap.
+    pub(super) dropped: u32,
+}
+
+/// Cull `lights` against the camera frustum and rank what is left, keeping at
+/// most `cap`.
+pub(super) fn rank_lights<'a>(
+    lights: impl Iterator<Item = &'a LightSource>,
+    frame: &FrameData,
+    cap: usize,
+) -> RankedLights<'a> {
+    // CPU per-frame frustum cull. Sphere-vs-frustum for point lights,
+    // cone-vs-frustum for spot lights, trivial-true for directional.
+    // Dropping off-screen lights here keeps the cluster build pass and
+    // the per-fragment iteration both bounded by what is actually visible.
+    // Directional lights always survive : they affect every fragment.
+    let cull_frustum =
+        crate::camera::frustum::Frustum::from_view_proj(&frame.camera.render_camera.view_proj());
+    let mut frustum_culled = 0u32;
+    let raw_lights: Vec<&LightSource> = lights
+        .filter(|l| match l.kind {
+            LightKind::Directional { .. } => true,
+            LightKind::Point {
+                position, range, ..
+            } => {
+                let keep = !cull_frustum.cull_sphere(glam::Vec3::from(position), range);
+                if !keep {
+                    frustum_culled += 1;
+                }
+                keep
+            }
+            LightKind::Spot {
+                position,
+                direction,
+                range,
+                outer_angle,
+                ..
+            } => {
+                let axis = glam::Vec3::from(direction).normalize_or_zero();
+                if axis.length_squared() < 1e-8 {
+                    return true;
+                }
+                let keep =
+                    !cull_frustum.cull_cone(glam::Vec3::from(position), axis, outer_angle, range);
+                if !keep {
+                    frustum_culled += 1;
+                }
+                keep
+            }
+            _ => false,
+        })
+        .collect();
+
+    // Rank the light array: first directional light pinned at slot 0 (the
+    // cascaded-shadow caster), the rest ordered by
+    // `importance * proximity_weight` descending (stable, so equal ranks
+    // keep submission order). The order does two jobs: over the cap the
+    // tail is dropped, and the cluster build keeps each cell's lights in
+    // array order, so a cluster that overflows its fixed slice drops the
+    // lowest-priority lights deterministically. Directional lights are
+    // treated as infinitely close (proximity_weight = 1). Shading itself is
+    // order-independent.
+    let camera_pos = glam::Vec3::from(frame.camera.render_camera.eye_position);
+    let directional_first = raw_lights
+        .iter()
+        .position(|l| matches!(l.kind, LightKind::Directional { .. }));
+    let mut out: Vec<&LightSource> = Vec::with_capacity(cap.min(raw_lights.len()));
+    if let Some(i) = directional_first {
+        out.push(raw_lights[i]);
+    }
+    let mut rest: Vec<(f32, &LightSource)> = raw_lights
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| Some(*i) != directional_first)
+        .map(|(_, l)| {
+            let proximity = match l.kind {
+                LightKind::Directional { .. } => 1.0,
+                LightKind::Point {
+                    position, range, ..
+                }
+                | LightKind::Spot {
+                    position, range, ..
+                } => {
+                    let d = (glam::Vec3::from(position) - camera_pos).length();
+                    // Light is fully relevant within `range`; fades to ~0 beyond 4x range.
+                    (range / (range + d.max(0.0))).clamp(0.0, 1.0)
+                }
+                _ => 1.0,
+            };
+            (l.importance.max(0.0) * proximity, *l)
+        })
+        .collect();
+    rest.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let take = cap.saturating_sub(out.len());
+    let dropped = rest.len().saturating_sub(take) as u32;
+    out.extend(rest.into_iter().take(take).map(|(_, l)| l));
+    RankedLights {
+        lights: out,
+        frustum_culled,
+        dropped,
     }
 }

@@ -15,8 +15,11 @@ pub enum Tier {
     /// the LDR path. Scene items are skipped, and the calls that add scene
     /// content return `ViewportError::TierUnsupported`.
     OverlayOnly,
-    /// Reserved for lit meshes without storage buffers or compute. No device
-    /// reports it yet.
+    /// Below the full tier on storage buffers or compute, with the bind groups,
+    /// textures and uniform blocks the forward group 0 needs (WebGL2 and most
+    /// GLES 3.x devices). Draws what the overlay-only tier draws, plus the item
+    /// types whose `requires()` accept this tier, lit by a capped light list
+    /// without shadows, image-based lighting or post effects.
     Forward,
     /// Everything the renderer has, with the per-feature fallbacks that apply
     /// when an optional feature is missing. The default.
@@ -33,6 +36,15 @@ impl Tier {
     /// Storage buffers per stage the full tier needs: wgpu's default, and the
     /// most the base lit mesh path binds in one stage.
     pub const FULL_STORAGE_BUFFERS_PER_STAGE: u32 = 8;
+    /// Bind groups the forward tier needs: group 0, an item type's own group,
+    /// and one more for its instances or picking.
+    pub const FORWARD_BIND_GROUPS: u32 = 3;
+    /// Sampled textures per stage the forward tier needs: WebGL2's 16. Its
+    /// group 0 binds 7 in the fragment stage.
+    pub const FORWARD_SAMPLED_TEXTURES_PER_STAGE: u32 = 16;
+    /// Uniform buffers per stage the forward tier needs: WebGL2's 11. Its
+    /// group 0 binds 6 in the fragment stage.
+    pub const FORWARD_UNIFORM_BUFFERS_PER_STAGE: u32 = 11;
 }
 
 impl std::fmt::Display for Tier {

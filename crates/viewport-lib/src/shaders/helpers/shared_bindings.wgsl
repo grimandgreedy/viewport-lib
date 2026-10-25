@@ -92,7 +92,9 @@ struct ClipVolumeUB {
 @group(0) @binding(9)  var          ibl_brdf_lut:         texture_2d<f32>;
 @group(0) @binding(10) var          ibl_sampler:          sampler;
 @group(0) @binding(11) var          skybox_tex:           texture_2d<f32>;
+// BEGIN_LIGHT_LIST
 @group(0) @binding(13) var<storage, read> lights_storage: array<SingleLight>;
+// END_LIGHT_LIST
 @group(0) @binding(17) var          point_shadow_cube:    texture_depth_cube_array;
 
 // Section-view clip planes: returns false when `world_pos` is on the

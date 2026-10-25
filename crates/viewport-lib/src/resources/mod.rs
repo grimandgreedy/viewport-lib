@@ -12,6 +12,9 @@ pub(crate) mod custom_data;
 pub(crate) mod device_resources;
 /// A cheap hasher for the maps rebuilt or probed every frame.
 pub(crate) mod fast_hash;
+/// Group 0 on the forward tier.
+pub(crate) mod forward_tier;
+pub use self::forward_tier::FORWARD_MAX_LIGHTS;
 /// GPU compute resources: clustered shading, hierarchical-Z, and dynamic resolution.
 pub mod gpu;
 /// Ground-plane pipeline, uniform, and bind group.

@@ -675,6 +675,8 @@ pub struct ViewportRenderer {
     /// Lights dropped by the CPU frustum cull on the most recent frame.
     /// Surfaced through the cluster debug overlay when enabled.
     pub(crate) last_frustum_culled_lights: u32,
+    /// Lights past the light list's cap on the most recent frame.
+    pub(crate) last_lights_dropped: u32,
     /// Most recent cluster build readback. Populated when a frame's
     /// `EffectsDebug::cluster_stats_request` was true.
     pub(crate) last_cluster_stats: Option<crate::resources::gpu::clustered::ClusterStats>,
@@ -1091,6 +1093,7 @@ impl ViewportRenderer {
             degradation_volume_quality_reduced: false,
             degradation_effects_throttled: false,
             last_frustum_culled_lights: 0,
+            last_lights_dropped: 0,
             last_cluster_stats: None,
         };
         renderer.register_internal_item_plugins(device);
@@ -1945,9 +1948,21 @@ impl ViewportRenderer {
             "item type name {name:?} is taken by a type the renderer installed itself. \
              Register under a prefix of your own."
         );
-        self.check_plugin_requirements(name, &plugin.requires())?;
+        self.check_item_type_requirements(name, &plugin.requires())?;
         self.register_item_type_plugin(device, plugin);
         Ok(())
+    }
+
+    /// [`check_plugin_requirements`](Self::check_plugin_requirements) for an
+    /// item type, which binds only group 0 of the scene layouts and so also
+    /// registers on the forward tier.
+    fn check_item_type_requirements(
+        &self,
+        type_name: &str,
+        requirements: &crate::capabilities::Requirements,
+    ) -> Result<(), crate::ViewportError> {
+        self.resources.require_lit_group0()?;
+        self.check_requirements(type_name, requirements)
     }
 
     /// `Err(PluginUnsupported)` naming what the device lacks for
@@ -1957,9 +1972,17 @@ impl ViewportRenderer {
         type_name: &str,
         requirements: &crate::capabilities::Requirements,
     ) -> Result<(), crate::ViewportError> {
-        // Plugins draw into the scene passes and bind the scene layouts, so
-        // none registers on a renderer without them, whatever it asks for.
+        // Post effects run on the scene's HDR passes, so none registers on a
+        // renderer without them, whatever it asks for.
         self.require_scene_tier()?;
+        self.check_requirements(type_name, requirements)
+    }
+
+    fn check_requirements(
+        &self,
+        type_name: &str,
+        requirements: &crate::capabilities::Requirements,
+    ) -> Result<(), crate::ViewportError> {
         let missing = self
             .resources
             .capabilities
@@ -1989,7 +2012,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
     ) {
-        if let Err(e) = self.check_plugin_requirements(plugin.type_name(), &plugin.requires()) {
+        if let Err(e) = self.check_item_type_requirements(plugin.type_name(), &plugin.requires()) {
             tracing::debug!(target: "viewport_lib::init", "{e}");
             return;
         }

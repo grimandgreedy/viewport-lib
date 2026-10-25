@@ -32,6 +32,8 @@ pub struct Capabilities {
     pub bind_groups: u32,
     /// `max_sampled_textures_per_shader_stage`.
     pub sampled_textures_per_stage: u32,
+    /// `max_uniform_buffers_per_shader_stage`.
+    pub uniform_buffers_per_stage: u32,
     /// `max_texture_dimension_2d`.
     pub texture_dimension_2d: u32,
     /// `max_binding_array_elements_per_shader_stage`.
@@ -146,6 +148,7 @@ impl Capabilities {
             uniform_binding_size: limits.max_uniform_buffer_binding_size.into(),
             bind_groups: limits.max_bind_groups,
             sampled_textures_per_stage: limits.max_sampled_textures_per_shader_stage,
+            uniform_buffers_per_stage: limits.max_uniform_buffers_per_shader_stage,
             texture_dimension_2d: limits.max_texture_dimension_2d,
             binding_array_elements: limits.max_binding_array_elements_per_shader_stage,
             compute,
@@ -171,6 +174,8 @@ impl Capabilities {
     pub fn tier(&self) -> Tier {
         if self.full_tier_missing().is_empty() {
             Tier::Full
+        } else if self.forward_tier_missing().is_empty() {
+            Tier::Forward
         } else if self.overlay_tier_missing().is_empty() {
             Tier::OverlayOnly
         } else {
@@ -179,12 +184,12 @@ impl Capabilities {
     }
 
     /// What this device lacks for `tier`, one entry per missing capability.
-    /// Empty when the device meets it. `Tier::Forward` is reported as
-    /// `Tier::Full`'s list, since nothing draws at that tier yet.
+    /// Empty when the device meets it.
     pub fn missing_for(&self, tier: Tier) -> Vec<String> {
         match tier {
             Tier::Unsupported => Vec::new(),
             Tier::OverlayOnly => self.overlay_tier_missing(),
+            Tier::Forward => self.forward_tier_missing(),
             _ => self.full_tier_missing(),
         }
     }
@@ -225,6 +230,19 @@ impl Capabilities {
 
     fn full_tier_missing(&self) -> Vec<String> {
         self.missing_requirements(&Requirements::full_tier())
+    }
+
+    fn forward_tier_missing(&self) -> Vec<String> {
+        let mut missing = self.overlay_tier_missing();
+        missing.extend(self.missing_requirements(&Requirements::forward_tier()));
+        if self.uniform_buffers_per_stage < Tier::FORWARD_UNIFORM_BUFFERS_PER_STAGE {
+            missing.push(format!(
+                "{} uniform buffers per shader stage (the device has {})",
+                Tier::FORWARD_UNIFORM_BUFFERS_PER_STAGE,
+                self.uniform_buffers_per_stage
+            ));
+        }
+        missing
     }
 
     fn overlay_tier_missing(&self) -> Vec<String> {
@@ -286,6 +304,21 @@ impl Requirements {
             compute: true,
             bind_groups: Tier::BIND_GROUPS,
             sampled_textures_per_stage: 0,
+        }
+    }
+
+    /// What the forward tier guarantees: no storage buffers, no compute, three
+    /// bind groups and 16 sampled textures per stage. A plugin returning this
+    /// registers on the forward tier as well as the full one, and must then
+    /// draw without storage buffers or compute where the device has neither.
+    pub fn forward_tier() -> Self {
+        Self {
+            storage_buffers_per_stage: 0,
+            vertex_storage: false,
+            fragment_storage: false,
+            compute: false,
+            bind_groups: Tier::FORWARD_BIND_GROUPS,
+            sampled_textures_per_stage: Tier::FORWARD_SAMPLED_TEXTURES_PER_STAGE,
         }
     }
 
@@ -354,9 +387,9 @@ mod tests {
     }
 
     #[test]
-    fn webgl2_limits_are_overlay_only() {
+    fn webgl2_limits_are_forward() {
         let limits = gpu::Limits::downlevel_webgl2_defaults();
-        assert_eq!(tier_of(limits.clone(), None), Tier::OverlayOnly);
+        assert_eq!(tier_of(limits.clone(), None), Tier::Forward);
         // The adapter's compute flag survives a device created with WebGL2
         // limits; the zero workgroup limits are what rule compute out.
         let caps = Capabilities::from_parts(
@@ -365,7 +398,21 @@ mod tests {
             Some(gpu::DownlevelFlags::all()),
         );
         assert!(!caps.compute);
+        assert_eq!(caps.tier(), Tier::Forward);
+    }
+
+    #[test]
+    fn two_bind_groups_below_full_are_overlay_only() {
+        let limits = gpu::Limits {
+            max_bind_groups: 2,
+            ..gpu::Limits::downlevel_webgl2_defaults()
+        };
+        let caps = Capabilities::from_parts(&limits, gpu::Features::empty(), None);
         assert_eq!(caps.tier(), Tier::OverlayOnly);
+        assert_eq!(
+            caps.missing_for(Tier::Forward),
+            vec!["3 bind groups (the device has 2)".to_owned()]
+        );
     }
 
     #[test]
@@ -377,7 +424,7 @@ mod tests {
             Capabilities::from_parts(&gpu::Limits::default(), gpu::Features::empty(), Some(flags));
         assert!(!caps.vertex_storage);
         assert!(caps.fragment_storage);
-        assert_eq!(caps.tier(), Tier::OverlayOnly);
+        assert_eq!(caps.tier(), Tier::Forward);
         assert_eq!(
             caps.missing_for(Tier::Full),
             vec!["storage buffers in the vertex stage".to_owned()]

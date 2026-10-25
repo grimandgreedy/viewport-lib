@@ -223,8 +223,12 @@ impl<'a> SharedBindings<'a> {
     ///
     /// On a device without cube-array textures binding 17 is a
     /// `texture_depth_2d_array`, so a source declaring it
-    /// `texture_depth_cube_array` would not match the layout. Modules built
-    /// through `DeviceResources::lazy_module` are adapted already.
+    /// `texture_depth_cube_array` would not match the layout. On the forward
+    /// tier the light list at binding 13 is a uniform array of
+    /// [`FORWARD_MAX_LIGHTS`](crate::resources::FORWARD_MAX_LIGHTS) and the
+    /// cluster lookups in `apply_scene_lighting` walk every light, since that
+    /// tier's group 0 has no storage buffers. Modules built through
+    /// `DeviceResources::lazy_module` are adapted already.
     pub fn adapt_wgsl<'s>(&self, source: &'s str) -> std::borrow::Cow<'s, str> {
         crate::resources::builders::adapt_wgsl(source, self.capabilities)
     }

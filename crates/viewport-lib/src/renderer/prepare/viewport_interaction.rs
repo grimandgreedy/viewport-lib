@@ -20,66 +20,7 @@ impl ViewportRenderer {
 
             // Upload clip planes + clip volume uniforms from clip_objects.
             {
-                let mut planes = [[0.0f32; 4]; 6];
-                let mut count = 0u32;
-                let mut clip_vols_uniform: ClipVolumesUniform = bytemuck::Zeroable::zeroed();
-
-                for obj in viewport_fx
-                    .clip
-                    .objects
-                    .iter()
-                    .filter(|o| o.enabled && o.clip_geometry)
-                {
-                    match obj.shape {
-                        ClipShape::Plane {
-                            normal, distance, ..
-                        } if count < 6 => {
-                            planes[count as usize] = [normal[0], normal[1], normal[2], distance];
-                            count += 1;
-                        }
-                        ClipShape::Box {
-                            center,
-                            half_extents,
-                            orientation,
-                        } if (clip_vols_uniform.count as usize) < CLIP_VOLUME_MAX => {
-                            let idx = clip_vols_uniform.count as usize;
-                            clip_vols_uniform.volumes[idx] =
-                                ClipVolumeEntry::from_box(center, half_extents, orientation);
-                            clip_vols_uniform.count += 1;
-                        }
-                        ClipShape::Sphere { center, radius }
-                            if (clip_vols_uniform.count as usize) < CLIP_VOLUME_MAX =>
-                        {
-                            let idx = clip_vols_uniform.count as usize;
-                            clip_vols_uniform.volumes[idx] =
-                                ClipVolumeEntry::from_sphere(center, radius);
-                            clip_vols_uniform.count += 1;
-                        }
-                        ClipShape::Cylinder {
-                            center,
-                            axis,
-                            radius,
-                            half_length,
-                        } if (clip_vols_uniform.count as usize) < CLIP_VOLUME_MAX => {
-                            let idx = clip_vols_uniform.count as usize;
-                            clip_vols_uniform.volumes[idx] =
-                                ClipVolumeEntry::from_cylinder(center, axis, radius, half_length);
-                            clip_vols_uniform.count += 1;
-                        }
-                        _ => {}
-                    }
-                }
-
-                let ppp = frame.camera.pixels_per_point;
-                let clip_uniform = ClipPlanesUniform {
-                    planes,
-                    count,
-                    _pad0: 0,
-                    // Physical pixels: clip_pos in the fragment shader is in physical pixels,
-                    // so split-screen and pixel-inspector buffer stride must match.
-                    viewport_width: (frame.camera.viewport_size[0] * ppp).max(1.0),
-                    viewport_height: (frame.camera.viewport_size[1] * ppp).max(1.0),
-                };
+                let (clip_uniform, clip_vols_uniform) = clip_uniforms(frame, viewport_fx);
                 // Write to per-viewport slot buffer.
                 if let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) {
                     queue.write_buffer(
@@ -845,4 +786,72 @@ impl ViewportRenderer {
             }
         }
     }
+}
+
+/// The clip-plane and clip-volume uniforms for a viewport, from its enabled
+/// clip objects.
+pub(super) fn clip_uniforms(
+    frame: &FrameData,
+    viewport_fx: &ViewportEffects<'_>,
+) -> (ClipPlanesUniform, ClipVolumesUniform) {
+    let mut planes = [[0.0f32; 4]; 6];
+    let mut count = 0u32;
+    let mut clip_vols_uniform: ClipVolumesUniform = bytemuck::Zeroable::zeroed();
+
+    for obj in viewport_fx
+        .clip
+        .objects
+        .iter()
+        .filter(|o| o.enabled && o.clip_geometry)
+    {
+        match obj.shape {
+            ClipShape::Plane {
+                normal, distance, ..
+            } if count < 6 => {
+                planes[count as usize] = [normal[0], normal[1], normal[2], distance];
+                count += 1;
+            }
+            ClipShape::Box {
+                center,
+                half_extents,
+                orientation,
+            } if (clip_vols_uniform.count as usize) < CLIP_VOLUME_MAX => {
+                let idx = clip_vols_uniform.count as usize;
+                clip_vols_uniform.volumes[idx] =
+                    ClipVolumeEntry::from_box(center, half_extents, orientation);
+                clip_vols_uniform.count += 1;
+            }
+            ClipShape::Sphere { center, radius }
+                if (clip_vols_uniform.count as usize) < CLIP_VOLUME_MAX =>
+            {
+                let idx = clip_vols_uniform.count as usize;
+                clip_vols_uniform.volumes[idx] = ClipVolumeEntry::from_sphere(center, radius);
+                clip_vols_uniform.count += 1;
+            }
+            ClipShape::Cylinder {
+                center,
+                axis,
+                radius,
+                half_length,
+            } if (clip_vols_uniform.count as usize) < CLIP_VOLUME_MAX => {
+                let idx = clip_vols_uniform.count as usize;
+                clip_vols_uniform.volumes[idx] =
+                    ClipVolumeEntry::from_cylinder(center, axis, radius, half_length);
+                clip_vols_uniform.count += 1;
+            }
+            _ => {}
+        }
+    }
+
+    let ppp = frame.camera.pixels_per_point;
+    let clip_uniform = ClipPlanesUniform {
+        planes,
+        count,
+        _pad0: 0,
+        // Physical pixels: clip_pos in the fragment shader is in physical pixels,
+        // so split-screen and pixel-inspector buffer stride must match.
+        viewport_width: (frame.camera.viewport_size[0] * ppp).max(1.0),
+        viewport_height: (frame.camera.viewport_size[1] * ppp).max(1.0),
+    };
+    (clip_uniform, clip_vols_uniform)
 }
