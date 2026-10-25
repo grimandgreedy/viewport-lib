@@ -456,7 +456,7 @@ impl ItemTypePlugin for SpritePlugin {
     fn init_gpu(
         &mut self,
         device: &viewport_lib::gpu::Device,
-        _shared: &viewport_lib::plugin_api::SharedBindings<'_>,
+        _resources: &dyn viewport_lib::plugin_api::PluginResources,
     ) {
         self.layouts = Some(SpriteLayouts::new(device));
     }

@@ -24,12 +24,6 @@ pub use crate::resources::builders::{
 };
 
 pub use crate::resources::device_resources::DualPipeline;
-/// The depth bias the renderer's own two-sided surfaces cast shadows with.
-///
-/// An item type drawing cull-none geometry that casts into the cascade atlas
-/// takes this on its shadow pipeline so its contact shadows land where the
-/// built-in ones do.
-pub use crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED;
 
 /// The vertex of the shared mesh arena, which
 /// [`mesh_vertex_layout`] describes. Fill this to build geometry for a

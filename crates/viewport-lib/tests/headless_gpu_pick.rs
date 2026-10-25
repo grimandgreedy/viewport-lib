@@ -934,8 +934,7 @@ fn vs(@builtin(vertex_index) vi: u32) -> MockVsOut {
 "#;
 
 /// Plugin that rasterises a fullscreen triangle into the pick pass, tagging it
-/// with its item's pick id. Hand-rolls the pipeline the way a real plugin does
-/// (plugins get `SharedBindings`, not `DeviceResources`, at `init_gpu`).
+/// with its item's pick id, built through the plugin pipeline builder.
 struct MockPickPlugin {
     pipeline: Option<wgpu::RenderPipeline>,
     id_bgl: Option<wgpu::BindGroupLayout>,
@@ -957,7 +956,7 @@ impl ItemTypePlugin for MockPickPlugin {
         "mock_pick"
     }
 
-    fn init_gpu(&mut self, device: &wgpu::Device, shared: &SharedBindings<'_>) {
+    fn init_gpu(&mut self, device: &wgpu::Device, resources: &dyn PluginResources) {
         let id_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mock_pick_id_bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -978,53 +977,17 @@ impl ItemTypePlugin for MockPickPlugin {
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
 
-        // Build through the library's version-portability helpers (see
-        // `viewport_lib::wgpu`) so this test stays free of per-wgpu-version cfg.
-        let layout = viewport_lib::wgpu::pipeline_layout(
-            &device,
-            "mock_pick_layout",
-            &[shared.group0_layout, &id_bgl],
+        let mut opts = PluginPipelineOpts::new(
+            Some("mock_pick_pipeline"),
+            &shader,
+            "vs",
+            "viewport_pick_fs",
+            &[],
         );
-
-        let color = |format| {
-            Some(wgpu::ColorTargetState {
-                format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })
-        };
-        let pipeline = viewport_lib::wgpu::render_pipeline(
-            &device,
-            viewport_lib::wgpu::RenderPipelineDesc {
-                label: "mock_pick_pipeline",
-                layout: &layout,
-                vertex_module: &shader,
-                vertex_entry: "vs",
-                vertex_buffers: &[],
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("viewport_pick_fs"),
-                    targets: &[
-                        color(PICK_COLOR_FORMAT),
-                        color(PICK_COLOR_FORMAT),
-                        color(PICK_DEPTH_CHANNEL_FORMAT),
-                    ],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(viewport_lib::wgpu::depth_stencil(
-                    SCENE_DEPTH_FORMAT,
-                    true,
-                    wgpu::CompareFunction::LessEqual,
-                )),
-                multisample: wgpu::MultisampleState::default(),
-                cache: None,
-            },
-        );
+        let extra = [&id_bgl];
+        opts.extra_bind_group_layouts = &extra;
+        opts.primitive.cull_mode = None;
+        let pipeline = resources.build_pick_pipeline(device, &opts);
 
         self.id_bgl = Some(id_bgl);
         self.pipeline = Some(pipeline);
@@ -1223,7 +1186,7 @@ impl ItemTypePlugin for SubPickPlugin {
         "sub_pick"
     }
 
-    fn init_gpu(&mut self, device: &wgpu::Device, shared: &SharedBindings<'_>) {
+    fn init_gpu(&mut self, device: &wgpu::Device, resources: &dyn PluginResources) {
         use viewport_lib::plugin_api::shared_wgsl::{PICK_PRIM_ENABLE_WGSL, SHARED_PICK_PRIM_WGSL};
 
         if !device
@@ -1253,51 +1216,17 @@ impl ItemTypePlugin for SubPickPlugin {
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
 
-        let layout = viewport_lib::wgpu::pipeline_layout(
-            &device,
-            "sub_pick_layout",
-            &[shared.group0_layout, &id_bgl],
+        let mut opts = PluginPipelineOpts::new(
+            Some("sub_pick_pipeline"),
+            &shader,
+            "vs",
+            "viewport_pick_prim_fs",
+            &[],
         );
-
-        let color = |format| {
-            Some(wgpu::ColorTargetState {
-                format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })
-        };
-        let pipeline = viewport_lib::wgpu::render_pipeline(
-            &device,
-            viewport_lib::wgpu::RenderPipelineDesc {
-                label: "sub_pick_pipeline",
-                layout: &layout,
-                vertex_module: &shader,
-                vertex_entry: "vs",
-                vertex_buffers: &[],
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("viewport_pick_prim_fs"),
-                    targets: &[
-                        color(PICK_COLOR_FORMAT),
-                        color(PICK_COLOR_FORMAT),
-                        color(PICK_DEPTH_CHANNEL_FORMAT),
-                    ],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(viewport_lib::wgpu::depth_stencil(
-                    SCENE_DEPTH_FORMAT,
-                    true,
-                    wgpu::CompareFunction::LessEqual,
-                )),
-                multisample: wgpu::MultisampleState::default(),
-                cache: None,
-            },
-        );
+        let extra = [&id_bgl];
+        opts.extra_bind_group_layouts = &extra;
+        opts.primitive.cull_mode = None;
+        let pipeline = resources.build_pick_pipeline(device, &opts);
 
         self.id_bgl = Some(id_bgl);
         self.pipeline = Some(pipeline);

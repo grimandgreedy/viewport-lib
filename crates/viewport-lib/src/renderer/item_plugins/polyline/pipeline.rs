@@ -153,7 +153,7 @@ impl PolylineGpu {
                 mask_layout: crate::resources::builders::standard_scene_layout(
                     device,
                     "polyline_outline_mask_pipeline_layout",
-                    resources.shared_bindings().group0_layout,
+                    resources.group0_layout(),
                     &resources.scene_tier.polyline.bgl,
                 ),
                 mask_shader: resources.lazy_module(

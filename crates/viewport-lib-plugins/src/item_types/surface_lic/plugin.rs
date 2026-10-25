@@ -182,7 +182,7 @@ impl LicGpu {
         let vector_layout = builders::pipeline_layout(
             device,
             "surface_lic_vector_layout",
-            &[resources.shared_bindings().group0_layout],
+            &[resources.group0_layout()],
         );
 
         let advect_shader = resources.lazy_module(

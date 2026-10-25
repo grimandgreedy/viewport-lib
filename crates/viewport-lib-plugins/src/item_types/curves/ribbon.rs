@@ -267,14 +267,12 @@ fn build_shadow(r: &RibbonRecipe) -> viewport_lib::gpu::RenderPipeline {
         "vs_main",
         "",
         &shadow_vertex_layouts,
-    );
+    )
+    // A ribbon is a thin open surface.
+    .shadow_caster(viewport_lib::plugin_api::ShadowCaster::TwoSided);
     let shadow_extra: [&viewport_lib::gpu::BindGroupLayout; 1] = [&r.bgl];
     shadow_opts.extra_bind_group_layouts = &shadow_extra;
-    shadow_opts.primitive.cull_mode = None;
     shadow_opts.depth_compare = viewport_lib::gpu::CompareFunction::Less;
-    // A ribbon is a thin open surface, so it self-shadows badly under the mild
-    // default. Same bias the lib uses where the shadow pass does not cull.
-    shadow_opts.depth_bias = Some(viewport_lib::plugin_api::builders::CSM_SHADOW_BIAS_TWO_SIDED);
     r.builder.build_shadow_pipeline(&r.device, &shadow_opts)
 }
 
@@ -316,7 +314,7 @@ impl RibbonGpu {
         let layout = standard_scene_layout(
             device,
             "ribbon_pipeline_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &layouts.bgl,
         );
         let pipelines = resources.lazy_pipelines(
@@ -428,7 +426,7 @@ impl ItemTypePlugin for RibbonPlugin {
     fn init_gpu(
         &mut self,
         device: &viewport_lib::gpu::Device,
-        _shared: &viewport_lib::plugin_api::SharedBindings<'_>,
+        _resources: &dyn viewport_lib::plugin_api::PluginResources,
     ) {
         self.layouts = Some(super::store::RibbonResources::new(device));
     }

@@ -145,7 +145,7 @@ impl TensorFieldGpu {
         let layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "tensor_field_pipeline_layout",
-            &[resources.shared_bindings().group0_layout, bgl, instance_bgl],
+            &[resources.group0_layout(), bgl, instance_bgl],
         );
         // Group 1 for the pick pass: the field's own uniform at binding 0 (the
         // vertex stage needs the model matrix) and the object id at binding 3.
@@ -194,7 +194,7 @@ impl TensorFieldGpu {
         let mask_layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "tensor_field_outline_mask_pipeline_layout",
-            &[resources.shared_bindings().group0_layout, bgl, instance_bgl],
+            &[resources.group0_layout(), bgl, instance_bgl],
         );
         let pipelines = resources.lazy_pipelines(
             TensorFieldRecipe {

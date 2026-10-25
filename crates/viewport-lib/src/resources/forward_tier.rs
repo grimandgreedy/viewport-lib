@@ -21,7 +21,10 @@ pub(crate) struct ForwardTier {
     pub(crate) lights_header_buf: crate::gpu::Buffer,
     /// The light list (binding 13), [`FORWARD_MAX_LIGHTS`] entries.
     pub(crate) light_list_buf: crate::gpu::Buffer,
-    shadow_sampler: crate::gpu::Sampler,
+    /// The samplers plugins share, the same configuration as the full tier's.
+    pub(crate) material_sampler: crate::gpu::Sampler,
+    pub(crate) lut_sampler: crate::gpu::Sampler,
+    pub(crate) shadow_sampler: crate::gpu::Sampler,
     ibl_sampler: crate::gpu::Sampler,
     shadow_atlas_view: crate::gpu::TextureView,
     point_shadow_view: crate::gpu::TextureView,
@@ -93,6 +96,15 @@ impl ForwardTier {
             shadow_camera_bgl,
             lights_header_buf,
             light_list_buf,
+            material_sampler: crate::resources::builders::repeat_linear_sampler(
+                device,
+                "forward_material_sampler",
+                crate::gpu::FilterMode::Nearest,
+            ),
+            lut_sampler: crate::resources::builders::clamp_linear_sampler(
+                device,
+                "forward_lut_sampler",
+            ),
             shadow_sampler: crate::resources::builders::comparison_sampler(
                 device,
                 "forward_shadow_sampler",

@@ -2027,8 +2027,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         mut plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
     ) {
-        let shared = self.resources.shared_bindings();
-        plugin.init_gpu(device, &shared);
+        plugin.init_gpu(device, &self.resources);
         let name = plugin.type_name();
         self.item_type_plugins.insert(name, plugin);
     }
@@ -2244,10 +2243,9 @@ impl ViewportRenderer {
     ) {
         // Whatever the lighting uniforms held is gone with the old device.
         self.shadow.written = Default::default();
-        let shared = self.resources.shared_bindings();
         for plugin in self.item_type_plugins.values_mut() {
             plugin.on_device_recreated(device, queue);
-            plugin.init_gpu(device, &shared);
+            plugin.init_gpu(device, &self.resources);
         }
         // Post-effect producers and stages follow the same shape, then
         // re-receive the per-viewport resize signal so their targets are

@@ -649,7 +649,7 @@ impl ScatterGpu {
         else {
             return;
         };
-        let camera_bgl = resources.shared_bindings().group0_layout;
+        let camera_bgl = resources.group0_layout();
         let module = |label, source: &str| resources.lazy_module(device, label, source);
         let layout = |label, bgls: &[&viewport_lib::gpu::BindGroupLayout]| {
             viewport_lib::plugin_api::builders::pipeline_layout(device, label, bgls)

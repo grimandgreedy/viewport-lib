@@ -97,7 +97,7 @@ pub(crate) use self::overlay::geometry::{CompiledOverlay, CompiledSource, Overla
 pub use self::plugin_builders::{
     HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry, PICK_COLOR_FORMAT,
     PICK_DEPTH_CHANNEL_FORMAT, PipelineBuilder, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
-    SHADOW_DEPTH_FORMAT,
+    SHADOW_DEPTH_FORMAT, ShadowCaster,
 };
 pub use self::resource_deps::{ResourceGate, Revalidate};
 pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};

@@ -237,7 +237,7 @@ impl CurvePickGpu {
         let mask_layout = pipeline_layout(
             device,
             mask_layout_label.as_str(),
-            &[resources.shared_bindings().group0_layout, &instance_bgl],
+            &[resources.group0_layout(), &instance_bgl],
         );
 
         let pipelines = resources.lazy_pipelines(
@@ -420,7 +420,7 @@ impl CurveMeshGpu {
         let layout = standard_scene_layout(
             device,
             &format!("{label}_pipeline_layout"),
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &layouts.bgl,
         );
         let pipelines = resources.lazy_pipelines(

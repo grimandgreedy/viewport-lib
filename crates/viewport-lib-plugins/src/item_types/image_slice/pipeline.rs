@@ -193,7 +193,7 @@ impl ImageSliceGpu {
         let layout = builders::standard_scene_layout(
             device,
             "image_slice_pipeline_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &bgl,
         );
         // Group 2 of the pick pipeline: the item's object id.

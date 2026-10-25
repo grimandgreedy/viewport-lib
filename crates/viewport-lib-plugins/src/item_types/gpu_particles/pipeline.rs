@@ -180,7 +180,7 @@ impl ParticleGpu {
         let draw_layout = viewport_lib::plugin_api::builders::standard_scene_layout(
             device,
             "particle_draw_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &layouts.draw_bgl,
         );
 
@@ -197,7 +197,7 @@ impl ParticleGpu {
             device,
             "particle_draw_lit_layout",
             &[
-                resources.shared_bindings().group0_layout,
+                resources.group0_layout(),
                 &layouts.draw_bgl,
                 &layouts.sprite_lit_bgl,
             ],
@@ -235,7 +235,7 @@ impl ParticleGpu {
         let mesh_layout = viewport_lib::plugin_api::builders::standard_scene_layout(
             device,
             "particle_mesh_draw_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &layouts.mesh_draw_bgl,
         );
 

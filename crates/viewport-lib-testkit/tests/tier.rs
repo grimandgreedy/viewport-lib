@@ -307,7 +307,7 @@ impl ItemTypePlugin for Greedy {
     fn requires(&self) -> Requirements {
         Requirements::full_tier().with_storage_buffers_per_stage(u32::MAX)
     }
-    fn init_gpu(&mut self, _: &wgpu::Device, _: &viewport_lib::plugin_api::SharedBindings<'_>) {
+    fn init_gpu(&mut self, _: &wgpu::Device, _: &dyn viewport_lib::plugin_api::PluginResources) {
         panic!("init_gpu ran for a declined plugin");
     }
 }
@@ -341,17 +341,20 @@ impl ItemTypePlugin for Modest {
     fn requires(&self) -> Requirements {
         Requirements::none()
     }
-    fn init_gpu(&mut self, _: &wgpu::Device, _: &viewport_lib::plugin_api::SharedBindings<'_>) {
+    fn init_gpu(&mut self, _: &wgpu::Device, _: &dyn viewport_lib::plugin_api::PluginResources) {
         panic!("init_gpu ran on an overlay-only renderer");
     }
 }
 
-/// An item type that accepts the forward tier and, in `init_gpu`, builds a
-/// pipeline lit through the shared scene-lighting helper against the shared
-/// group 0, recording any validation error.
+/// An item type that accepts the forward tier and, in `init_gpu`, builds an
+/// LDR pipeline lit through the shared scene-lighting helper with the plugin
+/// pipeline builder, recording any validation error.
 #[derive(Default)]
 struct ForwardLit {
     built: Option<Result<(), String>>,
+    /// Whether the resources offered the read-only-depth layout and the
+    /// material fallbacks, which only the full tier has.
+    full_tier_extras: Option<bool>,
 }
 
 const FORWARD_LIT_BODY: &str = "
@@ -388,41 +391,36 @@ impl ItemTypePlugin for ForwardLit {
     fn init_gpu(
         &mut self,
         device: &wgpu::Device,
-        shared: &viewport_lib::plugin_api::SharedBindings<'_>,
+        resources: &dyn viewport_lib::plugin_api::PluginResources,
     ) {
         let source = format!(
             "{}\n{}",
             viewport_lib::plugin_api::shared_wgsl::SHARED_SCENE_LIGHTING_WGSL,
             FORWARD_LIT_BODY
         );
-        let source = shared.adapt_wgsl(&source).into_owned();
+        self.full_tier_extras = Some(
+            resources.depth_read_bind_group_layout().is_some()
+                && resources.depth_read_sampler().is_some()
+                && resources
+                    .fallback_texture_view(viewport_lib::TextureSlot::Albedo)
+                    .is_some(),
+        );
         let scope = viewport_lib::gpu::push_error_scope(device, wgpu::ErrorFilter::Validation);
-        use viewport_lib::plugin_api::builders;
-        let module = builders::wgsl_module(device, "forward_lit", source);
-        let layout = builders::pipeline_layout(device, "forward_lit", &[shared.group0_layout]);
-        let _ = builders::render_pipeline(
+        let module = resources.lazy_module(device, "forward_lit", &source);
+        let vertex_layouts = [wgpu::VertexBufferLayout {
+            array_stride: 12,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+        }];
+        let _ = resources.build_ldr_opaque_pipeline(
             device,
-            builders::RenderPipelineDesc {
-                label: "forward_lit",
-                layout: &layout,
-                vertex_module: &module,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: 12,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                }],
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some("fs_main"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(Harness::DEFAULT_TARGET_FORMAT.into())],
-                }),
-                primitive: Default::default(),
-                depth_stencil: None,
-                multisample: Default::default(),
-                cache: None,
-            },
+            &viewport_lib::plugin_api::PluginPipelineOpts::new(
+                Some("forward_lit"),
+                module.get(),
+                "vs_main",
+                "fs_main",
+                &vertex_layouts,
+            ),
         );
         self.built = Some(match pollster::block_on(scope.pop()) {
             None => Ok(()),
@@ -454,6 +452,7 @@ fn forward_tier_registers_item_types_that_accept_it() {
             .item_type_plugin::<ForwardLit>("tier_test.forward_lit")
             .expect("registered");
         assert_eq!(plugin.built, Some(Ok(())), "{tier}");
+        assert_eq!(plugin.full_tier_extras, Some(tier == Tier::Full), "{tier}");
 
         if tier == Tier::Forward {
             match harness

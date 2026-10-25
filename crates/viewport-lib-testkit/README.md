@@ -74,7 +74,7 @@ library.
 The `Logging*` fixtures are cheap contract checks: they assert the renderer and
 runtime still call a plugin, in the right order, with the right context. The
 others put pixels on screen, so they also assert the seam still *works*: that a
-plugin outside the library can build pipelines from `SharedBindings` and the
+plugin outside the library can build pipelines through `PluginResources` and the
 published target descriptors, that a deformer body can address its own
 per-vertex data, and that a shading hook can sample its own textures.
 

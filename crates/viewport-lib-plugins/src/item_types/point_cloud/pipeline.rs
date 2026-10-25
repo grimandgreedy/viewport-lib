@@ -202,7 +202,7 @@ impl PointCloudGpu {
         let layout = builders::standard_scene_layout(
             device,
             "point_cloud_pipeline_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             bgl,
         );
         // Group 2 of the pick pipeline: the item's object id.
@@ -241,7 +241,7 @@ impl PointCloudGpu {
         let mask_layout = builders::pipeline_layout(
             device,
             "point_cloud_outline_mask_layout",
-            &[resources.shared_bindings().group0_layout, &mask_bgl],
+            &[resources.group0_layout(), &mask_bgl],
         );
         let pipelines = resources.lazy_pipelines(
             PointCloudRecipe {

@@ -38,9 +38,9 @@ pub const WGSL_VERSION: u32 = 6;
 /// Group-0 bind declarations and shared scene-data structs.
 ///
 /// Declares every binding in the lib's camera/lights/shadows/clip/IBL group,
-/// matching the layout exposed via
-/// [`SharedBindings`](super::SharedBindings). Plugin shaders include this
-/// once and must not re-declare these bindings.
+/// matching
+/// [`PluginResources::group0_layout`](super::PluginResources::group0_layout).
+/// Plugin shaders include this once and must not re-declare these bindings.
 ///
 /// Bindings exposed:
 ///

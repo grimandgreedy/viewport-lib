@@ -129,13 +129,10 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 "vs_main",
                 "",
                 &[MC_SURFACE_VERTEX_LAYOUT],
-            );
-            opts.primitive.cull_mode = None;
+            )
+            // The isosurface is an open, thin shell.
+            .shadow_caster(viewport_lib::plugin_api::ShadowCaster::TwoSided);
             opts.depth_compare = viewport_lib::gpu::CompareFunction::Less;
-            // The isosurface is an open, thin shell, so it self-shadows badly
-            // under the mild default. Same bias the lib uses where the shadow
-            // pass does not cull.
-            opts.depth_bias = Some(viewport_lib::plugin_api::builders::CSM_SHADOW_BIAS_TWO_SIDED);
             r.builder.build_shadow_pipeline(&r.device, &opts)
         }
         // Outline mask: the generated vertex buffer rasterised into the R8
@@ -368,7 +365,7 @@ impl McGpu {
         let surface_layout = viewport_lib::plugin_api::builders::standard_scene_layout(
             device,
             "mc_surface_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &render_bgl,
         );
 
@@ -401,7 +398,7 @@ impl McGpu {
         let wireframe_layout = viewport_lib::plugin_api::builders::standard_scene_layout(
             device,
             "mc_wireframe_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &wireframe_render_bgl,
         );
         let mask_shader = resources.lazy_module(

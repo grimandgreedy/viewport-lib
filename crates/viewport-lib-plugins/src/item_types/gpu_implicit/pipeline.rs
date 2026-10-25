@@ -164,7 +164,7 @@ impl GpuImplicitGpu {
         let layout = builders::standard_scene_layout(
             device,
             "implicit_pipeline_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &bgl,
         );
         let mask_shader = resources.lazy_module(

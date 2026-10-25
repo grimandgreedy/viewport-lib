@@ -292,7 +292,7 @@ impl SplatGpu {
         let render_layout = builders::standard_scene_layout(
             device,
             "gaussian_splat_pipeline_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &bgl,
         );
         // Sort compute pipelines.
@@ -420,7 +420,7 @@ impl SplatGpu {
         let mask_layout = builders::pipeline_layout(
             device,
             "gaussian_splat_mask_layout",
-            &[resources.shared_bindings().group0_layout, &mask_bgl],
+            &[resources.group0_layout(), &mask_bgl],
         );
         let pipelines = resources.lazy_pipelines(
             SplatRecipe {

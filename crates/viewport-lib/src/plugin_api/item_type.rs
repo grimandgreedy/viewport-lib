@@ -18,7 +18,7 @@
 
 use std::any::Any;
 
-use crate::plugin_api::SharedBindings;
+use crate::plugin_api::PluginResources;
 use crate::renderer::PickHit;
 use crate::renderer::PickId;
 use crate::scene::material::ItemSettings;
@@ -820,10 +820,10 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// once when the plugin is registered with a renderer that has a
     /// device.
     ///
-    /// The plugin reuses `shared.group0_layout` as group 0 of its pipeline
-    /// layouts. See [`SharedBindings`](crate::plugin_api::SharedBindings)
-    /// for the binding inventory.
-    fn init_gpu(&mut self, _device: &crate::gpu::Device, _shared: &SharedBindings<'_>) {}
+    /// Build pipelines through `resources` (`build_opaque_pipeline` and the
+    /// rest), or list [`group0_layout`](PluginResources::group0_layout) as
+    /// group 0 of a pipeline layout built by hand. See [`PluginResources`].
+    fn init_gpu(&mut self, _device: &crate::gpu::Device, _resources: &dyn PluginResources) {}
 
     /// Build, or ask for, every pipeline this type can draw with. Called by
     /// `ViewportRenderer::warm_pipelines` when the type is named in the
@@ -1355,11 +1355,9 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// spells them out, and
     /// [`SHARED_PICK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_WGSL)'s
     /// `viewport_pick_fs` writes the item's `pick_id` at `@location(0)` and the
-    /// other two channels. A plugin with access to
-    /// [`DeviceResources`](crate::resources::DeviceResources) can build the
-    /// pipeline with `build_pick_pipeline`; one that only has `SharedBindings`
-    /// (as at [`init_gpu`](Self::init_gpu)) hand-rolls it against those formats,
-    /// the way the built-in pick pipelines do.
+    /// other two channels. Build the pipeline with
+    /// [`build_pick_pipeline`](PluginResources::build_pick_pipeline) in
+    /// [`init_gpu`](Self::init_gpu).
     ///
     /// Implementations skip hidden items and items whose
     /// [`pick_id`](PluginItemCollection::pick_id) is [`PickId::NONE`] (the clear

@@ -235,7 +235,7 @@ impl VolumeGpu {
         let layout = viewport_lib::plugin_api::builders::standard_scene_layout(
             device,
             "volume_pipeline_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &bgl,
         );
         let mask_shader = resources.lazy_module(

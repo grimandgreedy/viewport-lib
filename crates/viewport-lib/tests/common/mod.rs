@@ -24,7 +24,7 @@ pub use viewport_lib::{
     PickMask, PickPoll, PolylineItem, Scene, Selection, ShadingModel, VolumeMeshItem,
     error::ViewportError,
     plugin_api::{
-        ItemTypePlugin, PickPassContext, PluginItemCollection, SharedBindings,
+        ItemTypePlugin, PickPassContext, PluginItemCollection, PluginPipelineOpts, PluginResources,
         shared_wgsl::SHARED_PICK_WGSL,
     },
     renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},

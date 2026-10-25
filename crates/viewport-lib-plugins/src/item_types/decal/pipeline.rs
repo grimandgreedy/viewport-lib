@@ -440,7 +440,7 @@ impl DecalGpu {
         if device.limits().max_bind_groups < 3 {
             return None;
         }
-        let camera_bgl = resources.shared_bindings().group0_layout;
+        let camera_bgl = resources.group0_layout();
 
         let depth_bgl =
             device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
