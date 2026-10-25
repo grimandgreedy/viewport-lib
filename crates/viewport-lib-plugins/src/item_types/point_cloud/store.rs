@@ -21,88 +21,95 @@ use viewport_lib::{Colour, ColourSource, SizeSource};
 ///
 /// Positions are the vertex stream, tightly packed `[f32; 3]` at stride 12 to
 /// match the `Float32x3` layout the pipeline declares. The rest are storage
-/// buffers the shader indexes by `vertex_index`.
+/// buffers the shader indexes by instance, or on the stream path more
+/// instance-stepped vertex buffers; they carry both usages.
 const POSITION_STRIDE: u32 = 12;
 const SCALAR_STRIDE: u32 = 4;
 const COLOUR_STRIDE: u32 = 16;
 const RADIUS_STRIDE: u32 = 4;
 const TRANSPARENCY_STRIDE: u32 = 4;
 
+/// Usage of the four per-point channels other than positions.
+const CHANNEL_USAGE: gpu::BufferUsages =
+    gpu::BufferUsages::STORAGE.union(gpu::BufferUsages::VERTEX);
+
 /// Build the point cloud group-1 bind group layout.
-pub(super) fn build_bgl(device: &gpu::Device) -> gpu::BindGroupLayout {
-    {
-        device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
-            label: Some("point_cloud_bgl"),
-            entries: &[
-                gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: gpu::ShaderStages::VERTEX | gpu::ShaderStages::FRAGMENT,
-                    ty: gpu::BindingType::Buffer {
-                        ty: gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                gpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: gpu::ShaderStages::VERTEX,
-                    ty: gpu::BindingType::Texture {
-                        sample_type: gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                gpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: gpu::ShaderStages::VERTEX,
-                    ty: gpu::BindingType::Sampler(gpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                gpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: gpu::ShaderStages::VERTEX,
-                    ty: gpu::BindingType::Buffer {
-                        ty: gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                gpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: gpu::ShaderStages::VERTEX,
-                    ty: gpu::BindingType::Buffer {
-                        ty: gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                gpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: gpu::ShaderStages::VERTEX,
-                    ty: gpu::BindingType::Buffer {
-                        ty: gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                gpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: gpu::ShaderStages::VERTEX,
-                    ty: gpu::BindingType::Buffer {
-                        ty: gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        })
-    }
+///
+/// `streams` leaves out the four storage channels: on a device without vertex
+/// storage they are bound as instance-stepped vertex buffers instead.
+pub(super) fn build_bgl(device: &gpu::Device, streams: bool) -> gpu::BindGroupLayout {
+    let entries = [
+        gpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: gpu::ShaderStages::VERTEX | gpu::ShaderStages::FRAGMENT,
+            ty: gpu::BindingType::Buffer {
+                ty: gpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+        gpu::BindGroupLayoutEntry {
+            binding: 1,
+            visibility: gpu::ShaderStages::VERTEX,
+            ty: gpu::BindingType::Texture {
+                sample_type: gpu::TextureSampleType::Float { filterable: true },
+                view_dimension: gpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        },
+        gpu::BindGroupLayoutEntry {
+            binding: 2,
+            visibility: gpu::ShaderStages::VERTEX,
+            ty: gpu::BindingType::Sampler(gpu::SamplerBindingType::Filtering),
+            count: None,
+        },
+        gpu::BindGroupLayoutEntry {
+            binding: 3,
+            visibility: gpu::ShaderStages::VERTEX,
+            ty: gpu::BindingType::Buffer {
+                ty: gpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+        gpu::BindGroupLayoutEntry {
+            binding: 4,
+            visibility: gpu::ShaderStages::VERTEX,
+            ty: gpu::BindingType::Buffer {
+                ty: gpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+        gpu::BindGroupLayoutEntry {
+            binding: 5,
+            visibility: gpu::ShaderStages::VERTEX,
+            ty: gpu::BindingType::Buffer {
+                ty: gpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+        gpu::BindGroupLayoutEntry {
+            binding: 6,
+            visibility: gpu::ShaderStages::VERTEX,
+            ty: gpu::BindingType::Buffer {
+                ty: gpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+    ];
+    device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
+        label: Some("point_cloud_bgl"),
+        entries: if streams { &entries[..3] } else { &entries },
+    })
 }
 
 /// The renderer-owned handles one point cloud upload binds, resolved from
@@ -117,6 +124,8 @@ pub(super) struct PointCloudBindings {
     lut_view: gpu::TextureView,
     lut_sampler: gpu::Sampler,
     bgl: gpu::BindGroupLayout,
+    /// The channels are vertex streams rather than storage bindings.
+    pub(super) streams: bool,
 }
 
 /// Resolve the colourmap LUT and the clamping LUT sampler an item names.
@@ -126,6 +135,7 @@ pub(super) struct PointCloudBindings {
 pub(super) fn resolve_bindings(
     resources: &DeviceResources,
     bgl: &gpu::BindGroupLayout,
+    streams: bool,
     item: &PointCloudItem,
 ) -> PointCloudBindings {
     let lut_view = crate::item_types::sources::requested_colourmap(&item.colour)
@@ -139,6 +149,7 @@ pub(super) fn resolve_bindings(
         // lookup at exactly 0 wrap onto the far end of the colourmap.
         lut_sampler: resources.lut_sampler().clone(),
         bgl: bgl.clone(),
+        streams,
     }
 }
 
@@ -286,28 +297,28 @@ pub(super) fn build_point_cloud(
     let mut scalars = ContentBuffer::new(
         device,
         "pc_scalars",
-        gpu::BufferUsages::STORAGE,
+        CHANNEL_USAGE,
         SCALAR_STRIDE,
         if has_scalars { capacity } else { 0 },
     );
     let mut colours = ContentBuffer::new(
         device,
         "pc_colours",
-        gpu::BufferUsages::STORAGE,
+        CHANNEL_USAGE,
         COLOUR_STRIDE,
         if has_colours { capacity } else { 0 },
     );
     let mut radii = ContentBuffer::new(
         device,
         "pc_radii",
-        gpu::BufferUsages::STORAGE,
+        CHANNEL_USAGE,
         RADIUS_STRIDE,
         if has_radius { capacity } else { 0 },
     );
     let mut transparencies = ContentBuffer::new(
         device,
         "pc_transparencies",
-        gpu::BufferUsages::STORAGE,
+        CHANNEL_USAGE,
         TRANSPARENCY_STRIDE,
         if has_transparency { capacity } else { 0 },
     );
@@ -406,40 +417,50 @@ fn build_bind_group(
     radii: &ContentBuffer,
     transparencies: &ContentBuffer,
 ) -> gpu::BindGroup {
+    let entries = [
+        gpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform_buf.as_entire_binding(),
+        },
+        gpu::BindGroupEntry {
+            binding: 1,
+            resource: gpu::BindingResource::TextureView(&binds.lut_view),
+        },
+        gpu::BindGroupEntry {
+            binding: 2,
+            resource: gpu::BindingResource::Sampler(&binds.lut_sampler),
+        },
+        gpu::BindGroupEntry {
+            binding: 3,
+            resource: scalars.buffer().as_entire_binding(),
+        },
+        gpu::BindGroupEntry {
+            binding: 4,
+            resource: colours.buffer().as_entire_binding(),
+        },
+        gpu::BindGroupEntry {
+            binding: 5,
+            resource: radii.buffer().as_entire_binding(),
+        },
+        gpu::BindGroupEntry {
+            binding: 6,
+            resource: transparencies.buffer().as_entire_binding(),
+        },
+    ];
     device.create_bind_group(&gpu::BindGroupDescriptor {
         label: Some("pc_bind_group"),
         layout: &binds.bgl,
-        entries: &[
-            gpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buf.as_entire_binding(),
-            },
-            gpu::BindGroupEntry {
-                binding: 1,
-                resource: gpu::BindingResource::TextureView(&binds.lut_view),
-            },
-            gpu::BindGroupEntry {
-                binding: 2,
-                resource: gpu::BindingResource::Sampler(&binds.lut_sampler),
-            },
-            gpu::BindGroupEntry {
-                binding: 3,
-                resource: scalars.buffer().as_entire_binding(),
-            },
-            gpu::BindGroupEntry {
-                binding: 4,
-                resource: colours.buffer().as_entire_binding(),
-            },
-            gpu::BindGroupEntry {
-                binding: 5,
-                resource: radii.buffer().as_entire_binding(),
-            },
-            gpu::BindGroupEntry {
-                binding: 6,
-                resource: transparencies.buffer().as_entire_binding(),
-            },
-        ],
+        entries: binding_entries(&entries, binds.streams),
     })
+}
+
+/// The entries a cloud's bind group takes: all seven, or on the stream path
+/// only the uniform and the LUT, the channels being vertex buffers there.
+fn binding_entries<'a, 'b>(
+    entries: &'a [gpu::BindGroupEntry<'b>; 7],
+    streams: bool,
+) -> &'a [gpu::BindGroupEntry<'b>] {
+    if streams { &entries[..3] } else { entries }
 }
 
 /// Rewrite a stored cloud's channels in place, keeping its bind group.
@@ -629,6 +650,9 @@ pub(crate) struct PointCloudDraw {
     pub(crate) point_count: u32,
     pub(crate) pick_id: viewport_lib::PickId,
     pub(crate) bind_group: gpu::BindGroup,
+    /// On the stream path, the pipeline variant for this cloud's channels and
+    /// the channel buffers, in the vertex slots after the positions.
+    pub(crate) streams: Option<(usize, Vec<gpu::Buffer>)>,
 }
 
 impl PointCloudGpuData {
@@ -640,7 +664,32 @@ impl PointCloudGpuData {
             point_count: self.positions.len(),
             pick_id: self.pick_id,
             bind_group: self.bind_group.clone(),
+            streams: self.binds.streams.then(|| self.stream_buffers()),
         }
+    }
+
+    /// The stream variant for the channels this cloud holds, and their buffers
+    /// in slot order: the scalar or colour channel, the radius, the
+    /// transparency.
+    fn stream_buffers(&self) -> (usize, Vec<gpu::Buffer>) {
+        let u = &self.uniform;
+        let key = super::pipeline::stream_key(
+            u.has_scalars == 1,
+            u.has_colours == 1,
+            u.has_radius == 1,
+            u.has_transparency == 1,
+        );
+        let buffers = [
+            PointChannel::Scalars,
+            PointChannel::Colours,
+            PointChannel::Sizes,
+            PointChannel::Transparencies,
+        ]
+        .into_iter()
+        .filter(|&which| self.has_channel(which))
+        .map(|which| self.bound_buffer(which).clone())
+        .collect();
+        (key, buffers)
     }
 
     /// Overwrite the model matrix at offset 0 of the uniform block.
@@ -724,6 +773,7 @@ impl PointCloudGpuData {
         if let Some(buffer) = source.as_ref() {
             let (needed_usage, missing) = match which {
                 PointChannel::Positions => (gpu::BufferUsages::VERTEX, "VERTEX"),
+                _ if self.binds.streams => (gpu::BufferUsages::VERTEX, "VERTEX"),
                 _ => (gpu::BufferUsages::STORAGE, "STORAGE"),
             };
             if !buffer.usage().contains(needed_usage) {
@@ -749,8 +799,9 @@ impl PointCloudGpuData {
         };
         *slot = source;
         // Positions are the vertex stream, bound at draw time rather than through
-        // the group, so only the storage channels move a binding.
-        if which == PointChannel::Positions {
+        // the group, so only the storage channels move a binding; on the stream
+        // path every channel is bound at draw time.
+        if which == PointChannel::Positions || self.binds.streams {
             return Ok(false);
         }
         self.rebuild_bind_group(device);
@@ -784,41 +835,42 @@ impl PointCloudGpuData {
     }
 
     fn rebuild_bind_group(&mut self, device: &gpu::Device) {
+        let entries = [
+            gpu::BindGroupEntry {
+                binding: 0,
+                resource: self.uniform_buf.as_entire_binding(),
+            },
+            gpu::BindGroupEntry {
+                binding: 1,
+                resource: gpu::BindingResource::TextureView(&self.binds.lut_view),
+            },
+            gpu::BindGroupEntry {
+                binding: 2,
+                resource: gpu::BindingResource::Sampler(&self.binds.lut_sampler),
+            },
+            gpu::BindGroupEntry {
+                binding: 3,
+                resource: self.bound_buffer(PointChannel::Scalars).as_entire_binding(),
+            },
+            gpu::BindGroupEntry {
+                binding: 4,
+                resource: self.bound_buffer(PointChannel::Colours).as_entire_binding(),
+            },
+            gpu::BindGroupEntry {
+                binding: 5,
+                resource: self.bound_buffer(PointChannel::Sizes).as_entire_binding(),
+            },
+            gpu::BindGroupEntry {
+                binding: 6,
+                resource: self
+                    .bound_buffer(PointChannel::Transparencies)
+                    .as_entire_binding(),
+            },
+        ];
         self.bind_group = device.create_bind_group(&gpu::BindGroupDescriptor {
             label: Some("pc_bind_group"),
             layout: &self.binds.bgl,
-            entries: &[
-                gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.uniform_buf.as_entire_binding(),
-                },
-                gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: gpu::BindingResource::TextureView(&self.binds.lut_view),
-                },
-                gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: gpu::BindingResource::Sampler(&self.binds.lut_sampler),
-                },
-                gpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.bound_buffer(PointChannel::Scalars).as_entire_binding(),
-                },
-                gpu::BindGroupEntry {
-                    binding: 4,
-                    resource: self.bound_buffer(PointChannel::Colours).as_entire_binding(),
-                },
-                gpu::BindGroupEntry {
-                    binding: 5,
-                    resource: self.bound_buffer(PointChannel::Sizes).as_entire_binding(),
-                },
-                gpu::BindGroupEntry {
-                    binding: 6,
-                    resource: self
-                        .bound_buffer(PointChannel::Transparencies)
-                        .as_entire_binding(),
-                },
-            ],
+            entries: binding_entries(&entries, self.binds.streams),
         });
     }
 
@@ -920,8 +972,8 @@ mod in_place_tests {
         resources: &DeviceResources,
         item: &PointCloudItem,
     ) -> PointCloudGpuData {
-        let bgl = build_bgl(device);
-        let binds = resolve_bindings(resources, &bgl, item);
+        let bgl = build_bgl(device, false);
+        let binds = resolve_bindings(resources, &bgl, false, item);
         build_point_cloud(device, queue, &binds, item, 0)
     }
 
@@ -1026,9 +1078,9 @@ mod in_place_tests {
             return;
         };
         let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let bgl = build_bgl(&device);
+        let bgl = build_bgl(&device, false);
         let item = cloud(8);
-        let binds = resolve_bindings(&resources, &bgl, &item);
+        let binds = resolve_bindings(&resources, &bgl, false, &item);
         let mut gpu = build_point_cloud(&device, &queue, &binds, &item, 64);
         assert_eq!(gpu.extent(PointChannel::Positions).capacity, 64);
         assert_eq!(gpu.extent(PointChannel::Positions).len, 8);
@@ -1165,9 +1217,9 @@ mod in_place_tests {
             return;
         };
         let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let bgl = build_bgl(&device);
+        let bgl = build_bgl(&device, false);
         let item = cloud(4);
-        let binds = resolve_bindings(&resources, &bgl, &item);
+        let binds = resolve_bindings(&resources, &bgl, false, &item);
         let mut gpu = build_point_cloud(&device, &queue, &binds, &item, 16);
         assert_eq!(gpu.extent(PointChannel::Positions).len, 4);
 
@@ -1265,9 +1317,9 @@ mod in_place_tests {
         };
         let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
         use viewport_lib::resources::handle::GpuByteSize;
-        let bgl = build_bgl(&device);
+        let bgl = build_bgl(&device, false);
         let item = cloud(8);
-        let binds = resolve_bindings(&resources, &bgl, &item);
+        let binds = resolve_bindings(&resources, &bgl, false, &item);
         let tight = build_point_cloud(&device, &queue, &binds, &item, 0);
         let roomy = build_point_cloud(&device, &queue, &binds, &item, 1024);
         assert!(

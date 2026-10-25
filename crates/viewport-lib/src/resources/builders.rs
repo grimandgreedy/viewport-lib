@@ -90,6 +90,25 @@ pub fn adapt_wgsl<'a>(
     source
 }
 
+/// Replace each `// BEGIN_<region>` .. `// END_<region>` region of `source`
+/// with the code on its `// ALT(<alt>):` lines, the way [`adapt_wgsl`] picks
+/// a device alternative. For a shader that keeps its own variants in one
+/// file; a source without the region comes back unchanged.
+pub fn select_wgsl_alternative<'a>(
+    source: impl Into<std::borrow::Cow<'a, str>>,
+    region: &str,
+    alt: &str,
+) -> std::borrow::Cow<'a, str> {
+    let source = source.into();
+    let begin = format!("// BEGIN_{region}");
+    if !source.contains(&begin) {
+        return source;
+    }
+    let mut out = source.into_owned();
+    select_alternative(&mut out, &begin, &format!("// END_{region}"), alt);
+    std::borrow::Cow::Owned(out)
+}
+
 /// Replace every `begin`..`end` region of `out`, markers included, with the
 /// code on its `// ALT(<alt>):` lines.
 fn select_alternative(out: &mut String, begin: &str, end: &str, alt: &str) {

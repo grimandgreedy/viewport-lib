@@ -480,6 +480,14 @@ fn compatibility_tier_registers_item_types_that_accept_it() {
                 ),
                 (
                     viewport_lib_plugins::item_types::point_cloud::TYPE_NAME,
+                    true,
+                ),
+                (
+                    viewport_lib_plugins::item_types::vector_field::TYPE_NAME,
+                    true,
+                ),
+                (
+                    viewport_lib_plugins::item_types::gaussian_splat::TYPE_NAME,
                     false,
                 ),
             ] {
@@ -499,10 +507,12 @@ fn compatibility_tier_registers_item_types_that_accept_it() {
 #[test]
 fn uploads_to_a_declined_item_type_return_why_it_was_declined() {
     use viewport_lib::plugin_api::{Handles, Uploads};
+    use viewport_lib_plugins::item_types::gaussian_splat::{
+        self, GaussianSplatData, GaussianSplatId,
+    };
     use viewport_lib_plugins::item_types::gpu_particles::{
         GpuParticleSystemConfig, GpuParticleSystems,
     };
-    use viewport_lib_plugins::item_types::point_cloud::{self, PointCloudId, PointCloudItem};
 
     let Some(mut harness) =
         Harness::with_profile(&DeviceProfile::downlevel_webgl2("tier-declined-upload"))
@@ -513,20 +523,20 @@ fn uploads_to_a_declined_item_type_return_why_it_was_declined() {
     assert_eq!(harness.renderer.tier(), Tier::Compatibility);
     let declined = harness
         .renderer
-        .item_type_declined(point_cloud::TYPE_NAME)
+        .item_type_declined(gaussian_splat::TYPE_NAME)
         .cloned()
-        .expect("point clouds are declined on the compatibility tier");
+        .expect("splats are declined on the compatibility tier");
 
-    let mut cloud = PointCloudItem::default();
-    cloud.positions = vec![[0.0, 0.0, 0.0]; 4];
+    let mut splats = GaussianSplatData::default();
+    splats.positions = vec![[0.0, 0.0, 0.0]; 4];
     let device = harness.device.clone();
     let queue = harness.queue.clone();
-    let result: Result<PointCloudId, _> = harness.renderer.upload(&device, &queue, &cloud);
+    let result: Result<GaussianSplatId, _> = harness.renderer.upload(&device, &queue, &splats);
     match result {
         Err(e) => assert_eq!(e.to_string(), declined.to_string()),
         Ok(_) => panic!("a declined type took an upload"),
     }
-    assert!(!harness.renderer.release(PointCloudId::from_index(0)));
+    assert!(!harness.renderer.release(GaussianSplatId::from_index(0)));
     assert!(
         harness
             .renderer
@@ -539,9 +549,9 @@ fn uploads_to_a_declined_item_type_return_why_it_was_declined() {
 
     let config = viewport_lib::RendererConfig::new(Harness::DEFAULT_TARGET_FORMAT);
     let mut bare = ViewportRenderer::try_with_config(&device, &config).expect("renderer");
-    match Uploads::<PointCloudItem>::upload(&mut bare, &device, &queue, &cloud) {
+    match Uploads::<GaussianSplatData>::upload(&mut bare, &device, &queue, &splats) {
         Err(ViewportError::ItemTypePluginMissing { type_name }) => {
-            assert_eq!(type_name, point_cloud::TYPE_NAME)
+            assert_eq!(type_name, gaussian_splat::TYPE_NAME)
         }
         other => panic!("expected ItemTypePluginMissing, got {:?}", other.err()),
     }

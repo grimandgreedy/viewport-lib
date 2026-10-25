@@ -20,6 +20,8 @@ pub use types::{GpuMarchingCubesItem, McVolumeId};
 pub const TYPE_NAME: &str = "vpl.gpu_marching_cubes";
 
 #[cfg(feature = "gpu")]
+mod iso;
+#[cfg(feature = "gpu")]
 mod pipeline;
 #[cfg(feature = "gpu")]
 mod plugin;

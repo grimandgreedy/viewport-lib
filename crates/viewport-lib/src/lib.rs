@@ -365,7 +365,7 @@ pub use resources::mesh::mesh_store::MeshId;
 pub use resources::volume::tetmesh::{TetMesh, TetMeshAttributes};
 pub use resources::volume::volume_mesh::{
     CELL_SENTINEL, ConversionReport, GridCells, ToTetMeshError, VolumeMeshData,
-    extract_clipped_volume_faces,
+    extract_clipped_volume_faces, extract_volume_mesh_isosurface,
 };
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,

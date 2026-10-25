@@ -21,6 +21,11 @@ const FORWARD_SHADERS: &[&str] = &[
     "streamtube.wgsl",
     "ribbon.wgsl",
     "curve_outline_mask.wgsl",
+    "point_cloud_stream.wgsl",
+    "point_disc_mask.wgsl",
+    "vector_field_stream.wgsl",
+    "vector_field_outline_mask_stream.wgsl",
+    "mc_isosurface.wgsl",
 ];
 
 fn webgl2_caps() -> Capabilities {

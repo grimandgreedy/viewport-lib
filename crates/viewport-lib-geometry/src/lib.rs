@@ -24,5 +24,7 @@ pub mod prelude {
     //! `use viewport_lib_geometry::prelude::*;`.
     pub use crate::volume::grid::VolumeData;
     pub use crate::volume::marching_cubes::extract_isosurface;
-    pub use crate::volume::mesh::{CELL_SENTINEL, GridCells, VolumeMeshData};
+    pub use crate::volume::mesh::{
+        CELL_SENTINEL, GridCells, VolumeMeshData, extract_volume_mesh_isosurface,
+    };
 }

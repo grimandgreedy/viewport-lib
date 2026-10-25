@@ -318,9 +318,17 @@ fn build_vector_fields(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         }
     }
     field.scale = 0.6;
+    field.settings.pick_id = PickId(1624);
+
+    // A second, selected item so the outline pass has coverage.
+    let mut sel = VectorFieldItem::new(shape);
+    sel.positions.push([-0.6, 0.0, 1.2]);
+    sel.vectors.push([1.0, 0.0, 0.0]);
+    sel.scale = 2.0;
+    sel.settings.selected = true;
 
     BuiltScene {
-        vector_fields: vec![field],
+        vector_fields: vec![field, sel],
         lighting: rigs::from_above(),
         ..Default::default()
     }
@@ -989,7 +997,9 @@ fn build_gpu_marching_cubes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             isovalue: 0.0,
             material,
             settings,
-            cpu_data: None,
+            // Carried so the CPU pick paths, the only ones below the full
+            // tier, reach the surface.
+            cpu_data: Some(std::sync::Arc::new(vol)),
         }],
         lighting: rigs::grazing(),
         ..Default::default()

@@ -214,6 +214,14 @@ fn build_compute(r: &McComputeRecipe, i: usize) -> viewport_lib::gpu::ComputePip
     )
 }
 
+/// The triangle surface's shader: the shared shading, then its entry points.
+pub(crate) fn surface_source() -> String {
+    lit_shader(
+        &[shared_wgsl::SHARED_CSM_WGSL],
+        &[wgsl_source!("mc_shading"), wgsl_source!("mc_surface")].join("\n"),
+    )
+}
+
 /// Pipelines, layouts, and case tables, made on the first prepare with items.
 /// Every pipeline is built the first time a frame needs it.
 pub(super) struct McGpu {
@@ -357,11 +365,7 @@ impl McGpu {
         // ----------------------------------------------------------------
         // Surface render pipeline.
         // ----------------------------------------------------------------
-        let surface_shader = resources.lazy_module(
-            device,
-            "mc_surface_shader",
-            &lit_shader(&[shared_wgsl::SHARED_CSM_WGSL], wgsl_source!("mc_surface")),
-        );
+        let surface_shader = resources.lazy_module(device, "mc_surface_shader", surface_source());
         let surface_layout = viewport_lib::plugin_api::builders::standard_scene_layout(
             device,
             "mc_surface_layout",
@@ -570,14 +574,7 @@ impl McGpu {
             // ----------------------------------------------------------
             // Per-item surface material (one bind group shared by all slabs).
             // ----------------------------------------------------------
-            let mat_raw = McSurfaceRaw {
-                base_colour: job.material.base_colour.to_linear_rgb(),
-                roughness: job.material.roughness,
-                unlit: job.settings.unlit as u32,
-                opacity: job.settings.opacity,
-                ambient: job.material.ambient,
-                receive_shadows: job.settings.receive_shadows as u32,
-            };
+            let mat_raw = McSurfaceRaw::for_item(job);
             let mat_buf =
                 device.create_buffer_init(&viewport_lib::gpu::util::BufferInitDescriptor {
                     label: Some("mc_surface_mat"),
@@ -1003,9 +1000,10 @@ struct GenerateParams {
     _pad1: f32,
 }
 
+/// `McSurfaceUniform` in mc_shading.wgsl.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct McSurfaceRaw {
+pub(super) struct McSurfaceRaw {
     base_colour: [f32; 3],
     roughness: f32,
     unlit: u32,
@@ -1017,4 +1015,18 @@ struct McSurfaceRaw {
     /// darker on its shadowed side than an equivalent regular mesh.
     ambient: f32,
     receive_shadows: u32,
+}
+
+impl McSurfaceRaw {
+    /// The shading block for one item's material and settings.
+    pub(super) fn for_item(job: &GpuMarchingCubesItem) -> Self {
+        Self {
+            base_colour: job.material.base_colour.to_linear_rgb(),
+            roughness: job.material.roughness,
+            unlit: job.settings.unlit as u32,
+            opacity: job.settings.opacity,
+            ambient: job.material.ambient,
+            receive_shadows: job.settings.receive_shadows as u32,
+        }
+    }
 }

@@ -1056,3 +1056,149 @@ fn cell_centroids_are_index_aligned_with_cells() {
     assert_eq!(c[0], [0.0; 3]);
     assert_eq!(c[1], [1.0, 1.0, 1.0]);
 }
+
+// --- isosurface ------------------------------------------------------------
+
+/// Area of a mesh's triangles.
+fn mesh_area(mesh: &viewport_lib_types::data::mesh::MeshData) -> f32 {
+    mesh.indices
+        .chunks_exact(3)
+        .map(|t| {
+            let [a, b, c] = [t[0], t[1], t[2]].map(|i| mesh.positions[i as usize]);
+            let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let n = cross3(ab, ac);
+            dot3(n, n).sqrt() * 0.5
+        })
+        .sum()
+}
+
+/// A node scalar copied from one position axis.
+fn with_axis_scalar(mut data: VolumeMeshData, name: &str, axis: usize) -> VolumeMeshData {
+    let values = data.positions.iter().map(|p| p[axis]).collect();
+    data.node_scalars.insert(name.to_string(), values);
+    data
+}
+
+#[test]
+fn isosurface_cuts_one_corner_off_a_tet() {
+    let mut data = single_tet();
+    data.node_scalars
+        .insert("f".into(), vec![0.0, 1.0, 1.0, 1.0]);
+    let mesh = extract_volume_mesh_isosurface(&data, "f", 0.5);
+    assert_eq!(mesh.indices.len(), 3);
+    assert_eq!(mesh.positions.len(), 3);
+    // Each vertex is the midpoint of an edge from node 0.
+    for p in &mesh.positions {
+        let from_origin = data.positions[1..]
+            .iter()
+            .any(|q| (0..3).all(|k| (p[k] - q[k] * 0.5).abs() < 1e-6));
+        assert!(from_origin, "{p:?}");
+    }
+}
+
+#[test]
+fn isosurface_through_a_hex_grid_is_a_welded_plane() {
+    // x = 1.5 through a 3x3x3 block of unit hexes: a 3x3 square.
+    let data = with_axis_scalar(structured_hex_grid(3), "x", 0);
+    let mesh = extract_volume_mesh_isosurface(&data, "x", 1.5);
+    assert!(!mesh.indices.is_empty());
+    assert!(
+        (mesh_area(&mesh) - 9.0).abs() < 1e-4,
+        "{}",
+        mesh_area(&mesh)
+    );
+    for (p, n) in mesh.positions.iter().zip(&mesh.normals) {
+        assert!((p[0] - 1.5).abs() < 1e-6, "{p:?}");
+        // Normals point toward higher values: +x.
+        assert!(n[0] > 0.999, "{n:?}");
+    }
+    // One vertex per cut edge: no two vertices share a position.
+    let mut seen: Vec<[f32; 3]> = mesh.positions.clone();
+    seen.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    seen.dedup();
+    assert_eq!(seen.len(), mesh.positions.len(), "vertices are welded");
+}
+
+#[test]
+fn isosurface_interpolates_the_other_node_scalars() {
+    let data = with_axis_scalar(
+        with_axis_scalar(structured_hex_grid(2), "x", 0),
+        "height",
+        2,
+    );
+    let mesh = extract_volume_mesh_isosurface(&data, "x", 0.75);
+    let Some(AttributeData::Vertex(height)) = mesh.attributes.get("height") else {
+        panic!("height is carried per vertex");
+    };
+    assert_eq!(height.len(), mesh.positions.len());
+    for (h, p) in height.iter().zip(&mesh.positions) {
+        assert!((h - p[2]).abs() < 1e-6, "{h} at {p:?}");
+    }
+}
+
+#[test]
+fn isosurface_carries_cell_scalars_per_face() {
+    let mut data = with_axis_scalar(structured_hex_grid(2), "x", 0);
+    let cells = data.cells.len();
+    data.cell_scalars
+        .insert("id".into(), (0..cells).map(|i| i as f32).collect());
+    let mesh = extract_volume_mesh_isosurface(&data, "x", 0.5);
+    let Some(AttributeData::Face(ids)) = mesh.attributes.get("id") else {
+        panic!("cell scalars are carried per face");
+    };
+    assert_eq!(ids.len(), mesh.indices.len() / 3);
+    // x = 0.5 runs through the cells at ix = 0 only.
+    for (t, &id) in mesh.indices.chunks_exact(3).zip(ids) {
+        let cell = data.cells[id as usize];
+        let xs: Vec<f32> = cell[..8]
+            .iter()
+            .map(|&v| data.positions[v as usize][0])
+            .collect();
+        assert!(
+            xs.contains(&0.0) && xs.contains(&1.0),
+            "triangle {t:?} in cell {id}"
+        );
+    }
+}
+
+#[test]
+fn isosurface_of_a_missing_scalar_or_out_of_range_value_is_empty() {
+    let data = with_axis_scalar(structured_hex_grid(2), "x", 0);
+    assert!(
+        extract_volume_mesh_isosurface(&data, "nope", 0.5)
+            .indices
+            .is_empty()
+    );
+    assert!(
+        extract_volume_mesh_isosurface(&data, "x", 5.0)
+            .indices
+            .is_empty()
+    );
+}
+
+#[test]
+fn isosurface_of_a_sphere_field_is_closed_and_faces_out() {
+    // r = |p - centre| over a 6^3 hex block, cut at 2: a closed sphere-like
+    // surface whose normals point away from the centre, where r grows.
+    let mut data = structured_hex_grid(6);
+    let r: Vec<f32> = data
+        .positions
+        .iter()
+        .map(|p| ((p[0] - 3.0).powi(2) + (p[1] - 3.0).powi(2) + (p[2] - 3.0).powi(2)).sqrt())
+        .collect();
+    data.node_scalars.insert("r".into(), r);
+    let mesh = extract_volume_mesh_isosurface(&data, "r", 2.0);
+    // Closed: every edge is shared by exactly two triangles.
+    let mut edges: std::collections::HashMap<(u32, u32), u32> = Default::default();
+    for t in mesh.indices.chunks_exact(3) {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *edges.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    assert!(edges.values().all(|&n| n == 2), "the surface is closed");
+    for (p, n) in mesh.positions.iter().zip(&mesh.normals) {
+        let out = [p[0] - 3.0, p[1] - 3.0, p[2] - 3.0];
+        assert!(dot3(*n, out) > 0.0, "normal {n:?} at {p:?} faces out");
+    }
+}

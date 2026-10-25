@@ -18,7 +18,15 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     vec![
         (
             "point_cloud.wgsl",
-            scene_shader(&[], wgsl_source!("point_cloud")),
+            scene_shader(&[], &pipeline::storage_shader_body()),
+        ),
+        (
+            "point_cloud_stream.wgsl",
+            scene_shader(&[], &pipeline::stream_shader_body()),
+        ),
+        (
+            "point_disc_mask.wgsl",
+            scene_shader(&[], wgsl_source!("point_disc_mask")),
         ),
         (
             "point_cloud_pick.wgsl",
@@ -64,6 +72,9 @@ pub struct PointCloudPlugin {
     pick_items: Vec<PointCloudItem>,
     /// Selection-outline coverage for this frame.
     outlines: Vec<pipeline::PointCloudOutline>,
+    /// The device has no vertex storage, so the per-point channels are
+    /// instance-stepped vertex streams. Set on registration.
+    streams: bool,
 }
 
 impl ItemTypePlugin for PointCloudPlugin {
@@ -74,16 +85,24 @@ impl ItemTypePlugin for PointCloudPlugin {
     fn init_gpu(
         &mut self,
         device: &gpu::Device,
-        _resources: &dyn viewport_lib::plugin_api::PluginResources,
+        resources: &dyn viewport_lib::plugin_api::PluginResources,
     ) {
-        self.bgl = Some(store::build_bgl(device));
+        self.streams = !resources.capabilities().vertex_storage;
+        self.bgl = Some(store::build_bgl(device, self.streams));
+    }
+
+    fn requires(&self) -> viewport_lib::Requirements {
+        viewport_lib::Requirements::compatibility_tier()
     }
 
     fn warm(&mut self, device: &gpu::Device, resources: &viewport_lib::DeviceResources) {
-        let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
+        let streams = self.streams;
+        let bgl = self
+            .bgl
+            .get_or_insert_with(|| store::build_bgl(device, streams));
         let gpu = self
             .gpu
-            .get_or_insert_with(|| pipeline::PointCloudGpu::new(device, resources, bgl));
+            .get_or_insert_with(|| pipeline::PointCloudGpu::new(device, resources, bgl, streams));
         gpu.pipelines.request_all();
     }
 
@@ -93,7 +112,7 @@ impl ItemTypePlugin for PointCloudPlugin {
 
     fn on_device_recreated(&mut self, device: &gpu::Device, _queue: &gpu::Queue) {
         self.gpu = None;
-        self.bgl = Some(store::build_bgl(device));
+        self.bgl = Some(store::build_bgl(device, self.streams));
         self.frame.clear();
         self.outlines.clear();
     }
@@ -114,17 +133,20 @@ impl ItemTypePlugin for PointCloudPlugin {
         if items.is_empty() && refs.is_empty() {
             return Vec::new();
         }
-        let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
+        let streams = self.streams;
+        let bgl = self
+            .bgl
+            .get_or_insert_with(|| store::build_bgl(device, streams));
         let stored = &self.stored;
-        let gpu = self
-            .gpu
-            .get_or_insert_with(|| pipeline::PointCloudGpu::new(device, ctx.resources, bgl));
+        let gpu = self.gpu.get_or_insert_with(|| {
+            pipeline::PointCloudGpu::new(device, ctx.resources, bgl, streams)
+        });
 
         for item in items {
             if item.settings.hidden || item.positions.is_empty() {
                 continue;
             }
-            let binds = resolve_bindings(ctx.resources, bgl, item);
+            let binds = resolve_bindings(ctx.resources, bgl, streams, item);
             let draw = build_point_cloud(device, queue, &binds, item, 0).draw();
             let pick_bind_group = (draw.pick_id != PickId::NONE)
                 .then(|| gpu.pick_bind_group(device, queue, draw.pick_id));
@@ -173,6 +195,25 @@ impl ItemTypePlugin for PointCloudPlugin {
     ) {
         let Some(gpu) = &self.gpu else { return };
         if self.frame.is_empty() {
+            return;
+        }
+        if let Some(stream_pipelines) = &gpu.streams {
+            // One variant per channel set; still compiling ones draw next frame.
+            for entry in &self.frame {
+                let Some((key, buffers)) = &entry.draw.streams else {
+                    continue;
+                };
+                let Some(pl) = stream_pipelines.get(*key) else {
+                    continue;
+                };
+                pass.set_pipeline(pl);
+                pass.set_bind_group(1, &entry.draw.bind_group, &[]);
+                pass.set_vertex_buffer(0, entry.draw.vertex_buffer.slice(..));
+                for (slot, buffer) in buffers.iter().enumerate() {
+                    pass.set_vertex_buffer(slot as u32 + 1, buffer.slice(..));
+                }
+                pass.draw(0..6, 0..entry.draw.point_count);
+            }
             return;
         }
         // Still compiling: the clouds draw next frame.
@@ -424,8 +465,10 @@ impl PointCloudPlugin {
         item: &PointCloudItem,
         capacity: u32,
     ) -> PointCloudId {
-        let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
-        let binds = resolve_bindings(resources, bgl, item);
+        let bgl = self
+            .bgl
+            .get_or_insert_with(|| store::build_bgl(device, self.streams));
+        let binds = resolve_bindings(resources, bgl, self.streams, item);
         let gpu = build_point_cloud(device, queue, &binds, item, capacity);
         self.stored.insert_sized(gpu)
     }
@@ -555,8 +598,10 @@ impl PointCloudPlugin {
             self.stored.bump_revision(id);
             return Ok(());
         }
-        let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
-        let binds = resolve_bindings(resources, bgl, item);
+        let bgl = self
+            .bgl
+            .get_or_insert_with(|| store::build_bgl(device, self.streams));
+        let binds = resolve_bindings(resources, bgl, self.streams, item);
         let gpu = build_point_cloud(device, queue, &binds, item, 0);
         self.stored.replace_sized(id, gpu);
         Ok(())
@@ -577,8 +622,10 @@ impl PointCloudPlugin {
         resources: &viewport_lib::resources::DeviceResources,
         item: PointCloudItem,
     ) -> viewport_lib::resources::JobId {
-        let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
-        let binds = resolve_bindings(resources, bgl, &item);
+        let bgl = self
+            .bgl
+            .get_or_insert_with(|| store::build_bgl(device, self.streams));
+        let binds = resolve_bindings(resources, bgl, self.streams, &item);
         let device = device.clone();
         let queue = queue.clone();
         jobs.submit_cpu(move || build_point_cloud(&device, &queue, &binds, &item, 0))
