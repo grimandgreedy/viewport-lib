@@ -212,7 +212,11 @@ fn aabb_occluded(aabb_min: vec3<f32>, aabb_max: vec3<f32>) -> bool {
 
     // Pick the mip whose texels are ~the box size, so the loop below reads at
     // most a 2x2 footprint.
-    let max_level = i32(textureNumLevels(hiz_tex)) - 1;
+    // The pyramid is a full chain down to 1x1, so its last level is
+    // floor(log2) of the base's longer side. Not `textureNumLevels`, which
+    // GLSL ES has no counterpart for.
+    let base_dim = textureDimensions(hiz_tex, 0);
+    let max_level = i32(firstLeadingBit(max(base_dim.x, base_dim.y)));
     let level = clamp(i32(ceil(log2(max_side))), 0, max_level);
     let lvl_dim = vec2<f32>(textureDimensions(hiz_tex, level));
     let scale = lvl_dim / frustum.viewport;

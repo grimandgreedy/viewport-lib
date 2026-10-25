@@ -18,7 +18,9 @@ struct PrefilterParams {
     roughness: f32,
     // The pyramid level a roughness-0 texel reads.
     min_lod: f32,
-    _pad1: f32,
+    // The source pyramid's last level. Passed in: GLSL ES has no
+    // `textureQueryLevels`, so `textureNumLevels` does not build on GLES.
+    max_lod: f32,
     _pad2: f32,
 }
 
@@ -93,7 +95,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var total_weight: f32 = 0.0;
 
     let base = textureDimensions(src_tex, 0);
-    let max_lod = f32(textureNumLevels(src_tex) - 1u);
+    let max_lod = params.max_lod;
     // Solid angle of a base-level texel at the equator.
     let texel_omega = (2.0 * PI / f32(base.x)) * (PI / f32(base.y));
     let a2 = a * a;

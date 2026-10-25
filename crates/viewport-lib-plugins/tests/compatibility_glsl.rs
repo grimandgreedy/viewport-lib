@@ -255,11 +255,7 @@ fn compatibility_tier_shaders_translate_to_webgl2_glsl() {
 /// Plugin shader entry points the GLSL writer cannot translate yet for a
 /// full-tier GL device, as `shader:entry point`. The test fails when one is
 /// fixed and still listed, so the list stays exact.
-const GL_KNOWN_FAILURES: &[&str] = &[
-    // A `@interpolate(linear)` varying, which GLSL ES has no qualifier for.
-    "surface_contour.wgsl:fs_main",
-    "surface_contour.wgsl:vs_main",
-];
+const GL_KNOWN_FAILURES: &[&str] = &[];
 
 /// Every plugin shader, adapted for a desktop GL device at the full tier (cube
 /// arrays, no depth-texture loads), translates at both GLSL versions wgpu's GL

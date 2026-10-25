@@ -586,11 +586,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     /// `shader:entry point`. The test fails when one is fixed and still listed,
     /// so the list stays exact.
     #[cfg(wgpu27)]
-    const GL_KNOWN_FAILURES: &[&str] = &[
-        // `textureNumLevels`, which GLSL ES has no counterpart for.
-        "cull.wgsl:cull_instances",
-        "ibl_prefilter.wgsl:cs_main",
-    ];
+    const GL_KNOWN_FAILURES: &[&str] = &[];
 
     /// The `(shader:entry point, error)` pairs that fail at either GLSL version
     /// wgpu's GL backend emits for a full-tier device: GLSL ES 3.2 on a GLES
