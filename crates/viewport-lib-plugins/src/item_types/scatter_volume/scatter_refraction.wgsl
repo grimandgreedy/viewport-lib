@@ -21,7 +21,8 @@ struct GpuRefractionVolume {
 
 @group(2) @binding(0) var scene_src:     texture_2d<f32>;
 @group(2) @binding(1) var scene_sampler: sampler;
-@group(2) @binding(2) var opaque_depth:  texture_depth_2d;
+@group(2) @binding(2) var opaque_depth:  texture_2d<f32>;
+@group(2) @binding(3) var opaque_depth_sampler: sampler;
 
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
@@ -166,7 +167,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         clamp(i32(uv.x * f32(dims.x)), 0, i32(dims.x) - 1),
         clamp(i32(uv.y * f32(dims.y)), 0, i32(dims.y) - 1),
     );
-    let depth = textureLoad(opaque_depth, coord, 0);
+    let depth = depth_texel(opaque_depth, opaque_depth_sampler, vec2<i32>(coord));
     let t_opaque = opaque_distance(ndc_xy, depth, ray_dir);
 
     var hit: vec2<f32>;

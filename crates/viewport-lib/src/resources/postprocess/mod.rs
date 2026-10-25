@@ -539,7 +539,7 @@ impl DeviceResources {
                     binding: 0,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
                         view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -605,7 +605,7 @@ impl DeviceResources {
                     binding: 0,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
                         view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -732,7 +732,7 @@ impl DeviceResources {
                     binding: 2,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
                         view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -754,12 +754,17 @@ impl DeviceResources {
                     binding: 4,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
                         view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
+                // binding 5: the nearest sampler both depth reads go through.
+                crate::resources::builders::nearest_sampler_entry(
+                    5,
+                    crate::gpu::ShaderStages::FRAGMENT,
+                ),
             ],
         });
 
@@ -785,16 +790,22 @@ impl DeviceResources {
         if self.post.depth_blit_bgl.is_none() {
             let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("depth_blit_bgl"),
-                entries: &[crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    crate::resources::builders::nearest_sampler_entry(
+                        1,
+                        crate::gpu::ShaderStages::FRAGMENT,
+                    ),
+                ],
             });
             self.post.depth_blit_bgl = Some(bgl);
         }
@@ -808,7 +819,7 @@ impl DeviceResources {
                         binding: 0,
                         visibility: crate::gpu::ShaderStages::FRAGMENT,
                         ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Depth,
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
                             view_dimension: crate::gpu::TextureViewDimension::D2,
                             multisampled: false,
                         },
@@ -816,6 +827,10 @@ impl DeviceResources {
                     },
                     crate::resources::builders::uniform_entry(
                         1,
+                        crate::gpu::ShaderStages::FRAGMENT,
+                    ),
+                    crate::resources::builders::nearest_sampler_entry(
+                        2,
                         crate::gpu::ShaderStages::FRAGMENT,
                     ),
                 ],
@@ -827,16 +842,22 @@ impl DeviceResources {
         if self.post.foreground_stamp_bgl.is_none() {
             let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("foreground_stamp_bgl"),
-                entries: &[crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    crate::resources::builders::nearest_sampler_entry(
+                        1,
+                        crate::gpu::ShaderStages::FRAGMENT,
+                    ),
+                ],
             });
             self.post.foreground_stamp_bgl = Some(bgl);
         }
@@ -1751,6 +1772,15 @@ impl DeviceResources {
                     resource: crate::gpu::BindingResource::TextureView(&hdr_depth_only_view),
                 },
                 crate::gpu::BindGroupEntry {
+                    binding: composite::slot::DEPTH_SAMPLER,
+                    resource: crate::gpu::BindingResource::Sampler(
+                        self.post
+                            .pp_nearest_sampler
+                            .as_ref()
+                            .expect("ensure_hdr_infra not called"),
+                    ),
+                },
+                crate::gpu::BindGroupEntry {
                     binding: composite::slot::FOREGROUND_DEPTH,
                     resource: crate::gpu::BindingResource::TextureView(
                         self.post
@@ -1921,6 +1951,15 @@ impl DeviceResources {
                             .expect("ensure_hdr_infra not called"),
                     ),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 5,
+                    resource: crate::gpu::BindingResource::Sampler(
+                        self.post
+                            .pp_nearest_sampler
+                            .as_ref()
+                            .expect("ensure_hdr_infra not called"),
+                    ),
+                },
             ],
         });
         let contact_shadow_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -2059,8 +2098,8 @@ impl DeviceResources {
                 ssaa_depth_only_view.as_ref(),
                 ssaa_ubuf.as_ref(),
             ) {
-                (Some(bgl), Some(depth_view), Some(ubuf)) => {
-                    Some(device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                (Some(bgl), Some(depth_view), Some(ubuf)) => Some(
+                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("ssaa_depth_resolve_bg"),
                         layout: bgl,
                         entries: &[
@@ -2072,9 +2111,18 @@ impl DeviceResources {
                                 binding: 1,
                                 resource: ubuf.as_entire_binding(),
                             },
+                            crate::gpu::BindGroupEntry {
+                                binding: 2,
+                                resource: crate::gpu::BindingResource::Sampler(
+                                    self.post
+                                        .pp_nearest_sampler
+                                        .as_ref()
+                                        .expect("ensure_hdr_infra not called"),
+                                ),
+                            },
                         ],
-                    }))
-                }
+                    }),
+                ),
                 _ => None,
             };
 
@@ -2105,10 +2153,23 @@ impl DeviceResources {
                 device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("depth_blit_bg"),
                     layout: bgl,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: crate::gpu::BindingResource::TextureView(&hdr_depth_only_view),
-                    }],
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: crate::gpu::BindingResource::TextureView(
+                                &hdr_depth_only_view,
+                            ),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: crate::gpu::BindingResource::Sampler(
+                                self.post
+                                    .pp_nearest_sampler
+                                    .as_ref()
+                                    .expect("ensure_hdr_infra not called"),
+                            ),
+                        },
+                    ],
                 })
             });
             (Some(tex), view, bg)
@@ -2384,6 +2445,15 @@ impl DeviceResources {
                         ),
                     },
                     crate::gpu::BindGroupEntry {
+                        binding: composite::slot::DEPTH_SAMPLER,
+                        resource: crate::gpu::BindingResource::Sampler(
+                            self.post
+                                .pp_nearest_sampler
+                                .as_ref()
+                                .expect("ensure_hdr_infra not called"),
+                        ),
+                    },
+                    crate::gpu::BindGroupEntry {
                         binding: composite::slot::FOREGROUND_DEPTH,
                         resource: crate::gpu::BindingResource::TextureView(foreground_view),
                     },
@@ -2430,6 +2500,15 @@ impl DeviceResources {
                         crate::gpu::BindGroupEntry {
                             binding: 4,
                             resource: crate::gpu::BindingResource::TextureView(&foreground_view),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 5,
+                            resource: crate::gpu::BindingResource::Sampler(
+                                self.post
+                                    .pp_nearest_sampler
+                                    .as_ref()
+                                    .expect("ensure_hdr_infra not called"),
+                            ),
                         },
                     ],
                 });

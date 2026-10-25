@@ -307,7 +307,8 @@ impl DeviceResources {
     /// A convenience for plugins that have a spare bind group: place this at
     /// whatever free slot of `extra_bind_group_layouts` when building the
     /// pipeline with [`build_depth_read_pipeline`](Self::build_depth_read_pipeline),
-    /// declare the matching `@group(K) @binding(0/1)` in the shader, and bind
+    /// declare the matching `@group(K) @binding(0/1)` in the shader
+    /// (`texture_2d<f32>` and `sampler`: binding 0 is unfilterable float), and bind
     /// the ready-made bind group there. A plugin already using all four bind
     /// groups skips this and folds the depth texture + sampler into an existing
     /// group instead (see

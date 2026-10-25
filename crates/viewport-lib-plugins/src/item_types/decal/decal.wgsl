@@ -45,10 +45,11 @@ struct ShadowAtlas {
 @group(0) @binding(5) var<uniform> shadow_atlas: ShadowAtlas;
 
 // Scene depth written by the opaque pass (depth-only aspect, Depth24PlusStencil8).
-@group(1) @binding(0) var scene_depth:   texture_depth_2d;
+@group(1) @binding(0) var scene_depth:   texture_2d<f32>;
 // Scene stencil (stencil-only aspect, Depth24PlusStencil8). Holds the surface
 // mask: the layers of the item that owns each pixel.
 @group(1) @binding(1) var scene_stencil: texture_2d<u32>;
+@group(1) @binding(2) var scene_depth_sampler: sampler;
 
 struct DecalUniform {
     // Inverse of the decal model matrix: transforms world -> decal local space.
@@ -118,7 +119,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Load scene depth at the current pixel.
     let pix   = vec2<i32>(i32(in.clip_pos.x), i32(in.clip_pos.y));
-    let depth = textureLoad(scene_depth, pix, 0);
+    let depth = depth_texel(scene_depth, scene_depth_sampler, pix);
 
     // The surface under this pixel shares no layer with the decal: skip it.
     let stencil = textureLoad(scene_stencil, pix, 0).r;

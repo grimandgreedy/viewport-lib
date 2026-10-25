@@ -5,7 +5,7 @@ struct AtlasBlitUniform {
 };
 
 @group(0) @binding(0) var<uniform> blit: AtlasBlitUniform;
-@group(0) @binding(1) var shadow_atlas: texture_depth_2d;
+@group(0) @binding(1) var shadow_atlas: texture_2d<f32>;
 @group(0) @binding(2) var atlas_sampler: sampler;
 
 struct VertexOut {
@@ -39,7 +39,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    let depth = textureSampleLevel(shadow_atlas, atlas_sampler, in.uv, 0i);
+    let depth = textureSampleLevel(shadow_atlas, atlas_sampler, in.uv, 0.0).r;
     // Apply a mild gamma curve to spread values away from 0 and 1.
     let grey = pow(depth, 0.33);
     return vec4<f32>(grey, grey, grey, 0.9);

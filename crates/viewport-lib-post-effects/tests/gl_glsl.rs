@@ -9,15 +9,7 @@
 
 /// Entry points the GLSL writer cannot translate yet, as `shader:entry point`.
 /// The test fails when one is fixed and still listed, so the list stays exact.
-const KNOWN_FAILURES: &[&str] = &[
-    // A depth texture sampled without a comparison: naga emits a
-    // `sampler2DShadow` lookup with no reference, which no GLSL overload
-    // matches, and reports no error.
-    "contact_shadow.wgsl:depth-sample",
-    // `textureLoad` from a depth texture.
-    "depth_fog.wgsl:fs_main",
-    "edge_detect.wgsl:fs_main",
-];
+const KNOWN_FAILURES: &[&str] = &[];
 
 /// The first function of `module` that samples or gathers a depth texture
 /// without a depth reference, as `` `function`: `texture` ``. naga declares
@@ -141,7 +133,13 @@ fn post_effect_shaders_translate_to_gl_glsl() {
             continue;
         }
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        let src = std::fs::read_to_string(&path).expect("shader source");
+        // The depth passes compose the depth-texel helper in front of their
+        // body; composing it in front of every shader is harmless.
+        let src = format!(
+            "{}\n{}",
+            viewport_lib::plugin_api::shared_wgsl::SHARED_DEPTH_TEXEL_WGSL,
+            std::fs::read_to_string(&path).expect("shader source")
+        );
         if let Some(at) = naga::front::wgsl::parse_str(&src)
             .ok()
             .and_then(|m| depth_sampled_without_comparison(&m))

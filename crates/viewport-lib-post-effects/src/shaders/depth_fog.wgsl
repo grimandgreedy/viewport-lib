@@ -8,9 +8,10 @@ struct VfxUniform {
 };
 
 @group(0) @binding(0) var input_color: texture_2d<f32>;
-@group(0) @binding(1) var input_depth: texture_depth_2d;
+@group(0) @binding(1) var input_depth: texture_2d<f32>;
 @group(0) @binding(2) var input_sampler: sampler;
 @group(0) @binding(3) var<uniform> u: VfxUniform;
+@group(0) @binding(4) var depth_sampler: sampler;
 
 struct VsOut {
     @builtin(position) position: vec4<f32>,
@@ -40,7 +41,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     let color = textureSample(input_color, input_sampler, in.uv);
     let pixel = vec2<i32>(in.uv * u.viewport_size);
-    let depth = textureLoad(input_depth, pixel, 0);
+    let depth = depth_texel(input_depth, depth_sampler, pixel);
     let fog_t = smoothstep(near_depth, far_depth, depth) * amount;
     return vec4<f32>(mix(color.rgb, fog_color, fog_t), color.a);
 }

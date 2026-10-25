@@ -8,9 +8,10 @@ struct VfxUniform {
 };
 
 @group(0) @binding(0) var input_color: texture_2d<f32>;
-@group(0) @binding(1) var input_depth: texture_depth_2d;
+@group(0) @binding(1) var input_depth: texture_2d<f32>;
 @group(0) @binding(2) var input_sampler: sampler;
 @group(0) @binding(3) var<uniform> u: VfxUniform;
+@group(0) @binding(4) var depth_sampler: sampler;
 
 struct VsOut {
     @builtin(position) position: vec4<f32>,
@@ -55,10 +56,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let sx = i32(u.viewport_size.x) - 2;
     let sy = i32(u.viewport_size.y) - 2;
     let p = vec2<i32>(min(px, sx), min(py, sy));
-    let d_left = textureLoad(input_depth, p + vec2<i32>(-1, 0), 0);
-    let d_right = textureLoad(input_depth, p + vec2<i32>(1, 0), 0);
-    let d_up = textureLoad(input_depth, p + vec2<i32>(0, -1), 0);
-    let d_down = textureLoad(input_depth, p + vec2<i32>(0, 1), 0);
+    let d_left = depth_texel(input_depth, depth_sampler, p + vec2<i32>(-1, 0));
+    let d_right = depth_texel(input_depth, depth_sampler, p + vec2<i32>(1, 0));
+    let d_up = depth_texel(input_depth, depth_sampler, p + vec2<i32>(0, -1));
+    let d_down = depth_texel(input_depth, depth_sampler, p + vec2<i32>(0, 1));
 
     let color_edge = abs(luminance(left.rgb) - luminance(right.rgb))
         + abs(luminance(up.rgb) - luminance(down.rgb));

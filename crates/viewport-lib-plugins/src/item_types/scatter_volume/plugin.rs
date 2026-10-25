@@ -13,15 +13,12 @@ use viewport_lib::renderer::{PickHit, PickId, PickMask};
 /// This type's shaders as the pipelines compile them, shared sections already
 /// spliced in front of each body.
 pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
-    use crate::item_types::shader::{lit_shader, scene_shader, wgsl_source};
+    use crate::item_types::shader::{scene_shader, wgsl_source};
     vec![
-        (
-            "scatter_volume.wgsl",
-            lit_shader(&[], wgsl_source!("scatter_volume")),
-        ),
+        ("scatter_volume.wgsl", super::pipeline::volume_source()),
         (
             "scatter_refraction.wgsl",
-            scene_shader(&[], wgsl_source!("scatter_refraction")),
+            super::pipeline::refraction_source(),
         ),
         (
             "scatter_pick.wgsl",

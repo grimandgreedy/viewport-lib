@@ -590,20 +590,6 @@ fn fs_main() -> @location(0) vec4<f32> {
         // `textureNumLevels`, which GLSL ES has no counterpart for.
         "cull.wgsl:cull_instances",
         "ibl_prefilter.wgsl:cs_main",
-        // A depth texture sampled without a comparison: naga emits a
-        // `sampler2DShadow` lookup with no reference, which no GLSL overload
-        // matches, and reports no error.
-        "contact_shadow.wgsl:depth-sample",
-        "shadow_atlas_blit.wgsl:depth-sample",
-        // `textureLoad` from a depth texture.
-        "depth_blit.wgsl:fs_main",
-        "dof.wgsl:fs_main",
-        "exposure.wgsl:build_main",
-        "foreground_depth_stamp.wgsl:fs_main",
-        "hiz_copy.wgsl:copy_depth",
-        "ssaa_depth_resolve.wgsl:fs_main",
-        "ssao.wgsl:fs_main",
-        "tone_map.wgsl:fs_main",
     ];
 
     /// The `(shader:entry point, error)` pairs that fail at either GLSL version
@@ -988,6 +974,38 @@ pub fn clamp_linear_sampler(device: &crate::gpu::Device, label: &str) -> crate::
         min_filter: crate::gpu::FilterMode::Linear,
         ..Default::default()
     })
+}
+
+/// A layout entry for a 2D depth view read as unfilterable float, the way
+/// `depth_texel` reads it. Pair it with [`nearest_sampler_entry`].
+pub fn depth_texel_entry(
+    binding: u32,
+    visibility: crate::gpu::ShaderStages,
+) -> crate::gpu::BindGroupLayoutEntry {
+    crate::gpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: crate::gpu::BindingType::Texture {
+            sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+            view_dimension: crate::gpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+/// A non-filtering sampler layout entry, for a depth texture read through
+/// [`clamp_nearest_sampler`] as unfilterable float.
+pub fn nearest_sampler_entry(
+    binding: u32,
+    visibility: crate::gpu::ShaderStages,
+) -> crate::gpu::BindGroupLayoutEntry {
+    crate::gpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::NonFiltering),
+        count: None,
+    }
 }
 
 /// Nearest-filtered sampler clamped to edge on all axes. Used where

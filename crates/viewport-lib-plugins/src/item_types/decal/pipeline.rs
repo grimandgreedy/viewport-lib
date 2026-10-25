@@ -4,6 +4,7 @@
 
 use crate::item_types::shader::{lit_shader, scene_shader, wgsl_source};
 use viewport_lib::gpu::util::DeviceExt as _;
+use viewport_lib::plugin_api::builders;
 use viewport_lib::plugin_api::shared_wgsl;
 use viewport_lib::resources::DeviceResources;
 
@@ -12,13 +13,20 @@ use viewport_lib::resources::DeviceResources;
 /// surface under it is lit by.
 pub(super) fn decal_source() -> String {
     lit_shader(
-        &[shared_wgsl::SHARED_CSM_WGSL, shared_wgsl::SHARED_BRDF_WGSL],
+        &[
+            shared_wgsl::SHARED_CSM_WGSL,
+            shared_wgsl::SHARED_BRDF_WGSL,
+            shared_wgsl::SHARED_DEPTH_TEXEL_WGSL,
+        ],
         wgsl_source!("decal"),
     )
 }
 
 pub(super) fn outline_mask_source() -> String {
-    scene_shader(&[], wgsl_source!("decal_outline_mask"))
+    scene_shader(
+        &[shared_wgsl::SHARED_DEPTH_TEXEL_WGSL],
+        wgsl_source!("decal_outline_mask"),
+    )
 }
 
 pub(super) fn pick_source() -> String {
@@ -397,8 +405,10 @@ fn build(r: &DecalRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
 /// the unit cube the pick pass rasterises.
 pub(crate) struct DecalGpu {
     pub(crate) pipelines: DecalPipelines,
-    /// Group 1 of the decal pass: depth texture + stencil texture bindings.
+    /// Group 1 of the decal pass: depth texture, stencil texture and the
+    /// nearest sampler the depth is read through.
     depth_bgl: viewport_lib::gpu::BindGroupLayout,
+    depth_sampler: viewport_lib::gpu::Sampler,
     /// Group 2 of the decal pass: uniform buffer + albedo texture + sampler.
     item_bgl: viewport_lib::gpu::BindGroupLayout,
     /// Repeat-address sampler used by the decal fragment shader.
@@ -446,16 +456,7 @@ impl DecalGpu {
             device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
                 label: Some("decal_depth_bgl"),
                 entries: &[
-                    viewport_lib::gpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
-                        ty: viewport_lib::gpu::BindingType::Texture {
-                            sample_type: viewport_lib::gpu::TextureSampleType::Depth,
-                            view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
+                    builders::depth_texel_entry(0, viewport_lib::gpu::ShaderStages::FRAGMENT),
                     viewport_lib::gpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
@@ -466,6 +467,7 @@ impl DecalGpu {
                         },
                         count: None,
                     },
+                    builders::nearest_sampler_entry(2, viewport_lib::gpu::ShaderStages::FRAGMENT),
                 ],
             });
         // Repeat address mode so UV scroll animation tiles correctly.
@@ -625,6 +627,7 @@ impl DecalGpu {
         Some(Self {
             pipelines,
             depth_bgl,
+            depth_sampler: builders::clamp_nearest_sampler(device, "decal_depth_sampler"),
             item_bgl,
             sampler,
             outline_edge_bgl,
@@ -729,6 +732,10 @@ impl DecalGpu {
                 viewport_lib::gpu::BindGroupEntry {
                     binding: 1,
                     resource: viewport_lib::gpu::BindingResource::TextureView(stencil_only_view),
+                },
+                viewport_lib::gpu::BindGroupEntry {
+                    binding: 2,
+                    resource: viewport_lib::gpu::BindingResource::Sampler(&self.depth_sampler),
                 },
             ],
         })

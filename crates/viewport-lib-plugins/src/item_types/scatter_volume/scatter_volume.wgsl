@@ -81,7 +81,7 @@ const EMISSION_THRESHOLD: u32 = 3u;
 @group(2) @binding(3) var          density_sampler:  sampler;
 
 @group(3) @binding(0) var<uniform> frame:          ScatterFrameUniform;
-@group(3) @binding(1) var          opaque_depth:   texture_depth_2d;
+@group(3) @binding(1) var          opaque_depth:   texture_2d<f32>;
 @group(3) @binding(2) var          depth_sampler:  sampler;
 
 struct VsOut {
@@ -372,7 +372,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         clamp(i32(uv.x * f32(dims.x)), 0, i32(dims.x) - 1),
         clamp(i32(uv.y * f32(dims.y)), 0, i32(dims.y) - 1),
     );
-    let depth = textureLoad(opaque_depth, coord, 0);
+    let depth = depth_texel(opaque_depth, depth_sampler, vec2<i32>(coord));
     let t_opaque = opaque_distance(ndc_xy, depth, ray_dir);
 
     // Ray-vs-shape entry / exit for this single volume.

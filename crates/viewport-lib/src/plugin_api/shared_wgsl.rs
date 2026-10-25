@@ -122,6 +122,26 @@ pub const SHARED_CSM_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/helper
 pub const SHARED_CLIP_VOLUME_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/clip_volume_test.wgsl"));
 
+/// Read one texel of a depth texture on every backend, GL included.
+///
+/// Provides:
+///
+/// ```ignore
+/// fn depth_texel(tex: texture_2d<f32>, samp: sampler, coord: vec2<i32>) -> f32;
+/// ```
+///
+/// Bind the depth view as `texture_2d<f32>` with an unfilterable-float layout
+/// entry ([`depth_texel_entry`](crate::plugin_api::builders::depth_texel_entry))
+/// and a non-filtering sampler
+/// ([`nearest_sampler_entry`](crate::plugin_api::builders::nearest_sampler_entry),
+/// [`clamp_nearest_sampler`](crate::plugin_api::builders::clamp_nearest_sampler)).
+/// Do not `textureLoad` a `texture_depth_2d` (wgpu's GL backend cannot
+/// translate it) or sample one without a comparison (the GLSL it becomes does
+/// not compile). A `texture_2d<f32>` read with `textureLoad` reads 0 on GLES.
+/// It declares no bindings, so it composes anywhere.
+pub const SHARED_DEPTH_TEXEL_WGSL: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/helpers/depth_texel.wgsl"));
+
 /// The direct Cook-Torrance BRDF the renderer's lit mesh shaders evaluate.
 ///
 /// Provides `D_GGX`, `G1_Smith` and the functions built on them, for a body
@@ -201,12 +221,13 @@ pub const SHARED_OIT_WGSL: &str =
 /// Declare the depth binding and sample it yourself, then pass the value in:
 ///
 /// ```wgsl
-/// // In a group the plugin owns, at any free binding index:
-/// @group(2) @binding(4) var scene_depth_tex:  texture_depth_2d;
+/// // In a group the plugin owns, at any free binding index. The depth view is
+/// // bound as unfilterable float, with a non-filtering sampler.
+/// @group(2) @binding(4) var scene_depth_tex:  texture_2d<f32>;
 /// @group(2) @binding(5) var scene_depth_samp: sampler;
 /// // ...
 /// let screen_uv    = frag_pos.xy / viewport_size;
-/// let scene_ndc_z  = textureSample(scene_depth_tex, scene_depth_samp, screen_uv);
+/// let scene_ndc_z  = textureSampleLevel(scene_depth_tex, scene_depth_samp, screen_uv, 0.0).r;
 /// let fade         = viewport_soft_fade_from_ndc(world_pos, screen_uv, scene_ndc_z, soft_dist);
 /// ```
 ///

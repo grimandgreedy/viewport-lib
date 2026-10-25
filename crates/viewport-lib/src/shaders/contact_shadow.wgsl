@@ -12,7 +12,7 @@ struct ContactShadowUniform {
     params:         vec4<f32>,     // x=max_distance, y=steps, z=thickness
 };
 
-@group(0) @binding(0) var depth_texture: texture_depth_2d;
+@group(0) @binding(0) var depth_texture: texture_2d<f32>;
 @group(0) @binding(1) var depth_sampler: sampler;
 @group(0) @binding(2) var<uniform> params: ContactShadowUniform;
 
@@ -43,7 +43,7 @@ fn view_pos_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let frag_depth = textureSample(depth_texture, depth_sampler, in.uv);
+    let frag_depth = textureSample(depth_texture, depth_sampler, in.uv).r;
 
     // Reconstruct view position and its screen-space normal before the sky
     // early-out: the derivatives must be taken in uniform control flow, and the
@@ -97,7 +97,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             break;
         }
 
-        let sample_depth = textureSampleLevel(depth_texture, depth_sampler, sample_uv, 0);
+        let sample_depth = textureSampleLevel(depth_texture, depth_sampler, sample_uv, 0.0).r;
         let sample_view_pos = view_pos_from_depth(sample_uv, sample_depth);
 
         // Self-shadow guard: the occluder must be meaningfully closer to the

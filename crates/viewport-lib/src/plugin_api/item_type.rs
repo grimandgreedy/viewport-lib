@@ -416,6 +416,15 @@ pub struct PaintContext<'a> {
 ///   list that layout at the matching slot of `extra_bind_group_layouts` when
 ///   building the pipeline via
 ///   [`build_depth_read_pipeline`](crate::resources::DeviceResources::build_depth_read_pipeline).
+///
+/// Either way, declare the depth as `texture_2d<f32>` (the layout entry is
+/// unfilterable float, see
+/// [`depth_texel_entry`](crate::plugin_api::builders::depth_texel_entry)) and
+/// read it through the sampler: `textureSampleLevel(...).r`, or `depth_texel`
+/// from [`SHARED_DEPTH_TEXEL_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_TEXEL_WGSL)
+/// for one texel. A `texture_depth_2d` read with `textureLoad` or a
+/// non-comparison sample does not build on wgpu's GL backend, and
+/// `textureLoad` on the `texture_2d<f32>` reads 0 on GLES.
 #[non_exhaustive]
 pub struct DepthReadContext<'a> {
     /// Active render-camera snapshot for this viewport.
@@ -432,7 +441,7 @@ pub struct DepthReadContext<'a> {
     /// own, or use the ready-made
     /// [`scene_depth_bind_group`](Self::scene_depth_bind_group).
     pub scene_depth: &'a crate::gpu::TextureView,
-    /// Non-filtering clamp sampler matching the depth view. Pair it with
+    /// Non-filtering, nearest, clamp sampler matching the depth view. Pair it with
     /// [`scene_depth`](Self::scene_depth) when building a bind group; the same
     /// sampler backs [`scene_depth_bind_group`](Self::scene_depth_bind_group).
     pub scene_depth_sampler: &'a crate::gpu::Sampler,

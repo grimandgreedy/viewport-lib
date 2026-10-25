@@ -2149,20 +2149,27 @@ impl ViewportRenderer {
         // tone map pass has already consumed).
         if self.foreground_active(ctx.frame) {
             let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
-            if let (Some(fg_view), Some(pipeline), Some(bgl)) = (
+            if let (Some(fg_view), Some(pipeline), Some(bgl), Some(nearest)) = (
                 hdr.foreground_depth_only_view.clone(),
                 self.resources.post.foreground_stamp_pipeline.as_ref(),
                 self.resources.post.foreground_stamp_bgl.as_ref(),
+                self.resources.post.pp_nearest_sampler.as_ref(),
             ) {
                 let stamp_bg = hdr.foreground_stamp_bg.get(fg_view.clone(), || {
                     ctx.device
                         .create_bind_group(&crate::gpu::BindGroupDescriptor {
                             label: Some("foreground_stamp_bg"),
                             layout: bgl,
-                            entries: &[crate::gpu::BindGroupEntry {
-                                binding: 0,
-                                resource: crate::gpu::BindingResource::TextureView(&fg_view),
-                            }],
+                            entries: &[
+                                crate::gpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: crate::gpu::BindingResource::TextureView(&fg_view),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: crate::gpu::BindingResource::Sampler(nearest),
+                                },
+                            ],
                         })
                 });
                 let slot_hdr = &*hdr;

@@ -113,6 +113,8 @@ pub struct ExposureResources {
     /// Bind group layout for all three compute passes (hdr texture, params
     /// uniform, histogram storage, exposure-state storage).
     pub bgl: crate::gpu::BindGroupLayout,
+    /// The nearest sampler the build pass reads the scene depth through.
+    depth_sampler: crate::gpu::Sampler,
     /// The clear, build and resolve pipelines, `None` until `ensure_pipelines`
     /// composes them. A frame whose dispatch finds one still compiling skips
     /// the pass and keeps the exposure it had.
@@ -174,17 +176,26 @@ impl ExposureResources {
                     binding: 4,
                     visibility: crate::gpu::ShaderStages::COMPUTE,
                     ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
                         view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
+                // binding 5: the nearest sampler the depth read goes through.
+                crate::resources::builders::nearest_sampler_entry(
+                    5,
+                    crate::gpu::ShaderStages::COMPUTE,
+                ),
             ],
         });
 
         Self {
             bgl,
+            depth_sampler: crate::resources::builders::clamp_nearest_sampler(
+                device,
+                "exposure_depth_sampler",
+            ),
             pipelines: None,
         }
     }
@@ -299,6 +310,10 @@ impl ExposureResources {
                 crate::gpu::BindGroupEntry {
                     binding: 4,
                     resource: crate::gpu::BindingResource::TextureView(depth_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 5,
+                    resource: crate::gpu::BindingResource::Sampler(&self.depth_sampler),
                 },
             ],
         })

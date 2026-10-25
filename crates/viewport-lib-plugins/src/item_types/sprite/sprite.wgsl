@@ -60,7 +60,7 @@ struct SpriteInstance {
 // Bound to the scene's depth-aspect view when soft particles are active;
 // otherwise bound to a placeholder. The shader only samples this when
 // soft_particle_distance > 0, so the placeholder contents do not matter.
-@group(2) @binding(0) var scene_depth_tex: texture_depth_2d;
+@group(2) @binding(0) var scene_depth_tex: texture_2d<f32>;
 @group(2) @binding(1) var scene_depth_samp: sampler;
 
 struct VertexIn {
@@ -230,7 +230,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         // mip level, so level zero is what the implicit lookup picked anyway.
         // (A depth texture's level is an integer, not the f32 the colour
         // overloads take.)
-        let scene_ndc_z   = textureSampleLevel(scene_depth_tex, scene_depth_samp, screen_uv, 0i);
+        let scene_ndc_z   = textureSampleLevel(scene_depth_tex, scene_depth_samp, screen_uv, 0.0).r;
         let ndc = vec4<f32>(
             screen_uv.x * 2.0 - 1.0,
             1.0 - screen_uv.y * 2.0,

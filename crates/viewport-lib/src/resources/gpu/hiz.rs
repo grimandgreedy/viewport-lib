@@ -44,6 +44,8 @@ fn level_dims(w: u32, h: u32, level: u32) -> (u32, u32) {
 /// policy the first time a pass asks for it.
 pub(crate) struct HizPipelines {
     copy_bgl: crate::gpu::BindGroupLayout,
+    /// The nearest sampler the copy reads the scene depth through.
+    depth_sampler: crate::gpu::Sampler,
     reproj_bgl: crate::gpu::BindGroupLayout,
     to_texture_bgl: crate::gpu::BindGroupLayout,
     reduce_bgl: crate::gpu::BindGroupLayout,
@@ -148,7 +150,8 @@ impl HizPipelines {
             include_str!(concat!(env!("OUT_DIR"), "/hiz_reduce.wgsl")),
         );
 
-        // depth -> prev_depth (texture_depth_2d in, R32Float storage out).
+        // depth -> prev_depth (depth read as unfilterable float, R32Float
+        // storage out).
         let copy_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("hiz_copy_bgl"),
             entries: &[
@@ -156,13 +159,14 @@ impl HizPipelines {
                     binding: 0,
                     visibility: compute,
                     ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
                         view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 storage_tex_entry(1),
+                crate::resources::builders::nearest_sampler_entry(2, compute),
             ],
         });
         // Reprojection (init + scatter share this layout; init ignores the
@@ -225,6 +229,10 @@ impl HizPipelines {
         };
         Self {
             copy_bgl,
+            depth_sampler: crate::resources::builders::clamp_nearest_sampler(
+                device,
+                "hiz_depth_sampler",
+            ),
             reproj_bgl,
             to_texture_bgl,
             reduce_bgl,
@@ -445,6 +453,10 @@ impl HizState {
                     resource: crate::gpu::BindingResource::TextureView(
                         &self.prev_depth_storage_view,
                     ),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 2,
+                    resource: crate::gpu::BindingResource::Sampler(&self.pipelines.depth_sampler),
                 },
             ],
         });

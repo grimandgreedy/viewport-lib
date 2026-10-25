@@ -1164,7 +1164,9 @@ impl DeviceResources {
                                 binding: 1,
                                 visibility: crate::gpu::ShaderStages::FRAGMENT,
                                 ty: crate::gpu::BindingType::Texture {
-                                    sample_type: crate::gpu::TextureSampleType::Depth,
+                                    sample_type: crate::gpu::TextureSampleType::Float {
+                                        filterable: false,
+                                    },
                                     view_dimension: crate::gpu::TextureViewDimension::D2,
                                     multisampled: false,
                                 },
@@ -1246,7 +1248,9 @@ impl DeviceResources {
                                 binding: 0,
                                 visibility: crate::gpu::ShaderStages::FRAGMENT,
                                 ty: crate::gpu::BindingType::Texture {
-                                    sample_type: crate::gpu::TextureSampleType::Depth,
+                                    sample_type: crate::gpu::TextureSampleType::Float {
+                                        filterable: false,
+                                    },
                                     view_dimension: crate::gpu::TextureViewDimension::D2,
                                     multisampled: false,
                                 },

@@ -256,17 +256,6 @@ fn compatibility_tier_shaders_translate_to_webgl2_glsl() {
 /// full-tier GL device, as `shader:entry point`. The test fails when one is
 /// fixed and still listed, so the list stays exact.
 const GL_KNOWN_FAILURES: &[&str] = &[
-    // `textureLoad` from a depth texture.
-    "decal.wgsl:fs_main",
-    "decal_outline_mask.wgsl:fs_main",
-    "scatter_refraction.wgsl:fs_main",
-    "scatter_temporal_resolve.wgsl:fs_main",
-    "scatter_volume.wgsl:fs_main",
-    // A depth texture sampled without a comparison: naga emits a
-    // `sampler2DShadow` lookup with no reference, which no GLSL overload
-    // matches, and reports no error.
-    "sprite.wgsl:depth-sample",
-    "sprite_lit.wgsl:depth-sample",
     // A `@interpolate(linear)` varying, which GLSL ES has no qualifier for.
     "surface_contour.wgsl:fs_main",
     "surface_contour.wgsl:vs_main",
