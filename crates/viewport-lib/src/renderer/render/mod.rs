@@ -340,7 +340,7 @@ impl ViewportRenderer {
                 &self.prepared_surfaces,
                 self.per_object_bundle.as_ref()
             );
-            self.draw_line_and_instance_layers(&mut render_pass, camera_bg, false);
+            self.draw_mesh_instance_batches(&mut render_pass, camera_bg);
             // TransparentVolumeMesh boundary wireframe overlay.
             if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
                 if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
@@ -1475,67 +1475,19 @@ impl ViewportRenderer {
 }
 
 impl crate::renderer::ViewportRenderer {
-    /// Draw the line substrate from the per-frame GPU data `prepare()` built:
-    /// item types' wireframe overlays, scatter and volume bounds, clip-object
-    /// outlines. On every tier with a lit group 0; nothing here binds storage.
+    /// Draw the mesh-instance batches from the per-frame GPU data `prepare()`
+    /// built.
     ///
-    /// Each thick segment instance is drawn as 6 vertices (2 triangles) by
-    /// screen-space quad expansion. Items with `skip_clip` (clip object
-    /// wireframe overlays) use the clip-exempt pipeline so they stay fully
-    /// visible regardless of active clip volumes. Items with `wireframe` use
-    /// the thin 1px LineList pipeline over the same segment buffer, still
-    /// honouring `skip_clip` (see `PolylineKey`).
-    pub(crate) fn draw_line_substrate(
+    /// Core rather than an item-type plugin, and deliberately so: a
+    /// mesh-instance batch rides the scene graph's own instanced pipeline.
+    /// Lines, the other layer that used to draw from here, belong to the
+    /// polyline item type, which also draws the other types' wireframe
+    /// overlays.
+    pub(crate) fn draw_mesh_instance_batches(
         &self,
         render_pass: &mut crate::gpu::RenderPass<'_>,
         camera_bg: &crate::gpu::BindGroup,
-        is_hdr: bool,
     ) {
-        let Some(pipelines) = self.resources.polyline.pipelines.get() else {
-            return;
-        };
-        for pl in self.polyline_gpu_data.iter() {
-            if pl.segment_count == 0 {
-                continue;
-            }
-            let key = crate::resources::PolylineKey {
-                skip_clip: pl.skip_clip,
-                wireframe: pl.wireframe,
-            };
-            let Some(pipeline) = pipelines.get(key, is_hdr) else {
-                continue;
-            };
-            render_pass.set_pipeline(pipeline);
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            render_pass.set_vertex_buffer(0, pl.vertex_buffer.slice(..));
-            if pl.wireframe {
-                render_pass.draw(0..2, 0..pl.segment_count);
-            } else {
-                render_pass.set_bind_group(1, &pl.bind_group, &[]);
-                render_pass.draw(0..6, 0..pl.segment_count);
-            }
-        }
-    }
-
-    /// Draw the line substrate and the mesh-instance batches from the per-frame
-    /// GPU data `prepare()` built.
-    ///
-    /// Both are core rather than item-type plugins, and deliberately so: the
-    /// line substrate is shared machinery with several producers (scatter
-    /// and volume bounds, clip outlines, the splat and sprite
-    /// wireframes), and a mesh-instance batch rides the scene graph's own
-    /// instanced pipeline. Every item type that used to draw from here has
-    /// moved to [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin).
-    ///
-    /// `is_hdr` selects the pipeline variant matching the pass's colour target.
-    pub(crate) fn draw_line_and_instance_layers(
-        &self,
-        render_pass: &mut crate::gpu::RenderPass<'_>,
-        camera_bg: &crate::gpu::BindGroup,
-        is_hdr: bool,
-    ) {
-        self.draw_line_substrate(render_pass, camera_bg, is_hdr);
-
         // Mesh-instance pass: one draw call per host-built batch, routed by
         // blend mode, through the HDR mesh family's blended members.
         if !self.mesh_instance_gpu_data.is_empty() {

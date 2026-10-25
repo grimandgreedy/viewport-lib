@@ -1,5 +1,14 @@
-use super::*;
-use crate::resources::pipeline_slot::LazyFamily;
+//! The line pipelines and the segment upload every polyline draws with: the
+//! polyline item type's own items, and the wireframe overlays other item
+//! types return from `wireframe_polylines` (splat rings, volume and scatter
+//! bounds, sprite outlines), which the renderer hands to this type to draw.
+//!
+//! Nothing here binds storage: the thick pipeline reads each segment record
+//! as instance attributes, and the thin wireframe pipeline reads the same
+//! records' endpoints, so one set of pipelines serves every tier with a lit
+//! group 0.
+
+use crate::resources::DeviceResources;
 
 /// Polyline pipeline variant axes: clip-exemption and thin-wireframe vs
 /// thick-billboard geometry. The two axes select genuinely different shader
@@ -212,9 +221,8 @@ fn build_polyline(r: &PolylineRecipe, i: usize) -> crate::gpu::RenderPipeline {
 }
 
 /// The polyline pipelines for every [`PolylineKey`] in both formats, each
-/// built the first time a draw reads it. Cheap to clone: the set is shared.
-#[derive(Clone)]
-pub(crate) struct PolylineVariantSet(std::sync::Arc<LazyFamily<PolylineRecipe, 8>>);
+/// built the first time a draw reads it.
+pub(crate) struct PolylineVariantSet(crate::plugin_api::LazyPipelines<PolylineRecipe, 8>);
 
 impl PolylineVariantSet {
     /// The pipeline for `key` in the HDR or LDR format, or `None` while it
@@ -263,64 +271,32 @@ mod polyline_key_tests {
     }
 }
 
-/// Polyline (screen-space thick line) pipelines and their layout.
-///
-/// Built on every tier with a lit group 0: nothing here binds storage, so the
-/// compatibility tier draws through the same pipelines. This is the shared
-/// line substrate: besides the polyline item type,
-/// scatter-volume bounds, volume bounding boxes, clip-object outlines and the
-/// splat and sprite wireframe overlays all render through it. The layouts are
-/// created up front because uploads bind against them; the pipelines are still
-/// built on first use, but through a shared reference, so the polyline item
-/// type's plugin can reach them from `prepare`, which holds
-/// `&DeviceResources`.
-pub(crate) struct PolylineResources {
-    /// Polyline render pipelines, keyed by `PolylineKey` and format.
-    pub(crate) pipelines: std::sync::OnceLock<PolylineVariantSet>,
-    /// Bind group layout for polyline uniforms (group 1).
+/// The line pipelines and the group-1 layout their draws bind: built the first
+/// time the polyline item type needs them, from the active tier's group 0.
+pub(crate) struct Lines {
+    pub(crate) pipelines: PolylineVariantSet,
+    /// Group 1 of the thick pipeline and of the pick and outline mask
+    /// pipelines: the per-item uniform, the colourmap and its sampler.
     pub(crate) bgl: crate::gpu::BindGroupLayout,
 }
 
-impl PolylineResources {
-    pub(crate) fn new(device: &crate::gpu::Device) -> Self {
+impl Lines {
+    pub(crate) fn new(device: &crate::gpu::Device, resources: &DeviceResources) -> Self {
         let bgl = crate::resources::builders::uniform_texture_sampler_bgl(
             device,
             "polyline_bgl",
             crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
             crate::gpu::ShaderStages::VERTEX,
         );
-        Self {
-            pipelines: std::sync::OnceLock::new(),
-            bgl,
-        }
-    }
-}
-
-impl DeviceResources {
-    /// Compose (on first call) and return the polyline render pipelines: the
-    /// modules and layouts, with each of the eight pipelines (four variants,
-    /// two formats) built the first time a draw reads it.
-    ///
-    /// Takes a shared reference so the polyline item type's plugin can reach
-    /// them from `prepare`, alongside the core producers that render through
-    /// the same substrate.
-    pub(crate) fn ensure_polyline_pipeline(
-        &self,
-        device: &crate::gpu::Device,
-    ) -> &PolylineVariantSet {
-        if let Some(set) = self.polyline.pipelines.get() {
-            return set;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
         let recipe = PolylineRecipe {
             device: device.clone(),
             layout: crate::resources::builders::standard_scene_layout(
                 device,
                 "polyline_pipeline_layout",
-                self.group0_layout(),
-                &self.polyline.bgl,
+                resources.group0_layout(),
+                &bgl,
             ),
-            shader: self.shared_module(
+            shader: resources.lazy_module(
                 device,
                 "polyline_shader",
                 crate::resources::builders::wgsl_source!("polyline"),
@@ -328,23 +304,20 @@ impl DeviceResources {
             wf_layout: crate::resources::builders::pipeline_layout(
                 device,
                 "polyline_wireframe_pipeline_layout",
-                &[self.group0_layout()],
+                &[resources.group0_layout()],
             ),
-            wf_shader: self.shared_module(
+            wf_shader: resources.lazy_module(
                 device,
                 "polyline_wireframe_shader",
                 crate::resources::builders::wgsl_source!("polyline_wireframe"),
             ),
-            sample_count: self.sample_count,
-            ldr_format: self.target_format,
+            sample_count: resources.sample_count(),
+            ldr_format: resources.target_format(),
         };
-        self.polyline.pipelines.get_or_init(|| {
-            PolylineVariantSet(std::sync::Arc::new(LazyFamily::new(
-                recipe,
-                std::sync::Arc::clone(&self.pipeline_compiler),
-                build_polyline,
-            )))
-        })
+        Self {
+            pipelines: PolylineVariantSet(resources.lazy_pipelines(recipe, build_polyline)),
+            bgl,
+        }
     }
 
     /// Upload one [`PolylineItem`] to the GPU and return draw data.
@@ -358,8 +331,9 @@ impl DeviceResources {
     ///
     /// `viewport_size` is `[width_px, height_px]` and is baked into the per-item
     /// uniform so the vertex shader can compute correct pixel offsets.
-    pub(crate) fn upload_polyline_per_frame(
+    pub(crate) fn upload(
         &self,
+        resources: &DeviceResources,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         item: &crate::renderer::PolylineItem,
@@ -601,20 +575,20 @@ impl DeviceResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let preset_id = item.colourmap_id.unwrap_or(
-            self.content.builtin_colourmap_ids
+            resources.content.builtin_colourmap_ids
                 [crate::resources::BuiltinColourmap::Viridis as usize],
         );
-        let lut_view = self
+        let lut_view = resources
             .content
             .colourmap_views
             .get(preset_id.0)
-            .unwrap_or(&self.content.fallback_lut_view);
+            .unwrap_or(&resources.content.fallback_lut_view);
 
-        let lut_sampler = self.lut_sampler();
+        let lut_sampler = resources.lut_sampler();
 
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("polyline_bind_group"),
-            layout: &self.polyline.bgl,
+            layout: &self.bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -680,10 +654,10 @@ mod tests {
         resources
             .pipeline_compiler
             .set_policy(crate::resources::PipelineCompilation::Blocking);
-        let pipelines = resources.ensure_polyline_pipeline(&device);
+        let lines = super::Lines::new(&device, &resources);
         for key in PolylineKey::all() {
             for hdr in [false, true] {
-                assert!(pipelines.get(key, hdr).is_some());
+                assert!(lines.pipelines.get(key, hdr).is_some());
             }
         }
     }

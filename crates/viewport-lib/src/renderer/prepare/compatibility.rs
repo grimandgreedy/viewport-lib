@@ -426,7 +426,6 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) {
         self.paint_basic_meshes(pass, camera_bg);
-        self.draw_line_substrate(pass, camera_bg, false);
         if !self.item_type_plugins.is_empty() {
             pass.set_bind_group(0, camera_bg, &[]);
             self.dispatch_plugin_paint(pass, frame, false);

@@ -1652,7 +1652,6 @@ impl DeviceResources {
         };
         let resources = Self {
             compatibility_tier,
-            polyline: crate::resources::scivis::polyline::PolylineResources::new(device),
             outline: None,
             group0_profile,
             capabilities,

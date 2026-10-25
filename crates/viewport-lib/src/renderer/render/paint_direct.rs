@@ -81,7 +81,7 @@ impl ViewportRenderer {
             &self.prepared_surfaces,
             self.per_object_bundle.as_ref()
         );
-        self.draw_line_and_instance_layers(&mut *render_pass, camera_bg, false);
+        self.draw_mesh_instance_batches(&mut *render_pass, camera_bg);
         // TransparentVolumeMesh boundary wireframe overlay.
         if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
             if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {

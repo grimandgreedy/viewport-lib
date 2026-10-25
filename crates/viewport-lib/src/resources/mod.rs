@@ -103,7 +103,6 @@ pub use self::plugin_builders::{
     SHADOW_DEPTH_FORMAT, ShadowCaster,
 };
 pub use self::resource_deps::{ResourceGate, Revalidate};
-pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
 pub use self::types::OutlineEdgeUniform;
 pub use crate::renderer::item_plugins::polyline::types::PolylineId;
 // BatchMeta is published to plugins through `plugin_api::cull`; keep the
@@ -139,7 +138,7 @@ pub use self::types::{
 // `plugin_api::shared_wgsl` instead.
 pub(crate) use self::types::{
     CameraUniform, GpuMesh, GpuTexture, LightUniform, LightsUniform, MAX_SCENE_LIGHTS,
-    OverlayVertex, PolylineGpuData, SingleLightUniform, VertexBufferLayoutExt,
+    OverlayVertex, SingleLightUniform, VertexBufferLayoutExt,
 };
 // The mesh vertex is the exception: `plugin_api::builders::mesh_vertex_layout`
 // publishes its buffer layout, so an item type building geometry for a

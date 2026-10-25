@@ -476,8 +476,6 @@ pub struct ViewportRenderer {
     plugin_frame_index: u64,
     /// Performance counters from the last frame.
     last_stats: crate::renderer::stats::FrameStats,
-    /// Per-frame polyline GPU data, rebuilt in prepare(), consumed in paint().
-    polyline_gpu_data: Vec<crate::resources::PolylineGpuData>,
     /// Whether the frame being prepared may be painted straight into the
     /// caller's render pass, which binds the LDR pipelines whatever display
     /// mode the frame asks for. Set by each entry point before it prepares;
@@ -1059,7 +1057,6 @@ impl ViewportRenderer {
             plugin_frame_index: 0,
             last_stats: crate::renderer::stats::FrameStats::default(),
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
-            polyline_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
             direct_paint: true,
             surface_mask: surface_mask::SurfaceMaskState::new(),
@@ -2441,24 +2438,32 @@ impl ViewportRenderer {
             };
             polylines.extend(plugin.wireframe_polylines(&items, &ctx));
         }
-        if polylines.is_empty() {
-            return;
+        // The polyline item type draws them, through its own pipelines.
+        if let Some(lines) = self.polyline_plugin_mut() {
+            lines.0.set_overlays(
+                device,
+                queue,
+                lines.1,
+                &polylines,
+                frame.camera.viewport_size,
+            );
         }
-        self.resources.ensure_polyline_pipeline(device);
-        let vp_size = frame.camera.viewport_size;
-        for item in &polylines {
-            if item.positions.is_empty() {
-                continue;
-            }
-            let mut gpu = self
-                .resources
-                .upload_polyline_per_frame(device, queue, item, vp_size);
-            // A plugin asks for the thin single-pixel line by setting the flag
-            // on the item it returns; the substrate keys its pipeline on the
-            // uploaded data rather than on the item.
-            gpu.wireframe = item.settings.wireframe;
-            self.polyline_gpu_data.push(gpu);
-        }
+    }
+
+    /// The polyline item type, which draws every line in the scene, and the
+    /// resources it uploads against. `None` on a tier that declined it.
+    fn polyline_plugin_mut(
+        &mut self,
+    ) -> Option<(
+        &mut crate::renderer::item_plugins::polyline::PolylinePlugin,
+        &crate::resources::DeviceResources,
+    )> {
+        let plugin = self
+            .item_type_plugins
+            .get_mut(crate::renderer::item_plugins::polyline::TYPE_NAME)?
+            .as_any_plugin_mut()
+            .downcast_mut::<crate::renderer::item_plugins::polyline::PolylinePlugin>()?;
+        Some((plugin, &self.resources))
     }
 
     /// Walk registered item-type plugins and invoke `paint` for each one
@@ -2498,7 +2503,14 @@ impl ViewportRenderer {
             let items = crate::plugin_api::ItemCollections::new(
                 crate::renderer::item_plugins::plugin_collections_slice(frame, name),
             );
-            if !items.is_empty() {
+            // The polyline type also paints the other types' wireframe
+            // overlays, which arrive without any items of its own.
+            let overlays = name == crate::renderer::item_plugins::polyline::TYPE_NAME
+                && plugin
+                    .as_any_plugin()
+                    .downcast_ref::<crate::renderer::item_plugins::polyline::PolylinePlugin>()
+                    .is_some_and(|p| p.has_overlays());
+            if !items.is_empty() || overlays {
                 plugin.paint(pass, &ctx, &items);
             }
         }

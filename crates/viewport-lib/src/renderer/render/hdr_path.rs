@@ -970,7 +970,7 @@ impl ViewportRenderer {
             // depth. The post-pass targets the ssaa_* attachments and samples
             // ssaa_depth_only_view when SSAA is active, the hdr_* attachments
             // otherwise. Sprites are always skipped inline here.
-            self.draw_line_and_instance_layers(&mut render_pass, camera_bg, true);
+            self.draw_mesh_instance_batches(&mut render_pass, camera_bg);
 
             // TransparentVolumeMesh boundary wireframe overlay (HDR path).
             if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {

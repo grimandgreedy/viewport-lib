@@ -5,15 +5,15 @@
 //! so a curve that does not change is built once and re-placed per frame.
 //!
 //! The payload and the builder that fills it are not here, and deliberately:
-//! [`PolylineGpuData`](crate::resources::PolylineGpuData) is the shared line
+//! [`PolylineGpuData`](super::lines::PolylineGpuData) is the shared line
 //! substrate's output shape. Clip-object outlines, scatter bounds,
 //! volume boxes and four item types' wireframe overlays all render through the
 //! same pipelines and the same per-frame upload, so the substrate stays with
 //! the renderer. What is this item type's alone is the store of pre-uploaded
 //! curves, which is what lives here.
 
+use super::lines::PolylineGpuData;
 pub(crate) use super::types::PolylineId;
-use crate::resources::PolylineGpuData;
 
 /// Slotted store of pre-uploaded polylines.
 ///

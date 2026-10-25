@@ -200,9 +200,7 @@ impl ViewportRenderer {
                 self.prepare_compatibility_lights(queue, frame, scene_fx);
                 self.prepare_basic_meshes(device, queue, frame);
             }
-            // Item-type wireframes fill the line substrate, as on the full
-            // tier below.
-            self.polyline_gpu_data.clear();
+            // Item types' wireframe overlays, as on the full tier below.
             self.dispatch_plugin_wireframes(device, queue, frame);
             return;
         }
@@ -411,9 +409,6 @@ impl ViewportRenderer {
         lod_switches += inst_switches;
         lod_culled += inst_culled;
         lod_items_reduced += inst_reduced;
-        // The shared line substrate is refilled each frame: the plugin
-        // wireframes below are its producers.
-        self.polyline_gpu_data.clear();
         // Refresh any deform slots bound to a same-device consumer buffer,
         // GPU-to-GPU, before the mesh render pass reads them.
         resources.run_deform_slot_copies(device, sink);
