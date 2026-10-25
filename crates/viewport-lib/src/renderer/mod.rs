@@ -978,6 +978,9 @@ impl ViewportRenderer {
         if let Some(backend) = config.backend {
             capabilities = capabilities.with_backend(backend);
         }
+        if let Some(max) = config.max_tier {
+            capabilities = capabilities.capped_at(max);
+        }
         let tier = capabilities.tier();
         if tier == crate::capabilities::Tier::Unsupported {
             return Err(crate::ViewportError::DeviceUnsupported {
@@ -989,10 +992,10 @@ impl ViewportRenderer {
                 ),
             });
         }
-        if tier < crate::capabilities::Tier::Full {
+        if tier < crate::capabilities::Tier::Full && config.max_tier.is_none() {
             tracing::info!(
                 target: "viewport_lib::init",
-                "the device is on the {tier} tier, so only overlays draw: it lacks {}. Pass \
+                "the device is on the {tier} tier, which draws less than the full tier: it lacks {}. Pass \
                  ViewportRenderer::recommended_device_limits(&adapter) as required_limits in \
                  the DeviceDescriptor if the adapter offers more.",
                 capabilities

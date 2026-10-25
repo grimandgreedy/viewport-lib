@@ -127,6 +127,34 @@ impl Capabilities {
         self
     }
 
+    /// These capabilities reduced to what a device at `tier` has, so a
+    /// renderer built from them runs at that tier on a device that has more.
+    /// Unchanged when the device is already at or below `tier`.
+    ///
+    /// Below the full tier the storage buffers and compute go, and with them
+    /// the features that need them (bindless textures, GPU-driven culling,
+    /// ray queries). For the overlay-only tier the bind groups drop to the
+    /// overlay floor as well. Only what the renderer reads is reduced; the
+    /// device keeps its own limits, so this shows what a lesser device would
+    /// draw without checking that the pipelines would fit its limits.
+    pub fn capped_at(mut self, tier: Tier) -> Self {
+        if self.tier() <= tier || tier >= Tier::Full {
+            return self;
+        }
+        self.storage_buffers_per_stage = 0;
+        self.vertex_storage = false;
+        self.fragment_storage = false;
+        self.compute = false;
+        self.bindless = false;
+        self.indirect_first_instance = false;
+        self.multi_draw_indirect_count = false;
+        self.ray_query = false;
+        if tier < Tier::Forward {
+            self.bind_groups = self.bind_groups.min(Tier::BIND_GROUPS);
+        }
+        self
+    }
+
     /// The capabilities described by limits, features and downlevel flags you
     /// already hold. `None` for the flags assumes them all present.
     pub fn from_parts(
@@ -362,6 +390,32 @@ impl Default for Requirements {
 
 #[cfg(test)]
 mod tests {
+    /// A capped device lands on the tier it was capped at, and a cap above
+    /// the device changes nothing.
+    #[test]
+    fn capping_lands_on_the_tier_asked_for() {
+        let full = Capabilities::from_parts(&gpu::Limits::default(), gpu::Features::empty(), None);
+        assert_eq!(full.tier(), Tier::Full);
+        assert_eq!(full.clone().capped_at(Tier::Forward).tier(), Tier::Forward);
+        assert_eq!(
+            full.clone().capped_at(Tier::OverlayOnly).tier(),
+            Tier::OverlayOnly
+        );
+        assert_eq!(full.clone().capped_at(Tier::Full), full);
+
+        let webgl2 = Capabilities::from_parts(
+            &gpu::Limits::downlevel_webgl2_defaults(),
+            gpu::Features::empty(),
+            None,
+        );
+        assert_eq!(webgl2.tier(), Tier::Forward);
+        assert_eq!(webgl2.clone().capped_at(Tier::Forward), webgl2);
+        assert_eq!(
+            webgl2.capped_at(Tier::OverlayOnly).tier(),
+            Tier::OverlayOnly
+        );
+    }
+
     use super::*;
 
     fn tier_of(limits: gpu::Limits, flags: Option<gpu::DownlevelFlags>) -> Tier {

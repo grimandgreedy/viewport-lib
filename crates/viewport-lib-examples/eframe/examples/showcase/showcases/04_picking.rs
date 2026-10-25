@@ -138,6 +138,10 @@ pub struct PickingShowcase {
     drag_start: Option<Vec2>,
     drag_cur: Option<Vec2>,
     dragging_prev: bool,
+
+    /// Uploads the renderer refused in `setup`, with the reason. Empty on the
+    /// full tier; a renderer below it refuses what it cannot draw.
+    pub refused: Vec<(String, String)>,
 }
 
 impl PickingShowcase {
@@ -181,6 +185,50 @@ impl PickingShowcase {
             drag_start: None,
             drag_cur: None,
             dragging_prev: false,
+            refused: Vec::new(),
+        }
+    }
+
+    /// Upload a mesh, noting a refusal under `what` instead of failing.
+    fn upload_mesh(
+        &mut self,
+        ctx: &mut SetupCtx,
+        what: &str,
+        data: &vpl::MeshData,
+    ) -> Option<MeshId> {
+        match ctx
+            .session
+            .resources_mut()
+            .upload_mesh_data(ctx.device, data)
+        {
+            Ok(id) => Some(id),
+            Err(e) => {
+                if !self.refused.iter().any(|(w, _)| w == what) {
+                    self.refused.push((what.into(), e.to_string()));
+                }
+                None
+            }
+        }
+    }
+
+    /// Run an upload that goes through an item type's plugin, only when that
+    /// plugin registered: an item type the renderer declined has nothing to
+    /// upload into.
+    fn plugin_upload<T>(
+        &mut self,
+        ctx: &mut SetupCtx,
+        what: &str,
+        type_name: &str,
+        upload: impl FnOnce(&mut SetupCtx) -> T,
+    ) -> Option<T> {
+        if ctx.session.renderer_mut().has_item_type_plugin(type_name) {
+            Some(upload(ctx))
+        } else {
+            self.refused.push((
+                what.into(),
+                "its item type was declined at registration".into(),
+            ));
+            None
         }
     }
 
@@ -409,29 +457,21 @@ impl Showcase for PickingShowcase {
 
         let cube_data = primitives::cube(1.4);
         let sphere_data = primitives::sphere(0.9, 40, 20);
-        let cube = ctx
-            .session
-            .resources_mut()
-            .upload_mesh_data(ctx.device, &cube_data)
-            .unwrap();
-        let sphere = ctx
-            .session
-            .resources_mut()
-            .upload_mesh_data(ctx.device, &sphere_data)
-            .unwrap();
+        let cube = self.upload_mesh(ctx, "Cube and sphere meshes", &cube_data);
+        let sphere = self.upload_mesh(ctx, "Cube and sphere meshes", &sphere_data);
         // Unit sphere for the tensor field to instance; the field scales each
         // one by its own eigenvalues.
-        let tensor_shape = ctx
-            .session
-            .resources_mut()
-            .upload_mesh_data(ctx.device, &primitives::icosphere(1.0, 2))
-            .unwrap();
+        let tensor_shape = self
+            .upload_mesh(ctx, "Tensor glyph mesh", &primitives::icosphere(1.0, 2))
+            .unwrap_or(MeshId::INVALID);
         // Arrow for the vector field, pointing along +Z.
-        let arrow_shape = ctx
-            .session
-            .resources_mut()
-            .upload_mesh_data(ctx.device, &primitives::arrow(0.06, 0.15, 0.35, 12))
-            .unwrap();
+        let arrow_shape = self
+            .upload_mesh(
+                ctx,
+                "Arrow glyph mesh",
+                &primitives::arrow(0.06, 0.15, 0.35, 12),
+            )
+            .unwrap_or(MeshId::INVALID);
 
         // Marker first so it takes node id 0 (PickId(0) == NONE, skipped by GPU
         // picking) and keeps the real meshes off node id 0.
@@ -442,38 +482,40 @@ impl Showcase for PickingShowcase {
             .resources_mut()
             .upload_material(marker_mat)
             .unwrap();
-        let marker = ctx.session.scene_mut().add(
-            Some(sphere),
-            Mat4::from_scale(Vec3::splat(0.001)),
-            marker_mat,
-        );
-        let mut hidden = ItemSettings::default();
-        hidden.hidden = true;
-        hidden.unlit = true;
-        ctx.session.scene_mut().set_appearance(marker, hidden);
-        self.marker = Some(marker);
-
-        // Meshes. A scene node's pick_id is its node id, so key by the node id.
         let cube_pos = Vec3::new(-11.0, -5.0, 0.7);
         let sphere_pos = Vec3::new(-5.5, 0.0, 0.9);
-        let cube_node = add_mesh(ctx, cube, cube_pos, [0.62, 0.18, 0.14]);
-        let sphere_node = add_mesh(ctx, sphere, sphere_pos, [0.16, 0.26, 0.60]);
-        self.labels
-            .insert(cube_node, ("Cube".into(), Some(cube_node)));
-        self.labels
-            .insert(sphere_node, ("Sphere".into(), Some(sphere_node)));
-        self.mesh_lookup.insert(
-            cube_node,
-            (cube_data.positions.clone(), cube_data.indices.clone()),
-        );
-        self.mesh_lookup.insert(
-            sphere_node,
-            (sphere_data.positions.clone(), sphere_data.indices.clone()),
-        );
-        self.model_matrices
-            .insert(cube_node, Mat4::from_translation(cube_pos));
-        self.model_matrices
-            .insert(sphere_node, Mat4::from_translation(sphere_pos));
+        if let (Some(cube), Some(sphere)) = (cube, sphere) {
+            let marker = ctx.session.scene_mut().add(
+                Some(sphere),
+                Mat4::from_scale(Vec3::splat(0.001)),
+                marker_mat,
+            );
+            let mut hidden = ItemSettings::default();
+            hidden.hidden = true;
+            hidden.unlit = true;
+            ctx.session.scene_mut().set_appearance(marker, hidden);
+            self.marker = Some(marker);
+
+            // Meshes. A scene node's pick_id is its node id, so key by the node id.
+            let cube_node = add_mesh(ctx, cube, cube_pos, [0.62, 0.18, 0.14]);
+            let sphere_node = add_mesh(ctx, sphere, sphere_pos, [0.16, 0.26, 0.60]);
+            self.labels
+                .insert(cube_node, ("Cube".into(), Some(cube_node)));
+            self.labels
+                .insert(sphere_node, ("Sphere".into(), Some(sphere_node)));
+            self.mesh_lookup.insert(
+                cube_node,
+                (cube_data.positions.clone(), cube_data.indices.clone()),
+            );
+            self.mesh_lookup.insert(
+                sphere_node,
+                (sphere_data.positions.clone(), sphere_data.indices.clone()),
+            );
+            self.model_matrices
+                .insert(cube_node, Mat4::from_translation(cube_pos));
+            self.model_matrices
+                .insert(sphere_node, Mat4::from_translation(sphere_pos));
+        }
 
         // Point cloud (cloud points).
         let (pos, sca) = noisy_sphere(Vec3::new(0.0, 5.0, 1.0), 0.9, 400);
@@ -649,11 +691,16 @@ impl Showcase for PickingShowcase {
                 }
             }
             let data = splat_data(&positions);
-            if let Ok(id) = ctx
-                .session
-                .renderer_mut()
-                .upload(ctx.device, ctx.queue, &data)
-            {
+            if let Some(Ok(id)) = self.plugin_upload(
+                ctx,
+                "Gaussian splats",
+                viewport_lib_plugins::item_types::gaussian_splat::TYPE_NAME,
+                |ctx| {
+                    ctx.session
+                        .renderer_mut()
+                        .upload(ctx.device, ctx.queue, &data)
+                },
+            ) {
                 self.splat_id = Some(id);
                 self.instance_lookup.insert(SPLAT, positions.clone());
                 self.model_matrices.insert(SPLAT, splat_model());
@@ -665,15 +712,18 @@ impl Showcase for PickingShowcase {
         // Volume mesh: a capsule hex mesh rendered as an opaque boundary surface.
         {
             let data = capsule_volume_mesh(Vec3::new(-5.5, 5.0, 0.5));
-            if let Ok(item) = ctx
+            match ctx
                 .session
                 .resources_mut()
                 .upload_volume_mesh(ctx.device, &data)
             {
-                self.vmesh_mesh_id = Some(item.boundary_mesh_id);
-                self.vmesh_face_to_cell = item.face_to_cell;
-                self.vmesh_data = Some(Arc::new(data));
-                self.labels.insert(VMESH, ("Volume mesh".into(), None));
+                Err(e) => self.refused.push(("Volume mesh".into(), e.to_string())),
+                Ok(item) => {
+                    self.vmesh_mesh_id = Some(item.boundary_mesh_id);
+                    self.vmesh_face_to_cell = item.face_to_cell;
+                    self.vmesh_data = Some(Arc::new(data));
+                    self.labels.insert(VMESH, ("Volume mesh".into(), None));
+                }
             }
         }
 
@@ -681,11 +731,16 @@ impl Showcase for PickingShowcase {
         {
             let vol = gyroid_volume(Vec3::new(11.0, -5.0, 0.0));
             let vol = Arc::new(vol);
-            if let Ok(id) = ctx
-                .session
-                .renderer_mut()
-                .upload_volume_for_mc(ctx.device, ctx.queue, &vol)
-            {
+            if let Some(Ok(id)) = self.plugin_upload(
+                ctx,
+                "Marching cubes volume",
+                viewport_lib_plugins::item_types::gpu_marching_cubes::TYPE_NAME,
+                |ctx| {
+                    ctx.session
+                        .renderer_mut()
+                        .upload_volume_for_mc(ctx.device, ctx.queue, &vol)
+                },
+            ) {
                 self.mc_id = Some(id);
                 self.mc_data = Some(vol);
                 self.labels.insert(MC, ("Marching cubes".into(), None));
@@ -698,15 +753,19 @@ impl Showcase for PickingShowcase {
         // Decal straddling the cube's +Z face (cube half-extent 0.7).
         {
             let (dw, dh, rgba) = decal_texture();
-            if let Ok(tex) = ctx.session.resources_mut().upload_texture(
+            match ctx.session.resources_mut().upload_texture(
                 ctx.device,
                 ctx.queue,
                 vpl::TextureData::srgb(dw, dh, rgba.to_vec()),
             ) {
-                self.decal_tex = Some(tex);
-                self.decal_transform = Mat4::from_translation(cube_pos + Vec3::new(0.0, 0.0, 0.7))
-                    * Mat4::from_scale(Vec3::new(1.0, 1.0, 0.5));
-                self.labels.insert(DECAL, ("Decal".into(), None));
+                Err(e) => self.refused.push(("Decal texture".into(), e.to_string())),
+                Ok(tex) => {
+                    self.decal_tex = Some(tex);
+                    self.decal_transform =
+                        Mat4::from_translation(cube_pos + Vec3::new(0.0, 0.0, 0.7))
+                            * Mat4::from_scale(Vec3::new(1.0, 1.0, 0.5));
+                    self.labels.insert(DECAL, ("Decal".into(), None));
+                }
             }
         }
 

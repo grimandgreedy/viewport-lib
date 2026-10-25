@@ -58,6 +58,12 @@ pub struct RendererConfig {
     /// it on the GL backend, whose shaders cannot load from depth textures.
     /// Default `None`.
     pub backend: Option<crate::gpu::Backend>,
+    /// The highest tier the renderer runs at, whatever the device offers.
+    /// `Some(Tier::Forward)` on a desktop GPU builds the renderer a WebGL2
+    /// device gets, to see what that tier draws without one; see
+    /// [`Capabilities::capped_at`](crate::Capabilities::capped_at) for what it
+    /// does and does not model. Default `None`.
+    pub max_tier: Option<crate::capabilities::Tier>,
 }
 
 impl RendererConfig {
@@ -71,6 +77,7 @@ impl RendererConfig {
             geometry_chunk_bytes: None,
             downlevel_capabilities: None,
             backend: None,
+            max_tier: None,
         }
     }
 
@@ -108,6 +115,13 @@ impl RendererConfig {
     /// [`Capabilities`](crate::Capabilities) read them rather than assume them.
     pub fn with_downlevel_capabilities(mut self, caps: crate::gpu::DownlevelCapabilities) -> Self {
         self.downlevel_capabilities = Some(caps);
+        self
+    }
+
+    /// Run at `tier` at most, whatever the device offers. See
+    /// [`max_tier`](Self::max_tier).
+    pub fn with_max_tier(mut self, tier: crate::capabilities::Tier) -> Self {
+        self.max_tier = Some(tier);
         self
     }
 

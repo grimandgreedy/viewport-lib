@@ -222,15 +222,18 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
 /// only the types you draw instead and the linker leaves the rest out.
 ///
 /// A type whose requirements the device does not meet is left out rather than
-/// failing the rest.
+/// failing the rest. The ones left out are returned with the reason each was
+/// declined, empty on a device that runs them all.
 pub fn install(
     renderer: &mut viewport_lib::renderer::ViewportRenderer,
     device: &viewport_lib::gpu::Device,
-) {
-    // A type the device cannot run is declined and left out; the rest still
-    // register. `renderer.has_item_type_plugin(name)` says which are there.
+) -> Vec<(&'static str, viewport_lib::ViewportError)> {
+    let mut declined = Vec::new();
     let mut register = |plugin: Box<dyn viewport_lib::plugin_api::ItemTypePlugin>| {
-        let _ = renderer.with_item_type_plugin(device, plugin);
+        let name = plugin.type_name();
+        if let Err(e) = renderer.with_item_type_plugin(device, plugin) {
+            declined.push((name, e));
+        }
     };
     // Registration order is draw order, and it is the order the renderer used
     // when these types were built into it. Keep it.
@@ -264,6 +267,7 @@ pub fn install(
     // Scatter composites over the finished scene, so it registers after every
     // type whose pixels it absorbs.
     register(Box::new(scatter_volume::ScatterVolumePlugin::default()));
+    declined
 }
 
 #[cfg(feature = "gpu")]
