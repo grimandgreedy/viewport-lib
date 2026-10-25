@@ -63,12 +63,14 @@ pub(crate) enum SplatChannel {
 /// worker, and the replace path so all three produce identical resources.
 ///
 /// `capacity` is the number of splats to allocate room for, which the plain
-/// upload leaves at the splat count.
+/// upload leaves at the splat count. `packed` builds for a device without
+/// vertex storage, where the pack pass reads the channels as vertex buffers.
 pub(super) fn build_gaussian_splat_set(
     device: &gpu::Device,
     queue: &gpu::Queue,
     data: &GaussianSplatData,
     capacity: u32,
+    packed: bool,
 ) -> GaussianSplatGpuSet {
     let count = data.positions.len() as u32;
     let capacity = capacity.max(count);
@@ -86,7 +88,11 @@ pub(super) fn build_gaussian_splat_set(
         .map(|s| [s[0], s[1], s[2], 0.0])
         .collect();
 
-    let usage = gpu::BufferUsages::STORAGE;
+    let usage = if packed {
+        gpu::BufferUsages::VERTEX
+    } else {
+        gpu::BufferUsages::STORAGE
+    };
     let mut positions =
         ContentBuffer::new(device, "splat_position_buf", usage, VEC4_STRIDE, capacity);
     let mut scales = ContentBuffer::new(device, "splat_scale_buf", usage, VEC4_STRIDE, capacity);
@@ -95,13 +101,15 @@ pub(super) fn build_gaussian_splat_set(
     let mut opacities =
         ContentBuffer::new(device, "splat_opacity_buf", usage, OPACITY_STRIDE, capacity);
     // A set with no coefficients still needs something bindable, so the buffer
-    // exists at one splat's worth and nothing is live in it.
+    // exists at one splat's worth and nothing is live in it. The pack pass reads
+    // it per splat whatever it holds, so there it is allocated in full, zeroed,
+    // which evaluates to mid grey as the storage path's placeholder does.
     let mut sh = ContentBuffer::new(
         device,
         "splat_sh_buf",
         usage,
         sh_stride.max(4),
-        if data.sh_coefficients.is_empty() {
+        if data.sh_coefficients.is_empty() && !packed {
             0
         } else {
             capacity
@@ -125,6 +133,7 @@ pub(super) fn build_gaussian_splat_set(
         sh_degree: data.sh_degree,
         cpu_positions: data.positions.clone(),
         cpu_scales: data.scales.clone(),
+        generation: 0,
     }
 }
 
@@ -154,6 +163,10 @@ pub(crate) struct GaussianSplatGpuSet {
     pub cpu_positions: Vec<[f32; 3]>,
     /// CPU scales kept for picking and the wireframe overlay.
     pub cpu_scales: Vec<[f32; 3]>,
+    /// Bumped by every write, length change and grow, so derived state (the
+    /// packed textures and CPU sort order below the full tier) knows to
+    /// rebuild.
+    pub generation: u64,
 }
 
 impl viewport_lib::resources::handle::GpuByteSize for GaussianSplatGpuSet {
@@ -233,6 +246,7 @@ impl GaussianSplatGpuSet {
         }
         self.channel_mut(which)
             .write_range(queue, first_element, data)?;
+        self.generation += 1;
         if let Some(values) = mirror {
             let target = match which {
                 SplatChannel::Positions => &mut self.cpu_positions,
@@ -273,12 +287,14 @@ impl GaussianSplatGpuSet {
         if moved {
             self.cpu_positions.resize(capacity as usize, [0.0; 3]);
             self.cpu_scales.resize(capacity as usize, [0.0; 3]);
+            self.generation += 1;
         }
         moved
     }
 
     /// Set how many splats draw, across every channel the set holds.
     pub(crate) fn set_live_len(&mut self, len: u32) -> ViewportResult<()> {
+        self.generation += 1;
         for which in [
             SplatChannel::Positions,
             SplatChannel::Scales,

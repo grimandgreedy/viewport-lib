@@ -32,9 +32,11 @@ use viewport_lib::resources::HDR_COLOR_FORMAT;
 pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     use crate::item_types::shader::{scene_shader, wgsl_source};
     vec![
+        ("gaussian_splat.wgsl", pipeline::storage_source()),
+        ("gaussian_splat_packed.wgsl", super::packed::draw_source()),
         (
-            "gaussian_splat.wgsl",
-            scene_shader(&[], wgsl_source!("gaussian_splat")),
+            "gaussian_splat_pack.wgsl",
+            wgsl_source!("gaussian_splat_pack").to_string(),
         ),
         (
             "gaussian_splat_pick.wgsl",
@@ -93,6 +95,11 @@ pub struct GaussianSplatPlugin {
     frame: Vec<FrameDraw>,
     outlines: Vec<pipeline::SplatOutlineEntry>,
     pick_items: Vec<PickSplatItem>,
+    /// Below the full tier there is no compute or vertex storage: sets are
+    /// packed into data textures and sorted on the CPU. Set on registration.
+    packed: bool,
+    packed_gpu: Option<super::packed::PackedGpu>,
+    packed_sets: std::collections::HashMap<GaussianSplatId, super::packed::PackedSet>,
 }
 
 impl ItemTypePlugin for GaussianSplatPlugin {
@@ -100,11 +107,30 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         TYPE_NAME
     }
 
+    fn init_gpu(
+        &mut self,
+        _device: &gpu::Device,
+        resources: &dyn viewport_lib::plugin_api::PluginResources,
+    ) {
+        self.packed = resources.capabilities().tier() != viewport_lib::Tier::Full;
+    }
+
+    fn requires(&self) -> viewport_lib::Requirements {
+        viewport_lib::Requirements::compatibility_tier()
+    }
+
     fn resident_bytes(&self) -> u64 {
         self.sets.allocated_bytes()
     }
 
     fn warm(&mut self, device: &gpu::Device, resources: &viewport_lib::DeviceResources) {
+        if self.packed {
+            self.packed_gpu
+                .get_or_insert_with(|| super::packed::PackedGpu::new(device, resources))
+                .pipelines
+                .request_all();
+            return;
+        }
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::SplatGpu::new(device, resources));
@@ -114,7 +140,9 @@ impl ItemTypePlugin for GaussianSplatPlugin {
 
     fn on_device_recreated(&mut self, _device: &gpu::Device, _queue: &gpu::Queue) {
         self.gpu = None;
+        self.packed_gpu = None;
         self.sorts.clear();
+        self.packed_sets.clear();
         self.frame.clear();
         self.outlines.clear();
     }
@@ -151,6 +179,9 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         }
         if items.is_empty() {
             return Vec::new();
+        }
+        if self.packed {
+            return self.prepare_packed(device, queue, ctx, items);
         }
 
         let gpu = self
@@ -243,6 +274,25 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         ctx: &PaintContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
+        if let Some(gpu) = &self.packed_gpu {
+            let Some(pl) = gpu.pipelines.get(super::packed::DRAW) else {
+                return;
+            };
+            pass.set_pipeline(pl);
+            for fd in self.frame.iter().filter(|fd| !fd.wireframe) {
+                let Some(state) = self
+                    .packed_sets
+                    .get(&fd.source)
+                    .and_then(|set| set.viewports.get(fd.viewport_index)?.as_ref())
+                else {
+                    continue;
+                };
+                pass.set_bind_group(1, &state.bind_group, &[]);
+                pass.set_vertex_buffer(0, state.index_buf.slice(..));
+                pass.draw(0..6, 0..fd.count);
+            }
+            return;
+        }
         let Some(gpu) = &self.gpu else { return };
         let mut bound = false;
         for fd in &self.frame {
@@ -280,13 +330,21 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         _ctx: &OutlineMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
-            return;
-        };
         if self.outlines.is_empty() {
             return;
         }
-        let Some(pl) = gpu.pipelines.get(pipeline::MASK) else {
+        let mask = match &self.packed_gpu {
+            Some(gpu) => gpu
+                .drawn()
+                .then(|| gpu.pipelines.get(super::packed::MASK))
+                .flatten(),
+            None => self
+                .gpu
+                .as_ref()
+                .filter(|g| g.drawn())
+                .and_then(|g| g.pipelines.get(pipeline::MASK)),
+        };
+        let Some(pl) = mask else {
             return;
         };
         pass.set_pipeline(pl);
@@ -517,7 +575,10 @@ impl GaussianSplatPlugin {
         capacity: u32,
     ) -> viewport_lib::error::ViewportResult<GaussianSplatId> {
         validate_gaussian_splat_data(data)?;
-        let gpu_set = build_gaussian_splat_set(device, queue, data, capacity);
+        if self.packed {
+            super::packed::check_capacity(device, capacity.max(data.positions.len() as u32))?;
+        }
+        let gpu_set = build_gaussian_splat_set(device, queue, data, capacity, self.packed);
         Ok(self.sets.insert_sized(gpu_set))
     }
 
@@ -552,6 +613,9 @@ impl GaussianSplatPlugin {
         let Some(set) = self.sets.get_mut(id) else {
             return Err(self.sets.stale(id));
         };
+        if self.packed {
+            super::packed::check_capacity(device, capacity)?;
+        }
         if set.reserve(device, queue, capacity) {
             // The buffers moved, so the per-viewport sort scratch bound over the
             // old ones is stale and the slot's charge is wrong.
@@ -601,7 +665,10 @@ impl GaussianSplatPlugin {
         data: &GaussianSplatData,
     ) -> viewport_lib::error::ViewportResult<()> {
         validate_gaussian_splat_data(data)?;
-        let gpu_set = build_gaussian_splat_set(device, queue, data, 0);
+        if self.packed {
+            super::packed::check_capacity(device, data.positions.len() as u32)?;
+        }
+        let gpu_set = build_gaussian_splat_set(device, queue, data, 0, self.packed);
         if self.sets.replace_sized(id, gpu_set).is_some() {
             Ok(())
         } else {
@@ -628,11 +695,15 @@ impl GaussianSplatPlugin {
         data: GaussianSplatData,
     ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId> {
         validate_gaussian_splat_data(&data)?;
+        if self.packed {
+            super::packed::check_capacity(device, data.positions.len() as u32)?;
+        }
         let device = device.clone();
         let queue = queue.clone();
+        let packed = self.packed;
         Ok(jobs.try_submit_cpu(move |progress| {
             progress.set(0.1);
-            let gpu_set = build_gaussian_splat_set(&device, &queue, &data, 0);
+            let gpu_set = build_gaussian_splat_set(&device, &queue, &data, 0, packed);
             progress.set(0.95);
             Ok(gpu_set)
         }))
@@ -666,6 +737,68 @@ impl GaussianSplatPlugin {
         }
     }
 
+    /// `prepare` below the full tier: repack what changed, sort on the CPU
+    /// where the eye or the set moved, and record the draws.
+    fn prepare_packed(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        ctx: &ItemFrameContext<'_>,
+        items: &[GaussianSplatItem],
+    ) -> Vec<gpu::CommandBuffer> {
+        let gpu = self
+            .packed_gpu
+            .get_or_insert_with(|| super::packed::PackedGpu::new(device, ctx.resources));
+        let store = &self.sets;
+        self.packed_sets.retain(|id, _| store.get(*id).is_some());
+        let mut encoder = device.create_command_encoder(&gpu::CommandEncoderDescriptor {
+            label: Some("gaussian_splat_pack_encoder"),
+        });
+        let viewport_size = [ctx.viewport_size.x.max(1.0), ctx.viewport_size.y.max(1.0)];
+        for item in items {
+            if item.settings.hidden {
+                continue;
+            }
+            let Some((set, revision)) = store.get_with_revision(item.source) else {
+                continue;
+            };
+            if set.count() == 0 {
+                continue;
+            }
+            let packed = self
+                .packed_sets
+                .entry(item.source)
+                .or_insert_with(|| super::packed::PackedSet::new(device, queue, set, revision));
+            if packed.revision != revision {
+                *packed = super::packed::PackedSet::new(device, queue, set, revision);
+            }
+            if !packed.pack_if_changed(device, gpu, &mut encoder, set) {
+                continue;
+            }
+            packed.sorted_viewport(
+                device,
+                queue,
+                gpu,
+                set,
+                ctx.viewport_index,
+                ctx.camera.eye_position,
+                item.model,
+                viewport_size,
+            );
+            self.frame.push(FrameDraw {
+                source: item.source,
+                viewport_index: ctx.viewport_index,
+                count: set.count(),
+                wireframe: ctx.wireframe_mode || item.settings.wireframe,
+                pick: None,
+            });
+        }
+        if ctx.outline_selected {
+            self.build_outlines(device, ctx, items);
+        }
+        vec![encoder.finish()]
+    }
+
     fn sort_state(&self, fd: &FrameDraw) -> Option<&pipeline::SortState> {
         self.sorts
             .get(&fd.source)?
@@ -687,7 +820,12 @@ impl GaussianSplatPlugin {
         let sets = &self.sets;
         // Cloned (wgpu layouts are handles) so the closure below does not hold
         // a borrow of `self.gpu` across the outline buffer writes.
-        let Some(mask_bgl) = self.gpu.as_ref().map(|g| g.mask_bgl.clone()) else {
+        let Some(mask_bgl) = self
+            .gpu
+            .as_ref()
+            .map(|g| g.mask_bgl.clone())
+            .or_else(|| self.packed_gpu.as_ref().map(|g| g.mask_bgl.clone()))
+        else {
             return;
         };
         let view_proj = ctx.camera.view_proj();

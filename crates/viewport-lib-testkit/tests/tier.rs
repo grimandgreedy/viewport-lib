@@ -488,8 +488,9 @@ fn compatibility_tier_registers_item_types_that_accept_it() {
                 ),
                 (
                     viewport_lib_plugins::item_types::gaussian_splat::TYPE_NAME,
-                    false,
+                    true,
                 ),
+                (viewport_lib_plugins::item_types::sprite::TYPE_NAME, false),
             ] {
                 assert_eq!(
                     harness.renderer.has_item_type_plugin(name),
@@ -507,12 +508,10 @@ fn compatibility_tier_registers_item_types_that_accept_it() {
 #[test]
 fn uploads_to_a_declined_item_type_return_why_it_was_declined() {
     use viewport_lib::plugin_api::{Handles, Uploads};
-    use viewport_lib_plugins::item_types::gaussian_splat::{
-        self, GaussianSplatData, GaussianSplatId,
-    };
     use viewport_lib_plugins::item_types::gpu_particles::{
         GpuParticleSystemConfig, GpuParticleSystems,
     };
+    use viewport_lib_plugins::item_types::sprite::{self, SpriteItem, SpriteSetId};
 
     let Some(mut harness) =
         Harness::with_profile(&DeviceProfile::downlevel_webgl2("tier-declined-upload"))
@@ -523,20 +522,20 @@ fn uploads_to_a_declined_item_type_return_why_it_was_declined() {
     assert_eq!(harness.renderer.tier(), Tier::Compatibility);
     let declined = harness
         .renderer
-        .item_type_declined(gaussian_splat::TYPE_NAME)
+        .item_type_declined(sprite::TYPE_NAME)
         .cloned()
-        .expect("splats are declined on the compatibility tier");
+        .expect("sprites are declined on the compatibility tier");
 
-    let mut splats = GaussianSplatData::default();
-    splats.positions = vec![[0.0, 0.0, 0.0]; 4];
+    let mut sprites = SpriteItem::default();
+    sprites.positions = vec![[0.0, 0.0, 0.0]; 4];
     let device = harness.device.clone();
     let queue = harness.queue.clone();
-    let result: Result<GaussianSplatId, _> = harness.renderer.upload(&device, &queue, &splats);
+    let result: Result<SpriteSetId, _> = harness.renderer.upload(&device, &queue, &sprites);
     match result {
         Err(e) => assert_eq!(e.to_string(), declined.to_string()),
         Ok(_) => panic!("a declined type took an upload"),
     }
-    assert!(!harness.renderer.release(GaussianSplatId::from_index(0)));
+    assert!(!harness.renderer.release(SpriteSetId::from_index(0)));
     assert!(
         harness
             .renderer
@@ -549,9 +548,9 @@ fn uploads_to_a_declined_item_type_return_why_it_was_declined() {
 
     let config = viewport_lib::RendererConfig::new(Harness::DEFAULT_TARGET_FORMAT);
     let mut bare = ViewportRenderer::try_with_config(&device, &config).expect("renderer");
-    match Uploads::<GaussianSplatData>::upload(&mut bare, &device, &queue, &splats) {
+    match Uploads::<SpriteItem>::upload(&mut bare, &device, &queue, &sprites) {
         Err(ViewportError::ItemTypePluginMissing { type_name }) => {
-            assert_eq!(type_name, gaussian_splat::TYPE_NAME)
+            assert_eq!(type_name, sprite::TYPE_NAME)
         }
         other => panic!("expected ItemTypePluginMissing, got {:?}", other.err()),
     }

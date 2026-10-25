@@ -26,6 +26,8 @@ const FORWARD_SHADERS: &[&str] = &[
     "vector_field_stream.wgsl",
     "vector_field_outline_mask_stream.wgsl",
     "mc_isosurface.wgsl",
+    "gaussian_splat_packed.wgsl",
+    "gaussian_splat_pack.wgsl",
 ];
 
 fn webgl2_caps() -> Capabilities {

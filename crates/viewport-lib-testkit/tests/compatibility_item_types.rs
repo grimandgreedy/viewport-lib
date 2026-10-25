@@ -50,6 +50,10 @@ const SCENES: &[(&str, &str)] = &[
         "gpu_marching_cubes",
         viewport_lib_plugins::item_types::gpu_marching_cubes::TYPE_NAME,
     ),
+    (
+        "gaussian_splats",
+        viewport_lib_plugins::item_types::gaussian_splat::TYPE_NAME,
+    ),
 ];
 
 /// Compare against `<backend>-compatibility/<name>.png`, writing it when missing or
@@ -211,6 +215,23 @@ fn compatibility_tier_draws_the_item_types_that_accept_it() {
                         Some(viewport_lib::SubObjectRef::Point(_))
                     ),
                     "point_cloud: {point:?}"
+                );
+            }
+            if name == &"gaussian_splats" {
+                let splat = harness.renderer.pick_object(
+                    viewport_lib::PickBackend::Gpu,
+                    glam::Vec2::new(cursor.0, cursor.1),
+                    &frame,
+                    &device,
+                    &queue,
+                    viewport_lib::PickMask::SPLAT,
+                );
+                assert!(
+                    matches!(
+                        splat.and_then(|h| h.sub_object),
+                        Some(viewport_lib::SubObjectRef::Splat(_))
+                    ),
+                    "gaussian_splats: {splat:?}"
                 );
             }
             if name == &"volume" {
@@ -403,7 +424,7 @@ fn compatibility_marching_cubes_follows_the_isovalue() {
         .find(|s| s.name == "gpu_marching_cubes")
         .expect("gpu_marching_cubes is in the catalogue");
     let mut built = harness.build_scene(scene);
-    let mut render = |harness: &mut Harness, built: &viewport_lib_testkit::BuiltScene| {
+    let render = |harness: &mut Harness, built: &viewport_lib_testkit::BuiltScene| {
         let frame = frame_for(built, &scene.cameras[0].camera, [W as f32, H as f32]);
         let _ = harness.render(&frame, W, H);
         harness.render(&frame, W, H)
@@ -427,5 +448,135 @@ fn compatibility_marching_cubes_follows_the_isovalue() {
     assert!(
         changed > (W * H / 20) as usize,
         "the surface moves with the isovalue, {changed} pixels changed"
+    );
+}
+
+/// Below the full tier a splat set is packed into data textures and sorted
+/// back to front on the CPU. Two overlapping splats swap which one shows in
+/// front when the eye moves to the other side, a ranged write that swaps
+/// them is repacked and re-sorted, and a degree-1 set's colour follows the
+/// view direction.
+#[test]
+fn compatibility_splats_sort_for_the_eye_and_follow_writes() {
+    use viewport_lib::plugin_api::{Uploads, Writes};
+    use viewport_lib_plugins::item_types::gaussian_splat::{
+        GaussianSplatData, GaussianSplatItem, ShDegree, channels,
+    };
+
+    let Some(mut harness) =
+        Harness::with_profile(&DeviceProfile::downlevel_webgl2("compatibility-splat-sort"))
+    else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    const SH0: f32 = 0.282_094_79;
+    let dc = |c: [f32; 3]| c.map(|v| (v - 0.5) / SH0);
+    let device = harness.device.clone();
+    let queue = harness.queue.clone();
+
+    // The centre pixel's colour from an eye on one side of the origin or the
+    // other, along the camera's own axis.
+    let view = |yaw: f32| viewport_lib::Camera {
+        center: glam::Vec3::ZERO,
+        distance: 4.0,
+        orientation: glam::Quat::from_rotation_z(yaw) * glam::Quat::from_rotation_x(1.5708),
+        ..viewport_lib::Camera::default()
+    };
+    let centre = |harness: &mut Harness, item: &GaussianSplatItem, yaw: f32| {
+        let built = viewport_lib_testkit::BuiltScene {
+            gaussian_splats: vec![item.clone()],
+            ..Default::default()
+        };
+        let frame = frame_for(&built, &view(yaw), [W as f32, H as f32]);
+        let _ = harness.render(&frame, W, H);
+        let pixels = harness.render(&frame, W, H);
+        let at = ((H / 2 * W + W / 2) * 4) as usize;
+        [
+            pixels[at] as i32,
+            pixels[at + 1] as i32,
+            pixels[at + 2] as i32,
+        ]
+    };
+    let reddish = |c: [i32; 3]| c[0] > c[2];
+
+    let mut pair = GaussianSplatData::default();
+    pair.positions = vec![
+        [0.0, -0.3, 0.0],
+        [0.0, 0.3, 0.0],
+        [-0.3, 0.0, 0.0],
+        [0.3, 0.0, 0.0],
+    ];
+    pair.scales = vec![[0.45; 3]; 4];
+    pair.rotations = vec![[0.0, 0.0, 0.0, 1.0]; 4];
+    pair.opacities = vec![0.97; 4];
+    // Red on the -y and -x sides, blue on the +y and +x sides, so whichever
+    // horizontal axis the camera looks along, one colour is nearer.
+    for c in [
+        [1.0, 0.1, 0.1],
+        [0.1, 0.1, 1.0],
+        [1.0, 0.1, 0.1],
+        [0.1, 0.1, 1.0],
+    ] {
+        pair.sh_coefficients.extend(dc(c));
+    }
+    let id = harness
+        .renderer
+        .upload(&device, &queue, &pair)
+        .expect("upload");
+    let mut item = GaussianSplatItem::default();
+    item.source = id;
+
+    let near_side = centre(&mut harness, &item, 0.0);
+    let far_side = centre(&mut harness, &item, std::f32::consts::PI);
+    assert_ne!(
+        reddish(near_side),
+        reddish(far_side),
+        "the nearer splat shows from each side: {near_side:?} vs {far_side:?}"
+    );
+
+    // Swap every pair's centres: the same eye now sees the other colour.
+    harness
+        .renderer
+        .write_range(
+            channels::Positions,
+            &queue,
+            id,
+            0,
+            &[
+                [0.0, 0.3, 0.0],
+                [0.0, -0.3, 0.0],
+                [0.3, 0.0, 0.0],
+                [-0.3, 0.0, 0.0],
+            ],
+        )
+        .expect("write");
+    let swapped = centre(&mut harness, &item, 0.0);
+    assert_ne!(
+        reddish(swapped),
+        reddish(near_side),
+        "a write is repacked and re-sorted: {swapped:?} vs {near_side:?}"
+    );
+
+    // Degree 1: grey DC, and view-dependent terms on y and x that swing red
+    // to blue as the view direction flips.
+    let mut lit = GaussianSplatData::default();
+    lit.positions = vec![[0.0; 3]];
+    lit.scales = vec![[0.6; 3]];
+    lit.rotations = vec![[0.0, 0.0, 0.0, 1.0]];
+    lit.opacities = vec![0.97];
+    lit.sh_degree = ShDegree::One;
+    let swing = [2.0, 0.0, -2.0];
+    lit.sh_coefficients = [[0.0; 3], swing, [0.0; 3], swing].concat();
+    let lit_id = harness
+        .renderer
+        .upload(&device, &queue, &lit)
+        .expect("upload");
+    item.source = lit_id;
+    let one_way = centre(&mut harness, &item, 0.0);
+    let other_way = centre(&mut harness, &item, std::f32::consts::PI);
+    assert_ne!(
+        reddish(one_way),
+        reddish(other_way),
+        "degree-1 colour follows the view: {one_way:?} vs {other_way:?}"
     );
 }
