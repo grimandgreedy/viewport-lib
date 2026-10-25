@@ -326,6 +326,20 @@ fn fs_main() -> @location(0) vec4<f32> {
         )
         .validate(&module)
         .map_err(|e| format!("{e:?}"))?;
+        // wgpu's GL backend (no `BUFFER_BINDINGS_NOT_16_BYTE_ALIGNED`) refuses a
+        // pipeline whose uniform types are not a multiple of 16 bytes, a rule no
+        // native device enforces, so it is checked here.
+        for (_, var) in module.global_variables.iter() {
+            if var.space == naga::AddressSpace::Uniform {
+                let size = module.types[var.ty].inner.size(module.to_ctx());
+                if size % 16 != 0 {
+                    return Err(format!(
+                        "uniform `{}` is {size} bytes, not a multiple of 16",
+                        var.name.as_deref().unwrap_or("?")
+                    ));
+                }
+            }
+        }
         for ep in &module.entry_points {
             let (module, info) = naga::back::pipeline_constants::process_overrides(
                 &module,
