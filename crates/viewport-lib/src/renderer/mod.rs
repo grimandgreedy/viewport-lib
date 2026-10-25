@@ -444,6 +444,10 @@ pub struct ViewportRenderer {
     /// Rebuilt each `dispatch_plugin_prepare`; a plugin with no items that frame
     /// is present with a zero.
     plugin_prepare_ms: Vec<(&'static str, f32)>,
+    /// The item types that had items in the last prepare. A type with none is
+    /// not prepared, so it still holds the last frame it was given; the CPU
+    /// pick paths ask only these.
+    plugins_with_items: std::collections::HashSet<&'static str>,
     /// Names of the item types the renderer installed itself, which an
     /// external plugin may not take over.
     renderer_owned_type_names: std::collections::HashSet<&'static str>,
@@ -1043,6 +1047,7 @@ impl ViewportRenderer {
             instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
             item_type_plugins: crate::renderer::item_plugins::registry::ItemPluginRegistry::new(),
             plugin_prepare_ms: Vec::new(),
+            plugins_with_items: std::collections::HashSet::new(),
             renderer_owned_type_names: std::collections::HashSet::new(),
             declined_item_types: std::collections::HashMap::new(),
             post_effect_producers: Vec::new(),
@@ -2319,6 +2324,17 @@ impl ViewportRenderer {
     ///
     /// Called internally from the lib's prepare paths; not part of the
     /// consumer-facing API.
+    /// The registered item types that had items in the last prepare, which
+    /// are the ones whose CPU pick state describes the current frame.
+    pub(crate) fn plugins_to_pick(
+        &self,
+    ) -> impl Iterator<Item = &dyn crate::plugin_api::ItemTypePlugin> {
+        self.item_type_plugins
+            .iter()
+            .filter(|(name, _)| self.plugins_with_items.contains(*name))
+            .map(|(_, plugin)| plugin)
+    }
+
     pub(crate) fn dispatch_plugin_prepare(
         &mut self,
         device: &crate::gpu::Device,
@@ -2341,11 +2357,13 @@ impl ViewportRenderer {
         self.collect_surface_mask(device, queue, frame);
         let mut bufs: Vec<crate::gpu::CommandBuffer> = Vec::new();
         let mut timings: Vec<(&'static str, f32)> = Vec::new();
+        self.plugins_with_items.clear();
         for (name, plugin) in self.item_type_plugins.iter_mut() {
             let items = crate::plugin_api::ItemCollections::new(
                 crate::renderer::item_plugins::plugin_collections_slice(frame, name),
             );
             if !items.is_empty() {
+                self.plugins_with_items.insert(name);
                 let start = web_time::Instant::now();
                 // Constructed per plugin because `Jobs` borrows `&resources`
                 // and the borrow only needs to live for this iteration.

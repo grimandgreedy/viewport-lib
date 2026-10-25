@@ -283,8 +283,8 @@ fn forward_tier_replaces_a_mesh() {
     assert_ne!(centre, corner, "the replaced mesh must draw");
 }
 
-/// The forward tier has no GPU pick pass, so a pick of either backend finds
-/// the surface under the cursor on the CPU.
+/// The forward tier has no GPU pick pass, so a pick or a box select of any
+/// backend finds the surface on the CPU, down to the face under the cursor.
 #[test]
 fn forward_tier_picks_a_surface_on_the_cpu() {
     let Some(mut harness) = forward_harness("forward-pick") else {
@@ -321,6 +321,33 @@ fn forward_tier_picks_a_surface_on_the_cpu() {
             viewport_lib::PickMask::OBJECT,
         );
         assert_eq!(hit.map(|h| h.id), Some(7), "{backend:?}");
+        // A box around the centre selects it too, and a face pick names a
+        // triangle of it.
+        let rect = harness.renderer.pick_rect_objects(
+            backend,
+            centre - glam::Vec2::splat(20.0),
+            centre + glam::Vec2::splat(20.0),
+            &frame,
+            &harness.device,
+            &harness.queue,
+            viewport_lib::PickMask::OBJECT,
+        );
+        assert_eq!(rect.objects, vec![7], "{backend:?}");
+        let face = harness.renderer.pick_object(
+            backend,
+            centre,
+            &frame,
+            &harness.device,
+            &harness.queue,
+            viewport_lib::PickMask::FACE,
+        );
+        assert!(
+            matches!(
+                face.and_then(|h| h.sub_object),
+                Some(viewport_lib::SubObjectRef::Face(_))
+            ),
+            "{backend:?}: {face:?}"
+        );
     }
 }
 

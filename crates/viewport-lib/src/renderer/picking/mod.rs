@@ -399,6 +399,9 @@ impl ViewportRenderer {
     /// `SHADER_PRIMITIVE_INDEX`, the same as the point path (see
     /// [`PickBackend::Gpu`]). `Cpu` is the same as calling
     /// [`pick_rect`](Self::pick_rect); `Auto` routes per query.
+    ///
+    /// The forward tier has no GPU pick pass, so there every `backend` picks
+    /// on the CPU, which needs the CPU pick cache on.
     pub fn pick_rect_objects(
         &mut self,
         backend: PickBackend,
@@ -409,11 +412,16 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> PickRectResult {
-        // Nothing pickable is drawn without the scene resources.
-        if !self.resources.scene_tier.is_built() {
+        // Nothing pickable is drawn on the overlay-only tier. The forward tier
+        // has no GPU pick pass, so it picks on the CPU.
+        let backend = if self.resources.scene_tier.is_built() {
+            self.resolve_pick_backend(backend, device, mask)
+        } else if self.resources.forward_tier.is_some() {
+            PickBackend::Cpu
+        } else {
             return PickRectResult::default();
-        }
-        match self.resolve_pick_backend(backend, device, mask) {
+        };
+        match backend {
             PickBackend::Cpu => {
                 let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
                 let view_proj = frame.camera.render_camera.view_proj();

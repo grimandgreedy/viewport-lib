@@ -27,8 +27,9 @@ impl ViewportRenderer {
         view_proj: glam::Mat4,
         mask: PickMask,
     ) -> PickRectResult {
-        // Nothing pickable is drawn without the scene resources.
-        if !self.resources.scene_tier.is_built() {
+        // Nothing pickable is drawn on the overlay-only tier; the forward tier
+        // draws surfaces and item types, which this path picks.
+        if !self.resources.scene_tier.is_built() && self.resources.forward_tier.is_none() {
             return PickRectResult::default();
         }
         let mut result = PickRectResult::default();
@@ -268,7 +269,7 @@ impl ViewportRenderer {
                 mask,
                 meshes: crate::resources::MeshGeometry::new(&self.resources),
             };
-            for plugin in self.item_type_plugins.values() {
+            for plugin in self.plugins_to_pick() {
                 let plugin_result = plugin.pick_rect(&plugin_ctx);
                 result.objects.extend(plugin_result.objects);
                 result.elements.extend(plugin_result.elements);

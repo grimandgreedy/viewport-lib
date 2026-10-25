@@ -63,7 +63,7 @@ fn check_golden(harness: &Harness, name: &str, pixels: Vec<u8>) {
 
 /// Each scene's items reach their plugin and draw: none is skipped, the frame
 /// differs from one with the type's items left out, the selected item is
-/// outlined, and a click on a pickable item picks it on the CPU.
+/// outlined, and a click or a box over a pickable item picks it on the CPU.
 #[test]
 fn forward_tier_draws_the_item_types_that_accept_it() {
     let Some(mut harness) =
@@ -162,8 +162,7 @@ fn forward_tier_draws_the_item_types_that_accept_it() {
                 d(*a).total_cmp(&d(*b))
             })
             .expect("drawn pixels");
-        // Streamtubes carry no pick id, and the volume no CPU copy to pick.
-        let pickable = !matches!(*name, "streamtubes" | "volume");
+        let pickable = name != &"streamtubes";
         let device = harness.device.clone();
         let queue = harness.queue.clone();
         let hit = harness.renderer.pick_object(
@@ -177,6 +176,47 @@ fn forward_tier_draws_the_item_types_that_accept_it() {
         if pickable {
             let hit = hit.unwrap_or_else(|| panic!("{name}: a click at {cursor:?} picks nothing"));
             assert_ne!(hit.id, 0, "{name}");
+            if name == &"volume" {
+                // The cell under the cursor, as PlotScope reads a value from.
+                let voxel = harness.renderer.pick_object(
+                    viewport_lib::PickBackend::Gpu,
+                    glam::Vec2::new(cursor.0, cursor.1),
+                    &frame,
+                    &device,
+                    &queue,
+                    viewport_lib::PickMask::VOXEL,
+                );
+                assert!(
+                    matches!(
+                        voxel.and_then(|h| h.sub_object),
+                        Some(viewport_lib::SubObjectRef::Voxel(_))
+                    ),
+                    "volume: {voxel:?}"
+                );
+            }
+            // A box over everything the type drew selects the clicked item.
+            let (min, max) = drawn.iter().fold(
+                (glam::Vec2::splat(f32::MAX), glam::Vec2::splat(f32::MIN)),
+                |(lo, hi), p| {
+                    let p = glam::Vec2::new(p.0, p.1);
+                    (lo.min(p), hi.max(p))
+                },
+            );
+            let rect = harness.renderer.pick_rect_objects(
+                viewport_lib::PickBackend::Gpu,
+                min,
+                max,
+                &frame,
+                &device,
+                &queue,
+                viewport_lib::PickMask::OBJECT,
+            );
+            assert!(
+                rect.objects.contains(&hit.id),
+                "{name}: the box selects {:?}, not {}",
+                rect.objects,
+                hit.id
+            );
         }
         check_golden(&harness, name, pixels);
     }

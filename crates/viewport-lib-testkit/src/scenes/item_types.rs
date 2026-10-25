@@ -797,6 +797,15 @@ fn build_volume(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     v.enable_shading = true;
     v.settings.pick_id = PickId(1606);
     v.settings.selected = true;
+    // The CPU copy the voxel pick reads, over the same box.
+    v.volume_data = Some(std::sync::Arc::new(
+        viewport_lib::geometry::volume::grid::VolumeData {
+            data,
+            dims,
+            origin: v.bbox_min,
+            spacing: [2.4 / (dims[0] - 1) as f32; 3],
+        },
+    ));
     BuiltScene {
         volumes: vec![v],
         lighting: rigs::from_above(),
