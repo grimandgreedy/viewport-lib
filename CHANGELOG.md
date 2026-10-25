@@ -227,6 +227,7 @@
 
 ### Fixed
 
+- **The HDR path builds on GL** - its foreground depth placeholder was filled with `write_texture`, which wgpu's GL backend refuses for depth textures, so the first HDR frame on desktop GL or Mesa's llvmpipe failed validation. The placeholder is now cleared to 1.0 in a render pass, which works on every backend.
 - **Degree-3 Gaussian splat sets read their own SH coefficients** - the full-tier shader indexed every non-zero degree at the degree-1 stride, so each splat after the first was coloured from another splat's coefficients and the degree 2 and 3 terms were never evaluated. Sets loaded from 3DGS PLY files are degree 3. The shader now reads 48 coefficients a splat and evaluates all four bands; below the full tier a degree-3 set draws its DC and degree-1 terms.
 - **`DeviceResources::ensure_matcaps_initialized` is a no-op below the full tier** - it used to panic on a compatibility-tier renderer, which draws no matcaps. The panic for a scene-tier path missing its tier check now says "below the full tier" instead of "overlay-only".
 - **The CPU pick docs say what the CPU backend answers** - `set_cpu_pick_cache` no longer claims to copy point, glyph and curve geometry it never copied, and `PickBackend::Cpu` says an item drawn from an upload handle (`PointCloudRefItem` and the rest) is not hit there.

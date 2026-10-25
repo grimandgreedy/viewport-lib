@@ -367,16 +367,46 @@ impl DeviceResources {
             self.post.cs_placeholder_view = Some(cv);
 
             // Foreground depth placeholder: 1x1 depth at 1.0 = no coverage.
-            // Depth16Unorm is the only depth format write_texture accepts,
-            // and it binds to texture_depth_2d like any other depth format.
-            let (_ft, fv) = make_placeholder(
-                device,
-                queue,
-                "foreground_depth_placeholder",
-                crate::gpu::TextureFormat::Depth16Unorm,
-                &[0xFFu8, 0xFF],
-                2,
-            );
+            // Set by clearing it in a pass rather than with write_texture,
+            // which GL refuses for depth textures (no
+            // DEPTH_TEXTURE_AND_BUFFER_COPIES).
+            let depth = device.create_texture(&crate::gpu::TextureDescriptor {
+                label: Some("foreground_depth_placeholder"),
+                size: crate::gpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: crate::gpu::TextureDimension::D2,
+                format: crate::gpu::TextureFormat::Depth16Unorm,
+                usage: crate::gpu::TextureUsages::TEXTURE_BINDING
+                    | crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let fv = depth.create_view(&crate::gpu::TextureViewDescriptor::default());
+            let mut encoder =
+                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                    label: Some("foreground_depth_placeholder_clear"),
+                });
+            encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(any(wgpu29, wgpu30))]
+                multiview_mask: None,
+                label: Some("foreground_depth_placeholder_clear"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+                    view: &fv,
+                    depth_ops: Some(crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(1.0),
+                        store: crate::gpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            queue.submit(std::iter::once(encoder.finish()));
             self.post.foreground_placeholder_view = Some(fv);
         }
 
