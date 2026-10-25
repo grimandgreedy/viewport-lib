@@ -62,8 +62,8 @@ fn check_golden(harness: &Harness, name: &str, pixels: Vec<u8>) {
 }
 
 /// Each scene's items reach their plugin and draw: none is skipped, the frame
-/// differs from one with the type's items left out, and a click on a pickable
-/// item picks it on the CPU.
+/// differs from one with the type's items left out, the selected item is
+/// outlined, and a click on a pickable item picks it on the CPU.
 #[test]
 fn forward_tier_draws_the_item_types_that_accept_it() {
     let Some(mut harness) =
@@ -94,9 +94,43 @@ fn forward_tier_draws_the_item_types_that_accept_it() {
             .unwrap_or(0);
         assert!(items > 0, "{name} submits {type_name} items");
 
-        // The first frame may still be compiling pipelines.
-        let _ = harness.render(&frame, W, H);
-        let pixels = harness.render(&frame, W, H);
+        // Each render runs twice: the first frame may still be compiling
+        // pipelines.
+        let mut render = |frame: &viewport_lib::FrameData| {
+            let _ = harness.render(frame, W, H);
+            harness.render(frame, W, H)
+        };
+        let mut without = frame_for(&built, &scene.cameras[0].camera, [W as f32, H as f32]);
+        without.scene.plugin_items.remove(*type_name);
+        without.interaction.outline_selected = false;
+        let bare = render(&without);
+        let mut plain = frame_for(&built, &scene.cameras[0].camera, [W as f32, H as f32]);
+        plain.interaction.outline_selected = false;
+        let unoutlined = render(&plain);
+        let pixels = render(&frame);
+
+        let differing = |a: &[u8], b: &[u8]| {
+            a.chunks_exact(4)
+                .zip(b.chunks_exact(4))
+                .enumerate()
+                .filter(|(_, (a, b))| a[..3] != b[..3])
+                .map(|(i, _)| ((i as u32 % W) as f32 + 0.5, (i as u32 / W) as f32 + 0.5))
+                .collect::<Vec<_>>()
+        };
+        let drawn = differing(&unoutlined, &bare);
+        assert!(
+            drawn.len() > (W * H / 50) as usize,
+            "{name}: the {type_name} items must draw, {} pixels changed",
+            drawn.len()
+        );
+        // Every one of these scenes selects one of its items.
+        let ring = differing(&pixels, &unoutlined);
+        assert!(
+            ring.len() > 40,
+            "{name}: the selected item must be outlined, {} pixels changed",
+            ring.len()
+        );
+
         let stats = harness.stats();
         let skippable = frame.scene.volume_meshes.len()
             + frame.scene.mesh_instances.len()
@@ -114,28 +148,8 @@ fn forward_tier_draws_the_item_types_that_accept_it() {
             "{name}: only items of unregistered types are skipped"
         );
 
-        let mut without = frame_for(&built, &scene.cameras[0].camera, [W as f32, H as f32]);
-        without.scene.plugin_items.remove(*type_name);
-        let _ = harness.render(&without, W, H);
-        let bare = harness.render(&without, W, H);
-        let changed = pixels
-            .chunks_exact(4)
-            .zip(bare.chunks_exact(4))
-            .filter(|(a, b)| a[..3] != b[..3])
-            .count();
-        assert!(
-            changed > (W * H / 50) as usize,
-            "{name}: the {type_name} items must draw, {changed} pixels changed"
-        );
-
-        // Click the drawn pixel nearest the middle of what the type drew.
-        let drawn: Vec<(f32, f32)> = pixels
-            .chunks_exact(4)
-            .zip(bare.chunks_exact(4))
-            .enumerate()
-            .filter(|(_, (a, b))| a[..3] != b[..3])
-            .map(|(i, _)| ((i as u32 % W) as f32 + 0.5, (i as u32 / W) as f32 + 0.5))
-            .collect();
+        // Click the drawn pixel nearest the middle of what the type drew,
+        // against the frame just prepared.
         let n = drawn.len() as f32;
         let centre = drawn
             .iter()
@@ -148,7 +162,8 @@ fn forward_tier_draws_the_item_types_that_accept_it() {
                 d(*a).total_cmp(&d(*b))
             })
             .expect("drawn pixels");
-        let pickable = name != &"streamtubes";
+        // Streamtubes carry no pick id, and the volume no CPU copy to pick.
+        let pickable = !matches!(*name, "streamtubes" | "volume");
         let device = harness.device.clone();
         let queue = harness.queue.clone();
         let hit = harness.renderer.pick_object(

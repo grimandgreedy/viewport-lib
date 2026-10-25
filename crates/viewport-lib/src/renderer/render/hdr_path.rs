@@ -1675,8 +1675,14 @@ impl ViewportRenderer {
         {
             // Skipped while the pipeline is on a worker: the outline appears
             // a frame or two late.
-            if let Some(pipeline) = self.resources.scene_tier.outline.composite_hdr() {
-                let bg = &slot_hdr.outline_composite_bind_group;
+            if let (Some(pipeline), Some(targets)) = (
+                self.resources
+                    .outline
+                    .as_ref()
+                    .and_then(|o| o.composite_hdr()),
+                slot.outline_targets.as_ref(),
+            ) {
+                let bg = &targets.composite_bind_group;
                 let hdr_view = &slot_hdr.hdr_view;
                 let hdr_depth_view = &slot_hdr.hdr_depth_view;
                 let mut outline_pass =

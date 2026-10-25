@@ -203,6 +203,7 @@ impl ViewportRenderer {
                 emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             } else {
                 self.paint_forward_scene(&mut render_pass, camera_bg, frame);
+                emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             }
             // When blur backdrops are needed, skip overlays here. They'll
             // be drawn in a second pass after the blur is applied.

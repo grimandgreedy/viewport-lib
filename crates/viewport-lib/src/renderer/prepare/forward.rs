@@ -115,6 +115,90 @@ impl ViewportRenderer {
         queue.write_buffer(&slot.camera_buf, 0, bytemuck::cast_slice(&[camera_uniform]));
     }
 
+    /// The forward tier's selection outline: a mask binding per selected
+    /// surface, then the mask and edge passes into the viewport's outline
+    /// targets, which hold their own depth since the tier has no LDR depth of
+    /// its own at prepare time.
+    pub(super) fn prepare_forward_outlines(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &FrameData,
+        sink: &mut crate::renderer::SubmitSink,
+    ) {
+        if self.resources.forward_tier.is_none() {
+            return;
+        }
+        let vp_idx = frame.camera.viewport_index;
+        let mut old = std::mem::take(
+            &mut self.viewport_slots[vp_idx]
+                .selection_outlines
+                .outline_object_buffers,
+        )
+        .into_iter()
+        .map(|b| b.mask);
+        let crate::renderer::SurfaceSubmission::Flat(items) = &frame.scene.surfaces;
+        let outlined = |item: &crate::renderer::SceneRenderItem| {
+            frame.interaction.outline_selected && item.settings.selected && !item.settings.hidden
+        };
+        if items.iter().any(outlined) || self.any_plugin_item_selected(frame) {
+            self.resources.ensure_forward_outline_mask(device);
+        }
+        let mut buffers = Vec::new();
+        if let Some(mask) = self
+            .resources
+            .forward_tier
+            .as_deref()
+            .and_then(|f| f.outline_mask.as_ref())
+        {
+            for item in items.iter().filter(|i| outlined(i)) {
+                if self.resources.mesh_store.get(item.mesh_id).is_none() {
+                    continue;
+                }
+                let uniform = crate::resources::overlay::highlight::OutlineUniform {
+                    model: item.model,
+                    colour: [0.0; 4],
+                    pixel_offset: 0.0,
+                    has_position_override: 0,
+                    position_override_base: 0,
+                    position_override_len: u32::MAX,
+                    deform_flags: 0,
+                    deform_table: 0,
+                    _deform_pad: [0; 2],
+                };
+                let binding = crate::resources::overlay::highlight::OutlineBinding::reuse_or_new(
+                    old.next(),
+                    device,
+                    queue,
+                    &mask.bgl,
+                    uniform,
+                    None,
+                    "outline_mask_object_bg",
+                );
+                buffers.push(crate::resources::overlay::highlight::OutlineObjectBuffers {
+                    mesh_id: item.mesh_id,
+                    two_sided: self
+                        .resources
+                        .material_or_default(item.material)
+                        .is_two_sided(),
+                    mask: binding,
+                });
+            }
+        }
+        self.viewport_slots[vp_idx]
+            .selection_outlines
+            .outline_object_buffers = buffers;
+        if !self.outline_active(frame) {
+            return;
+        }
+        let ppp = frame.camera.pixels_per_point;
+        let size = [
+            (frame.camera.viewport_size[0] * ppp).round() as u32,
+            (frame.camera.viewport_size[1] * ppp).round() as u32,
+        ];
+        self.encode_outline_passes(device, queue, frame, size, true, sink);
+    }
+
     /// Build the frame's basic mesh draws: one instance record per drawn item
     /// (or per material range), the group 1 bind groups they need, and the
     /// pipeline variants.

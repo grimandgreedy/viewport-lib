@@ -290,9 +290,9 @@ impl ViewportRenderer {
         }
         if set.outlines {
             r.ensure_outline_pipelines(device);
-            r.ensure_outline_composite_pipelines(device);
-            if let Some(f) = &r.scene_tier.outline.composite {
-                f.request_all();
+            r.ensure_outline_shared(device);
+            if let Some(outline) = &r.outline {
+                outline.composite.request_all();
             }
         }
         if set.ground_plane {

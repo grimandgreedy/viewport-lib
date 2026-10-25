@@ -209,6 +209,9 @@ pub(crate) struct ViewportSlot {
     // --- Per-viewport interaction state ---
     /// Per-frame selection-outline state, one entry per scene-item kind, rebuilt in prepare().
     pub selection_outlines: SelectionOutlines,
+    /// The selection mask, the outline colour texture and their bind groups,
+    /// sized on the first frame with a selection to outline.
+    pub outline_targets: Option<crate::resources::outline::OutlineTargets>,
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(
         crate::resources::mesh::mesh_store::MeshId,
@@ -3559,6 +3562,7 @@ impl ViewportRenderer {
                 cull: crate::resources::ViewportCullState::new(),
                 debug_readback_dims: None,
                 selection_outlines: SelectionOutlines::default(),
+                outline_targets: None,
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),
@@ -3604,8 +3608,8 @@ impl ViewportRenderer {
         ViewportId(idx)
     }
 
-    /// Release the heavy GPU texture memory (HDR targets, OIT, bloom, SSAO) held
-    /// by `id`.
+    /// Release the heavy GPU texture memory (HDR targets, OIT, bloom, SSAO,
+    /// the selection outline's) held by `id`.
     ///
     /// The slot index is not reclaimed : future calls with this `ViewportId` will
     /// lazily recreate the texture resources as needed.  This is useful when a
@@ -3614,6 +3618,7 @@ impl ViewportRenderer {
     pub fn destroy_viewport(&mut self, id: ViewportId) {
         if let Some(slot) = self.viewport_slots.get_mut(id.0) {
             slot.hdr = None;
+            slot.outline_targets = None;
         }
     }
 

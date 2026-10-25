@@ -73,23 +73,12 @@ pub(crate) struct ViewportHdrState {
     pub foreground_depth_only_view: Option<crate::gpu::TextureView>,
     pub foreground_depth_size: [u32; 2],
 
-    // --- Outline offscreen (used by the outline prepare pass) ---
-    /// R8Unorm mask: selected objects rendered as white on black.
-    pub outline_mask_texture: crate::gpu::Texture,
-    pub outline_mask_view: crate::gpu::TextureView,
-    /// RGBA output of the edge-detection pass (composited onto the main target).
-    pub outline_colour_texture: crate::gpu::Texture,
-    pub outline_colour_view: crate::gpu::TextureView,
+    // --- LDR scene depth, which the outline mask pass also tests ---
     pub outline_depth_texture: crate::gpu::Texture,
     pub outline_depth_view: crate::gpu::TextureView,
     /// Depth-aspect view of `outline_depth_texture` for sampling (the HiZ
     /// occlusion prev-depth copy on the LDR path).
     pub outline_depth_only_view: crate::gpu::TextureView,
-    /// Bind group for the edge-detection pass (reads mask, writes to colour).
-    pub outline_edge_bind_group: crate::gpu::BindGroup,
-    /// Uniform buffer for the edge-detection pass parameters.
-    pub outline_edge_uniform_buf: crate::gpu::Buffer,
-    pub outline_composite_bind_group: crate::gpu::BindGroup,
 
     // --- Bind groups (rebuilt when viewport dimensions change) ---
     pub tone_map_bind_group: crate::gpu::BindGroup,
@@ -232,23 +221,6 @@ pub(crate) struct ProjectedTetResources {
 }
 
 impl OutlineResources {
-    /// The mask-write pipelines and the edge pass, built by
-    /// [`DeviceResources::ensure_outline_pipelines`] on the first frame with a
-    /// selection to outline, which is before anything draws with them.
-    pub(crate) fn mask_pipeline(&self) -> &crate::gpu::RenderPipeline {
-        self.mask_pipeline.as_ref().expect(OUTLINE_NOT_BUILT)
-    }
-
-    pub(crate) fn mask_two_sided_pipeline(&self) -> &crate::gpu::RenderPipeline {
-        self.mask_two_sided_pipeline
-            .as_ref()
-            .expect(OUTLINE_NOT_BUILT)
-    }
-
-    pub(crate) fn edge_pipeline(&self) -> &crate::gpu::RenderPipeline {
-        self.edge_pipeline.as_ref().expect(OUTLINE_NOT_BUILT)
-    }
-
     /// The x-ray pipeline, built by
     /// [`DeviceResources::ensure_xray_pipeline`] on the first frame with an
     /// x-ray item.
@@ -259,13 +231,11 @@ impl OutlineResources {
     }
 }
 
-const OUTLINE_NOT_BUILT: &str = "outline pipelines missing; the outline prepare builds them";
-
-/// Selection-outline and x-ray pipelines, the offscreen mask/composite targets,
-/// and their layouts. Every pipeline here is lazily built: the mask and edge
-/// pair by `ensure_outline_pipelines` on the first frame with a selection to
-/// outline, the x-ray pipeline by `ensure_xray_pipeline`, and the composites by
-/// `ensure_outline_composite_pipelines`.
+/// The full tier's selection-mask and x-ray pipelines and their group 1
+/// layout. Both are lazily built: the mask pair by `ensure_outline_pipelines`
+/// on the first frame with a selection to outline, the x-ray pipeline by
+/// `ensure_xray_pipeline`. The edge and composite passes are shared with the
+/// forward tier (`resources::outline`).
 pub(crate) struct OutlineResources {
     /// Group 1 layout for OutlineUniform (mask/xray pipelines).
     pub(crate) bind_group_layout: crate::gpu::BindGroupLayout,
@@ -273,40 +243,8 @@ pub(crate) struct OutlineResources {
     pub(crate) mask_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Two-sided mask-write pipeline (no face culling).
     pub(crate) mask_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Fullscreen edge-detection pipeline: reads mask, outputs the outline ring.
-    pub(crate) edge_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Layout for the edge-detection pass (mask texture + sampler + uniform).
-    pub(crate) edge_bgl: crate::gpu::BindGroupLayout,
     /// X-ray pipeline: draws selected objects through occluders (depth Always).
     pub(crate) xray_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Fullscreen composite pipelines: single-sample LDR, MSAA, HDR, each
-    /// built when a pass first binds it.
-    pub(crate) composite: Option<
-        crate::resources::pipeline_slot::LazyFamily<
-            crate::resources::postprocess::OutlineCompositeRecipe,
-            3,
-        >,
-    >,
-    pub(crate) composite_bgl: Option<crate::gpu::BindGroupLayout>,
-    pub(crate) composite_sampler: Option<crate::gpu::Sampler>,
-}
-
-impl OutlineResources {
-    /// The composite pipeline for the LDR target at `sample_count`, or `None`
-    /// while a worker has it.
-    pub(crate) fn composite_ldr(&self, sample_count: u32) -> Option<&crate::gpu::RenderPipeline> {
-        self.composite.as_ref()?.get(if sample_count > 1 {
-            crate::resources::postprocess::OUTLINE_COMPOSITE_MSAA
-        } else {
-            crate::resources::postprocess::OUTLINE_COMPOSITE_SINGLE
-        })
-    }
-
-    pub(crate) fn composite_hdr(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.composite
-            .as_ref()?
-            .get(crate::resources::postprocess::OUTLINE_COMPOSITE_HDR)
-    }
 }
 
 /// Former name of [`DeviceResources`]. Renamed to reflect that this holds the
@@ -611,6 +549,9 @@ pub struct DeviceResources {
     /// Group 0 on the forward tier: built there in place of the scene tier,
     /// `None` on every other tier.
     pub(crate) forward_tier: Option<Box<crate::resources::forward_tier::ForwardTier>>,
+    /// The selection outline's edge and composite passes, shared by both
+    /// tiers that draw a scene; built on the first frame with a selection.
+    pub(crate) outline: Option<crate::resources::outline::OutlineShared>,
     /// Which form each group 0 binding takes here; `None` on the overlay-only
     /// tier, which has no lit group 0.
     pub(crate) group0_profile: Option<crate::resources::group0::Group0Profile>,
@@ -1320,9 +1261,9 @@ impl DeviceResources {
         self.scene_tier.ground.pipeline = Some(pipeline);
     }
 
-    /// Build the selection-outline mask-write and edge-detection pipelines.
-    /// Called by the outline prepare on the first frame with a selection to
-    /// outline. A no-op after that.
+    /// Build the full tier's selection-mask pipelines. Called by the outline
+    /// prepare on the first frame with a selection to outline. A no-op after
+    /// that.
     ///
     /// The mask pair runs the registered deformers, so `register_deformer`
     /// rebuilds it once it exists.
@@ -1349,49 +1290,8 @@ impl DeviceResources {
             crate::gpu::TextureFormat::R8Unorm,
             self.pipeline_cache.as_ref(),
         );
-        // Edge-detection pipeline: fullscreen pass that reads the R8 mask and
-        // outputs an anti-aliased outline ring to the outline colour texture.
-        let edge_shader = crate::resources::builders::wgsl_module(
-            device,
-            "outline_edge_shader",
-            crate::resources::builders::wgsl_source!("outline_edge"),
-        );
-        let outline_edge_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "outline_edge_layout",
-            &[&self.scene_tier.outline.edge_bgl],
-        );
-        let edge_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "outline_edge_pipeline",
-                layout: &outline_edge_layout,
-                vertex_module: &edge_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &edge_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: self.target_format,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: crate::gpu::MultisampleState::default(),
-                cache: self.pipeline_cache.as_ref(),
-            },
-        );
         self.scene_tier.outline.mask_pipeline = Some(masks.mask);
         self.scene_tier.outline.mask_two_sided_pipeline = Some(masks.mask_two_sided);
-        self.scene_tier.outline.edge_pipeline = Some(edge_pipeline);
     }
 
     /// Build the x-ray pipeline, which draws selected objects through their

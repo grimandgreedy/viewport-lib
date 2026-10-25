@@ -323,10 +323,12 @@ impl ViewportRenderer {
                     queue,
                     &resources.scene_tier.outline.bind_group_layout,
                     uniform,
-                    override_buf.unwrap_or(&resources.content.fallback_position_override_buf),
-                    resources
-                        .sidecar
-                        .binding_buffer(mesh.and_then(|m| m.sidecar.as_ref())),
+                    Some((
+                        override_buf.unwrap_or(&resources.content.fallback_position_override_buf),
+                        resources
+                            .sidecar
+                            .binding_buffer(mesh.and_then(|m| m.sidecar.as_ref())),
+                    )),
                     "outline_mask_object_bg",
                 );
                 outline_object_buffers.push(OutlineObjectBuffers {
@@ -363,8 +365,10 @@ impl ViewportRenderer {
                     queue,
                     &resources.scene_tier.outline.bind_group_layout,
                     uniform,
-                    &resources.content.fallback_position_override_buf,
-                    resources.sidecar.fallback(),
+                    Some((
+                        &resources.content.fallback_position_override_buf,
+                        resources.sidecar.fallback(),
+                    )),
                     "outline_mask_object_bg",
                 );
                 outline_object_buffers.push(OutlineObjectBuffers {
@@ -403,8 +407,10 @@ impl ViewportRenderer {
                     queue,
                     &resources.scene_tier.outline.bind_group_layout,
                     uniform,
-                    &resources.content.fallback_position_override_buf,
-                    resources.sidecar.fallback(),
+                    Some((
+                        &resources.content.fallback_position_override_buf,
+                        resources.sidecar.fallback(),
+                    )),
                     "xray_object_bg",
                 );
                 xray_object_buffers.push((item.mesh_id, binding));
@@ -534,192 +540,184 @@ impl ViewportRenderer {
         frame: &FrameData,
         sink: &mut crate::renderer::SubmitSink,
     ) {
+        if !self.outline_active(frame) {
+            return;
+        }
         let vp_idx = frame.camera.viewport_index;
+        let ppp = frame.camera.pixels_per_point;
+        let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
+        let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
+        self.resources.ensure_outline_pipelines(device);
+        // The mask tests against the LDR scene depth the HDR state holds.
+        self.ensure_viewport_hdr(
+            device,
+            queue,
+            vp_idx,
+            w.max(1),
+            h.max(1),
+            frame.effects.post_process.ssaa_factor.max(1),
+            self.current_render_scale,
+            crate::resources::TargetGroups::LDR_DEPTH,
+        );
+        let size = self.viewport_slots[vp_idx]
+            .hdr
+            .as_ref()
+            .expect("just ensured")
+            .scene_size;
+        self.encode_outline_passes(device, queue, frame, size, false, sink);
+    }
 
-        // Item-type plugins draw their own selection coverage into the mask (they
-        // are not tracked in the per-kind outline buffers). Record whether any
-        // plugin has a selection this frame, so both the mask/edge pass below and
-        // the composite (see `emit_outline_composite!`) run for plugin outlines.
-        let plugin_outline = self.any_plugin_item_selected(frame);
-        self.viewport_slots[vp_idx]
-            .selection_outlines
-            .plugin_outline_present = plugin_outline;
+    /// Record whether viewport `frame.camera.viewport_index` outlines anything
+    /// this frame, which gates the mask and edge passes and the composite. The
+    /// selected surfaces' mask buffers must already be built.
+    ///
+    /// Item-type plugins draw their own coverage into the mask, so they are
+    /// not in the mask buffers; whether any has a selected item is recorded
+    /// beside them.
+    pub(super) fn outline_active(&mut self, frame: &FrameData) -> bool {
+        let plugin_outline =
+            frame.interaction.outline_selected && self.any_plugin_item_selected(frame);
+        let outlines = &mut self.viewport_slots[frame.camera.viewport_index].selection_outlines;
+        outlines.plugin_outline_present = plugin_outline;
+        frame.interaction.outline_selected
+            && (!outlines.outline_object_buffers.is_empty() || plugin_outline)
+    }
 
-        // The composite that blits the outline onto the main target runs whenever
-        // there is outline coverage, in either the LDR or the HDR path, so build
-        // its pipelines on that same condition rather than at construction.
-        if !self.viewport_slots[vp_idx]
-            .selection_outlines
-            .outline_object_buffers
-            .is_empty()
-            || plugin_outline
+    /// Draw the selection mask and run the edge pass into the viewport's
+    /// outline targets at `size`, for the composite to blend over the scene.
+    ///
+    /// 1. Selected surfaces and the plugins' selected items draw white into
+    ///    the R8 mask, tested against a cleared depth target: the LDR scene
+    ///    depth on the full tier, the targets' own on the forward tier
+    ///    (`own_depth`).
+    /// 2. A fullscreen pass finds the mask's boundary and writes an
+    ///    anti-aliased ring of the frame's outline colour and width.
+    pub(super) fn encode_outline_passes(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &FrameData,
+        size: [u32; 2],
+        own_depth: bool,
+        sink: &mut crate::renderer::SubmitSink,
+    ) {
+        let vp_idx = frame.camera.viewport_index;
+        self.resources.ensure_outline_shared(device);
+        let shared = self.resources.outline.as_ref().expect("just ensured");
+        let slot = &mut self.viewport_slots[vp_idx];
+        if !slot
+            .outline_targets
+            .as_ref()
+            .is_some_and(|t| t.fits(size, own_depth))
         {
-            self.resources.ensure_outline_composite_pipelines(device);
-        }
-
-        // ------------------------------------------------------------------
-        // Outline offscreen pass : screen-space edge detection.
-        //
-        // 1. Render selected objects to an R8 mask texture (white on black).
-        // 2. Run a fullscreen edge-detection pass reading the mask and writing
-        //    an anti-aliased outline ring to the outline colour texture.
-        //
-        // The outline colour texture is later composited onto the main target
-        // by the composite pass in paint()/render().
-        // ------------------------------------------------------------------
-        if frame.interaction.outline_selected
-            && (!self.viewport_slots[vp_idx]
-                .selection_outlines
-                .outline_object_buffers
-                .is_empty()
-                || plugin_outline)
-        {
-            let ppp = frame.camera.pixels_per_point;
-            let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
-            let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
-
-            self.resources.ensure_outline_pipelines(device);
-            // Ensure per-viewport HDR state exists (provides outline textures).
-            self.ensure_viewport_hdr(
+            slot.outline_targets = Some(crate::resources::outline::OutlineTargets::new(
                 device,
-                queue,
-                vp_idx,
-                w.max(1),
-                h.max(1),
-                frame.effects.post_process.ssaa_factor.max(1),
-                self.current_render_scale,
-                // The mask and colour targets, and the depth the mask tests.
-                crate::resources::TargetGroups::OUTLINE | crate::resources::TargetGroups::LDR_DEPTH,
-            );
-
-            // Write edge-detection uniform (colour, radius, viewport size).
-            {
-                let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
-                let [scene_w, scene_h] = slot_hdr.scene_size;
-                let edge_uniform = OutlineEdgeUniform {
-                    colour: frame.interaction.outline_colour.to_linear_rgba(),
-                    radius: frame.interaction.outline_width_px,
-                    viewport_w: scene_w as f32,
-                    viewport_h: scene_h as f32,
-                    _pad: 0.0,
-                };
-                queue.write_buffer(
-                    &slot_hdr.outline_edge_uniform_buf,
-                    0,
-                    bytemuck::cast_slice(&[edge_uniform]),
-                );
-            }
-
-            // Extract raw pointers for slot fields needed inside the render
-            // passes alongside &self.resources borrows.
-            let slot_ref = &self.viewport_slots[vp_idx];
-            let outlines_ptr = &slot_ref.selection_outlines.outline_object_buffers
-                as *const Vec<OutlineObjectBuffers>;
-            let camera_bg_ptr = &slot_ref.camera_bind_group as *const crate::gpu::BindGroup;
-            let slot_hdr = slot_ref.hdr.as_ref().unwrap();
-            let mask_view_ptr = &slot_hdr.outline_mask_view as *const crate::gpu::TextureView;
-            let colour_view_ptr = &slot_hdr.outline_colour_view as *const crate::gpu::TextureView;
-            let depth_view_ptr = &slot_hdr.outline_depth_view as *const crate::gpu::TextureView;
-            let edge_bg_ptr = &slot_hdr.outline_edge_bind_group as *const crate::gpu::BindGroup;
-            // SAFETY: slot fields remain valid for the duration of this function;
-            // no other code modifies these fields here.
-            let (outlines, camera_bg, mask_view, colour_view, depth_view, edge_bg) = unsafe {
-                (
-                    &*outlines_ptr,
-                    &*camera_bg_ptr,
-                    &*mask_view_ptr,
-                    &*colour_view_ptr,
-                    &*depth_view_ptr,
-                    &*edge_bg_ptr,
-                )
-            };
-
-            let mut encoder =
-                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-                    label: Some("outline_offscreen_encoder"),
-                });
-
-            // Pass 1: render selected objects to R8 mask texture.
-            {
-                let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(any(wgpu29, wgpu30))]
-                    multiview_mask: None,
-                    label: Some("outline_mask_pass"),
-                    color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                        view: mask_view,
-                        resolve_target: None,
-                        ops: crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color::TRANSPARENT),
-                            store: crate::gpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
-                        view: depth_view,
-                        depth_ops: Some(crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(1.0),
-                            store: crate::gpu::StoreOp::Discard,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-
-                pass.set_bind_group(0, camera_bg, &[]);
-                for outlined in outlines {
-                    let Some(mesh) = self.resources.mesh_store.get(outlined.mesh_id) else {
-                        continue;
-                    };
-                    let pipeline: &crate::gpu::RenderPipeline = if outlined.two_sided {
-                        self.resources.scene_tier.outline.mask_two_sided_pipeline()
-                    } else {
-                        self.resources.scene_tier.outline.mask_pipeline()
-                    };
-                    pass.set_pipeline(pipeline);
-                    pass.set_bind_group(1, &outlined.mask.bind_group, &[]);
-                    pass.set_vertex_buffer(
-                        0,
-                        self.resources.geometry.vertex_slice(mesh.vertex_span),
-                    );
-                    pass.set_index_buffer(
-                        self.resources.geometry.index_slice(mesh.index_span),
-                        crate::gpu::IndexFormat::Uint32,
-                    );
-                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                }
-
-                // Item-type plugin outline mask: each registered plugin
-                // draws its selected items into the R8 mask.
-                self.dispatch_plugin_outline_mask(&mut pass, frame);
-            }
-
-            // Pass 2: fullscreen edge detection (reads mask, writes colour).
-            {
-                let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(any(wgpu29, wgpu30))]
-                    multiview_mask: None,
-                    label: Some("outline_edge_pass"),
-                    color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                        view: colour_view,
-                        resolve_target: None,
-                        ops: crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color::TRANSPARENT),
-                            store: crate::gpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                pass.set_pipeline(self.resources.scene_tier.outline.edge_pipeline());
-                pass.set_bind_group(0, edge_bg, &[]);
-                pass.draw(0..3, 0..1);
-            }
-
-            sink.push(encoder.finish());
+                shared,
+                self.resources.target_format,
+                size,
+                own_depth,
+            ));
         }
+        let slot = &self.viewport_slots[vp_idx];
+        let targets = slot.outline_targets.as_ref().expect("just ensured");
+        let [target_w, target_h] = targets.size();
+        let edge_uniform = OutlineEdgeUniform {
+            colour: frame.interaction.outline_colour.to_linear_rgba(),
+            radius: frame.interaction.outline_width_px,
+            viewport_w: target_w as f32,
+            viewport_h: target_h as f32,
+            _pad: 0.0,
+        };
+        queue.write_buffer(
+            &targets.edge_uniform_buf,
+            0,
+            bytemuck::cast_slice(&[edge_uniform]),
+        );
+        let depth_view = match targets.depth_view() {
+            Some(view) => view,
+            None => {
+                &slot
+                    .hdr
+                    .as_ref()
+                    .expect("the full tier's LDR depth")
+                    .outline_depth_view
+            }
+        };
+        let Some((mask_pipeline, mask_two_sided)) = self.resources.outline_mask_pipelines() else {
+            return;
+        };
+
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("outline_offscreen_encoder"),
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(any(wgpu29, wgpu30))]
+                multiview_mask: None,
+                label: Some("outline_mask_pass"),
+                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                    view: &targets.mask_view,
+                    resolve_target: None,
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color::TRANSPARENT),
+                        store: crate::gpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(1.0),
+                        store: crate::gpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_bind_group(0, &slot.camera_bind_group, &[]);
+            for outlined in &slot.selection_outlines.outline_object_buffers {
+                let Some(mesh) = self.resources.mesh_store.get(outlined.mesh_id) else {
+                    continue;
+                };
+                pass.set_pipeline(if outlined.two_sided {
+                    mask_two_sided
+                } else {
+                    mask_pipeline
+                });
+                pass.set_bind_group(1, &outlined.mask.bind_group, &[]);
+                pass.set_vertex_buffer(0, self.resources.geometry.vertex_slice(mesh.vertex_span));
+                pass.set_index_buffer(
+                    self.resources.geometry.index_slice(mesh.index_span),
+                    crate::gpu::IndexFormat::Uint32,
+                );
+                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            }
+            self.dispatch_plugin_outline_mask(&mut pass, frame);
+        }
+        {
+            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(any(wgpu29, wgpu30))]
+                multiview_mask: None,
+                label: Some("outline_edge_pass"),
+                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                    view: &targets.colour_view,
+                    resolve_target: None,
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color::TRANSPARENT),
+                        store: crate::gpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&shared.edge_pipeline);
+            pass.set_bind_group(0, &targets.edge_bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        sink.push(encoder.finish());
     }
 
     pub(super) fn prepare_sub_highlight(

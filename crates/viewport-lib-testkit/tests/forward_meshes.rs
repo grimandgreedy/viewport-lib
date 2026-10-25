@@ -323,3 +323,54 @@ fn forward_tier_picks_a_surface_on_the_cpu() {
         assert_eq!(hit.map(|h| h.id), Some(7), "{backend:?}");
     }
 }
+
+/// A selected sphere is outlined in the frame's outline colour, and only when
+/// the frame asks for outlines.
+#[test]
+fn forward_tier_outlines_a_selected_mesh() {
+    let Some(mut harness) = forward_harness("forward-outline") else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let sphere = viewport_lib::geometry::primitives::sphere(1.0, 48, 24);
+    let cube = viewport_lib::geometry::primitives::cube(1.2);
+    let resources = harness.renderer.resources_mut();
+    let sphere = resources
+        .upload_mesh_data(&harness.device, &sphere)
+        .unwrap();
+    let cube = resources.upload_mesh_data(&harness.device, &cube).unwrap();
+    let grey = material(
+        &mut harness,
+        Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6)),
+    );
+    let mut selected = item(sphere, grey, [-1.2, 0.0, 0.0]);
+    selected.settings.selected = true;
+    let mut frame = frame(vec![selected, item(cube, grey, [1.4, 0.0, 0.0])]);
+    frame.interaction.outline_colour = Colour::linear_rgb(1.0, 0.5, 0.0);
+    frame.interaction.outline_width_px = 3.0;
+
+    frame.interaction.outline_selected = false;
+    let plain = render(&mut harness, &frame);
+    frame.interaction.outline_selected = true;
+    let pixels = render(&mut harness, &frame);
+
+    let orange = |p: &[u8]| p[0] as i32 > p[2] as i32 + 120 && p[1] as i32 > p[2] as i32 + 40;
+    let ring = pixels
+        .chunks_exact(4)
+        .zip(plain.chunks_exact(4))
+        .filter(|(a, b)| orange(a) && !orange(b))
+        .count();
+    assert!(
+        ring > 150,
+        "the sphere must be outlined: {ring} ring pixels"
+    );
+    // Only the sphere is selected: nothing changes on the cube's side.
+    let right_half_changed = pixels
+        .chunks_exact(4)
+        .zip(plain.chunks_exact(4))
+        .enumerate()
+        .filter(|(i, (a, b))| (*i as u32 % W) > W * 3 / 4 && a != b)
+        .count();
+    assert_eq!(right_half_changed, 0, "the unselected cube is not outlined");
+    check_golden(&harness, "outlined_mesh", pixels);
+}

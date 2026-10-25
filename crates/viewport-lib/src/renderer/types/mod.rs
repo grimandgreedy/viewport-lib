@@ -1007,12 +1007,21 @@ macro_rules! emit_outline_composite {
             if !slot.selection_outlines.outline_object_buffers.is_empty()
                 || slot.selection_outlines.plugin_outline_present
             {
-                let composite_bg = slot.hdr.as_ref().map(|h| &h.outline_composite_bind_group);
+                let composite_bg = slot
+                    .outline_targets
+                    .as_ref()
+                    .map(|t| &t.composite_bind_group);
+                // The forward tier draws its scene pass single-sampled.
+                let samples = if resources.scene_tier.is_built() {
+                    resources.sample_count
+                } else {
+                    1
+                };
                 // Skipped while the pipeline is on a worker.
                 let pipeline = resources
-                    .scene_tier
                     .outline
-                    .composite_ldr(resources.sample_count);
+                    .as_ref()
+                    .and_then(|o| o.composite_ldr(samples));
                 if let (Some(pipeline), Some(bg)) = (pipeline, composite_bg) {
                     render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(0, bg, &[]);

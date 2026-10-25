@@ -126,18 +126,21 @@ fn build_fullscreen(r: &FullscreenRecipe, _i: usize) -> crate::gpu::RenderPipeli
 /// What the outline composite builds read: one shader and layout, three
 /// targets (LDR single-sample, LDR multisampled, HDR).
 pub(crate) struct OutlineCompositeRecipe {
-    device: crate::gpu::Device,
-    layout: crate::gpu::PipelineLayout,
-    shader: crate::resources::pipeline_slot::LazyModule,
-    target_format: crate::gpu::TextureFormat,
-    sample_count: u32,
+    pub(crate) device: crate::gpu::Device,
+    pub(crate) layout: crate::gpu::PipelineLayout,
+    pub(crate) shader: crate::resources::pipeline_slot::LazyModule,
+    pub(crate) target_format: crate::gpu::TextureFormat,
+    pub(crate) sample_count: u32,
 }
 
 pub(crate) const OUTLINE_COMPOSITE_SINGLE: usize = 0;
 pub(crate) const OUTLINE_COMPOSITE_MSAA: usize = 1;
 pub(crate) const OUTLINE_COMPOSITE_HDR: usize = 2;
 
-fn build_outline_composite(r: &OutlineCompositeRecipe, i: usize) -> crate::gpu::RenderPipeline {
+pub(crate) fn build_outline_composite(
+    r: &OutlineCompositeRecipe,
+    i: usize,
+) -> crate::gpu::RenderPipeline {
     let (label, format, sample_count) = match i {
         OUTLINE_COMPOSITE_SINGLE => ("outline_composite_pipeline_single", r.target_format, 1),
         OUTLINE_COMPOSITE_MSAA => (
@@ -461,8 +464,6 @@ impl DeviceResources {
         let fxaa_sampler = crate::resources::builders::clamp_linear_sampler(device, "fxaa_sampler");
         let oit_sampler =
             crate::resources::builders::clamp_linear_sampler(device, "oit_composite_sampler");
-        let outline_sampler =
-            crate::resources::builders::clamp_linear_sampler(device, "outline_composite_sampler");
 
         // --- Bind group layouts ---
         // The tone-map layout is driven by the composite binding table; see
@@ -642,10 +643,6 @@ impl DeviceResources {
                 ],
             });
 
-        if self.scene_tier.is_built() {
-            self.ensure_outline_composite_bgl(device);
-        }
-
         // --- SSAA resolve bind group layout ---
         let ssaa_resolve_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
@@ -741,9 +738,6 @@ impl DeviceResources {
         self.post.pp_nearest_sampler = Some(nearest_sampler);
         self.post.fxaa.sampler = Some(fxaa_sampler);
         self.oit.composite_sampler = Some(oit_sampler);
-        if self.scene_tier.is_built() {
-            self.scene_tier.outline.composite_sampler = Some(outline_sampler);
-        }
 
         self.post.tone_map_bgl = Some(tone_map_bgl);
         self.post.bloom.bgl = Some(bloom_bgl);
@@ -818,58 +812,6 @@ impl DeviceResources {
         }
     }
 
-    /// The outline composite's bind group layout, shared by the three composite
-    /// pipelines and by each viewport's composite bind group.
-    fn ensure_outline_composite_bgl(&mut self, device: &crate::gpu::Device) {
-        if self.scene_tier.outline.composite_bgl.is_none() {
-            self.scene_tier.outline.composite_bgl =
-                Some(crate::resources::builders::texture_sampler_bgl(
-                    device,
-                    "outline_composite_bgl",
-                    crate::gpu::ShaderStages::FRAGMENT,
-                ));
-        }
-    }
-
-    /// Compose the three fullscreen pipelines that blit the offscreen outline
-    /// texture onto the main target: LDR single-sample, LDR multisampled, and
-    /// the HDR variant. Composed on the first frame that has a selection
-    /// outline to draw, in either path; each is built when a pass binds it.
-    pub(crate) fn ensure_outline_composite_pipelines(&mut self, device: &crate::gpu::Device) {
-        if self.scene_tier.outline.composite.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        self.ensure_outline_composite_bgl(device);
-        let bgl = self
-            .scene_tier
-            .outline
-            .composite_bgl
-            .clone()
-            .expect("just ensured");
-        let shader = self.shared_module(
-            device,
-            "outline_composite_shader",
-            crate::resources::builders::wgsl_source!("outline_composite"),
-        );
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            "outline_composite_layout",
-            &[&bgl],
-        );
-        self.scene_tier.outline.composite = Some(LazyFamily::new(
-            OutlineCompositeRecipe {
-                device: device.clone(),
-                layout,
-                shader,
-                target_format: self.target_format,
-                sample_count: self.sample_count,
-            },
-            std::sync::Arc::clone(&self.pipeline_compiler),
-            build_outline_composite,
-        ));
-    }
-
     /// Build every shared pipeline the HDR path can bind, whatever a frame asks
     /// for. A frame builds only the groups it uses, through the per-group
     /// `ensure_*` functions below; this is for a caller that wants the whole
@@ -894,7 +836,7 @@ impl DeviceResources {
         self.ensure_oit_composite_pipeline(device);
         self.ensure_oit_mesh_pipelines(device);
         self.ensure_hdr_mesh_pipelines(device);
-        self.ensure_outline_composite_pipelines(device);
+        self.ensure_outline_shared(device);
         self.ensure_ssaa_resolve_pipelines(device);
         self.ensure_depth_blit_pipeline(device);
         self.ensure_foreground_stamp_pipeline(device);
@@ -1547,37 +1489,6 @@ impl DeviceResources {
             ),
         };
 
-        // Outline offscreen : mask (R8), colour (target_format), and depth -- at scene resolution.
-        let ((outline_mask_tex, outline_mask_view), (outline_colour_tex, outline_colour_view)) =
-            match kept(TargetGroups::OUTLINE) {
-                Some(old) => (
-                    (
-                        old.outline_mask_texture.clone(),
-                        old.outline_mask_view.clone(),
-                    ),
-                    (
-                        old.outline_colour_texture.clone(),
-                        old.outline_colour_view.clone(),
-                    ),
-                ),
-                None => {
-                    let size = groups.size(TargetGroups::OUTLINE, TargetSize::Scene);
-                    (
-                        alloc.colour(
-                            "outline_mask_texture",
-                            crate::gpu::TextureFormat::R8Unorm,
-                            size,
-                            crate::gpu::TextureUsages::empty(),
-                        ),
-                        alloc.colour(
-                            "outline_colour_texture",
-                            self.target_format,
-                            size,
-                            crate::gpu::TextureUsages::empty(),
-                        ),
-                    )
-                }
-            };
         // The LDR path renders against this depth target and the outline mask
         // pass tests against it. It is sampleable so the HiZ occlusion
         // prev-depth copy can read the LDR scene depth.
@@ -1598,8 +1509,7 @@ impl DeviceResources {
             };
 
         // Uniform buffers. None depends on a target's size, so a promotion keeps
-        // the old state's: the outline pass has already written its edge
-        // uniform this frame, and the exposure state is the adaptation history.
+        // the old state's: the exposure state is the adaptation history.
         let uniform = |old: Option<&crate::gpu::Buffer>, label: &str, size: usize| match old {
             Some(buf) => buf.clone(),
             None => device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -1710,12 +1620,6 @@ impl DeviceResources {
             .composite_sampler
             .as_ref()
             .expect("ensure_hdr_infra not called");
-        let outline_sampler = self
-            .scene_tier
-            .outline
-            .composite_sampler
-            .as_ref()
-            .expect("ensure_hdr_infra not called");
         let bloom_placeholder_view = self
             .post
             .bloom_placeholder_view
@@ -1783,13 +1687,6 @@ impl DeviceResources {
             .composite_bgl
             .as_ref()
             .expect("ensure_hdr_infra not called");
-        let outline_composite_bgl = self
-            .scene_tier
-            .outline
-            .composite_bgl
-            .as_ref()
-            .expect("ensure_hdr_infra not called");
-
         // Bind groups
         let tone_map_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("tone_map_bg"),
@@ -2028,48 +1925,6 @@ impl DeviceResources {
                 },
             ],
         });
-        let outline_composite_bind_group =
-            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some("outline_composite_bg"),
-                layout: outline_composite_bgl,
-                entries: &[
-                    crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: crate::gpu::BindingResource::TextureView(&outline_colour_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 1,
-                        resource: crate::gpu::BindingResource::Sampler(outline_sampler),
-                    },
-                ],
-            });
-
-        // Edge-detection bind group : reads the R8 mask, writes outline ring.
-        let outline_edge_uniform_buf = uniform(
-            reuse.map(|o| &o.outline_edge_uniform_buf),
-            "outline_edge_uniform_buf",
-            std::mem::size_of::<OutlineEdgeUniform>(),
-        );
-        let outline_edge_bgl = &self.scene_tier.outline.edge_bgl;
-        let outline_edge_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("outline_edge_bg"),
-            layout: outline_edge_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(&outline_mask_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(outline_sampler),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: outline_edge_uniform_buf.as_entire_binding(),
-                },
-            ],
-        });
-
         // OIT composite bind group placeholder (created lazily via ensure_viewport_oit)
         // We create a dummy one using placeholders so the bind group is always valid.
         // It will be rebuilt on first ensure_viewport_oit call.
@@ -2344,16 +2199,9 @@ impl DeviceResources {
             foreground_depth_view: reuse.and_then(|o| o.foreground_depth_view.clone()),
             foreground_depth_only_view: reuse.and_then(|o| o.foreground_depth_only_view.clone()),
             foreground_depth_size: reuse.map_or([0, 0], |o| o.foreground_depth_size),
-            outline_mask_texture: outline_mask_tex,
-            outline_mask_view,
-            outline_colour_texture: outline_colour_tex,
-            outline_colour_view,
             outline_depth_texture: outline_depth_tex,
             outline_depth_view,
             outline_depth_only_view,
-            outline_edge_bind_group,
-            outline_edge_uniform_buf,
-            outline_composite_bind_group,
             tone_map_bind_group,
             tone_map_bg_views: None,
             dof_bg_foreground: None,

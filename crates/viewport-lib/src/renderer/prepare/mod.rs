@@ -847,6 +847,7 @@ impl ViewportRenderer {
             self.prepare_viewport_scene(device, queue, frame, viewport_fx, sink);
         } else {
             self.prepare_viewport_forward(queue, frame, viewport_fx);
+            self.prepare_forward_outlines(device, queue, frame, sink);
         }
         self.prepare_viewport_overlays(device, queue, frame);
         self.prepare_debug_buffer(frame);

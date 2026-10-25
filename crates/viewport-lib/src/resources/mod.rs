@@ -39,6 +39,7 @@ mod memory;
 /// Mesh storage, instancing, level-of-detail, and mesh-family pipelines.
 pub mod mesh;
 pub(crate) mod mesh_sidecar;
+pub(crate) mod outline;
 pub(crate) mod overlay;
 /// Lazy GPU pick-pipeline construction (`ensure_*_pick_pipeline` methods).
 mod pick_pipelines;

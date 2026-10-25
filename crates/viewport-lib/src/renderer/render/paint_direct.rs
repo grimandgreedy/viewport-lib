@@ -41,6 +41,7 @@ impl ViewportRenderer {
             self.paint_slot_scene(render_pass, vp_idx, frame);
         } else if let Some(slot) = self.viewport_slots.get(vp_idx) {
             self.paint_forward_scene(render_pass, &slot.camera_bind_group, frame);
+            emit_outline_composite!(&self.resources, &mut *render_pass, Some(slot));
         }
         let ov = &self.viewport_slots[vp_idx].overlay;
         emit_overlay_2d!(self, ov, render_pass);

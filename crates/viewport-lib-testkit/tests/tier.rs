@@ -774,6 +774,58 @@ fn assert_split_paths_match_the_full_tier(profile: &DeviceProfile) {
 
 /// A mesh on the forward tier draws through both halves of the split API: into
 /// a host-owned pass and through `render_viewport`.
+/// A selected mesh on the forward tier is outlined through the host's own
+/// pass (`paint_viewport`) and the owned-encoder path (`render_viewport`): the
+/// composite draws in both.
+#[test]
+fn forward_outlines_draw_through_the_split_and_host_pass_paths() {
+    let Some(mut harness) =
+        Harness::with_profile(&DeviceProfile::downlevel_webgl2("tier-forward-outline"))
+    else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let cube = viewport_lib::geometry::primitives::cube(2.0);
+    let mesh = harness
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(&harness.device, &cube)
+        .expect("meshes upload on the forward tier");
+    let mut item = viewport_lib::SceneRenderItem::default();
+    item.mesh_id = mesh;
+    item.settings.colour = Some(viewport_lib::Colour::linear_rgb(0.9, 0.3, 0.1));
+    item.settings.selected = true;
+    let mut camera = viewport_lib::Camera::default();
+    camera.set_distance(6.0);
+    camera.set_aspect_ratio(W as f32, H as f32);
+    let mut frame = viewport_lib::FrameData::default();
+    frame.camera.render_camera = viewport_lib::RenderCamera::from_camera(&camera);
+    frame.camera.viewport_size = [W as f32, H as f32];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.interaction.outline_selected = true;
+    frame.interaction.outline_colour = viewport_lib::Colour::linear_rgb(0.0, 1.0, 0.0);
+    frame.interaction.outline_width_px = 3.0;
+    frame.scene.surfaces = viewport_lib::SurfaceSubmission::Flat(vec![item].into());
+
+    let (painted, owned) = draw_split(&mut harness, &mut frame);
+    // `read_back` keeps the copy's padded rows and the target's BGRA order.
+    let row = (W * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) as usize;
+    for (name, pixels) in [("paint_viewport", &painted), ("render_viewport", &owned)] {
+        let green = (0..H as usize)
+            .flat_map(|y| (0..W as usize).map(move |x| y * row + x * 4))
+            .filter(|&i| {
+                let [b, g, r] = [pixels[i] as i32, pixels[i + 1] as i32, pixels[i + 2] as i32];
+                g > r + 100 && g > b + 100
+            })
+            .count();
+        assert!(
+            green > 100,
+            "{name}: the cube must be outlined, {green} green pixels"
+        );
+    }
+}
+
 #[test]
 fn forward_meshes_draw_through_the_split_and_host_pass_paths() {
     let Some(mut harness) =

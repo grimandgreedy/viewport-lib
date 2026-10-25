@@ -48,6 +48,17 @@ pub(crate) struct ForwardTier {
     fallbacks_written: bool,
     /// The basic mesh pipelines, built on first use.
     pub(crate) mesh_pipelines: crate::resources::forward_mesh::BasicMeshPipelines,
+    /// The selection mask pipelines, built on the first frame with a selection
+    /// to outline.
+    pub(crate) outline_mask: Option<ForwardOutlineMask>,
+}
+
+/// The forward tier's selection mask pipelines and their group 1 layout: the
+/// outline uniform alone, with none of the full tier's storage bindings.
+pub(crate) struct ForwardOutlineMask {
+    pub(crate) bgl: crate::gpu::BindGroupLayout,
+    pub(crate) mask: crate::gpu::RenderPipeline,
+    pub(crate) mask_two_sided: crate::gpu::RenderPipeline,
 }
 
 impl ForwardTier {
@@ -211,6 +222,7 @@ impl ForwardTier {
             fallback_ao_view,
             fallbacks_written: false,
             mesh_pipelines: Default::default(),
+            outline_mask: None,
         }
     }
 

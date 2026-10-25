@@ -1,5 +1,6 @@
-//! The colour shaders of the item types that register on the forward tier,
-//! adapted for that tier, translate to the GLSL ES 3.0 WebGL2 compiles.
+//! The colour and selection mask shaders of the item types that register on
+//! the forward tier, adapted for that tier, translate to the GLSL ES 3.0
+//! WebGL2 compiles.
 //!
 //! naga's GLSL writer is the path wgpu's GL backend takes, and it rejects some
 //! WGSL that every other backend accepts: a texture read through two samplers,
@@ -9,13 +10,17 @@
 
 use viewport_lib::{Capabilities, Tier, gpu};
 
-/// The shaders that draw on the forward tier. Their pick, outline and shadow
-/// shaders run only on the full tier.
+/// The shaders that draw on the forward tier: each type's colour shader and
+/// its selection mask. Their pick and shadow shaders run only on the full
+/// tier.
 const FORWARD_SHADERS: &[&str] = &[
     "implicit.wgsl",
+    "implicit_outline_mask.wgsl",
     "volume.wgsl",
+    "volume_outline_mask.wgsl",
     "streamtube.wgsl",
     "ribbon.wgsl",
+    "curve_outline_mask.wgsl",
 ];
 
 fn webgl2_caps() -> Capabilities {

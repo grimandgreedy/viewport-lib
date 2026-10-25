@@ -666,12 +666,14 @@ pub(crate) struct OutlineObjectBuffers {
 /// x-ray draw, kept across frames: the next frame's draw at the same position
 /// rewrites the uniform only when it changed and rebuilds the bind group only
 /// when the position-override buffer or the sidecar chunk did.
+///
+/// The full tier's layout also binds the position override and the sidecar
+/// chunk (`storage`); the forward tier's binds the uniform alone.
 pub(crate) struct OutlineBinding {
     pub bind_group: crate::gpu::BindGroup,
     buf: crate::gpu::Buffer,
     uniform: OutlineUniform,
-    override_buf: crate::gpu::Buffer,
-    sidecar_buf: crate::gpu::Buffer,
+    storage: Option<(crate::gpu::Buffer, crate::gpu::Buffer)>,
 }
 
 impl OutlineBinding {
@@ -681,8 +683,7 @@ impl OutlineBinding {
         queue: &crate::gpu::Queue,
         layout: &crate::gpu::BindGroupLayout,
         uniform: OutlineUniform,
-        override_buf: &crate::gpu::Buffer,
-        sidecar_buf: &crate::gpu::Buffer,
+        storage: Option<(&crate::gpu::Buffer, &crate::gpu::Buffer)>,
         label: &'static str,
     ) -> Self {
         if let Some(mut old) = old {
@@ -690,11 +691,14 @@ impl OutlineBinding {
                 queue.write_buffer(&old.buf, 0, bytemuck::bytes_of(&uniform));
                 old.uniform = uniform;
             }
-            if old.override_buf != *override_buf || old.sidecar_buf != *sidecar_buf {
-                old.bind_group =
-                    Self::bind_group(device, layout, &old.buf, override_buf, sidecar_buf, label);
-                old.override_buf = override_buf.clone();
-                old.sidecar_buf = sidecar_buf.clone();
+            let same = match (&old.storage, storage) {
+                (Some((o, s)), Some((new_o, new_s))) => o == new_o && s == new_s,
+                (None, None) => true,
+                _ => false,
+            };
+            if !same {
+                old.bind_group = Self::bind_group(device, layout, &old.buf, storage, label);
+                old.storage = storage.map(|(o, s)| (o.clone(), s.clone()));
             }
             return old;
         }
@@ -706,11 +710,10 @@ impl OutlineBinding {
         });
         queue.write_buffer(&buf, 0, bytemuck::bytes_of(&uniform));
         Self {
-            bind_group: Self::bind_group(device, layout, &buf, override_buf, sidecar_buf, label),
+            bind_group: Self::bind_group(device, layout, &buf, storage, label),
             buf,
             uniform,
-            override_buf: override_buf.clone(),
-            sidecar_buf: sidecar_buf.clone(),
+            storage: storage.map(|(o, s)| (o.clone(), s.clone())),
         }
     }
 
@@ -718,27 +721,27 @@ impl OutlineBinding {
         device: &crate::gpu::Device,
         layout: &crate::gpu::BindGroupLayout,
         buf: &crate::gpu::Buffer,
-        override_buf: &crate::gpu::Buffer,
-        sidecar_buf: &crate::gpu::Buffer,
+        storage: Option<(&crate::gpu::Buffer, &crate::gpu::Buffer)>,
         label: &'static str,
     ) -> crate::gpu::BindGroup {
+        let mut entries = vec![crate::gpu::BindGroupEntry {
+            binding: 0,
+            resource: buf.as_entire_binding(),
+        }];
+        if let Some((override_buf, sidecar_buf)) = storage {
+            entries.push(crate::gpu::BindGroupEntry {
+                binding: 1,
+                resource: override_buf.as_entire_binding(),
+            });
+            entries.push(crate::gpu::BindGroupEntry {
+                binding: 2,
+                resource: sidecar_buf.as_entire_binding(),
+            });
+        }
         device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some(label),
             layout,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: override_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: sidecar_buf.as_entire_binding(),
-                },
-            ],
+            entries: &entries,
         })
     }
 }

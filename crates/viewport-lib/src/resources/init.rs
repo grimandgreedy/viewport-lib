@@ -1502,48 +1502,8 @@ impl DeviceResources {
                         ],
                     });
 
-                // The mask-write and edge-detection pipelines are built by
-                // `ensure_outline_pipelines` on the first frame with a selection to
-                // outline. Their layouts are built here because the edge pass's bind
-                // group is too.
-                let outline_edge_bgl =
-                    device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-                        label: Some("outline_edge_bgl"),
-                        entries: &[
-                            crate::gpu::BindGroupLayoutEntry {
-                                binding: 0,
-                                visibility: crate::gpu::ShaderStages::FRAGMENT,
-                                ty: crate::gpu::BindingType::Texture {
-                                    sample_type: crate::gpu::TextureSampleType::Float {
-                                        filterable: true,
-                                    },
-                                    view_dimension: crate::gpu::TextureViewDimension::D2,
-                                    multisampled: false,
-                                },
-                                count: None,
-                            },
-                            crate::gpu::BindGroupLayoutEntry {
-                                binding: 1,
-                                visibility: crate::gpu::ShaderStages::FRAGMENT,
-                                ty: crate::gpu::BindingType::Sampler(
-                                    crate::gpu::SamplerBindingType::Filtering,
-                                ),
-                                count: None,
-                            },
-                            crate::gpu::BindGroupLayoutEntry {
-                                binding: 2,
-                                visibility: crate::gpu::ShaderStages::FRAGMENT,
-                                ty: crate::gpu::BindingType::Buffer {
-                                    ty: crate::gpu::BufferBindingType::Uniform,
-                                    has_dynamic_offset: false,
-                                    min_binding_size: None,
-                                },
-                                count: None,
-                            },
-                        ],
-                    });
-                // `outline_edge_layout`, the edge pipeline, the x-ray pipeline and the
-                // skybox pipeline are all built on first use; see
+                // The outline mask pipelines, the x-ray pipeline and the skybox
+                // pipeline are all built on first use; see
                 // `ensure_outline_pipelines`, `ensure_xray_pipeline` and
                 // `ensure_skybox_pipeline`.
 
@@ -1639,12 +1599,7 @@ impl DeviceResources {
                         bind_group_layout: outline_bgl,
                         mask_pipeline: None,
                         mask_two_sided_pipeline: None,
-                        edge_pipeline: None,
-                        edge_bgl: outline_edge_bgl,
                         xray_pipeline: None,
-                        composite: None,
-                        composite_bgl: None,
-                        composite_sampler: None,
                     },
                     polyline,
                     ibl: crate::resources::material::environment::IblResources {
@@ -1703,6 +1658,7 @@ impl DeviceResources {
         };
         let resources = Self {
             forward_tier,
+            outline: None,
             group0_profile,
             capabilities,
             target_format,
