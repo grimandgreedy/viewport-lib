@@ -1,6 +1,7 @@
 //! The colour and selection mask shaders of the item types that register on
 //! the compatibility tier, adapted for that tier, translate to the GLSL ES 3.0
-//! WebGL2 compiles.
+//! WebGL2 compiles, and every plugin shader translates for a full-tier GL
+//! device.
 //!
 //! naga's GLSL writer is the path wgpu's GL backend takes, and it rejects some
 //! WGSL that every other backend accepts: a texture read through two samplers,
@@ -77,7 +78,13 @@ fn local_array_indexed_at_run_time(module: &naga::Module) -> Option<String> {
     None
 }
 
-fn translate(src: &str) -> Result<(), String> {
+/// The entry points of `src` naga's GLSL writer cannot translate at `version`,
+/// as `(entry point, error)`. An error that is not about one entry point
+/// (parsing, validation, a uniform size) is the `Err`.
+fn glsl_failures(
+    src: &str,
+    version: naga::back::glsl::Version,
+) -> Result<Vec<(String, String)>, String> {
     let module = naga::front::wgsl::parse_str(src).map_err(|e| e.emit_to_string(src))?;
     let info = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
@@ -99,45 +106,68 @@ fn translate(src: &str) -> Result<(), String> {
             }
         }
     }
-    if let Some(at) = local_array_indexed_at_run_time(&module) {
-        return Err(format!(
-            "{at} is a function-local array indexed by a run-time value, which Adreno \
-             miscompiles; make it a module-scope const or compute it"
-        ));
-    }
+    let mut failures = Vec::new();
     for ep in &module.entry_points {
-        let (module, info) = naga::back::pipeline_constants::process_overrides(
+        let result = naga::back::pipeline_constants::process_overrides(
             &module,
             &info,
             Some((ep.stage, ep.name.as_str())),
             &Default::default(),
         )
-        .map_err(|e| format!("{}: {e}", ep.name))?;
-        let options = naga::back::glsl::Options {
-            version: naga::back::glsl::Version::Embedded {
-                version: 300,
-                is_webgl: true,
-            },
-            ..Default::default()
-        };
-        let pipeline = naga::back::glsl::PipelineOptions {
-            shader_stage: ep.stage,
-            entry_point: ep.name.clone(),
-            multiview: None,
-        };
-        let mut out = String::new();
-        naga::back::glsl::Writer::new(
-            &mut out,
-            &module,
-            &info,
-            &options,
-            &pipeline,
-            naga::proc::BoundsCheckPolicies::default(),
-        )
-        .and_then(|mut writer| writer.write())
-        .map_err(|e| format!("{}: {e}", ep.name))?;
+        .map_err(|e| e.to_string())
+        .and_then(|(module, info)| {
+            let options = naga::back::glsl::Options {
+                version,
+                ..Default::default()
+            };
+            let pipeline = naga::back::glsl::PipelineOptions {
+                shader_stage: ep.stage,
+                entry_point: ep.name.clone(),
+                multiview: None,
+            };
+            let mut out = String::new();
+            naga::back::glsl::Writer::new(
+                &mut out,
+                &module,
+                &info,
+                &options,
+                &pipeline,
+                naga::proc::BoundsCheckPolicies::default(),
+            )
+            .and_then(|mut writer| writer.write())
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        });
+        if let Err(e) = result {
+            failures.push((ep.name.clone(), e));
+        }
     }
-    Ok(())
+    Ok(failures)
+}
+
+/// The run-time indexed local array in `src`, as an error.
+fn local_array_error(src: &str) -> Option<String> {
+    let module = naga::front::wgsl::parse_str(src).ok()?;
+    local_array_indexed_at_run_time(&module).map(|at| {
+        format!(
+            "{at} is a function-local array indexed by a run-time value, which Adreno \
+             miscompiles; make it a module-scope const or compute it"
+        )
+    })
+}
+
+fn translate(src: &str) -> Result<(), String> {
+    if let Some(e) = local_array_error(src) {
+        return Err(e);
+    }
+    let version = naga::back::glsl::Version::Embedded {
+        version: 300,
+        is_webgl: true,
+    };
+    match glsl_failures(src, version)?.into_iter().next() {
+        Some((ep, e)) => Err(format!("{ep}: {e}")),
+        None => Ok(()),
+    }
 }
 
 #[test]
@@ -156,4 +186,69 @@ fn compatibility_tier_shaders_translate_to_webgl2_glsl() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// Plugin shader entry points the GLSL writer cannot translate yet for a
+/// full-tier GL device, as `shader:entry point`. The test fails when one is
+/// fixed and still listed, so the list stays exact.
+const GL_KNOWN_FAILURES: &[&str] = &[
+    // `textureLoad` from a depth texture.
+    "decal.wgsl:fs_main",
+    "decal_outline_mask.wgsl:fs_main",
+    "scatter_refraction.wgsl:fs_main",
+    "scatter_temporal_resolve.wgsl:fs_main",
+    "scatter_volume.wgsl:fs_main",
+    // A `@interpolate(linear)` varying, which GLSL ES has no qualifier for.
+    "surface_contour.wgsl:fs_main",
+    "surface_contour.wgsl:vs_main",
+];
+
+/// Every plugin shader, adapted for a desktop GL device at the full tier (cube
+/// arrays, no depth-texture loads), translates at both GLSL versions wgpu's GL
+/// backend emits: GLSL ES 3.2 on a GLES context and desktop GLSL 4.50 (the
+/// driver's version, which wgpu caps at 450) on a desktop one.
+#[test]
+fn full_tier_shaders_translate_to_gl_glsl() {
+    let mut caps = Capabilities::from_parts(&gpu::Limits::default(), gpu::Features::empty(), None)
+        .with_backend(gpu::Backend::Gl);
+    caps.cube_array_textures = true;
+    let versions = [
+        naga::back::glsl::Version::Embedded {
+            version: 320,
+            is_webgl: false,
+        },
+        naga::back::glsl::Version::Desktop(450),
+    ];
+    let mut failures = std::collections::BTreeMap::<String, String>::new();
+    for (name, src) in viewport_lib_plugins::shader_sources() {
+        let adapted = viewport_lib::plugin_api::builders::adapt_wgsl(src.as_str(), &caps);
+        for version in versions {
+            match glsl_failures(&adapted, version) {
+                Ok(eps) => {
+                    for (ep, e) in eps {
+                        let at = failures.entry(format!("{name}:{ep}")).or_default();
+                        at.push_str(&format!("[{version:?}] {e} "));
+                    }
+                }
+                Err(e) => {
+                    failures.entry(format!("{name}:*")).or_insert(e);
+                }
+            }
+        }
+    }
+    let new: Vec<String> = failures
+        .iter()
+        .filter(|(k, _)| !GL_KNOWN_FAILURES.contains(&k.as_str()))
+        .map(|(k, e)| format!("{k}: {e}"))
+        .collect();
+    let fixed: Vec<&str> = GL_KNOWN_FAILURES
+        .iter()
+        .copied()
+        .filter(|k| !failures.contains_key(*k))
+        .collect();
+    assert!(
+        new.is_empty() && fixed.is_empty(),
+        "new GL translation failures:\n{}\n\nlisted but now translate: {fixed:?}",
+        new.join("\n")
+    );
 }

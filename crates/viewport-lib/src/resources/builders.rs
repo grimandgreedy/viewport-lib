@@ -352,10 +352,15 @@ fn fs_main() -> @location(0) vec4<f32> {
         None
     }
 
-    /// Translate every entry point of `src` with naga's GLSL writer, the
-    /// path wgpu's GL backend takes.
+    /// The entry points of `src` naga's GLSL writer cannot translate at
+    /// `version`, the path wgpu's GL backend takes, as `(entry point, error)`.
+    /// An error that is not about one entry point (parsing, validation, a
+    /// uniform size) is the `Err`.
     #[cfg(wgpu27)]
-    fn translate_to_glsl(src: &str, version: u16, is_webgl: bool) -> Result<(), String> {
+    fn glsl_failures(
+        src: &str,
+        version: naga::back::glsl::Version,
+    ) -> Result<Vec<(String, String)>, String> {
         let module = naga::front::wgsl::parse_str(src).map_err(|e| e.emit_to_string(src))?;
         let info = naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
@@ -377,36 +382,53 @@ fn fs_main() -> @location(0) vec4<f32> {
                 }
             }
         }
+        let mut failures = Vec::new();
         for ep in &module.entry_points {
-            let (module, info) = naga::back::pipeline_constants::process_overrides(
+            let result = naga::back::pipeline_constants::process_overrides(
                 &module,
                 &info,
                 Some((ep.stage, ep.name.as_str())),
                 &Default::default(),
             )
-            .map_err(|e| format!("{}: {e}", ep.name))?;
-            let options = naga::back::glsl::Options {
-                version: naga::back::glsl::Version::Embedded { version, is_webgl },
-                ..Default::default()
-            };
-            let pipeline = naga::back::glsl::PipelineOptions {
-                shader_stage: ep.stage,
-                entry_point: ep.name.clone(),
-                multiview: None,
-            };
-            let mut out = String::new();
-            naga::back::glsl::Writer::new(
-                &mut out,
-                &module,
-                &info,
-                &options,
-                &pipeline,
-                naga::proc::BoundsCheckPolicies::default(),
-            )
-            .and_then(|mut writer| writer.write())
-            .map_err(|e| format!("{}: {e}", ep.name))?;
+            .map_err(|e| e.to_string())
+            .and_then(|(module, info)| {
+                let options = naga::back::glsl::Options {
+                    version,
+                    ..Default::default()
+                };
+                let pipeline = naga::back::glsl::PipelineOptions {
+                    shader_stage: ep.stage,
+                    entry_point: ep.name.clone(),
+                    multiview: None,
+                };
+                let mut out = String::new();
+                naga::back::glsl::Writer::new(
+                    &mut out,
+                    &module,
+                    &info,
+                    &options,
+                    &pipeline,
+                    naga::proc::BoundsCheckPolicies::default(),
+                )
+                .and_then(|mut writer| writer.write())
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+            });
+            if let Err(e) = result {
+                failures.push((ep.name.clone(), e));
+            }
         }
-        Ok(())
+        Ok(failures)
+    }
+
+    /// Translate every entry point of `src` to GLSL ES `version`.
+    #[cfg(wgpu27)]
+    fn translate_to_glsl(src: &str, version: u16, is_webgl: bool) -> Result<(), String> {
+        let version = naga::back::glsl::Version::Embedded { version, is_webgl };
+        match glsl_failures(src, version)?.into_iter().next() {
+            Some((ep, e)) => Err(format!("{ep}: {e}")),
+            None => Ok(()),
+        }
     }
 
     /// The shared lighting sources a compatibility-tier item type composes, the
@@ -504,6 +526,90 @@ fn fs_main() -> @location(0) vec4<f32> {
                 panic!("{name}: {e}");
             }
         }
+    }
+
+    /// Shader entry points the GLSL writer cannot translate yet, as
+    /// `shader:entry point`. The test fails when one is fixed and still listed,
+    /// so the list stays exact.
+    #[cfg(wgpu27)]
+    const GL_KNOWN_FAILURES: &[&str] = &[
+        // `textureNumLevels`, which GLSL ES has no counterpart for.
+        "cull.wgsl:cull_instances",
+        "ibl_prefilter.wgsl:cs_main",
+        // `textureLoad` from a depth texture.
+        "depth_blit.wgsl:fs_main",
+        "dof.wgsl:fs_main",
+        "exposure.wgsl:build_main",
+        "foreground_depth_stamp.wgsl:fs_main",
+        "hiz_copy.wgsl:copy_depth",
+        "ssaa_depth_resolve.wgsl:fs_main",
+        "ssao.wgsl:fs_main",
+        "tone_map.wgsl:fs_main",
+    ];
+
+    /// The `(shader:entry point, error)` pairs that fail at either GLSL version
+    /// wgpu's GL backend emits for a full-tier device: GLSL ES 3.2 on a GLES
+    /// context and desktop GLSL 4.50 (the driver's version, which wgpu caps at
+    /// 450) on a desktop one.
+    #[cfg(wgpu27)]
+    fn gl_failures(
+        sources: impl IntoIterator<Item = (String, String)>,
+    ) -> std::collections::BTreeMap<String, String> {
+        let versions = [
+            naga::back::glsl::Version::Embedded {
+                version: 320,
+                is_webgl: false,
+            },
+            naga::back::glsl::Version::Desktop(450),
+        ];
+        let mut failures = std::collections::BTreeMap::new();
+        for (name, src) in sources {
+            for version in versions {
+                match glsl_failures(&src, version) {
+                    Ok(eps) => {
+                        for (ep, e) in eps {
+                            let at: &mut String =
+                                failures.entry(format!("{name}:{ep}")).or_default();
+                            at.push_str(&format!("[{version:?}] {e} "));
+                        }
+                    }
+                    Err(e) => {
+                        failures.entry(format!("{name}:*")).or_insert(e);
+                    }
+                }
+            }
+        }
+        failures
+    }
+
+    /// Every shader in viewport-lib's catalogue, adapted for a desktop GL device at the
+    /// full tier (cube arrays, no depth-texture loads), translates at both GLSL
+    /// versions wgpu emits, apart from the listed failures.
+    #[cfg(wgpu27)]
+    #[test]
+    fn full_tier_shaders_translate_to_gl_glsl() {
+        let mut gl = caps(crate::gpu::Backend::Gl);
+        gl.cube_array_textures = true;
+        let sources: Vec<(String, String)> = crate::renderer::shader_hashes::SHADERS
+            .iter()
+            .map(|s| (s.name.to_string(), adapt_wgsl(s.source, &gl).into_owned()))
+            .collect();
+        let failures = gl_failures(sources);
+        let new: Vec<String> = failures
+            .iter()
+            .filter(|(k, _)| !GL_KNOWN_FAILURES.contains(&k.as_str()))
+            .map(|(k, e)| format!("{k}: {e}"))
+            .collect();
+        let fixed: Vec<&str> = GL_KNOWN_FAILURES
+            .iter()
+            .copied()
+            .filter(|k| !failures.contains_key(*k))
+            .collect();
+        assert!(
+            new.is_empty() && fixed.is_empty(),
+            "new GL translation failures:\n{}\n\nlisted but now translate: {fixed:?}",
+            new.join("\n")
+        );
     }
 }
 
