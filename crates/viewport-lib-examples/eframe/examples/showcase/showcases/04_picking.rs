@@ -196,39 +196,23 @@ impl PickingShowcase {
         what: &str,
         data: &vpl::MeshData,
     ) -> Option<MeshId> {
-        match ctx
+        let result = ctx
             .session
             .resources_mut()
-            .upload_mesh_data(ctx.device, data)
-        {
-            Ok(id) => Some(id),
+            .upload_mesh_data(ctx.device, data);
+        self.accept(what, result)
+    }
+
+    /// The upload's value, or `None` with the reason recorded in `refused`.
+    fn accept<T>(&mut self, what: &str, result: vpl::ViewportResult<T>) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
             Err(e) => {
                 if !self.refused.iter().any(|(w, _)| w == what) {
                     self.refused.push((what.into(), e.to_string()));
                 }
                 None
             }
-        }
-    }
-
-    /// Run an upload that goes through an item type's plugin, only when that
-    /// plugin registered: an item type the renderer declined has nothing to
-    /// upload into.
-    fn plugin_upload<T>(
-        &mut self,
-        ctx: &mut SetupCtx,
-        what: &str,
-        type_name: &str,
-        upload: impl FnOnce(&mut SetupCtx) -> T,
-    ) -> Option<T> {
-        if ctx.session.renderer_mut().has_item_type_plugin(type_name) {
-            Some(upload(ctx))
-        } else {
-            self.refused.push((
-                what.into(),
-                "its item type was declined at registration".into(),
-            ));
-            None
         }
     }
 
@@ -691,16 +675,11 @@ impl Showcase for PickingShowcase {
                 }
             }
             let data = splat_data(&positions);
-            if let Some(Ok(id)) = self.plugin_upload(
-                ctx,
-                "Gaussian splats",
-                viewport_lib_plugins::item_types::gaussian_splat::TYPE_NAME,
-                |ctx| {
-                    ctx.session
-                        .renderer_mut()
-                        .upload(ctx.device, ctx.queue, &data)
-                },
-            ) {
+            let result = ctx
+                .session
+                .renderer_mut()
+                .upload(ctx.device, ctx.queue, &data);
+            if let Some(id) = self.accept("Gaussian splats", result) {
                 self.splat_id = Some(id);
                 self.instance_lookup.insert(SPLAT, positions.clone());
                 self.model_matrices.insert(SPLAT, splat_model());
@@ -731,16 +710,11 @@ impl Showcase for PickingShowcase {
         {
             let vol = gyroid_volume(Vec3::new(11.0, -5.0, 0.0));
             let vol = Arc::new(vol);
-            if let Some(Ok(id)) = self.plugin_upload(
-                ctx,
-                "Marching cubes volume",
-                viewport_lib_plugins::item_types::gpu_marching_cubes::TYPE_NAME,
-                |ctx| {
-                    ctx.session
-                        .renderer_mut()
-                        .upload_volume_for_mc(ctx.device, ctx.queue, &vol)
-                },
-            ) {
+            let result = ctx
+                .session
+                .renderer_mut()
+                .upload_volume_for_mc(ctx.device, ctx.queue, &vol);
+            if let Some(id) = self.accept("Marching cubes volume", result) {
                 self.mc_id = Some(id);
                 self.mc_data = Some(vol);
                 self.labels.insert(MC, ("Marching cubes".into(), None));

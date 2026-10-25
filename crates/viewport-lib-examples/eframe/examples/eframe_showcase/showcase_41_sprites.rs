@@ -625,8 +625,9 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         lit_params: SpriteLitParams::default(),
         normal_texture_id: None,
     };
-    let particle_sys = renderer.create_gpu_particle_system(&app.device, &app.queue, &particle_cfg);
-    app.sprite_state.gpu_particle_system = Some(particle_sys);
+    app.sprite_state.gpu_particle_system = renderer
+        .create_gpu_particle_system(&app.device, &app.queue, &particle_cfg)
+        .ok();
 
     // Second GPU particle system, using the mesh render route. Each live
     // particle becomes one instance of the cube uploaded above; rotation per
@@ -639,9 +640,9 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         blend: SpriteBlend::AlphaBlend,
         align: ParticleMeshAlign::Random,
     };
-    let mesh_particle_sys =
-        renderer.create_gpu_particle_system(&app.device, &app.queue, &mesh_particle_cfg);
-    app.sprite_state.gpu_mesh_particle_system = Some(mesh_particle_sys);
+    app.sprite_state.gpu_mesh_particle_system = renderer
+        .create_gpu_particle_system(&app.device, &app.queue, &mesh_particle_cfg)
+        .ok();
 
     app.sprite_state.streak_tex = streak_tex;
     app.sprite_state.flame_tex = flame_tex;

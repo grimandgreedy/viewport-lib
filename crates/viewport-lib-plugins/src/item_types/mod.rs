@@ -52,7 +52,7 @@ macro_rules! standard_uploads {
                 queue: &viewport_lib::gpu::Queue,
                 item: &$item,
             ) -> viewport_lib::error::ViewportResult<$id> {
-                let host = $crate::item_types::host::<$plugin>(self, $name);
+                let host = $crate::item_types::host::<$plugin>(self, $name)?;
                 Ok(host.plugin.upload(device, queue, host.resources, item))
             }
 
@@ -62,7 +62,7 @@ macro_rules! standard_uploads {
                 queue: &viewport_lib::gpu::Queue,
                 item: $item,
             ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId> {
-                let host = $crate::item_types::host::<$plugin>(self, $name);
+                let host = $crate::item_types::host::<$plugin>(self, $name)?;
                 Ok(host
                     .plugin
                     .begin_upload(&host.jobs, device, queue, host.resources, item))
@@ -75,7 +75,7 @@ macro_rules! standard_uploads {
                 id: $id,
                 item: &$item,
             ) -> viewport_lib::error::ViewportResult<()> {
-                let host = $crate::item_types::host::<$plugin>(self, $name);
+                let host = $crate::item_types::host::<$plugin>(self, $name)?;
                 host.plugin.replace(device, queue, host.resources, id, item)
             }
         }
@@ -85,12 +85,13 @@ macro_rules! standard_uploads {
                 &mut self,
                 job: viewport_lib::resources::JobId,
             ) -> viewport_lib::error::ViewportResult<$id> {
-                let host = $crate::item_types::host::<$plugin>(self, $name);
+                let host = $crate::item_types::host::<$plugin>(self, $name)?;
                 host.plugin.take_upload_result(&host.jobs, job)
             }
 
             fn release(&mut self, id: $id) -> bool {
-                $crate::item_types::plugin_mut::<$plugin>(self, $name).drop_stored(id)
+                $crate::item_types::plugin_mut::<$plugin>(self, $name)
+                    .is_ok_and(|p| p.drop_stored(id))
             }
         }
     };
@@ -116,7 +117,7 @@ macro_rules! field_sample_writes {
                 data: &[<$marker as viewport_lib::plugin_api::Channel>::Input],
             ) -> viewport_lib::error::ViewportResult<()> {
                 let bytes = $encode(data);
-                $crate::item_types::plugin_mut::<$plugin>(self, $name).write_samples(
+                $crate::item_types::plugin_mut::<$plugin>(self, $name)?.write_samples(
                     queue,
                     id,
                     first_element,
@@ -132,7 +133,7 @@ macro_rules! field_sample_writes {
                 id: $id,
                 capacity: u32,
             ) -> viewport_lib::error::ViewportResult<()> {
-                $crate::item_types::plugin_mut::<$plugin>(self, $name)
+                $crate::item_types::plugin_mut::<$plugin>(self, $name)?
                     .reserve_stored(device, queue, id, capacity)
             }
 
@@ -142,7 +143,7 @@ macro_rules! field_sample_writes {
                 id: $id,
                 len: u32,
             ) -> viewport_lib::error::ViewportResult<()> {
-                $crate::item_types::plugin_mut::<$plugin>(self, $name).set_stored_len(id, len)
+                $crate::item_types::plugin_mut::<$plugin>(self, $name)?.set_stored_len(id, len)
             }
 
             fn extent(
@@ -278,13 +279,18 @@ pub(crate) fn cast_bytes<T: bytemuck::Pod>(data: &[T]) -> std::borrow::Cow<'_, [
 
 #[cfg(feature = "gpu")]
 /// A registered item type plugin, borrowed back as its concrete type.
+///
+/// When the type is not registered this is the error the renderer declined it
+/// with, so an upload on a device that cannot run the type says why, or
+/// `ItemTypePluginMissing` when `install` was never called.
 pub(crate) fn plugin_mut<'a, T: viewport_lib::plugin_api::ItemTypePlugin>(
     renderer: &'a mut viewport_lib::renderer::ViewportRenderer,
-    type_name: &str,
-) -> &'a mut T {
+    type_name: &'static str,
+) -> viewport_lib::error::ViewportResult<&'a mut T> {
+    check_registered(renderer, type_name)?;
     renderer
         .item_type_plugin_mut(type_name)
-        .unwrap_or_else(|| panic!("{type_name} must be registered; call install() first"))
+        .ok_or(viewport_lib::ViewportError::ItemTypePluginMissing { type_name })
 }
 
 #[cfg(feature = "gpu")]
@@ -292,9 +298,24 @@ pub(crate) fn plugin_mut<'a, T: viewport_lib::plugin_api::ItemTypePlugin>(
 /// arenas an upload needs.
 pub(crate) fn host<'a, T: viewport_lib::plugin_api::ItemTypePlugin>(
     renderer: &'a mut viewport_lib::renderer::ViewportRenderer,
-    type_name: &str,
-) -> viewport_lib::plugin_api::ItemTypeHost<'a, T> {
+    type_name: &'static str,
+) -> viewport_lib::error::ViewportResult<viewport_lib::plugin_api::ItemTypeHost<'a, T>> {
+    check_registered(renderer, type_name)?;
     renderer
         .item_type_plugin_host(type_name)
-        .unwrap_or_else(|| panic!("{type_name} must be registered; call install() first"))
+        .ok_or(viewport_lib::ViewportError::ItemTypePluginMissing { type_name })
+}
+
+#[cfg(feature = "gpu")]
+fn check_registered(
+    renderer: &viewport_lib::renderer::ViewportRenderer,
+    type_name: &'static str,
+) -> viewport_lib::error::ViewportResult<()> {
+    if renderer.has_item_type_plugin(type_name) {
+        return Ok(());
+    }
+    Err(renderer
+        .item_type_declined(type_name)
+        .cloned()
+        .unwrap_or(viewport_lib::ViewportError::ItemTypePluginMissing { type_name }))
 }

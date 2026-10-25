@@ -467,6 +467,12 @@ impl ViewportInstance {
         self.renderer.with_item_type_plugin(device, plugin)
     }
 
+    /// Why an item type was refused, the same call as
+    /// [`ViewportRenderer::item_type_declined`](crate::renderer::ViewportRenderer::item_type_declined).
+    pub fn item_type_declined(&self, type_name: &str) -> Option<&crate::ViewportError> {
+        self.renderer.item_type_declined(type_name)
+    }
+
     /// Borrow a registered item-type plugin back as its concrete type.
     pub fn item_type_plugin<T: crate::plugin_api::ItemTypePlugin>(
         &self,

@@ -4,7 +4,6 @@
 //! Nothing is called: the point is that the paths resolve.
 
 #![cfg(feature = "item-types")]
-
 #![allow(unused_imports)]
 
 use viewport_lib_plugins::item_types::{
@@ -66,7 +65,7 @@ fn upload_surfaces(
     renderer.clear_mc_scalar_source(mc_id)?;
     renderer.release(mc_id);
 
-    let job = renderer.begin_upload_volume_for_mc(device, queue, vol);
+    let job = renderer.begin_upload_volume_for_mc(device, queue, vol)?;
     let from_job: McVolumeId = renderer.upload_result(job)?;
     renderer.release(from_job);
     Ok(())

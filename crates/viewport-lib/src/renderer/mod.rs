@@ -444,6 +444,9 @@ pub struct ViewportRenderer {
     /// Names of the item types the renderer installed itself, which an
     /// external plugin may not take over.
     renderer_owned_type_names: std::collections::HashSet<&'static str>,
+    /// Why each item type the device could not run was refused, by type name.
+    /// Cleared for a name once a type registers under it.
+    declined_item_types: std::collections::HashMap<&'static str, crate::ViewportError>,
     /// Externally registered post-effect producers, in registration order.
     /// `init_gpu` is deferred to the first render with the device; per-frame
     /// `prepare` / `encode` run on the HDR path, per viewport.
@@ -1038,6 +1041,7 @@ impl ViewportRenderer {
             item_type_plugins: crate::renderer::item_plugins::registry::ItemPluginRegistry::new(),
             plugin_prepare_ms: Vec::new(),
             renderer_owned_type_names: std::collections::HashSet::new(),
+            declined_item_types: std::collections::HashMap::new(),
             post_effect_producers: Vec::new(),
             next_post_effect_producer_id: 0,
             post_effect_stages: Vec::new(),
@@ -1954,7 +1958,10 @@ impl ViewportRenderer {
             "item type name {name:?} is taken by a type the renderer installed itself. \
              Register under a prefix of your own."
         );
-        self.check_item_type_requirements(name, &plugin.requires())?;
+        if let Err(e) = self.check_item_type_requirements(name, &plugin.requires()) {
+            self.declined_item_types.insert(name, e.clone());
+            return Err(e);
+        }
         self.register_item_type_plugin(device, plugin);
         Ok(())
     }
@@ -2020,6 +2027,7 @@ impl ViewportRenderer {
     ) {
         if let Err(e) = self.check_item_type_requirements(plugin.type_name(), &plugin.requires()) {
             tracing::debug!(target: "viewport_lib::init", "{e}");
+            self.declined_item_types.insert(plugin.type_name(), e);
             return;
         }
         self.renderer_owned_type_names.insert(plugin.type_name());
@@ -2035,6 +2043,7 @@ impl ViewportRenderer {
     ) {
         plugin.init_gpu(device, &self.resources);
         let name = plugin.type_name();
+        self.declined_item_types.remove(name);
         self.item_type_plugins.insert(name, plugin);
     }
 
@@ -2042,6 +2051,19 @@ impl ViewportRenderer {
     /// registered.
     pub fn has_item_type_plugin(&self, type_name: &str) -> bool {
         self.item_type_plugins.contains_key(type_name)
+    }
+
+    /// The error an item type was refused with when the device could not run
+    /// it: [`TierUnsupported`](crate::ViewportError::TierUnsupported) below the
+    /// tier item types need, or
+    /// [`PluginUnsupported`](crate::ViewportError::PluginUnsupported) naming
+    /// what the device lacks.
+    ///
+    /// `None` when the type is registered, or when nothing under `type_name`
+    /// was ever offered. A type's own upload calls return this error when the
+    /// type is missing, so a host does not have to check it first.
+    pub fn item_type_declined(&self, type_name: &str) -> Option<&crate::ViewportError> {
+        self.declined_item_types.get(type_name)
     }
 
     /// Borrow a registered item-type plugin back as its concrete type.

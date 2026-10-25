@@ -706,7 +706,8 @@ fn build_gpu_particles(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     };
     let system = ctx
         .renderer
-        .create_gpu_particle_system(ctx.device, ctx.queue, &config);
+        .create_gpu_particle_system(ctx.device, ctx.queue, &config)
+        .expect("gpu particles are registered");
 
     let mut item =
         viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystemItem::new(system, 0.4);

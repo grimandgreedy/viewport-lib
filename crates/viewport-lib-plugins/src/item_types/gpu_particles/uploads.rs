@@ -12,13 +12,15 @@ use crate::item_types::{host, plugin_mut};
 /// place, so creating one is not an upload of content and neither call fits
 /// [`Uploads`](viewport_lib::plugin_api::Uploads).
 pub trait GpuParticleSystems {
-    /// Create a persistent GPU particle system, returning its handle.
+    /// Create a persistent GPU particle system, returning its handle, or the
+    /// error the renderer declined GPU particles with on a device that cannot
+    /// run them.
     fn create_gpu_particle_system(
         &mut self,
         device: &gpu::Device,
         queue: &gpu::Queue,
         config: &GpuParticleSystemConfig,
-    ) -> GpuParticleSystemId;
+    ) -> viewport_lib::error::ViewportResult<GpuParticleSystemId>;
 
     /// Release a system. The handle stops resolving and its buffers are freed.
     fn drop_gpu_particle_system(&mut self, id: GpuParticleSystemId);
@@ -30,13 +32,16 @@ impl GpuParticleSystems for ViewportRenderer {
         device: &gpu::Device,
         queue: &gpu::Queue,
         config: &GpuParticleSystemConfig,
-    ) -> GpuParticleSystemId {
-        let host = host::<GpuParticlesPlugin>(self, TYPE_NAME);
-        host.plugin
-            .create_system(device, queue, host.resources, config)
+    ) -> viewport_lib::error::ViewportResult<GpuParticleSystemId> {
+        let host = host::<GpuParticlesPlugin>(self, TYPE_NAME)?;
+        Ok(host
+            .plugin
+            .create_system(device, queue, host.resources, config))
     }
 
     fn drop_gpu_particle_system(&mut self, id: GpuParticleSystemId) {
-        plugin_mut::<GpuParticlesPlugin>(self, TYPE_NAME).drop_system(id)
+        if let Ok(plugin) = plugin_mut::<GpuParticlesPlugin>(self, TYPE_NAME) {
+            plugin.drop_system(id);
+        }
     }
 }

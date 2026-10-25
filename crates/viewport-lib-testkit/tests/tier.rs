@@ -476,6 +476,60 @@ fn forward_tier_registers_item_types_that_accept_it() {
     }
 }
 
+/// An upload to a built-in item type the renderer declined returns the error it
+/// was declined with, and the calls with nothing to return do nothing. A
+/// renderer that never ran `install` names the missing type.
+#[test]
+fn uploads_to_a_declined_item_type_return_why_it_was_declined() {
+    use viewport_lib::plugin_api::{Handles, Uploads};
+    use viewport_lib_plugins::item_types::gpu_particles::{
+        GpuParticleSystemConfig, GpuParticleSystems,
+    };
+    use viewport_lib_plugins::item_types::point_cloud::{self, PointCloudId, PointCloudItem};
+
+    let Some(mut harness) =
+        Harness::with_profile(&DeviceProfile::downlevel_webgl2("tier-declined-upload"))
+    else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    assert_eq!(harness.renderer.tier(), Tier::Forward);
+    let declined = harness
+        .renderer
+        .item_type_declined(point_cloud::TYPE_NAME)
+        .cloned()
+        .expect("point clouds are declined on the forward tier");
+
+    let mut cloud = PointCloudItem::default();
+    cloud.positions = vec![[0.0, 0.0, 0.0]; 4];
+    let device = harness.device.clone();
+    let queue = harness.queue.clone();
+    let result: Result<PointCloudId, _> = harness.renderer.upload(&device, &queue, &cloud);
+    match result {
+        Err(e) => assert_eq!(e.to_string(), declined.to_string()),
+        Ok(_) => panic!("a declined type took an upload"),
+    }
+    assert!(!harness.renderer.release(PointCloudId::from_index(0)));
+    assert!(
+        harness
+            .renderer
+            .create_gpu_particle_system(&device, &queue, &GpuParticleSystemConfig::default())
+            .is_err()
+    );
+    harness.renderer.drop_gpu_particle_system(
+        viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystemId::from_index(0),
+    );
+
+    let config = viewport_lib::RendererConfig::new(Harness::DEFAULT_TARGET_FORMAT);
+    let mut bare = ViewportRenderer::try_with_config(&device, &config).expect("renderer");
+    match Uploads::<PointCloudItem>::upload(&mut bare, &device, &queue, &cloud) {
+        Err(ViewportError::ItemTypePluginMissing { type_name }) => {
+            assert_eq!(type_name, point_cloud::TYPE_NAME)
+        }
+        other => panic!("expected ItemTypePluginMissing, got {:?}", other.err()),
+    }
+}
+
 /// The forward light list holds `FORWARD_MAX_LIGHTS`, and the frame says how
 /// many it left out. The full tier's holds all of them.
 #[test]

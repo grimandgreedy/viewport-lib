@@ -15,7 +15,7 @@ impl viewport_lib::plugin_api::Uploads<PointCloudItem> for ViewportRenderer {
         queue: &gpu::Queue,
         item: &PointCloudItem,
     ) -> viewport_lib::error::ViewportResult<PointCloudId> {
-        let host = host::<PointCloudPlugin>(self, TYPE_NAME);
+        let host = host::<PointCloudPlugin>(self, TYPE_NAME)?;
         Ok(host.plugin.upload(device, queue, host.resources, item))
     }
 
@@ -25,7 +25,7 @@ impl viewport_lib::plugin_api::Uploads<PointCloudItem> for ViewportRenderer {
         queue: &gpu::Queue,
         item: PointCloudItem,
     ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId> {
-        let host = host::<PointCloudPlugin>(self, TYPE_NAME);
+        let host = host::<PointCloudPlugin>(self, TYPE_NAME)?;
         Ok(host
             .plugin
             .begin_upload(&host.jobs, device, queue, host.resources, item))
@@ -38,7 +38,7 @@ impl viewport_lib::plugin_api::Uploads<PointCloudItem> for ViewportRenderer {
         id: PointCloudId,
         item: &PointCloudItem,
     ) -> viewport_lib::error::ViewportResult<()> {
-        let host = host::<PointCloudPlugin>(self, TYPE_NAME);
+        let host = host::<PointCloudPlugin>(self, TYPE_NAME)?;
         host.plugin.replace(device, queue, host.resources, id, item)
     }
 }
@@ -48,12 +48,12 @@ impl viewport_lib::plugin_api::Handles<PointCloudId> for ViewportRenderer {
         &mut self,
         job: viewport_lib::resources::JobId,
     ) -> viewport_lib::error::ViewportResult<PointCloudId> {
-        let host = host::<PointCloudPlugin>(self, TYPE_NAME);
+        let host = host::<PointCloudPlugin>(self, TYPE_NAME)?;
         host.plugin.take_upload_result(&host.jobs, job)
     }
 
     fn release(&mut self, id: PointCloudId) -> bool {
-        plugin_mut::<PointCloudPlugin>(self, TYPE_NAME).drop_stored(id)
+        plugin_mut::<PointCloudPlugin>(self, TYPE_NAME).is_ok_and(|p| p.drop_stored(id))
     }
 }
 
@@ -75,7 +75,7 @@ macro_rules! point_cloud_writes {
                 data: &[<$marker as viewport_lib::plugin_api::Channel>::Input],
             ) -> viewport_lib::error::ViewportResult<()> {
                 let bytes: std::borrow::Cow<'_, [u8]> = $encode(data);
-                plugin_mut::<PointCloudPlugin>(self, TYPE_NAME).write_channel(
+                plugin_mut::<PointCloudPlugin>(self, TYPE_NAME)?.write_channel(
                     queue,
                     id,
                     PointChannel::$variant,
@@ -93,7 +93,7 @@ macro_rules! point_cloud_writes {
                 id: PointCloudId,
                 capacity: u32,
             ) -> viewport_lib::error::ViewportResult<()> {
-                plugin_mut::<PointCloudPlugin>(self, TYPE_NAME)
+                plugin_mut::<PointCloudPlugin>(self, TYPE_NAME)?
                     .reserve_stored(device, queue, id, capacity)
             }
 
@@ -103,7 +103,7 @@ macro_rules! point_cloud_writes {
                 id: PointCloudId,
                 len: u32,
             ) -> viewport_lib::error::ViewportResult<()> {
-                plugin_mut::<PointCloudPlugin>(self, TYPE_NAME).set_stored_len(id, len)
+                plugin_mut::<PointCloudPlugin>(self, TYPE_NAME)?.set_stored_len(id, len)
             }
 
             fn extent(
@@ -144,7 +144,7 @@ macro_rules! point_cloud_sources {
                 id: PointCloudId,
                 source: Option<gpu::Buffer>,
             ) -> viewport_lib::error::ViewportResult<()> {
-                plugin_mut::<PointCloudPlugin>(self, TYPE_NAME).set_channel_source(
+                plugin_mut::<PointCloudPlugin>(self, TYPE_NAME)?.set_channel_source(
                     device,
                     id,
                     PointChannel::$variant,

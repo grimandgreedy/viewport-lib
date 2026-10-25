@@ -671,7 +671,9 @@ mod emission_tests {
         };
         let mut config = GpuParticleSystemConfig::default();
         config.capacity = 256;
-        let id = renderer.create_gpu_particle_system(&device, &queue, &config);
+        let id = renderer
+            .create_gpu_particle_system(&device, &queue, &config)
+            .unwrap();
 
         // 10 per frame for 5 frames, well inside a 256-slot buffer.
         run_frames(&device, &queue, &mut renderer, id, 10.0, 1.0, 5);
@@ -692,7 +694,9 @@ mod emission_tests {
         };
         let mut config = GpuParticleSystemConfig::default();
         config.capacity = 256;
-        let id = renderer.create_gpu_particle_system(&device, &queue, &config);
+        let id = renderer
+            .create_gpu_particle_system(&device, &queue, &config)
+            .unwrap();
 
         run_frames(&device, &queue, &mut renderer, id, 10.0, 1.0, 30);
         let live = lifetimes(&device, &queue, plugin_of(&renderer), id)
@@ -719,8 +723,12 @@ mod emission_tests {
         };
         let mut config = GpuParticleSystemConfig::default();
         config.capacity = 512;
-        let a = ra.create_gpu_particle_system(&device, &queue, &config);
-        let b = rb.create_gpu_particle_system(&device_b, &queue_b, &config);
+        let a = ra
+            .create_gpu_particle_system(&device, &queue, &config)
+            .unwrap();
+        let b = rb
+            .create_gpu_particle_system(&device_b, &queue_b, &config)
+            .unwrap();
 
         run_frames(&device, &queue, &mut ra, a, 40.0, 0.5, 4);
         run_frames(&device_b, &queue_b, &mut rb, b, 40.0, 0.5, 4);
@@ -746,9 +754,13 @@ mod emission_tests {
         };
         let config = GpuParticleSystemConfig::default();
 
-        let first = renderer.create_gpu_particle_system(&device, &queue, &config);
+        let first = renderer
+            .create_gpu_particle_system(&device, &queue, &config)
+            .unwrap();
         renderer.drop_gpu_particle_system(first);
-        let second = renderer.create_gpu_particle_system(&device, &queue, &config);
+        let second = renderer
+            .create_gpu_particle_system(&device, &queue, &config)
+            .unwrap();
 
         assert_ne!(first, second, "the reused slot must carry a new generation");
         let plugin = plugin_of(&renderer);
@@ -827,8 +839,9 @@ mod revalidation_tests {
             .resources_mut()
             .upload_texture(&device, &queue, srgb_texture(200))
             .expect("texture upload");
-        let _system =
-            renderer.create_gpu_particle_system(&device, &queue, &sprite_config(Some(tex)));
+        let _system = renderer
+            .create_gpu_particle_system(&device, &queue, &sprite_config(Some(tex)))
+            .unwrap();
 
         // Sync the gate so the assertion below isolates the free.
         let baseline = revalidate(&mut renderer, &device);
@@ -856,8 +869,9 @@ mod revalidation_tests {
             .resources_mut()
             .upload_texture(&device, &queue, srgb_texture(40))
             .expect("texture upload");
-        let _system =
-            renderer.create_gpu_particle_system(&device, &queue, &sprite_config(Some(tex)));
+        let _system = renderer
+            .create_gpu_particle_system(&device, &queue, &sprite_config(Some(tex)))
+            .unwrap();
 
         let baseline = revalidate(&mut renderer, &device);
 
@@ -883,7 +897,9 @@ mod revalidation_tests {
             .resources_mut()
             .upload_texture(&device, &queue, srgb_texture(10))
             .expect("texture upload");
-        let _system = renderer.create_gpu_particle_system(&device, &queue, &sprite_config(None));
+        let _system = renderer
+            .create_gpu_particle_system(&device, &queue, &sprite_config(None))
+            .unwrap();
 
         let baseline = revalidate(&mut renderer, &device);
 
@@ -912,7 +928,9 @@ mod revalidation_tests {
 
         let mut config = GpuParticleSystemConfig::default();
         config.capacity = 4096;
-        let id = renderer.create_gpu_particle_system(&device, &queue, &config);
+        let id = renderer
+            .create_gpu_particle_system(&device, &queue, &config)
+            .unwrap();
         assert!(
             held_now(&renderer) >= 4096 * std::mem::size_of::<GpuParticle>() as u64,
             "the particle buffer is the bulk of what a system holds"

@@ -43,7 +43,9 @@ fn a_warmed_particle_type_builds_nothing_on_its_first_frame() {
         .iter_mut()
         .map(|config| {
             config.capacity = 64;
-            renderer.create_gpu_particle_system(&device, &queue, config)
+            renderer
+                .create_gpu_particle_system(&device, &queue, config)
+                .unwrap()
         })
         .collect();
 

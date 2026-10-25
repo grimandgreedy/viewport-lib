@@ -1921,13 +1921,17 @@ impl App {
         let item = demo_sprite_instance_set();
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            let id = renderer.upload_sprite_instance_set(&self.device, &self.queue, &item);
+            let id = renderer
+                .upload_sprite_instance_set(&self.device, &self.queue, &item)
+                .unwrap();
             self.async_uploads_state.loaded_sprite_instance_set_id = Some(id);
             self.async_uploads_state.sprite_instance_set_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job = renderer.begin_upload_sprite_instance_set(&self.device, &self.queue, item);
+            let job = renderer
+                .begin_upload_sprite_instance_set(&self.device, &self.queue, item)
+                .unwrap();
             self.async_uploads_state.sprite_instance_set_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
