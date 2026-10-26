@@ -114,6 +114,8 @@ struct Row {
     exempt: usize,
     gpu_pick_in_cut: Option<bool>,
     cpu_pick_in_cut: Option<bool>,
+    /// Whether the CPU pick finds the item on a pixel the box kept.
+    cpu_pick_kept: Option<bool>,
 }
 
 /// A drawn-pixel mask as a greyscale image, for looking at what a row counted.
@@ -187,6 +189,19 @@ fn clip_coverage_by_item_type() {
             }
             None => (None, None),
         };
+        // A pixel the box kept, as near the middle of what it kept as there is.
+        let kept = (0..(W * H) as usize)
+            .filter(|&i| boxed[i])
+            .min_by_key(|&i| {
+                let (x, y) = ((i % W as usize) as i64 - W as i64 / 2, (i / W as usize) as i64 - H as i64 / 2);
+                x * x + y * y
+            });
+        let cpu_pick_kept = kept.map(|i| {
+            let at = glam::Vec2::new((i % W as usize) as f32 + 0.5, (i / W as usize) as f32 + 0.5);
+            renderer
+                .pick_object(PickBackend::Cpu, at, &boxed_frame, &device, &queue, PickMask::OBJECT)
+                .is_some()
+        });
 
         if let Ok(dir) = std::env::var("CLIP_COVERAGE_DUMP") {
             for (tag, mask) in [("full", &full), ("box", &boxed), ("plane", &planed)] {
@@ -202,6 +217,7 @@ fn clip_coverage_by_item_type() {
             exempt: count(&exempt),
             gpu_pick_in_cut,
             cpu_pick_in_cut,
+            cpu_pick_kept,
         });
     }
 
@@ -211,12 +227,12 @@ fn clip_coverage_by_item_type() {
         None => "-",
     };
     eprintln!(
-        "\n{:<18} {:>7} {:>13} {:>15} {:>17} {:>16} {:>16}",
-        "item", "pixels", "box removes", "plane removes", "ignoring, removes", "GPU pick in cut", "CPU pick in cut"
+        "\n{:<18} {:>7} {:>13} {:>15} {:>17} {:>16} {:>16} {:>14}",
+        "item", "pixels", "box removes", "plane removes", "ignoring, removes", "GPU pick in cut", "CPU pick in cut", "CPU pick kept"
     );
     for r in &rows {
         eprintln!(
-            "{:<18} {:>7} {:>12.0}% {:>14.0}% {:>16.0}% {:>16} {:>16}",
+            "{:<18} {:>7} {:>12.0}% {:>14.0}% {:>16.0}% {:>16} {:>16} {:>14}",
             r.name,
             r.full,
             removed(r.full, r.boxed),
@@ -224,6 +240,7 @@ fn clip_coverage_by_item_type() {
             removed(r.full, r.exempt),
             yes_no(r.gpu_pick_in_cut),
             yes_no(r.cpu_pick_in_cut),
+            yes_no(r.cpu_pick_kept),
         );
     }
     for r in &rows {
@@ -231,11 +248,19 @@ fn clip_coverage_by_item_type() {
         assert!(removed(r.full, r.boxed) > 10.0, "{}: a clip box removed nothing", r.name);
         assert!(removed(r.full, r.planed) > 10.0, "{}: a clip plane removed nothing", r.name);
         assert_eq!(r.gpu_pick_in_cut, Some(false), "{}: the GPU picked what the box cut away", r.name);
+        assert_ne!(r.cpu_pick_in_cut, Some(true), "{}: the CPU picked what the box cut away", r.name);
+        if CPU_PICKED.contains(&r.name) {
+            assert_eq!(r.cpu_pick_kept, Some(true), "{}: the CPU picked nothing where the box kept it", r.name);
+        }
         if HONOUR_IGNORE_CLIP.contains(&r.name) {
             assert!(removed(r.full, r.exempt) < 2.0, "{}: ignore_clip was not honoured", r.name);
         }
     }
 }
+
+/// The types the CPU ray cast reaches: the rest keep no copy of their
+/// geometry on the CPU, and their kept pixels pick nothing there either way.
+const CPU_PICKED: [&str; 3] = ["surface mesh", "GPU implicit", "Gaussian splats"];
 
 fn surface(mesh: MeshId) -> Scene {
     Box::new(move |ignore_clip: bool| {

@@ -33,6 +33,22 @@ impl ViewportRenderer {
         view_proj: glam::Mat4,
         mask: PickMask,
     ) -> Option<PickHit> {
+        self.pick_clipped(click_pos, viewport_size, view_proj, mask, &[])
+    }
+
+    /// [`pick`](Self::pick) against the frame as the clip objects in `clip`
+    /// leave it: a surface they cut away is not hit, and what lies behind it
+    /// is. An item with `ignore_clip` is cast against the whole ray, as it is
+    /// drawn. A plugin item's hit is kept only where the clip keeps its
+    /// position, since the router cannot see a plugin item's settings.
+    pub(crate) fn pick_clipped(
+        &self,
+        click_pos: glam::Vec2,
+        viewport_size: glam::Vec2,
+        view_proj: glam::Mat4,
+        mask: PickMask,
+        clip: &[ClipObject],
+    ) -> Option<PickHit> {
         // Nothing pickable is drawn on the overlay-only tier; the compatibility tier
         // draws surfaces, which this path picks.
         if !self.resources.scene_tier.is_built() && self.resources.compatibility_tier.is_none() {
@@ -53,6 +69,12 @@ impl ViewportRenderer {
 
         let view_proj_inv = view_proj.inverse();
         let (ray_origin, ray_dir) = screen_to_ray(click_pos, viewport_size, view_proj_inv);
+        // The stretch of the ray the clip leaves, or `None` when it leaves none
+        // of it, in which case only items that ignore the clip can be hit.
+        let span = super::clip_span::ClipSpan::of(clip, ray_origin, ray_dir);
+        let whole = super::clip_span::ClipSpan::WHOLE;
+        // Where along the ray a world point lies, in the ray's own `t`.
+        let t_of = |p: glam::Vec3| (p - ray_origin).dot(ray_dir) / ray_dir.length_squared();
 
         let wants_face = mask.intersects(PickMask::FACE);
         let wants_vertex = mask.intersects(PickMask::VERTEX);
@@ -89,6 +111,9 @@ impl ViewportRenderer {
                 if item.settings.hidden || item.settings.pick_id == PickId::NONE {
                     continue;
                 }
+                let Some(kept) = (if item.settings.ignore_clip { Some(whole) } else { span }) else {
+                    continue;
+                };
                 let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                     continue;
                 };
@@ -111,20 +136,24 @@ impl ViewportRenderer {
                 let inv_model = model.inverse();
                 let local_origin = inv_model.transform_point3(ray_origin);
                 let local_dir = inv_model.transform_vector3(ray_dir);
+                // Cast from where the kept stretch starts, no further than it
+                // ends: `t` is the same in local space, so the offset carries.
+                let cast_from = local_origin + local_dir * kept.start;
                 let ray = Ray::new(
-                    Vector::new(local_origin.x, local_origin.y, local_origin.z),
+                    Vector::new(cast_from.x, cast_from.y, cast_from.z),
                     Vector::new(local_dir.x, local_dir.y, local_dir.z),
                 );
+                let reach = if kept.end.is_finite() { kept.end - kept.start } else { f32::MAX };
 
                 {
                     // Vertices are in mesh-local space: use identity pose.
                     let identity = Pose::identity();
                     let Some(intersection) =
-                        trimesh.cast_ray_and_get_normal(&identity, &ray, f32::MAX, true)
+                        trimesh.cast_ray_and_get_normal(&identity, &ray, reach, true)
                     else {
                         continue;
                     };
-                    let toi = intersection.time_of_impact;
+                    let toi = kept.start + intersection.time_of_impact;
                     let world_pos = ray_origin + ray_dir * toi;
                     // Transform the local-space normal back to world space with
                     // the inverse-transpose of the model's linear part, so
@@ -278,6 +307,11 @@ impl ViewportRenderer {
                     data,
                 ) {
                     let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                    let at = t_of(hit.world_pos);
+                    let kept = if item.settings.ignore_clip { Some(whole) } else { span };
+                    if !kept.is_some_and(|k| at >= k.start && at <= k.end) {
+                        continue;
+                    }
                     if !wants_cell {
                         hit.sub_object = None;
                     }
@@ -289,9 +323,14 @@ impl ViewportRenderer {
         // Consult registered item-type plugins after the built-in pickers.
         // Each plugin returns its own closest hit; the router compares
         // by world-space ray t against the running best.
-        if !self.item_type_plugins.is_empty() {
+        // Under a clip, a plugin's ray starts where the kept stretch does, so a
+        // plugin that casts finds the first surface the clip leaves; any hit
+        // whose position the clip cuts is then dropped, which covers a plugin
+        // that tests in screen space instead.
+        let plugin_span = span.filter(|s| !s.is_whole());
+        if !self.item_type_plugins.is_empty() && span.is_some() {
             let plugin_ray = crate::plugin_api::PickRay {
-                origin: ray_origin,
+                origin: ray_origin + ray_dir * plugin_span.map_or(0.0, |s| s.start),
                 direction: ray_dir,
             };
             let plugin_ctx = crate::plugin_api::PickContext {
@@ -303,7 +342,16 @@ impl ViewportRenderer {
             };
             for plugin in self.plugins_to_pick() {
                 if let Some((t, hit)) = plugin.pick(&plugin_ray, &plugin_ctx) {
-                    consider(t, hit);
+                    match plugin_span {
+                        None => consider(t, hit),
+                        Some(s) => {
+                            let at = t_of(hit.world_pos);
+                            let slack = (s.end - s.start).abs().min(1.0) * 1e-4;
+                            if at >= s.start - slack && at <= s.end + slack {
+                                consider(at, hit);
+                            }
+                        }
+                    }
                 }
             }
         }

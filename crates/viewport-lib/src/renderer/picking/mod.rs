@@ -1,5 +1,6 @@
 use super::*;
 
+mod clip_span;
 pub(crate) mod helpers;
 use helpers::*;
 mod gpu;
@@ -201,7 +202,9 @@ impl ViewportRenderer {
         let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
         let view_proj = frame.camera.render_camera.view_proj();
         let hit = match backend {
-            PickBackend::Cpu => self.pick(cursor, viewport_size, view_proj, mask),
+            PickBackend::Cpu => {
+                self.pick_clipped(cursor, viewport_size, view_proj, mask, &frame.effects.clip.objects)
+            }
             // `resolve_pick_backend` never returns `Auto`.
             _ => self.pick_object_gpu_blocking(device, queue, cursor, frame, mask),
         };
