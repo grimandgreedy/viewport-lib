@@ -11,11 +11,13 @@
 # 800x480 kiosk panel.
 #
 # Usage:
-#   scripts/llvmpipe_arena.sh [--backend gl|vulkan|both] [--cpus N] [--shell|--testkit]
+#   scripts/llvmpipe_arena.sh [--backend gl|vulkan|both] [--cpus N] [--cell NAME] [--shell|--testkit]
 #
 #   --backend  which CPU renderer to time (default both)
 #   --cpus     cores the container is pinned to, and llvmpipe's thread count
 #              (default 4)
+#   --cell     run that arena cell (scripts/cells.sh NAME) instead of the suite,
+#              for example embedded-panel
 #   --shell    open a shell in the container with Mesa installed and the GL
 #              environment set, instead of running anything
 #   --testkit  run the testkit's tier and snapshot suites on each backend
@@ -37,13 +39,15 @@ backend="both"
 cpus=4
 shell=0
 testkit=0
+cell=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --backend) backend="$2"; shift 2 ;;
         --cpus) cpus="$2"; shift 2 ;;
         --shell) shell=1; shift ;;
         --testkit) testkit=1; shift ;;
-        -h|--help) sed -n 2,31p "$0"; exit 0 ;;
+        --cell) cell="$2"; shift 2 ;;
+        -h|--help) sed -n 2,33p "$0"; exit 0 ;;
         *) echo "unknown arg: $1" >&2; exit 1 ;;
     esac
 done
@@ -120,10 +124,17 @@ for b in $BACKENDS; do
         if [ "$b" = gl ]; then gl_env; else vulkan_env; fi
         export ARENA_PARENT="$VPL_ROOT/harness/viewport-lib-overlay-arena/runs/cpu-$b-$stamp"
         mkdir -p "$ARENA_PARENT"
-        echo "== suite on $b -> runs/cpu-$b-$stamp/suite"
-        ./scripts/suite.sh --no-settle
-        used="$(grep -ho '"gpu"[^,]*\|"backend"[^,]*' "$ARENA_PARENT/suite/suite.json" 2>/dev/null | head -2 | tr '\n' ' ' || true)"
-        echo "== $b run used: ${used:-no adapter recorded in suite.json}"
+        if [ -n "$CELL" ]; then
+            echo "== cell $CELL on $b -> runs/cpu-$b-$stamp/cells"
+            ./scripts/cells.sh "$CELL" --no-settle
+            report="$(ls "$ARENA_PARENT"/cells*/ours.json 2>/dev/null | head -1)"
+        else
+            echo "== suite on $b -> runs/cpu-$b-$stamp/suite"
+            ./scripts/suite.sh --no-settle
+            report="$ARENA_PARENT/suite/suite.json"
+        fi
+        used="$(grep -ho '"gpu"[^,]*\|"backend"[^,]*' "$report" 2>/dev/null | head -2 | tr '\n' ' ' || true)"
+        echo "== $b run used: ${used:-no adapter recorded in the report}"
     )
 done
 INNER
@@ -147,5 +158,6 @@ exec docker run --rm "${tty_flags[@]}" \
     -e BACKENDS="$backends" \
     -e SHELL_ONLY="$shell" \
     -e TESTKIT="$testkit" \
+    -e CELL="$cell" \
     rust:latest \
     bash -c "$inner"
