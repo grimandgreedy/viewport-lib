@@ -28,11 +28,15 @@ struct ImplicitUniform {
     num_primitives: u32,
     blend_mode:     u32,
     max_steps:      u32,
-    _pad0:          u32,
+    unlit:          u32,
     step_scale:     f32,
     hit_threshold:  f32,
     max_distance:   f32,
-    _pad1:          f32,
+    opacity:        f32,
+    ignore_clip:    u32,
+    _pad0:          u32,
+    _pad1:          u32,
+    _pad2:          u32,
     primitives:     array<ImplicitPrimitive, 16>,
 };
 
