@@ -35,5 +35,8 @@ fn vs_main(v: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    if !mc_clip_keep(in.world_pos) {
+        discard;
+    }
     return shade_mc(in.world_pos, in.world_norm);
 }

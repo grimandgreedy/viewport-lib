@@ -229,7 +229,18 @@ impl ItemTypePlugin for GaussianSplatPlugin {
                     label: Some("splat_sort_encoder"),
                 })
             });
-            gpu.encode_sort(device, queue, enc, set, sort, eye, item.model, vp_w, vp_h);
+            gpu.encode_sort(
+                device,
+                queue,
+                enc,
+                set,
+                sort,
+                eye,
+                item.model,
+                vp_w,
+                vp_h,
+                item.settings.ignore_clip,
+            );
 
             let pick = (item.settings.pick_id != PickId::NONE).then(|| {
                 let id_data: [u32; 4] = [item.settings.pick_id.0 as u32, 0, 0, 0];
@@ -784,6 +795,7 @@ impl GaussianSplatPlugin {
                 ctx.camera.eye_position,
                 item.model,
                 viewport_size,
+                item.settings.ignore_clip,
             );
             self.frame.push(FrameDraw {
                 source: item.source,

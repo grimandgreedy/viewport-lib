@@ -217,7 +217,7 @@ fn build_compute(r: &McComputeRecipe, i: usize) -> viewport_lib::gpu::ComputePip
 /// The triangle surface's shader: the shared shading, then its entry points.
 pub(crate) fn surface_source() -> String {
     lit_shader(
-        &[shared_wgsl::SHARED_CSM_WGSL],
+        &[shared_wgsl::SHARED_CSM_WGSL, shared_wgsl::SHARED_CLIP_WGSL],
         &[wgsl_source!("mc_shading"), wgsl_source!("mc_surface")].join("\n"),
     )
 }
@@ -476,11 +476,13 @@ impl McGpu {
         device: &viewport_lib::gpu::Device,
         queue: &viewport_lib::gpu::Queue,
         pick_id: PickId,
+        ignore_clip: bool,
     ) -> Option<(viewport_lib::gpu::Buffer, viewport_lib::gpu::BindGroup)> {
         if pick_id == PickId::NONE {
             return None;
         }
-        let id_data: [u32; 4] = [pick_id.0 as u32, 0, 0, 0];
+        // `.y` is `ItemSettings::ignore_clip`, read by the pick's clip test.
+        let id_data: [u32; 4] = [pick_id.0 as u32, ignore_clip as u32, 0, 0];
         let buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
             label: Some("mc_pick_id_buf"),
             size: std::mem::size_of_val(&id_data) as u64,
@@ -1015,6 +1017,10 @@ pub(super) struct McSurfaceRaw {
     /// darker on its shadowed side than an equivalent regular mesh.
     ambient: f32,
     receive_shadows: u32,
+    /// `ItemSettings::ignore_clip`: the item takes no part in clipping.
+    ignore_clip: u32,
+    /// The WGSL struct rounds up to 48 bytes.
+    _pad: [u32; 3],
 }
 
 impl McSurfaceRaw {
@@ -1027,6 +1033,8 @@ impl McSurfaceRaw {
             opacity: job.settings.opacity,
             ambient: job.material.ambient,
             receive_shadows: job.settings.receive_shadows as u32,
+            ignore_clip: job.settings.ignore_clip as u32,
+            _pad: [0; 3],
         }
     }
 }

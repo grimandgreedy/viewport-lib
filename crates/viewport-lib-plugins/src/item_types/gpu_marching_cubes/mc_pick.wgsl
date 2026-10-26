@@ -7,10 +7,11 @@
 // the primitive channel is 0.
 //
 // Group 0: the shared scene bind group, whose pick camera bind group the
-//          surface pick pipeline binds too. The clip volume at binding 6 is
-//          present in the layout but unused here.
+//          surface pick pipeline binds too. A fragment outside a clip volume
+//          (binding 6) is not picked; the pick pass binds no clip planes.
 // Group 1: per-job pick id (binding 0).
 
+// `x` is the pick id, `y` is 1 when the item ignores clipping.
 @group(1) @binding(0) var<uniform> pick_id: vec4<u32>;
 
 struct VertexIn {
@@ -20,12 +21,14 @@ struct VertexIn {
 
 struct VertexOut {
     @builtin(position) clip_pos: vec4<f32>,
+    @location(0)       world_pos: vec3<f32>,
 };
 
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
     out.clip_pos = camera.view_proj * vec4<f32>(in.position, 1.0);
+    out.world_pos = in.position;
     return out;
 }
 
@@ -37,6 +40,9 @@ struct PickOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> PickOut {
+    if pick_id.y == 0u && !viewport_pass_clip_volumes(in.world_pos) {
+        discard;
+    }
     var out: PickOut;
     out.object_id = pick_id.x;
     out.primitive_id = 0u;

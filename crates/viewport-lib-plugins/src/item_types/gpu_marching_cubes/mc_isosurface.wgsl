@@ -111,7 +111,9 @@ struct IsoHit {
 };
 
 // March the eye ray through `world_pos` (a back face of the box) to the first
-// isovalue crossing.
+// isovalue crossing that survives the clip objects. A crossing that is cut
+// away is stepped past, so a section shows the surface behind it as the
+// triangle path's does.
 fn march_isosurface(world_pos: vec3<f32>) -> IsoHit {
     var hit = IsoHit(false, vec3<f32>(0.0));
     let eye = camera.eye_pos;
@@ -145,8 +147,11 @@ fn march_isosurface(world_pos: vec3<f32>) -> IsoHit {
                     hi = mid;
                 }
             }
-            hit = IsoHit(true, eye + dir * ((lo + hi) * 0.5));
-            break;
+            let p = eye + dir * ((lo + hi) * 0.5);
+            if mc_clip_keep(p) {
+                hit = IsoHit(true, p);
+                break;
+            }
         }
         t_prev = t;
         prev = cur;

@@ -188,7 +188,7 @@ impl ParticleGpu {
             device,
             "particle_sprite_lit_shader",
             &crate::item_types::shader::lit_shader(
-                &[],
+                &[viewport_lib::plugin_api::shared_wgsl::SHARED_CLIP_WGSL],
                 crate::item_types::shader::wgsl_source!("particle_sprite_lit"),
             ),
         );

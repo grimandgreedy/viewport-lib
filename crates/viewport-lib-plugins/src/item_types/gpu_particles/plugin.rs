@@ -30,7 +30,10 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
         ),
         (
             "particle_sprite_lit.wgsl",
-            lit_shader(&[], wgsl_source!("particle_sprite_lit")),
+            lit_shader(
+                &[viewport_lib::plugin_api::shared_wgsl::SHARED_CLIP_WGSL],
+                wgsl_source!("particle_sprite_lit"),
+            ),
         ),
         (
             "particle_mesh.wgsl",

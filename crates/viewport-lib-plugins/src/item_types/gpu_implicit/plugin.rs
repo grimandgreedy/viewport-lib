@@ -3,6 +3,7 @@
 
 use super::*;
 use viewport_lib::gpu;
+use viewport_lib::plugin_api::shared_wgsl;
 use viewport_lib::plugin_api::{
     ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
@@ -15,7 +16,13 @@ use viewport_lib::resources::HDR_COLOR_FORMAT;
 pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     use crate::item_types::shader::{lit_shader, scene_shader, wgsl_source};
     vec![
-        ("implicit.wgsl", lit_shader(&[], wgsl_source!("implicit"))),
+        (
+            "implicit.wgsl",
+            lit_shader(
+                &[shared_wgsl::SHARED_CLIP_WGSL],
+                wgsl_source!("implicit"),
+            ),
+        ),
         (
             "implicit_outline_mask.wgsl",
             scene_shader(&[], wgsl_source!("implicit_outline_mask")),

@@ -15,14 +15,6 @@ struct Camera {
     view:          mat4x4<f32>,
 };
 
-struct ClipPlanes {
-    planes:          array<vec4<f32>, 6>,
-    count:           u32,
-    _pad0:           u32,
-    viewport_width:  f32,
-    viewport_height: f32,
-};
-
 struct SpriteUniform {
     model:          mat4x4<f32>,
     world_space:    u32,
@@ -48,7 +40,6 @@ struct Particle {
 
 @group(0) @binding(0) var<uniform>       camera:         Camera;
 @group(0) @binding(3) var<uniform>       lights_uniform: Lights;
-@group(0) @binding(4) var<uniform>       clip_planes:    ClipPlanes;
 
 @group(1) @binding(0) var<uniform>       sprite_ub:      SpriteUniform;
 @group(1) @binding(1) var                sprite_texture: texture_2d<f32>;
@@ -161,10 +152,9 @@ fn build_normal(local_offset: vec2<f32>,
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    for (var i = 0u; i < clip_planes.count; i = i + 1u) {
-        if dot(vec4<f32>(in.world_pos, 1.0), clip_planes.planes[i]) < 0.0 {
-            discard;
-        }
+    // `clip_planes` and the clip tests come from SHARED_CLIP_WGSL.
+    if !viewport_pass_clip_planes(in.world_pos) {
+        discard;
     }
 
     var colour = in.colour;

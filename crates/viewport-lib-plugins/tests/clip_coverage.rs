@@ -7,17 +7,21 @@
 //! ignores it loses none. The comparison is between frames from the same
 //! camera, so it does not depend on where x = 0 lands on screen.
 //!
+//! Each is drawn once more under the box with `ItemSettings::ignore_clip` set,
+//! which should cut nothing from the types that honour it.
+//!
 //! Then a pick at a pixel the box cut away, through the GPU pick pass and the
 //! CPU ray cast, with the box in the frame. A pick there should find nothing:
 //! the viewer is looking at empty space.
 //!
-//! Run with `--nocapture` for the table. The test asserts only that every item
-//! drew; the coverage it reports is the subject of
-//! `clipping-coverage-uneven-across-item-types` and is not yet a contract.
+//! Run with `--nocapture` for the table. Every type must draw, lose pixels to
+//! both clips, and have nothing picked by the GPU where the box cut it away.
+//! The CPU pick column is reported and not held: the CPU paths read no clip
+//! objects yet (`clipping-coverage-uneven-across-item-types`).
 
 #![cfg(feature = "item-types")]
 
-use viewport_lib::plugin_api::{PluginItem, Uploads};
+use viewport_lib::plugin_api::Uploads;
 use viewport_lib::wgpu;
 use viewport_lib::vplg::volume::grid::VolumeData;
 use viewport_lib::{
@@ -71,17 +75,28 @@ fn frame(scene: SceneFrame, clip: Option<ClipObject>) -> FrameData {
     frame
 }
 
-/// A scene each time it is asked for: a frame takes its scene by value and a
-/// `SceneFrame` is not `Clone`.
-type Scene = Box<dyn Fn() -> SceneFrame>;
+/// A scene each time it is asked for, with `ignore_clip` set on its item or
+/// not: a frame takes its scene by value and a `SceneFrame` is not `Clone`.
+type Scene = Box<dyn Fn(bool) -> SceneFrame>;
 
-fn one<T: PluginItem + Clone + 'static>(item: T) -> Scene {
-    Box::new(move || {
-        let mut scene = SceneFrame::default();
-        scene.items_mut::<T>().push(item.clone());
-        scene
-    })
+/// One plugin item as a scene. Every item type carries `settings`, but no
+/// trait reaches it, so this is a macro.
+macro_rules! one {
+    ($item:expr) => {{
+        let item = $item;
+        Box::new(move |ignore_clip: bool| {
+            let mut item = item.clone();
+            item.settings.ignore_clip = ignore_clip;
+            let mut scene = SceneFrame::default();
+            scene.items_mut().push(item);
+            scene
+        }) as Scene
+    }};
 }
+
+/// The types whose shaders read `ignore_clip`. The rest are reported only
+/// (`clipping-coverage-uneven-across-item-types`).
+const HONOUR_IGNORE_CLIP: [&str; 5] = ["surface mesh", "polyline", "GPU implicit", "marching cubes", "Gaussian splats"];
 
 /// Which pixels differ from the empty frame by more than a rounding step.
 fn drawn(base: &[u8], pixels: &[u8]) -> Vec<bool> {
@@ -96,6 +111,7 @@ struct Row {
     full: usize,
     boxed: usize,
     planed: usize,
+    exempt: usize,
     gpu_pick_in_cut: Option<bool>,
     cpu_pick_in_cut: Option<bool>,
 }
@@ -127,26 +143,30 @@ fn clip_coverage_by_item_type() {
         .upload_mesh_data(&device, &primitives::sphere(1.4, 32, 16))
         .expect("sphere");
     scenes.push(("surface mesh", surface(sphere)));
-    scenes.push(("polyline", one(polyline())));
-    scenes.push(("point cloud", one(point_cloud())));
-    scenes.push(("tube", one(tube())));
-    scenes.push(("GPU implicit", one(implicit())));
-    scenes.push(("volume", one(volume(&mut renderer, &device, &queue))));
-    scenes.push(("vector field", one(vector_field(&mut renderer, &device))));
-    scenes.push(("marching cubes", one(marching_cubes(&mut renderer, &device, &queue))));
-    scenes.push(("Gaussian splats", one(splats(&mut renderer, &device, &queue))));
+    scenes.push(("polyline", one!(polyline())));
+    scenes.push(("point cloud", one!(point_cloud())));
+    scenes.push(("tube", one!(tube())));
+    scenes.push(("GPU implicit", one!(implicit())));
+    scenes.push(("volume", one!(volume(&mut renderer, &device, &queue))));
+    scenes.push(("vector field", one!(vector_field(&mut renderer, &device))));
+    scenes.push(("marching cubes", one!(marching_cubes(&mut renderer, &device, &queue))));
+    scenes.push(("Gaussian splats", one!(splats(&mut renderer, &device, &queue))));
 
     let empty = renderer.render_offscreen(&device, &queue, &frame(SceneFrame::default(), None), W, H);
 
     let mut rows = Vec::new();
     for (name, scene) in scenes {
-        let full_frame = frame(scene(), None);
+        let full_frame = frame(scene(false), None);
         let full = drawn(&empty, &renderer.render_offscreen(&device, &queue, &full_frame, W, H));
-        let boxed_frame = frame(scene(), Some(box_clip()));
+        let boxed_frame = frame(scene(false), Some(box_clip()));
         let boxed = drawn(&empty, &renderer.render_offscreen(&device, &queue, &boxed_frame, W, H));
         let planed = drawn(
             &empty,
-            &renderer.render_offscreen(&device, &queue, &frame(scene(), Some(plane_clip())), W, H),
+            &renderer.render_offscreen(&device, &queue, &frame(scene(false), Some(plane_clip())), W, H),
+        );
+        let exempt = drawn(
+            &empty,
+            &renderer.render_offscreen(&device, &queue, &frame(scene(true), Some(box_clip())), W, H),
         );
 
         // A pixel the box cut away, as far from the kept part as there is.
@@ -179,6 +199,7 @@ fn clip_coverage_by_item_type() {
             full: count(&full),
             boxed: count(&boxed),
             planed: count(&planed),
+            exempt: count(&exempt),
             gpu_pick_in_cut,
             cpu_pick_in_cut,
         });
@@ -190,31 +211,39 @@ fn clip_coverage_by_item_type() {
         None => "-",
     };
     eprintln!(
-        "\n{:<18} {:>7} {:>13} {:>15} {:>16} {:>16}",
-        "item", "pixels", "box removes", "plane removes", "GPU pick in cut", "CPU pick in cut"
+        "\n{:<18} {:>7} {:>13} {:>15} {:>17} {:>16} {:>16}",
+        "item", "pixels", "box removes", "plane removes", "ignoring, removes", "GPU pick in cut", "CPU pick in cut"
     );
     for r in &rows {
         eprintln!(
-            "{:<18} {:>7} {:>12.0}% {:>14.0}% {:>16} {:>16}",
+            "{:<18} {:>7} {:>12.0}% {:>14.0}% {:>16.0}% {:>16} {:>16}",
             r.name,
             r.full,
             removed(r.full, r.boxed),
             removed(r.full, r.planed),
+            removed(r.full, r.exempt),
             yes_no(r.gpu_pick_in_cut),
             yes_no(r.cpu_pick_in_cut),
         );
     }
     for r in &rows {
         assert!(r.full > 200, "{} drew {} pixels", r.name, r.full);
+        assert!(removed(r.full, r.boxed) > 10.0, "{}: a clip box removed nothing", r.name);
+        assert!(removed(r.full, r.planed) > 10.0, "{}: a clip plane removed nothing", r.name);
+        assert_eq!(r.gpu_pick_in_cut, Some(false), "{}: the GPU picked what the box cut away", r.name);
+        if HONOUR_IGNORE_CLIP.contains(&r.name) {
+            assert!(removed(r.full, r.exempt) < 2.0, "{}: ignore_clip was not honoured", r.name);
+        }
     }
 }
 
 fn surface(mesh: MeshId) -> Scene {
-    Box::new(move || {
+    Box::new(move |ignore_clip: bool| {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
         item.settings.colour = Some(Colour::linear_rgb(0.6, 0.6, 0.7));
         item.settings.pick_id = PickId(ID);
+        item.settings.ignore_clip = ignore_clip;
         let mut scene = SceneFrame::default();
         scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         scene

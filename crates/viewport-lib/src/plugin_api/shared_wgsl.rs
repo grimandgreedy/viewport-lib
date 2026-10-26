@@ -52,7 +52,7 @@ pub const WGSL_VERSION: u32 = 6;
 /// | 3  | `Lights` header uniform | `lights` |
 /// | 4  | `ClipPlanes` uniform | `clip_planes` |
 /// | 5  | *(internal: CSM uniform; route through `viewport_sample_csm`)* | *(opaque)* |
-/// | 6  | `ClipVolumes` uniform | `clip_volumes` |
+/// | 6  | `ClipVolumeUB` uniform | `clip_volume` |
 /// | 7  | IBL irradiance equirect | `ibl_irradiance_tex` |
 /// | 8  | IBL specular equirect | `ibl_specular_tex` |
 /// | 9  | BRDF integration LUT | `ibl_brdf_lut` |
@@ -121,6 +121,25 @@ pub const SHARED_CSM_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/helper
 /// the body declares at binding 6, and declares nothing itself.
 pub const SHARED_CLIP_VOLUME_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/clip_volume_test.wgsl"));
+
+/// The section-view clip uniforms and tests, for a body that declares its own
+/// group-0 bindings.
+///
+/// Declares `clip_planes: ClipPlanes` at group 0 binding 4 and
+/// `clip_volume: ClipVolumeUB` at binding 6, and provides:
+///
+/// ```ignore
+/// fn viewport_pass_clip_planes(world_pos: vec3<f32>) -> bool;
+/// fn viewport_pass_clip_volumes(world_pos: vec3<f32>) -> bool;
+/// fn viewport_clip_test(world_pos: vec3<f32>) -> bool;
+/// ```
+///
+/// [`SHARED_BINDINGS_WGSL`] already includes all of this. Compose it instead
+/// when the body cannot take the shared bindings, which is a body lit through
+/// [`SHARED_SCENE_LIGHTING_WGSL`]: the two declare the light list on the same
+/// binding. Never compose both.
+pub const SHARED_CLIP_WGSL: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/helpers/clip_bindings.wgsl"));
 
 /// Read one texel of a depth or stencil texture on every backend, GL included.
 ///

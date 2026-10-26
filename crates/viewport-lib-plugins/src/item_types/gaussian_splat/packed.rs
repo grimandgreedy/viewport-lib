@@ -218,7 +218,8 @@ impl PackedGpu {
         let draw_bgl = device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
             label: Some("gaussian_splat_packed_bgl"),
             entries: &[
-                builders::uniform_entry(0, gpu::ShaderStages::VERTEX),
+                // The fragment stage reads `ignore_clip` for the clip test.
+                builders::uniform_entry(0, gpu::ShaderStages::VERTEX | gpu::ShaderStages::FRAGMENT),
                 texture_entry(1),
                 texture_entry(2),
                 texture_entry(3),
@@ -480,6 +481,7 @@ impl PackedSet {
         eye: [f32; 3],
         model: [[f32; 4]; 4],
         viewport_size: [f32; 2],
+        ignore_clip: bool,
     ) -> &PackedViewport {
         while self.viewports.len() <= viewport {
             self.viewports.push(None);
@@ -530,6 +532,8 @@ impl PackedSet {
                 ShDegree::Three => 3,
             },
             count,
+            ignore_clip: ignore_clip as u32,
+            _pad: [0; 3],
         };
         queue.write_buffer(&state.uniform_buf, 0, bytemuck::bytes_of(&uniform));
 

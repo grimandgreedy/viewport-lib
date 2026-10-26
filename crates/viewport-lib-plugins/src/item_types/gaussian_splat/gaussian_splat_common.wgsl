@@ -16,6 +16,10 @@ struct SplatUniform {
     viewport_h: f32,
     sh_degree:  u32,
     count:      u32,
+    ignore_clip: u32,   // 1 = take no part in clipping
+    _pad0:      u32,
+    _pad1:      u32,
+    _pad2:      u32,
 };
 
 @group(1) @binding(0) var<uniform>        splat_u:         SplatUniform;
@@ -238,12 +242,10 @@ fn splat_view_dir(pos_obj: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    // Clip plane test on world position.
-    for (var p = 0u; p < clip_planes.count; p++) {
-        let plane = clip_planes.planes[p];
-        if dot(plane.xyz, in.world_pos) + plane.w < 0.0 {
-            discard;
-        }
+    // Clip planes and clip volumes, on the splat's centre: a splat is kept
+    // or cut whole.
+    if splat_u.ignore_clip == 0u && !viewport_clip_test(in.world_pos) {
+        discard;
     }
 
     // Mahalanobis distance squared.

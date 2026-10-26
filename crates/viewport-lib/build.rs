@@ -124,6 +124,10 @@ fn main() {
         }
         let raw = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("build.rs: failed to read {}: {}", path.display(), e));
+        // A helper may include another from the same directory, so one file
+        // holds what two published constants share.
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let raw = resolve_includes(&raw, &[&helpers_dir], &name);
         let out_path = helpers_out.join(path.file_name().unwrap());
         fs::write(&out_path, finish(raw))
             .unwrap_or_else(|e| panic!("build.rs: failed to write {}: {}", out_path.display(), e));

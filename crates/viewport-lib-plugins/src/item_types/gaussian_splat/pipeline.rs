@@ -18,6 +18,9 @@ pub(super) struct SplatUniform {
     pub viewport_h: f32,
     pub sh_degree: u32,
     pub count: u32,
+    /// `ItemSettings::ignore_clip`: the item takes no part in clipping.
+    pub ignore_clip: u32,
+    pub _pad: [u32; 3],
 }
 
 // Depth compute uniform (must match gaussian_splat_sort.wgsl DepthUniform).
@@ -596,6 +599,7 @@ impl SplatGpu {
         model: [[f32; 4]; 4],
         vp_w: f32,
         vp_h: f32,
+        ignore_clip: bool,
     ) {
         let count = set.count();
         if count == 0 {
@@ -612,6 +616,8 @@ impl SplatGpu {
                 ShDegree::Three => 3,
             },
             count,
+            ignore_clip: ignore_clip as u32,
+            _pad: [0; 3],
         };
         queue.write_buffer(&sort.uniform_buf, 0, bytemuck::bytes_of(&splat_uni));
 

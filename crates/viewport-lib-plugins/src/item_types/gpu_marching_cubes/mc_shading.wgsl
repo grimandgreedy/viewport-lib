@@ -65,7 +65,15 @@ struct McSurfaceUniform {
     // visibly darker than an equivalent regular mesh.
     ambient:    f32,
     receive_shadows: u32,
+    // 1 when the item takes no part in clipping (`ItemSettings::ignore_clip`).
+    ignore_clip: u32,
 };
+
+// Whether a point of this item survives the clip objects, or the item is
+// exempt from them.
+fn mc_clip_keep(p: vec3<f32>) -> bool {
+    return material.ignore_clip != 0u || viewport_clip_test(p);
+}
 
 @group(1) @binding(0) var<uniform> material: McSurfaceUniform;
 

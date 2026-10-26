@@ -175,7 +175,7 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
 
         for entry in &self.frame {
             self.pick_bgs
-                .push(gpu.pick_bind_group(device, queue, entry.pick_id));
+                .push(gpu.pick_bind_group(device, queue, entry.pick_id, entry.settings.ignore_clip));
         }
         buf.into_iter().collect()
     }
