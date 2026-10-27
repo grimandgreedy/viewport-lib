@@ -164,7 +164,7 @@ const ALL_COLOURMAPS: &[(BuiltinColourmap, &str)] = &[
 // Carl Gauss portrait: pre-converted raw RGBA (1500 x 1000).
 pub(crate) const CARLGAUSS_WIDTH: u32 = 1500;
 pub(crate) const CARLGAUSS_HEIGHT: u32 = 1000;
-pub(crate) const CARLGAUSS_RGBA: &[u8] = include_bytes!("carlgauss.rgba");
+pub(crate) const CARLGAUSS_RGBA: &[u8] = include_bytes!("assets/carlgauss.rgba");
 
 /// Generate a 128x128 RGBA8 image for the texture masking demo.
 ///

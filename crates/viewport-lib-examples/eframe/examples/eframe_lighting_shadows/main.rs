@@ -42,7 +42,7 @@ use vpl::{
 // Percy photo: pre-converted raw RGBA (2203 x 2009).
 const PERCY_WIDTH: u32 = 2203;
 const PERCY_HEIGHT: u32 = 2009;
-const PERCY_RGBA: &[u8] = include_bytes!("../eframe_showcase/percy.rgba");
+const PERCY_RGBA: &[u8] = include_bytes!("../eframe_showcase/assets/percy.rgba");
 
 // Equirectangular environment resolution. Small is fine: it feeds the IBL
 // prefilter (diffuse irradiance + a few specular mips), not a sharp backdrop.

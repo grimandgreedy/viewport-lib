@@ -20,7 +20,7 @@ use vpl::{Material, NodeId, ViewportRenderer, scene::Scene};
 // Percy photo : pre-converted to raw RGBA (2203 x 2009).
 const PERCY_WIDTH: u32 = 2203;
 const PERCY_HEIGHT: u32 = 2009;
-const PERCY_RGBA: &[u8] = include_bytes!("percy.rgba");
+const PERCY_RGBA: &[u8] = include_bytes!("assets/percy.rgba");
 
 // ---------------------------------------------------------------------------
 // State
