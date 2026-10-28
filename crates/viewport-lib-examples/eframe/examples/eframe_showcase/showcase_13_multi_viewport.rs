@@ -23,12 +23,13 @@ use crate::eframe::egui;
 use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
+use viewport_lib::input::adapters::modifiers_from_egui;
 use vpl::{
     Action, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis,
     GizmoInfo, GizmoMode, GizmoSpace, LightingSettings, ManipResult, ManipulationContext,
-    ManipulationController, Material, Modifiers, MouseButton, NodeId, OrbitCameraController,
-    PickBackend, PickMask, Projection, SceneFrame, ScrollUnits, Selection, ViewportContext,
-    ViewportEvent, ViewportInput, ViewportRenderer,
+    ManipulationController, Material, MouseButton, NodeId, OrbitCameraController, PickBackend,
+    PickMask, Projection, SceneFrame, ScrollUnits, Selection, ViewportContext, ViewportEvent,
+    ViewportInput, ViewportRenderer,
     gizmo::{compute_gizmo_scale, gizmo_center_from_selection},
 };
 
@@ -247,11 +248,7 @@ impl App {
 
         // Push this frame's input events to the hovered controller.
         ui.input(|i| {
-            let mods = Modifiers {
-                alt: i.modifiers.alt,
-                shift: i.modifiers.shift,
-                ctrl: i.modifiers.command,
-            };
+            let mods = modifiers_from_egui(&i.modifiers);
             self.mv_state.inputs[hq].push_event(ViewportEvent::ModifiersChanged(mods));
             self.mv_state.inputs[hq].push_event(ViewportEvent::PointerMoved {
                 position: self.mv_state.cursor_local,
@@ -274,6 +271,7 @@ impl App {
                                     ButtonState::Released
                                 },
                                 repeat: *repeat,
+                                logical: None,
                             });
                         }
                     }

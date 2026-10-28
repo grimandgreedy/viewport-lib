@@ -3,6 +3,7 @@
 use crate::eframe::egui;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
+use viewport_lib::input::adapters::modifiers_from_egui;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BindingPreset, ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData,
@@ -772,11 +773,7 @@ impl eframe::App for App {
                 // Translate egui events -> ViewportEvents.
                 let manip_active_for_text = self.interact_state.manip.is_active();
                 ui.input(|i| {
-                    let mods = vpl::Modifiers {
-                        alt: i.modifiers.alt,
-                        shift: i.modifiers.shift,
-                        ctrl: i.modifiers.command,
-                    };
+                    let mods = modifiers_from_egui(&i.modifiers);
                     self.input.push_event(ViewportEvent::ModifiersChanged(mods));
 
                     if let Some(pos) = i.pointer.interact_pos() {
@@ -803,6 +800,7 @@ impl eframe::App for App {
                                             ButtonState::Released
                                         },
                                         repeat: *repeat,
+                                        logical: None,
                                     });
                                 }
                             }

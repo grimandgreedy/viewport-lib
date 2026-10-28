@@ -28,13 +28,13 @@ use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
-use vpl::input::adapters::from_egui;
+use vpl::input::adapters::{from_egui, modifiers_from_egui};
 use vpl::{
     AtlasViewerCorner, AutoExposure, BackfacePolicy, BuiltinMatcap, Candela, DebugOutputMode,
     DebugQuantity, DebugVis, DisplaySettings, EnvironmentBackground, EnvironmentIntensity,
     EnvironmentLighting, EnvironmentMapId, ExposureMode, ExposureReadback, ExposureSettings,
     LightKind, LightSource, LightingSettings, Lumen, Lux, MatcapId, Material, MaterialId, MeshId,
-    Modifiers, OrbitCameraController, PipelineMode, SceneFrame, SceneRenderItem, ShadowDebugStats,
+    OrbitCameraController, PipelineMode, SceneFrame, SceneRenderItem, ShadowDebugStats,
     ShadowFilter, ToneMapping, ViewportContext, ViewportEvent, ViewportId, ViewportInstance,
     primitives,
 };
@@ -936,11 +936,9 @@ impl eframe::App for App {
             let origin = glam::Vec2::new(rect.left(), rect.top());
             ui.input(|i| {
                 self.session
-                    .handle_event(ViewportEvent::ModifiersChanged(Modifiers {
-                        alt: i.modifiers.alt,
-                        shift: i.modifiers.shift,
-                        ctrl: i.modifiers.command,
-                    }));
+                    .handle_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
+                        &i.modifiers,
+                    )));
                 for event in &i.events {
                     if let Some(ev) = from_egui(event, origin) {
                         self.session.handle_event(ev);

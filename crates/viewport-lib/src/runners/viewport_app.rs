@@ -41,7 +41,7 @@ use ::winit::window::{
     CursorIcon, Fullscreen, Window, WindowAttributes, WindowId as WinitWindowId,
 };
 
-use crate::interaction::input::adapters::{from_winit, from_winit_device};
+use crate::interaction::input::adapters::{from_winit_device, from_winit_into};
 use crate::interaction::input::{CursorShape, ViewportContext, ViewportEvent};
 use crate::runners::ViewportInstance;
 use crate::{
@@ -1245,33 +1245,6 @@ impl ApplicationHandler for AppHandler {
             return;
         };
 
-        // Typed characters: winit resolves layout/shift/dead keys into `text`. Feed
-        // the window's session directly (unless an input handler owns forwarding) and
-        // buffer for the callback.
-        if let WindowEvent::KeyboardInput {
-            event: key_event, ..
-        } = &event
-        {
-            if key_event.state == ::winit::event::ElementState::Pressed {
-                if let Some(text) = &key_event.text {
-                    let chars: Vec<char> = text.chars().filter(|c| !c.is_control()).collect();
-                    if !chars.is_empty() {
-                        if let Some(state) = self.windows.get_mut(&id) {
-                            let auto_feed = state.input.is_none();
-                            for c in chars {
-                                let ev = ViewportEvent::Character(c);
-                                if auto_feed {
-                                    state.session.handle_event(ev.clone());
-                                }
-                                state.events.push(ev);
-                            }
-                            state.window.request_redraw();
-                        }
-                    }
-                }
-            }
-        }
-
         match event {
             WindowEvent::CloseRequested => {
                 if self.config.intercept_close {
@@ -1342,12 +1315,18 @@ impl ApplicationHandler for AppHandler {
                                 | ::winit::event::TouchPhase::Cancelled
                         );
                     }
+                    // A key press is followed by the text it typed: winit resolves
+                    // layout, shift and dead keys into it.
                     let scale = state.window.scale_factor() as f32;
-                    if let Some(ev) = from_winit(&other, scale) {
-                        if state.input.is_none() {
-                            state.session.handle_event(ev.clone());
+                    let mut evs = Vec::new();
+                    from_winit_into(&other, scale, &mut evs);
+                    if !evs.is_empty() {
+                        for ev in evs {
+                            if state.input.is_none() {
+                                state.session.handle_event(ev.clone());
+                            }
+                            state.events.push(ev);
                         }
-                        state.events.push(ev);
                         state.window.request_redraw();
                     }
                 }

@@ -30,15 +30,16 @@ use crate::eframe::{egui, wgpu};
 use std::collections::HashMap;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
+use viewport_lib::input::adapters::modifiers_from_egui;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     Action, BackfacePolicy, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo,
     GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, KeyCode, LightingSettings, ManipResult,
-    ManipulationContext, ManipulationController, Material, MaterialId, MeshId, Modifiers,
-    MouseButton, OffscreenViewportTarget, OrbitCameraController, Projection, SceneFrame,
-    SceneRenderItem, ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportId,
-    ViewportInput, ViewportRenderer, gizmo::compute_gizmo_scale, gizmo_center_for_pivot,
-    picking::screen_to_ray, primitives,
+    ManipulationContext, ManipulationController, Material, MaterialId, MeshId, MouseButton,
+    OffscreenViewportTarget, OrbitCameraController, Projection, SceneFrame, SceneRenderItem,
+    ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportId, ViewportInput,
+    ViewportRenderer, gizmo::compute_gizmo_scale, gizmo_center_for_pivot, picking::screen_to_ray,
+    primitives,
 };
 
 const QUAD_LABELS: [&str; 4] = ["Perspective", "Top", "Front", "Right"];
@@ -450,11 +451,7 @@ impl App {
 
                 // Route input events to the hovered quad's controller.
                 ui.input(|i| {
-                    let mods = Modifiers {
-                        alt: i.modifiers.alt,
-                        shift: i.modifiers.shift,
-                        ctrl: i.modifiers.command,
-                    };
+                    let mods = modifiers_from_egui(&i.modifiers);
                     self.inputs[hq].push_event(ViewportEvent::ModifiersChanged(mods));
                     self.inputs[hq].push_event(ViewportEvent::PointerMoved {
                         position: self.cursor_local,
@@ -477,6 +474,7 @@ impl App {
                                             ButtonState::Released
                                         },
                                         repeat: *repeat,
+                                        logical: None,
                                     });
                                 }
                             }

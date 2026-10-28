@@ -14,6 +14,7 @@
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
+use viewport_lib::input::adapters::modifiers_from_egui;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource,
@@ -372,11 +373,9 @@ impl eframe::App for App {
                 }
 
                 self.input
-                    .push_event(ViewportEvent::ModifiersChanged(vpl::Modifiers {
-                        alt: i.modifiers.alt,
-                        shift: i.modifiers.shift,
-                        ctrl: i.modifiers.command,
-                    }));
+                    .push_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
+                        &i.modifiers,
+                    )));
 
                 let local_pos = i
                     .pointer

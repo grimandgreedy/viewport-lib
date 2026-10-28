@@ -16,10 +16,15 @@ pub enum ModifiersMatch {
 
 impl ModifiersMatch {
     /// Test whether the given modifier state satisfies this policy.
+    ///
+    /// Ctrl and Super count as one key on both sides (see
+    /// [`Modifiers::for_bindings`]).
     pub fn matches(&self, mods: Modifiers) -> bool {
+        let mods = mods.for_bindings();
         match self {
-            ModifiersMatch::Exact(required) => mods == *required,
+            ModifiersMatch::Exact(required) => mods == required.for_bindings(),
             ModifiersMatch::Contains(required) => {
+                let required = required.for_bindings();
                 // every set bit in `required` must also be set in `mods`
                 (!required.alt || mods.alt)
                     && (!required.shift || mods.shift)
@@ -156,5 +161,17 @@ mod tests {
         assert!(ModifiersMatch::Any.matches(Modifiers::NONE));
         assert!(ModifiersMatch::Any.matches(Modifiers::ALT));
         assert!(ModifiersMatch::Any.matches(Modifiers::CTRL_SHIFT));
+    }
+
+    // Cmd on macOS (Super) fires bindings written for Ctrl, as it did when the
+    // adapters folded it into `ctrl`.
+    #[test]
+    fn super_counts_as_ctrl_for_bindings() {
+        let cmd = Modifiers::NONE.with_super(true);
+        assert!(ModifiersMatch::Contains(Modifiers::CTRL).matches(cmd));
+        assert!(ModifiersMatch::Exact(Modifiers::CTRL).matches(cmd));
+        assert!(ModifiersMatch::Exact(Modifiers::CTRL).matches(cmd.with_ctrl(true)));
+        assert!(!ModifiersMatch::Exact(Modifiers::NONE).matches(cmd));
+        assert!(!ModifiersMatch::Exact(Modifiers::CTRL).matches(cmd.with_shift(true)));
     }
 }

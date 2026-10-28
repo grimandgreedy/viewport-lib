@@ -21,12 +21,13 @@
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
+use viewport_lib::input::adapters::modifiers_from_egui;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material,
-    MaterialId, MeshData, MeshId, Modifiers, MouseButton, OffscreenViewportTarget,
-    OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
-    ViewportEvent, ViewportInput, ViewportRenderer, primitives,
+    MaterialId, MeshData, MeshId, MouseButton, OffscreenViewportTarget, OrbitCameraController,
+    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
+    ViewportRenderer, primitives,
 };
 
 const SLAB_HALF_EXTENTS: [f32; 3] = [0.5, 0.5, 0.005];
@@ -305,11 +306,9 @@ impl App {
 
             ui.input(|i| {
                 self.input
-                    .push_event(ViewportEvent::ModifiersChanged(Modifiers {
-                        alt: i.modifiers.alt,
-                        shift: i.modifiers.shift,
-                        ctrl: i.modifiers.command,
-                    }));
+                    .push_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
+                        &i.modifiers,
+                    )));
                 let local = i
                     .pointer
                     .interact_pos()

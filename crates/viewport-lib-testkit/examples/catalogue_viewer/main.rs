@@ -124,12 +124,12 @@ impl eframe::App for App {
                     .set_viewport_size([rect.width(), rect.height()]);
 
                 ui.input(|i| {
-                    self.input
-                        .push_event(ViewportEvent::ModifiersChanged(Modifiers {
-                            alt: i.modifiers.alt,
-                            shift: i.modifiers.shift,
-                            ctrl: i.modifiers.command,
-                        }));
+                    self.input.push_event(ViewportEvent::ModifiersChanged(
+                        Modifiers::NONE
+                            .with_alt(i.modifiers.alt)
+                            .with_shift(i.modifiers.shift)
+                            .with_ctrl(i.modifiers.command),
+                    ));
                     let local = i
                         .pointer
                         .interact_pos()

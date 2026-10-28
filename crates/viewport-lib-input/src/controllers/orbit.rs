@@ -566,6 +566,7 @@ mod tests {
             key: KeyCode::W,
             state: ButtonState::Pressed,
             repeat: false,
+            logical: None,
         });
         ctrl.apply_to_camera(&mut cam);
         assert!(

@@ -543,7 +543,9 @@ impl ViewportInput {
             ViewportEvent::ModifiersChanged(mods) => {
                 self.modifiers = mods;
             }
-            ViewportEvent::Key { key, state, repeat } => {
+            ViewportEvent::Key {
+                key, state, repeat, ..
+            } => {
                 // Only process key events when the viewport is focused
                 if !self.ctx.focused {
                     return;
@@ -562,8 +564,7 @@ impl ViewportInput {
             }
             ViewportEvent::Character(c) => {
                 // Only accept characters that are valid in a numeric expression.
-                // The app is responsible for only pushing this event while a
-                // manipulation session is active (see ViewportEvent::Character docs).
+                // The buffer is per frame and only a manipulation session reads it.
                 if c.is_ascii_digit() || c == '.' || c == '-' {
                     self.typed_chars.push(c);
                 }
@@ -1034,6 +1035,7 @@ mod tests {
             key: KeyCode::W,
             state: ButtonState::Pressed,
             repeat: false,
+            logical: None,
         });
         input.cancel_gesture();
         let frame = input.resolve();
@@ -1051,6 +1053,7 @@ mod tests {
             key: KeyCode::F,
             state: ButtonState::Pressed,
             repeat: false,
+            logical: None,
         });
         let frame = input.resolve();
         assert!(
@@ -1079,6 +1082,7 @@ mod tests {
             key: KeyCode::F,
             state: ButtonState::Pressed,
             repeat: false,
+            logical: None,
         });
         let frame = input.resolve();
         assert!(
@@ -1279,6 +1283,7 @@ mod tests {
             key: KeyCode::W,
             state: ButtonState::Pressed,
             repeat: false,
+            logical: None,
         });
         input.push_event(ViewportEvent::FocusLost);
         let frame = input.resolve();
@@ -1685,6 +1690,7 @@ mod tests {
             key: KeyCode::W,
             state: ButtonState::Pressed,
             repeat: false,
+            logical: None,
         });
         let frame1 = input.resolve();
         assert!(frame1.is_active(Action::FlyForward));
@@ -1705,6 +1711,7 @@ mod tests {
             key: KeyCode::W,
             state: ButtonState::Pressed,
             repeat: false,
+            logical: None,
         });
         let frame1 = input.resolve();
         assert!(frame1.is_active(Action::FlyForward));
@@ -1713,6 +1720,7 @@ mod tests {
             key: KeyCode::W,
             state: ButtonState::Released,
             repeat: false,
+            logical: None,
         });
         let frame2 = input.resolve();
         assert!(
@@ -1731,6 +1739,7 @@ mod tests {
             key: KeyCode::X,
             state: ButtonState::Pressed,
             repeat: false,
+            logical: None,
         });
         let frame = input.resolve();
         assert!(
@@ -1747,6 +1756,7 @@ mod tests {
             key: KeyCode::G,
             state: ButtonState::Pressed,
             repeat: true,
+            logical: None,
         });
         let frame = input.resolve();
         // BeginMove is a KeyPress binding; repeat should not trigger it

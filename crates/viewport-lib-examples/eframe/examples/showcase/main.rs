@@ -25,9 +25,9 @@ mod ui;
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
-use vpl::input::adapters::from_egui;
+use vpl::input::adapters::{from_egui, modifiers_from_egui};
 use vpl::{
-    ManipulationController, Modifiers, OffscreenViewportTarget, ViewportContext, ViewportEvent,
+    ManipulationController, OffscreenViewportTarget, ViewportContext, ViewportEvent,
     ViewportInstance,
 };
 
@@ -280,11 +280,9 @@ impl App {
             let keys_down: Vec<egui::Key> = ui.input(|i| i.keys_down.iter().copied().collect());
             ui.input(|i| {
                 self.session
-                    .handle_event(ViewportEvent::ModifiersChanged(Modifiers {
-                        alt: i.modifiers.alt,
-                        shift: i.modifiers.shift,
-                        ctrl: i.modifiers.command,
-                    }));
+                    .handle_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
+                        &i.modifiers,
+                    )));
                 for event in &i.events {
                     if let egui::Event::Key {
                         key,
