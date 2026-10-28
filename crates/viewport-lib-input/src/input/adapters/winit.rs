@@ -1,8 +1,8 @@
 //! winit -> [`ViewportEvent`] translation.
 
 use crate::input::{
-    ButtonState, KeyCode, Modifiers, MouseButton, ScrollUnits, Theme, TouchId, TouchPhase,
-    ViewportEvent,
+    ButtonState, ImeEvent, KeyCode, Modifiers, MouseButton, ScrollUnits, Theme, TouchId,
+    TouchPhase, ViewportEvent,
 };
 
 /// Translate a winit [`WindowEvent`](::winit::event::WindowEvent) into a
@@ -83,6 +83,15 @@ pub fn from_winit(event: &::winit::event::WindowEvent, scale_factor: f32) -> Opt
         WindowEvent::DroppedFile(path) => Some(ViewportEvent::FileDropped(path.clone())),
         WindowEvent::HoveredFile(path) => Some(ViewportEvent::FileHovered(path.clone())),
         WindowEvent::HoveredFileCancelled => Some(ViewportEvent::FileHoverCancelled),
+        WindowEvent::Ime(ime) => Some(ViewportEvent::Ime(match ime {
+            ::winit::event::Ime::Enabled => ImeEvent::Enabled,
+            ::winit::event::Ime::Preedit(text, cursor) => ImeEvent::Preedit {
+                text: text.clone(),
+                cursor: *cursor,
+            },
+            ::winit::event::Ime::Commit(text) => ImeEvent::Commit(text.clone()),
+            ::winit::event::Ime::Disabled => ImeEvent::Disabled,
+        })),
         _ => None,
     }
 }
@@ -390,6 +399,28 @@ mod tests {
         assert!(matches!(
             from_winit(&WindowEvent::Occluded(false), 1.0),
             Some(ViewportEvent::Occluded(false))
+        ));
+    }
+
+    #[test]
+    fn ime_events_translate() {
+        use ::winit::event::{Ime, WindowEvent};
+
+        assert!(matches!(
+            from_winit(&WindowEvent::Ime(Ime::Enabled), 1.0),
+            Some(ViewportEvent::Ime(ImeEvent::Enabled))
+        ));
+        assert!(matches!(
+            from_winit(&WindowEvent::Ime(Ime::Preedit("ni".into(), Some((2, 2)))), 1.0),
+            Some(ViewportEvent::Ime(ImeEvent::Preedit { text, cursor: Some((2, 2)) })) if text == "ni"
+        ));
+        assert!(matches!(
+            from_winit(&WindowEvent::Ime(Ime::Commit("\u{65e5}".into())), 1.0),
+            Some(ViewportEvent::Ime(ImeEvent::Commit(text))) if text == "\u{65e5}"
+        ));
+        assert!(matches!(
+            from_winit(&WindowEvent::Ime(Ime::Disabled), 1.0),
+            Some(ViewportEvent::Ime(ImeEvent::Disabled))
         ));
     }
 

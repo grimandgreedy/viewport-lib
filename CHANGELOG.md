@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`ViewportEvent::Ime` and `FrameCtx::set_ime_allowed` / `set_ime_cursor_area`** - the winit adapter now forwards input-method composition (enabled, preedit, commit, disabled) as `ImeEvent`, so a host on `ViewportApp` can type Japanese, Chinese, Korean and macOS dead-key accents into a text field. Turn composition on with `set_ime_allowed` while a field has focus and report the caret with `set_ime_cursor_area`; the viewport itself ignores these events.
 - **`ViewportRenderer::set_mesh_universal` and `RenderDiagnostics::mesh_universal`** - draws every mesh batch with every shader feature compiled in, to compare against or measure the reduced pipelines. Off by default; `VIEWPORT_MESH_UNIVERSAL` sets it under `dev-knobs`.
 - **`FrameStats::feature_pipelines_built`, `feature_sets_capped` and `stand_in_draws`** - how many reduced mesh pipelines the scene has asked for, how many draws this frame stayed on the full pipeline because a family held its limit of 32, and how many drew on the full pipeline while their own was still compiling.
 - **Lightmap placement per draw** - `SceneRenderItem::lightmap_placement` (a `LightmapPlacementId` into the new `SceneFrame::lightmap_placements`, each a `LightmapPlacement` of atlas page and `scale_bias`) puts one draw of a lightmapped mesh in its own rect of a shared atlas, over the placement `set_scene_lightmap` registered. Copies of a baked prop share one mesh upload and one unwrap, and draws at different placements no longer split the material block.
