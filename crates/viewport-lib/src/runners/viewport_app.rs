@@ -452,6 +452,23 @@ impl FrameCtx<'_> {
         self.window.set_cursor(cursor_icon(shape));
     }
 
+    /// Turn the platform input method on or off for this window. Turn it on while a
+    /// text field has focus, so composition arrives as [`ViewportEvent::Ime`], and off
+    /// when it loses focus. Off by default.
+    pub fn set_ime_allowed(&self, allowed: bool) {
+        self.window.set_ime_allowed(allowed);
+    }
+
+    /// Tell the platform where the caret is, in logical points from the window's
+    /// top-left, so the input method opens its candidate window beside it. Set it
+    /// each frame while composition is on.
+    pub fn set_ime_cursor_area(&self, position: [f32; 2], size: [f32; 2]) {
+        self.window.set_ime_cursor_area(
+            ::winit::dpi::LogicalPosition::new(position[0], position[1]),
+            ::winit::dpi::LogicalSize::new(size[0], size[1]),
+        );
+    }
+
     /// Ask the OS to give this window keyboard focus.
     pub fn focus_window(&self) {
         self.window.focus_window();

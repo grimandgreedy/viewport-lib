@@ -53,6 +53,31 @@ pub enum TouchPhase {
     Cancelled,
 }
 
+/// What the platform input method reported, for composing text (Japanese,
+/// Chinese, Korean, dead-key accents) into a text field.
+///
+/// Arrives only after the host turns composition on for the window (on
+/// `ViewportApp`, `FrameCtx::set_ime_allowed`). While it is on, accepted text
+/// comes as [`Commit`](ImeEvent::Commit); typing that never composed can still
+/// arrive as [`ViewportEvent::Character`], so a text field takes both.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ImeEvent {
+    /// Composition is available for the window.
+    Enabled,
+    /// The provisional text being composed, to show in the field without
+    /// writing it to the document. An empty `text` clears it.
+    Preedit {
+        /// The provisional text.
+        text: String,
+        /// The caret inside `text` as a byte range, or `None` to hide it.
+        cursor: Option<(usize, usize)>,
+    },
+    /// Accepted text, to insert at the caret. Clears any preedit.
+    Commit(String),
+    /// Composition is off for the window. Drop any preedit still shown.
+    Disabled,
+}
+
 /// An event delivered to the viewport input pipeline.
 ///
 /// Host applications translate their native windowing events into
@@ -206,6 +231,10 @@ pub enum ViewportEvent {
     /// A file drag left the window without dropping, cancelling a prior
     /// [`FileHovered`](ViewportEvent::FileHovered).
     FileHoverCancelled,
+
+    /// The platform input method reported composition. For text fields; the
+    /// viewport itself ignores it.
+    Ime(ImeEvent),
 }
 
 impl ViewportEvent {
