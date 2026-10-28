@@ -72,6 +72,27 @@ fn two_bind_groups_build_an_overlay_only_renderer() {
     assert!(!renderer.has_item_type_plugin("tier_test.modest"));
 }
 
+/// One bind group is below the overlay floor: the fallible constructors return
+/// `DeviceUnsupported` instead of panicking.
+#[test]
+fn one_bind_group_is_refused_without_a_panic() {
+    let profile = DeviceProfile::downlevel_webgl2("tier-unsupported").max_bind_groups(1);
+    let Some(d) = headless_device_full(&profile) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let config = viewport_lib::RendererConfig::new(Harness::DEFAULT_TARGET_FORMAT)
+        .with_downlevel_capabilities(d.downlevel);
+    match ViewportRenderer::try_with_config(&d.device, &config) {
+        Err(ViewportError::DeviceUnsupported { .. }) => {}
+        other => panic!("expected DeviceUnsupported, got {:?}", other.err()),
+    }
+    match viewport_lib::ViewportInstance::try_with_config(&d.device, &config) {
+        Err(ViewportError::DeviceUnsupported { .. }) => {}
+        other => panic!("expected DeviceUnsupported, got {:?}", other.err()),
+    }
+}
+
 /// The calls that add scene content say why they cannot.
 fn assert_scene_calls_refused(
     renderer: &mut ViewportRenderer,

@@ -152,7 +152,27 @@ impl ViewportInstance {
     /// `ViewportRenderer::recommended_device_features` requests where the
     /// adapter has it; on any other device the data is ignored. Stale or
     /// foreign data is discarded, so passing whatever was last saved is safe.
+    ///
+    /// # Panics
+    ///
+    /// When the device is below the tier the renderer can be built on, with
+    /// the message [`try_with_config`](Self::try_with_config) returns as an
+    /// error.
     pub fn with_config(device: &crate::gpu::Device, config: &crate::RendererConfig) -> Self {
+        match Self::try_with_config(device, config) {
+            Ok(instance) => instance,
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    /// As [`with_config`](Self::with_config), returning
+    /// [`ViewportError::DeviceUnsupported`](crate::ViewportError::DeviceUnsupported)
+    /// when the device is below the overlay floor, as
+    /// [`ViewportRenderer::try_with_config`] does, instead of panicking.
+    pub fn try_with_config(
+        device: &crate::gpu::Device,
+        config: &crate::RendererConfig,
+    ) -> Result<Self, crate::ViewportError> {
         // Your application creates the device before the instance, so a missing
         // feature otherwise degrades silently (e.g. mesh sub-object picking).
         // Warn about the ones the caller could still enable at device creation.
@@ -186,7 +206,7 @@ impl ViewportInstance {
         }
         warn_missing_device_capabilities(device);
 
-        let mut renderer = ViewportRenderer::with_config(device, config);
+        let mut renderer = ViewportRenderer::try_with_config(device, config)?;
         tracing::info!(
             target: "viewport_lib::init",
             tier = %renderer.tier(),
@@ -195,7 +215,7 @@ impl ViewportInstance {
         );
         renderer.set_cpu_pick_cache(true);
         let defaults = InteractionFrame::default();
-        Self {
+        Ok(Self {
             renderer,
             scene: Scene::new(),
             selection: Selection::new(),
@@ -216,7 +236,7 @@ impl ViewportInstance {
             outline_width_px: defaults.outline_width_px,
             extras: Vec::new(),
             next_extra_id: 0,
-        }
+        })
     }
 
     /// Replace the binding set this viewport resolves with, at construction.
