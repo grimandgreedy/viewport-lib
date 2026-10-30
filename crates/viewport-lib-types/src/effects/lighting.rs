@@ -356,6 +356,11 @@ pub const POINT_SHADOW_FACE_SIZE: u32 = 1024;
 /// or variable-width PCSS with contact hardening) and the sampling budget
 /// within that model. Receiver-side filtering runs per lit fragment, so
 /// the tap count is a whole-scene cost multiplier on shadowed frames.
+///
+/// Point-light shadows follow the same tiers with the disk laid on the cube
+/// face around the light-to-receiver direction. They have no blocker search:
+/// [`Pcss`](Self::Pcss) and [`PcssFast`](Self::PcssFast) filter point lights
+/// as [`Pcf`](Self::Pcf).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
