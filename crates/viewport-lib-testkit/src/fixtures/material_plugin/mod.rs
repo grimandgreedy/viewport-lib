@@ -8,9 +8,14 @@
 //! - [`TexturedMaterialPlugin`]: authors the surface through `shade_surface`,
 //!   sampling the material's plugin texture and tinting it from a declared
 //!   parameter.
+//! - [`SurfaceGlowMaterialPlugin`]: sets emissive and alpha through
+//!   `shade_surface` with lighting zeroed, so a pixel reads a known blend of
+//!   the emissive and the background.
 
 mod flat_colour;
+mod surface_glow;
 mod textured;
 
 pub use flat_colour::FlatColourMaterialPlugin;
+pub use surface_glow::SurfaceGlowMaterialPlugin;
 pub use textured::TexturedMaterialPlugin;
