@@ -40,8 +40,8 @@ fn post_effect_ctx<'a>(
         viewport_index,
         scene_size: slot_hdr.scene_size,
         output_size: slot_hdr.output_size,
-        proj: frame.camera.render_camera.projection,
-        view: frame.camera.render_camera.view,
+        proj: frame.camera.render_camera.projection(),
+        view: frame.camera.render_camera.view(),
         near: frame.camera.render_camera.depth_range().0,
         far: frame.camera.render_camera.depth_range().1,
         scene_colour: &slot_hdr.hdr_view,
@@ -487,8 +487,8 @@ impl ViewportRenderer {
             // per-frame uniform from the same inputs.
             let inputs = crate::resources::ProducerFrameInputs {
                 post: pp,
-                proj: frame.camera.render_camera.projection,
-                view: frame.camera.render_camera.view,
+                proj: frame.camera.render_camera.projection(),
+                view: frame.camera.render_camera.view(),
                 near: frame.camera.render_camera.depth_range().0,
                 far: frame.camera.render_camera.depth_range().1,
                 first_light: frame.effects.lighting.lights.first(),
@@ -2004,8 +2004,8 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         let inputs = crate::resources::ProducerFrameInputs {
             post: pp,
-            proj: frame.camera.render_camera.projection,
-            view: frame.camera.render_camera.view,
+            proj: frame.camera.render_camera.projection(),
+            view: frame.camera.render_camera.view(),
             near: frame.camera.render_camera.depth_range().0,
             far: frame.camera.render_camera.depth_range().1,
             first_light: frame.effects.lighting.lights.first(),

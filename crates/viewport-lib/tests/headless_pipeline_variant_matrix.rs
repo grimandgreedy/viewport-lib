@@ -79,11 +79,7 @@ fn base_frame(target: PipelineMode, size: u32, generation: u64) -> FrameData {
     frame.viewport.show_axes_indicator = false;
     frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
     frame.effects.display.mode = target;
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&top_down_camera(6.0));
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&top_down_camera(6.0));
     frame.camera.viewport_size = [size as f32, size as f32];
     frame
 }

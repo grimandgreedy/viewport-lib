@@ -137,11 +137,7 @@ fn external_instances_render_with_instance_range_slice() {
     let make_frame = |first: u32, count: u32| -> FrameData {
         let cam = Camera::default();
         let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&cam);
         frame.camera.viewport_size = [64.0, 64.0];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;

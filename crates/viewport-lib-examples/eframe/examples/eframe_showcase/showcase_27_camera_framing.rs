@@ -669,10 +669,10 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 
     // Cap far plane for better cascade distribution, but track orbit
     // distance so the scene doesn't disappear when zooming out.
-    let mut rc = vpl::RenderCamera::from_camera(&app.camera);
-    rc.far = (app.camera.distance * 3.0).max(60.0);
-    rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-    fd.camera.render_camera = rc;
+    let cam = &app.camera;
+    let far = (cam.distance * 3.0).max(60.0);
+    let proj = glam::Mat4::perspective_rh(cam.fov_y, cam.aspect, cam.effective_znear(), far);
+    fd.camera.render_camera = vpl::RenderCamera::from_matrices(cam.view_matrix(), proj);
 }
 
 // ---------------------------------------------------------------------------

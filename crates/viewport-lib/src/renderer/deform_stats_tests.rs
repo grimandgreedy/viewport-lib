@@ -39,9 +39,10 @@ fn translate(x: f32) -> [[f32; 4]; 4] {
 
 /// `count` copies of one mesh, all visible, looking down -Z.
 fn frame_with(mesh_id: crate::MeshId, count: usize) -> FrameData {
-    let mut cam = RenderCamera::default();
-    cam.eye_position = [0.0, 0.0, 0.0];
-    cam.forward = [0.0, 0.0, -1.0];
+    let cam = RenderCamera::from_matrices(
+        glam::Mat4::look_at_rh(glam::Vec3::ZERO, glam::Vec3::NEG_Z, glam::Vec3::Y),
+        glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.333, 0.1, 1000.0),
+    );
     let cf = CameraFrame::new(cam, [256.0, 256.0]);
     let items: Vec<SceneRenderItem> = (0..count)
         .map(|i| {

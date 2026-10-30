@@ -435,10 +435,10 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     // Cap the far plane so depth values span a useful range for EDL.
     // Without this, all scene geometry clusters near depth 0.99, making
     // the log-space neighbor differences too small to see.
-    let mut rc = vpl::RenderCamera::from_camera(&app.camera);
-    rc.far = (app.camera.distance * 3.0).max(30.0);
-    rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-    fd.camera.render_camera = rc;
+    let cam = &app.camera;
+    let far = (cam.distance * 3.0).max(30.0);
+    let proj = glam::Mat4::perspective_rh(cam.fov_y, cam.aspect, cam.effective_znear(), far);
+    fd.camera.render_camera = vpl::RenderCamera::from_matrices(cam.view_matrix(), proj);
     if app.lights_state.edl_enabled {
         fd.effects.post_process = {
             let mut _t = vpl::PostProcessSettings::default();

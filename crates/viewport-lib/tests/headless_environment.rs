@@ -46,11 +46,7 @@ fn sphere_frame(
         .upload_mesh_data(device, &viewport_lib::primitives::sphere(1.0, 32, 16))
         .unwrap();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&Camera::default());
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -258,11 +254,7 @@ fn lux_environment_matches_a_directional_light_of_the_same_lux() {
             orientation: glam::Quat::from_rotation_x(0.2),
             ..Camera::default()
         };
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&camera);
-            rc.aspect = 1.0;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&camera);
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;

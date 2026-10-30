@@ -1563,10 +1563,10 @@ mod lod_resolve_tests {
     }
 
     fn looking_down_z() -> RenderCamera {
-        let mut camera = RenderCamera::default();
-        camera.eye_position = [0.0, 0.0, 0.0];
-        camera.forward = [0.0, 0.0, -1.0];
-        camera
+        RenderCamera::from_matrices(
+            glam::Mat4::look_at_rh(glam::Vec3::ZERO, glam::Vec3::NEG_Z, glam::Vec3::Y),
+            glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.333, 0.1, 1000.0),
+        )
     }
 
     fn item_at(z: f32, group: crate::resources::LodGroupId, pick: u64) -> SceneRenderItem {

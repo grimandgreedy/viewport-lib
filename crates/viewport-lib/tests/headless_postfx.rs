@@ -29,11 +29,7 @@ fn quad_mesh() -> MeshData {
 fn tonemap_frame(size: u32, background: [f32; 4]) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -178,11 +174,7 @@ fn bloom_glows_into_empty_background() {
 fn foreground_frame() -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -277,8 +269,8 @@ fn foreground_override_projection_avoids_near_clip() {
 
     // A small box held 0.05 world units in front of the eye: inside the
     // scene near plane (0.1 for the default camera).
-    let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
-    let fwd = glam::Vec3::from(frame.camera.render_camera.forward);
+    let eye = frame.camera.render_camera.eye_position();
+    let fwd = frame.camera.render_camera.forward();
     let model = glam::Mat4::from_translation(eye + fwd * 0.05)
         * glam::Mat4::from_scale(glam::Vec3::splat(0.02));
     let fg = coloured_item(&mut renderer, mesh_id, [0.9, 0.1, 0.1], model);
@@ -619,11 +611,7 @@ fn lit_clamp_hdr_passes_above_one_ldr_saturates() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -699,11 +687,7 @@ fn bloom_firefly_cap_bounds_blob_size() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;

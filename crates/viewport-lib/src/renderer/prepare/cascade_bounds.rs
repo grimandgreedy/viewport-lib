@@ -274,7 +274,7 @@ fn visible_depth_span(
             }
         }
         for p in &poly[..n] {
-            let depth = -camera.view.transform_point3(*p).z;
+            let depth = -camera.view().transform_point3(*p).z;
             span.0 = span.0.min(depth);
             span.1 = span.1.max(depth);
         }

@@ -269,10 +269,10 @@ pub(crate) fn update_foreground(app: &mut App, dt: f32) {
 /// Set the camera, post-process (DoF), and foreground pass + items for the frame.
 pub(crate) fn configure_frame(app: &App, fd: &mut vpl::FrameData) {
     // Cap the far plane so cascades and the depth range stay useful.
-    let mut rc = RenderCamera::from_camera(&app.camera);
-    rc.far = (app.camera.distance * 3.0).max(60.0);
-    rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-    fd.camera.render_camera = rc;
+    let cam = &app.camera;
+    let far = (cam.distance * 3.0).max(60.0);
+    let proj = glam::Mat4::perspective_rh(cam.fov_y, cam.aspect, cam.effective_znear(), far);
+    fd.camera.render_camera = RenderCamera::from_matrices(cam.view_matrix(), proj);
 
     // The foreground pass runs in the HDR path, so keep the HDR pipeline active
     // (also required for DoF). DoF itself is toggled separately.

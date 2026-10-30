@@ -105,7 +105,7 @@ impl DiskWidget {
                     DiskHandle::NormalTip => self.normal_tip_pos(),
                     DiskHandle::Radius => self.radius_handle_pos(),
                 };
-                let n = -glam::Vec3::from(ctx.camera.forward);
+                let n = -ctx.camera.forward();
                 self.drag_plane_normal = n;
                 self.drag_plane_d = -n.dot(anchor);
                 self.drag_anchor = anchor;

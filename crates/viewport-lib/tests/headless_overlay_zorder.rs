@@ -23,11 +23,7 @@ use viewport_lib::{OverlayFill, OverlayPolylineItem, OverlayShape, OverlayShapeI
 fn overlay_frame(size: u32) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;

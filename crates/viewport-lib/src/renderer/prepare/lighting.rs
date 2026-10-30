@@ -230,11 +230,11 @@ impl ViewportRenderer {
                 ClusterGridUniform,
             };
 
-            let view_mat = frame.camera.render_camera.view;
+            let view_mat = frame.camera.render_camera.view();
             // Perspective parameters : derive tan(half_fov) from the proj
             // matrix diagonal (proj[0][0] = 1/tan(half_fov_x), with the wgpu
             // RH perspective matrices used here).
-            let proj = frame.camera.render_camera.projection;
+            let proj = frame.camera.render_camera.projection();
             let p00 = proj.col(0).x.max(1e-6);
             let p11 = proj.col(1).y.max(1e-6);
             let tan_half_fov_x = 1.0 / p00;

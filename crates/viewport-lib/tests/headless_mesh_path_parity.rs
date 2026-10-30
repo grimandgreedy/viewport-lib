@@ -79,9 +79,7 @@ impl Scene {
             cam.center = glam::Vec3::ZERO;
             cam.distance = 6.0;
             cam.orientation = glam::Quat::IDENTITY;
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
+            RenderCamera::from_camera(&cam)
         };
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
 
@@ -364,9 +362,7 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
             cam.center = glam::Vec3::ZERO;
             cam.distance = 6.0;
             cam.orientation = glam::Quat::IDENTITY;
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
+            RenderCamera::from_camera(&cam)
         };
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
         frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
@@ -479,9 +475,7 @@ fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
             cam.center = glam::Vec3::ZERO;
             cam.distance = 6.0;
             cam.orientation = glam::Quat::IDENTITY;
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
+            RenderCamera::from_camera(&cam)
         };
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
         frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
