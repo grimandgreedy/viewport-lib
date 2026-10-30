@@ -18,6 +18,10 @@
 //!   declarations and shading helpers (`viewport_pbr_shade`,
 //!   `viewport_oit_pack`, `viewport_sample_csm`, etc.) so plugin shaders stay
 //!   in lockstep with the lib's lighting and transparency contracts.
+//! - [`depth`](crate::plugin_api::depth) holds the scene depth convention (reversed: near at 1, far
+//!   at 0): the compare functions, clear value and bias a pipeline that
+//!   touches scene depth uses. Its shader side is
+//!   [`SHARED_DEPTH_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_WGSL).
 //! - Pipeline builders (`build_opaque_pipeline`, `build_oit_pipeline`, ...)
 //!   construct the common variants in one call. Plugins ship one shader and
 //!   call a builder per variant.
