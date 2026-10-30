@@ -51,7 +51,7 @@ fn environment_pixels() -> Vec<f32> {
 }
 
 /// Rows from the top: metallic 0, 0.5 and 1 across roughness 0 to 1; dark
-/// dielectrics at five steps of `Material::specular`; and an AO-mapped row.
+/// dielectrics at reflectance 0, 0.25, 0.5, 0.75 and 1; and an AO-mapped row.
 fn build_materials_ibl(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let env = ctx
         .renderer
@@ -78,7 +78,7 @@ fn build_materials_ibl(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
     for col in 0..5 {
         let mut material = Material::pbr(Colour::linear_rgb(0.04, 0.04, 0.05), 0.0, 0.3);
-        material.specular = col as f32 / 4.0;
+        material.reflectance = col as f32 / 4.0;
         items.push(item(ctx, sphere, at(3, col), material));
     }
     for (col, (metallic, roughness)) in
