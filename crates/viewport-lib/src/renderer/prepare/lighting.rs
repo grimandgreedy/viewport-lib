@@ -43,7 +43,7 @@ impl ViewportRenderer {
         {
             (glam::Vec3::ZERO, extent)
         } else {
-            let camera_far = frame.camera.render_camera.far.max(1.0);
+            let camera_far = frame.camera.render_camera.depth_range().1.max(1.0);
             let auto_extent = (camera_far * 0.25).clamp(20.0, 200.0);
             (glam::Vec3::ZERO, auto_extent)
         };
@@ -97,7 +97,7 @@ impl ViewportRenderer {
             // defaults to true) would otherwise queue six shadow faces per
             // light per frame and thrash every slot. Lights beyond the pool
             // render unshadowed, exactly as if their acquire had failed.
-            let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
+            let eye = frame.camera.render_camera.eye_position();
             let mut point_casters: Vec<(usize, glam::Vec3, f32, f32)> = combined_lights
                 .iter()
                 .enumerate()
@@ -205,11 +205,11 @@ impl ViewportRenderer {
         let atlas_res = lighting.shadows.atlas_resolution.max(64);
         let tile_size = atlas_res / 2;
 
-        let dist = frame.camera.render_camera.distance;
-        let shadow_near = (dist * 0.1).max(frame.camera.render_camera.near);
+        let dist = frame.camera.render_camera.distance();
+        let shadow_near = (dist * 0.1).max(frame.camera.render_camera.depth_range().0);
         let shadow_far = (dist * 1.5)
             .max(shadow_extent)
-            .min(frame.camera.render_camera.far);
+            .min(frame.camera.render_camera.depth_range().1);
         let cascade_splits =
             compute_cascade_splits(shadow_near, shadow_far, cascade_count as u32, 0.75);
 
@@ -245,7 +245,7 @@ impl ViewportRenderer {
         if use_csm {
             for i in 0..cascade_count {
                 let split_near = if i == 0 {
-                    frame.camera.render_camera.near.max(0.01)
+                    frame.camera.render_camera.depth_range().0.max(0.01)
                 } else {
                     cascade_splits[i - 1]
                 };
@@ -253,8 +253,8 @@ impl ViewportRenderer {
                 cascade_view_projs[i] = compute_cascade_matrix(
                     light_dir_for_csm,
                     frame.camera.render_camera.view,
-                    frame.camera.render_camera.fov,
-                    frame.camera.render_camera.aspect,
+                    frame.camera.render_camera.fov_y(),
+                    frame.camera.render_camera.aspect(),
                     split_near,
                     split_far,
                     tile_size as f32,
@@ -269,7 +269,7 @@ impl ViewportRenderer {
                 glam::Mat4::IDENTITY
             };
             cascade_view_projs[0] = primary_shadow_mat;
-            cascade_split_distances[0] = frame.camera.render_camera.far;
+            cascade_split_distances[0] = frame.camera.render_camera.depth_range().1;
         }
         // A primary light with `cast_shadows` off gets no shadow map at all:
         // no cascades are rendered and the shader's CSM sample short-circuits
@@ -291,7 +291,7 @@ impl ViewportRenderer {
                     cascade_count = effective_cascade_count,
                     splits = ?cascade_split_distances,
                     shadow_extent = shadow_extent,
-                    camera_dist = frame.camera.render_camera.distance,
+                    camera_dist = frame.camera.render_camera.distance(),
                     "cascade splits changed"
                 );
                 shadow.last_logged_cascade_splits = cascade_split_distances;
@@ -487,8 +487,8 @@ impl ViewportRenderer {
             let p11 = proj.col(1).y.max(1e-6);
             let tan_half_fov_x = 1.0 / p00;
             let tan_half_fov_y = 1.0 / p11;
-            let near = frame.camera.render_camera.near.max(0.01);
-            let far = frame.camera.render_camera.far.max(near + 0.01);
+            let near = frame.camera.render_camera.depth_range().0.max(0.01);
+            let far = frame.camera.render_camera.depth_range().1.max(near + 0.01);
 
             // Fit the cluster depth range to the punctual lights' actual
             // reach instead of the camera far plane. With the default
@@ -578,7 +578,7 @@ impl ViewportRenderer {
                     active_count as f32,
                 ],
                 screen: [
-                    frame.camera.render_camera.aspect.max(0.01),
+                    frame.camera.render_camera.aspect().max(0.01),
                     1.0,
                     fallback_flag,
                     0.0,
@@ -945,7 +945,7 @@ pub(super) fn rank_lights<'a>(
     // lowest-priority lights deterministically. Directional lights are
     // treated as infinitely close (proximity_weight = 1). Shading itself is
     // order-independent.
-    let camera_pos = glam::Vec3::from(frame.camera.render_camera.eye_position);
+    let camera_pos = frame.camera.render_camera.eye_position();
     let directional_first = raw_lights
         .iter()
         .position(|l| matches!(l.kind, LightKind::Directional { .. }));

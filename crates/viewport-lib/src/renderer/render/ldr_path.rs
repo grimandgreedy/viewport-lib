@@ -252,7 +252,7 @@ impl ViewportRenderer {
                     .camera
                     .render_camera
                     .foreground_camera(frame.effects.foreground.as_ref());
-                let eye = glam::Vec3::from(fg_camera.eye_position);
+                let eye = fg_camera.eye_position();
                 let dist_from_eye = |item: &SceneRenderItem| -> f32 {
                     let pos = glam::Vec3::new(item.model[3][0], item.model[3][1], item.model[3][2]);
                     (pos - eye).length()

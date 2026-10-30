@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`RenderCamera` accessors derived from the matrices** - `eye_position()`, `orientation()`, `forward()`, `right()`, `up()`, `depth_range()`, `vertical_fov()` (`None` for orthographic), `view_height_at(depth)`, `aspect()` and `is_orthographic()` read the camera from `view` and `projection` instead of the matching fields; `distance()` returns the stored field. A matrix left at the identity, as `Default` leaves both, reports the stored fields. The renderer now reads these accessors; the public fields are unchanged.
 - **`ViewportEvent::Key::logical`** - the character the layout gives the key, unshifted and lower case, or `None` for keys without one. `KeyCode` stays the physical key for bindings; match layout-following shortcuts (Ctrl+Z on AZERTY) on `logical`.
 - **`from_winit_into`, `modifiers_from_winit` and `modifiers_from_egui`** - `from_winit_into` appends the event plus a `Character` per typed character, which `from_winit` drops; `ViewportApp` now uses it instead of reading `KeyEvent::text` itself. The two modifier helpers replace hand-built `Modifiers` literals in hosts.
 - **`Capabilities::direct_depth_sampling`** - false on wgpu's GL backend, where the scene depth cannot be sampled while attached read-only or alongside its stencil. There `DepthReadContext::scene_depth` and `EncoderScopeContext::scene_depth_only` are a copy of the scene depth taken just before the plugin draws. `SHARED_DEPTH_TEXEL_WGSL` gains `stencil_texel`, which reads `scene_stencil_only` through a sampler so it also reads correctly on GL.

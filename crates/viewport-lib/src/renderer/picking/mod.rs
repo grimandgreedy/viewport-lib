@@ -256,7 +256,7 @@ impl ViewportRenderer {
         // The pick struck the front face, so the outward normal points back
         // toward the eye. Orient it that way to resolve the winding sign, which
         // also matches the previous camera-facing stand-in.
-        let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
+        let eye = frame.camera.render_camera.eye_position();
         let to_eye = eye - hit.world_pos;
         Some(if n.dot(to_eye) < 0.0 { -n } else { n })
     }

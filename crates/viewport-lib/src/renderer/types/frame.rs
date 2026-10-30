@@ -61,6 +61,145 @@ impl RenderCamera {
         self.projection * self.view
     }
 
+    // The accessors below derive camera state from `view` and `projection`,
+    // computed from the current matrices on each call so a host that edits
+    // the matrices directly sees consistent results. A matrix still at the
+    // identity, as `Default` leaves both, describes no camera, so the
+    // accessors that depend on it report the stored fields instead.
+
+    fn camera_to_world(&self) -> Option<glam::Mat4> {
+        (self.view != glam::Mat4::IDENTITY).then(|| self.view.inverse())
+    }
+
+    fn has_projection(&self) -> bool {
+        self.projection != glam::Mat4::IDENTITY
+    }
+
+    /// Camera eye position in world space: the translation of `view.inverse()`.
+    pub fn eye_position(&self) -> glam::Vec3 {
+        match self.camera_to_world() {
+            Some(m) => m.w_axis.truncate(),
+            None => self.eye_position.into(),
+        }
+    }
+
+    /// Camera orientation: the rotation of `view.inverse()` as a quaternion.
+    ///
+    /// The camera looks down its local `-Z` with `+Y` up.
+    pub fn orientation(&self) -> glam::Quat {
+        match self.camera_to_world() {
+            Some(m) => glam::Quat::from_mat4(&m).normalize(),
+            None => self.orientation,
+        }
+    }
+
+    /// Camera forward direction in world space (the local `-Z` axis).
+    pub fn forward(&self) -> glam::Vec3 {
+        match self.camera_to_world() {
+            Some(m) => -m.z_axis.truncate(),
+            None => self.forward.into(),
+        }
+    }
+
+    /// Camera right direction in world space (the local `+X` axis).
+    pub fn right(&self) -> glam::Vec3 {
+        match self.camera_to_world() {
+            Some(m) => m.x_axis.truncate(),
+            None => self.orientation * glam::Vec3::X,
+        }
+    }
+
+    /// Camera up direction in world space (the local `+Y` axis).
+    pub fn up(&self) -> glam::Vec3 {
+        match self.camera_to_world() {
+            Some(m) => m.y_axis.truncate(),
+            None => self.orientation * glam::Vec3::Y,
+        }
+    }
+
+    /// Whether `projection` is orthographic (`w_axis.w == 1`) rather than
+    /// perspective (`w_axis.w == 0`).
+    pub fn is_orthographic(&self) -> bool {
+        self.has_projection() && self.projection.w_axis.w != 0.0
+    }
+
+    /// Near and far clip distances recovered from `projection`.
+    ///
+    /// Expects a right-handed, 0..1 depth projection as built by glam's
+    /// `perspective_rh` or `orthographic_rh`. A perspective far plane keeps
+    /// only about `f32::EPSILON * far / near` of relative precision.
+    pub fn depth_range(&self) -> (f32, f32) {
+        if !self.has_projection() {
+            return (self.near, self.far);
+        }
+        let p = &self.projection;
+        let (a, b) = (p.z_axis.z, p.w_axis.z);
+        if self.is_orthographic() {
+            // a = 1 / (near - far), b = near / (near - far)
+            let near = b / a;
+            (near, near - 1.0 / a)
+        } else {
+            // a = far / (near - far), b = near * far / (near - far)
+            let (near, far) = (b / a, b / (a + 1.0));
+            debug_assert!(
+                near > 0.0 && near < far,
+                "perspective depth range is not 0 < near < far: ({near}, {far})"
+            );
+            (near, far)
+        }
+    }
+
+    /// Vertical field of view in radians, or `None` for an orthographic
+    /// projection.
+    pub fn vertical_fov(&self) -> Option<f32> {
+        if !self.has_projection() {
+            Some(self.fov)
+        } else if self.is_orthographic() {
+            None
+        } else {
+            Some(2.0 * (1.0 / self.projection.y_axis.y).atan())
+        }
+    }
+
+    /// World-space height the viewport spans at view depth `depth`.
+    ///
+    /// For an orthographic projection the height is the same at every depth.
+    pub fn view_height_at(&self, depth: f32) -> f32 {
+        let h = self.projection.y_axis.y;
+        if !self.has_projection() {
+            2.0 * (self.fov / 2.0).tan() * depth
+        } else if self.is_orthographic() {
+            2.0 / h
+        } else {
+            2.0 * depth / h
+        }
+    }
+
+    /// Aspect ratio (width / height) recovered from `projection`.
+    pub fn aspect(&self) -> f32 {
+        if !self.has_projection() {
+            return self.aspect;
+        }
+        self.projection.y_axis.y / self.projection.x_axis.x
+    }
+
+    /// Orbit distance from the eye to the scene centre (world units).
+    ///
+    /// Not recoverable from the matrices; returns the stored field.
+    pub fn distance(&self) -> f32 {
+        self.distance
+    }
+
+    /// Vertical field of view for the renderer's size and frustum maths: the
+    /// stored `fov` field, for both projections.
+    ///
+    /// Read from the field rather than `projection` because the angle
+    /// recovered from the matrix differs in the last bits, which is enough to
+    /// move the shadow cascade fit.
+    pub(crate) fn fov_y(&self) -> f32 {
+        self.fov
+    }
+
     /// The camera the foreground pass renders with: this camera's view
     /// transform, with the projection replaced by the pass override when one
     /// is set. With no override (or no pass config) the scene camera is used
@@ -70,8 +209,8 @@ impl RenderCamera {
         if let Some(p) = pass.and_then(|p| p.projection.as_ref()) {
             cam.fov = p.fov_y;
             cam.near = p.near.max(1e-4);
-            cam.far = p.far.unwrap_or(self.far).max(cam.near * 2.0);
-            cam.projection = glam::Mat4::perspective_rh(cam.fov, self.aspect, cam.near, cam.far);
+            cam.far = p.far.unwrap_or(self.depth_range().1).max(cam.near * 2.0);
+            cam.projection = glam::Mat4::perspective_rh(cam.fov, self.aspect(), cam.near, cam.far);
         }
         cam
     }
@@ -902,3 +1041,7 @@ impl EffectsFrame {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "render_camera_tests.rs"]
+mod render_camera_tests;
