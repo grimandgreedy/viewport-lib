@@ -642,7 +642,7 @@ fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec
         }
         if dot(n, l) <= 0.0 { continue; }
         if any_hit(pos + n * EPS, l, max_t) { continue; }
-        sum = sum + pbr_light_contrib(n, v, l, radiance, m.base, m.metallic, m.roughness, f0);
+        sum = sum + viewport_brdf_light_contrib(n, v, l, radiance, m.base, m.metallic, m.roughness, f0);
     }
     return sum;
 }
@@ -654,7 +654,7 @@ fn bsdf_pdf(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, metallic: f32, roughness: 
     let ndotl = dot(n, l);
     if ndotl <= 0.0 { return 0.0; }
     let ndotv = max(dot(n, v), 1.0e-3);
-    let fr = F_Schlick(ndotv, f0);
+    let fr = viewport_brdf_f_schlick(ndotv, f0);
     var p_spec = clamp(max(fr.r, max(fr.g, fr.b)), 0.1, 0.9);
     p_spec = mix(p_spec, 1.0, metallic * 0.5);
     let rough = clamp(roughness, 0.04, 1.0);
@@ -662,7 +662,7 @@ fn bsdf_pdf(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, metallic: f32, roughness: 
     let hvec = normalize(v + l);
     let ndoth = max(dot(n, hvec), 1.0e-4);
     let vdoth = max(dot(v, hvec), 1.0e-4);
-    let d = D_GGX(ndoth, rough);
+    let d = viewport_brdf_d_ggx(ndoth, rough);
     let pdf_spec = d * ndoth / (4.0 * vdoth);
     return p_spec * pdf_spec + (1.0 - p_spec) * pdf_diff;
 }
@@ -678,7 +678,7 @@ fn env_nee(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32
     if es.pdf <= 0.0 || dot(n, es.dir) <= 0.0 { return vec3<f32>(0.0); }
     if any_hit(pos + n * EPS, es.dir, T_MAX) { return vec3<f32>(0.0); }
     let env_rad = sky(es.dir);
-    let bsdf_cos = pbr_light_contrib(n, v, es.dir, vec3<f32>(1.0), m.base, m.metallic, m.roughness, f0);
+    let bsdf_cos = viewport_brdf_light_contrib(n, v, es.dir, vec3<f32>(1.0), m.base, m.metallic, m.roughness, f0);
     let pdf_b = bsdf_pdf(n, v, es.dir, m.metallic, m.roughness, f0);
     let w = power_heuristic(es.pdf, pdf_b);
     return bsdf_cos * env_rad * (w / es.pdf);
@@ -732,7 +732,7 @@ fn sample_emitters(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: 
     // Estimator: (f * cos_surface * Le) / pdf_sa, with the solid-angle pdf of
     // uniform-over-emitters, uniform-on-triangle sampling
     //   pdf_sa = dist^2 / (count * area * cos_light),  area = area2 / 2.
-    let bsdf_cos = pbr_light_contrib(n, v, wi, le, m.base, m.metallic, m.roughness, f0);
+    let bsdf_cos = viewport_brdf_light_contrib(n, v, wi, le, m.base, m.metallic, m.roughness, f0);
     let inv_pdf = f32(count) * (0.5 * area2) * cos_l / dist2;
     return bsdf_cos * inv_pdf;
 }
@@ -819,7 +819,7 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
                 let l = reflect(-v, hvec);
                 if dot(h.ng, l) <= 0.0 { break; }
                 let ndotl = max(dot(n, l), 1.0e-4);
-                let g = G_Smith(ndotv, ndotl, rough);
+                let g = viewport_brdf_g_smith(ndotv, ndotl, rough);
                 throughput = throughput * (g * cos_i / (ndotv * ndoth));
                 ro = h.pos + h.ng * EPS;
                 rd = l;
@@ -829,7 +829,7 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
                 if dot(l, l) < 1.0e-6 { break; }
                 let ln = normalize(l);
                 let ndotl = max(abs(dot(n, ln)), 1.0e-4);
-                let g = G_Smith(ndotv, ndotl, rough);
+                let g = viewport_brdf_g_smith(ndotv, ndotl, rough);
                 throughput = throughput * m.base * (g * cos_i / (ndotv * max(abs(dot(n, hvec)), 1.0e-4)));
                 ro = h.pos - h.ng * EPS;
                 rd = ln;
@@ -838,7 +838,7 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
             throughput = throughput / opacity;
             // Sample a new direction: pick specular vs diffuse lobe.
             let ndotv = max(dot(n, v), 1.0e-3);
-            let fr = F_Schlick(ndotv, f0);
+            let fr = viewport_brdf_f_schlick(ndotv, f0);
             var p_spec = clamp(max(fr.r, max(fr.g, fr.b)), 0.1, 0.9);
             p_spec = mix(p_spec, 1.0, m.metallic * 0.5);
 
@@ -850,8 +850,8 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
                 if ndotl <= 0.0 { break; }
                 let ndoth = max(dot(n, hvec), 1.0e-4);
                 let vdoth = max(dot(v, hvec), 1.0e-4);
-                let g = G_Smith(ndotv, ndotl, rough);
-                let f = F_Schlick(vdoth, f0);
+                let g = viewport_brdf_g_smith(ndotv, ndotl, rough);
+                let f = viewport_brdf_f_schlick(vdoth, f0);
                 // weight = brdf * ndotl / pdf = G F VdotH / (NdotV NdotH), then / p_spec.
                 let weight = f * (g * vdoth / (ndotv * ndoth));
                 throughput = throughput * weight / p_spec;

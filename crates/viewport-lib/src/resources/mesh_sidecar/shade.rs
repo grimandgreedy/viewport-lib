@@ -71,8 +71,8 @@ pub(crate) const SHADE_FAMILY_SHADERS: &[&str] = &["mesh.wgsl", "mesh_oit.wgsl"]
 ///   if it defines any. Emissive adds alongside the material's term; alpha
 ///   is honoured only under Mask/Blend alpha modes (Mask re-tests the
 ///   cutoff, Blend takes it as output alpha, Opaque ignores it).
-/// - `shade_light` replaces the built-in `pbr_light_contrib` per-light term;
-///   `shade_ambient` replaces the whole ambient term; `recolor` replaces the
+/// - `shade_light` replaces the built-in `viewport_brdf_light_contrib`
+///   per-light term; `shade_ambient` replaces the whole ambient term; `recolor` replaces the
 ///   final pre-emissive colour with `recolor(surf, Lo, ambient)`.
 /// - `hook_emissive`, `hook_alpha` and `params` are reserved identifiers in
 ///   hook bodies (the composer's carriers for the surface hook's outputs, and
@@ -514,8 +514,8 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
 
 /// The internal hook behind the `VIEWPORT_MESH_BUILTIN_HOOK` A/B knob: the
 /// built-in Cook-Torrance per-light term replayed through the shading seam.
-/// `shade_light` calls the same `pbr_light_contrib` the inline path calls
-/// (with `radiance * shadow`, matching the inline multiply exactly), keeps the
+/// `shade_light` calls the same `viewport_brdf_light_contrib` the inline path
+/// calls (with `radiance * shadow`, matching the inline multiply exactly), keeps the
 /// backface early-continue, and leaves ambient and recolor on the defaults.
 /// The composed module therefore computes identical lighting; what it adds is
 /// exactly the hook mechanism (ShadingSurface fill, LightSample construction,
@@ -529,9 +529,9 @@ pub(crate) fn builtin_pbr_hook() -> &'static StoredShadingHook {
             name: "builtin_pbr",
             wgsl_body: "\
 fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
-    return pbr_light_contrib(surf.normal, surf.view_dir, light.l,
-                             light.radiance * light.shadow,
-                             surf.base_colour, surf.metallic, surf.roughness, surf.f0);
+    return viewport_brdf_light_contrib(surf.normal, surf.view_dir, light.l,
+                                       light.radiance * light.shadow,
+                                       surf.base_colour, surf.metallic, surf.roughness, surf.f0);
 }
 "
             .to_string(),
@@ -1682,7 +1682,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
                 "{shader}: light region not wired"
             );
             assert!(
-                !composed.contains("Lo += pbr_light_contrib("),
+                !composed.contains("Lo += viewport_brdf_light_contrib("),
                 "{shader}: default light term should be replaced"
             );
             assert!(
@@ -1728,7 +1728,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
             return;
         };
         let composed = compose_shade_shader(base, &hook).expect("compose");
-        assert!(composed.contains("Lo += pbr_light_contrib("));
+        assert!(composed.contains("Lo += viewport_brdf_light_contrib("));
         assert!(
             composed.contains("final_rgb = clamp(poster__recolor(surf, Lo, ambient) * tint.rgb")
         );

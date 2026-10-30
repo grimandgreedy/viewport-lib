@@ -14,7 +14,7 @@
 //!   runs a small parallax march in tangent space, so surface relief is
 //!   faked entirely inside the plugin; the library has no height binding.
 //!   It keeps the lighting-hook shape (`shade_light` + `shade_ambient`
-//!   calling `pbr_light_contrib`) as the reference for that style.
+//!   calling `viewport_brdf_light_contrib`) as the reference for that style.
 //! - [`DissolvePlugin`]: a `shade_surface` body driving the gated alpha
 //!   output: a procedural dissolve cuts fragments on a Mask material, with
 //!   an emissive glow at the burning edge.
@@ -158,9 +158,9 @@ fn parallax_albedo(surf: ShadingSurface) -> vec3<f32> {
     return alb * mix(0.55, 1.0, h);
 }
 fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
-    return pbr_light_contrib(surf.normal, surf.view_dir, light.l,
-                             light.radiance * light.shadow,
-                             parallax_albedo(surf), surf.metallic, surf.roughness, surf.f0);
+    return viewport_brdf_light_contrib(surf.normal, surf.view_dir, light.l,
+                                       light.radiance * light.shadow,
+                                       parallax_albedo(surf), surf.metallic, surf.roughness, surf.f0);
 }
 fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     return parallax_albedo(surf) * 0.22 * surf.ao;

@@ -618,7 +618,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
 // ---------------------------------------------------------------------------
 // PBR BRDF helpers (Cook-Torrance)
 // ---------------------------------------------------------------------------
-// Shared direct BRDF: D_GGX, G1_Smith, G_Smith, F_Schlick, pbr_light_contrib.
+// Shared direct BRDF (the viewport_brdf_* functions).
 // #include "helpers/brdf.wgsl"
 
 // Shared ambient / IBL helpers (equirect sampling, split-sum ambient).
@@ -1019,7 +1019,7 @@ fn compute_lit(
             metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
             roughness = max(r_remapped * roughness, 0.04);
         }
-        roughness = specular_aa_roughness_kernel(roughness, saa_kernel);
+        roughness = viewport_brdf_specular_aa_roughness_kernel(roughness, saa_kernel);
         var F0 = mix(vec3<f32>(0.04), base_colour, metallic);
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.
@@ -1036,7 +1036,7 @@ fn compute_lit(
             if !ev.in_range { continue; }
             let L = ev.l;
             let radiance = ev.radiance;
-            // Backfacing: pbr_light_contrib returns exactly zero; skip it.
+            // Backfacing: the direct BRDF returns exactly zero; skip it.
             // <viewport-shade-slot:backface-cull>
             if dot(N, L) <= 0.0 { continue; }
             // </viewport-shade-slot:backface-cull>
@@ -1046,7 +1046,7 @@ fn compute_lit(
             // suppress its realtime direct to avoid double counting (transparent
             // surfaces have no realtime shadow to add back).
             if !(FEAT_LIGHTMAP && object.lightmap_mode == 4u && i == 0u) {
-                Lo += pbr_light_contrib(N, V, L, radiance, base_colour, metallic, roughness, F0);
+                Lo += viewport_brdf_light_contrib(N, V, L, radiance, base_colour, metallic, roughness, F0);
             }
             // </viewport-shade-slot:light>
         }

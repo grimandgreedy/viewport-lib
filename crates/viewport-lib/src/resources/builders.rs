@@ -781,7 +781,7 @@ pub(crate) fn strip_mesh_non_pbr<'a>(
 ///
 /// This is the A/B tool for "what does the hook mechanism itself cost": the
 /// composed module computes identical lighting via the same
-/// `pbr_light_contrib`, plus the ShadingSurface fill and per-light
+/// `viewport_brdf_light_contrib`, plus the ShadingSurface fill and per-light
 /// LightSample construction a real material plugin pays. Compare against the
 /// plain baseline and against `VIEWPORT_MESH_PBR_ONLY` (which strips the
 /// alternate branches without the hook) to separate branch-stripping gains

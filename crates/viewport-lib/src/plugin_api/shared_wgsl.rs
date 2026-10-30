@@ -173,8 +173,9 @@ pub const SHARED_DEPTH_TEXEL_WGSL: &str =
 
 /// The direct Cook-Torrance BRDF the renderer's lit mesh shaders evaluate.
 ///
-/// Provides `D_GGX`, `G1_Smith` and the functions built on them, for a body
-/// that shades with the scene's lights itself and wants its highlights to
+/// Provides `viewport_brdf_d_ggx`, `viewport_brdf_g1_smith` and the functions
+/// built on them (`viewport_brdf_light_contrib` evaluates one light), for a
+/// body that shades with the scene's lights itself and wants its highlights to
 /// match the surface it sits on. It declares no bindings and reads none, so
 /// it composes after either set of group-0 declarations.
 pub const SHARED_BRDF_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/helpers/brdf.wgsl"));
