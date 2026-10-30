@@ -137,7 +137,7 @@ fn a_deferred_frame_copies_the_source_written_before_its_submit() {
     let id = match renderer.resources_mut().register_deformer(
         &device,
         DeformerDesc {
-            name: "test_keep_from_slot",
+            name: "test_keep_from_slot".into(),
             stage: DeformStage::WorldSpace,
             priority: 0,
             wgsl_body: KEEP_FROM_SLOT.to_string(),

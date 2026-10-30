@@ -1,5 +1,7 @@
 //! A deformer whose body moves every vertex by a constant.
 
+use std::borrow::Cow;
+
 use viewport_lib::resources::DeviceResources;
 use viewport_lib::wgpu;
 use viewport_lib::{DEFORM_PARAMS_PER_SLOT, DeformStage, DeformerDesc, MeshId};
@@ -11,8 +13,14 @@ use viewport_lib::{DEFORM_PARAMS_PER_SLOT, DeformStage, DeformerDesc, MeshId};
 /// (`deform_slot_stride(ctx.slot) == 0u`), which is the contract's opt-out, so
 /// a mesh only moves once [`ConstantOffsetDeformer::attach`] has run for it.
 pub fn constant_offset_deformer() -> DeformerDesc {
+    constant_offset_deformer_named(ConstantOffsetDeformer::NAME)
+}
+
+/// [`constant_offset_deformer`] registered under `name`, so several can be
+/// registered at once.
+pub fn constant_offset_deformer_named(name: impl Into<Cow<'static, str>>) -> DeformerDesc {
     DeformerDesc {
-        name: ConstantOffsetDeformer::NAME,
+        name: name.into(),
         stage: DeformStage::WorldSpace,
         priority: 0,
         wgsl_body: "\

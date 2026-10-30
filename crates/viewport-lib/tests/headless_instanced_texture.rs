@@ -693,7 +693,7 @@ fn bindless_survives_deformer_pipeline_rebuild() {
         .register_deformer(
             &device,
             viewport_lib::resources::DeformerDesc {
-                name: "bindless_noop",
+                name: "bindless_noop".into(),
                 stage: DeformStage::ObjectSpace,
                 priority: 0,
                 wgsl_body: body.to_string(),

@@ -68,7 +68,7 @@ pub use frame::{probe_frame, probe_quad, probe_targets};
 
 pub use deformer::{
     ConstantOffsetDeformer, PerVertexOffsetDeformer, constant_offset_deformer,
-    per_vertex_offset_deformer,
+    constant_offset_deformer_named, per_vertex_offset_deformer,
 };
 pub use gpu_plugin::LoggingGpuPlugin;
 pub use installer::{DeformAndStepInstaller, DeformAndStepInstallerHandle};

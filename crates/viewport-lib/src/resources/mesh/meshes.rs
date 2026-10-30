@@ -1741,6 +1741,9 @@ impl DeviceResources {
                     self.sidecar.free(&record);
                 }
             }
+            if self.scene_tier.is_built() {
+                self.scene_tier.deform.forget_mesh(id);
+            }
             self.resource_free_epoch += 1;
         }
         removed

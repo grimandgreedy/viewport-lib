@@ -271,6 +271,13 @@ pub(crate) struct DeformationState {
     /// Kept beside the registrations so the per-item early-Z check does not
     /// re-scan WGSL every frame.
     pub keep_slots: u32,
+    /// Generation per slot, carried by every `DeformerId` issued for it and
+    /// bumped when the slot's deformer is removed.
+    pub slot_generations: [u32; DEFORM_SLOT_COUNT],
+    /// Bit per slot whose parameter block was zeroed on the CPU by a removal
+    /// and still has to be zeroed in the header buffer. Written by
+    /// `process_uploads`, the first point with a queue.
+    pub params_pending_clear: u32,
     /// Number of slots (per-mesh and per-instance, across all meshes) currently
     /// bound to an external buffer source. Lets the per-frame copy pass skip its
     /// encoder entirely when nothing is buffer-backed.
@@ -312,6 +319,8 @@ impl DeformationState {
             time_pinned: false,
             registrations: Vec::new(),
             keep_slots: 0,
+            slot_generations: [0; DEFORM_SLOT_COUNT],
+            params_pending_clear: 0,
             external_source_count: 0,
             counters: DeformCounters::default(),
         }
@@ -538,6 +547,88 @@ impl DeformationState {
             .get(&mesh_id)
             .and_then(|m| m.instances.get(&instance_id))
             .is_some_and(|i| i.slot_external[slot].is_some())
+    }
+
+    /// The id for the deformer registered at `slot`, at the slot's current
+    /// generation.
+    pub(crate) fn id_for_slot(&self, slot: usize) -> DeformerId {
+        DeformerId {
+            slot: slot as u8,
+            generation: self.slot_generations[slot],
+        }
+    }
+
+    /// Clear `slot` on every mesh and every instance that holds it: CPU data,
+    /// an external source or an attribute alias. Returns the meshes whose
+    /// records need re-syncing.
+    fn clear_slot_on_every_mesh(&mut self, slot: usize) -> Vec<MeshId> {
+        let bit = 1u32 << slot;
+        let touched: Vec<MeshId> = self
+            .meshes
+            .iter()
+            .filter(|(_, m)| (m.mesh.flag_bits | m.instance_flag_bits_union) & bit != 0)
+            .map(|(id, _)| *id)
+            .collect();
+        for &mesh_id in &touched {
+            let m = self.meshes.get_mut(&mesh_id).expect("collected above");
+            let mut externals = 0;
+            if m.mesh.clear(slot).1 {
+                externals += 1;
+            }
+            m.slot_alias[slot] = None;
+            for inst in m.instances.values_mut() {
+                if inst.clear(slot).1 {
+                    externals += 1;
+                }
+            }
+            m.instances.retain(|_, i| i.flag_bits != 0);
+            self.external_source_count -= externals;
+            self.after_change(mesh_id);
+        }
+        touched
+    }
+
+    /// Forget a freed mesh's deform state, so a stale entry neither lingers
+    /// nor keeps its external sources counted.
+    pub(crate) fn forget_mesh(&mut self, mesh_id: MeshId) {
+        let Some(m) = self.meshes.remove(&mesh_id) else {
+            return;
+        };
+        let externals = std::iter::once(&m.mesh)
+            .chain(m.instances.values())
+            .flat_map(|slots| slots.slot_external.iter())
+            .filter(|src| src.is_some())
+            .count();
+        self.external_source_count -= externals;
+        self.epoch = self.epoch.wrapping_add(1);
+    }
+
+    /// Zero `slot`'s parameter block in the CPU header mirror and queue the
+    /// matching buffer write.
+    fn clear_slot_params(&mut self, slot: usize) {
+        let base = slot * DEFORM_PARAMS_PER_SLOT;
+        self.header_cpu.slot_params[base..base + DEFORM_PARAMS_PER_SLOT].fill([0.0; 4]);
+        self.params_pending_clear |= 1u32 << slot;
+    }
+
+    /// Zero the parameter blocks a removal cleared, for slots no deformer has
+    /// taken since. A deformer registered on the slot in the meantime owns
+    /// its parameters and may already have written them.
+    pub(crate) fn flush_params_clear(&mut self, queue: &crate::gpu::Queue) {
+        let mut pending = std::mem::take(&mut self.params_pending_clear);
+        for d in &self.registrations {
+            pending &= !(1u32 << d.slot);
+        }
+        while pending != 0 {
+            let slot = pending.trailing_zeros() as usize;
+            pending &= pending - 1;
+            let zeros = [[0.0f32; 4]; DEFORM_PARAMS_PER_SLOT];
+            queue.write_buffer(
+                &self.header_buffer,
+                deform_slot_params_byte_offset(slot),
+                bytemuck::cast_slice(&zeros),
+            );
+        }
     }
 }
 
@@ -1317,7 +1408,7 @@ impl DeviceResources {
         desc: DeformerDesc,
     ) -> ViewportResult<DeformerId> {
         self.require_scene_tier()?;
-        validate_name(&self.scene_tier.deform.registrations, desc.name)?;
+        validate_name(&self.scene_tier.deform.registrations, &desc.name)?;
         let slot = allocate_slot(&self.scene_tier.deform.registrations)?;
 
         let candidate = StoredDeformer { desc, slot };
@@ -1340,7 +1431,7 @@ impl DeviceResources {
         }
         self.scene_tier.deform.registrations.push(candidate);
         self.mesh_pipelines_dirty = true;
-        Ok(DeformerId(slot))
+        Ok(self.scene_tier.deform.id_for_slot(slot))
     }
 
     /// Register a deformer on a reserved internal slot
@@ -1355,7 +1446,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         desc: DeformerDesc,
     ) -> ViewportResult<DeformerId> {
-        validate_name(&self.scene_tier.deform.registrations, desc.name)?;
+        validate_name(&self.scene_tier.deform.registrations, &desc.name)?;
         let slot = allocate_internal_slot(&self.scene_tier.deform.registrations)?;
 
         let candidate = StoredDeformer { desc, slot };
@@ -1378,7 +1469,66 @@ impl DeviceResources {
         }
         self.scene_tier.deform.registrations.push(candidate);
         self.mesh_pipelines_dirty = true;
-        Ok(DeformerId(slot))
+        Ok(self.scene_tier.deform.id_for_slot(slot))
+    }
+
+    /// Remove a deformer registered with [`Self::register_deformer`].
+    ///
+    /// Drops the registration, keeping the order of the ones that remain, and
+    /// clears the slot on every mesh and instance that attached data, a
+    /// source buffer or an attribute to it, so those meshes draw as if the
+    /// deformer had never been attached. The slot's parameter block is zeroed
+    /// before the next frame unless another deformer has taken the slot by
+    /// then. The mesh-family pipelines, and any material-plugin pipelines
+    /// composed over the deformers, rebuild at the start of the next
+    /// `prepare()`, the same as after a registration.
+    ///
+    /// The slot is free for a later registration. `id` stops resolving: the
+    /// slot's generation moves on, so the id does not match whatever takes
+    /// the slot next.
+    ///
+    /// # Errors
+    ///
+    /// - [`ViewportError::StaleHandle`] when `id` was already removed or its
+    ///   slot holds a later registration.
+    /// - [`ViewportError::DeformerReserved`] when `id` names one of the
+    ///   in-crate deformers (skinning), which stay registered for the
+    ///   renderer's lifetime.
+    ///
+    /// [`ViewportError::StaleHandle`]: crate::error::ViewportError::StaleHandle
+    /// [`ViewportError::DeformerReserved`]: crate::error::ViewportError::DeformerReserved
+    pub fn remove_deformer(
+        &mut self,
+        device: &crate::gpu::Device,
+        id: DeformerId,
+    ) -> ViewportResult<()> {
+        self.require_scene_tier()?;
+        let slot = id.slot();
+        let deform = &mut self.scene_tier.deform;
+        let index = deform
+            .registrations
+            .iter()
+            .position(|r| r.slot == slot)
+            .filter(|_| deform.slot_generations[slot] == id.generation)
+            .ok_or(crate::error::ViewportError::StaleHandle {
+                index: slot,
+                count: deform.registrations.len(),
+            })?;
+        if slot >= DEFORM_INTERNAL_SLOT_START {
+            return Err(crate::error::ViewportError::DeformerReserved {
+                name: deform.registrations[index].desc.name.to_string(),
+            });
+        }
+        deform.registrations.remove(index);
+        deform.keep_slots &= !(1u32 << slot);
+        deform.slot_generations[slot] = deform.slot_generations[slot].wrapping_add(1);
+        deform.clear_slot_params(slot);
+        let touched = deform.clear_slot_on_every_mesh(slot);
+        for mesh_id in touched {
+            self.sync_deform_record(device, mesh_id, &[]);
+        }
+        self.mesh_pipelines_dirty = true;
+        Ok(())
     }
 
     /// Number of currently registered deformers (host + internal).
@@ -1400,7 +1550,7 @@ impl DeviceResources {
             .registrations
             .iter()
             .find(|r| r.desc.name == name)
-            .map(|r| DeformerId(r.slot))
+            .map(|r| self.scene_tier.deform.id_for_slot(r.slot))
     }
 
     /// Build a [`DeformSlotHandle`] for the given deformer. Plugins stash
@@ -1815,7 +1965,7 @@ mod tests {
 
         let body = "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    if (deform_slot_stride(0u) > 0u) {\n        o.position.z = o.position.z + deform_read_f32(0u, v.vertex_index, 0u);\n    }\n    return o;\n}\n";
         let desc = DeformerDesc {
-            name: "wave",
+            name: "wave".into(),
             stage: crate::resources::mesh_sidecar::registry::DeformStage::ObjectSpace,
             priority: 0,
             wgsl_body: body.to_string(),
@@ -1860,7 +2010,7 @@ mod tests {
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         let resources = renderer.resources_mut();
         let desc = DeformerDesc {
-            name: "wind",
+            name: "wind".into(),
             stage: crate::resources::mesh_sidecar::registry::DeformStage::WorldSpace,
             priority: 0,
             wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    o.position.z = o.position.z + 0.001;\n    return o;\n}\n".to_string(),
@@ -1877,7 +2027,7 @@ mod tests {
         assert_eq!(resources.registered_deformer_count(), baseline + 1);
 
         let dup = DeformerDesc {
-            name: "wind",
+            name: "wind".into(),
             stage: crate::resources::mesh_sidecar::registry::DeformStage::ObjectSpace,
             priority: 0,
             wgsl_body:
@@ -1893,7 +2043,7 @@ mod tests {
         assert_eq!(resources.registered_deformer_count(), baseline + 1);
 
         let bad = DeformerDesc {
-            name: "wave",
+            name: "wave".into(),
             stage: crate::resources::mesh_sidecar::registry::DeformStage::WorldSpace,
             priority: 0,
             wgsl_body: "this is not valid wgsl".to_string(),
@@ -1907,6 +2057,149 @@ mod tests {
         assert_eq!(resources.registered_deformer_count(), baseline + 1);
     }
 
+    fn lift(name: &str, keep: bool) -> DeformerDesc {
+        let mut body = String::from(
+            "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    o.position.z = o.position.z + 0.001;\n    return o;\n}\n",
+        );
+        if keep {
+            body.push_str(
+                "fn keep(v: DeformVertex, ctx: DeformContext) -> f32 {\n    return 1.0;\n}\n",
+            );
+        }
+        DeformerDesc {
+            name: name.to_string().into(),
+            stage: crate::resources::mesh_sidecar::registry::DeformStage::WorldSpace,
+            priority: 0,
+            wgsl_body: body,
+            per_vertex_stride: 4,
+        }
+    }
+
+    #[test]
+    fn removing_a_deformer_clears_its_slot_and_keeps_the_rest_in_order() {
+        let Some((device, queue, mut renderer, mesh_id, vertices)) = with_mesh() else {
+            return;
+        };
+        let resources = renderer.resources_mut();
+        let a = resources
+            .register_deformer(&device, lift("a", false))
+            .unwrap();
+        let b = resources
+            .register_deformer(&device, lift("b", true))
+            .unwrap();
+        let c = resources
+            .register_deformer(&device, lift("c", false))
+            .unwrap();
+        let data = vec![0u8; vertices * 4];
+        for id in [a, b, c] {
+            resources.attach_deform_slot(&device, mesh_id, id.slot(), 4, &data);
+        }
+        resources.attach_deform_slot_instance(&device, &queue, mesh_id, 7, b.slot(), 4, &data);
+        resources.set_deform_slot_params(&queue, b.slot(), [[1.0; 4]; DEFORM_PARAMS_PER_SLOT]);
+        resources.flush_mesh_pipeline_rebuild(&device);
+        let before = resources.registered_deformer_count();
+
+        resources.remove_deformer(&device, b).expect("remove b");
+
+        let deform = &resources.scene_tier.deform;
+        let names: Vec<&str> = deform
+            .registrations
+            .iter()
+            .filter(|r| r.slot < DEFORM_INTERNAL_SLOT_START)
+            .map(|r| r.desc.name.as_ref())
+            .collect();
+        assert_eq!(names, ["a", "c"]);
+        assert_eq!(resources.registered_deformer_count(), before - 1);
+        assert_eq!(deform.keep_slots & (1 << b.slot()), 0);
+        assert_eq!(
+            deform.flag_bits(mesh_id),
+            (1 << a.slot()) | (1 << c.slot()),
+            "only the removed slot's bit goes"
+        );
+        assert!(!deform.meshes[&mesh_id].instances.contains_key(&7));
+        assert!(!resources.has_deform_slot(mesh_id, b.slot()));
+        assert!(resources.has_deform_slot(mesh_id, a.slot()));
+        assert!(resources.has_deform_slot(mesh_id, c.slot()));
+        let base = b.slot() * DEFORM_PARAMS_PER_SLOT;
+        assert!(
+            deform.header_cpu.slot_params[base..base + DEFORM_PARAMS_PER_SLOT]
+                .iter()
+                .all(|p| *p == [0.0; 4])
+        );
+        assert_eq!(deform.params_pending_clear, 1 << b.slot());
+        assert!(resources.mesh_pipelines_dirty);
+        let record = record(resources, mesh_id).expect("record");
+        assert!(
+            record
+                .first_of(StreamKind::DeformSlot(b.slot() as u8))
+                .is_none()
+        );
+        assert!(
+            record
+                .first_of(StreamKind::DeformInstanceSlot(b.slot() as u8, 7))
+                .is_none()
+        );
+
+        resources.process_uploads(&device, &queue);
+        assert_eq!(resources.scene_tier.deform.params_pending_clear, 0);
+    }
+
+    #[test]
+    fn a_removed_id_is_stale_once_its_slot_is_reused() {
+        let Some((device, _queue)) = headless() else {
+            return;
+        };
+        let mut renderer = crate::renderer::ViewportRenderer::new(
+            &device,
+            crate::gpu::TextureFormat::Bgra8UnormSrgb,
+        );
+        let resources = renderer.resources_mut();
+        let a = resources
+            .register_deformer(&device, lift("a", false))
+            .unwrap();
+        resources.remove_deformer(&device, a).unwrap();
+        let b = resources
+            .register_deformer(&device, lift("b", false))
+            .unwrap();
+        assert_eq!(a.slot(), b.slot());
+        assert_ne!(a, b);
+        assert!(matches!(
+            resources.remove_deformer(&device, a),
+            Err(crate::error::ViewportError::StaleHandle { .. })
+        ));
+        assert_eq!(resources.deformer_id_by_name("b"), Some(b));
+        resources
+            .remove_deformer(&device, b)
+            .expect("b still resolves");
+        assert!(matches!(
+            resources.remove_deformer(&device, b),
+            Err(crate::error::ViewportError::StaleHandle { .. })
+        ));
+    }
+
+    #[test]
+    fn the_built_in_skinning_deformer_refuses_removal() {
+        let Some((device, _queue)) = headless() else {
+            return;
+        };
+        let mut renderer = crate::renderer::ViewportRenderer::new(
+            &device,
+            crate::gpu::TextureFormat::Bgra8UnormSrgb,
+        );
+        let resources = renderer.resources_mut();
+        let skin = crate::plugins::skinning::SkinningPlugin::install(resources, &device)
+            .unwrap()
+            .deformer_id();
+        assert!(skin.slot() >= DEFORM_INTERNAL_SLOT_START);
+        let count = resources.registered_deformer_count();
+        assert!(matches!(
+            resources.remove_deformer(&device, skin),
+            Err(crate::error::ViewportError::DeformerReserved { .. })
+        ));
+        assert_eq!(resources.registered_deformer_count(), count);
+        assert_eq!(resources.deformer_id_by_name("viewport_skin"), Some(skin));
+    }
+
     fn copy_src_buffer(device: &crate::gpu::Device, size: u64) -> crate::gpu::Buffer {
         device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("deform_src_test"),
@@ -1914,6 +2207,28 @@ mod tests {
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         })
+    }
+
+    #[test]
+    fn freeing_a_mesh_drops_its_deform_state() {
+        let Some((device, _queue, mut renderer, mesh, n)) = with_mesh() else {
+            return;
+        };
+        let res = renderer.resources_mut();
+        res.attach_deform_slot(&device, mesh, 0, 4, &vec![0u8; n * 4]);
+        res.set_deform_slot_source_buffer(
+            &device,
+            mesh,
+            2,
+            copy_src_buffer(&device, n as u64 * 4),
+            4,
+        )
+        .unwrap();
+        assert_eq!(res.scene_tier.deform.external_source_count, 1);
+
+        assert!(res.free_mesh(mesh));
+        assert!(!res.scene_tier.deform.meshes.contains_key(&mesh));
+        assert_eq!(res.scene_tier.deform.external_source_count, 0);
     }
 
     #[test]

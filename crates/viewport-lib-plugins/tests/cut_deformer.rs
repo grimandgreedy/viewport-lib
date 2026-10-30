@@ -290,7 +290,7 @@ fn the_cut_lands_where_other_deformers_moved_the_mesh() {
         .register_deformer(
             &s.device,
             DeformerDesc {
-                name: "test_slide",
+                name: "test_slide".into(),
                 stage: DeformStage::ObjectSpace,
                 priority: 0,
                 wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    \
