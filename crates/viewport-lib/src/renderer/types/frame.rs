@@ -328,6 +328,9 @@ impl RenderCamera {
                 crate::plugin_api::depth::clip_lane(self.projection, near, far)
             },
             time: [0.0; 4],
+            // Filled per frame by `CameraFrame::camera_uniform`.
+            world_origin: [0.0; 3],
+            origin_epoch: 0,
         }
     }
 
@@ -526,6 +529,8 @@ impl CameraFrame {
         origin: &crate::renderer::origin::OriginState,
     ) -> CameraUniform {
         let mut u = origin.camera(&self.render_camera).camera_uniform();
+        u.world_origin = origin.origin().as_vec3().to_array();
+        u.origin_epoch = origin.epoch();
         let ppp = self.pixels_per_point;
         let w = (self.viewport_size[0] * ppp).round().max(1.0);
         let h = (self.viewport_size[1] * ppp).round().max(1.0);

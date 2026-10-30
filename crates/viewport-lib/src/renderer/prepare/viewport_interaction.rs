@@ -90,6 +90,8 @@ impl ViewportRenderer {
                     fg_uniform.lit_clamp = camera_uniform.lit_clamp;
                     fg_uniform.viewport = camera_uniform.viewport;
                     fg_uniform.time = camera_uniform.time;
+                    fg_uniform.world_origin = camera_uniform.world_origin;
+                    fg_uniform.origin_epoch = camera_uniform.origin_epoch;
                     queue.write_buffer(
                         &slot.foreground_camera_buf,
                         0,

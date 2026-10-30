@@ -82,6 +82,8 @@ fn stored_field_uniform(cam: &Camera) -> CameraUniform {
         viewport: [0.0; 4],
         clip: [near, far, f32::from(u8::from(ortho)), 0.0],
         time: [0.0; 4],
+        world_origin: [0.0; 3],
+        origin_epoch: 0,
     }
 }
 
