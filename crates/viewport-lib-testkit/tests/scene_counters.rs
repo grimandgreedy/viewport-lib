@@ -59,6 +59,11 @@ fn expected(name: &str) -> Option<Expected> {
         // The environment-lit grid: the AO-mapped row's texture set splits
         // it from the other twenty spheres.
         "materials_ibl" => e(25, 25, 2, 2, 55200),
+        // The layered-lobe grids: one material per sphere, one mesh, so each
+        // grid is a single batch whose feature set is the union of its lobes.
+        "lobes_clearcoat" => e(25, 25, 1, 1, 55200),
+        "lobes_sheen" => e(25, 25, 1, 1, 55200),
+        "lobes_anisotropy" => e(25, 25, 1, 1, 55200),
         // Material grids: half the items are pinned per-object, which no
         // longer splits a batch, so each pinned copy shares its batch with
         // its twin by mesh and texture set. The alpha grid's backdrop wall
