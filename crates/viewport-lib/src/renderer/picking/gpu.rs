@@ -1894,9 +1894,7 @@ impl ViewportRenderer {
         let mut hit = gpu_hit.to_pick_hit(pending.cursor, pending.viewport_size, pending.view_proj);
         // The pass drew relative to the origin; put the hit back in world
         // coordinates.
-        if pending.origin != glam::DVec3::ZERO {
-            hit.world_pos = (hit.world_pos.as_dvec3() + pending.origin).as_vec3();
-        }
+        hit.world_pos = pending.hit_world(gpu_hit.depth).as_vec3();
         hit.sub_object = self.resolve_gpu_sub_object(
             gpu_hit.object_id.0,
             gpu_hit.sub_primitive,
@@ -2236,6 +2234,13 @@ pub(crate) struct PendingPick {
 }
 
 impl PendingPick {
+    /// World position of the picked pixel at `depth`, in f64.
+    fn hit_world(&self, depth: f32) -> glam::DVec3 {
+        let ndc_x = (self.cursor.x / self.viewport_size.x) * 2.0 - 1.0;
+        let ndc_y = 1.0 - (self.cursor.y / self.viewport_size.y) * 2.0;
+        pick_world(self.view_proj.inverse(), self.origin, ndc_x, ndc_y, depth)
+    }
+
     /// Read the object id and depth from the mapped staging buffers and unmap
     /// them. Only valid once both maps have completed (the caller has waited or
     /// seen `ready == 3`). Returns `None` for id 0, which is the clear value and
@@ -2283,4 +2288,67 @@ pub(crate) fn pick_world(
         .project_point3(glam::Vec3::new(ndc_x, ndc_y, depth))
         .as_dvec3()
         + origin
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::renderer::{CameraFrame, RenderCamera, SceneFrame, WorldOrigin};
+
+    /// A GPU pick of a surface 1,000 km from the world origin lands within a
+    /// millimetre of the true hit when drawn relative to a snapped origin.
+    #[test]
+    fn pick_round_trip_far_from_origin() {
+        let Some((device, queue)) = crate::resources::test_support::try_make_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let (w, h) = (64u32, 64u32);
+        // Exactly representable in f32, so the inputs carry no rounding.
+        let centre = glam::Vec3::new(1_000_000.0, 200_000.0, 10.0);
+        let eye = centre - glam::Vec3::new(5.0, 0.0, 0.0);
+        // The camera looks along +X at the face x = centre.x - 1.
+        let truth = glam::DVec3::new(999_999.0, 200_000.0, 10.0);
+
+        let error = |origin: WorldOrigin| -> f64 {
+            let mut renderer = ViewportRenderer::with_config(
+                &device,
+                &crate::RendererConfig::new(crate::gpu::TextureFormat::Rgba8UnormSrgb)
+                    .with_pipeline_compilation(crate::PipelineCompilation::Blocking)
+                    .with_world_origin(origin),
+            );
+            let mesh = renderer
+                .resources_mut()
+                .upload_mesh_data(&device, &crate::geometry::primitives::cube(2.0))
+                .expect("cube upload");
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = mesh;
+            item.model = glam::Mat4::from_translation(centre).to_cols_array_2d();
+            item.settings.pick_id = PickId(3);
+            let camera = RenderCamera::from_matrices(
+                glam::Mat4::look_at_rh(eye, centre, glam::Vec3::Z),
+                glam::Mat4::perspective_infinite_reverse_rh(0.8, 1.0, 0.1),
+            )
+            .with_depth_range(0.1, 100.0);
+            let frame = FrameData::new(
+                CameraFrame::new(camera, [w as f32, h as f32]),
+                SceneFrame::from_surface_items(vec![item]),
+            );
+            let _ = renderer.render_offscreen(&device, &queue, &frame, w, h);
+            let cursor = glam::Vec2::new(w as f32 * 0.5, h as f32 * 0.5);
+            let PickBegin::Pending(pending) =
+                renderer.pick_scene_gpu_begin(&device, &queue, cursor, &frame, PickMask::OBJECT)
+            else {
+                panic!("nothing to pick");
+            };
+            assert!(wait_for_pick(&device, &pending.submission, "test pick"));
+            let hit = pending.read_hit().expect("the cube is under the cursor");
+            (pending.hit_world(hit.depth) - truth).length()
+        };
+
+        let snapped = error(WorldOrigin::snapped().with_cell(16.0));
+        let zero = error(WorldOrigin::Zero);
+        eprintln!("pick error at 1e6 m: snapped {snapped:e} m, zero {zero:e} m");
+        assert!(snapped < 1.0e-3, "snapped pick missed by {snapped} m");
+    }
 }
