@@ -33,10 +33,14 @@ struct PbrPixel {
     perceptual_roughness: f32,
     // GGX alpha: perceptual_roughness squared.
     alpha: f32,
-    // Split-sum DFG terms (scale, bias); zero when not sampled up front.
+    // Split-sum DFG terms (scale, bias): the BRDF LUT at (n_dot_v,
+    // perceptual_roughness).
     dfg: vec2<f32>,
-    // Multiple-scattering energy compensation for the specular lobe.
+    // Multiple-scattering energy compensation for the specular lobe, from f0
+    // and dfg.
     energy_comp: vec3<f32>,
+    // max(N.V, 1e-3) for the resolved normal.
+    n_dot_v: f32,
     diffuse_ao: f32,
     spec_ao: f32,
 };
@@ -44,8 +48,12 @@ struct PbrPixel {
 // Resolve the material inputs: clamp metallic, floor roughness, apply the
 // metallic-roughness map's remap when `has_mr_map` (G = roughness,
 // B = metallic, each mixed across its range before the scalar factor), widen
-// the roughness by the specular AA kernel, then derive F0.
+// the roughness by the specular AA kernel, then derive F0 and look up the
+// split-sum terms and the energy compensation. `N` and `V` are the shading
+// normal and the unit vector toward the eye.
 fn pbr_resolve(
+    N: vec3<f32>,
+    V: vec3<f32>,
     base_colour: vec3<f32>,
     metallic_factor: f32,
     roughness_factor: f32,
@@ -73,8 +81,9 @@ fn pbr_resolve(
     px.alpha = roughness * roughness;
     px.f0 = mix(vec3<f32>(DEFAULT_DIELECTRIC_F0), base_colour, metallic);
     px.f90 = 1.0;
-    px.dfg = vec2<f32>(0.0);
-    px.energy_comp = vec3<f32>(1.0);
+    px.n_dot_v = max(dot(N, V), 1e-3);
+    px.dfg = sample_brdf_lut(px.n_dot_v, roughness);
+    px.energy_comp = viewport_brdf_energy_compensation(px.f0, px.dfg);
     px.diffuse_ao = ao;
     px.spec_ao = ao;
     return px;
@@ -82,6 +91,7 @@ fn pbr_resolve(
 
 // Replace the surface terms of a resolved pixel with authored ones (a shading
 // hook's `shade_surface` output). No specular AA: the author owns the value.
+// The split-sum terms are looked up again at the resolved N.V.
 fn pbr_apply_override(
     px: PbrPixel,
     base_colour: vec3<f32>,
@@ -94,14 +104,18 @@ fn pbr_apply_override(
     out.perceptual_roughness = max(roughness, MIN_PERCEPTUAL_ROUGHNESS);
     out.alpha = out.perceptual_roughness * out.perceptual_roughness;
     out.f0 = mix(vec3<f32>(DEFAULT_DIELECTRIC_F0), base_colour, out.metallic);
+    out.dfg = sample_brdf_lut(out.n_dot_v, out.perceptual_roughness);
+    out.energy_comp = viewport_brdf_energy_compensation(out.f0, out.dfg);
     return out;
 }
 
 // One light's direct contribution. `radiance` is the light's colour times its
-// attenuation and shadow. Exactly zero when N.L <= 0.
+// attenuation and shadow. The specular lobe carries the energy compensation.
+// Exactly zero when N.L <= 0.
 fn pbr_direct(px: PbrPixel, N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, radiance: vec3<f32>) -> vec3<f32> {
-    return viewport_brdf_light_contrib(N, V, L, radiance, px.diffuse_colour,
-                                       px.metallic, px.perceptual_roughness, px.f0);
+    return viewport_brdf_light_contrib_compensated(N, V, L, radiance, px.diffuse_colour,
+                                                   px.metallic, px.perceptual_roughness, px.f0,
+                                                   px.energy_comp);
 }
 
 struct AmbientOut {
@@ -154,11 +168,11 @@ fn pbr_ambient(
             ibl = ibl_ambient_zoned(N, V, base_colour, metallic, roughness, F0,
                                     ao_factor, lights_uniform.ibl_intensity,
                                     lights_uniform.ibl_rotation, refl_dr, world_pos,
-                                    lights_uniform.env_zone_count);
+                                    lights_uniform.env_zone_count, px.dfg, px.energy_comp);
         } else {
             ibl = ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0,
                                    ao_factor, lights_uniform.ibl_intensity,
-                                   lights_uniform.ibl_rotation, refl_dr);
+                                   lights_uniform.ibl_rotation, refl_dr, px.dfg, px.energy_comp);
         }
         ibl.diffuse *= lights_uniform.ibl_diffuse_scale;
         ibl.specular *= lights_uniform.ibl_specular_scale;

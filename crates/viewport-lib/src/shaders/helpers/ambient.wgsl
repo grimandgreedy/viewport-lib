@@ -197,7 +197,9 @@ struct IblContrib {
 
 /// Full IBL ambient: diffuse irradiance + specular split-sum. `dr` is the
 /// screen-space derivative length of the reflection vector `reflect(-V, N)`,
-/// supplied by the caller from uniform control flow.
+/// supplied by the caller from uniform control flow. `dfg` is the BRDF LUT tap
+/// at (N.V, roughness) and `ec` the specular energy compensation
+/// (`viewport_brdf_energy_compensation`).
 fn ibl_ambient_grad(
     N: vec3<f32>,
     V: vec3<f32>,
@@ -209,6 +211,8 @@ fn ibl_ambient_grad(
     intensity: f32,
     rotation: f32,
     dr: f32,
+    dfg: vec2<f32>,
+    ec: vec3<f32>,
 ) -> IblContrib {
     let NdotV = max(dot(N, V), 0.001);
     let F = F_Schlick_roughness(NdotV, F0, roughness);
@@ -222,13 +226,13 @@ fn ibl_ambient_grad(
     // Specular IBL (split-sum approximation).
     let R = reflect(-V, N);
     let prefiltered = sample_ibl_prefiltered_grad(R, roughness, rotation, dr);
-    let brdf = sample_brdf_lut(NdotV, roughness);
-    let specular_ibl = prefiltered * (F * brdf.x + brdf.y) * ao * intensity;
+    let specular_ibl = prefiltered * (F * dfg.x + dfg.y) * ec * ao * intensity;
 
     return IblContrib(diffuse_ibl, specular_ibl);
 }
 
-/// `ibl_ambient_grad` with the footprint derivative taken in place.
+/// `ibl_ambient_grad` with the footprint derivative taken in place and the
+/// BRDF LUT sampled here; the specular carries the energy compensation.
 /// Uniform control flow only. Frozen plugin-contract signature.
 fn ibl_ambient(
     N: vec3<f32>,
@@ -243,7 +247,10 @@ fn ibl_ambient(
 ) -> IblContrib {
     let R = reflect(-V, N);
     let dr = max(length(dpdx(R)), length(dpdy(R)));
-    return ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0, ao, intensity, rotation, dr);
+    let dfg = sample_brdf_lut(max(dot(N, V), 0.001), roughness);
+    let ec = viewport_brdf_energy_compensation(F0, dfg);
+    return ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0, ao, intensity, rotation, dr,
+                            dfg, ec);
 }
 
 // ---------------------------------------------------------------------------
@@ -294,10 +301,11 @@ fn spec_occlusion(n_dot_v: f32, ao: f32, roughness: f32) -> f32 {
 }
 
 /// Full IBL ambient (diffuse irradiance + specular split-sum) for environment
-/// `layer`. Mirrors `ibl_ambient_grad`, sampling the chosen layer, and adds the
-/// reflection-probe extras: when `parallax != 0`, box-projects the reflection
-/// vector and irradiance normal against the proxy box `[center +/- half]`; and a
-/// specular-occlusion term on the specular contribution.
+/// `layer`. Mirrors `ibl_ambient_grad` (same `dfg` and `ec`), sampling the
+/// chosen layer, and adds the reflection-probe extras: when `parallax != 0`,
+/// box-projects the reflection vector and irradiance normal against the proxy
+/// box `[center +/- half]`; and a specular-occlusion term on the specular
+/// contribution.
 fn ibl_ambient_layer_grad(
     N: vec3<f32>,
     V: vec3<f32>,
@@ -314,6 +322,8 @@ fn ibl_ambient_layer_grad(
     box_center: vec3<f32>,
     box_half: vec3<f32>,
     parallax: u32,
+    dfg: vec2<f32>,
+    ec: vec3<f32>,
 ) -> IblContrib {
     let NdotV = max(dot(N, V), 0.001);
     let F = F_Schlick_roughness(NdotV, F0, roughness);
@@ -334,9 +344,8 @@ fn ibl_ambient_layer_grad(
         R = parallax_box(R, world_pos, box_center, box_half);
     }
     let prefiltered = sample_ibl_prefiltered_layer(R, roughness, rotation, dr, layer);
-    let brdf = sample_brdf_lut(NdotV, roughness);
     let so = spec_occlusion(NdotV, ao, roughness);
-    let specular_ibl = prefiltered * (F * brdf.x + brdf.y) * ao * so * intensity;
+    let specular_ibl = prefiltered * (F * dfg.x + dfg.y) * ec * ao * so * intensity;
 
     return IblContrib(diffuse_ibl, specular_ibl);
 }
@@ -397,6 +406,8 @@ fn ibl_ambient_zoned(
     dr: f32,
     world_pos: vec3<f32>,
     count: u32,
+    dfg: vec2<f32>,
+    ec: vec3<f32>,
 ) -> IblContrib {
     var diffuse = vec3<f32>(0.0);
     var specular = vec3<f32>(0.0);
@@ -409,7 +420,7 @@ fn ibl_ambient_zoned(
         }
         let c = ibl_ambient_layer_grad(
             N, V, base_colour, metallic, roughness, F0, ao, intensity, rotation, dr, i32(z.layer),
-            world_pos, z.center, z.half_extents, z.parallax,
+            world_pos, z.center, z.half_extents, z.parallax, dfg, ec,
         );
         diffuse = diffuse + c.diffuse * w;
         specular = specular + c.specular * w;
@@ -420,7 +431,7 @@ fn ibl_ambient_zoned(
         // The default environment (layer 0) is distant: no parallax.
         let c0 = ibl_ambient_layer_grad(
             N, V, base_colour, metallic, roughness, F0, ao, intensity, rotation, dr, 0,
-            world_pos, vec3<f32>(0.0), vec3<f32>(1.0), 0u,
+            world_pos, vec3<f32>(0.0), vec3<f32>(1.0), 0u, dfg, ec,
         );
         diffuse = diffuse + c0.diffuse * default_w;
         specular = specular + c0.specular * default_w;

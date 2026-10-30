@@ -748,6 +748,11 @@ pub struct Tracer {
     env_view: crate::gpu::TextureView,
     env_sampler: crate::gpu::Sampler,
     has_env: bool,
+    // The split-sum BRDF LUT (bindings 15/16), read for the specular energy
+    // compensation the raster path applies.
+    _brdf_lut_texture: crate::gpu::Texture,
+    brdf_lut_view: crate::gpu::TextureView,
+    brdf_lut_sampler: crate::gpu::Sampler,
     // Environment importance-sampling tables (binding 14) and their metadata
     // (width, height, integral, enabled). The three tables (func, conditional
     // CDFs, marginal CDF) are concatenated into one storage buffer to stay under
@@ -1197,6 +1202,15 @@ impl Tracer {
             mipmap_filter: crate::resources::builders::dmipmap(crate::gpu::FilterMode::Nearest),
             ..Default::default()
         });
+        let (brdf_lut_texture, brdf_lut_view) =
+            crate::resources::material::environment::create_brdf_lut(device);
+        crate::resources::material::environment::write_brdf_lut_texels(queue, &brdf_lut_texture);
+        let brdf_lut_sampler = device.create_sampler(&crate::gpu::SamplerDescriptor {
+            label: Some("rt_brdf_lut_sampler"),
+            mag_filter: crate::gpu::FilterMode::Linear,
+            min_filter: crate::gpu::FilterMode::Linear,
+            ..Default::default()
+        });
 
         // Environment importance-sampling tables. Built from the equirect image so
         // the integrator can next-event-estimate toward bright regions; a
@@ -1273,6 +1287,8 @@ impl Tracer {
             bgl_entry(9, sampler_ty_filtering()),
             // Environment importance-sampling tables (packed into one buffer).
             bgl_entry(14, buffer_ty_storage(true)),
+            bgl_entry(15, texture_ty_float()),
+            bgl_entry(16, sampler_ty_filtering()),
         ];
         #[cfg(feature = "raytrace-hardware")]
         if use_hw {
@@ -1330,6 +1346,8 @@ impl Tracer {
             bgl_entry(10, buffer_ty_storage(true)),
             bgl_entry(12, buffer_ty_storage(false)),
             bgl_entry(14, buffer_ty_storage(true)),
+            bgl_entry(15, texture_ty_float()),
+            bgl_entry(16, sampler_ty_filtering()),
         ];
         #[cfg(feature = "raytrace-hardware")]
         if use_hw {
@@ -1406,6 +1424,9 @@ impl Tracer {
             env_view,
             env_sampler,
             has_env,
+            _brdf_lut_texture: brdf_lut_texture,
+            brdf_lut_view,
+            brdf_lut_sampler,
             env_tables_buf,
             env_dist,
             emit,
@@ -1480,6 +1501,14 @@ impl Tracer {
                 resource: crate::gpu::BindingResource::Sampler(&self.env_sampler),
             },
             bg_entry(14, &self.env_tables_buf),
+            crate::gpu::BindGroupEntry {
+                binding: 15,
+                resource: crate::gpu::BindingResource::TextureView(&self.brdf_lut_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 16,
+                resource: crate::gpu::BindingResource::Sampler(&self.brdf_lut_sampler),
+            },
         ];
         #[cfg(feature = "raytrace-hardware")]
         if let Some(hw) = &self.hw {
@@ -1797,6 +1826,14 @@ impl Tracer {
             bg_entry(10, &surf_buf),
             bg_entry(12, &accum_dir_buf),
             bg_entry(14, &self.env_tables_buf),
+            crate::gpu::BindGroupEntry {
+                binding: 15,
+                resource: crate::gpu::BindingResource::TextureView(&self.brdf_lut_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 16,
+                resource: crate::gpu::BindingResource::Sampler(&self.brdf_lut_sampler),
+            },
         ];
         #[cfg(feature = "raytrace-hardware")]
         if let Some(hw) = &self.hw {
@@ -1934,6 +1971,14 @@ impl Tracer {
             bg_entry(10, &surf_buf),
             bg_entry(12, &accum_dir_buf),
             bg_entry(14, &self.env_tables_buf),
+            crate::gpu::BindGroupEntry {
+                binding: 15,
+                resource: crate::gpu::BindingResource::TextureView(&self.brdf_lut_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 16,
+                resource: crate::gpu::BindingResource::Sampler(&self.brdf_lut_sampler),
+            },
         ];
         #[cfg(feature = "raytrace-hardware")]
         if let Some(hw) = &self.hw {

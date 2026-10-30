@@ -56,6 +56,9 @@ fn expected(name: &str) -> Option<Expected> {
         // and draw their edges per-object.
         "surface_wireframe" => e(3, 3, 3, 3, 1116),
         "materials_pbr" => e(25, 25, 1, 1, 55200),
+        // The environment-lit grid: the AO-mapped row's texture set splits
+        // it from the other twenty spheres.
+        "materials_ibl" => e(25, 25, 2, 2, 55200),
         // Material grids: half the items are pinned per-object, which no
         // longer splits a batch, so each pinned copy shares its batch with
         // its twin by mesh and texture set. The alpha grid's backdrop wall

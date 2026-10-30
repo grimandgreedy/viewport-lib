@@ -57,6 +57,32 @@ fn viewport_brdf_light_contrib(
     roughness: f32,
     F0: vec3<f32>,
 ) -> vec3<f32> {
+    return viewport_brdf_light_contrib_compensated(N, V, L, radiance, base_colour,
+                                                   metallic, roughness, F0, vec3<f32>(1.0));
+}
+
+// Multiple-scattering energy compensation for the specular lobe:
+// 1 + F0 * (1 / (A + B) - 1), where (A, B) is the split-sum BRDF LUT tap at
+// (N.V, perceptual roughness). A single-scattering GGX lobe loses the energy
+// that bounces between microfacets, which darkens rough metals; this restores
+// it. Equal to 1 when A + B = 1.
+fn viewport_brdf_energy_compensation(F0: vec3<f32>, dfg: vec2<f32>) -> vec3<f32> {
+    return vec3<f32>(1.0) + F0 * (1.0 / max(dfg.x + dfg.y, 1e-4) - 1.0);
+}
+
+// `viewport_brdf_light_contrib` with the specular term scaled by `ec`, the
+// value of `viewport_brdf_energy_compensation`. The diffuse term is unchanged.
+fn viewport_brdf_light_contrib_compensated(
+    N: vec3<f32>,
+    V: vec3<f32>,
+    L: vec3<f32>,
+    radiance: vec3<f32>,
+    base_colour: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    F0: vec3<f32>,
+    ec: vec3<f32>,
+) -> vec3<f32> {
     let H = normalize(L + V);
     let NdotL = max(dot(N, L), 0.0);
     if NdotL <= 0.0 { return vec3<f32>(0.0); }
@@ -71,7 +97,7 @@ fn viewport_brdf_light_contrib(
     let kS = F;
     let kD = (vec3<f32>(1.0) - kS) * (1.0 - metallic);
 
-    let specular = (D * G * F) / (4.0 * NdotV * NdotL + 0.001);
+    let specular = (D * G * F) / (4.0 * NdotV * NdotL + 0.001) * ec;
     return (kD * base_colour / 3.14159265 + specular) * radiance * NdotL;
 }
 
