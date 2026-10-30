@@ -573,7 +573,15 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
     );
     let world_pos4 = model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;
-    dv.normal = normalize(model3 * dv.normal);
+    // Normals take the cofactor (the inverse transpose up to scale), signed
+    // so a mirroring transform keeps the normal's side.
+    let normal3 = mat3x3<f32>(
+        cross(model3[1], model3[2]),
+        cross(model3[2], model3[0]),
+        cross(model3[0], model3[1]),
+    );
+    let normal_sign = select(1.0, -1.0, dot(model3[0], normal3[0]) < 0.0);
+    dv.normal = normalize(normal3 * dv.normal) * normal_sign;
     dv.tangent = vec4<f32>(normalize(model3 * dv.tangent.xyz), dv.tangent.w);
     if FEAT_DEFORM {
         dv = viewport_deform_world_space(dv, dctx);
