@@ -118,7 +118,8 @@ pub struct PerformancePolicy {
     /// Allow the viewport to skip non-essential HDR effect passes under load.
     ///
     /// When `true` and the previous frame exceeded the target budget, the SSAO,
-    /// contact shadow, and bloom passes are skipped for that frame.
+    /// contact shadow, bloom and depth of field passes are skipped for that
+    /// frame.
     /// Ignored when `preset` is `Some`.
     pub allow_effect_throttling: bool,
 }
@@ -574,7 +575,8 @@ pub struct FrameStats {
     /// Set when `allow_volume_quality_reduction` is true and the previous frame
     /// missed the target budget. Always false in [`RuntimeMode::Capture`].
     pub volume_quality_reduced: bool,
-    /// True when SSAO, contact shadows, and bloom were skipped this frame.
+    /// True when SSAO, contact shadows, bloom and depth of field were skipped
+    /// this frame.
     ///
     /// Set when `allow_effect_throttling` is true and the previous frame missed
     /// the target budget. Always false in [`RuntimeMode::Capture`].
