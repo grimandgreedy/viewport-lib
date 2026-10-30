@@ -155,16 +155,27 @@ impl Harness {
         }
     }
 
-    /// Directory name golden references for this harness's backend live under:
-    /// `"metal"`, `"vulkan"`, `"dx12"`, `"gl"`. References are blessed per
-    /// backend because different backends rasterise the same frame differently.
-    /// Falls back to `"unknown"` when the harness was built around a
-    /// caller-owned device.
+    /// Directory name golden references for this harness's adapter live under:
+    /// `"metal"`, `"vulkan"`, `"dx12"`, `"gl"` for hardware, with the
+    /// rasteriser appended for a software adapter (`"vulkan-lavapipe"`,
+    /// `"gl-llvmpipe"`, `"dx12-warp"`). References are blessed per adapter
+    /// because each rasterises the same frame differently, and a software
+    /// rasteriser differently again from hardware on the same backend. Falls
+    /// back to `"unknown"` when the harness was built around a caller-owned
+    /// device. See [`reference_dir_name`].
     pub fn backend_dir_name(&self) -> String {
         match &self.adapter_info {
-            Some(info) => format!("{:?}", info.backend).to_lowercase(),
+            Some(info) => {
+                reference_dir_name(info.backend, info.device_type, &info.name, &info.driver)
+            }
             None => "unknown".to_string(),
         }
+    }
+
+    /// The adapter's `driver_info` (for Mesa, the version string `vulkaninfo`
+    /// prints as `driverInfo`), or `None` for a caller-owned device.
+    pub fn driver_info(&self) -> Option<&str> {
+        self.adapter_info.as_ref().map(|i| i.driver_info.as_str())
     }
 
     /// Upload a scene's assets into this harness's renderer and return the built
@@ -334,4 +345,109 @@ fn half_to_f32(bits: u16) -> f32 {
         (sign << 31) | ((exponent + 127 - 15) << 23) | (fraction << 13)
     };
     f32::from_bits(out)
+}
+
+/// The golden reference directory name for an adapter.
+///
+/// The backend's name in lower case (`metal`, `vulkan`, `dx12`, `gl`), plus a
+/// suffix naming the rasteriser when `device_type` is
+/// [`DeviceType::Cpu`](wgpu::DeviceType::Cpu): `lavapipe` for Mesa's Vulkan
+/// driver, `llvmpipe` for Mesa's GL driver, `warp` for Direct3D's, `softpipe`
+/// and `swiftshader` by name, and `cpu` for any other software adapter.
+/// `name` and `driver` are the adapter's `AdapterInfo` fields.
+pub fn reference_dir_name(
+    backend: wgpu::Backend,
+    device_type: wgpu::DeviceType,
+    name: &str,
+    driver: &str,
+) -> String {
+    let base = format!("{backend:?}").to_lowercase();
+    if device_type != wgpu::DeviceType::Cpu {
+        return base;
+    }
+    let id = format!("{name} {driver}").to_lowercase();
+    // lavapipe reports itself as "llvmpipe" in its device name, so the backend
+    // decides which Mesa driver it is.
+    let rasteriser = if id.contains("lavapipe")
+        || (backend == wgpu::Backend::Vulkan && id.contains("llvmpipe"))
+    {
+        "lavapipe"
+    } else if id.contains("llvmpipe") {
+        "llvmpipe"
+    } else if id.contains("basic render driver") || id.contains("warp") {
+        "warp"
+    } else if id.contains("softpipe") {
+        "softpipe"
+    } else if id.contains("swiftshader") {
+        "swiftshader"
+    } else {
+        "cpu"
+    };
+    format!("{base}-{rasteriser}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reference_dir_name;
+    use viewport_lib::wgpu::{Backend, DeviceType};
+
+    #[test]
+    fn hardware_adapters_keep_the_backend_name() {
+        assert_eq!(
+            reference_dir_name(Backend::Metal, DeviceType::IntegratedGpu, "Apple M4", ""),
+            "metal"
+        );
+        assert_eq!(
+            reference_dir_name(
+                Backend::Vulkan,
+                DeviceType::DiscreteGpu,
+                "NVIDIA GeForce RTX 3080",
+                "NVIDIA"
+            ),
+            "vulkan"
+        );
+        assert_eq!(
+            reference_dir_name(Backend::Gl, DeviceType::IntegratedGpu, "Mesa Intel", ""),
+            "gl"
+        );
+    }
+
+    #[test]
+    fn software_adapters_name_their_rasteriser() {
+        assert_eq!(
+            reference_dir_name(
+                Backend::Vulkan,
+                DeviceType::Cpu,
+                "llvmpipe (LLVM 17.0.6, 256 bits)",
+                "llvmpipe"
+            ),
+            "vulkan-lavapipe"
+        );
+        assert_eq!(
+            reference_dir_name(
+                Backend::Gl,
+                DeviceType::Cpu,
+                "llvmpipe (LLVM 17.0.6, 256 bits)",
+                ""
+            ),
+            "gl-llvmpipe"
+        );
+        assert_eq!(
+            reference_dir_name(
+                Backend::Dx12,
+                DeviceType::Cpu,
+                "Microsoft Basic Render Driver",
+                ""
+            ),
+            "dx12-warp"
+        );
+        assert_eq!(
+            reference_dir_name(Backend::Vulkan, DeviceType::Cpu, "SwiftShader Device", ""),
+            "vulkan-swiftshader"
+        );
+        assert_eq!(
+            reference_dir_name(Backend::Vulkan, DeviceType::Cpu, "Some Emulator", ""),
+            "vulkan-cpu"
+        );
+    }
 }
