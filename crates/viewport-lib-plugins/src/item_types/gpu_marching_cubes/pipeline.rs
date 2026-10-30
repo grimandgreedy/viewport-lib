@@ -91,7 +91,7 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: viewport_lib::gpu::CompareFunction::LessEqual,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
             },
@@ -110,7 +110,7 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 topology: viewport_lib::gpu::PrimitiveTopology::LineList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: viewport_lib::gpu::CompareFunction::LessEqual,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
             },
@@ -132,7 +132,7 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             )
             // The isosurface is an open, thin shell.
             .shadow_caster(viewport_lib::plugin_api::ShadowCaster::TwoSided);
-            opts.depth_compare = viewport_lib::gpu::CompareFunction::Less;
+            opts.depth_compare = viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT;
             r.builder.build_shadow_pipeline(&r.device, &opts)
         }
         // Outline mask: the generated vertex buffer rasterised into the R8

@@ -114,7 +114,9 @@ impl ViewportRenderer {
                 depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                     view: &resources.scene_tier.shadow.map_view,
                     depth_ops: Some(crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(1.0),
+                        load: crate::gpu::LoadOp::Clear(
+                            crate::plugin_api::depth::SHADOW_DEPTH_CLEAR,
+                        ),
                         store: crate::gpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -304,7 +306,9 @@ impl ViewportRenderer {
                             crate::gpu::RenderPassDepthStencilAttachment {
                                 view: &resources.scene_tier.shadow.map_view,
                                 depth_ops: Some(crate::gpu::Operations {
-                                    load: crate::gpu::LoadOp::Clear(1.0),
+                                    load: crate::gpu::LoadOp::Clear(
+                                        crate::plugin_api::depth::SHADOW_DEPTH_CLEAR,
+                                    ),
                                     store: crate::gpu::StoreOp::Store,
                                 }),
                                 stencil_ops: None,
@@ -845,7 +849,9 @@ impl ViewportRenderer {
                             crate::gpu::RenderPassDepthStencilAttachment {
                                 view,
                                 depth_ops: Some(crate::gpu::Operations {
-                                    load: crate::gpu::LoadOp::Clear(1.0),
+                                    load: crate::gpu::LoadOp::Clear(
+                                        crate::plugin_api::depth::SHADOW_DEPTH_CLEAR,
+                                    ),
                                     store: crate::gpu::StoreOp::Store,
                                 }),
                                 stencil_ops: None,

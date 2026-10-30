@@ -177,7 +177,7 @@ impl CompatibilityTier {
             shadow_sampler: crate::resources::builders::comparison_sampler(
                 device,
                 "forward_shadow_sampler",
-                crate::gpu::CompareFunction::LessEqual,
+                crate::plugin_api::depth::SHADOW_DEPTH_COMPARE,
             ),
             ibl_sampler: device.create_sampler(&crate::gpu::SamplerDescriptor {
                 label: Some("forward_ibl_sampler"),

@@ -54,7 +54,7 @@ fn build(r: &ImageSliceRecipe, i: usize) -> gpu::RenderPipeline {
                 topology: gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: false,
-                depth_compare: gpu::CompareFunction::LessEqual,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: r.sample_count,
                 ldr_format: r.ldr_format,
             },

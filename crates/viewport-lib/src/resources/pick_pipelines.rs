@@ -121,7 +121,7 @@ impl DeviceResources {
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     true,
-                    crate::gpu::CompareFunction::Less,
+                    crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: 1, // pick pass is always 1x (no MSAA)
@@ -319,7 +319,7 @@ impl DeviceResources {
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     true,
-                    crate::gpu::CompareFunction::Less,
+                    crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: 1,
@@ -420,7 +420,7 @@ impl DeviceResources {
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     true,
-                    crate::gpu::CompareFunction::Less,
+                    crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: 1,

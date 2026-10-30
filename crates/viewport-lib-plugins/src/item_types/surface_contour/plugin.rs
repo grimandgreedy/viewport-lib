@@ -128,7 +128,7 @@ fn build_contour(r: &ContourRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
     // Tested against the surface's own depth. The bias absorbs the rounding
     // between this draw and the colour draw of the same triangles.
     let mut depth =
-        builders::scene_depth_stencil(false, viewport_lib::gpu::CompareFunction::LessEqual);
+        builders::scene_depth_stencil(false, viewport_lib::plugin_api::depth::DEPTH_COMPARE);
     depth.bias.constant = -2;
     builders::render_pipeline(
         &r.device,

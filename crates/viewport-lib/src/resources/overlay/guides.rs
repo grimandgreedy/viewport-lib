@@ -105,7 +105,7 @@ fn build_guide(r: &GuideRecipe, i: usize) -> crate::gpu::RenderPipeline {
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false, // Do not write to depth buffer.
-                    crate::gpu::CompareFunction::Less,
+                    crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: r.sample_count,
@@ -145,7 +145,7 @@ fn build_guide(r: &GuideRecipe, i: usize) -> crate::gpu::RenderPipeline {
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false,
-                    crate::gpu::CompareFunction::Less,
+                    crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: r.sample_count,
@@ -183,18 +183,14 @@ fn build_guide(r: &GuideRecipe, i: usize) -> crate::gpu::RenderPipeline {
                     format: crate::gpu::TextureFormat::Depth24PlusStencil8,
                     depth_write_enabled: crate::resources::builders::dwrite(true),
                     depth_compare: crate::resources::builders::dcompare(
-                        crate::gpu::CompareFunction::LessEqual,
+                        crate::plugin_api::depth::DEPTH_COMPARE,
                     ),
                     stencil: crate::gpu::StencilState::default(),
-                    bias: crate::gpu::DepthBiasState {
-                        // Push grid depth slightly behind coplanar geometry to prevent
-                        // z-fighting when object faces coincide with the grid plane.
-                        // 4 x the minimum representable Depth24 unit ~ 2.4e-7 : invisible
-                        // at any distance but reliably loses the depth test to geometry.
-                        constant: 4,
-                        slope_scale: 0.0,
-                        clamp: 0.0,
-                    },
+                    // Push grid depth slightly behind coplanar geometry to prevent
+                    // z-fighting when object faces coincide with the grid plane.
+                    // 4 x the minimum representable Depth24 unit ~ 2.4e-7 : invisible
+                    // at any distance but reliably loses the depth test to geometry.
+                    bias: crate::plugin_api::depth::scene_depth_bias(4, 0.0),
                 }),
                 multisample: crate::gpu::MultisampleState {
                     count: r.sample_count,

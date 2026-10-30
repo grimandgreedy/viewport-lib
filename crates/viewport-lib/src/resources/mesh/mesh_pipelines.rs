@@ -128,8 +128,10 @@ pub(crate) fn ldr_mesh_pipeline_with(
     depth_write: bool,
     constants: &[(&str, f64)],
 ) -> crate::gpu::RenderPipeline {
-    let depth_stencil =
-        crate::resources::builders::scene_depth_stencil(true, crate::gpu::CompareFunction::Less);
+    let depth_stencil = crate::resources::builders::scene_depth_stencil(
+        true,
+        crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
+    );
     let plain = plain_entries(constants);
     let lean = lean_entries(constants);
     crate::resources::builders::render_pipeline_with_constants(
@@ -245,7 +247,7 @@ pub(crate) fn hdr_mesh_pipeline_entry(
             },
             depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                 depth_write,
-                crate::gpu::CompareFunction::Less,
+                crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
             )),
             multisample: crate::gpu::MultisampleState {
                 count: 1,
@@ -309,7 +311,7 @@ pub(crate) fn build_oit_pipeline_entry(
     };
     let depth_stencil = crate::resources::builders::scene_depth_stencil(
         false,
-        crate::gpu::CompareFunction::LessEqual,
+        crate::plugin_api::depth::DEPTH_COMPARE,
     );
     crate::resources::builders::render_pipeline_with_constants(
         device,
@@ -494,7 +496,7 @@ pub(crate) fn build_shadow_pipeline(
                 format: crate::gpu::TextureFormat::Depth32Float,
                 depth_write_enabled: crate::resources::builders::dwrite(true),
                 depth_compare: crate::resources::builders::dcompare(
-                    crate::gpu::CompareFunction::Less,
+                    crate::plugin_api::depth::SHADOW_DEPTH_COMPARE_STRICT,
                 ),
                 stencil: crate::gpu::StencilState::default(),
                 bias: if cull_mode.is_none() {
@@ -565,7 +567,7 @@ pub(crate) fn build_shadow_point_pipeline(
             depth_stencil: Some(crate::resources::builders::depth_stencil(
                 crate::gpu::TextureFormat::Depth32Float,
                 true,
-                crate::gpu::CompareFunction::Less,
+                crate::plugin_api::depth::SHADOW_DEPTH_COMPARE_STRICT,
             )),
             multisample: crate::gpu::MultisampleState {
                 count: 1,
@@ -617,7 +619,7 @@ pub(crate) fn build_outline_mask_pipelines(
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     true,
-                    crate::gpu::CompareFunction::Less,
+                    crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: 1,

@@ -133,7 +133,7 @@ fn build(r: &PackedRecipe, i: usize) -> gpu::RenderPipeline {
                 topology: gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: false,
-                depth_compare: gpu::CompareFunction::Less,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
             },

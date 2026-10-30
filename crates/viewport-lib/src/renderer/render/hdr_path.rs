@@ -764,7 +764,7 @@ impl ViewportRenderer {
                 depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                     view: scene_depth_view,
                     depth_ops: Some(crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(1.0),
+                        load: crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
                         store: crate::gpu::StoreOp::Store,
                     }),
                     // Every pixel starts as a member of every layer; the
@@ -1128,7 +1128,7 @@ impl ViewportRenderer {
                     depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                         view: &slot_hdr.hdr_depth_view,
                         depth_ops: Some(crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(1.0),
+                            load: crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
                             store: crate::gpu::StoreOp::Store,
                         }),
                         // The value the scene pass clears stencil to when it
@@ -1420,7 +1420,7 @@ impl ViewportRenderer {
                 depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                     view: &copy.view,
                     depth_ops: Some(crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(1.0),
+                        load: crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
                         store: crate::gpu::StoreOp::Store,
                     }),
                     stencil_ops: Some(crate::gpu::Operations {
@@ -1946,7 +1946,7 @@ impl ViewportRenderer {
             depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                 view: fg_depth_view,
                 depth_ops: Some(crate::gpu::Operations {
-                    load: crate::gpu::LoadOp::Clear(1.0),
+                    load: crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
                     store: crate::gpu::StoreOp::Store,
                 }),
                 stencil_ops: Some(crate::gpu::Operations {
@@ -2281,7 +2281,9 @@ impl ViewportRenderer {
                                 crate::gpu::RenderPassDepthStencilAttachment {
                                     view: &slot_hdr.output_depth_view,
                                     depth_ops: Some(crate::gpu::Operations {
-                                        load: crate::gpu::LoadOp::Clear(1.0),
+                                        load: crate::gpu::LoadOp::Clear(
+                                            crate::plugin_api::depth::DEPTH_CLEAR,
+                                        ),
                                         store: crate::gpu::StoreOp::Store,
                                     }),
                                     stencil_ops: None,

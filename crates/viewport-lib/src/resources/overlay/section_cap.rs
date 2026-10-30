@@ -69,7 +69,7 @@ fn build_cap(r: &CapRecipe, i: usize) -> crate::gpu::RenderPipeline {
             },
             depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                 false,
-                crate::gpu::CompareFunction::Less,
+                crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
             )),
             multisample: crate::gpu::MultisampleState {
                 count: sample_count,

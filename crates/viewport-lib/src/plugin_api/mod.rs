@@ -147,6 +147,7 @@
 
 pub mod builders;
 pub mod cull;
+pub mod depth;
 pub mod install;
 pub mod item_type;
 pub mod pick_helpers;

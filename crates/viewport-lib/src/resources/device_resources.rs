@@ -1311,7 +1311,7 @@ impl DeviceResources {
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     true,
-                    crate::gpu::CompareFunction::LessEqual,
+                    crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: self.sample_count,

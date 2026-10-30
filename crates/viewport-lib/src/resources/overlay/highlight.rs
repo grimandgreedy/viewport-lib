@@ -99,14 +99,10 @@ impl DeviceResources {
                         format: crate::gpu::TextureFormat::Depth24PlusStencil8,
                         depth_write_enabled: crate::resources::builders::dwrite(false),
                         depth_compare: crate::resources::builders::dcompare(
-                            crate::gpu::CompareFunction::LessEqual,
+                            crate::plugin_api::depth::DEPTH_COMPARE,
                         ),
                         stencil: crate::gpu::StencilState::default(),
-                        bias: crate::gpu::DepthBiasState {
-                            constant: -2,
-                            slope_scale: -1.0,
-                            clamp: 0.0,
-                        },
+                        bias: crate::plugin_api::depth::scene_depth_bias(-2, -1.0),
                     }),
                     multisample: crate::gpu::MultisampleState {
                         count: 1,

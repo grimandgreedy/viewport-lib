@@ -1341,7 +1341,8 @@ pub fn build_outline_mask_pipeline(
 /// has nothing to output: leave it empty, or have it `discard` where the item's
 /// own fragment stage would, so a cut-out stamps only what it drew.
 ///
-/// The depth test is `LessEqual` with a small bias towards the camera. This is
+/// The depth test is [`DEPTH_COMPARE`](crate::plugin_api::depth::DEPTH_COMPARE)
+/// with a small bias towards the camera. This is
 /// a second draw of geometry the opaque pass already drew, and without the
 /// bias rounding differences between the two passes leave holes in the stamp.
 pub fn build_surface_mask_pipeline(
@@ -1391,18 +1392,14 @@ pub(crate) fn surface_mask_depth_stencil() -> crate::gpu::DepthStencilState {
     crate::gpu::DepthStencilState {
         format: crate::gpu::TextureFormat::Depth24PlusStencil8,
         depth_write_enabled: dwrite(false),
-        depth_compare: dcompare(crate::gpu::CompareFunction::LessEqual),
+        depth_compare: dcompare(crate::plugin_api::depth::DEPTH_COMPARE),
         stencil: crate::gpu::StencilState {
             front: stamp,
             back: stamp,
             read_mask: 0xff,
             write_mask: 0xff,
         },
-        bias: crate::gpu::DepthBiasState {
-            constant: -2,
-            slope_scale: 0.0,
-            clamp: 0.0,
-        },
+        bias: crate::plugin_api::depth::scene_depth_bias(-2, 0.0),
     }
 }
 
