@@ -890,7 +890,7 @@ impl LightmapBakeShowcase {
                 // realtime shadow reads as a soft contact shadow that blends with the
                 // baked GI rather than a hard-edged blot on the curved baked heroes.
                 l.shadows.filter = ShadowFilter::Pcss;
-                l.shadows.pcss_light_radius = 0.05;
+                l.shadows.sun_angular_radius = 0.03;
             } else {
                 let mut key = LightSource::default();
                 key.kind = LightKind::Directional {

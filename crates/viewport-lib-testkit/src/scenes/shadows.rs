@@ -11,7 +11,7 @@ use glam::Vec3;
 use viewport_lib::Colour;
 use viewport_lib::{
     BackfacePolicy, ClipObject, LightKind, LightSource, LightingSettings, Material,
-    SceneRenderItem, primitives,
+    SceneRenderItem, ShadowFilter, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, item, orbit_camera, upload};
@@ -407,6 +407,57 @@ fn build_spots_wide_narrow(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
 }
 
+/// A sun under the PCSS filter over casters of different heights: a tall
+/// thin post, a cube, a small cube, and a plank held 1.2 m up on thin legs.
+/// The penumbra should be sharp where each caster meets the ground and widen
+/// with height: widest at the post's tip and under the plank, and never wide
+/// enough to swallow the small cube's shadow. The sun's angular radius is the
+/// default.
+fn build_pcss_sun(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let mut items = vec![super::ground(ctx, 0.0)];
+    items.push(slab(
+        ctx,
+        [0.1, 0.1, 2.5],
+        [-2.2, 1.0, 1.25],
+        [0.8, 0.75, 0.7],
+    ));
+    items.push(slab(
+        ctx,
+        [0.8, 0.8, 0.8],
+        [1.1, 1.0, 0.4],
+        [0.7, 0.8, 0.95],
+    ));
+    items.push(slab(
+        ctx,
+        [0.15, 0.15, 0.15],
+        [-1.4, -1.0, 0.075],
+        [0.95, 0.8, 0.7],
+    ));
+    items.push(slab(
+        ctx,
+        [1.4, 0.35, 0.05],
+        [0.9, -1.4, 1.225],
+        [0.6, 0.45, 0.3],
+    ));
+    for x in [0.3, 1.5] {
+        items.push(slab(
+            ctx,
+            [0.04, 0.04, 1.2],
+            [x, -1.4, 0.6],
+            [0.5, 0.38, 0.25],
+        ));
+    }
+    let mut l = LightingSettings::default();
+    l.lights = vec![sun([-0.45, 0.35, 0.8], 1.5)];
+    l.hemisphere_intensity = 0.2;
+    l.shadows.filter = ShadowFilter::Pcss;
+    BuiltScene {
+        items,
+        lighting: l,
+        ..Default::default()
+    }
+}
+
 fn hall_cameras() -> Vec<NamedCamera> {
     vec![NamedCamera {
         name: "end",
@@ -470,6 +521,14 @@ pub fn scenes() -> Vec<NamedScene> {
                 camera: orbit_camera(Vec3::new(0.0, -0.8, 0.0), 11.0, 0.0, 0.9),
             }],
             build: build_spots_wide_narrow,
+        },
+        NamedScene {
+            name: "pcss_sun",
+            cameras: vec![NamedCamera {
+                name: "iso",
+                camera: orbit_camera(Vec3::new(0.0, -0.4, 0.4), 8.0, 0.4, 0.7),
+            }],
+            build: build_pcss_sun,
         },
     ]
 }

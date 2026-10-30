@@ -329,7 +329,7 @@ struct App {
     shadow_bias: f32,
     shadow_cascade_count: u32,
     shadow_filter: ShadowFilter,
-    pcss_light_radius: f32,
+    sun_angular_radius: f32,
     shadow_atlas_resolution: u32,
     shadow_extent_enabled: bool,
     shadow_extent_value: f32,
@@ -535,7 +535,7 @@ impl App {
             shadow_bias: 0.0,
             shadow_cascade_count: 4,
             shadow_filter: ShadowFilter::Pcf,
-            pcss_light_radius: 0.02,
+            sun_angular_radius: 0.01,
             shadow_atlas_resolution: 4096,
             shadow_extent_enabled: false,
             shadow_extent_value: 20.0,
@@ -629,7 +629,7 @@ impl App {
             _t.shadows.bias = self.shadow_bias;
             _t.shadows.cascade_count = self.shadow_cascade_count;
             _t.shadows.filter = self.shadow_filter;
-            _t.shadows.pcss_light_radius = self.pcss_light_radius;
+            _t.shadows.sun_angular_radius = self.sun_angular_radius;
             _t.shadows.atlas_resolution = self.shadow_atlas_resolution;
             _t.shadows.extent_override = if self.shadow_extent_enabled {
                 Some(self.shadow_extent_value)
@@ -1270,8 +1270,8 @@ impl App {
                     ShadowFilter::Pcss | ShadowFilter::PcssFast
                 ) {
                     ui.add(
-                        egui::Slider::new(&mut self.pcss_light_radius, 0.001..=0.2)
-                            .text("PCSS radius"),
+                        egui::Slider::new(&mut self.sun_angular_radius, 0.0..=0.05)
+                            .text("Sun angular radius (rad)"),
                     );
                 }
 

@@ -19,10 +19,15 @@ fn punctual_tap(layer: i32, uv: vec2<f32>, reference: f32) -> f32 {
     return textureSampleCompareLevel(punctual_shadow_tex, shadow_sampler, uv, layer, reference);
 }
 
-// One compare tap of the cube whose faces start at `base`, along `dir` from
-// the light (any length). The major axis picks the face; the face UV follows
-// the hardware cube-map table.
-fn punctual_cube_tap(base: i32, dir: vec3<f32>, reference: f32) -> f32 {
+// The layer and face UV a direction from the light (any length) lands on,
+// for the cube whose faces start at `base`. The major axis picks the face;
+// the face UV follows the hardware cube-map table.
+struct PunctualCubeTexel {
+    layer: i32,
+    uv: vec2<f32>,
+}
+
+fn punctual_cube_face(base: i32, dir: vec3<f32>) -> PunctualCubeTexel {
     let a = abs(dir);
     var face = 0;
     var sc = 0.0;
@@ -60,13 +65,142 @@ fn punctual_cube_tap(base: i32, dir: vec3<f32>, reference: f32) -> f32 {
         }
     }
     let uv = vec2<f32>(sc, tc) / max(ma, 1e-8) * 0.5 + 0.5;
-    return punctual_tap(base + face, uv, reference);
+    return PunctualCubeTexel(base + face, uv);
 }
+
+// One compare tap of the cube whose faces start at `base`, along `dir` from
+// the light.
+fn punctual_cube_tap(base: i32, dir: vec3<f32>, reference: f32) -> f32 {
+    let f = punctual_cube_face(base, dir);
+    return punctual_tap(f.layer, f.uv, reference);
+}
+
+// Caps of the punctual PCSS tiers: the search and filter radius in
+// shadow-map texels, and the penumbra-to-light-size ratio.
+const PUNCTUAL_PCSS_MAX_TEXELS: f32 = 24.0;
+const PUNCTUAL_PCSS_MAX_RATIO: f32 = 10.0;
+
+// BEGIN_PCSS_BLOCKER_SEARCH
+// The layer and UV a ray from the light along `q` (any length) lands on: the
+// spot's map through its light_view_proj, or the cube face the hardware would
+// pick.
+fn punctual_ray_texel(light: SingleLight, spot: bool, q: vec3<f32>) -> PunctualCubeTexel {
+    if spot {
+        let clip = light.light_view_proj * vec4<f32>(light.pos_or_dir + q, 1.0);
+        let ndc = clip.xy / max(clip.w, 1e-6);
+        return PunctualCubeTexel(light.shadow_layer, vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - 0.5 * ndc.y));
+    }
+    return punctual_cube_face(light.shadow_layer, q);
+}
+
+// The stored normalised distance at `texel`, read raw for the blocker search.
+fn punctual_load(texel: PunctualCubeTexel, res: f32) -> f32 {
+    let last = i32(res) - 1;
+    let coords = clamp(vec2<i32>(texel.uv * res), vec2<i32>(0), vec2<i32>(last));
+    return textureLoad(punctual_shadow_tex, coords, texel.layer, 0);
+}
+
+// PCSS for a point or spot light. `dir` is the unit ray from the light to the
+// lifted receiver `offset_pos`, `n` the receiver normal facing the light and
+// `reference` the receiver's normalised compare distance.
+//
+// Taps are rays around `dir`, so one kernel serves the cube and the spot map.
+// Each tap compares against the receiver plane where its ray meets it rather
+// than the receiver's own distance: a wide disk on a receiver the light
+// grazes (a ceiling beside a room light) would otherwise read the receiver
+// itself as an occluder. The tilt is capped at sixteen times the tap's
+// sideways reach (a receiver up to 86 degrees from the light).
+fn punctual_pcss(
+    light: SingleLight,
+    spot: bool,
+    dir: vec3<f32>,
+    offset_pos: vec3<f32>,
+    n: vec3<f32>,
+    reference: f32,
+    dist: f32,
+    range: f32,
+    res: f32,
+    tier: u32,
+) -> f32 {
+    // Texels per radian at the light: a cube face spans 90 degrees, a spot's
+    // frustum 2 * atan(1 / P[0][0]).
+    var texels_per_rad = res * 0.5;
+    if spot {
+        let vp = light.light_view_proj;
+        texels_per_rad = res * 0.5 * length(vec3<f32>(vp[0][0], vp[1][0], vp[2][0]));
+    }
+    let light_radius = max(light.radius, 0.01);
+    let angular_texels = light_radius / max(dist, 1e-4) * texels_per_rad;
+    // The search covers the widest penumbra this light can cast here, and
+    // the filter stays inside it: a filter reaching past the search would
+    // jump to lit where the search first misses the occluder.
+    let search_texels = clamp(angular_texels * PUNCTUAL_PCSS_MAX_RATIO, 1.0, PUNCTUAL_PCSS_MAX_TEXELS);
+    let search = search_texels / texels_per_rad;
+    let blocker_taps = select(8u, 16u, tier == 1u);
+    let filter_taps = select(16u, 32u, tier == 1u);
+    let t = normalize(cross(dir, select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(dir.z) > 0.9)));
+    let b = cross(dir, t);
+    let plane = dot(n, offset_pos - light.pos_or_dir);
+
+    // The receiver's own texel first: a thin caster's umbra can fall between
+    // every disk tap of a wide search, which would read as lit.
+    let own_texel = punctual_ray_texel(light, spot, dir);
+    let own = punctual_load(own_texel, res);
+    let cs = pcss_rotation(own_texel.uv * res + f32(own_texel.layer) * 0.37);
+    let cos_r = cs.x;
+    let sin_r = cs.y;
+    var blocker_sum = select(0.0, own, own < reference);
+    var blocker_count = select(0.0, 1.0, own < reference);
+    for (var i = 0u; i < blocker_taps; i++) {
+        let d = shadow_tap_dir(i, blocker_taps == 8u);
+        let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
+        let q = dir + (t * rd.x + b * rd.y) * search;
+        let stored = punctual_load(punctual_ray_texel(light, spot, q), res);
+        if stored < punctual_plane_reference(q, n, plane, dist, reference, length(rd) * search * dist, range) {
+            blocker_sum += stored;
+            blocker_count += 1.0;
+        }
+    }
+    if blocker_count < 1.0 {
+        return 1.0;
+    }
+    let avg = blocker_sum / blocker_count;
+    let ratio = pcss_soft_cap(max(reference - avg, 0.0) / max(avg, 1e-4), PUNCTUAL_PCSS_MAX_RATIO);
+    let radius = clamp(ratio * angular_texels, 1.0, search_texels) / texels_per_rad;
+    var shadow = 0.0;
+    for (var i = 0u; i < filter_taps; i++) {
+        let d = POISSON_DISK[i];
+        let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
+        let q = dir + (t * rd.x + b * rd.y) * radius;
+        let texel = punctual_ray_texel(light, spot, q);
+        let tap_ref = punctual_plane_reference(q, n, plane, dist, reference, length(rd) * radius * dist, range);
+        shadow += punctual_tap(texel.layer, texel.uv, tap_ref);
+    }
+    return shadow / f32(filter_taps);
+}
+
+// The normalised compare distance for a tap along `q`: `reference` moved by
+// how much farther from the light the ray meets the receiver plane
+// (`dot(n, p - light) == plane`) than the receiver at `dist`, by at most
+// `16 * reach` world units.
+fn punctual_plane_reference(q: vec3<f32>, n: vec3<f32>, plane: f32, dist: f32, reference: f32, reach: f32, range: f32) -> f32 {
+    let limit = 16.0 * reach / range;
+    let qn = dot(n, q);
+    if qn >= -1e-6 {
+        return reference + limit;
+    }
+    let along = plane / qn * length(q);
+    return reference + clamp((along - dist) / range, -limit, limit);
+}
+// ALT(NO_DEPTH_LOADS):
+// END_PCSS_BLOCKER_SEARCH
 
 // Shadow of a point or spot light with layers, filtered by
 // `shadow_atlas.shadow_filter` the way the cascades are: Hard takes one tap,
-// PCF 8 rotated disk taps, PCF high 32. The PCSS tiers have no blocker search
-// here and run PCF.
+// PCF 8 rotated disk taps, PCF high 32. The PCSS tiers search for blockers and
+// size the penumbra by the light's radius (at least 0.01): a blocker at `d_b`
+// in front of a receiver at `d_r` widens it by `(d_r - d_b) / d_b` times the
+// light's angular radius seen from the receiver.
 fn sample_punctual_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec3<f32>) -> f32 {
     if light.shadow_layer < 0 {
         return 1.0;
@@ -126,6 +260,7 @@ fn sample_punctual_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: 
     let sin_r = sin(rot);
     let cos_r = cos(rot);
     let taps = select(8u, 32u, tier == 3u);
+    let pcss = tier == 1u || tier == 4u;
 
     if spot {
         let clip = vp * vec4<f32>(offset_pos, 1.0);
@@ -140,6 +275,12 @@ fn sample_punctual_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: 
         if hard {
             return punctual_tap(light.shadow_layer, uv, normalised);
         }
+        // BEGIN_PCSS_BLOCKER_SEARCH
+        if pcss {
+            return punctual_pcss(light, true, dir, offset_pos, n, normalised, offset_dist, range, res, tier);
+        }
+        // ALT(NO_DEPTH_LOADS):
+        // END_PCSS_BLOCKER_SEARCH
         let r = radius_texels / res;
         var shadow = 0.0;
         for (var i = 0u; i < taps; i++) {
@@ -153,6 +294,12 @@ fn sample_punctual_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: 
     if hard {
         return punctual_cube_tap(light.shadow_layer, dir, normalised);
     }
+    // BEGIN_PCSS_BLOCKER_SEARCH
+    if pcss {
+        return punctual_pcss(light, false, dir, offset_pos, n, normalised, offset_dist, range, res, tier);
+    }
+    // ALT(NO_DEPTH_LOADS):
+    // END_PCSS_BLOCKER_SEARCH
     // Taps on the plane perpendicular to `dir`, at unit distance, where one
     // cube-face texel spans 2 / res. Each tap picks its own face, so taps
     // that cross a face edge land on the neighbouring face.

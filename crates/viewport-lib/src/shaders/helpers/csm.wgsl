@@ -8,7 +8,8 @@
 //
 // `shadow_atlas.shadow_filter` selects the filter tier:
 //   0 = PCF: 8 rotated Poisson taps, fixed radius (default)
-//   1 = PCSS: 16-tap blocker search + 32-tap filter, variable penumbra
+//   1 = PCSS: 16-tap blocker search + 32-tap filter, a penumbra sized by
+//       the sun's angular radius (`tan_sun`)
 //   2 = hard: one hardware-compare tap (2x2 bilinear)
 //   3 = PCF high: 32 rotated Poisson taps (the former PCF default)
 //   4 = PCSS fast: 8-tap blocker search + 16-tap filter
@@ -127,6 +128,28 @@ fn csm_contact(
         return textureSampleCompareLevel(shadow_map, shadow_sampler, atlas_uv, biased_depth);
     }
     return filtered;
+}
+
+// Disk rotation (cos, sin) for the PCSS kernels: interleaved gradient noise
+// over half-texel cells of the shadow map at `texel` (map coordinates in
+// texels). The world-position noise the PCF kernels rotate by changes slowly
+// across a surface, which a 1.5-texel disk hides and a wide sparse PCSS disk
+// shows as blocky steps along the penumbra.
+fn pcss_rotation(texel: vec2<f32>) -> vec2<f32> {
+    let cell = floor(texel * 2.0);
+    let rot = fract(52.9829189 * fract(dot(cell, vec2<f32>(0.06711056, 0.00583715)))) * 6.28318530;
+    return vec2<f32>(cos(rot), sin(rot));
+}
+
+// `x` up to half of `limit`, then bending smoothly toward `limit` without
+// reaching it: caps a PCSS radius without a visible edge where the cap
+// starts.
+fn pcss_soft_cap(x: f32, limit: f32) -> f32 {
+    let knee = 0.5 * limit;
+    if x <= knee || limit <= 0.0 {
+        return min(x, max(limit, 0.0));
+    }
+    return knee + knee * (1.0 - exp(-(x - knee) / knee));
 }
 
 // Distance fade at the far end of the cascades: 1 up to the fade band, 0
@@ -299,11 +322,30 @@ fn sample_shadow_csm_at(
         // fragment and widens the filter with it (contact hardening). The
         // fast tier halves both loops; its penumbras get noisier at the
         // widest radii where 16 taps are sparse.
+        //
+        // Every radius is worked out in world units and only then turned
+        // into this cascade's texels, so a blocker and receiver pair casts
+        // the same penumbra whichever cascade the receiver falls in. The
+        // cascade is orthographic along the light, so one NDC depth unit is
+        // `depth_scale` world units.
         let blocker_taps = select(8u, 16u, tier == 1u);
         let filter_taps = select(16u, 32u, tier == 1u);
-        let search_radius = shadow_atlas.pcss_light_radius * 16.0 * texel_size;
-        var blocker_sum = 0.0;
-        var blocker_count = 0.0;
+        let cs = pcss_rotation(atlas_uv * shadow_atlas.atlas_size);
+        let cos_r = cs.x;
+        let sin_r = cs.y;
+        let tan_sun = shadow_atlas.tan_sun;
+        let r_max = shadow_atlas.range.w;
+        let depth_scale = 1.0 / max(length(vp_row2), 1e-8);
+        // A blocker anywhere between the cascade's near plane and the
+        // receiver can shade it from up to `tan_sun * height` away.
+        let search_world = min(tan_sun * max(surface_depth, 0.0) * depth_scale, r_max);
+        let search_radius = max(search_world / texel_world, 1.0) * texel_size;
+        // The receiver's own texel first: a thin caster's umbra can fall
+        // between every disk tap of a wide search, which would read as lit.
+        let own_depth = textureLoad(shadow_map, vec2<i32>(atlas_uv * shadow_atlas.atlas_size), 0);
+        let own_blocks = own_depth < biased_depth;
+        var blocker_sum = select(0.0, own_depth, own_blocks);
+        var blocker_count = select(0.0, 1.0, own_blocks);
         for (var i = 0u; i < blocker_taps; i++) {
             let d = shadow_tap_dir(i, tier == 4u);
             let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
@@ -311,7 +353,12 @@ fn sample_shadow_csm_at(
             let clamped_uv = clamp(sample_uv, rect.xy, rect.zw);
             let coords = vec2<i32>(clamped_uv * shadow_atlas.atlas_size);
             let raw_depth = textureLoad(shadow_map, coords, 0);
-            if raw_depth < surface_depth {
+            // Compared against the receiver plane at the tap, so the
+            // receiver's own surface around a sloped fragment is not taken
+            // for a blocker.
+            let tap_depth = biased_depth
+                + clamp(dot(depth_grad, clamped_uv - atlas_uv), -0.005, 0.005);
+            if raw_depth < tap_depth {
                 blocker_sum += raw_depth;
                 blocker_count += 1.0;
             }
@@ -320,8 +367,9 @@ fn sample_shadow_csm_at(
             return ShadowSample(1.0, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
         }
         let avg_blocker = blocker_sum / blocker_count;
-        let penumbra_width = shadow_atlas.pcss_light_radius * (biased_depth - avg_blocker) / max(avg_blocker, 0.001);
-        let filter_radius = max(penumbra_width * 16.0 * texel_size, texel_size);
+        let height = max(biased_depth - avg_blocker, 0.0) * depth_scale;
+        let penumbra_world = pcss_soft_cap(tan_sun * height, r_max);
+        let filter_radius = max(penumbra_world / texel_world, 1.0) * texel_size;
         var shadow = 0.0;
         for (var i = 0u; i < filter_taps; i++) {
             let d = POISSON_DISK[i];
