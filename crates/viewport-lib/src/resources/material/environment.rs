@@ -347,11 +347,16 @@ pub const ENV_ZONE_STRIDE_BYTES: usize = 48;
 /// zones blend by influence weight, so there is no hard seam at a boundary. Feed
 /// a set through `ViewportRenderer::set_environment_zones`.
 ///
-/// A distant environment (a region-selected sky) sets `parallax = false`. A local
-/// reflection probe, captured at the box centre, sets `parallax = true` so its
-/// reflection is box-projected against `bounds`;
+/// A distant environment (a region-selected sky, [`new`](Self::new)) has no
+/// parallax. A local reflection probe, captured at the box centre
+/// ([`probe`](Self::probe)), is box-projected against `bounds`;
 /// `ViewportRenderer::capture_reflection_probe` returns one already configured.
+///
+/// The zone's environment is sampled with the zone's own `rotation` and
+/// `intensity`, not the lighting environment's: a captured probe is
+/// world-aligned and already holds the scene's lit radiance.
 #[derive(Copy, Clone, Debug)]
+#[non_exhaustive]
 pub struct EnvironmentZone {
     /// World-space box this zone covers (and, for a probe, the parallax proxy).
     pub bounds: crate::scene::aabb::Aabb,
@@ -362,6 +367,59 @@ pub struct EnvironmentZone {
     pub fade_distance: f32,
     /// Box-project the reflection against `bounds` (a local reflection probe).
     pub parallax: bool,
+    /// Rotation of the zone's environment about +Z, in radians. Default 0.
+    pub rotation: f32,
+    /// Brightness of the zone's environment. Default: a multiplier of 1.0. A
+    /// `Lux` target is resolved against this zone's environment.
+    pub intensity: EnvironmentIntensity,
+}
+
+impl EnvironmentZone {
+    /// A zone selecting a distant `environment` inside `bounds`: no parallax,
+    /// no fade band, no rotation and a multiplier of 1.0.
+    pub fn new(bounds: crate::scene::aabb::Aabb, environment: EnvironmentMapId) -> Self {
+        Self {
+            bounds,
+            environment,
+            fade_distance: 0.0,
+            parallax: false,
+            rotation: 0.0,
+            intensity: EnvironmentIntensity::default(),
+        }
+    }
+
+    /// A local reflection probe: `environment` captured at the centre of
+    /// `bounds`, box-projected against them and fading out over
+    /// `fade_distance` beyond them.
+    pub fn probe(
+        bounds: crate::scene::aabb::Aabb,
+        environment: EnvironmentMapId,
+        fade_distance: f32,
+    ) -> Self {
+        Self {
+            fade_distance,
+            parallax: true,
+            ..Self::new(bounds, environment)
+        }
+    }
+
+    /// Set the outer falloff band, in world units.
+    pub fn with_fade_distance(mut self, fade_distance: f32) -> Self {
+        self.fade_distance = fade_distance;
+        self
+    }
+
+    /// Set the rotation of the zone's environment about +Z, in radians.
+    pub fn with_rotation(mut self, rotation: f32) -> Self {
+        self.rotation = rotation;
+        self
+    }
+
+    /// Set the brightness of the zone's environment.
+    pub fn with_intensity(mut self, intensity: EnvironmentIntensity) -> Self {
+        self.intensity = intensity;
+        self
+    }
 }
 
 /// GPU layout of one environment zone (binding 19), matching the WGSL `EnvZone`.
@@ -373,7 +431,9 @@ struct EnvZoneGpu {
     half_extents: [f32; 3],
     fade: f32,
     parallax: u32,
-    _pad_probe: [u32; 3],
+    rotation: f32,
+    intensity: f32,
+    _pad: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<EnvZoneGpu>() == ENV_ZONE_STRIDE_BYTES);
@@ -429,7 +489,9 @@ pub(crate) fn write_environment_zones(
             half_extents: z.bounds.half_extents().into(),
             fade: z.fade_distance,
             parallax: u32::from(z.parallax),
-            _pad_probe: [0; 3],
+            rotation: z.rotation,
+            intensity: environment_multiplier(ibl, z.environment, z.intensity),
+            _pad: 0,
         })
         .collect();
     if !gpu.is_empty() {
@@ -2676,15 +2738,14 @@ mod tests {
         upload(&mut resources, &device, &queue, [0.5, 0.5, 0.5]).unwrap();
         let env = upload(&mut resources, &device, &queue, [0.9, 0.1, 0.1]).unwrap();
 
-        let zone = EnvironmentZone {
-            bounds: crate::scene::aabb::Aabb {
+        let zone = EnvironmentZone::probe(
+            crate::scene::aabb::Aabb {
                 min: glam::Vec3::splat(-1.0),
                 max: glam::Vec3::splat(1.0),
             },
-            environment: env,
-            fade_distance: 0.5,
-            parallax: true,
-        };
+            env,
+            0.5,
+        );
         set_environment_zones(&mut resources, &queue, &[zone]);
         assert_eq!(resources.scene_tier.ibl.env_zone_count, 1);
 

@@ -1066,7 +1066,28 @@ pub(super) fn lights_header(
         env_zone_count: extras.env_zone_count,
         ibl_specular_scale: extras.ibl_specular_scale,
         custom_data_base: extras.custom_data_base,
+        ao_flags: ao_flags(lighting),
+        _pad_ao: [0; 3],
     }
+}
+
+/// `ao_flags` bit: apply the multi-bounce AO fit. Matches `AO_FLAG_MULTI_BOUNCE`
+/// in scene_lighting.wgsl.
+const AO_FLAG_MULTI_BOUNCE: u32 = 1;
+/// `ao_flags` bit: material AO shadows directional lights. Matches
+/// `AO_FLAG_MICRO_SHADOW` in scene_lighting.wgsl.
+const AO_FLAG_MICRO_SHADOW: u32 = 2;
+
+/// The lights header's `ao_flags` word for `lighting`.
+fn ao_flags(lighting: &LightingSettings) -> u32 {
+    let mut flags = 0;
+    if lighting.multi_bounce_ao {
+        flags |= AO_FLAG_MULTI_BOUNCE;
+    }
+    if lighting.ao_micro_shadowing {
+        flags |= AO_FLAG_MICRO_SHADOW;
+    }
+    flags
 }
 
 #[cfg(test)]

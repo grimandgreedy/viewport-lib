@@ -301,8 +301,18 @@ fn viewport_ibl_ambient(
         max(roughness * 4.0, footprint_mip),
     ).rgb;
     let brdf = textureSampleLevel(ibl_brdf_lut, ibl_sampler, vec2<f32>(n_dot_v, roughness), 0.0).rg;
-    let diffuse = kd * irradiance * albedo * ao * lights.ibl_diffuse_scale;
-    let specular = prefiltered * (f * brdf.x + brdf.y) * ao * lights.ibl_specular_scale;
+    // AO as the lit mesh shaders take it: the visibility on the diffuse, the
+    // specular occlusion on the reflection, each through the multi-bounce fit
+    // when the lighting enables it.
+    let so = viewport_brdf_spec_occlusion(n_dot_v, ao, roughness * roughness);
+    var diffuse_occ = vec3<f32>(ao);
+    var spec_occ = vec3<f32>(so);
+    if (lights.ao_flags & 1u) != 0u {
+        diffuse_occ = viewport_brdf_multi_bounce_ao(ao, albedo * (1.0 - metallic));
+        spec_occ = viewport_brdf_multi_bounce_ao(so, f0);
+    }
+    let diffuse = kd * irradiance * albedo * diffuse_occ * lights.ibl_diffuse_scale;
+    let specular = prefiltered * (f * brdf.x + brdf.y) * spec_occ * lights.ibl_specular_scale;
     return (diffuse + specular) * lights.ibl_intensity;
 }
 
@@ -324,8 +334,12 @@ fn viewport_pbr_shade(inp: PbrInputs) -> vec3<f32> {
         ambient = viewport_ibl_ambient(N, V, inp.albedo, inp.metallic, roughness, f0, inp.ao);
     } else {
         let up_weight = clamp(N.z * 0.5 + 0.5, 0.0, 1.0);
+        var occ = vec3<f32>(inp.ao);
+        if (lights.ao_flags & 1u) != 0u {
+            occ = viewport_brdf_multi_bounce_ao(inp.ao, inp.albedo * (1.0 - inp.metallic));
+        }
         ambient = mix(lights.ground_colour, lights.sky_colour, up_weight)
-                  * lights.hemisphere_intensity * inp.albedo * inp.ao;
+                  * lights.hemisphere_intensity * inp.albedo * occ;
     }
 
     var lo = vec3<f32>(0.0);
