@@ -447,7 +447,10 @@ pub struct ShadowSettings {
     /// Number of cascaded shadow map splits (1-4). Default: 4.
     pub cascade_count: u32,
     /// Shadow atlas resolution (width = height). Default: 4096.
-    /// Each cascade tile is `atlas_resolution / 2`.
+    /// Each cascade tile is `atlas_resolution / 2`. The atlas texture is made at
+    /// this size, clamped to 256..=8192 and the device's largest 2D texture and
+    /// rounded down to even (a clamp is reported as a notice), and is recreated
+    /// when the value changes. Its memory is `4 * atlas_resolution^2` bytes.
     pub atlas_resolution: u32,
     /// Shadow filtering mode. Default: PCF.
     pub filter: ShadowFilter,

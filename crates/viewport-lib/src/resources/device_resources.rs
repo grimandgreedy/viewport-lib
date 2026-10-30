@@ -1533,31 +1533,52 @@ impl DeviceResources {
             ));
     }
 
-    /// Promote the cascade shadow atlas from its 1x1 placeholder to the full
-    /// `SHADOW_ATLAS_SIZE` depth texture and rebuild every bind group that
-    /// samples it. A no-op once promoted.
+    /// Make the cascade shadow atlas a `size` square depth texture, promoting
+    /// it from its 1x1 placeholder or recreating it at a new size, and rebuild
+    /// every bind group that samples it. A no-op when it already is one.
+    /// `size` comes from [`shadow_atlas_size`](Self::shadow_atlas_size).
     ///
-    /// Returns whether it allocated, so the renderer knows to rebuild the
-    /// per-viewport camera bind groups it owns (this can only reach the ones
-    /// hanging off `DeviceResources`).
-    pub(crate) fn ensure_shadow_atlas(&mut self, device: &crate::gpu::Device) -> bool {
-        if self.scene_tier.shadow.atlas_allocated {
+    /// Returns whether it allocated. The per-viewport camera bind groups the
+    /// renderer owns are flagged through `camera_bind_groups_dirty`.
+    pub(crate) fn ensure_shadow_atlas(&mut self, device: &crate::gpu::Device, size: u32) -> bool {
+        let shadow = &self.scene_tier.shadow;
+        if shadow.atlas_allocated && shadow.atlas_size == size {
             return false;
         }
-        let (texture, view) = crate::resources::shadow::create_atlas_texture(
-            device,
-            crate::resources::SHADOW_ATLAS_SIZE,
-        );
+        let (texture, view) = crate::resources::shadow::create_atlas_texture(device, size);
         self.scene_tier.shadow.map_texture = texture;
         self.scene_tier.shadow.map_view = view;
+        self.scene_tier.shadow.atlas_size = size;
         self.scene_tier.shadow.atlas_allocated = true;
         self.rebuild_shadow_sampling_bind_groups(device);
         tracing::debug!(
             target: "viewport_lib::init",
-            size = crate::resources::SHADOW_ATLAS_SIZE,
+            size,
             "allocated the cascade shadow atlas"
         );
         true
+    }
+
+    /// The cascade atlas side for a requested `ShadowSettings::atlas_resolution`
+    /// on this device. A request the device cannot take as asked is reported
+    /// as a [`NoticeDetail::ShadowAtlasClamped`](crate::NoticeDetail::ShadowAtlasClamped).
+    pub(crate) fn shadow_atlas_size(&self, requested: u32) -> u32 {
+        let used = crate::resources::shadow::atlas_size_for(
+            requested,
+            self.capabilities.texture_dimension_2d,
+        );
+        if used != requested {
+            self.notices.report(
+                crate::notice::NoticeKey::new(
+                    crate::NoticeCategory::ResourceSlot,
+                    "shadow_atlas_clamped",
+                    [u64::from(requested), u64::from(used)],
+                ),
+                crate::Severity::Warning,
+                || crate::NoticeDetail::ShadowAtlasClamped { requested, used },
+            );
+        }
+        used
     }
 
     /// Promote the point-light cube array from its single 1x1 cube to the full

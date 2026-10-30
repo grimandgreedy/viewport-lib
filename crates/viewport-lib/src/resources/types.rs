@@ -149,9 +149,6 @@ impl VertexBufferLayoutExt for Vertex {
     }
 }
 
-/// Default shadow atlas resolution (width = height). The atlas is a 2x2 grid of tiles.
-pub(crate) const SHADOW_ATLAS_SIZE: u32 = 4096;
-
 /// Per-frame camera uniform: view-projection and eye position.
 ///
 /// GPU uniform struct : must remain 16-byte aligned (`#[repr(C)]`).

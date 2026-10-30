@@ -12,18 +12,19 @@ use crate::resources::builders::LoggedAlloc;
 
 /// Directional-cascade and point-light shadow resources.
 pub(crate) struct ShadowResources {
-    /// Shadow atlas depth texture (Depth32Float, atlas_size x atlas_size, 2x2
+    /// Shadow atlas depth texture (Depth32Float, `atlas_size` square, 2x2
     /// tile grid). Read for its dimensions by `shadow_allocation_bytes`.
     pub(crate) map_texture: crate::gpu::Texture,
     /// Depth texture view for binding as a shader resource (sampling).
     pub(crate) map_view: crate::gpu::TextureView,
     /// Whether [`map_texture`](Self::map_texture) is the full-size atlas.
     ///
-    /// It starts as a 1x1 placeholder. The atlas is 64 MB at
-    /// `SHADOW_ATLAS_SIZE`, and a scene that casts no cascade shadow never
+    /// It starts as a 1x1 placeholder. The atlas is 64 MB at the default
+    /// 4096 resolution, and a scene that casts no cascade shadow never
     /// samples it, so the allocation waits until a frame needs it.
     /// [`DeviceResources::ensure_shadow_atlas`](crate::resources::DeviceResources::ensure_shadow_atlas)
-    /// promotes it and rebuilds the bind groups that sample it.
+    /// promotes it, or recreates it at a new size, and rebuilds the bind
+    /// groups that sample it.
     pub(crate) atlas_allocated: bool,
     /// Comparison sampler for PCF shadow filtering.
     pub(crate) sampler: crate::gpu::Sampler,
@@ -89,8 +90,9 @@ pub(crate) struct ShadowResources {
     pub(crate) bind_group: crate::gpu::BindGroup,
     /// Uniform buffer for the ShadowAtlasUniform (binding 5 of camera_bgl, 416 bytes).
     pub(crate) info_buf: crate::gpu::Buffer,
-    /// Current shadow atlas texture size. Used to detect when atlas needs recreation.
-    #[allow(dead_code)]
+    /// Side of [`map_texture`](Self::map_texture) in texels: 1 for the
+    /// placeholder, the resolved `atlas_resolution` once allocated. A frame
+    /// that asks for another size recreates the texture.
     pub(crate) atlas_size: u32,
     /// Non-comparison sampler for reading depth values as float (atlas viewer).
     #[allow(dead_code)]
@@ -104,9 +106,23 @@ pub(crate) struct ShadowResources {
     pub(crate) atlas_viewer_buf: crate::gpu::Buffer,
 }
 
+/// Smallest cascade atlas side the renderer allocates.
+pub(crate) const MIN_ATLAS_SIZE: u32 = 256;
+/// Largest cascade atlas side the renderer allocates, before the device limit.
+pub(crate) const MAX_ATLAS_SIZE: u32 = 8192;
+
+/// The atlas side a requested `ShadowSettings::atlas_resolution` resolves to
+/// on a device whose 2D textures reach `max_dimension`: clamped to
+/// `MIN_ATLAS_SIZE..=MAX_ATLAS_SIZE` and the device limit, then rounded down to
+/// even so the 2x2 tiles split it exactly.
+pub(crate) fn atlas_size_for(requested: u32, max_dimension: u32) -> u32 {
+    let ceiling = MAX_ATLAS_SIZE.min(max_dimension).max(MIN_ATLAS_SIZE);
+    requested.clamp(MIN_ATLAS_SIZE, ceiling) & !1
+}
+
 /// Create the cascade atlas depth texture and its sampling view at `size`
-/// square. Called twice: once in `init` at 1x1 for the placeholder, once from
-/// `ensure_shadow_atlas` at `SHADOW_ATLAS_SIZE`.
+/// square. Called once in `init` at 1x1 for the placeholder, then from
+/// `ensure_shadow_atlas` each time a frame needs a new size.
 pub(crate) fn create_atlas_texture(
     device: &crate::gpu::Device,
     size: u32,
@@ -283,7 +299,11 @@ mod tests {
             return;
         };
         let shadow = &res.scene_tier.shadow;
-        assert!(shadow.atlas_size > 0, "atlas size must be recorded");
+        assert_eq!(
+            shadow.atlas_size,
+            shadow.map_texture.width(),
+            "atlas size records the texture side"
+        );
         assert_eq!(
             shadow.map_texture.width(),
             shadow.map_texture.height(),
@@ -299,8 +319,8 @@ mod tests {
             "the cascade atlas starts as a placeholder"
         );
         assert!(
-            shadow.map_texture.width() < shadow.atlas_size,
-            "the placeholder is smaller than the atlas it stands in for"
+            shadow.map_texture.width() < super::MIN_ATLAS_SIZE,
+            "the placeholder is smaller than any atlas it stands in for"
         );
         assert!(
             !shadow.point_cubes_allocated,
@@ -319,7 +339,8 @@ mod tests {
 
     /// Promotion is what the first shadow-casting frame does: both textures
     /// reach full size, the face views cover every slot, and a second call is a
-    /// no-op so a steady-state frame does not reallocate.
+    /// no-op so a steady-state frame does not reallocate. A new atlas size
+    /// recreates the atlas.
     #[test]
     fn promotion_allocates_full_size_once() {
         let Some((device, _queue, mut res)) = crate::resources::test_support::try_make_resources()
@@ -327,13 +348,23 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        assert!(res.ensure_shadow_atlas(&device), "first call allocates");
-        assert!(!res.ensure_shadow_atlas(&device), "second call is a no-op");
-        assert_eq!(
-            res.scene_tier.shadow.map_texture.width(),
-            res.scene_tier.shadow.atlas_size
+        assert!(
+            res.ensure_shadow_atlas(&device, 4096),
+            "first call allocates"
         );
+        assert!(
+            !res.ensure_shadow_atlas(&device, 4096),
+            "second call is a no-op"
+        );
+        assert_eq!(res.scene_tier.shadow.map_texture.width(), 4096);
+        assert_eq!(res.scene_tier.shadow.atlas_size, 4096);
         assert!(res.scene_tier.shadow.atlas_allocated);
+        assert!(
+            res.ensure_shadow_atlas(&device, 1024),
+            "a new size recreates"
+        );
+        assert_eq!(res.scene_tier.shadow.map_texture.width(), 1024);
+        assert_eq!(res.scene_tier.shadow.atlas_size, 1024);
 
         assert!(
             res.ensure_point_shadow_cubes(&device),
@@ -352,6 +383,18 @@ mod tests {
             crate::renderer::POINT_SHADOW_FACE_SIZE
         );
         assert!(res.scene_tier.shadow.point_cubes_allocated);
+    }
+
+    #[test]
+    fn atlas_size_clamps_to_the_range_and_the_device() {
+        use super::atlas_size_for;
+        assert_eq!(atlas_size_for(4096, 16384), 4096);
+        assert_eq!(atlas_size_for(64, 16384), 256);
+        assert_eq!(atlas_size_for(16384, 16384), 8192);
+        assert_eq!(atlas_size_for(8192, 4096), 4096);
+        assert_eq!(atlas_size_for(1025, 16384), 1024);
+        // A device below the floor still gets the floor.
+        assert_eq!(atlas_size_for(4096, 128), 256);
     }
 
     /// Same completeness guarantee as `scene_pipelines::hdr_opaque_resolves_every_key_once_built`

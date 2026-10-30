@@ -205,8 +205,10 @@ impl ViewportRenderer {
         // every split viewport shares one shadow atlas.
         // -------------------------------------------------------------------
         let cascade_count = lighting.shadows.cascade_count.clamp(1, 4) as usize;
-        let atlas_res = lighting.shadows.atlas_resolution.max(64);
-        let tile_size = atlas_res / 2;
+        // The atlas texture is sized from the setting; `prepare_shadow_pass`
+        // (re)allocates it at `tile_size * 2` before rasterising cascades.
+        let atlas_size = resources.shadow_atlas_size(lighting.shadows.atlas_resolution);
+        let tile_size = atlas_size / 2;
 
         let dist = frame.camera.render_camera.distance();
         let shadow_near = (dist * 0.1).max(frame.camera.render_camera.depth_range().0);
@@ -308,23 +310,17 @@ impl ViewportRenderer {
             shadow.last_cascade_count = effective_cascade_count as u32;
             shadow.last_cascade_splits = cascade_split_distances;
             shadow.last_shadow_extent = shadow_extent;
-            shadow.last_shadow_atlas_resolution = lighting.shadows.atlas_resolution.max(64);
+            shadow.last_shadow_atlas_resolution = atlas_size;
             shadow.last_contact_shadow_active = frame.effects.post_process.contact_shadows.enabled;
         }
 
-        // Atlas tile layout (2x2 grid):
+        // Atlas tile layout (2x2 grid of `tile_size` tiles filling the texture):
         // [0] = top-left, [1] = top-right, [2] = bottom-left, [3] = bottom-right
-        //
-        // UV extents are computed from tile_size relative to the fixed SHADOW_ATLAS_SIZE
-        // texture. When atlas_res < SHADOW_ATLAS_SIZE only the top-left portion of the
-        // texture is rendered into (via scissor rect), so the UV rects must match that
-        // footprint rather than always covering 0.0..0.5.
-        let tile_uv = tile_size as f32 / crate::resources::SHADOW_ATLAS_SIZE as f32;
         let atlas_rects: [[f32; 4]; 8] = [
-            [0.0, 0.0, tile_uv, tile_uv],                     // cascade 0
-            [tile_uv, 0.0, tile_uv * 2.0, tile_uv],           // cascade 1
-            [0.0, tile_uv, tile_uv, tile_uv * 2.0],           // cascade 2
-            [tile_uv, tile_uv, tile_uv * 2.0, tile_uv * 2.0], // cascade 3
+            [0.0, 0.0, 0.5, 0.5], // cascade 0
+            [0.5, 0.0, 1.0, 0.5], // cascade 1
+            [0.0, 0.5, 0.5, 1.0], // cascade 2
+            [0.5, 0.5, 1.0, 1.0], // cascade 3
             [0.0; 4],
             [0.0; 4],
             [0.0; 4],
@@ -344,11 +340,10 @@ impl ViewportRenderer {
                 cascade_view_proj: vp_data,
                 cascade_splits: cascade_split_distances,
                 cascade_count: effective_cascade_count as u32,
-                // The backing texture size, not the requested resolution: shader
-                // texel math (PCF radius, texel_world, blocker-search coords) is
-                // relative to the real texture. The requested resolution enters
-                // through the atlas rects, which shrink when it is lowered.
-                atlas_size: crate::resources::SHADOW_ATLAS_SIZE as f32,
+                // The backing texture size, after clamping: shader texel maths
+                // (PCF radius, texel_world, blocker-search coords) is relative
+                // to the real texture.
+                atlas_size: atlas_size as f32,
                 // Tier values match the dispatch in csm.wgsl.
                 shadow_filter: match lighting.shadows.filter {
                     ShadowFilter::Pcf => 0,
