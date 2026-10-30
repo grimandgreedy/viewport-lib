@@ -21,6 +21,16 @@ impl ViewportRenderer {
             // Upload clip planes + clip volume uniforms from clip_objects.
             {
                 let (clip_uniform, clip_vols_uniform) = clip_uniforms(frame, viewport_fx);
+                if let Some((planes, volumes)) = clip_overflow(viewport_fx) {
+                    resources.notices.report(
+                        crate::notice::NoticeKey::single(
+                            crate::NoticeCategory::Pipeline,
+                            "clip_objects_over_cap",
+                        ),
+                        crate::Severity::Warning,
+                        || crate::NoticeDetail::ClipObjectsOverCap { planes, volumes },
+                    );
+                }
                 // Write to per-viewport slot buffer.
                 if let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) {
                     queue.write_buffer(
@@ -446,67 +456,65 @@ impl ViewportRenderer {
         // the scene is clipped. The renderer only performs the clip operation and
         // the section cap fill below.
 
-        // Cap geometry for section-view cross-section fill.
-        let mut cap_pool = std::mem::take(&mut self.viewport_slots[vp_idx].cap_pool);
+        // Section caps: one per clipping plane per item the clip applies to,
+        // each at its plane's index in the clip-plane uniform so the shader
+        // can skip that plane. Cached across frames on the viewport slot.
+        let mut cap_cache = std::mem::take(&mut self.viewport_slots[vp_idx].cap_cache);
+        cap_cache.begin_frame();
         let mut cap_buffers = Vec::new();
-        if viewport_fx.clip.cap_fill_enabled {
-            for obj in viewport_fx.clip.objects.iter().filter(|o| o.enabled) {
-                if let ClipShape::Plane {
-                    normal,
-                    distance,
-                    cap_colour,
-                    ..
-                } = obj.shape
+        let mut caps_built = 0u32;
+        if viewport_fx.clip.cap_fill_enabled && clipping_planes(viewport_fx).next().is_some() {
+            let hdr = self.draws_hdr(frame);
+            self.resources.ensure_section_cap_pipeline(device, hdr);
+            let resources = &self.resources;
+            let cap_bgl = &resources.section_cap.as_ref().unwrap().bgl;
+            for (plane_index, normal, distance, cap_colour) in clipping_planes(viewport_fx) {
+                let plane_n = glam::Vec3::from(normal);
+                for item in scene_items
+                    .iter()
+                    .filter(|i| !i.settings.hidden && !i.settings.ignore_clip)
                 {
-                    let plane_n = glam::Vec3::from(normal);
-                    for item in scene_items.iter().filter(|i| !i.settings.hidden) {
-                        let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
-                            continue;
-                        };
-                        let model = glam::Mat4::from_cols_array_2d(&item.model);
-                        let world_aabb = mesh.aabb.transformed(&model);
-                        if !world_aabb.intersects_plane(plane_n, distance) {
-                            continue;
-                        }
-                        let (Some(pos), Some(idx)) = (&mesh.cpu_positions, &mesh.cpu_indices)
-                        else {
-                            continue;
-                        };
-                        if let Some(cap) = crate::geometry::mesh::cap::generate_cap_mesh(
-                            pos, idx, &model, plane_n, distance,
-                        ) {
-                            let bc = item
-                                .settings
-                                .colour
-                                .unwrap_or(
-                                    self.resources
-                                        .material_or_default(item.material)
-                                        .base_colour,
-                                )
-                                .to_linear_rgb();
-                            let colour = cap_colour.unwrap_or([bc[0], bc[1], bc[2], 1.0]);
-                            let i = cap_buffers.len();
-                            if i == cap_pool.len() {
-                                cap_pool.push(OverlayGeometrySlot::new());
-                            }
-                            let vertices: Vec<crate::resources::OverlayVertex> = cap
-                                .positions
-                                .iter()
-                                .map(|p| crate::resources::OverlayVertex { position: *p })
-                                .collect();
-                            cap_buffers.push(cap_pool[i].write(
-                                device,
-                                queue,
-                                &self.resources.guides.overlay_bgl,
-                                &vertices,
-                                &cap.indices,
-                                colour,
-                            ));
-                        }
+                    let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
+                        continue;
+                    };
+                    let model = glam::Mat4::from_cols_array_2d(&item.model);
+                    let world_aabb = mesh.aabb.transformed(&model);
+                    if !world_aabb.intersects_plane(plane_n, distance) {
+                        continue;
                     }
+                    let (Some(pos), Some(idx)) = (&mesh.cpu_positions, &mesh.cpu_indices) else {
+                        continue;
+                    };
+                    let colour = cap_colour.unwrap_or_else(|| {
+                        let bc = item
+                            .settings
+                            .colour
+                            .unwrap_or(resources.material_or_default(item.material).base_colour)
+                            .to_linear_rgb();
+                        [bc[0], bc[1], bc[2], 1.0]
+                    });
+                    let key = crate::renderer::section_caps::CapKey::new(
+                        item.mesh_id,
+                        mesh.content_rev,
+                        &item.model,
+                        normal,
+                        distance,
+                        plane_index,
+                    );
+                    let (draw, built) = cap_cache.cap(device, queue, cap_bgl, key, colour, || {
+                        crate::geometry::mesh::cap::generate_cap_mesh(
+                            pos, idx, &model, plane_n, distance,
+                        )
+                    });
+                    caps_built += built as u32;
+                    cap_buffers.extend(draw);
                 }
             }
         }
+        cap_cache.evict_unseen();
+        // Per viewport, like the overlay counters: the split API prepares a
+        // viewport without assembling a `FrameStats`.
+        self.last_stats.cap_meshes_built = caps_built;
 
         // The transform gizmo and the axes indicator are generated as 2D overlay
         // primitives during the overlay prepare (see `gizmo_overlay_items` and
@@ -519,7 +527,7 @@ impl ViewportRenderer {
             if !xray_object_buffers.is_empty() {
                 self.resources.ensure_xray_pipeline(device);
             }
-            if !constraint_line_buffers.is_empty() || !cap_buffers.is_empty() {
+            if !constraint_line_buffers.is_empty() {
                 self.resources.ensure_guide_overlay_pipelines(device);
             }
             let slot = &mut self.viewport_slots[vp_idx];
@@ -527,9 +535,8 @@ impl ViewportRenderer {
             slot.xray_object_buffers = xray_object_buffers;
             slot.constraint_line_buffers = constraint_line_buffers;
             slot.cap_buffers = cap_buffers;
-            cap_pool.truncate(slot.cap_buffers.len());
             slot.constraint_line_pool = constraint_line_pool;
-            slot.cap_pool = cap_pool;
+            slot.cap_cache = cap_cache;
         }
     }
 
@@ -796,49 +803,32 @@ pub(super) fn clip_uniforms(
     let mut count = 0u32;
     let mut clip_vols_uniform: ClipVolumesUniform = bytemuck::Zeroable::zeroed();
 
-    for obj in viewport_fx
-        .clip
-        .objects
-        .iter()
-        .filter(|o| o.enabled && o.clip_geometry)
-    {
-        match obj.shape {
-            ClipShape::Plane {
-                normal, distance, ..
-            } if count < 6 => {
-                planes[count as usize] = [normal[0], normal[1], normal[2], distance];
-                count += 1;
-            }
+    for (i, normal, distance, _) in clipping_planes(viewport_fx) {
+        planes[i as usize] = [normal[0], normal[1], normal[2], distance];
+        count = i + 1;
+    }
+    for obj in clipping_objects(viewport_fx) {
+        if clip_vols_uniform.count as usize >= CLIP_VOLUME_MAX {
+            break;
+        }
+        let idx = clip_vols_uniform.count as usize;
+        let entry = match obj.shape {
             ClipShape::Box {
                 center,
                 half_extents,
                 orientation,
-            } if (clip_vols_uniform.count as usize) < CLIP_VOLUME_MAX => {
-                let idx = clip_vols_uniform.count as usize;
-                clip_vols_uniform.volumes[idx] =
-                    ClipVolumeEntry::from_box(center, half_extents, orientation);
-                clip_vols_uniform.count += 1;
-            }
-            ClipShape::Sphere { center, radius }
-                if (clip_vols_uniform.count as usize) < CLIP_VOLUME_MAX =>
-            {
-                let idx = clip_vols_uniform.count as usize;
-                clip_vols_uniform.volumes[idx] = ClipVolumeEntry::from_sphere(center, radius);
-                clip_vols_uniform.count += 1;
-            }
+            } => ClipVolumeEntry::from_box(center, half_extents, orientation),
+            ClipShape::Sphere { center, radius } => ClipVolumeEntry::from_sphere(center, radius),
             ClipShape::Cylinder {
                 center,
                 axis,
                 radius,
                 half_length,
-            } if (clip_vols_uniform.count as usize) < CLIP_VOLUME_MAX => {
-                let idx = clip_vols_uniform.count as usize;
-                clip_vols_uniform.volumes[idx] =
-                    ClipVolumeEntry::from_cylinder(center, axis, radius, half_length);
-                clip_vols_uniform.count += 1;
-            }
-            _ => {}
-        }
+            } => ClipVolumeEntry::from_cylinder(center, axis, radius, half_length),
+            _ => continue,
+        };
+        clip_vols_uniform.volumes[idx] = entry;
+        clip_vols_uniform.count += 1;
     }
 
     let ppp = frame.camera.pixels_per_point;
@@ -852,4 +842,48 @@ pub(super) fn clip_uniforms(
         viewport_height: (frame.camera.viewport_size[1] * ppp).max(1.0),
     };
     (clip_uniform, clip_vols_uniform)
+}
+
+/// The clip objects that clip geometry this frame.
+fn clipping_objects<'a>(
+    viewport_fx: &'a ViewportEffects<'_>,
+) -> impl Iterator<Item = &'a crate::renderer::types::ClipObject> + 'a {
+    viewport_fx
+        .clip
+        .objects
+        .iter()
+        .filter(|o| o.enabled && o.clip_geometry)
+}
+
+/// The planes the clip-plane uniform holds, with their index in it: normal,
+/// distance and cap colour override. Planes past the uniform's six do not
+/// clip.
+fn clipping_planes<'a>(
+    viewport_fx: &'a ViewportEffects<'_>,
+) -> impl Iterator<Item = (u32, [f32; 3], f32, Option<[f32; 4]>)> + 'a {
+    clipping_objects(viewport_fx)
+        .filter_map(|o| match o.shape {
+            ClipShape::Plane {
+                normal,
+                distance,
+                cap_colour,
+            } => Some((normal, distance, cap_colour)),
+            _ => None,
+        })
+        .take(6)
+        .zip(0u32..)
+        .map(|((n, d, c), i)| (i, n, d, c))
+}
+
+/// Clipping planes and volumes in the frame, when either is past what the
+/// clip uniforms hold.
+fn clip_overflow(viewport_fx: &ViewportEffects<'_>) -> Option<(u32, u32)> {
+    let (mut planes, mut volumes) = (0u32, 0u32);
+    for o in clipping_objects(viewport_fx) {
+        match o.shape {
+            ClipShape::Plane { .. } => planes += 1,
+            _ => volumes += 1,
+        }
+    }
+    (planes > 6 || volumes as usize > CLIP_VOLUME_MAX).then_some((planes, volumes))
 }

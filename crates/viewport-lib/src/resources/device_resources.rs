@@ -567,6 +567,8 @@ pub struct DeviceResources {
     /// Floor grid, axes indicator, base overlay pipelines, and constraint guide
     /// lines. See `resources::overlay::guides::OverlayGuideResources`.
     pub(crate) guides: crate::resources::overlay::guides::OverlayGuideResources,
+    /// The section cap fill pipelines, composed on the first frame with a cap.
+    pub(crate) section_cap: Option<crate::resources::overlay::section_cap::SectionCapPipelines>,
 
     // --- Texture system ---
     /// Uploaded GPU assets and their handle registries (textures, geometry /

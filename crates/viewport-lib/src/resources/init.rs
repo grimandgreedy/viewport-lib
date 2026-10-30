@@ -1692,6 +1692,7 @@ impl DeviceResources {
                 grid_bgl,
                 constraint_lines: Vec::new(),
             },
+            section_cap: None,
             content: crate::resources::types::ContentResources {
                 material_bind_groups: std::collections::HashMap::new(),
                 texture_slot_mismatches: std::sync::Mutex::new(Vec::new()),

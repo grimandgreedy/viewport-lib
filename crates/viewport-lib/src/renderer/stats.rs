@@ -621,6 +621,13 @@ pub struct FrameStats {
     /// A level, not a per-frame count, and independent of what was submitted
     /// this frame.
     pub overlay_retained_bytes: u64,
+    /// Section cap meshes generated this frame, for the most recently
+    /// prepared viewport.
+    ///
+    /// Caps are cached per mesh, transform and clip plane, so a static
+    /// section reads zero after its first frame. A value that tracks the
+    /// capped item count every frame means the cache is missing.
+    pub cap_meshes_built: u32,
 
     /// Objects that resolved through a LOD group this frame.
     ///
