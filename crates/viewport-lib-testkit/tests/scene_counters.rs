@@ -173,6 +173,8 @@ fn expected(name: &str) -> Option<Expected> {
         "slab_stack_sun" => e(10, 10, 10, 10, 120),
         "slab_stack_point" => e(10, 10, 10, 10, 120),
         "long_hall" => e(26, 26, 5, 5, 312),
+        "spot_and_sun" => e(10, 10, 10, 10, 1068),
+        "spots_wide_narrow" => e(4, 4, 4, 4, 48),
         // Ground, tube and cube; the section caps are not batch draws.
         "section_caps" => e(3, 3, 3, 3, 408),
         // counters are identical across all of them. They exist to gate overlay
