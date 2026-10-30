@@ -543,7 +543,7 @@ pub struct ViewportRenderer {
     /// Instant recorded at the start of the most recent `prepare()` call.
     /// Used to compute `total_frame_ms` on the following frame.
     last_prepare_instant: Option<web_time::Instant>,
-    /// Frame counter incremented each `prepare()` call. Used for picking throttle in Playback mode.
+    /// Frame counter incremented each `prepare()` call.
     frame_counter: u64,
     /// Current LOD level per item, keyed by pick id, carried across frames so
     /// level switches use hysteresis. Items without a pick id are not tracked
@@ -1481,9 +1481,9 @@ impl ViewportRenderer {
 
     /// Set the runtime mode controlling internal default behaviour.
     ///
-    /// - [`RuntimeMode::Interactive`](crate::RuntimeMode::Interactive): full picking rate, full quality (default).
-    /// - [`RuntimeMode::Playback`](crate::RuntimeMode::Playback): picking throttled to reduce CPU overhead during animation.
-    /// - [`RuntimeMode::Paused`](crate::RuntimeMode::Paused): full picking rate, full quality.
+    /// - [`RuntimeMode::Interactive`](crate::RuntimeMode::Interactive): full quality (default).
+    /// - [`RuntimeMode::Playback`](crate::RuntimeMode::Playback): steady frame pacing during animation.
+    /// - [`RuntimeMode::Paused`](crate::RuntimeMode::Paused): full quality.
     /// - [`RuntimeMode::Capture`](crate::RuntimeMode::Capture): full quality, intended for screenshot/export workflows.
     pub fn set_runtime_mode(&mut self, mode: crate::renderer::stats::RuntimeMode) {
         self.runtime_mode = mode;

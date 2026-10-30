@@ -65,7 +65,7 @@ struct FragOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> FragOut {
-    if !viewport_pass_clip_volumes(in.world_pos) { discard; }
+    if !viewport_clip_test(in.world_pos) { discard; }
     var out: FragOut;
     out.object_id    = pick.object_id;
     out.primitive_id = 0u;

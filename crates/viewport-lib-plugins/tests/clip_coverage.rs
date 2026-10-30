@@ -11,11 +11,13 @@
 //! which should cut nothing from the types that honour it.
 //!
 //! Then a pick at a pixel the box cut away, through the GPU pick pass and the
-//! CPU ray cast, with the box in the frame. A pick there should find nothing:
-//! the viewer is looking at empty space.
+//! CPU ray cast, with the box in the frame, and a GPU pick at a pixel the plane
+//! cut away, with the plane in the frame. A pick there should find nothing: the
+//! viewer is looking at empty space. An item with `ignore_clip` set is picked
+//! there.
 //!
 //! Run with `--nocapture` for the table. Every type must draw, lose pixels to
-//! both clips, and have nothing picked by the GPU where the box cut it away.
+//! both clips, and have nothing picked by the GPU where either clip cut it away.
 //! The CPU pick column is reported and not held: the CPU paths read no clip
 //! objects yet (`clipping-coverage-uneven-across-item-types`).
 
@@ -113,9 +115,50 @@ struct Row {
     planed: usize,
     exempt: usize,
     gpu_pick_in_cut: Option<bool>,
+    /// Whether the GPU pick finds the item on a pixel the plane cut away.
+    gpu_pick_in_plane_cut: Option<bool>,
+    /// The same pick with `ignore_clip` set on the item.
+    gpu_pick_exempt: Option<bool>,
+    /// The same pick with no clip in the frame, which should hit.
+    gpu_pick_unclipped: Option<bool>,
     cpu_pick_in_cut: Option<bool>,
     /// Whether the CPU pick finds the item on a pixel the box kept.
     cpu_pick_kept: Option<bool>,
+}
+
+/// A pixel `full` draws and `clipped` does not, well inside that region: every
+/// pixel within two of it is in the region too (within one for a thin item),
+/// and of those the nearest to the region's centroid. An edge pixel can draw in
+/// the colour pass and still miss the pick, so it would pass the cut test
+/// without testing anything.
+fn interior_pixel(full: &[bool], clipped: &[bool]) -> Option<usize> {
+    (1..=2)
+        .rev()
+        .find_map(|r| interior_pixel_within(full, clipped, r))
+}
+
+fn interior_pixel_within(full: &[bool], clipped: &[bool], r: i64) -> Option<usize> {
+    let (w, h) = (W as i64, H as i64);
+    let cut = |x: i64, y: i64| {
+        x >= 0 && y >= 0 && x < w && y < h && {
+            let i = (y * w + x) as usize;
+            full[i] && !clipped[i]
+        }
+    };
+    let interior: Vec<(i64, i64)> = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .filter(|&(x, y)| (-r..=r).all(|dy| (-r..=r).all(|dx| cut(x + dx, y + dy))))
+        .collect();
+    if interior.is_empty() {
+        return None;
+    }
+    let n = interior.len() as i64;
+    let cx = interior.iter().map(|p| p.0).sum::<i64>() / n;
+    let cy = interior.iter().map(|p| p.1).sum::<i64>() / n;
+    interior
+        .iter()
+        .min_by_key(|&&(x, y)| (x - cx) * (x - cx) + (y - cy) * (y - cy))
+        .map(|&(x, y)| (y * w + x) as usize)
 }
 
 /// A drawn-pixel mask as a greyscale image, for looking at what a row counted.
@@ -162,10 +205,8 @@ fn clip_coverage_by_item_type() {
         let full = drawn(&empty, &renderer.render_offscreen(&device, &queue, &full_frame, W, H));
         let boxed_frame = frame(scene(false), Some(box_clip()));
         let boxed = drawn(&empty, &renderer.render_offscreen(&device, &queue, &boxed_frame, W, H));
-        let planed = drawn(
-            &empty,
-            &renderer.render_offscreen(&device, &queue, &frame(scene(false), Some(plane_clip())), W, H),
-        );
+        let planed_frame = frame(scene(false), Some(plane_clip()));
+        let planed = drawn(&empty, &renderer.render_offscreen(&device, &queue, &planed_frame, W, H));
         let exempt = drawn(
             &empty,
             &renderer.render_offscreen(&device, &queue, &frame(scene(true), Some(box_clip())), W, H),
@@ -188,6 +229,29 @@ fn clip_coverage_by_item_type() {
                 (Some(gpu), Some(cpu))
             }
             None => (None, None),
+        };
+        // A pixel the plane cut away, picked with the plane in the frame and
+        // then with the item exempt from clipping.
+        let plane_cut = interior_pixel(&full, &planed);
+        let (gpu_pick_in_plane_cut, gpu_pick_exempt, gpu_pick_unclipped) = match plane_cut {
+            Some(i) => {
+                let at = glam::Vec2::new((i % W as usize) as f32 + 0.5, (i / W as usize) as f32 + 0.5);
+                let _ = renderer.pass().prepare(&device, &queue, &full_frame);
+                let unclipped = renderer
+                    .pick_object(PickBackend::Gpu, at, &full_frame, &device, &queue, PickMask::OBJECT)
+                    .is_some();
+                let _ = renderer.pass().prepare(&device, &queue, &planed_frame);
+                let clipped = renderer
+                    .pick_object(PickBackend::Gpu, at, &planed_frame, &device, &queue, PickMask::OBJECT)
+                    .is_some();
+                let exempt_frame = frame(scene(true), Some(plane_clip()));
+                let _ = renderer.pass().prepare(&device, &queue, &exempt_frame);
+                let exempt = renderer
+                    .pick_object(PickBackend::Gpu, at, &exempt_frame, &device, &queue, PickMask::OBJECT)
+                    .is_some();
+                (Some(clipped), Some(exempt), Some(unclipped))
+            }
+            None => (None, None, None),
         };
         // A pixel the box kept, as near the middle of what it kept as there is.
         let kept = (0..(W * H) as usize)
@@ -216,6 +280,9 @@ fn clip_coverage_by_item_type() {
             planed: count(&planed),
             exempt: count(&exempt),
             gpu_pick_in_cut,
+            gpu_pick_in_plane_cut,
+            gpu_pick_exempt,
+            gpu_pick_unclipped,
             cpu_pick_in_cut,
             cpu_pick_kept,
         });
@@ -227,18 +294,31 @@ fn clip_coverage_by_item_type() {
         None => "-",
     };
     eprintln!(
-        "\n{:<18} {:>7} {:>13} {:>15} {:>17} {:>16} {:>16} {:>14}",
-        "item", "pixels", "box removes", "plane removes", "ignoring, removes", "GPU pick in cut", "CPU pick in cut", "CPU pick kept"
+        "\n{:<18} {:>7} {:>13} {:>15} {:>17} {:>16} {:>18} {:>18} {:>18} {:>16} {:>14}",
+        "item",
+        "pixels",
+        "box removes",
+        "plane removes",
+        "ignoring, removes",
+        "GPU pick in cut",
+        "GPU pick in plane",
+        "ignoring, picked",
+        "unclipped, picked",
+        "CPU pick in cut",
+        "CPU pick kept"
     );
     for r in &rows {
         eprintln!(
-            "{:<18} {:>7} {:>12.0}% {:>14.0}% {:>16.0}% {:>16} {:>16} {:>14}",
+            "{:<18} {:>7} {:>12.0}% {:>14.0}% {:>16.0}% {:>16} {:>18} {:>18} {:>18} {:>16} {:>14}",
             r.name,
             r.full,
             removed(r.full, r.boxed),
             removed(r.full, r.planed),
             removed(r.full, r.exempt),
             yes_no(r.gpu_pick_in_cut),
+            yes_no(r.gpu_pick_in_plane_cut),
+            yes_no(r.gpu_pick_exempt),
+            yes_no(r.gpu_pick_unclipped),
             yes_no(r.cpu_pick_in_cut),
             yes_no(r.cpu_pick_kept),
         );
@@ -248,12 +328,31 @@ fn clip_coverage_by_item_type() {
         assert!(removed(r.full, r.boxed) > 10.0, "{}: a clip box removed nothing", r.name);
         assert!(removed(r.full, r.planed) > 10.0, "{}: a clip plane removed nothing", r.name);
         assert_eq!(r.gpu_pick_in_cut, Some(false), "{}: the GPU picked what the box cut away", r.name);
+        assert_eq!(
+            r.gpu_pick_unclipped,
+            Some(true),
+            "{}: the GPU picked nothing at the plane-cut pixel with no clip",
+            r.name
+        );
+        assert_eq!(
+            r.gpu_pick_in_plane_cut,
+            Some(false),
+            "{}: the GPU picked what the plane cut away",
+            r.name
+        );
         assert_ne!(r.cpu_pick_in_cut, Some(true), "{}: the CPU picked what the box cut away", r.name);
         if CPU_PICKED.contains(&r.name) {
             assert_eq!(r.cpu_pick_kept, Some(true), "{}: the CPU picked nothing where the box kept it", r.name);
         }
         if HONOUR_IGNORE_CLIP.contains(&r.name) {
             assert!(removed(r.full, r.exempt) < 2.0, "{}: ignore_clip was not honoured", r.name);
+        }
+        if r.name == "surface mesh" {
+            assert_eq!(
+                r.gpu_pick_exempt,
+                Some(true),
+                "surface mesh: the GPU did not pick an ignore_clip item inside the plane cut"
+            );
         }
     }
 }

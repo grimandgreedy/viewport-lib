@@ -38,8 +38,8 @@ use crate::interaction::select::selection::NodeId;
 /// - [`Voxel`](SubObjectRef::Voxel) : voxel in a structured scalar volume.
 /// - [`Cell`](SubObjectRef::Cell) : cell in an unstructured volume mesh (`VolumeMeshData`).
 /// - [`Splat`](SubObjectRef::Splat) : gaussian splat, by index in the splat buffer.
-/// - [`Instance`](SubObjectRef::Instance) : a vector or tensor field sample, or a sprite instance,
-///   by instance index.
+/// - [`Instance`](SubObjectRef::Instance) : a vector or tensor field sample, a sprite instance,
+///   or a `MeshInstanceItem` transform, by instance index.
 /// - [`Segment`](SubObjectRef::Segment) : polyline, tube, or ribbon segment, by index.
 /// - [`Strip`](SubObjectRef::Strip) : connected curve strip within a multi-strip item,
 ///   by strip index.
@@ -71,7 +71,8 @@ pub enum SubObjectRef {
     Cell(u32),
     /// A gaussian splat identified by its index in the splat buffer.
     Splat(u32),
-    /// A field sample or sprite instance identified by its instance index.
+    /// A field sample, sprite instance or mesh instance identified by its
+    /// instance index.
     Instance(u32),
     /// A polyline, tube, or ribbon segment identified by its segment index.
     Segment(u32),

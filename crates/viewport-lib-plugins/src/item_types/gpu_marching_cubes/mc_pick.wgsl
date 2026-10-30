@@ -7,8 +7,8 @@
 // the primitive channel is 0.
 //
 // Group 0: the shared scene bind group, whose pick camera bind group the
-//          surface pick pipeline binds too. A fragment outside a clip volume
-//          (binding 6) is not picked; the pick pass binds no clip planes.
+//          surface pick pipeline binds too. A fragment a clip plane
+//          (binding 4) or clip volume (binding 6) cuts away is not picked.
 // Group 1: per-job pick id (binding 0).
 
 // `x` is the pick id, `y` is 1 when the item ignores clipping.
@@ -40,7 +40,7 @@ struct PickOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> PickOut {
-    if pick_id.y == 0u && !viewport_pass_clip_volumes(in.world_pos) {
+    if pick_id.y == 0u && !viewport_clip_test(in.world_pos) {
         discard;
     }
     var out: PickOut;

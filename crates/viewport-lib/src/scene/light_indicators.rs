@@ -5,8 +5,9 @@
 //! indicator per light, without deciding what it is drawn as. The caller turns
 //! that into whatever it likes;
 //! [`LightIndicators::to_mesh_instances`] covers the usual case of a small
-//! arrow or sphere per light. Everything carries `settings.pick_id = node_id`
-//! so the standard pick and selection-outline machinery applies.
+//! arrow or sphere per light. Everything carries `settings.pick_id = node_id`,
+//! so the standard pick API returns the light. Mesh-instance batches are
+//! picked but not drawn with a selection outline.
 
 use crate::Colour;
 use std::collections::HashMap;
@@ -67,7 +68,11 @@ impl LightIndicators {
     /// `primitives::icosphere` are what these were drawn with before.
     ///
     /// Returns up to two items, one batch per mesh, and skips a batch with no
-    /// instances.
+    /// instances. Each batch carries its first marker's `pick_id`; a GPU pick
+    /// on a batch reports [`SubObjectRef::Instance(i)`](crate::SubObjectRef)
+    /// under `PickMask::INSTANCE`, the batch's `i`-th marker in `markers`
+    /// order. `selected` is set when any marker in the batch is selected, but
+    /// mesh instances draw no selection outline.
     pub fn to_mesh_instances(
         &self,
         directional: crate::resources::mesh::mesh_store::MeshId,
@@ -108,8 +113,7 @@ impl LightIndicators {
             item.settings.unlit = true;
             item.settings.cast_shadows = false;
             item.settings.receive_shadows = false;
-            // One batch, one id. A caller wanting to pick an individual light
-            // submits one item per marker instead.
+            // One batch, one id. A pick's instance index names the marker.
             if let Some(first) = batch.first() {
                 item.settings.pick_id = first.pick_id;
                 item.settings.selected = batch.iter().any(|m| m.selected);

@@ -37,7 +37,12 @@ pub struct MeshInstanceItem {
     /// GPU blend state for this batch. Shares [`SpriteBlend`] with the sprite
     /// path so both particle systems share one enum.
     pub blend: SpriteBlend,
-    /// Per-item render settings (visibility, pick identity, selection state).
+    /// Per-item render settings: visibility, clipping and pick identity.
+    ///
+    /// With a `pick_id` set, every instance in the batch is picked under that
+    /// id, and a GPU pick under `PickMask::INSTANCE` also reports
+    /// [`SubObjectRef::Instance(i)`](crate::SubObjectRef) for the hit
+    /// transform. `selected` draws no outline for mesh instances.
     pub settings: ItemSettings,
     /// LOD group to draw these instances from. `None` means draw `mesh_id`
     /// directly for every instance.
