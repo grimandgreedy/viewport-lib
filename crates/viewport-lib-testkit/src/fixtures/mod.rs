@@ -76,7 +76,9 @@ pub use item_type_plugin::{
     ConformanceItemTypePlugin, ConformanceItems, CountedItemCollection, LoggingItemTypePlugin,
     QuadId, StoredId, StoringItemTypePlugin, TriangleItemTypePlugin,
 };
-pub use material_plugin::{FlatColourMaterialPlugin, TexturedMaterialPlugin};
+pub use material_plugin::{
+    FlatColourMaterialPlugin, SurfaceGlowMaterialPlugin, TexturedMaterialPlugin,
+};
 pub use post_effect_producer::LoggingPostEffectProducer;
 pub use post_effect_stage::PassthroughPostEffectStage;
 pub use runtime_plugin::{LoggingRuntimePlugin, ProbeEvent};
