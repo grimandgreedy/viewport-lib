@@ -37,6 +37,12 @@ fn viewport_brdf_f_schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (vec3<f32>(1.0) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
+// Fresnel-Schlick with the grazing reflectance capped by roughness, for the
+// split-sum environment term.
+fn viewport_brdf_f_schlick_roughness(cos_theta: f32, F0: vec3<f32>, roughness: f32) -> vec3<f32> {
+    return F0 + (max(vec3<f32>(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
 // One analytic light's Cook-Torrance contribution. `radiance` is the light
 // colour times its attenuation; `F0` is the surface reflectance at normal
 // incidence (mix(vec3(0.04), base_colour, metallic)). Returns exactly zero

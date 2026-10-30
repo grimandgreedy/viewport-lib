@@ -1,6 +1,6 @@
-// Shared ambient / IBL helpers for the lit mesh family: mesh.wgsl,
-// mesh_oit.wgsl, mesh_instanced.wgsl, mesh_instanced_oit.wgsl. Pulled in by
-// the build-time `// #include` preprocessor (build.rs).
+// Shared ambient / IBL helpers for the lit mesh shaders (mesh.wgsl,
+// mesh_oit.wgsl), which also include brdf.wgsl. Pulled in by the build-time
+// `// #include` preprocessor (build.rs).
 //
 // Sampling is equirect 2D end to end. The including shader declares the IBL
 // bindings this file reads: `ibl_irradiance`, `ibl_prefiltered`,
@@ -181,17 +181,13 @@ fn sample_ibl_prefiltered(R: vec3<f32>, roughness: f32, rotation: f32) -> vec3<f
     return sample_ibl_prefiltered_grad(R, roughness, rotation, dr);
 }
 
-/// Geometric specular anti-aliasing (Kaplanyan-style): widen perceptual
-/// roughness by the screen-space variance of the shading normal so a detailed
-/// normal map does not alias into per-pixel glints on a single-sampled
-/// target. Neutral on smooth normals; applies to direct and IBL specular.
 /// Look up the BRDF integration LUT (x=NdotV, y=roughness).
 fn sample_brdf_lut(NdotV: f32, roughness: f32) -> vec2<f32> {
     return textureSampleLevel(ibl_brdf_lut, ibl_sampler, vec2<f32>(NdotV, roughness), 0.0).rg;
 }
 
 fn F_Schlick_roughness(cos_theta: f32, F0: vec3<f32>, roughness: f32) -> vec3<f32> {
-    return F0 + (max(vec3<f32>(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+    return viewport_brdf_f_schlick_roughness(cos_theta, F0, roughness);
 }
 
 struct IblContrib {
