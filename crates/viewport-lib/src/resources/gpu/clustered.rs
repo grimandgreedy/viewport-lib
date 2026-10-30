@@ -5,10 +5,11 @@
 //! the list of lights whose volume of influence intersects it; lit pipelines
 //! then read just their cell's slice of the index list instead of scanning
 //! every active light per fragment. Every cluster owns a fixed
-//! `MAX_LIGHTS_PER_CLUSTER` slice of the index list, written in the host's
-//! priority order (directionals, then punctuals ranked by importance and
-//! proximity), so a crowded cluster degrades by dropping its lowest-priority
-//! lights and never disturbs any other cluster.
+//! `MAX_LIGHTS_PER_CLUSTER` slice of the index list, so a crowded cluster
+//! never disturbs any other. A cell whose lights overflow its slice records
+//! the overflow (`punctual_demand > punctual_count`) and its fragments walk
+//! the full light array instead, so a crowded cell costs more but drops no
+//! light.
 //!
 //! Bindings 14 and 15 of the camera bind group expose the grid uniform and one
 //! storage buffer holding the per-cell offsets followed by the global index
@@ -35,10 +36,9 @@ pub const CLUSTER_Z_SLICES: u32 = 24;
 /// Total cluster cell count (`16 * 9 * 24 = 3456`).
 pub const CLUSTER_COUNT: u32 = CLUSTER_X_TILES * CLUSTER_Y_TILES * CLUSTER_Z_SLICES;
 /// Fixed light-index capacity per cluster cell. Each cluster owns its own
-/// slice of the index list, so a crowded cluster can never starve another,
-/// and overflow within a cluster drops the lowest-priority lights (the host
-/// orders the light array by importance and proximity). Must match
-/// `MAX_PER_CLUSTER` in `cluster_build.wgsl`.
+/// slice of the index list, so a crowded cluster can never starve another.
+/// A cluster that overflows its slice shades with the full light array
+/// instead. Must match `MAX_PER_CLUSTER` in `cluster_build.wgsl`.
 pub const MAX_LIGHTS_PER_CLUSTER: u32 = 64;
 /// Total light-index list capacity: one fixed slice per cluster
 /// (`3456 * 64` entries, 864 KB at 4 bytes per index).
@@ -76,8 +76,8 @@ pub struct ClusterGridUniform {
     /// not the camera near plane; see `CLUSTER_Z_SLICES`.
     pub depth: [f32; 4],
     /// (screen_w, screen_h, fallback_mode, _pad). `fallback_mode != 0` signals
-    /// the small-N fallback path to the shader, which then iterates the full
-    /// light array instead of the cluster list.
+    /// the small-N or forced fallback path to the shader, which then iterates
+    /// the full light array instead of the cluster list.
     pub screen: [f32; 4],
     /// (tan_half_fov_x, tan_half_fov_y, _pad, _pad). Used by the build pass
     /// to compute per-cluster view-space AABBs from screen-tile NDC bounds.
@@ -164,9 +164,9 @@ pub struct ClusterStats {
     /// Capacity of the light index list (one fixed
     /// `MAX_LIGHTS_PER_CLUSTER` slice per cluster).
     pub max_index_slots: u32,
-    /// Punctual lights dropped by per-cluster capacity this frame, summed
-    /// over all cells (`punctual_demand - punctual_count`). Zero means no
-    /// cluster overflowed its slice.
+    /// Cells that fell back to the full light array this frame because their
+    /// punctual demand overflowed the per-cluster slice. Zero means no cluster
+    /// overflowed.
     pub dropped_punctual_slots: u32,
     /// Active light count after the CPU frustum cull.
     pub active_light_count: u32,
@@ -193,8 +193,8 @@ pub struct ClusterCell {
     /// out the per-cluster light density signal.
     pub punctual_count: u32,
     /// Punctual lights that intersect this cluster, before the per-cluster
-    /// capacity cap. `punctual_demand - punctual_count` is how many lights
-    /// this cluster dropped.
+    /// capacity cap. When it exceeds `punctual_count` the slice overflowed
+    /// and the cluster's fragments iterate the full light array.
     pub punctual_demand: u32,
 }
 
@@ -671,7 +671,9 @@ fn compute_stats(
     let mut non_empty: u32 = 0;
     for c in cells {
         total_index_slots_used = total_index_slots_used.saturating_add(c.count);
-        dropped = dropped.saturating_add(c.punctual_demand.saturating_sub(c.punctual_count));
+        if c.punctual_demand > c.punctual_count {
+            dropped += 1;
+        }
         if c.punctual_demand > 0 {
             non_empty += 1;
             punctuals.push(c.punctual_demand);

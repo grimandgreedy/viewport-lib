@@ -14,7 +14,8 @@
 // accumulates direct contribution from the per-cluster light list. When the
 // active light count is small enough that cluster overhead would dominate,
 // the host sets `cluster_grid_uniform.screen.z != 0` and the helper iterates
-// the full `lights_storage` array directly.
+// the full `lights_storage` array directly. A cell whose list overflowed its
+// fixed slice iterates the full array too, so no light is ever dropped.
 //
 // The world-to-view matrix is carried inside the cluster grid uniform so the
 // helper can derive the view-space fragment position itself; consumers don't
@@ -188,9 +189,9 @@ fn cluster_index_for(view_pos: vec3<f32>) -> u32 {
 }
 
 // Iteration bounds for the per-fragment light loop. `fallback` is true when
-// the host short-circuited the cluster build : in that case `start` is 0 and
-// `count` is the total active light count, and `cluster_light_global` returns
-// the loop index directly.
+// the host short-circuited the cluster build or the fragment's cell overflowed
+// its index slice: in that case `start` is 0 and `count` is the total active
+// light count, and `cluster_light_global` returns the loop index directly.
 struct LightRange {
     fallback: bool,
     start:    u32,
@@ -209,6 +210,14 @@ fn cluster_light_range(world_pos: vec3<f32>, total_count: u32) -> LightRange {
         let cid = cluster_index_for(view_pos);
         r.start = cluster_data[cid * 4u];
         r.count = cluster_data[cid * 4u + 1u];
+        // A cell whose punctual demand outgrew its slice walks every light
+        // instead of dropping the overflow; `eval_light`'s range test keeps
+        // that walk cheap.
+        if cluster_data[cid * 4u + 3u] > cluster_data[cid * 4u + 2u] {
+            r.fallback = true;
+            r.start = 0u;
+            r.count = total_count;
+        }
     }
     // ALT(UNCLUSTERED): r.fallback = true;
     // ALT(UNCLUSTERED): r.start = 0u;

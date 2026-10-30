@@ -8,10 +8,10 @@
 //   1. Marks the lights intersecting its cluster AABB in a workgroup-shared
 //      bitmask (parallel across threads).
 //   2. Thread 0 compacts the set bits into the cluster's slice in light-index
-//      order. The host orders the light array by priority (directionals
-//      first, then punctuals ranked by importance and proximity), so when a
-//      cluster holds more lights than its slice, the lowest-priority lights
-//      are the ones dropped, deterministically.
+//      order and records the cell's punctual demand next to the punctual
+//      count it kept. When demand exceeds the kept count the slice
+//      overflowed, and `cluster_light_range` makes that cell's fragments walk
+//      the full light array instead, so no light is dropped.
 //
 // Spot lights are tested with the conservative sphere-vs-AABB on their
 // bounding sphere. A tighter cone-vs-AABB test would be a useful follow-up if
@@ -167,8 +167,8 @@ fn main(
     workgroupBarrier();
 
     // Pass 2 : thread 0 compacts set bits into the cluster's fixed slice in
-    // light-index order. Array order is the host's priority order, so slice
-    // overflow drops the lowest-priority lights.
+    // light-index order. On overflow the slice stops filling; the recorded
+    // demand tells the lit shaders to ignore it and walk every light.
     if lid.x == 0u {
         let base = cluster_id * MAX_PER_CLUSTER;
         var written = 0u;
