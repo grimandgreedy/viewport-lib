@@ -4,7 +4,7 @@
 // tracks the drawn shape. The fragment stage writes the field's object id, the
 // sample index, and clip-space depth.
 //
-// Group 0: camera (binding 0) + clip volume (binding 6).
+// Group 0: camera (binding 0), clip planes (binding 4), clip volumes (binding 6).
 // Group 1: vector field uniform (binding 0) + pick id (binding 3).
 // Group 2: per-instance storage buffer (binding 0).
 
@@ -104,7 +104,7 @@ struct FragOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> FragOut {
-    if !viewport_pass_clip_volumes(in.world_pos) { discard; }
+    if !viewport_clip_test(in.world_pos) { discard; }
     var out: FragOut;
     out.object_id    = pick.id;
     out.primitive_id = in.instance_index;

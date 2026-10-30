@@ -156,8 +156,8 @@ fn fs_pick(in: VertexOutput) -> PickOut {
         }
     }
 
-    // The pick pass binds clip volumes and no clip planes.
-    if !hit || (u.ignore_clip == 0u && !viewport_pass_clip_volumes(hit_pos)) {
+    // A hit a clip plane or clip volume cuts away is not picked.
+    if !hit || (u.ignore_clip == 0u && !viewport_clip_test(hit_pos)) {
         discard;
     }
 

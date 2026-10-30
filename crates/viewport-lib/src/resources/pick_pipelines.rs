@@ -137,8 +137,8 @@ impl DeviceResources {
     /// The group 0 and group 1 layouts every surface pick pipeline shares.
     fn create_pick_layouts(&mut self, device: &crate::gpu::Device) {
         // --- group 0: pick camera bind group layout ---
-        // Includes binding 0 (CameraUniform), binding 6 (ClipVolumesUniform)
-        // and binding 23 (the deform header).
+        // Includes binding 0 (CameraUniform), binding 4 (ClipPlanesUniform),
+        // binding 6 (ClipVolumesUniform) and binding 23 (the deform header).
         // The full camera_bind_group_layout has many more bindings; a separate
         // minimal layout is cleaner and avoids binding unused resources.
         let pick_camera_bgl =
@@ -148,6 +148,16 @@ impl DeviceResources {
                     crate::gpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: crate::gpu::ShaderStages::VERTEX,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
                         ty: crate::gpu::BindingType::Buffer {
                             ty: crate::gpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,

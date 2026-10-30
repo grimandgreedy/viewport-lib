@@ -16,8 +16,8 @@
 //
 // Group 0: the shared scene bindings, prefixed from SHARED_BINDINGS_WGSL; the
 //          vertex stage reads the camera and the fragment stage needs none.
-//          The pick pass binds clip volumes and no clip planes, so a splat
-//          whose centre a clip volume cuts away is not picked.
+//          A splat whose centre a clip plane or clip volume cuts away is
+//          not picked.
 // Group 1: SplatUniform + sorted_indices + positions + scales + rotations
 //          (bindings 0-4), reused unchanged from the render bind group.
 //          Bindings 5 (opacities) is read; binding 6 (sh_coefficients) is
@@ -197,7 +197,7 @@ struct FragOut {
 
 @fragment
 fn fs_main(in: VsOut) -> FragOut {
-    if splat_u.ignore_clip == 0u && !viewport_pass_clip_volumes(in.centre) { discard; }
+    if splat_u.ignore_clip == 0u && !viewport_clip_test(in.centre) { discard; }
     let ux = in.uv.x;
     let uy = in.uv.y;
     let d2 = ux*ux*in.sigma_inv_a + 2.0*ux*uy*in.sigma_inv_b + uy*uy*in.sigma_inv_c;

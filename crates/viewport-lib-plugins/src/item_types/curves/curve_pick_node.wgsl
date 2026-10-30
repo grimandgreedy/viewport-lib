@@ -64,7 +64,7 @@ struct FragOut {
 
 @fragment
 fn fs_main(in: VertexOut, @builtin(primitive_index) prim: u32) -> FragOut {
-    if !viewport_pass_clip_volumes(in.world_pos) { discard; }
+    if !viewport_clip_test(in.world_pos) { discard; }
     let model = mat4x4<f32>(pick.model_c0, pick.model_c1, pick.model_c2, pick.model_c3);
 
     let np = tri_nodes[prim];

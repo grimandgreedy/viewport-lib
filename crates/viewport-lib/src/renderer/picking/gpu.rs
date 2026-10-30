@@ -100,6 +100,25 @@ enum PickSubKind {
     /// `resolve_sub_object`; a plugin without the hook stays object-level. The
     /// payload is the plugin's `type_name`, the `item_type_plugins` key.
     Plugin(&'static str),
+    /// [`MeshInstanceItem`](crate::renderer::MeshInstanceItem) batch: the pick
+    /// pass writes the transform index into the primitive channel, which
+    /// resolves to [`SubObjectRef::Instance`] under [`PickMask::INSTANCE`].
+    Instance,
+}
+
+/// `PickInstance` flag words, matching the pick shaders' `PICK_*` constants.
+/// The Rust struct keeps them in `_pad`: `_pad[0]` is the flags word and
+/// `_pad[1]` the instance index written when `PICK_WRITE_INSTANCE` is set.
+const PICK_IGNORE_CLIP: u32 = 1;
+const PICK_WRITE_INSTANCE: u32 = 2;
+
+/// One mesh-instance batch in the pick pass: `count` consecutive
+/// `PickInstance` slots from `first` in `PickDrawSet::batch_instances`, drawn
+/// with one instanced draw of `mesh_id`.
+struct PickInstanceBatch {
+    mesh_id: crate::resources::mesh::mesh_store::MeshId,
+    first: u32,
+    count: u32,
 }
 
 /// Marker that the pick pipelines this query needs have been built. The pass
@@ -191,6 +210,10 @@ impl PickInstanceGroups {
 /// pixel or a whole rect region back, only which types answer `mask`.
 struct PickDrawSet {
     draws: Vec<(crate::resources::mesh::mesh_store::MeshId, PickInstance)>,
+    /// Instance slots for the mesh-instance batches, stored after `draws` in
+    /// the pick instance buffer.
+    batch_instances: Vec<PickInstance>,
+    batches: Vec<PickInstanceBatch>,
     /// Whether any registered plugin has pickable geometry this frame. Plugin
     /// draws are not collected here; they are issued directly from
     /// `dispatch_plugin_pick` during `record_pick_pass_draws`.
@@ -213,7 +236,7 @@ impl PickDrawSet {
     /// `true` when nothing would be drawn: the pass has nothing to submit, so
     /// the caller can report a miss without touching the GPU.
     fn is_empty(&self) -> bool {
-        self.draws.is_empty() && !self.has_plugin_pick
+        self.draws.is_empty() && self.batches.is_empty() && !self.has_plugin_pick
     }
 }
 
@@ -536,8 +559,7 @@ impl ViewportRenderer {
         // The buffer half of each pair only needs to live through
         // `create_bind_group` (which retains its own GPU-side reference), not
         // beyond, so neither is named further.
-        let (_, pick_instance_bg) =
-            self.build_pick_instance_bind_group(device, queue, &draw_set.draws);
+        let (_, pick_instance_bg) = self.build_pick_instance_bind_group(device, queue, &draw_set);
         let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
         let sublevel = self.build_pick_sublevel_binds(device, &draw_set);
 
@@ -745,6 +767,7 @@ impl ViewportRenderer {
         // are hidden or have pick_id 0 are skipped; clear value 0 means "no hit".
         // An item whose colour pipeline is still compiling is not on screen,
         // so it is not under the cursor either.
+        let clip_flag = |ignore_clip: bool| if ignore_clip { PICK_IGNORE_CLIP } else { 0 };
         let colour_hdr = self.draws_hdr(frame);
         let clipping_active = crate::resources::DeviceResources::clipping_active(frame);
         let pickable = |item: &SceneRenderItem| {
@@ -774,7 +797,7 @@ impl ViewportRenderer {
                     item.deform_instance,
                     record,
                 ),
-                _pad: [0; 2],
+                _pad: [clip_flag(item.settings.ignore_clip), 0],
             }
         };
 
@@ -798,10 +821,46 @@ impl ViewportRenderer {
             }
         }
 
-        // Glyph and tensor-glyph sets draw with their own pick pipelines. Each
-        // set builds a group-1 bind group (the set uniform + a per-set object-id
-        // uniform) here so it outlives the render pass. The buffers behind the
-        // bind group stay alive through it, so the temporary id buffer can drop.
+        // Mesh-instance batches: one slot per transform, all carrying the
+        // batch's pick id and writing their transform index into the
+        // primitive channel. A LOD batch picks against its full-detail mesh.
+        let mut batch_instances: Vec<PickInstance> = Vec::new();
+        let mut batches: Vec<PickInstanceBatch> = Vec::new();
+        if mask.intersects(PickMask::OBJECT | PickMask::INSTANCE) {
+            for item in frame.scene.mesh_instances.iter() {
+                if item.settings.hidden
+                    || item.settings.pick_id == PickId::NONE
+                    || item.transforms.is_empty()
+                {
+                    continue;
+                }
+                let mesh_id = item
+                    .lod_group
+                    .and_then(|id| self.resources.lod_group(id))
+                    .map_or(item.mesh_id, |g| g.mesh_at(0));
+                if self.resources.mesh_store.get(mesh_id).is_none() {
+                    continue;
+                }
+                let flags = clip_flag(item.settings.ignore_clip) | PICK_WRITE_INSTANCE;
+                let first = batch_instances.len() as u32;
+                for (i, m) in item.transforms.iter().enumerate() {
+                    batch_instances.push(PickInstance {
+                        model_c0: m[0],
+                        model_c1: m[1],
+                        model_c2: m[2],
+                        model_c3: m[3],
+                        object_id: item.settings.pick_id.0 as u32,
+                        deform_table: 0,
+                        _pad: [flags, i as u32],
+                    });
+                }
+                batches.push(PickInstanceBatch {
+                    mesh_id,
+                    first,
+                    count: item.transforms.len() as u32,
+                });
+            }
+        }
 
         // Registered plugins draw their own pick-ids into the pass. They answer
         // the same level set as built-in surfaces (object plus the mesh
@@ -835,6 +894,8 @@ impl ViewportRenderer {
 
         PickDrawSet {
             draws,
+            batch_instances,
+            batches,
             has_plugin_pick,
             kinds,
             surface_meta,
@@ -844,15 +905,20 @@ impl ViewportRenderer {
     }
 
     /// Build the group-1 `PickInstance` storage buffer and its bind groups for
-    /// the surface-pipeline `draws` list, one per sidecar chunk the draws'
-    /// meshes sit in. Shared by the point and rect pick passes.
+    /// the surface-pipeline draws and mesh-instance batches, one per sidecar
+    /// chunk their meshes sit in. Shared by the point and rect pick passes.
     fn build_pick_instance_bind_group(
         &self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        draws: &[(crate::resources::mesh::mesh_store::MeshId, PickInstance)],
+        draw_set: &PickDrawSet,
     ) -> (crate::gpu::Buffer, PickInstanceGroups) {
-        let pick_instances: Vec<PickInstance> = draws.iter().map(|(_, inst)| *inst).collect();
+        let pick_instances: Vec<PickInstance> = draw_set
+            .draws
+            .iter()
+            .map(|(_, inst)| *inst)
+            .chain(draw_set.batch_instances.iter().copied())
+            .collect();
         let pick_instance_bytes = bytemuck::cast_slice(&pick_instances);
         let pick_instance_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pick_instance_buf"),
@@ -888,11 +954,16 @@ impl ViewportRenderer {
             fallback: group(self.resources.sidecar.fallback()),
             chunks: std::collections::HashMap::new(),
         };
-        for (mesh_id, _) in draws {
+        let mesh_ids = draw_set
+            .draws
+            .iter()
+            .map(|(mesh_id, _)| *mesh_id)
+            .chain(draw_set.batches.iter().map(|b| b.mesh_id));
+        for mesh_id in mesh_ids {
             let Some(record) = self
                 .resources
                 .mesh_store
-                .get(*mesh_id)
+                .get(mesh_id)
                 .and_then(|g| g.sidecar.as_ref())
             else {
                 continue;
@@ -906,7 +977,7 @@ impl ViewportRenderer {
     }
 
     /// Build the group-0 minimal pick camera uniform buffer + bind group
-    /// (camera + clip volume). Shared by the point and rect pick passes.
+    /// (camera, clip planes, clip volumes, deform header). Shared by the point and rect pick passes.
     fn build_pick_camera_bind_group(
         &self,
         device: &crate::gpu::Device,
@@ -923,14 +994,15 @@ impl ViewportRenderer {
         });
         queue.write_buffer(&pick_camera_buf, 0, camera_bytes);
 
-        // The picked viewport's clip volumes, not whichever viewport was
-        // prepared last.
-        let clip_volume_buf = self
-            .viewport_slots
-            .get(frame.camera.viewport_index)
-            .map_or(&self.resources.scene_tier.binds.clip_volume_buf, |slot| {
-                &slot.clip_volume_buf
-            });
+        // The picked viewport's clip planes and volumes, not whichever
+        // viewport was prepared last.
+        let slot = self.viewport_slots.get(frame.camera.viewport_index);
+        let clip_planes_buf = slot.map_or(&self.resources.scene_tier.binds.clip_planes_buf, |s| {
+            &s.clip_planes_buf
+        });
+        let clip_volume_buf = slot.map_or(&self.resources.scene_tier.binds.clip_volume_buf, |s| {
+            &s.clip_volume_buf
+        });
         let pick_camera_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("pick_camera_bg"),
             layout: self
@@ -943,6 +1015,10 @@ impl ViewportRenderer {
                 crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: pick_camera_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 4,
+                    resource: clip_planes_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 6,
@@ -1078,6 +1154,25 @@ impl ViewportRenderer {
             pick_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
         }
 
+        // Mesh-instance batches: one instanced draw per batch over its
+        // consecutive slots, after the single-slot draws in the buffer.
+        let batch_base = draw_set.draws.len() as u32;
+        for batch in &draw_set.batches {
+            let Some(mesh) = self.resources.mesh_store.get(batch.mesh_id) else {
+                continue;
+            };
+            let first = batch_base + batch.first;
+            pick_pass.set_pipeline(default_pipeline);
+            pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+            pick_pass.set_bind_group(1, pick_instance_bg.for_mesh(mesh), &[]);
+            pick_pass.set_vertex_buffer(0, self.resources.geometry.vertex_slice(mesh.vertex_span));
+            pick_pass.set_index_buffer(
+                self.resources.geometry.index_slice(mesh.index_span),
+                crate::gpu::IndexFormat::Uint32,
+            );
+            pick_pass.draw_indexed(0..mesh.index_count, 0, first..first + batch.count);
+        }
+
         // Item-type plugins render their own pick-ids last. They build their
         // pipelines against the full shared group-0 layout, so bind the picked
         // viewport's full camera bind group before handing them the pass.
@@ -1169,8 +1264,7 @@ impl ViewportRenderer {
             std::collections::HashMap::new()
         };
 
-        let (_, pick_instance_bg) =
-            self.build_pick_instance_bind_group(device, queue, &draw_set.draws);
+        let (_, pick_instance_bg) = self.build_pick_instance_bind_group(device, queue, &draw_set);
         let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
         let sublevel = self.build_pick_sublevel_binds(device, &draw_set);
         let targets = PickTargets::new(device, vp_w, vp_h);
@@ -1435,8 +1529,7 @@ impl ViewportRenderer {
             std::collections::HashMap::new()
         };
 
-        let (_, pick_instance_bg) =
-            self.build_pick_instance_bind_group(device, queue, &draw_set.draws);
+        let (_, pick_instance_bg) = self.build_pick_instance_bind_group(device, queue, &draw_set);
         let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
         let sublevel = self.build_pick_sublevel_binds(device, &draw_set);
         let targets = PickTargets::new(device, vp_w, vp_h);
@@ -1832,6 +1925,9 @@ impl ViewportRenderer {
                 primitive_index_supported,
                 world_pos,
             ),
+            PickSubKind::Instance => mask
+                .intersects(PickMask::INSTANCE)
+                .then_some(SubObjectRef::Instance(sub_primitive)),
         }
     }
 
@@ -1935,6 +2031,9 @@ impl ViewportRenderer {
                 primitive_index_supported,
                 world_pos,
             ),
+            PickSubKind::Instance => mask
+                .intersects(PickMask::INSTANCE)
+                .then_some(SubObjectRef::Instance(sub_primitive)),
         }
     }
 
@@ -2012,6 +2111,13 @@ impl ViewportRenderer {
                         kinds.insert(settings.pick_id.0, PickSubKind::Plugin(name));
                     }
                 }
+            }
+        }
+
+        // Mesh-instance batches: the channel holds the transform index.
+        for item in frame.scene.mesh_instances.iter() {
+            if !item.settings.hidden && item.settings.pick_id != PickId::NONE {
+                kinds.insert(item.settings.pick_id.0, PickSubKind::Instance);
             }
         }
 

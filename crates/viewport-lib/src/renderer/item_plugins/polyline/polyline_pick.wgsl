@@ -7,8 +7,8 @@
 // per-item object id (from a small group-2 uniform) and the clip-space depth,
 // matching the pick pass's two render targets (R32Uint id + R32Float depth).
 //
-// Group 0: pick camera bind group (Camera at binding 0, ClipVolume at binding 6),
-//          matching the surface pick pipeline's group 0.
+// Group 0: the shared scene bind group (Camera at binding 0, clip planes at
+//          binding 4, clip volumes at binding 6).
 // Group 1: the polyline render item's own bind group (PolylineUniform + LUT +
 //          sampler). Reused unchanged so the model matrix and viewport dims that
 //          drive the expansion are exactly those the render path used.
@@ -31,6 +31,14 @@ struct PolylineUniform {
     viewport_width:  f32,
     viewport_height: f32,
     _pad:            vec2<f32>,
+};
+
+struct ClipPlanes {
+    planes:          array<vec4<f32>, 6>,
+    count:           u32,
+    _pad0:           u32,
+    viewport_width:  f32,
+    viewport_height: f32,
 };
 
 struct ClipVolumeEntry {
@@ -66,6 +74,7 @@ struct PickId {
 };
 
 @group(0) @binding(0) var<uniform> camera:      Camera;
+@group(0) @binding(4) var<uniform> clip_planes: ClipPlanes;
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
 
 // #include "helpers/clip_volume_test.wgsl"
@@ -196,6 +205,10 @@ struct FragOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> FragOut {
+    for (var i = 0u; i < clip_planes.count; i = i + 1u) {
+        let plane = clip_planes.planes[i];
+        if dot(in.world_pos, plane.xyz) + plane.w < 0.0 { discard; }
+    }
     if !clip_volume_test(in.world_pos) { discard; }
     var out: FragOut;
     out.object_id    = pick.object_id;
