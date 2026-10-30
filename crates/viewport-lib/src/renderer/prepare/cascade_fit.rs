@@ -67,8 +67,24 @@ impl ViewportRenderer {
             Some(range) => range,
             None => fallback,
         };
-        let cascade_splits =
-            compute_cascade_splits(shadow_near, shadow_far, cascade_count as u32, 0.75);
+        // A set shadow distance replaces the far end, whatever the scene.
+        let (shadow_near, shadow_far) = match lighting.shadows.shadow_distance {
+            Some(d) if d.is_finite() && d > 0.0 => {
+                let far = d.min(camera_far);
+                (shadow_near.min(far * 0.5), far)
+            }
+            _ => (shadow_near, shadow_far),
+        };
+        let cascade_splits = compute_cascade_splits(
+            shadow_near,
+            shadow_far,
+            cascade_count as u32,
+            lighting.shadows.cascade_split,
+        );
+        // With depth clamp the cascade casters land in the map however far
+        // in front of a cascade they are, so its depth range need not reach
+        // them.
+        let depth_clamp = resources.capabilities.depth_clip_control;
 
         // The single map a camera with no view matrix gets: the override
         // around the origin, or the casters' light-space half-extent around
@@ -108,7 +124,13 @@ impl ViewportRenderer {
                         split_near,
                         split_far,
                         light.tile_size as f32,
-                    );
+                        |light_view, rect| {
+                            (!depth_clamp)
+                                .then(|| bounds.caster_max_z(light_view, rect))
+                                .flatten()
+                        },
+                    )
+                    .view_proj;
                     cascade_split_distances[i] = split_far;
                 }
             } else {
@@ -143,16 +165,26 @@ impl ViewportRenderer {
 
         // Atlas tile layout (2x2 grid of `tile_size` tiles filling the texture):
         // [0] = top-left, [1] = top-right, [2] = bottom-left, [3] = bottom-right
-        let atlas_rects: [[f32; 4]; 8] = [
+        let atlas_rects: [[f32; 4]; 4] = [
             [0.0, 0.0, 0.5, 0.5], // cascade 0
             [0.5, 0.0, 1.0, 0.5], // cascade 1
             [0.0, 0.5, 0.5, 1.0], // cascade 2
             [0.5, 0.5, 1.0, 1.0], // cascade 3
-            [0.0; 4],
-            [0.0; 4],
-            [0.0; 4],
-            [0.0; 4], // unused slots
         ];
+        // Where the cascades end along the view, and the share of that
+        // distance they fade out over. The single no-view map has no
+        // distance cut. The last two lanes are reserved for physically
+        // sized soft shadows (sun angular radius, widest penumbra).
+        let range = if use_csm && effective_cascade_count > 0 {
+            [
+                cascade_split_distances[effective_cascade_count - 1],
+                0.0,
+                0.0,
+                0.0,
+            ]
+        } else {
+            [0.0; 4]
+        };
 
         // Upload ShadowAtlasUniform (binding 5).
         {
@@ -181,6 +213,7 @@ impl ViewportRenderer {
                     _ => 0,
                 },
                 pcss_light_radius: lighting.shadows.pcss_light_radius,
+                range,
                 atlas_rects,
             };
             // The shared buffer and every per-viewport copy, only when the
@@ -255,4 +288,93 @@ fn compute_shadow_matrix(
         shadow_extent * 5.0,
     );
     light_proj * light_view
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::renderer::shadows::{CascadeFit, compute_cascade_matrix, compute_cascade_splits};
+    use glam::{Mat4, Vec3};
+
+    fn sun() -> Vec3 {
+        Vec3::new(0.3, -0.5, 0.8).normalize()
+    }
+
+    /// The second cascade of a camera at `eye` looking along +Y.
+    fn fit(eye: Vec3, caster_max_z: Option<f32>) -> CascadeFit {
+        let view = Mat4::look_at_rh(eye, eye + Vec3::Y, Vec3::Z);
+        compute_cascade_matrix(sun(), view, 0.8, 1.5, 10.0, 40.0, 2048.0, |_, _| {
+            caster_max_z
+        })
+    }
+
+    #[test]
+    fn cascade_depth_range_steps_rather_than_drifts() {
+        let mut prev = fit(Vec3::new(0.0, -20.0, 1.7), None);
+        let mut moves = 0;
+        for i in 1..=400 {
+            let t = i as f32;
+            let eye = Vec3::new(t * 0.013, -20.0 + t * 0.007, 1.7 + t * 0.001);
+            let f = fit(eye, None);
+            assert_eq!(f.z_step, prev.z_step, "step {i}");
+            for (a, b) in [(prev.min_z, f.min_z), (prev.max_z, f.max_z)] {
+                let steps = (b - a) / f.z_step;
+                assert!(
+                    steps == 0.0 || (steps.abs() - 1.0).abs() < 1e-3,
+                    "step {i}: {a} -> {b} is {steps} quanta of {}",
+                    f.z_step
+                );
+                moves += (steps != 0.0) as u32;
+            }
+            assert_eq!((f.min_z / f.z_step).fract(), 0.0);
+            assert_eq!((f.max_z / f.z_step).fract(), 0.0);
+            prev = f;
+        }
+        assert!(moves > 0, "the walk crossed no quantum");
+    }
+
+    #[test]
+    fn casters_in_front_of_a_cascade_widen_its_range_toward_the_light() {
+        let eye = Vec3::new(0.0, -20.0, 1.7);
+        let own = fit(eye, None);
+        // A caster just above the cascade's own range: the margin covers it.
+        assert_eq!(fit(eye, Some(own.max_z - 6.0)).max_z, own.max_z);
+        // A tall caster well in front of it is taken in.
+        let tall = own.max_z + 40.0;
+        let wide = fit(eye, Some(tall));
+        assert!(wide.max_z >= tall, "{} < {tall}", wide.max_z);
+        assert!(wide.min_z <= own.min_z);
+    }
+
+    #[test]
+    fn fraction_splits_fall_at_the_given_fractions() {
+        let close = |a: [f32; 4], b: [f32; 4]| {
+            assert!(
+                a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-4),
+                "{a:?} != {b:?}"
+            );
+        };
+        let s = compute_cascade_splits(
+            2.0,
+            102.0,
+            4,
+            crate::CascadeSplit::Fractions([0.125, 0.25, 0.5]),
+        );
+        close(s, [14.5, 27.0, 52.0, 102.0]);
+        // Out of order fractions never make a cascade run backwards.
+        let s = compute_cascade_splits(
+            0.0,
+            100.0,
+            4,
+            crate::CascadeSplit::Fractions([0.5, 0.25, 2.0]),
+        );
+        close(s, [50.0, 50.0, 100.0, 100.0]);
+        // Two cascades read the first fraction only.
+        let s = compute_cascade_splits(
+            0.0,
+            100.0,
+            2,
+            crate::CascadeSplit::Fractions([0.3, 0.6, 0.9]),
+        );
+        close(s, [30.0, 100.0, 100.0, 100.0]);
+    }
 }

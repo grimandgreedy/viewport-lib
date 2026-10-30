@@ -87,7 +87,7 @@ pub(crate) struct ShadowResources {
     pub(crate) uniform_buf: crate::gpu::Buffer,
     /// Bind group for the shadow pass (group 0: light uniform).
     pub(crate) bind_group: crate::gpu::BindGroup,
-    /// Uniform buffer for the ShadowAtlasUniform (binding 5 of camera_bgl, 416 bytes).
+    /// Uniform buffer for the ShadowAtlasUniform (binding 5 of camera_bgl, 368 bytes).
     pub(crate) info_buf: crate::gpu::Buffer,
     /// Side of [`map_texture`](Self::map_texture) in texels: 1 for the
     /// placeholder, the resolved `atlas_resolution` once allocated. A frame
@@ -262,6 +262,9 @@ pub(crate) struct ShadowRecipe {
     pub(crate) device: crate::gpu::Device,
     pub(crate) layout: crate::gpu::PipelineLayout,
     pub(crate) shader: crate::gpu::ShaderModule,
+    /// Cascade casters clamp to the near plane rather than clip
+    /// (`Capabilities::depth_clip_control`). Unused by the punctual family.
+    pub(crate) depth_clamp: bool,
 }
 
 /// Slot index of the cascade pipeline for `key`: bit 0 two-sided, bit 1
@@ -282,6 +285,7 @@ pub(crate) fn build_cascade(r: &ShadowRecipe, i: usize) -> crate::gpu::RenderPip
         (!two_sided).then_some(crate::gpu::Face::Front),
         cutout,
         culled,
+        r.depth_clamp,
         None,
     )
 }

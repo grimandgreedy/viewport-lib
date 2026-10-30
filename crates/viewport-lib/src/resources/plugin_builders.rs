@@ -104,6 +104,7 @@ impl DeviceResources {
             mask: self.mask_target_desc(),
             pick: self.pick_target_desc(),
             shadow: self.shadow_target_desc(),
+            shadow_depth_clamp: self.capabilities.depth_clip_control,
         }
     }
 
@@ -568,7 +569,10 @@ impl DeviceResources {
     /// No fragment output. The fragment entry is optional; pass an empty
     /// string to use a depth-only configuration with no fragment stage.
     /// Standard depth state: `LessEqual` test, depth write on, with the
-    /// lib's standard depth bias.
+    /// lib's standard depth bias. On a device with
+    /// [`depth_clip_control`](crate::Capabilities::depth_clip_control) the
+    /// primitive state's `unclipped_depth` is set, so casters in front of a
+    /// cascade clamp to its near plane rather than vanish.
     ///
     /// Group 0 is the shadow pass's own camera, not the scene bind group the
     /// other builders use: the lib binds the cascade's light view-projection
@@ -629,6 +633,9 @@ pub struct PipelineBuilder {
     mask: MaskTargetDesc,
     pick: PickTargetDesc,
     shadow: ShadowTargetDesc,
+    /// Shadow pipelines clamp casters in front of a cascade to its near
+    /// plane (`unclipped_depth`) rather than clip them.
+    shadow_depth_clamp: bool,
 }
 
 impl PipelineBuilder {
@@ -1001,6 +1008,10 @@ impl PipelineBuilder {
                 compilation_options: Default::default(),
             })
         };
+        // The cascade fit relies on every caster clamping when the device
+        // can, so a caster above the cascade's depth range still lands in it.
+        let mut primitive = opts.primitive;
+        primitive.unclipped_depth |= self.shadow_depth_clamp;
         crate::resources::builders::render_pipeline(
             device,
             crate::resources::builders::RenderPipelineDesc {
@@ -1010,7 +1021,7 @@ impl PipelineBuilder {
                 vertex_entry: opts.vs_entry,
                 vertex_buffers: opts.vertex_layouts,
                 fragment,
-                primitive: opts.primitive,
+                primitive,
                 depth_stencil: Some(crate::gpu::DepthStencilState {
                     format: desc.depth_format,
                     depth_write_enabled: crate::resources::builders::dwrite(true),

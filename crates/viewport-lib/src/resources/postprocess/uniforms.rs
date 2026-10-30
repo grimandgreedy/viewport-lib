@@ -76,10 +76,10 @@ pub(crate) struct DofUniform {
     pub(crate) foreground_enabled: f32,
 }
 
-/// Shadow atlas uniform (416 bytes, bound at group 0 binding 5).
+/// Shadow atlas uniform (368 bytes, bound at group 0 binding 5).
 ///
-/// Contains per-cascade view-projection matrices, split distances, atlas layout,
-/// and PCSS parameters. Used by the fragment shader for CSM cascade selection
+/// Contains per-cascade view-projection matrices, split distances, the
+/// distance fade, atlas layout, and PCSS parameters. Used by the fragment shader for CSM cascade selection
 /// and shadow sampling.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -101,10 +101,17 @@ pub(crate) struct ShadowAtlasUniform {
     pub(crate) shadow_filter: u32, //   4 bytes
     /// PCSS light source radius in UV space.
     pub(crate) pcss_light_radius: f32, //   4 bytes
-    /// Per-slot atlas UV rects: [uv_min.x, uv_min.y, uv_max.x, uv_max.y] x 8 slots.
-    pub(crate) atlas_rects: [[f32; 4]; 8], // 128 bytes
+    /// `[far, fade_fraction, tan_sun, r_max_world]`: `far` is where the
+    /// cascades end along the view (0 = no distance cut), `fade_fraction`
+    /// the share of `far` over which shadows fade out before it. The sun's
+    /// angular-radius tangent and the widest world-space penumbra are
+    /// reserved for physically sized soft shadows and written as 0.
+    pub(crate) range: [f32; 4], //  16 bytes
+    /// Per-cascade atlas UV rects: [uv_min.x, uv_min.y, uv_max.x, uv_max.y].
+    pub(crate) atlas_rects: [[f32; 4]; 4], //  64 bytes
 }
-// Total: 256 + 16 + 16 + 128 = 416 bytes
+// Total: 256 + 16 + 16 + 16 + 64 = 368 bytes
+const _: () = assert!(std::mem::size_of::<ShadowAtlasUniform>() == 368);
 
 /// Uniform for the shadow atlas blit overlay. 16 bytes.
 #[repr(C)]

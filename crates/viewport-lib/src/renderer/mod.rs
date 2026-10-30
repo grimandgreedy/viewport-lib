@@ -91,8 +91,9 @@ pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 
 pub use self::types::{
     Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
-    BackgroundSource, BloomSettings, CameraFrame, Candela, ClipObject, ClipShape,
-    ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings, DofSettings,
+    BackgroundSource, BloomSettings, CameraFrame, Candela, CascadeSplit, ClipObject,
+    ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings,
+    DofSettings,
     EdlSettings, EffectsFrame, EnvironmentBackground, EnvironmentIntensity, EnvironmentLighting,
     ExposureMode, ExposureSettings, FillRule, ForegroundPass, ForegroundProjection, FrameData,
     FrameTime, GlyphRunItem, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
@@ -773,6 +774,9 @@ impl ViewportRenderer {
     ///   mesh with different materials batch together. Present on Vulkan, DX12, and
     ///   Apple Silicon Metal (argument buffers Tier 2); without it (WebGPU, older
     ///   hardware) the path binds textures per batch (the portable default).
+    /// - `DEPTH_CLIP_CONTROL` lets the directional shadow pass clamp casters
+    ///   in front of a cascade rather than clip them, so the cascade's depth
+    ///   range stays tight around what it covers.
     ///
     /// Everything works without them; rendering falls back to direct draws
     /// (with CPU-side shadow-cascade culling), GPU timings read as `None`,
@@ -787,6 +791,7 @@ impl ViewportRenderer {
             crate::gpu::Features::PIPELINE_CACHE,
             crate::gpu::PRIMITIVE_INDEX_FEATURE,
             crate::gpu::Features::FLOAT32_FILTERABLE,
+            crate::gpu::Features::DEPTH_CLIP_CONTROL,
         ] {
             if adapter.features().contains(feature) {
                 features |= feature;

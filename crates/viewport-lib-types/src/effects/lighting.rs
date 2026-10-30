@@ -439,8 +439,9 @@ pub struct ShadowSettings {
     pub enabled: bool,
     /// Constant NDC depth bias subtracted from the receiver comparison depth. Default: 0.0.
     pub bias: f32,
-    /// Override the shadow frustum half-extent (world units). None = auto (20.0).
-    /// Tighter values improve shadow map texel density and reduce contact-shadow penumbra.
+    /// Half-extent in world units of the single shadow map a directional
+    /// light gets when the camera has no view matrix to fit cascades to.
+    /// `None` sizes it to the shadow casters. Does not affect the cascades.
     pub extent_override: Option<f32>,
     /// Number of cascaded shadow map splits (1-4). Default: 4.
     pub cascade_count: u32,
@@ -474,6 +475,42 @@ pub struct ShadowSettings {
         serde(default = "default_punctual_shadow_resolution")
     )]
     pub punctual_shadow_resolution: u32,
+    /// How far along the view direction directional shadows reach. `None`
+    /// fits the cascades to the depth range in which the scene's casters
+    /// can throw a visible shadow; `Some(d)` ends them `d` world units in
+    /// front of the camera, clamped to its far plane, whatever the scene.
+    /// Default: `None`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub shadow_distance: Option<f32>,
+    /// Where the cascade boundaries fall inside that range. Default:
+    /// [`CascadeSplit::Practical`] with `lambda` 0.75.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub cascade_split: CascadeSplit,
+}
+
+/// Where the boundaries between directional shadow cascades fall, within
+/// the view depth range the cascades cover.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum CascadeSplit {
+    /// A blend of logarithmic and even splits: `lambda` 1.0 is fully
+    /// logarithmic (dense near the camera), 0.0 fully even.
+    Practical {
+        /// Weight of the logarithmic split, `0.0..=1.0`.
+        lambda: f32,
+    },
+    /// Boundaries as fractions of the covered range, nearest first: cascade
+    /// `i` ends at `near + (far - near) * fractions[i]` and the last ends at
+    /// `far`. With fewer than four cascades only the first
+    /// `cascade_count - 1` are read.
+    Fractions([f32; 3]),
+}
+
+impl Default for CascadeSplit {
+    fn default() -> Self {
+        Self::Practical { lambda: 0.75 }
+    }
 }
 
 #[cfg(feature = "serde")]
@@ -498,6 +535,8 @@ impl Default for ShadowSettings {
             pcss_light_radius: 0.02,
             punctual_shadow_layers: 48,
             punctual_shadow_resolution: 1024,
+            shadow_distance: None,
+            cascade_split: CascadeSplit::default(),
         }
     }
 }

@@ -436,6 +436,9 @@ pub(crate) const CSM_SHADOW_BIAS_TWO_SIDED: crate::gpu::DepthBiasState =
 /// silhouette for an `AlphaMode::Mask` material. `culled` selects the
 /// `_cull` entry points, which read each visible slot's record index from
 /// group-1 binding 15 and draw from the cascade cull's indirect args.
+/// `depth_clamp` clamps casters in front of the cascade to its near plane
+/// instead of clipping them; it needs `Features::DEPTH_CLIP_CONTROL`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_shadow_pipeline(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
@@ -443,6 +446,7 @@ pub(crate) fn build_shadow_pipeline(
     cull_mode: Option<crate::gpu::Face>,
     cutout: bool,
     culled: bool,
+    depth_clamp: bool,
     cache: Option<&crate::gpu::PipelineCache>,
 ) -> crate::gpu::RenderPipeline {
     let label = match (cull_mode, cutout) {
@@ -482,7 +486,7 @@ pub(crate) fn build_shadow_pipeline(
                 strip_index_format: None,
                 front_face: crate::gpu::FrontFace::Ccw,
                 cull_mode,
-                unclipped_depth: false,
+                unclipped_depth: depth_clamp,
                 polygon_mode: crate::gpu::PolygonMode::Fill,
                 conservative: false,
             },
