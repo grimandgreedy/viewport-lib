@@ -63,6 +63,7 @@ pub enum DeformStage {
 ///     position: vec3<f32>,
 ///     normal: vec3<f32>,
 ///     vertex_index: u32,
+///     tangent: vec4<f32>,
 /// };
 ///
 /// struct DeformContext {
@@ -84,6 +85,14 @@ pub enum DeformStage {
 /// index within its mesh, the index slot data is laid out by. `ctx.slot` is
 /// the slot the registry assigned to this deformer; pass it to the
 /// `deform_read_*` helpers rather than baking in a literal.
+///
+/// `tangent` holds the surface tangent in xyz and the bitangent sign in w, in
+/// the same space as `position`; normal-mapped shading builds its frame from
+/// it. A body that changes `normal` should move `tangent` with the same
+/// transform, or at least re-orthogonalise it against the new normal
+/// (`t - dot(t, n) * n`), or normal maps shade against a stale frame. Passes
+/// that do no shading (shadow, outline mask, GPU pick) pass a placeholder
+/// `(1, 0, 0, 1)`.
 ///
 /// # Composition order
 ///

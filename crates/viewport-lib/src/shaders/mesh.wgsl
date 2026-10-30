@@ -628,7 +628,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
             );
         }
     }
-    var dv = DeformVertex(local_pos, local_normal, vi);
+    var dv = DeformVertex(local_pos, local_normal, vi, in.tangent);
     let dctx = DeformContext(model, model[3].xyz, 0.0, deform_flags, 0u);
     if FEAT_DEFORM {
         dv = viewport_deform_object_space(dv, dctx);
@@ -641,6 +641,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
     let world_pos4 = model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;
     dv.normal = normalize(model3 * dv.normal);
+    dv.tangent = vec4<f32>(normalize(model3 * dv.tangent.xyz), dv.tangent.w);
     if FEAT_DEFORM {
         dv = viewport_deform_world_space(dv, dctx);
     }
@@ -650,7 +651,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
     out.colour = in.colour;
     out.world_pos = world_pos.xyz;
     out.world_normal = dv.normal;
-    out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
+    out.world_tangent = dv.tangent;
     out.uv = in.uv;
     // Second UV set: the parallel uv1 stream, indexed by the chunk vertex
     // index. Zero for a mesh without one, whose chunk may bind another mesh's
