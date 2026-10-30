@@ -268,6 +268,23 @@ pub struct RtMaterial {
     /// Tints the dielectric F0, as `Material::specular_colour`. Default linear
     /// white.
     pub specular_colour: crate::Colour,
+    /// Clear coat strength 0..1, as `Material::clearcoat`. Default 0.
+    pub clearcoat: f32,
+    /// Clear coat perceptual roughness, as `Material::clearcoat_roughness`.
+    /// Default 0.
+    pub clearcoat_roughness: f32,
+    /// Sheen colour, as `Material::sheen_colour`. Default black (no sheen).
+    pub sheen_colour: crate::Colour,
+    /// Sheen perceptual roughness, as `Material::sheen_roughness`. Default 0.
+    pub sheen_roughness: f32,
+    /// Anisotropy of the base specular lobe, -1..1, as
+    /// `Material::anisotropy`. Default 0. The tracer has no mesh tangents: the
+    /// direction is the frame the rasteriser builds from the normal for a
+    /// mesh without tangents.
+    pub anisotropy: f32,
+    /// Rotation of the anisotropy direction in radians, as
+    /// `Material::anisotropy_rotation`. Default 0.
+    pub anisotropy_rotation: f32,
 }
 
 impl Default for RtMaterial {
@@ -282,6 +299,12 @@ impl Default for RtMaterial {
             reflectance: 0.5,
             specular_factor: 1.0,
             specular_colour: crate::Colour::linear_rgb(1.0, 1.0, 1.0),
+            clearcoat: 0.0,
+            clearcoat_roughness: 0.0,
+            sheen_colour: crate::Colour::linear_rgb(0.0, 0.0, 0.0),
+            sheen_roughness: 0.0,
+            anisotropy: 0.0,
+            anisotropy_rotation: 0.0,
         }
     }
 }
@@ -663,6 +686,11 @@ struct GpuMaterial {
     _pad1: f32,
     /// `(dielectric_f0.rgb, dielectric_f90)`.
     dielectric: [f32; 4],
+    /// `(clearcoat, clearcoat_roughness, anisotropy, anisotropy_rotation)`;
+    /// zero lanes for a layer that is off.
+    layers0: [f32; 4],
+    /// `(sheen_colour.rgb, sheen_roughness)`; zero without a sheen.
+    layers1: [f32; 4],
 }
 
 #[repr(C)]
@@ -1075,20 +1103,32 @@ impl Tracer {
         let mut gpu_mats: Vec<GpuMaterial> = scene
             .materials
             .iter()
-            .map(|m| GpuMaterial {
-                base: m.base_colour.to_linear_rgb(),
-                metallic: m.metallic,
-                emissive: m.emissive.to_linear_rgb(),
-                roughness: m.roughness,
-                transmission: m.transmission.clamp(0.0, 1.0),
-                ior: m.ior.max(1.0),
-                _pad0: 0.0,
-                _pad1: 0.0,
-                dielectric: crate::resources::material_gpu::dielectric_specular(
-                    m.reflectance,
-                    m.specular_colour.to_linear_rgb(),
-                    m.specular_factor,
-                ),
+            .map(|m| {
+                let (layers0, layers1, _) = crate::resources::material_gpu::layer_lanes(
+                    m.clearcoat,
+                    m.clearcoat_roughness,
+                    m.sheen_colour.to_linear_rgb(),
+                    m.sheen_roughness,
+                    m.anisotropy,
+                    m.anisotropy_rotation,
+                );
+                GpuMaterial {
+                    base: m.base_colour.to_linear_rgb(),
+                    metallic: m.metallic,
+                    emissive: m.emissive.to_linear_rgb(),
+                    roughness: m.roughness,
+                    transmission: m.transmission.clamp(0.0, 1.0),
+                    ior: m.ior.max(1.0),
+                    _pad0: 0.0,
+                    _pad1: 0.0,
+                    dielectric: crate::resources::material_gpu::dielectric_specular(
+                        m.reflectance,
+                        m.specular_colour.to_linear_rgb(),
+                        m.specular_factor,
+                    ),
+                    layers0,
+                    layers1,
+                }
             })
             .collect();
         if gpu_mats.is_empty() {
@@ -1102,6 +1142,8 @@ impl Tracer {
                 _pad0: 0.0,
                 _pad1: 0.0,
                 dielectric: [0.04, 0.04, 0.04, 1.0],
+                layers0: [0.0; 4],
+                layers1: [0.0; 4],
             });
         }
 

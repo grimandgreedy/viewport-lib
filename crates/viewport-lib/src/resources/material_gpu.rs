@@ -194,31 +194,40 @@ pub(crate) mod item_flags {
     pub(crate) const HAS_ANISOTROPY: u32 = 1 << 10;
 }
 
-/// The material's layer lanes and their `item_flags` bits:
-/// `(layers0, layers1, flags)`. A layer that is off contributes zeros.
-fn layer_lanes(m: &Material) -> ([f32; 4], [f32; 4], u32) {
+/// A material's layer lanes and their `item_flags` bits:
+/// `(layers0, layers1, flags)`. A layer that is off contributes zeros, so its
+/// unused roughness does not split blocks. Shared with the path tracer's
+/// material table.
+pub(crate) fn layer_lanes(
+    clearcoat: f32,
+    clearcoat_roughness: f32,
+    sheen_colour: [f32; 3],
+    sheen_roughness: f32,
+    anisotropy: f32,
+    anisotropy_rotation: f32,
+) -> ([f32; 4], [f32; 4], u32) {
     let mut layers0 = [0.0; 4];
     let mut layers1 = [0.0; 4];
     let mut flags = 0;
-    let coat = m.clearcoat.clamp(0.0, 1.0);
+    let coat = clearcoat.clamp(0.0, 1.0);
     if coat > 0.0 {
         layers0[0] = coat;
-        layers0[1] = m.clearcoat_roughness.clamp(0.0, 1.0);
+        layers0[1] = clearcoat_roughness.clamp(0.0, 1.0);
         flags |= item_flags::HAS_CLEARCOAT;
     }
-    let aniso = m.anisotropy.clamp(-1.0, 1.0);
+    let aniso = anisotropy.clamp(-1.0, 1.0);
     if aniso != 0.0 {
         layers0[2] = aniso;
-        layers0[3] = m.anisotropy_rotation;
+        layers0[3] = anisotropy_rotation;
         flags |= item_flags::HAS_ANISOTROPY;
     }
-    let sheen = m.sheen_colour.to_linear_rgb().map(|c| c.max(0.0));
+    let sheen = sheen_colour.map(|c| c.max(0.0));
     if sheen.iter().any(|&c| c > 0.0) {
         layers1 = [
             sheen[0],
             sheen[1],
             sheen[2],
-            m.sheen_roughness.clamp(0.0, 1.0),
+            sheen_roughness.clamp(0.0, 1.0),
         ];
         flags |= item_flags::HAS_SHEEN;
     }
@@ -439,7 +448,14 @@ impl MaterialGpu {
             // Forward-compat: an unknown future mode renders as Opaque (the default).
             _ => 0,
         };
-        let (layers0, layers1, layer_flags) = layer_lanes(m);
+        let (layers0, layers1, layer_flags) = layer_lanes(
+            m.clearcoat,
+            m.clearcoat_roughness,
+            m.sheen_colour.to_linear_rgb(),
+            m.sheen_roughness,
+            m.anisotropy,
+            m.anisotropy_rotation,
+        );
         let param_vis_mode = m.param_vis.map_or(0u32, |pv| pv.mode as u32);
         let param_vis_scale = m.param_vis.map_or(8.0, |pv| pv.scale);
         // Styled back-face policy and colour (the per-item Pattern world scale
