@@ -390,7 +390,7 @@ pub use runtime::{
     CameraFollow, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep, GpuFrameContext,
     GpuPlugin, JobPoll, JobSender, JobSlot, ManipulationSystem, NodeTransformOp, PostPaintTargets,
     RuntimeEventBus, RuntimeFrameContext, RuntimeOutput, RuntimePhase, RuntimePlugin,
-    RuntimeResources, RuntimeStats, RuntimeStepContext, SceneRuntimeMode, SelectionOp,
-    SelectionSystem, SimulationStepContext, TransformSnapshot, TransformSnapshotTable,
-    TransformWriteback, ViewportRuntime,
+    RuntimeResources, RuntimeStats, RuntimeStepContext, SelectionOp, SelectionSystem,
+    SimulationStepContext, TransformSnapshot, TransformSnapshotTable, TransformWriteback,
+    ViewportRuntime,
 };

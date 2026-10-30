@@ -119,6 +119,8 @@
 
 ### Changed
 
+- **`ViewportRuntime::snapshots()` holds world transforms** - each node a writeback op touches is recorded with its world transform after the scene's transforms are propagated, so a child's snapshot includes its parents and a `preserve_scale` op's kept scale. It used to record the op's incoming local transform. `interpolated()` and `CameraFollow::Node` now give the world position for a parented node; code that treated the snapshot as a local transform composes the parent's inverse world transform instead.
+- **`FixedTimestep` caps the steps per frame** - one `advance` yields at most 8 steps (`DEFAULT_MAX_STEPS`, set with `with_max_steps(n)`), so a hitch no longer makes the simulation run ever further behind. Whole steps past the cap are dropped and reported by `FixedTimestep::dropped()` and `RuntimeStats::dropped_sim_ms`; the leftover fraction of a step is kept for `alpha()`. Pass a larger `with_max_steps` to keep the old catch-up behaviour for longer stalls.
 - **`Modifiers` keeps Super apart from Ctrl** - new `super_key` field (Cmd on macOS, the Windows key), set by both adapters, and `command()` for the platform's shortcut key. `Modifiers` is `#[non_exhaustive]`: build it with the adapter helpers or `Modifiers::NONE.with_*`. Bindings still treat Ctrl and Super as one key (`Modifiers::for_bindings`), so no binding changes behaviour.
 - **`from_egui` maps `KeyCode` from the physical key** - it reads egui's `physical_key`, falling back to the layout key when a host leaves it empty, so a `KeyCode` binding means the same key through egui and winit on non-US layouts.
 - **Scene depth for plugins is unfilterable float** - `depth_read_bind_group_layout` binds the depth view as `TextureSampleType::Float { filterable: false }`. Declare the scene depth `texture_2d<f32>` and read it through the sampler (`textureSampleLevel(...).r`), or compose `shared_wgsl::SHARED_DEPTH_TEXEL_WGSL` and call `depth_texel`. `builders::depth_texel_entry` and `builders::nearest_sampler_entry` build the matching layout entries for a plugin's own group.
@@ -234,6 +236,10 @@
 - **`NavigationMode::Turntable` pitch reaches the pole limit** - a drag step that would carry the eye past 89 degrees of elevation used to be dropped whole, so a fast drag stopped short of the limit and a camera left past it by another mode could not be dragged back. The step is now clamped to the limit, and a step back toward the horizon always applies.
 - **`NavigationMode::Fly` look holds the horizon** - fly look now turns as yaw and pitch, with pitch held short of vertical, instead of an arcball rotation about the eye that could go over the top and leave the view rolled. A camera entering fly mode with roll from an arcball session is levelled on the first look input.
 - **Camera controllers take the frame time** - `OrbitCameraController::apply(camera, frame, dt)`, `CameraController::apply(.., dt)`, `ViewportInstance::update_orbit(orbit, dt)` and `update_orbit_with(orbit, dt, inject)`. `fly_speed` is now world units per second (default `6.0`, the old `0.1` per frame at 60 Hz), so fly movement no longer speeds up with the frame rate; drags, the wheel and touch are unaffected. Pass `stable_dt` from egui, the difference between frame `Instant`s from your own loop, or `ictx.dt()` in a `ViewportApp` input handler. The deprecated `apply_to_camera` assumes 60 Hz.
+
+### Removed
+
+- **`SceneRuntimeMode`, `ViewportRuntime::with_mode` and `mode()`** - the mode was stored and never read. Delete the `with_mode` call and configure the runtime directly, for example `with_fixed_timestep(FixedTimestep::new(60.0))` for a simulation; gizmo and camera policy stay with the application.
 
 ### Fixed
 
