@@ -47,6 +47,7 @@ pub use readback::ExposureReadback;
 pub(crate) mod pipeline_key;
 use pipeline_key::PipelineKey;
 mod point_shadow_pool;
+mod punctual_shadow_pool;
 mod prepare;
 mod render;
 mod submit;

@@ -14,6 +14,7 @@ mod overlay_vector;
 mod per_object;
 mod projection;
 mod scene_uploads;
+mod shadow_casters;
 mod shadow_pass;
 mod viewport_interaction;
 mod viewport_misc;
