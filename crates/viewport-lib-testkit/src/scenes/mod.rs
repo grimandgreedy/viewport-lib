@@ -31,9 +31,9 @@ pub mod textures;
 use glam::{Mat4, Quat, Vec3};
 use viewport_lib::wgpu;
 use viewport_lib::{
-    BackfacePolicy, Camera, CameraFrame, FrameData, LightingSettings, Material, MaterialId,
-    MeshData, MeshId, MeshInstanceItem, PolylineItem, ScatterSettings, SceneFrame, SceneRenderItem,
-    ViewportRenderer, primitives,
+    BackfacePolicy, Camera, CameraFrame, FrameData, FrameTime, LightingSettings, Material,
+    MaterialId, MeshData, MeshId, MeshInstanceItem, PolylineItem, ScatterSettings, SceneFrame,
+    SceneRenderItem, ViewportRenderer, primitives,
 };
 use viewport_lib_plugins::item_types::decal::DecalItem;
 use viewport_lib_plugins::item_types::gpu_marching_cubes::GpuMarchingCubesItem;
@@ -291,6 +291,8 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     // reference image; without this the flag is off and the outline pass never
     // runs, so those marks render nothing.
     fd.interaction.outline_selected = true;
+    // A fixed frame time, so time-driven shading renders the same every run.
+    fd.time = Some(FrameTime::fixed(0.0));
     fd
 }
 

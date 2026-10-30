@@ -6,7 +6,7 @@
 
 use viewport_lib::Colour;
 use viewport_lib::wgpu;
-use viewport_lib::{Camera, FrameData, MeshData, RenderCamera};
+use viewport_lib::{Camera, FrameData, FrameTime, MeshData, RenderCamera};
 
 /// A unit quad in the XY plane facing `+Z`, centred on the origin.
 ///
@@ -30,7 +30,7 @@ pub fn probe_quad() -> MeshData {
 /// a flat background, looking at the origin down `-Z`.
 ///
 /// The overlays are off so a pixel assertion reads the fixture's own output
-/// rather than a gridline.
+/// rather than a gridline, and the frame time is fixed at zero.
 pub fn probe_frame(size: u32, background: [f32; 4]) -> FrameData {
     let mut frame = FrameData::default();
     frame.camera.render_camera = {
@@ -42,6 +42,7 @@ pub fn probe_frame(size: u32, background: [f32; 4]) -> FrameData {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     frame.viewport.background_colour = Some(Colour::from_linear_array(background));
+    frame.time = Some(FrameTime::fixed(0.0));
     frame
 }
 
