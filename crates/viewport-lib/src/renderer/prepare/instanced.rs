@@ -40,16 +40,18 @@ type MaterialKey = (
     u32,
 );
 
-/// The batch key of one record: its material key, what it draws, the
+/// The batch key of one record: its draw priority, its material key, what it draws, the
 /// colourmap and matcap its group-1 bind group binds, and the deform instance
 /// whose table it reads. The per-record stream words (scalar attribute, warp,
 /// lightmap) are not in it: each record carries its own, and the batch's
 /// feature set is the union over its records.
 ///
 /// Used by both the sort comparator and the batch-split predicate below, so the
-/// two cannot drift out of sync.
+/// two cannot drift out of sync. Priority comes first, so batches sort by it
+/// and never merge across it.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct BatchKey {
+    priority: i8,
     material: MaterialKey,
     draw: crate::renderer::types::DrawKind,
     lut: u64,
@@ -80,7 +82,9 @@ impl BatchKey {
 /// The group key mirrors the draw loop's run key exactly (transparency,
 /// two-sidedness, discard-free eligibility, and geometry chunk over contiguous
 /// batches), so the groups drawn here match the runs the CPU path would have
-/// formed. The texture bind group is constant under bindless, so it is not part of
+/// formed. It also holds the draw priority, so a group never spans two
+/// priorities; batches are sorted by priority, so the CPU runs already draw in
+/// that order. The texture bind group is constant under bindless, so it is not part of
 /// the key. Each group also carries that geometry chunk and its pipeline selectors,
 /// so the draw loop binds and draws straight from the group without a per-group
 /// mesh-store lookup.
@@ -155,6 +159,7 @@ fn build_and_upload_draw_groups(
         let mut next_group = 0u32;
         // (run key, index within the group vec the key's transparency bit selects).
         type RunKey = (
+            i8,
             bool,
             bool,
             bool,
@@ -191,6 +196,7 @@ fn build_and_upload_draw_groups(
             let index_chunk = mesh.index_span.chunk;
             let features = crate::renderer::types::draw_features(resources, batch);
             let key = (
+                batch.priority,
                 transparent,
                 batch.two_sided,
                 no_discard,
@@ -377,6 +383,7 @@ fn batch_key(
         }
     };
     Some(BatchKey {
+        priority: item.settings.draw_priority,
         material: material_group_key(item.mesh_id, material, item.settings.opacity, binding),
         draw,
         lut: item.colourmap_id.map_or(u64::MAX, |c| c.0 as u64),
@@ -1031,6 +1038,8 @@ impl ViewportRenderer {
                             } else {
                                 [0.0; 3]
                             },
+                            priority: rep.key.priority,
+                            blend_order: rep.item.settings.blend_order,
                         });
 
                         batch_start = i;

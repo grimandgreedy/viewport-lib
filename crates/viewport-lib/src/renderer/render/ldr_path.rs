@@ -279,14 +279,21 @@ impl ViewportRenderer {
                     }
                 }
                 opaque.sort_by(|a, b| {
-                    dist_from_eye(a.1)
-                        .partial_cmp(&dist_from_eye(b.1))
-                        .unwrap_or(std::cmp::Ordering::Equal)
+                    a.1.settings
+                        .draw_priority
+                        .cmp(&b.1.settings.draw_priority)
+                        .then_with(|| {
+                            dist_from_eye(a.1)
+                                .partial_cmp(&dist_from_eye(b.1))
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
                 });
-                transparent.sort_by(|a, b| {
-                    dist_from_eye(b.1)
-                        .partial_cmp(&dist_from_eye(a.1))
-                        .unwrap_or(std::cmp::Ordering::Equal)
+                transparent.sort_by_key(|(_, item)| {
+                    crate::renderer::types::draw_order::blend_key(
+                        item.settings.draw_priority,
+                        item.settings.blend_order,
+                        dist_from_eye(item),
+                    )
                 });
 
                 let mut render_pass =
