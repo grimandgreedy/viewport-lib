@@ -434,6 +434,11 @@ impl ViewportRenderer {
             composite_inputs.contact_shadows &= post.contact_shadow.ready();
             composite_inputs.dof &= post.dof.ready();
         }
+        // The throttle skips these producers, so their targets hold last
+        // frame's output; bind the placeholders instead.
+        if self.degradation_effects_throttled {
+            composite_inputs.mask_throttled();
+        }
 
         // Upload tone map uniform into the per-viewport buffer.
         let mode = match frame.effects.display.operator {
