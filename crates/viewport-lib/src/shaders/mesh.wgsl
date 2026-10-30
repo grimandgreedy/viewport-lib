@@ -119,8 +119,8 @@ struct Object {
     has_shadowmask: u32,                   // offset 356 : 1 = the binding-18 atlas is a shadowmask
     ignore_clip: u32,                      // offset 360 : 1 = exempt from clip planes/volumes
     object_mask: u32,                      // offset 364 : layer mask, AND-tested per light
-    // The vec4 higher up keeps the struct 16-aligned, so its size is 368 and
-    // matches the Rust ObjectUniform.
+    dielectric_f0: vec3<f32>,              // dielectric reflectance at normal incidence
+    dielectric_f90: f32,                   // dielectric reflectance at grazing incidence
 };
 
 // Per-material UV transform block (group 0, binding 21). One entry per distinct
@@ -132,7 +132,7 @@ struct TexTransform {
 }
 // The per-object mesh path only reads the UV transforms (`xf`); the scalar and
 // flag blocks are consumed by the instanced path. They are declared here so the
-// WGSL array stride matches the Rust MaterialGpu (368 bytes): omitting them
+// WGSL array stride matches the Rust MaterialGpu (MATERIAL_GPU_BYTES): omitting them
 // shrinks the stride and misreads every entry past material_id 0.
 struct MaterialGpu {
     xf: array<TexTransform, 5>,
@@ -149,6 +149,7 @@ struct MaterialGpu {
     nan_colour: vec4<f32>,   // colour for NaN scalar attribute samples
     item_flags: vec4<u32>,   // (MAT_* bits, lightmap_mode, 0, 0)
     params: array<vec4<f32>, 16>, // material plugin parameters, declaration order
+    specular: vec4<f32>,     // (dielectric F0 rgb, dielectric F90)
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
@@ -397,6 +398,8 @@ fn load_object(i: u32) -> Object {
     o.lightmap_mode = mat.item_flags.y;
     o.lightmap_directional = u32((mbit & MAT_LIGHTMAP_DIRECTIONAL) != 0u);
     o.has_shadowmask = u32((mbit & MAT_HAS_SHADOWMASK) != 0u);
+    o.dielectric_f0 = mat.specular.xyz;
+    o.dielectric_f90 = mat.specular.w;
     return o;
 }
 
@@ -789,6 +792,8 @@ fn build_shading_surface(
     F0: vec3<f32>,
     energy_compensation: vec3<f32>,
     spec_ao: f32,
+    dielectric_f0: vec3<f32>,
+    f90: f32,
 ) -> ShadingSurface {
     var surf: ShadingSurface;
     surf.base_colour = surface.base_colour;
@@ -815,6 +820,8 @@ fn build_shading_surface(
     surf.tangent = t;
     surf.bitangent = cross(n, t) * handedness;
     surf.f0 = F0;
+    surf.dielectric_f0 = dielectric_f0;
+    surf.f90 = f90;
     surf.energy_compensation = energy_compensation;
     surf.spec_ao = spec_ao;
     surf.metallic = metallic;
@@ -1188,7 +1195,7 @@ fn compute_lit(
         var px = pbr_resolve(N, V, base_colour, object.metallic, object.roughness,
                                  object.has_metallic_roughness_tex != 0u, surface.mr_sample,
                                  object.metallic_range, object.roughness_range,
-                                 saa_kernel, ao_factor);
+                                 saa_kernel, ao_factor, object.dielectric_f0, object.dielectric_f90);
 
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.

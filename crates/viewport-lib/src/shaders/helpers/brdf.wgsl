@@ -43,9 +43,22 @@ fn viewport_brdf_f_schlick_roughness(cos_theta: f32, F0: vec3<f32>, roughness: f
     return F0 + (max(vec3<f32>(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
+// Fresnel-Schlick toward a grazing reflectance `f90` (1 for a plain dielectric
+// or metal; lower when a specular factor scales the dielectric lobe down).
+fn viewport_brdf_f_schlick_f90(cos_theta: f32, F0: vec3<f32>, f90: f32) -> vec3<f32> {
+    return F0 + (vec3<f32>(f90) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+// `viewport_brdf_f_schlick_roughness` with the roughness-capped grazing
+// reflectance scaled by `f90`.
+fn viewport_brdf_f_schlick_roughness_f90(cos_theta: f32, F0: vec3<f32>, f90: f32, roughness: f32) -> vec3<f32> {
+    return F0 + (max(vec3<f32>(1.0 - roughness), F0) * f90 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
 // One analytic light's Cook-Torrance contribution. `radiance` is the light
 // colour times its attenuation; `F0` is the surface reflectance at normal
-// incidence (mix(vec3(0.04), base_colour, metallic)). Returns exactly zero
+// incidence (mix(dielectric_f0, base_colour, metallic), 0.04 for a default
+// dielectric). Returns exactly zero
 // when N.L <= 0.
 fn viewport_brdf_light_contrib(
     N: vec3<f32>,
@@ -83,6 +96,24 @@ fn viewport_brdf_light_contrib_compensated(
     F0: vec3<f32>,
     ec: vec3<f32>,
 ) -> vec3<f32> {
+    return viewport_brdf_light_contrib_f90(N, V, L, radiance, base_colour, metallic, roughness,
+                                           F0, 1.0, ec);
+}
+
+// `viewport_brdf_light_contrib_compensated` with Fresnel rising to `f90` at
+// grazing incidence instead of 1.
+fn viewport_brdf_light_contrib_f90(
+    N: vec3<f32>,
+    V: vec3<f32>,
+    L: vec3<f32>,
+    radiance: vec3<f32>,
+    base_colour: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    F0: vec3<f32>,
+    f90: f32,
+    ec: vec3<f32>,
+) -> vec3<f32> {
     let H = normalize(L + V);
     let NdotL = max(dot(N, L), 0.0);
     if NdotL <= 0.0 { return vec3<f32>(0.0); }
@@ -92,7 +123,7 @@ fn viewport_brdf_light_contrib_compensated(
 
     let D = viewport_brdf_d_ggx(NdotH, roughness);
     let G = viewport_brdf_g_smith(NdotV, NdotL, roughness);
-    let F = viewport_brdf_f_schlick(HdotV, F0);
+    let F = viewport_brdf_f_schlick_f90(HdotV, F0, f90);
 
     let kS = F;
     let kD = (vec3<f32>(1.0) - kS) * (1.0 - metallic);

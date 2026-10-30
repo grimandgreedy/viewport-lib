@@ -17,8 +17,6 @@
 // Floor on perceptual roughness, so a mirror-smooth material keeps a finite
 // GGX lobe.
 const MIN_PERCEPTUAL_ROUGHNESS: f32 = 0.04;
-// Reflectance at normal incidence of a dielectric (about 4%, an IOR of 1.5).
-const DEFAULT_DIELECTRIC_F0: f32 = 0.04;
 
 // One fragment's resolved PBR surface.
 struct PbrPixel {
@@ -28,6 +26,11 @@ struct PbrPixel {
     // Specular reflectance at normal and grazing incidence.
     f0: vec3<f32>,
     f90: f32,
+    // The material's dielectric reflectance at normal and grazing incidence,
+    // before the metallic mix: f0 and f90 are recomputed from them when a
+    // hook overrides metallic.
+    dielectric_f0: vec3<f32>,
+    dielectric_f90: f32,
     metallic: f32,
     // Roughness after the floor and specular anti-aliasing.
     perceptual_roughness: f32,
@@ -52,7 +55,9 @@ struct PbrPixel {
 // B = metallic, each mixed across its range before the scalar factor), widen
 // the roughness by the specular AA kernel, then derive F0 and look up the
 // split-sum terms and the energy compensation. `N` and `V` are the shading
-// normal and the unit vector toward the eye.
+// normal and the unit vector toward the eye; `dielectric_f0` and
+// `dielectric_f90` the material's dielectric reflectance at normal and grazing
+// incidence, which metallic mixes toward the base colour and 1.
 fn pbr_resolve(
     N: vec3<f32>,
     V: vec3<f32>,
@@ -65,6 +70,8 @@ fn pbr_resolve(
     roughness_range: vec2<f32>,
     saa_kernel: f32,
     ao: f32,
+    dielectric_f0: vec3<f32>,
+    dielectric_f90: f32,
 ) -> PbrPixel {
     var metallic = clamp(metallic_factor, 0.0, 1.0);
     var roughness = max(roughness_factor, MIN_PERCEPTUAL_ROUGHNESS);
@@ -81,8 +88,10 @@ fn pbr_resolve(
     px.metallic = metallic;
     px.perceptual_roughness = roughness;
     px.alpha = roughness * roughness;
-    px.f0 = mix(vec3<f32>(DEFAULT_DIELECTRIC_F0), base_colour, metallic);
-    px.f90 = 1.0;
+    px.dielectric_f0 = dielectric_f0;
+    px.dielectric_f90 = dielectric_f90;
+    px.f0 = mix(dielectric_f0, base_colour, metallic);
+    px.f90 = pbr_f90(dielectric_f90, metallic);
     px.n_dot_v = max(dot(N, V), 1e-3);
     px.dfg = sample_brdf_lut(px.n_dot_v, roughness);
     px.energy_comp = viewport_brdf_energy_compensation(px.f0, px.dfg);
@@ -91,22 +100,32 @@ fn pbr_resolve(
     return px;
 }
 
+// Grazing reflectance: the dielectric value mixed toward 1 by metallic. Written
+// out rather than with mix() so a dielectric F90 of 1 stays exactly 1.
+fn pbr_f90(dielectric_f90: f32, metallic: f32) -> f32 {
+    return dielectric_f90 + (1.0 - dielectric_f90) * metallic;
+}
+
 // Replace the surface terms of a resolved pixel with authored ones (a shading
 // hook's `shade_surface` output). No specular AA: the author owns the value.
-// The split-sum terms and the specular occlusion are derived again at the
-// resolved N.V.
+// `f0_override.w > 0.5` replaces the material's dielectric F0 with
+// `f0_override.rgb`; otherwise it is kept. The split-sum terms and the
+// specular occlusion are derived again at the resolved N.V.
 fn pbr_apply_override(
     px: PbrPixel,
     base_colour: vec3<f32>,
     metallic: f32,
     roughness: f32,
+    f0_override: vec4<f32>,
 ) -> PbrPixel {
     var out = px;
     out.diffuse_colour = base_colour;
     out.metallic = clamp(metallic, 0.0, 1.0);
     out.perceptual_roughness = max(roughness, MIN_PERCEPTUAL_ROUGHNESS);
     out.alpha = out.perceptual_roughness * out.perceptual_roughness;
-    out.f0 = mix(vec3<f32>(DEFAULT_DIELECTRIC_F0), base_colour, out.metallic);
+    out.dielectric_f0 = select(px.dielectric_f0, f0_override.rgb, f0_override.w > 0.5);
+    out.f0 = mix(out.dielectric_f0, base_colour, out.metallic);
+    out.f90 = pbr_f90(px.dielectric_f90, out.metallic);
     out.dfg = sample_brdf_lut(out.n_dot_v, out.perceptual_roughness);
     out.energy_comp = viewport_brdf_energy_compensation(out.f0, out.dfg);
     out.spec_ao = spec_occlusion(out.n_dot_v, out.diffuse_ao, out.alpha);
@@ -126,9 +145,9 @@ fn pbr_micro_shadow(n_dot_l: f32, ao: f32) -> f32 {
 // attenuation and shadow. The specular lobe carries the energy compensation.
 // Exactly zero when N.L <= 0.
 fn pbr_direct(px: PbrPixel, N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, radiance: vec3<f32>) -> vec3<f32> {
-    return viewport_brdf_light_contrib_compensated(N, V, L, radiance, px.diffuse_colour,
-                                                   px.metallic, px.perceptual_roughness, px.f0,
-                                                   px.energy_comp);
+    return viewport_brdf_light_contrib_f90(N, V, L, radiance, px.diffuse_colour, px.metallic,
+                                           px.perceptual_roughness, px.f0, px.f90,
+                                           px.energy_comp);
 }
 
 struct AmbientOut {
@@ -178,17 +197,18 @@ fn pbr_ambient(
     var ibl_specular = vec3<f32>(0.0);
     var ibl_diffuse = vec3<f32>(0.0);
     var ambient_lum = 0.0;
-    let ambient_kd = (vec3<f32>(1.0) - F_Schlick_roughness(max(dot(N, V), 0.001), F0, roughness))
+    let ambient_kd = (vec3<f32>(1.0) - F_Schlick_roughness_f90(max(dot(N, V), 0.001), F0, px.f90,
+                                                                roughness))
         * (1.0 - metallic);
     if lights_uniform.ibl_enabled != 0u {
         var ibl: IblContrib;
         if lights_uniform.env_zone_count != 0u {
-            ibl = ibl_ambient_zoned(N, V, base_colour, metallic, roughness, F0,
+            ibl = ibl_ambient_zoned(N, V, base_colour, metallic, roughness, F0, px.f90,
                                     diffuse_occ, spec_occ, lights_uniform.ibl_intensity,
                                     lights_uniform.ibl_rotation, refl_dr, world_pos,
                                     lights_uniform.env_zone_count, px.dfg, px.energy_comp);
         } else {
-            ibl = ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0,
+            ibl = ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0, px.f90,
                                    diffuse_occ, spec_occ, lights_uniform.ibl_intensity,
                                    lights_uniform.ibl_rotation, refl_dr, px.dfg, px.energy_comp);
         }

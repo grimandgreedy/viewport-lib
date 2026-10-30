@@ -53,9 +53,9 @@ impl TexTransformGpu {
 }
 
 /// A material's per-slot UV transforms plus its scalar shading parameters, as the
-/// instanced mesh shaders read them. Matches the WGSL `MaterialGpu` struct, 368
-/// bytes. The scalars are the per-material fields that used to be duplicated into
-/// every `InstanceData` record; moving them here shrinks the per-instance record
+/// instanced mesh shaders read them. Matches the WGSL `MaterialGpu` struct,
+/// [`MATERIAL_GPU_BYTES`] bytes. The scalars are the per-material fields that
+/// used to be duplicated into every `InstanceData` record; moving them here shrinks the per-instance record
 /// to O(instances) transform-free and keeps a single copy per distinct material.
 ///
 /// Field packing (after the 160-byte transform array):
@@ -68,6 +68,7 @@ impl TexTransformGpu {
 /// - `mr_range`  = (metallic_min, metallic_max, roughness_min, roughness_max)
 /// - `tex_index0` = bindless array indices (albedo, normal, ao, metallic-roughness)
 /// - `tex_index1` = (emissive bindless index, sampler code, unused, unused)
+/// - `specular` = (dielectric F0 rgb, dielectric F90), see [`dielectric_specular`]
 ///
 /// `tex_index0` / `tex_index1` hold each material texture's index into the
 /// bindless texture array, or `NO_TEXTURE` (`u32::MAX`) when the material has no
@@ -127,11 +128,38 @@ pub(crate) struct MaterialGpu {
     /// The material plugin's declared parameters, one word each in
     /// declaration order, defaults filled in. Zero without a plugin.
     pub(crate) params: [[f32; 4]; MATERIAL_PLUGIN_MAX_PARAMS],
+    /// `(dielectric_f0.rgb, dielectric_f90)`; see [`dielectric_specular`].
+    pub(crate) specular: [f32; 4],
 }
 
 /// Size in bytes of one [`MaterialGpu`] block.
-pub(crate) const MATERIAL_GPU_BYTES: usize = 608;
+pub(crate) const MATERIAL_GPU_BYTES: usize = 624;
 const _: () = assert!(std::mem::size_of::<MaterialGpu>() == MATERIAL_GPU_BYTES);
+
+/// A dielectric's specular reflectance at normal and grazing incidence,
+/// `(f0.r, f0.g, f0.b, f90)`, from the material's reflectance and
+/// `KHR_materials_specular` terms:
+/// `f0 = min(0.16 * reflectance^2 * specular_colour, 1) * specular_factor`,
+/// `f90 = specular_factor`. The shader mixes these toward the base colour and
+/// 1 by metallic.
+///
+/// Computed in f64 and rounded once, so the defaults land on exactly
+/// `0.04f32` and `1.0` (`0.16f32 * 0.25f32` is not `0.04f32`).
+pub(crate) fn dielectric_specular(
+    reflectance: f32,
+    specular_colour: [f32; 3],
+    specular_factor: f32,
+) -> [f32; 4] {
+    let r = reflectance as f64;
+    let factor = (specular_factor as f64).clamp(0.0, 1.0);
+    let f0 = |c: f32| (((0.16 * r * r) * (c as f64).max(0.0)).min(1.0) * factor) as f32;
+    [
+        f0(specular_colour[0]),
+        f0(specular_colour[1]),
+        f0(specular_colour[2]),
+        factor as f32,
+    ]
+}
 
 /// Bit lanes of `MaterialGpu::item_flags[0]`. The WGSL `MAT_*` constants in the
 /// mesh shaders mirror these.
@@ -456,6 +484,11 @@ impl MaterialGpu {
                 ]
             },
             params: [[0.0; 4]; MATERIAL_PLUGIN_MAX_PARAMS],
+            specular: dielectric_specular(
+                m.reflectance,
+                m.specular_colour.to_linear_rgb(),
+                m.specular_factor,
+            ),
         }
     }
 }
@@ -678,6 +711,38 @@ mod tests {
             all_live(m),
             &ItemShading::default(),
         ))
+    }
+
+    #[test]
+    fn default_material_packs_exact_dielectric_specular() {
+        let block = MaterialGpu::from_material(
+            &Material::default(),
+            false,
+            MaterialSlots::default(),
+            &ItemShading::default(),
+        );
+        assert_eq!(block.specular, [0.04f32, 0.04, 0.04, 1.0]);
+        assert_eq!(block.specular[0].to_bits(), 0.04f32.to_bits());
+        // An IOR of 1.5 lands on the same F0.
+        assert_eq!(
+            dielectric_specular(Material::default().with_ior(1.5).reflectance, [1.0; 3], 1.0),
+            [0.04f32, 0.04, 0.04, 1.0]
+        );
+    }
+
+    #[test]
+    fn dielectric_specular_follows_the_specular_extension() {
+        let [r, g, b, f90] = dielectric_specular(1.0, [1.0, 0.5, 0.0], 1.0);
+        assert_eq!([r, g, b, f90], [0.16, 0.08, 0.0, 1.0]);
+        // The tinted F0 clamps to 1 before the factor scales it.
+        assert_eq!(
+            dielectric_specular(5.0, [1.0; 3], 0.5),
+            [0.5, 0.5, 0.5, 0.5]
+        );
+        // A factor with no colour change does not zero F0.
+        let half = dielectric_specular(0.5, [1.0; 3], 0.5);
+        assert_eq!(half, [0.02, 0.02, 0.02, 0.5]);
+        assert_eq!(dielectric_specular(0.5, [1.0; 3], 0.0), [0.0; 4]);
     }
 
     #[test]

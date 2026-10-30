@@ -31,7 +31,8 @@ struct ShadingSurface {
     tangent: vec3<f32>,
     // B = cross(normal, tangent) * handedness.
     bitangent: vec3<f32>,
-    // Fresnel reflectance at normal incidence (lib-computed from metallic).
+    // Fresnel reflectance at normal incidence: `dielectric_f0` mixed toward
+    // the base colour by metallic.
     f0: vec3<f32>,
     metallic: f32,
     roughness: f32,
@@ -62,14 +63,22 @@ struct ShadingSurface {
     // Specular occlusion the lib applies to the environment's reflection,
     // derived from `ao`, N.V and the roughness. 1 where `ao` is 1.
     spec_ao: f32,
+    // The material's dielectric reflectance at normal incidence (0.04 for
+    // the default reflectance), before the metallic mix.
+    dielectric_f0: vec3<f32>,
+    // Fresnel reflectance at grazing incidence: the material's specular
+    // factor mixed toward 1 by metallic. Use it as Schlick's grazing value,
+    // `f0 + (f90 - f0) * (1 - cos)^5`.
+    f90: f32,
 };
 
 // Output of the surface-authoring hook
 // `fn <name>__shade_surface(surf: ShadingSurface) -> SurfaceOverride`. The
-// hook initialises the override from `surf` and modifies what it wants; the
+// hook declares `var ov: SurfaceOverride;` and sets the fields it uses; the
 // composer applies every field unconditionally (WGSL has no optional
 // fields), renormalising `normal` and recomputing F0 from the overridden
-// base colour and metallic. Stock lighting, shadows, and IBL then run on
+// base colour and metallic. A field the hook leaves unset reads zero, so
+// fields appended later are defined to keep the built-in value at zero. Stock lighting, shadows, and IBL then run on
 // the authored surface, as do any lighting hooks the same plugin defines.
 struct SurfaceOverride {
     // Replaces the resolved base colour for direct, ambient, and IBL terms.
@@ -86,6 +95,10 @@ struct SurfaceOverride {
     // draws take it as the output alpha; Mask draws re-test it against the
     // material's cutoff and discard below it. Opaque draws ignore it.
     alpha: f32,
+    // Replaces the material's dielectric F0 with `rgb` when `w` is 1; with
+    // `w` 0 (the zero default) the material's own value is kept. Metallic
+    // still mixes the result toward the base colour.
+    f0_override: vec4<f32>,
 };
 
 // One light's data for the per-light hook. `radiance` folds in

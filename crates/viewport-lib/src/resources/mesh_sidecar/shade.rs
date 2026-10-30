@@ -412,11 +412,11 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
     let mut surface_region = String::new();
     if wire_vertex_attr || hook.has_surface {
         surface_region.push_str(
-            "        var surf = build_shading_surface(surface, in, V, px.metallic, px.perceptual_roughness, px.f0, px.energy_comp, px.spec_ao);\n",
+            "        var surf = build_shading_surface(surface, in, V, px.metallic, px.perceptual_roughness, px.f0, px.energy_comp, px.spec_ao, px.dielectric_f0, px.f90);\n",
         );
     } else {
         surface_region.push_str(
-            "        let surf = build_shading_surface(surface, in, V, px.metallic, px.perceptual_roughness, px.f0, px.energy_comp, px.spec_ao);\n",
+            "        let surf = build_shading_surface(surface, in, V, px.metallic, px.perceptual_roughness, px.f0, px.energy_comp, px.spec_ao, px.dielectric_f0, px.f90);\n",
         );
     }
     if wire_vertex_attr {
@@ -424,11 +424,12 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
     }
     if hook.has_surface {
         // Apply the override to the live PBR pixel (F0 recomputed from the
-        // authored base colour and metallic) and patch `surf` so the built-in
+        // authored base colour and metallic, and from the authored dielectric
+        // F0 when `f0_override.w` is set) and patch `surf` so the built-in
         // loop and any lighting hooks both see the authored surface.
         surface_region.push_str(&format!(
             "        let sov = {name}__shade_surface(surf);\n\
-             \x20       px = pbr_apply_override(px, sov.base_colour, sov.metallic, sov.roughness);\n\
+             \x20       px = pbr_apply_override(px, sov.base_colour, sov.metallic, sov.roughness, sov.f0_override);\n\
              \x20       N = normalize(sov.normal);\n\
              \x20       {name}__hook_emissive = sov.emissive;\n\
              \x20       surf.base_colour = px.diffuse_colour;\n\
@@ -436,6 +437,8 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
              \x20       surf.metallic = px.metallic;\n\
              \x20       surf.roughness = px.perceptual_roughness;\n\
              \x20       surf.f0 = px.f0;\n\
+             \x20       surf.dielectric_f0 = px.dielectric_f0;\n\
+             \x20       surf.f90 = px.f90;\n\
              \x20       surf.energy_compensation = px.energy_comp;\n\
              \x20       surf.spec_ao = px.spec_ao;\n"
         ));
@@ -513,9 +516,9 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
 
 /// The internal hook behind the `VIEWPORT_MESH_BUILTIN_HOOK` A/B knob: the
 /// built-in Cook-Torrance per-light term replayed through the shading seam.
-/// `shade_light` calls the same `viewport_brdf_light_contrib_compensated` the
-/// inline path calls (with `radiance * shadow`, matching the inline multiply
-/// exactly, and the surface's energy compensation), keeps the
+/// `shade_light` calls the same `viewport_brdf_light_contrib_f90` the inline
+/// path calls (with `radiance * shadow`, matching the inline multiply
+/// exactly, and the surface's f90 and energy compensation), keeps the
 /// backface early-continue, and leaves ambient and recolor on the defaults.
 /// The composed module therefore computes identical lighting; what it adds is
 /// exactly the hook mechanism (ShadingSurface fill, LightSample construction,
@@ -529,10 +532,10 @@ pub(crate) fn builtin_pbr_hook() -> &'static StoredShadingHook {
             name: "builtin_pbr",
             wgsl_body: "\
 fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
-    return viewport_brdf_light_contrib_compensated(surf.normal, surf.view_dir, light.l,
-                                                   light.radiance * light.shadow,
-                                                   surf.base_colour, surf.metallic, surf.roughness,
-                                                   surf.f0, surf.energy_compensation);
+    return viewport_brdf_light_contrib_f90(surf.normal, surf.view_dir, light.l,
+                                           light.radiance * light.shadow,
+                                           surf.base_colour, surf.metallic, surf.roughness,
+                                           surf.f0, surf.f90, surf.energy_compensation);
 }
 "
             .to_string(),
@@ -1911,7 +1914,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
             );
             assert!(
                 composed.contains(
-                    "px = pbr_apply_override(px, sov.base_colour, sov.metallic, sov.roughness);"
+                    "px = pbr_apply_override(px, sov.base_colour, sov.metallic, sov.roughness, sov.f0_override);"
                 ),
                 "{shader}: missing F0 recompute"
             );

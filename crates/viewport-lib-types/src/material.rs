@@ -600,7 +600,9 @@ pub struct Material {
     pub ambient: f32,
     /// Diffuse light coefficient. Default 0.75.
     pub diffuse: f32,
-    /// Specular highlight coefficient. Default 0.4.
+    /// Blinn-Phong specular highlight coefficient. Default 0.4. Only the Phong
+    /// shading model reads it; PBR takes its dielectric reflectance from
+    /// [`reflectance`](Self::reflectance).
     pub specular: f32,
     /// Specular shininess exponent. Default 32.0.
     pub shininess: f32,
@@ -786,6 +788,30 @@ pub struct Material {
     /// a plugin, and past the plugin's `texture_count`.
     #[cfg_attr(feature = "serde", serde(default))]
     pub plugin_textures: [Option<crate::ids::TextureId>; MATERIAL_PLUGIN_MAX_TEXTURES],
+    /// Dielectric reflectance at normal incidence, as a perceptual 0..1 value:
+    /// PBR shading takes F0 = `0.16 * reflectance^2`. Default 0.5 (F0 = 0.04,
+    /// the reflectance of most plastics and glass). 0 removes the dielectric
+    /// specular; 1 gives F0 = 0.16, about a gemstone. Metals ignore it: their
+    /// F0 is the base colour. Set it from an index of refraction with
+    /// [`with_ior`](Self::with_ior).
+    #[cfg_attr(feature = "serde", serde(default = "default_reflectance"))]
+    pub reflectance: f32,
+    /// Scales the dielectric specular at normal and grazing incidence, as glTF
+    /// `KHR_materials_specular`'s `specularFactor`. Default 1.0. 0 removes the
+    /// dielectric specular lobe entirely, grazing Fresnel included.
+    #[cfg_attr(feature = "serde", serde(default = "default_specular_factor"))]
+    pub specular_factor: f32,
+    /// Tints the dielectric F0, as glTF `KHR_materials_specular`'s
+    /// `specularColorFactor`. Default linear white. The tinted F0 is clamped
+    /// to 1 before [`specular_factor`](Self::specular_factor) scales it.
+    #[cfg_attr(feature = "serde", serde(default = "default_specular_colour"))]
+    pub specular_colour: crate::colour::Colour,
+    /// Index of refraction, for refraction and transmission only. Default 1.5.
+    /// The rasteriser does not read it: F0 comes from
+    /// [`reflectance`](Self::reflectance), which [`with_ior`](Self::with_ior)
+    /// sets together with this field.
+    #[cfg_attr(feature = "serde", serde(default = "default_ior"))]
+    pub ior: f32,
 }
 
 /// A material's values for its plugin's declared parameters, keyed by name.
@@ -925,6 +951,26 @@ fn default_normal_strength() -> f32 {
     1.0
 }
 
+#[cfg(feature = "serde")]
+fn default_reflectance() -> f32 {
+    0.5
+}
+
+#[cfg(feature = "serde")]
+fn default_specular_factor() -> f32 {
+    1.0
+}
+
+#[cfg(feature = "serde")]
+fn default_specular_colour() -> crate::colour::Colour {
+    crate::colour::Colour::linear_rgb(1.0, 1.0, 1.0)
+}
+
+#[cfg(feature = "serde")]
+fn default_ior() -> f32 {
+    1.5
+}
+
 impl Default for Material {
     fn default() -> Self {
         Self {
@@ -958,6 +1004,10 @@ impl Default for Material {
             shading_plugin: None,
             plugin_params: PluginParams::default(),
             plugin_textures: [None; MATERIAL_PLUGIN_MAX_TEXTURES],
+            reflectance: 0.5,
+            specular_factor: 1.0,
+            specular_colour: crate::colour::Colour::linear_rgb(1.0, 1.0, 1.0),
+            ior: 1.5,
         }
     }
 }
@@ -1017,6 +1067,15 @@ impl Material {
     /// Bind `id` to `slot`. See [`set_texture`](Self::set_texture).
     pub fn with_texture(mut self, slot: TextureSlot, id: crate::ids::TextureId) -> Self {
         self.set_texture(slot, Some(id));
+        self
+    }
+
+    /// Set the index of refraction and derive [`reflectance`](Self::reflectance)
+    /// from it, so F0 = `((ior - 1) / (ior + 1))^2`. An IOR of 1.5 gives the
+    /// default reflectance of 0.5.
+    pub fn with_ior(mut self, ior: f32) -> Self {
+        self.ior = ior;
+        self.reflectance = ((ior - 1.0) / (ior + 1.0)).abs() / 0.4;
         self
     }
 
@@ -1251,6 +1310,18 @@ impl Material {
 mod tests {
     use super::*;
     use crate::colour::Colour;
+
+    #[test]
+    fn with_ior_derives_reflectance() {
+        let m = Material::default().with_ior(1.5);
+        assert_eq!(m.ior, 1.5);
+        assert!((m.reflectance - Material::default().reflectance).abs() < 1e-6);
+        // F0 = 0.16 r^2 reproduces ((ior - 1) / (ior + 1))^2.
+        let m = Material::default().with_ior(2.4);
+        let f0 = 0.16 * m.reflectance * m.reflectance;
+        let expected = ((2.4f32 - 1.0) / (2.4 + 1.0)).powi(2);
+        assert!((f0 - expected).abs() < 1e-6, "{f0} vs {expected}");
+    }
 
     #[test]
     fn texture_slots_list_in_index_order() {
