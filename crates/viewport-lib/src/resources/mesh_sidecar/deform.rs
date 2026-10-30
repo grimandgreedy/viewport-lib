@@ -584,6 +584,21 @@ impl DeformationState {
         touched
     }
 
+    /// Forget a freed mesh's deform state, so a stale entry neither lingers
+    /// nor keeps its external sources counted.
+    pub(crate) fn forget_mesh(&mut self, mesh_id: MeshId) {
+        let Some(m) = self.meshes.remove(&mesh_id) else {
+            return;
+        };
+        let externals = std::iter::once(&m.mesh)
+            .chain(m.instances.values())
+            .flat_map(|slots| slots.slot_external.iter())
+            .filter(|src| src.is_some())
+            .count();
+        self.external_source_count -= externals;
+        self.epoch = self.epoch.wrapping_add(1);
+    }
+
     /// Zero `slot`'s parameter block in the CPU header mirror and queue the
     /// matching buffer write.
     fn clear_slot_params(&mut self, slot: usize) {
@@ -2160,6 +2175,28 @@ mod tests {
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         })
+    }
+
+    #[test]
+    fn freeing_a_mesh_drops_its_deform_state() {
+        let Some((device, _queue, mut renderer, mesh, n)) = with_mesh() else {
+            return;
+        };
+        let res = renderer.resources_mut();
+        res.attach_deform_slot(&device, mesh, 0, 4, &vec![0u8; n * 4]);
+        res.set_deform_slot_source_buffer(
+            &device,
+            mesh,
+            2,
+            copy_src_buffer(&device, n as u64 * 4),
+            4,
+        )
+        .unwrap();
+        assert_eq!(res.scene_tier.deform.external_source_count, 1);
+
+        assert!(res.free_mesh(mesh));
+        assert!(!res.scene_tier.deform.meshes.contains_key(&mesh));
+        assert_eq!(res.scene_tier.deform.external_source_count, 0);
     }
 
     #[test]
