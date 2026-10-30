@@ -276,3 +276,137 @@ fn item_type_fixture_sees_the_scene_generation() {
         log.entries()
     );
 }
+
+fn logging(log: &CallLog, name: &'static str) -> Box<LoggingItemTypePlugin> {
+    Box::new(LoggingItemTypePlugin::new(log.clone(), name))
+}
+
+/// After removal no call reaches the plugin, and items still submitted under
+/// its name are skipped.
+#[test]
+fn a_removed_item_type_receives_no_calls() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let log = CallLog::new();
+    let id = harness
+        .renderer
+        .with_item_type_plugin(&harness.device, logging(&log, "probe_items"))
+        .unwrap();
+    log.clear();
+
+    let submitted = || {
+        let mut frame = probe_frame(SIZE, [0.1, 0.1, 0.1, 1.0]);
+        frame
+            .scene
+            .submit_plugin_items("probe_items", CountedItemCollection::new(2));
+        frame
+    };
+    harness.render(&submitted(), SIZE, SIZE);
+    assert_eq!(log.count("prepare"), 1, "log holds {:?}", log.entries());
+    log.clear();
+
+    let removed = harness.renderer.remove_item_type_plugin(id);
+    assert!(removed.is_some());
+    assert!(!harness.renderer.has_item_type_plugin("probe_items"));
+    assert!(harness.renderer.remove_item_type_plugin(id).is_none());
+    harness.render(&submitted(), SIZE, SIZE);
+    log.assert_empty();
+}
+
+/// Removing the middle of three types leaves the other two dispatched in
+/// registration order.
+#[test]
+fn removal_keeps_the_order_of_the_remaining_item_types() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let log = CallLog::new();
+    let mut ids = Vec::new();
+    for name in ["order_a", "order_b", "order_c"] {
+        ids.push(
+            harness
+                .renderer
+                .with_item_type_plugin(&harness.device, logging(&log, name))
+                .unwrap(),
+        );
+    }
+    assert!(harness.renderer.remove_item_type_plugin(ids[1]).is_some());
+    log.clear();
+
+    let mut frame = probe_frame(SIZE, [0.1, 0.1, 0.1, 1.0]);
+    for name in ["order_c", "order_b", "order_a"] {
+        frame
+            .scene
+            .submit_plugin_items(name, CountedItemCollection::new(1));
+    }
+    harness.render(&frame, SIZE, SIZE);
+    let prepares: Vec<String> = log
+        .entries()
+        .into_iter()
+        .filter(|e| e.starts_with("prepare:"))
+        .collect();
+    assert_eq!(
+        prepares,
+        vec![
+            "prepare:order_a:items=1:vp=0:gen=0".to_owned(),
+            "prepare:order_c:items=1:vp=0:gen=0".to_owned(),
+        ]
+    );
+}
+
+/// A second plugin under a registered name is refused; once the first is
+/// removed the name, and the removed plugin itself, register again.
+#[test]
+fn a_taken_item_type_name_is_refused_until_removed() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let log = CallLog::new();
+    let first = harness
+        .renderer
+        .with_item_type_plugin(&harness.device, logging(&log, "dup_items"))
+        .unwrap();
+    let refused = harness
+        .renderer
+        .with_item_type_plugin(&harness.device, logging(&log, "dup_items"));
+    assert!(
+        matches!(
+            refused,
+            Err(viewport_lib::ViewportError::ItemTypeNameTaken { ref name }) if name == "dup_items"
+        ),
+        "got {refused:?}"
+    );
+    assert_eq!(harness.renderer.item_type_id("dup_items"), Some(first));
+
+    let plugin = harness.renderer.remove_item_type_plugin(first).unwrap();
+    let again = harness
+        .renderer
+        .with_item_type_plugin(&harness.device, plugin)
+        .unwrap();
+    assert_ne!(again, first);
+    let other = harness.renderer.remove_item_type_plugin(again).unwrap();
+    drop(other);
+    harness
+        .renderer
+        .with_item_type_plugin(&harness.device, logging(&log, "dup_items"))
+        .unwrap();
+}
+
+/// A type the renderer installed itself cannot be removed.
+#[test]
+fn a_renderer_owned_item_type_cannot_be_removed() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let Some(id) = harness.renderer.item_type_id("vpl.polyline") else {
+        eprintln!("skipping: the device declined the built-in polyline type");
+        return;
+    };
+    assert!(harness.renderer.remove_item_type_plugin(id).is_none());
+    assert!(harness.renderer.has_item_type_plugin("vpl.polyline"));
+}

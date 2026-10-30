@@ -503,6 +503,8 @@ pub struct ViewportRenderer {
     /// Why each item type the device could not run was refused, by type name.
     /// Cleared for a name once a type registers under it.
     declined_item_types: std::collections::HashMap<&'static str, crate::ViewportError>,
+    /// Source for [`ItemTypeId`](crate::plugin_api::ItemTypeId)s.
+    next_item_type_id: u64,
     /// Externally registered post-effect producers, in registration order.
     /// `init_gpu` is deferred to the first render with the device; per-frame
     /// `prepare` / `encode` run on the HDR path, per viewport.
@@ -1075,6 +1077,7 @@ impl ViewportRenderer {
             plugins_with_items: std::collections::HashSet::new(),
             renderer_owned_type_names: std::collections::HashSet::new(),
             declined_item_types: std::collections::HashMap::new(),
+            next_item_type_id: 0,
             post_effect_producers: Vec::new(),
             next_post_effect_producer_id: 0,
             post_effect_stages: Vec::new(),
@@ -2040,9 +2043,9 @@ impl ViewportRenderer {
     /// Register an [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin).
     ///
     /// Invokes the plugin's `init_gpu` against the current device and
-    /// shared bind layout, then stores it keyed by `type_name()` for the
-    /// remainder of the renderer's lifetime. Registering a second plugin
-    /// with the same `type_name` replaces the first.
+    /// shared bind layout, then stores it keyed by `type_name()` until
+    /// [`remove_item_type_plugin`](Self::remove_item_type_plugin) is called
+    /// with the returned id.
     ///
     /// The renderer will dispatch `prepare` and `paint` to the plugin on
     /// every frame where
@@ -2057,6 +2060,10 @@ impl ViewportRenderer {
     /// dropped without `init_gpu` running, and anything registered under the
     /// same name before stays.
     ///
+    /// [`ViewportError::ItemTypeNameTaken`](crate::ViewportError::ItemTypeNameTaken)
+    /// when a plugin is already registered under `type_name()`. To replace it,
+    /// remove it first.
+    ///
     /// # Panics
     ///
     /// If a type the renderer installed itself already answers to
@@ -2070,7 +2077,7 @@ impl ViewportRenderer {
         &mut self,
         device: &crate::gpu::Device,
         plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
-    ) -> Result<(), crate::ViewportError> {
+    ) -> Result<crate::plugin_api::ItemTypeId, crate::ViewportError> {
         self.resources.require_live()?;
         let name = plugin.type_name();
         assert!(
@@ -2078,12 +2085,36 @@ impl ViewportRenderer {
             "item type name {name:?} is taken by a type the renderer installed itself. \
              Register under a prefix of your own."
         );
+        if self.item_type_plugins.contains_key(name) {
+            return Err(crate::ViewportError::ItemTypeNameTaken {
+                name: name.to_owned(),
+            });
+        }
         if let Err(e) = self.check_item_type_requirements(name, &plugin.requires()) {
             self.declined_item_types.insert(name, e.clone());
             return Err(e);
         }
-        self.register_item_type_plugin(device, plugin);
-        Ok(())
+        Ok(self.register_item_type_plugin(device, plugin))
+    }
+
+    /// Unregister the item type registered with `id` and hand the plugin
+    /// back. The types that remain keep their draw order, and items still
+    /// submitted under the name are skipped as any unregistered name is.
+    ///
+    /// `None` when `id` was already removed, or names a type the renderer
+    /// installed itself: those cannot be removed.
+    pub fn remove_item_type_plugin(
+        &mut self,
+        id: crate::plugin_api::ItemTypeId,
+    ) -> Option<Box<dyn crate::plugin_api::ItemTypePlugin>> {
+        let name = self.item_type_plugins.name_of(id.0)?;
+        if self.renderer_owned_type_names.contains(name) {
+            return None;
+        }
+        let plugin = self.item_type_plugins.remove(name)?;
+        self.declined_item_types.remove(name);
+        self.plugins_with_items.remove(name);
+        Some(plugin)
     }
 
     /// [`check_plugin_requirements`](Self::check_plugin_requirements) for an
@@ -2160,11 +2191,22 @@ impl ViewportRenderer {
         &mut self,
         device: &crate::gpu::Device,
         mut plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
-    ) {
+    ) -> crate::plugin_api::ItemTypeId {
         plugin.init_gpu(device, &self.resources);
         let name = plugin.type_name();
         self.declined_item_types.remove(name);
-        self.item_type_plugins.insert(name, plugin);
+        let id = crate::plugin_api::ItemTypeId(self.next_item_type_id);
+        self.next_item_type_id += 1;
+        self.item_type_plugins.insert_with_id(name, id.0, plugin);
+        id
+    }
+
+    /// The id of the item type registered under `type_name`, including the
+    /// types the renderer installed itself.
+    pub fn item_type_id(&self, type_name: &str) -> Option<crate::plugin_api::ItemTypeId> {
+        self.item_type_plugins
+            .id_of(type_name)
+            .map(crate::plugin_api::ItemTypeId)
     }
 
     /// Returns true when an item-type plugin with `type_name` is

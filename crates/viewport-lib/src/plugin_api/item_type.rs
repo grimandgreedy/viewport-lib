@@ -818,6 +818,14 @@ impl<T: Any> AsAnyItemTypePlugin for T {
     }
 }
 
+/// Handle returned by
+/// [`with_item_type_plugin`](crate::renderer::ViewportRenderer::with_item_type_plugin);
+/// pass it to
+/// [`remove_item_type_plugin`](crate::renderer::ViewportRenderer::remove_item_type_plugin)
+/// to unregister. Ids are never reused within a renderer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ItemTypeId(pub(crate) u64);
+
 /// A scene item category owned by a plugin: its GPU data, its pipelines, and
 /// the draws that put it on screen.
 ///
