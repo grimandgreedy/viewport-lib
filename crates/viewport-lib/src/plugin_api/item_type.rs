@@ -946,19 +946,6 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         0
     }
 
-    /// Called when the wgpu device is recreated, e.g. after device loss or a
-    /// host-driven reset. Every pipeline, buffer, texture, or bind group the
-    /// plugin built against the old device is now invalid and must be rebuilt.
-    ///
-    /// The host invokes this via
-    /// [`ViewportRenderer::notify_device_recreated`](crate::renderer::ViewportRenderer::notify_device_recreated);
-    /// the renderer does not detect device loss on its own. After this call
-    /// returns, [`init_gpu`](Self::init_gpu) is re-invoked on the plugin before
-    /// it is next used, so a typical implementation drops its cached resources
-    /// here and lets `init_gpu` rebuild them. Matches
-    /// [`GpuPlugin::on_device_recreated`](crate::runtime::GpuPlugin::on_device_recreated).
-    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {}
-
     /// Encode per-frame prepare work for this plugin's items.
     ///
     /// Returns a `Vec<wgpu::CommandBuffer>` that the renderer concatenates

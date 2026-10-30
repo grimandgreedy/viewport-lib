@@ -48,10 +48,6 @@ impl ItemTypePlugin for LoggingItemTypePlugin {
             .record(format!("init_gpu:samples={}", resources.sample_count()));
     }
 
-    fn on_device_recreated(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue) {
-        self.log.record("on_device_recreated");
-    }
-
     fn prepare(
         &mut self,
         _device: &wgpu::Device,

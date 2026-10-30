@@ -189,14 +189,8 @@ pub trait PostEffectProducer: Send + Sync + 'static {
 
     /// Build pipelines, layouts, and shared (viewport-independent) GPU
     /// state. Called once after registration, when the renderer first runs
-    /// with the device, and again after device recreation.
+    /// with the device.
     fn init_gpu(&mut self, _device: &crate::gpu::Device) {}
-
-    /// The wgpu device was recreated (device loss, surface re-init). All
-    /// previously created GPU resources are invalid; `init_gpu` is called
-    /// again after this, followed by `on_viewport_resized` for each live
-    /// viewport.
-    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {}
 
     /// A viewport's render targets were (re)created. Allocate or resize the
     /// per-viewport textures and bind groups for `ctx.viewport_index` here.
@@ -276,14 +270,8 @@ pub trait PostEffectStage: Send + Sync + 'static {
 
     /// Build pipelines, layouts, and shared (viewport-independent) GPU
     /// state. Called once after registration, when the renderer first runs
-    /// with the device, and again after device recreation.
+    /// with the device.
     fn init_gpu(&mut self, _device: &crate::gpu::Device) {}
-
-    /// The wgpu device was recreated (device loss, surface re-init). All
-    /// previously created GPU resources are invalid; `init_gpu` is called
-    /// again after this, followed by `on_viewport_resized` for each live
-    /// viewport.
-    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {}
 
     /// A viewport's render targets were (re)created. Allocate or resize the
     /// per-viewport input texture and bind groups for `ctx.viewport_index`

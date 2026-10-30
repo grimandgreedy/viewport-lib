@@ -64,11 +64,6 @@ impl ItemTypePlugin for ImageSlicePlugin {
         gpu.pipelines.request_all();
     }
 
-    fn on_device_recreated(&mut self, _device: &gpu::Device, _queue: &gpu::Queue) {
-        self.gpu = None;
-        self.frame.clear();
-    }
-
     fn prepare(
         &mut self,
         device: &gpu::Device,

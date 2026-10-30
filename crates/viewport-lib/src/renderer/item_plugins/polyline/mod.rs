@@ -74,11 +74,6 @@ impl ItemTypePlugin for PolylinePlugin {
         self.stored.allocated_bytes()
     }
 
-    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
-        self.gpu = None;
-        self.frame.clear();
-    }
-
     /// Asks for the four line pipelines in both formats, the pick and the
     /// outline mask.
     fn warm(&mut self, device: &crate::gpu::Device, resources: &crate::DeviceResources) {

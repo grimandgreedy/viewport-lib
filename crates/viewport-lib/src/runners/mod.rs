@@ -612,19 +612,6 @@ impl ViewportInstance {
     pub fn upload_status(&self, id: crate::resources::JobId) -> crate::resources::UploadStatus {
         self.renderer.upload_status(id)
     }
-
-    /// Forward a device recreation from your application to the renderer and runtime so their
-    /// GPU state re-initialises. Call after your application rebuilds the device.
-    pub fn notify_device_recreated(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-    ) {
-        self.renderer.notify_device_recreated(device, queue);
-        if let Some(runtime) = self.runtime.as_mut() {
-            runtime.notify_device_recreated(device, queue);
-        }
-    }
 }
 
 #[cfg(test)]

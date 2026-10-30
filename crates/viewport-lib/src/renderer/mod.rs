@@ -2268,62 +2268,6 @@ impl ViewportRenderer {
         }
     }
 
-    /// Notify every registered item-type plugin that the wgpu device has been
-    /// recreated (device loss, surface re-init, host-driven reset).
-    ///
-    /// Calls [`ItemTypePlugin::on_device_recreated`](crate::plugin_api::ItemTypePlugin::on_device_recreated)
-    /// on each plugin, then re-runs its `init_gpu` against the new device and
-    /// the current shared bind layout, mirroring registration. The renderer
-    /// does not detect device loss on its own; the host invokes this after it
-    /// recreates the device. Matches
-    /// [`ViewportRuntime::notify_device_recreated`](crate::runtime::ViewportRuntime::notify_device_recreated)
-    /// on the GPU-plugin side.
-    pub fn notify_device_recreated(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-    ) {
-        // Whatever the lighting uniforms held is gone with the old device.
-        self.shadow.written = Default::default();
-        for plugin in self.item_type_plugins.values_mut() {
-            plugin.on_device_recreated(device, queue);
-            plugin.init_gpu(device, &self.resources);
-        }
-        // Post-effect producers and stages follow the same shape, then
-        // re-receive the per-viewport resize signal so their targets are
-        // rebuilt against the new device.
-        for entry in &mut self.post_effect_producers {
-            entry.producer.on_device_recreated(device, queue);
-            entry.producer.init_gpu(device);
-            entry.gpu_ready = true;
-        }
-        for entry in &mut self.post_effect_stages {
-            entry.stage.on_device_recreated(device, queue);
-            entry.stage.init_gpu(device);
-            entry.gpu_ready = true;
-        }
-        let target_format = self.resources.target_format;
-        for (vp_idx, slot) in self.viewport_slots.iter().enumerate() {
-            let Some(hdr) = slot.hdr.as_ref() else {
-                continue;
-            };
-            let ctx = crate::plugin_api::PostEffectResizeContext {
-                viewport_index: vp_idx,
-                scene_size: hdr.scene_size,
-                output_size: hdr.output_size,
-                scene_colour: &hdr.hdr_view,
-                scene_depth: &hdr.hdr_depth_only_view,
-                target_format,
-            };
-            for entry in &mut self.post_effect_producers {
-                entry.producer.on_viewport_resized(device, &ctx);
-            }
-            for entry in &mut self.post_effect_stages {
-                entry.stage.on_viewport_resized(device, &ctx);
-            }
-        }
-    }
-
     /// Walk registered item-type plugins, invoke `prepare` for each one
     /// that has a matching collection submitted on `frame.scene`, and
     /// return the concatenated command buffers.

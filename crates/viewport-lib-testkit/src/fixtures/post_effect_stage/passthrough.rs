@@ -131,12 +131,6 @@ impl PostEffectStage for PassthroughPostEffectStage {
         self.record("init_gpu".into());
     }
 
-    fn on_device_recreated(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue) {
-        self.record("on_device_recreated".into());
-        self.pipeline = None;
-        self.per_viewport.clear();
-    }
-
     fn on_viewport_resized(&mut self, device: &wgpu::Device, ctx: &PostEffectResizeContext<'_>) {
         self.record(format!(
             "resize:{}:{}x{}",

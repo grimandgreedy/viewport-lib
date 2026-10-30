@@ -138,15 +138,6 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         gpu.pipelines.request_all();
     }
 
-    fn on_device_recreated(&mut self, _device: &gpu::Device, _queue: &gpu::Queue) {
-        self.gpu = None;
-        self.packed_gpu = None;
-        self.sorts.clear();
-        self.packed_sets.clear();
-        self.frame.clear();
-        self.outlines.clear();
-    }
-
     fn prepare(
         &mut self,
         device: &gpu::Device,

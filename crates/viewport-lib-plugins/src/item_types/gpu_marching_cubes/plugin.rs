@@ -121,18 +121,6 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         gpu.pipelines.request_all();
     }
 
-    fn on_device_recreated(
-        &mut self,
-        _device: &viewport_lib::gpu::Device,
-        _queue: &viewport_lib::gpu::Queue,
-    ) {
-        self.gpu = None;
-        self.iso_gpu = None;
-        self.frame.clear();
-        self.iso_frame.clear();
-        self.pick_bgs.clear();
-    }
-
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
