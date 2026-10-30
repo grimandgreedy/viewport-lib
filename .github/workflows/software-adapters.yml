@@ -1,15 +1,18 @@
 name: Software adapters
 
-# Every platform the library claims that a runner can exercise without real
-# hardware. Three software adapters run the headless tests: WARP (Direct3D 12)
-# on Windows, lavapipe (Vulkan) on Linux, and llvmpipe (GL) on Linux. Beside
-# them: the wasm compile check, the web smoke page in headless Chrome, and the
-# Android and iOS compile checks. None of it gates anything: the workflow runs
-# only when started by hand from the Actions tab, and a job or step that is
-# expected to fail says so where it is declared. A platform with no job here is a platform nobody is
-# testing, which is how a backend quietly stops working.
+# The platforms a runner can exercise without real hardware that the gating CI
+# workflow (ci.yml, which runs lavapipe and the wasm check) does not cover:
+# WARP (Direct3D 12) on Windows and llvmpipe (GL) on Linux run the headless
+# tests, beside the web smoke page in headless Chrome and the Android and iOS
+# compile checks. None of it gates anything: the workflow runs nightly and when
+# started by hand from the Actions tab, and a job or step that is expected to
+# fail says so where it is declared. A platform with no job here or in ci.yml
+# is a platform nobody is testing, which is how a backend quietly stops
+# working.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,6 +22,11 @@ env:
   # gpu_available canary fail instead, so a runner with a broken adapter setup
   # cannot report green while testing nothing.
   VIEWPORT_REQUIRE_GPU: 1
+  # No adapter here has a blessed golden set, so every golden check (the
+  # catalogue snapshots and the compatibility goldens inside the testkit run)
+  # renders without comparing. Frames go under the target directory, never
+  # into tests/snapshots/.
+  GOLDEN_RENDER_ONLY: 1
 
 jobs:
   warp:
@@ -47,48 +55,10 @@ jobs:
         working-directory: crates/viewport-lib-testkit
         run: cargo test --release --tests
 
-      # There are no references blessed for this backend, so the gate writes a
-      # fresh set and passes. That makes this step a check that every catalogue
-      # scene renders through WARP, not a pixel comparison. The files are never
-      # committed from here.
+      # Renders every catalogue scene without comparing pixels.
       - name: Catalogue scenes render
         working-directory: crates/viewport-lib-testkit
-        run: |
-          cargo test --release --test snapshots
-          git status --short tests/snapshots/
-
-  lavapipe:
-    name: lavapipe (Vulkan, Linux)
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      WGPU_BACKEND: vulkan
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install lavapipe
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
-          vulkaninfo --summary
-
-      - name: Adapter probe
-        run: cargo test --release -p viewport-lib --test gpu_available -- --nocapture
-
-      - name: Library headless tests
-        run: cargo test --release -p viewport-lib --tests
-
-      - name: Testkit tests
-        working-directory: crates/viewport-lib-testkit
-        run: cargo test --release --tests
-
-      - name: Catalogue scenes render
-        working-directory: crates/viewport-lib-testkit
-        run: |
-          cargo test --release --test snapshots
-          git status --short tests/snapshots/
+        run: cargo test --release --test snapshots
 
   llvmpipe-gl:
     name: llvmpipe (GL, Linux)
@@ -132,30 +102,11 @@ jobs:
         working-directory: crates/viewport-lib-testkit
         run: cargo test --release --tests
 
-      # No references are blessed for GL in CI; as on WARP and lavapipe this is
-      # a check that every scene renders, not a pixel comparison.
+      # As on WARP, renders every scene without comparing pixels.
       - name: Catalogue scenes render
         continue-on-error: true
         working-directory: crates/viewport-lib-testkit
-        run: |
-          cargo test --release --test snapshots
-          git status --short tests/snapshots/
-
-  wasm-check:
-    name: wasm compile check
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-
-      # The script defaults to a macOS rustup toolchain path; point it at the
-      # runner's instead.
-      - name: Check the library crates and web examples for wasm32
-        run: VPL_WASM_TOOLCHAIN="$(rustc --print sysroot)" scripts/build_web.sh --check
+        run: cargo test --release --test snapshots
 
   web-smoke:
     name: Web smoke page (headless Chrome)
