@@ -68,13 +68,22 @@ impl ViewportRenderer {
             None => fallback,
         };
         // A set shadow distance replaces the far end, whatever the scene.
-        let (shadow_near, shadow_far) = match lighting.shadows.shadow_distance {
-            Some(d) if d.is_finite() && d > 0.0 => {
+        let distance = lighting
+            .shadows
+            .shadow_distance
+            .filter(|d| d.is_finite() && *d > 0.0);
+        let (shadow_near, shadow_far) = match distance {
+            Some(d) => {
                 let far = d.min(camera_far);
                 (shadow_near.min(far * 0.5), far)
             }
-            _ => (shadow_near, shadow_far),
+            None => (shadow_near, shadow_far),
         };
+        // Shadows fade out where the cascades stop short of the scene: at a
+        // set distance, or at the end of the fallback range. A fitted range
+        // already reaches every shadow in view, and fading its far end
+        // would light the farthest shadowed receivers.
+        let ends_short = distance.is_some() || fitted.is_none_or(|(_, far)| shadow_far > far);
         let cascade_splits = compute_cascade_splits(
             shadow_near,
             shadow_far,
@@ -172,13 +181,18 @@ impl ViewportRenderer {
             [0.5, 0.5, 1.0, 1.0], // cascade 3
         ];
         // Where the cascades end along the view, and the share of that
-        // distance they fade out over. The single no-view map has no
-        // distance cut. The last two lanes are reserved for physically
-        // sized soft shadows (sun angular radius, widest penumbra).
+        // distance they fade out over (0: no fade and no cut). The single
+        // no-view map has no distance cut. The last two lanes are reserved
+        // for physically sized soft shadows (sun angular radius, widest
+        // penumbra).
+        let fade_fraction = match lighting.shadows.fade_fraction {
+            f if ends_short && f > 0.0 => f.min(1.0),
+            _ => 0.0,
+        };
         let range = if use_csm && effective_cascade_count > 0 {
             [
                 cascade_split_distances[effective_cascade_count - 1],
-                0.0,
+                fade_fraction,
                 0.0,
                 0.0,
             ]

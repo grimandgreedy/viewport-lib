@@ -153,6 +153,18 @@ fn fs_main(in: VertexOutput) -> FragOut {
         let cam_forward = -gp.cam_back.xyz;
         let dist = dot(hit - gp.eye_pos, cam_forward);
 
+        // Distance fade at the far end of the cascades, as `csm_distance_fade`
+        // in the mesh shaders: nothing past `range.x`.
+        var shadow_fade = 1.0;
+        if shadow_atlas.range.x > 0.0 && shadow_atlas.range.y > 0.0 {
+            shadow_fade = clamp(
+                (shadow_atlas.range.x - dist) / (shadow_atlas.range.y * shadow_atlas.range.x),
+                0.0,
+                1.0,
+            );
+        }
+        if shadow_fade <= 0.0 { discard; }
+
         var cascade_idx = 0u;
         for (var i = 0u; i < shadow_atlas.cascade_count; i++) {
             if dist > shadow_atlas.cascade_splits[i] {
@@ -199,7 +211,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
         }
         let shadow_factor = shadow_sum / 9.0;
         // shadow_factor == 1.0 -> lit, 0.0 -> fully in shadow.
-        let shadow_alpha = (1.0 - shadow_factor) * gp.shadow_opacity * fade;
+        let shadow_alpha = (1.0 - shadow_factor) * gp.shadow_opacity * fade * shadow_fade;
         if shadow_alpha < 0.005 { discard; }
         out_colour = vec4<f32>(gp.shadow_colour.rgb, shadow_alpha);
 

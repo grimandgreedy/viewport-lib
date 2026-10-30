@@ -486,6 +486,15 @@ pub struct ShadowSettings {
     /// [`CascadeSplit::Practical`] with `lambda` 0.75.
     #[cfg_attr(feature = "serde", serde(default))]
     pub cascade_split: CascadeSplit,
+    /// The fraction of the shadow distance, at its far end, over which
+    /// directional shadows fade out where the cascades stop short of the
+    /// scene: at a set [`shadow_distance`](Self::shadow_distance), or when
+    /// there are no mesh bounds to fit them to. Past the end shadows are
+    /// off. A range fitted to the scene already reaches every shadow in
+    /// view and is not faded. `0.0` leaves a hard edge where the last
+    /// cascade's map runs out. Clamped to `0.0..=1.0`. Default: 0.1.
+    #[cfg_attr(feature = "serde", serde(default = "default_fade_fraction"))]
+    pub fade_fraction: f32,
 }
 
 /// Where the boundaries between directional shadow cascades fall, within
@@ -505,6 +514,11 @@ pub enum CascadeSplit {
     /// `far`. With fewer than four cascades only the first
     /// `cascade_count - 1` are read.
     Fractions([f32; 3]),
+}
+
+#[cfg(feature = "serde")]
+fn default_fade_fraction() -> f32 {
+    ShadowSettings::default().fade_fraction
 }
 
 impl Default for CascadeSplit {
@@ -537,6 +551,7 @@ impl Default for ShadowSettings {
             punctual_shadow_resolution: 1024,
             shadow_distance: None,
             cascade_split: CascadeSplit::default(),
+            fade_fraction: 0.1,
         }
     }
 }

@@ -258,3 +258,76 @@ fn a_tall_caster_outside_the_view_slice_still_shadows_without_depth_clamp() {
     let (shadowed, open) = tall_caster_probe(&mut h);
     assert!(shadowed < open * 0.7, "{shadowed} vs {open} unshadowed");
 }
+
+/// A ground with a fence 12 m ahead of a standing eye, lit from ahead so
+/// the fence throws its shadow back toward the eye, about 11.5 m out. With
+/// a 10 m shadow distance that shadow lies past the end of the cascades.
+/// Returns the probe's brightness with the given fade, and with shadows off.
+fn shadow_past_the_distance(h: &mut Harness, fade_fraction: f32) -> (f32, f32) {
+    let resources = h.renderer.resources_mut();
+    let ground_mesh = resources
+        .upload_mesh_data(
+            &h.device,
+            &viewport_lib::primitives::cuboid(200.0, 200.0, 0.2),
+        )
+        .expect("ground");
+    let fence_mesh = resources
+        .upload_mesh_data(&h.device, &viewport_lib::primitives::cuboid(20.0, 0.5, 2.0))
+        .expect("fence");
+    let material = resources
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
+        .expect("material");
+    let mut ground = SceneRenderItem::default();
+    ground.mesh_id = ground_mesh;
+    ground.model = glam::Mat4::from_translation(Vec3::new(0.0, 40.0, -0.1)).to_cols_array_2d();
+    ground.material = material;
+    let mut fence = SceneRenderItem::default();
+    fence.mesh_id = fence_mesh;
+    fence.model = glam::Mat4::from_translation(Vec3::new(0.0, 12.0, 1.0)).to_cols_array_2d();
+    fence.material = material;
+    let items = vec![ground, fence];
+
+    let eye = Vec3::new(0.0, 0.0, 1.7);
+    let camera = Camera {
+        center: eye + Vec3::Y * 0.01,
+        distance: 0.01,
+        orientation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+        ..Camera::default()
+    };
+    let mut fd = frame(&items, &camera, 1);
+    let mut sun = LightSource::default();
+    sun.kind = LightKind::Directional {
+        direction: [0.0, 0.5, 1.0],
+    };
+    fd.effects.lighting.lights = vec![sun];
+    fd.effects.lighting.shadows.shadow_distance = Some(10.0);
+    fd.effects.lighting.shadows.fade_fraction = fade_fraction;
+
+    let probe = fd.camera.render_camera.view_proj() * glam::Vec4::new(0.0, 11.5, 0.0, 1.0);
+    let ndc = probe.truncate() / probe.w;
+    let px = (((ndc.x * 0.5 + 0.5) * W as f32) as u32).min(W - 1);
+    let py = (((0.5 - ndc.y * 0.5) * H as f32) as u32).min(H - 1);
+    let at = |img: &[u8]| {
+        let i = (py * W + px) as usize * 4;
+        img[i..i + 3].iter().map(|&c| c as f32).sum::<f32>()
+    };
+    let shadowed = at(&h.render(&fd, W, H));
+    fd.effects.lighting.shadows.enabled = false;
+    let open = at(&h.render(&fd, W, H));
+    (shadowed, open)
+}
+
+#[test]
+fn shadows_past_the_shadow_distance_fade_out() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    // Without a fade the last cascade's map still reaches a little past the
+    // shadow distance, so the shadow shows there.
+    let (hard, open) = shadow_past_the_distance(&mut h, 0.0);
+    assert!(hard < open * 0.7, "{hard} vs {open} unshadowed");
+    // With one the shadow is gone past the end.
+    let (faded, open) = shadow_past_the_distance(&mut h, 0.1);
+    assert!(faded >= open - 3.0, "{faded} vs {open} unshadowed");
+}
