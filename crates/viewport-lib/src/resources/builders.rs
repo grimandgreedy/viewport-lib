@@ -1330,7 +1330,11 @@ pub fn build_outline_mask_pipeline(
                 cull_mode: cull,
                 ..Default::default()
             },
-            depth_stencil: Some(scene_depth_stencil(depth_format, depth_write, depth_compare)),
+            depth_stencil: Some(scene_depth_stencil(
+                depth_format,
+                depth_write,
+                depth_compare,
+            )),
             multisample: crate::gpu::MultisampleState::default(),
             cache: None,
         },
