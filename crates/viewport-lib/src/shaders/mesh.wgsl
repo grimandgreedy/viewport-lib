@@ -691,17 +691,42 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
 }
 
 // ---------------------------------------------------------------------------
-// 32-sample Poisson disk (first 16 used for blocker search, all 32 for filter)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // CSM shadow sampling : selects cascade by eye distance, samples atlas tile
 // ---------------------------------------------------------------------------
 
+// #include "helpers/csm.wgsl"
+
+// ---------------------------------------------------------------------------
+// Point-light shadow sampling
+// ---------------------------------------------------------------------------
+
+// One compare tap of a point light's shadow cube: `dir` points from the light
+// to the receiver (any length), `layer` is the light's cube in the array and
+// `reference` the normalised distance compared against the stored one.
+fn punctual_tap(layer: i32, dir: vec3<f32>, reference: f32) -> f32 {
+    // BEGIN_POINT_SHADOW_SAMPLE
+    return textureSampleCompareLevel(
+        point_shadow_cube_tex,
+        shadow_sampler,
+        dir,
+        layer,
+        reference,
+    );
+    // ALT(NO_CUBE_ARRAY): return 1.0;
+    // END_POINT_SHADOW_SAMPLE
+}
+
+// Point-light shadow, filtered by `shadow_atlas.shadow_filter` the way the
+// directional cascades are: Hard takes one tap, PCF 8 rotated disk taps,
+// PCF high 32. The PCSS tiers have no blocker search for cubes and run PCF.
 fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec3<f32>) -> f32 {
     if light.shadow_layer < 0 {
         return 1.0;
     }
+    let tier = shadow_atlas.shadow_filter;
+    let hard = tier == 2u;
+    // Disk radius in cube-face texels; zero for the single hard tap.
+    let radius_texels = select(1.5, 0.0, hard);
     // The cube stores linear distance-to-light over range, one value per
     // texel, so across one texel a receiver's own distance changes by
     // texel_world * tan(theta) (theta between the normal and the light ray).
@@ -710,10 +735,11 @@ fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec
     // its own recorded distance as an occluder, in bands aligned with the
     // cube-face texel rows. Two receiver-side terms clear it:
     //   - normal offset: the sample point is lifted off the surface along the
-    //     normal by a couple of texels, scaled by sin(theta) so perpendicular
-    //     receivers stay put. Lifting by e buys a distance margin of e /
-    //     cos(theta), the same growth as a slope-scaled bias, but the world
-    //     displacement stays bounded at grazing angles;
+    //     normal by a couple of texels plus the filter radius, scaled by
+    //     sin(theta) so perpendicular receivers stay put. Lifting by e buys a
+    //     distance margin of e / cos(theta), the same growth as a
+    //     slope-scaled bias, but the world displacement stays bounded at
+    //     grazing angles;
     //   - a constant distance bias of one texel, plus the consumer knob.
     // Both scale with the cube-face texel footprint at the receiver, so the
     // bias is a fixed number of texels at any distance and face resolution.
@@ -721,34 +747,45 @@ fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec
     let dist = length(to_light);
     let l = to_light / max(dist, 1e-5);
     // A cube face spans two units at unit distance over face_size texels.
-    let face_size = f32(textureDimensions(point_shadow_cube_tex).x);
-    let texel_world = dist * 2.0 / max(face_size, 1.0);
+    let face_size = max(f32(textureDimensions(point_shadow_cube_tex).x), 1.0);
+    let texel_world = dist * 2.0 / face_size;
     // Whichever side of the surface faces the light: two-sided receivers are
     // shaded from either side and the offset must always lift toward the
     // light.
     let n = geo_normal * select(-1.0, 1.0, dot(geo_normal, l) >= 0.0);
     let n_dot_l = clamp(dot(n, l), 0.0, 1.0);
     let sin_t = sqrt(max(1.0 - n_dot_l * n_dot_l, 0.0));
-    let offset_pos = world_pos + n * (texel_world * 2.0 * sin_t);
+    let offset_pos = world_pos + n * (texel_world * (2.0 + radius_texels) * sin_t);
     let to_frag = offset_pos - light.pos_or_dir;
     let offset_dist = length(to_frag);
     let dir = to_frag / max(offset_dist, 1e-5);
     let range = max(light.range, 1e-5);
     let normalised = clamp((offset_dist - texel_world) / range, 0.0, 1.0)
         - lights_uniform.shadow_bias;
-    // BEGIN_POINT_SHADOW_SAMPLE
-    return textureSampleCompareLevel(
-        point_shadow_cube_tex,
-        shadow_sampler,
-        dir,
-        light.shadow_layer,
-        normalised,
-    );
-    // ALT(NO_CUBE_ARRAY): return 1.0;
-    // END_POINT_SHADOW_SAMPLE
+    if hard {
+        return punctual_tap(light.shadow_layer, dir, normalised);
+    }
+    // Taps on the plane perpendicular to `dir`, at unit distance, where one
+    // cube-face texel spans 2 / face_size. Taps that cross a face edge land
+    // on the neighbouring face through the hardware cube addressing.
+    let t = normalize(cross(dir, select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(dir.z) > 0.9)));
+    let b = cross(dir, t);
+    let r = radius_texels * 2.0 / face_size;
+    // The same world-space rotation noise as the cascades.
+    let noise = fract(52.9829189 * fract(dot(world_pos.xz, vec2<f32>(0.06711056, 0.00583715))));
+    let rot = noise * 6.28318530;
+    let sin_r = sin(rot);
+    let cos_r = cos(rot);
+    let taps = select(8u, 32u, tier == 3u);
+    var shadow = 0.0;
+    for (var i = 0u; i < taps; i++) {
+        let d = shadow_tap_dir(i, taps == 8u);
+        let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
+        shadow += punctual_tap(light.shadow_layer, dir + (t * rd.x + b * rd.y) * r, normalised);
+    }
+    return shadow / f32(taps);
 }
 
-// #include "helpers/csm.wgsl"
 
 // ---------------------------------------------------------------------------
 // PBR BRDF helpers (Cook-Torrance)
