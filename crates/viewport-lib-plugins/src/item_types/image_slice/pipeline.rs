@@ -28,6 +28,7 @@ pub(super) struct ImageSliceRecipe {
     mask_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: gpu::TextureFormat,
+    depth_format: gpu::TextureFormat,
 }
 
 /// The render pipeline in both formats, the pick pipeline and the outline
@@ -57,6 +58,7 @@ fn build(r: &ImageSliceRecipe, i: usize) -> gpu::RenderPipeline {
                 depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: r.sample_count,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
             },
             i == COLOUR_HDR,
         ),
@@ -234,6 +236,7 @@ impl ImageSliceGpu {
                 mask_shader,
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );

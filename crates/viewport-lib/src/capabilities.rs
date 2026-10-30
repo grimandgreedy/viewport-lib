@@ -98,6 +98,14 @@ pub struct Capabilities {
     /// The bindless material-texture path: the texture-array feature set and
     /// enough binding-array elements to build its layout.
     pub bindless: bool,
+    /// `Features::DEPTH32FLOAT_STENCIL8`: the scene depth can be
+    /// `Depth32FloatStencil8`.
+    pub depth32float_stencil8: bool,
+    /// The format of the scene depth-stencil attachment. `Depth24PlusStencil8`
+    /// unless [`RendererConfig::scene_depth_format`](crate::RendererConfig::scene_depth_format)
+    /// asked for `Depth32FloatStencil8` and the device has it. Every scene
+    /// pipeline and depth target the renderer makes uses it.
+    pub scene_depth_format: gpu::TextureFormat,
 }
 
 impl Capabilities {
@@ -213,6 +221,8 @@ impl Capabilities {
             ray_query: features.contains(gpu::RAY_QUERY_FEATURE),
             depth_clip_control: features.contains(gpu::Features::DEPTH_CLIP_CONTROL),
             bindless,
+            depth32float_stencil8: features.contains(gpu::Features::DEPTH32FLOAT_STENCIL8),
+            scene_depth_format: gpu::TextureFormat::Depth24PlusStencil8,
         }
     }
 
@@ -289,6 +299,32 @@ impl Capabilities {
             ));
         }
         missing
+    }
+
+    /// The scene depth format for a requested
+    /// [`RendererConfig::scene_depth_format`](crate::RendererConfig::scene_depth_format)
+    /// on this device, and whether a request for `Depth32FloatStencil8` fell
+    /// back to `Depth24PlusStencil8` because the device lacks
+    /// `Features::DEPTH32FLOAT_STENCIL8`. Any other format is an error: the
+    /// scene passes need a stencil aspect and a depth aspect they can sample.
+    pub(crate) fn select_scene_depth_format(
+        &self,
+        requested: Option<gpu::TextureFormat>,
+    ) -> Result<(gpu::TextureFormat, bool), crate::ViewportError> {
+        match requested {
+            None | Some(gpu::TextureFormat::Depth24PlusStencil8) => {
+                Ok((gpu::TextureFormat::Depth24PlusStencil8, false))
+            }
+            Some(gpu::TextureFormat::Depth32FloatStencil8) if self.depth32float_stencil8 => {
+                Ok((gpu::TextureFormat::Depth32FloatStencil8, false))
+            }
+            Some(gpu::TextureFormat::Depth32FloatStencil8) => {
+                Ok((gpu::TextureFormat::Depth24PlusStencil8, true))
+            }
+            Some(other) => Err(crate::ViewportError::InvalidSceneDepthFormat {
+                format: format!("{other:?}"),
+            }),
+        }
     }
 
     fn overlay_tier_missing(&self) -> Vec<String> {
@@ -438,6 +474,42 @@ mod tests {
     }
 
     use super::*;
+
+    /// No request is 24-bit; 32F is honoured with the feature and falls back
+    /// without it; a format without stencil is refused.
+    #[test]
+    fn scene_depth_format_selection() {
+        let without =
+            Capabilities::from_parts(&gpu::Limits::default(), gpu::Features::empty(), None);
+        let with = Capabilities::from_parts(
+            &gpu::Limits::default(),
+            gpu::Features::DEPTH32FLOAT_STENCIL8,
+            None,
+        );
+        let f24 = gpu::TextureFormat::Depth24PlusStencil8;
+        let f32s8 = gpu::TextureFormat::Depth32FloatStencil8;
+        assert_eq!(without.scene_depth_format, f24);
+        assert!(with.depth32float_stencil8 && !without.depth32float_stencil8);
+        for caps in [&without, &with] {
+            assert_eq!(caps.select_scene_depth_format(None).unwrap(), (f24, false));
+            assert_eq!(
+                caps.select_scene_depth_format(Some(f24)).unwrap(),
+                (f24, false)
+            );
+            assert!(matches!(
+                caps.select_scene_depth_format(Some(gpu::TextureFormat::Depth32Float)),
+                Err(crate::ViewportError::InvalidSceneDepthFormat { .. })
+            ));
+        }
+        assert_eq!(
+            with.select_scene_depth_format(Some(f32s8)).unwrap(),
+            (f32s8, false)
+        );
+        assert_eq!(
+            without.select_scene_depth_format(Some(f32s8)).unwrap(),
+            (f24, true)
+        );
+    }
 
     fn tier_of(limits: gpu::Limits, flags: Option<gpu::DownlevelFlags>) -> Tier {
         Capabilities::from_parts(&limits, gpu::Features::empty(), flags).tier()

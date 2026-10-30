@@ -99,6 +99,7 @@ pub(super) struct SpriteRecipe {
     lit_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
 /// The 24 sprite colour pipelines: each [`SpriteKey`] in the LDR and HDR
@@ -150,6 +151,7 @@ fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline
             depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
+            depth_format: r.depth_format,
         },
         hdr,
     )
@@ -192,6 +194,7 @@ pub(super) struct SpritePassRecipe {
     pick_layout: viewport_lib::gpu::PipelineLayout,
     pick_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
 /// The refractive, pick, outline mask, surface mask and four OIT pipelines,
@@ -227,6 +230,7 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
                     ..Default::default()
                 },
                 depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
+                    r.depth_format,
                     false,
                     viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
@@ -273,6 +277,7 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
                     ..Default::default()
                 },
                 depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
+                    r.depth_format,
                     true,
                     viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
@@ -289,6 +294,7 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
             &r.mask_layout,
             r.mask_shader.get(),
             viewport_lib::gpu::TextureFormat::R8Unorm,
+            r.depth_format,
             &vertex_buffers,
             None,
             false,
@@ -302,6 +308,7 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
             "sprite_surface_mask_pipeline",
             &r.layout,
             r.shader.get(),
+            r.depth_format,
             &vertex_buffers,
             None,
         ),
@@ -369,6 +376,7 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
                         ..Default::default()
                     },
                     depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
+                        r.depth_format,
                         false,
                         viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                     )),
@@ -627,6 +635,7 @@ impl SpriteGpu {
                 lit_shader,
                 sample_count,
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build_sprite,
         );
@@ -646,6 +655,7 @@ impl SpriteGpu {
                 pick_layout,
                 pick_shader,
                 sample_count,
+                depth_format: resources.scene_depth_format(),
             },
             build_pass,
         );

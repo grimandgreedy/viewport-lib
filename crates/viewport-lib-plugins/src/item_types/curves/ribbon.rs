@@ -126,6 +126,7 @@ struct RibbonRecipe {
     bgl: viewport_lib::gpu::BindGroupLayout,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
 /// Every blend, topology and depth-write variant in both formats, the two OIT
@@ -197,6 +198,7 @@ fn build_variant(r: &RibbonRecipe, key: RibbonKey, hdr: bool) -> viewport_lib::g
             depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
+            depth_format: r.depth_format,
         },
         hdr,
     )
@@ -243,6 +245,7 @@ fn build_oit(r: &RibbonRecipe, premultiplied: bool) -> viewport_lib::gpu::Render
                 ..Default::default()
             },
             depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
+                r.depth_format,
                 false,
                 viewport_lib::plugin_api::depth::DEPTH_COMPARE,
             )),
@@ -329,6 +332,7 @@ impl RibbonGpu {
                 bgl: layouts.bgl.clone(),
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );

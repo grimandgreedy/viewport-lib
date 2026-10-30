@@ -24,6 +24,7 @@ pub(super) struct VolumeRecipe {
     pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
 /// The ray-march in both formats, the outline mask and the pick pipeline.
@@ -58,6 +59,7 @@ fn build(r: &VolumeRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 sample_count: r.sample_count,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
             },
             i == COLOUR_HDR,
         ),
@@ -281,6 +283,7 @@ impl VolumeGpu {
                 pick_id_bgl: pick_id_bgl.clone(),
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );

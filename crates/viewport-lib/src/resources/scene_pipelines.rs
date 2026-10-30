@@ -20,6 +20,7 @@ pub(crate) struct LdrMeshContext {
     shader: crate::resources::pipeline_slot::LazyModule,
     shader_nodiscard: crate::resources::pipeline_slot::LazyModule,
     target_format: crate::gpu::TextureFormat,
+    depth_format: crate::gpu::TextureFormat,
     sample_count: u32,
 }
 
@@ -32,6 +33,7 @@ pub(crate) struct HdrMeshContext {
     shader_nodiscard: crate::resources::pipeline_slot::LazyModule,
     overlay_layout: crate::gpu::PipelineLayout,
     overlay_shader: crate::gpu::ShaderModule,
+    depth_format: crate::gpu::TextureFormat,
 }
 
 /// Base and HDR-variant pipelines for core scene surfaces.
@@ -109,6 +111,7 @@ fn build_ldr_features(
             } else {
                 ctx.shader.get()
             },
+            ctx.depth_format,
             ctx.target_format,
             ctx.sample_count,
             None,
@@ -185,6 +188,7 @@ fn build_hdr_features(
             &ctx.device,
             &ctx.layout,
             shader,
+            ctx.depth_format,
             &feature_label(label, feats),
             cull,
             blend,
@@ -276,6 +280,7 @@ fn build_hdr_features(
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    ctx.depth_format,
                     false,
                     crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
@@ -614,6 +619,7 @@ impl crate::resources::DeviceResources {
                     shader,
                     shader_nodiscard,
                     target_format: self.target_format,
+                    depth_format: self.scene_depth_format(),
                     sample_count: self.sample_count,
                 },
                 std::sync::Arc::clone(&self.pipeline_compiler),
@@ -701,6 +707,7 @@ impl crate::resources::DeviceResources {
                     shader_nodiscard,
                     overlay_layout: overlay_layout.clone(),
                     overlay_shader: overlay_shader.clone(),
+                    depth_format: self.scene_depth_format(),
                 },
                 std::sync::Arc::clone(&self.pipeline_compiler),
                 build_hdr,

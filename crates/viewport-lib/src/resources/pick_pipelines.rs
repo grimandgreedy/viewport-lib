@@ -120,6 +120,7 @@ impl DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     true,
                     crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
@@ -318,6 +319,7 @@ impl DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     true,
                     crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
@@ -419,6 +421,7 @@ impl DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     true,
                     crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),

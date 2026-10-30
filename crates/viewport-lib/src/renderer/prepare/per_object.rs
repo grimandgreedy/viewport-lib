@@ -534,7 +534,7 @@ impl ViewportRenderer {
             "per_object_bundle",
             &[Some(colour_format)],
             Some(crate::gpu::RenderBundleDepthStencil {
-                format: crate::resources::SCENE_DEPTH_FORMAT,
+                format: resources.scene_depth_format(),
                 depth_read_only: false,
                 stencil_read_only: true,
             }),

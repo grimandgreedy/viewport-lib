@@ -211,6 +211,7 @@ pub(crate) struct ViewportTargetAllocator<'a> {
     output: [u32; 2],
     scene: [u32; 2],
     ssaa_factor: u32,
+    depth_format: crate::gpu::TextureFormat,
 }
 
 impl<'a> ViewportTargetAllocator<'a> {
@@ -221,12 +222,14 @@ impl<'a> ViewportTargetAllocator<'a> {
         scene_w: u32,
         scene_h: u32,
         ssaa_factor: u32,
+        depth_format: crate::gpu::TextureFormat,
     ) -> Self {
         Self {
             device,
             output: [output_w.max(1), output_h.max(1)],
             scene: [scene_w.max(1), scene_h.max(1)],
             ssaa_factor: ssaa_factor.max(1),
+            depth_format,
         }
     }
 
@@ -299,12 +302,12 @@ impl<'a> ViewportTargetAllocator<'a> {
         )
     }
 
-    /// Allocate a `Depth24PlusStencil8` depth target with its attachment view
-    /// and a depth-aspect-only sampling view.
+    /// Allocate a scene depth-stencil target with its attachment view and a
+    /// depth-aspect-only sampling view.
     pub(crate) fn depth(&self, label: &str, size: TargetSize) -> DepthTarget {
         let (texture, view) = self.texture(
             label,
-            crate::gpu::TextureFormat::Depth24PlusStencil8,
+            self.depth_format,
             size,
             crate::gpu::TextureUsages::RENDER_ATTACHMENT
                 | crate::gpu::TextureUsages::TEXTURE_BINDING,

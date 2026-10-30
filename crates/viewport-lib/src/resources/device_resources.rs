@@ -1145,6 +1145,15 @@ impl DeviceResources {
         self.sample_count
     }
 
+    /// The scene depth-stencil format every scene pipeline here was built
+    /// with: `Depth24PlusStencil8`, or `Depth32FloatStencil8` when
+    /// [`RendererConfig::scene_depth_format`](crate::RendererConfig::scene_depth_format)
+    /// asked for it and the device has it. Build plugin pipelines that draw
+    /// into a scene pass against this, not a fixed format.
+    pub fn scene_depth_format(&self) -> crate::gpu::TextureFormat {
+        self.capabilities.scene_depth_format
+    }
+
     /// Create a camera bind group (group 0) for the given per-viewport buffers.
     ///
     /// Per-viewport buffers (camera, clip planes, shadow info, clip volume) are
@@ -1310,6 +1319,7 @@ impl DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     true,
                     crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
@@ -1350,6 +1360,7 @@ impl DeviceResources {
             device,
             &self.outline_pipeline_layout(device),
             &mask_shader,
+            self.scene_depth_format(),
             crate::gpu::TextureFormat::R8Unorm,
             self.pipeline_cache.as_ref(),
         );
@@ -1396,6 +1407,7 @@ impl DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     false,
                     crate::gpu::CompareFunction::Always,
                 )),
@@ -1478,6 +1490,7 @@ impl DeviceResources {
                 },
                 // Drawn after opaques: only sky pixels (depth at the clear value) pass.
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     false,
                     crate::gpu::CompareFunction::Equal,
                 )),

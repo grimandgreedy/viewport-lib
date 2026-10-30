@@ -27,6 +27,7 @@ pub(super) struct GpuImplicitRecipe {
     mask_shader: viewport_lib::plugin_api::LazyModule,
     pick_shader: viewport_lib::plugin_api::LazyModule,
     ldr_format: gpu::TextureFormat,
+    depth_format: gpu::TextureFormat,
 }
 
 /// The render pipeline in both formats, the two masks and the pick pipeline.
@@ -58,6 +59,7 @@ fn build(r: &GpuImplicitRecipe, i: usize) -> gpu::RenderPipeline {
                 depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
             },
             i == COLOUR_HDR,
         ),
@@ -206,6 +208,7 @@ impl GpuImplicitGpu {
                 mask_shader,
                 pick_shader,
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );

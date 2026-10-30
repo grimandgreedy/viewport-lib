@@ -16,7 +16,13 @@ const NO_LIT_GROUP0: &str = "item types register only where there is a lit group
 /// path build pipelines against this format.
 pub const HDR_COLOR_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::Rgba16Float;
 
-/// Depth-stencil format shared by every scene render pass.
+/// The default scene depth-stencil format, `Depth24PlusStencil8`.
+///
+/// A renderer configured with
+/// [`RendererConfig::scene_depth_format`](crate::RendererConfig::scene_depth_format)
+/// may use another one: build pipelines against
+/// [`DeviceResources::scene_depth_format`] or a target descriptor's
+/// `depth_format`, not this constant.
 pub const SCENE_DEPTH_FORMAT: crate::gpu::TextureFormat =
     crate::gpu::TextureFormat::Depth24PlusStencil8;
 
@@ -147,7 +153,7 @@ impl DeviceResources {
     pub fn opaque_target_desc(&self) -> OpaqueTargetDesc {
         OpaqueTargetDesc {
             color_format: HDR_COLOR_FORMAT,
-            depth_format: SCENE_DEPTH_FORMAT,
+            depth_format: self.scene_depth_format(),
             sample_count: self.sample_count,
         }
     }
@@ -164,7 +170,7 @@ impl DeviceResources {
     pub fn ldr_opaque_target_desc(&self) -> OpaqueTargetDesc {
         OpaqueTargetDesc {
             color_format: self.target_format,
-            depth_format: SCENE_DEPTH_FORMAT,
+            depth_format: self.scene_depth_format(),
             sample_count: self.sample_count,
         }
     }
@@ -173,7 +179,7 @@ impl DeviceResources {
     pub fn foreground_target_desc(&self) -> ForegroundTargetDesc {
         ForegroundTargetDesc {
             color_format: HDR_COLOR_FORMAT,
-            depth_format: SCENE_DEPTH_FORMAT,
+            depth_format: self.scene_depth_format(),
             sample_count: 1,
         }
     }
@@ -183,7 +189,7 @@ impl DeviceResources {
         OitTargetDesc {
             accum_format: HDR_COLOR_FORMAT,
             reveal_format: MASK_COLOR_FORMAT,
-            depth_format: SCENE_DEPTH_FORMAT,
+            depth_format: self.scene_depth_format(),
             accum_blend: OIT_ACCUM_BLEND,
             reveal_blend: OIT_REVEAL_BLEND,
             sample_count: self.sample_count,
@@ -194,7 +200,7 @@ impl DeviceResources {
     pub fn depth_read_target_desc(&self) -> DepthReadTargetDesc {
         DepthReadTargetDesc {
             color_format: HDR_COLOR_FORMAT,
-            depth_format: SCENE_DEPTH_FORMAT,
+            depth_format: self.scene_depth_format(),
             sample_count: self.sample_count,
         }
     }
@@ -203,7 +209,7 @@ impl DeviceResources {
     pub fn mask_target_desc(&self) -> MaskTargetDesc {
         MaskTargetDesc {
             color_format: MASK_COLOR_FORMAT,
-            depth_format: SCENE_DEPTH_FORMAT,
+            depth_format: self.scene_depth_format(),
             sample_count: 1,
         }
     }
@@ -214,7 +220,7 @@ impl DeviceResources {
             object_id_format: PICK_COLOR_FORMAT,
             primitive_id_format: PICK_COLOR_FORMAT,
             depth_channel_format: PICK_DEPTH_CHANNEL_FORMAT,
-            depth_stencil_format: SCENE_DEPTH_FORMAT,
+            depth_stencil_format: self.scene_depth_format(),
             sample_count: 1,
         }
     }
@@ -639,6 +645,12 @@ pub struct PipelineBuilder {
 }
 
 impl PipelineBuilder {
+    /// The scene depth-stencil format these pipelines are built against. See
+    /// [`DeviceResources::scene_depth_format`].
+    pub fn scene_depth_format(&self) -> crate::gpu::TextureFormat {
+        self.opaque.depth_format
+    }
+
     /// See [`DeviceResources::build_opaque_pipeline`].
     pub fn build_opaque_pipeline(
         &self,
@@ -920,7 +932,9 @@ impl PipelineBuilder {
                     compilation_options: Default::default(),
                 }),
                 primitive: opts.primitive,
-                depth_stencil: Some(crate::resources::builders::surface_mask_depth_stencil()),
+                depth_stencil: Some(crate::resources::builders::surface_mask_depth_stencil(
+                    self.opaque.depth_format,
+                )),
                 multisample: crate::gpu::MultisampleState::default(),
                 cache: None,
             },

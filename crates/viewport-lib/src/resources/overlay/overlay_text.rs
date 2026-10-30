@@ -93,6 +93,7 @@ impl crate::resources::DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     false,
                     crate::gpu::CompareFunction::Always,
                 )),

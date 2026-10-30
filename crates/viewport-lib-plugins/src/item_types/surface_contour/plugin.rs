@@ -108,6 +108,7 @@ struct ContourRecipe {
     shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
 /// The colour pipeline in the LDR (member 0) and HDR (member 1) formats.
@@ -127,8 +128,11 @@ fn build_contour(r: &ContourRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
     };
     // Tested against the surface's own depth. The bias absorbs the rounding
     // between this draw and the colour draw of the same triangles.
-    let mut depth =
-        builders::scene_depth_stencil(false, viewport_lib::plugin_api::depth::DEPTH_COMPARE);
+    let mut depth = builders::scene_depth_stencil(
+        r.depth_format,
+        false,
+        viewport_lib::plugin_api::depth::DEPTH_COMPARE,
+    );
     depth.bias = viewport_lib::plugin_api::depth::scene_depth_bias(-2, 0.0);
     builders::render_pipeline(
         &r.device,
@@ -207,6 +211,7 @@ impl ContourGpu {
                 shader,
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build_contour,
         );

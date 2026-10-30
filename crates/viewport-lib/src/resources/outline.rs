@@ -25,6 +25,8 @@ pub(crate) struct OutlineShared {
     /// The composite onto an LDR target, single-sample or multisampled, and
     /// onto the HDR target, each built when a pass first binds it.
     pub(crate) composite: LazyFamily<OutlineCompositeRecipe, 3>,
+    /// The scene depth format the mask pass's own depth target takes.
+    pub(crate) depth_format: crate::gpu::TextureFormat,
 }
 
 impl OutlineShared {
@@ -91,6 +93,7 @@ impl crate::resources::DeviceResources {
             device,
             &layout,
             &shader,
+            self.scene_depth_format(),
             crate::gpu::TextureFormat::R8Unorm,
             self.pipeline_cache.as_ref(),
         );
@@ -205,6 +208,7 @@ impl crate::resources::DeviceResources {
                 layout: composite_layout,
                 shader: composite_shader,
                 target_format: self.target_format,
+                depth_format: self.scene_depth_format(),
                 sample_count: self.sample_count,
             },
             std::sync::Arc::clone(&self.pipeline_compiler),
@@ -216,6 +220,7 @@ impl crate::resources::DeviceResources {
             sampler,
             edge_pipeline,
             composite,
+            depth_format: self.scene_depth_format(),
         });
     }
 }
@@ -250,7 +255,15 @@ impl OutlineTargets {
         own_depth: bool,
     ) -> Self {
         let size = [size[0].max(1), size[1].max(1)];
-        let alloc = ViewportTargetAllocator::new(device, size[0], size[1], size[0], size[1], 1);
+        let alloc = ViewportTargetAllocator::new(
+            device,
+            size[0],
+            size[1],
+            size[0],
+            size[1],
+            1,
+            shared.depth_format,
+        );
         let (mask_texture, mask_view) = alloc.colour(
             "outline_mask_texture",
             crate::gpu::TextureFormat::R8Unorm,

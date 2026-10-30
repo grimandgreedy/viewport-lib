@@ -66,6 +66,7 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("sub_highlight_sprite"),
         );
 
+        let depth_format = self.scene_depth_format();
         // Inline helper: build one fill pipeline for the given colour format.
         let make_fill = |label: &'static str, fmt: crate::gpu::TextureFormat| {
             crate::resources::builders::render_pipeline(
@@ -96,7 +97,7 @@ impl DeviceResources {
                         ..Default::default()
                     },
                     depth_stencil: Some(crate::gpu::DepthStencilState {
-                        format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+                        format: depth_format,
                         depth_write_enabled: crate::resources::builders::dwrite(false),
                         depth_compare: crate::resources::builders::dcompare(
                             crate::plugin_api::depth::DEPTH_COMPARE,
@@ -144,6 +145,7 @@ impl DeviceResources {
                     // geometry they belong to is a 3D solid (e.g. tube/streamtube
                     // where the control curve sits inside the rendered mesh).
                     depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                        depth_format,
                         false,
                         crate::gpu::CompareFunction::Always,
                     )),
@@ -186,6 +188,7 @@ impl DeviceResources {
                     // Always pass depth so point sprites are visible even when
                     // the control point is inside a 3D solid (e.g. tube/streamtube).
                     depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                        depth_format,
                         false,
                         crate::gpu::CompareFunction::Always,
                     )),

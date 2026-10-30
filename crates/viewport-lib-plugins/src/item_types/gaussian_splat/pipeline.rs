@@ -73,6 +73,7 @@ pub(super) struct SplatRecipe {
     mask_layout: gpu::PipelineLayout,
     mask_shader: viewport_lib::plugin_api::LazyModule,
     ldr_format: gpu::TextureFormat,
+    depth_format: gpu::TextureFormat,
 }
 
 /// The render pipeline in both formats, the pick pipeline and the outline
@@ -98,6 +99,7 @@ fn build(r: &SplatRecipe, i: usize) -> gpu::RenderPipeline {
                 depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
             },
             i == COLOUR_HDR,
         ),
@@ -126,7 +128,12 @@ fn build(r: &SplatRecipe, i: usize) -> gpu::RenderPipeline {
         // Outline mask: point-sprite discs, instance-stepped position and
         // pixel-size vertex buffers, over the shared outline bind group
         // layout (the same shape the point-cloud outline pipeline uses).
-        _ => disc_mask_pipeline(&r.device, &r.mask_layout, r.mask_shader.get()),
+        _ => disc_mask_pipeline(
+            &r.device,
+            &r.mask_layout,
+            r.mask_shader.get(),
+            r.depth_format,
+        ),
     }
 }
 
@@ -135,6 +142,7 @@ pub(super) fn disc_mask_pipeline(
     device: &gpu::Device,
     layout: &gpu::PipelineLayout,
     shader: &gpu::ShaderModule,
+    depth_format: gpu::TextureFormat,
 ) -> gpu::RenderPipeline {
     let mask_pos_attrs = [gpu::VertexAttribute {
         offset: 0,
@@ -181,6 +189,7 @@ pub(super) fn disc_mask_pipeline(
                 ..Default::default()
             },
             depth_stencil: Some(builders::scene_depth_stencil(
+                depth_format,
                 false,
                 viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             )),
@@ -454,6 +463,7 @@ impl SplatGpu {
                 mask_layout,
                 mask_shader,
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );

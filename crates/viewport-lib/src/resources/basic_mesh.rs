@@ -136,7 +136,7 @@ impl BasicMeshPipelines {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::depth_stencil(
-                    crate::resources::SCENE_DEPTH_FORMAT,
+                    capabilities.scene_depth_format,
                     !key.blend,
                     crate::plugin_api::depth::DEPTH_COMPARE,
                 )),

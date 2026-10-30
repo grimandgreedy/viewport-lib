@@ -777,6 +777,9 @@ impl ViewportRenderer {
     /// - `DEPTH_CLIP_CONTROL` lets the directional shadow pass clamp casters
     ///   in front of a cascade rather than clip them, so the cascade's depth
     ///   range stays tight around what it covers.
+    /// - `DEPTH32FLOAT_STENCIL8` lets
+    ///   [`RendererConfig::scene_depth_format`] choose a 32-bit float scene
+    ///   depth.
     ///
     /// Everything works without them; rendering falls back to direct draws
     /// (with CPU-side shadow-cascade culling), GPU timings read as `None`,
@@ -792,6 +795,7 @@ impl ViewportRenderer {
             crate::gpu::PRIMITIVE_INDEX_FEATURE,
             crate::gpu::Features::FLOAT32_FILTERABLE,
             crate::gpu::Features::DEPTH_CLIP_CONTROL,
+            crate::gpu::Features::DEPTH32FLOAT_STENCIL8,
         ] {
             if adapter.features().contains(feature) {
                 features |= feature;
@@ -1025,6 +1029,9 @@ impl ViewportRenderer {
         if let Some(max) = config.max_tier {
             capabilities = capabilities.capped_at(max);
         }
+        let (scene_depth_format, depth_fell_back) =
+            capabilities.select_scene_depth_format(config.scene_depth_format)?;
+        capabilities.scene_depth_format = scene_depth_format;
         let tier = capabilities.tier();
         if tier == crate::capabilities::Tier::Unsupported {
             return Err(crate::ViewportError::DeviceUnsupported {
@@ -1069,6 +1076,22 @@ impl ViewportRenderer {
             config.geometry_chunk_bytes,
         )?;
         resources.device_lost = device_lost;
+        if depth_fell_back {
+            let requested = config.scene_depth_format.unwrap_or(scene_depth_format);
+            resources.notices.report(
+                crate::notice::NoticeKey::new(
+                    crate::NoticeCategory::Device,
+                    "scene_depth_format_fallback",
+                    [0, 0],
+                ),
+                crate::Severity::Warning,
+                || crate::NoticeDetail::SceneDepthFormatFallback {
+                    requested: format!("{requested:?}"),
+                    used: format!("{scene_depth_format:?}"),
+                    feature: "DEPTH32FLOAT_STENCIL8",
+                },
+            );
+        }
         if let Some(policy) = config.pipeline_compilation {
             resources.pipeline_compiler.set_policy(policy);
         }
@@ -1197,6 +1220,12 @@ impl ViewportRenderer {
     /// What the device can do, as read at construction.
     pub fn capabilities(&self) -> &crate::capabilities::Capabilities {
         &self.resources.capabilities
+    }
+
+    /// The scene depth-stencil format. A host-owned render pass handed to
+    /// [`pass`](Self::pass) carries a depth attachment of this format.
+    pub fn scene_depth_format(&self) -> crate::gpu::TextureFormat {
+        self.resources.capabilities.scene_depth_format
     }
 
     /// The tier the renderer runs at on its device.
@@ -3945,6 +3974,7 @@ impl ViewportRenderer {
         w: u32,
         h: u32,
     ) {
+        let depth_format = self.resources.scene_depth_format();
         let slot = &mut self.viewport_slots[viewport_index];
         let current = slot
             .overlay_depth
@@ -3952,7 +3982,13 @@ impl ViewportRenderer {
             .map(|d| (d.texture.width(), d.texture.height()));
         if current != Some((w, h)) {
             let alloc = crate::resources::postprocess::targets::ViewportTargetAllocator::new(
-                device, w, h, w, h, 1,
+                device,
+                w,
+                h,
+                w,
+                h,
+                1,
+                depth_format,
             );
             slot.overlay_depth = Some(alloc.depth(
                 "overlay_depth_texture",
