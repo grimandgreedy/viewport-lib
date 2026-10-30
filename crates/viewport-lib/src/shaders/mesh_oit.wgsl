@@ -561,7 +561,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
             );
         }
     }
-    var dv = DeformVertex(local_pos, local_normal, vi);
+    var dv = DeformVertex(local_pos, local_normal, vi, in.tangent);
     let dctx = DeformContext(model, model[3].xyz, 0.0, deform_flags, 0u);
     if FEAT_DEFORM {
         dv = viewport_deform_object_space(dv, dctx);
@@ -573,7 +573,16 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
     );
     let world_pos4 = model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;
-    dv.normal = normalize(model3 * dv.normal);
+    // Normals take the cofactor (the inverse transpose up to scale), signed
+    // so a mirroring transform keeps the normal's side.
+    let normal3 = mat3x3<f32>(
+        cross(model3[1], model3[2]),
+        cross(model3[2], model3[0]),
+        cross(model3[0], model3[1]),
+    );
+    let normal_sign = select(1.0, -1.0, dot(model3[0], normal3[0]) < 0.0);
+    dv.normal = normalize(normal3 * dv.normal) * normal_sign;
+    dv.tangent = vec4<f32>(normalize(model3 * dv.tangent.xyz), dv.tangent.w);
     if FEAT_DEFORM {
         dv = viewport_deform_world_space(dv, dctx);
     }
@@ -583,7 +592,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
     out.colour = in.colour;
     out.world_pos = world_pos.xyz;
     out.world_normal = dv.normal;
-    out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
+    out.world_tangent = dv.tangent;
     out.uv = in.uv;
     // Second UV set from the parallel uv1 stream. See mesh.wgsl:vs_body.
     out.uv1 = vec2<f32>(0.0);

@@ -65,7 +65,7 @@ fn vs_main(
         }
     }
     deform_table = outline.deform_table;
-    var dv = DeformVertex(local_pos, vec3<f32>(0.0, 0.0, 1.0), vertex_index);
+    var dv = DeformVertex(local_pos, vec3<f32>(0.0, 0.0, 1.0), vertex_index, vec4<f32>(1.0, 0.0, 0.0, 1.0));
     let dctx = DeformContext(outline.model, outline.model[3].xyz, 0.0, outline.deform_flags, 0u);
     dv = viewport_deform_object_space(dv, dctx);
     let world_pos4 = outline.model * vec4<f32>(dv.position, 1.0);

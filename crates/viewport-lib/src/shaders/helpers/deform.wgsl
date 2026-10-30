@@ -14,11 +14,17 @@
 //
 // A slot with no data reads a zero pair: `deform_slot_stride(slot)` returning
 // zero is the signal a registered body should use to skip its work.
+//
+// `tangent` is the surface tangent in xyz with the bitangent sign in w. Passes
+// that do no shading carry a placeholder (1, 0, 0, 1). A body that changes the
+// normal should move the tangent with it, or at least re-orthogonalise it
+// against the new normal.
 
 struct DeformVertex {
     position: vec3<f32>,
     normal: vec3<f32>,
     vertex_index: u32,
+    tangent: vec4<f32>,
 };
 
 struct DeformContext {

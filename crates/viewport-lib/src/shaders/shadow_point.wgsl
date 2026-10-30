@@ -76,7 +76,7 @@ fn caster_vertex(position: vec3<f32>, vertex_index: u32, instance_index: u32) ->
             );
         }
     }
-    var dv = DeformVertex(local_pos, vec3<f32>(0.0, 0.0, 1.0), vi);
+    var dv = DeformVertex(local_pos, vec3<f32>(0.0, 0.0, 1.0), vi, vec4<f32>(1.0, 0.0, 0.0, 1.0));
     let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, object.deform_flags, 0u);
     dv = viewport_deform_object_space(dv, dctx);
     let world_pos4 = object.model * vec4<f32>(dv.position, 1.0);

@@ -26,6 +26,7 @@ pub mod real_models;
 pub mod rigs;
 pub mod section_caps;
 pub mod shadows;
+pub mod skinning;
 pub mod textures;
 
 use glam::{Mat4, Quat, Vec3};
@@ -1076,6 +1077,9 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(fallbacks::scenes());
     scenes.extend(exposure::scenes());
     scenes.extend(materials_ibl::scenes());
+    // Registers the skinning deformer, which recomposes the mesh shaders for
+    // every scene built after it on the same renderer: keep it last.
+    scenes.extend(skinning::scenes());
     scenes
 }
 

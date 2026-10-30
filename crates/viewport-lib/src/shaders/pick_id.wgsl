@@ -114,7 +114,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     let inst = pick_instances[idx];
     let model = mat4x4<f32>(inst.model_c0, inst.model_c1, inst.model_c2, inst.model_c3);
     deform_table = inst.deform_table;
-    var dv = DeformVertex(in.position, vec3<f32>(0.0, 0.0, 1.0), in.vertex_index);
+    var dv = DeformVertex(in.position, vec3<f32>(0.0, 0.0, 1.0), in.vertex_index, vec4<f32>(1.0, 0.0, 0.0, 1.0));
     let dctx = DeformContext(model, model[3].xyz, 0.0, deform_bound_flags(), 0u);
     dv = viewport_deform_object_space(dv, dctx);
     dv.position = (model * vec4<f32>(dv.position, 1.0)).xyz;
