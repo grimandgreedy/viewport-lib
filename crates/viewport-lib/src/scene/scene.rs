@@ -673,6 +673,22 @@ impl Scene {
         self.version = self.version.wrapping_add(1);
     }
 
+    /// Set a node's `draw_priority` (see `ItemSettings::draw_priority`).
+    pub fn set_draw_priority(&mut self, id: NodeId, priority: i8) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.appearance.draw_priority = priority;
+        }
+        self.version = self.version.wrapping_add(1);
+    }
+
+    /// Set a node's `blend_order` (see `ItemSettings::blend_order`).
+    pub fn set_blend_order(&mut self, id: NodeId, order: Option<u16>) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.appearance.blend_order = order;
+        }
+        self.version = self.version.wrapping_add(1);
+    }
+
     /// Set node mesh.
     pub fn set_mesh(&mut self, id: NodeId, mesh_id: Option<MeshId>) {
         if let Some(node) = self.nodes.get_mut(&id) {
@@ -1518,6 +1534,21 @@ mod tests {
         scene.remove_many(&[child1, child2]);
         assert!(scene.node(parent).is_some());
         assert!(scene.node(parent).unwrap().children().is_empty());
+    }
+
+    #[test]
+    fn test_draw_order_setters_bump_version() {
+        let mut scene = Scene::new();
+        let id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let before = scene.version();
+        scene.set_draw_priority(id, -3);
+        assert!(scene.version() > before);
+        let mid = scene.version();
+        scene.set_blend_order(id, Some(4));
+        assert!(scene.version() > mid);
+        let settings = scene.node(id).unwrap().appearance();
+        assert_eq!(settings.draw_priority, -3);
+        assert_eq!(settings.blend_order, Some(4));
     }
 
     #[test]

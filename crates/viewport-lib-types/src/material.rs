@@ -105,6 +105,27 @@ pub struct ItemSettings {
     /// stamp it takes every decal whatever its mask; one that writes no depth
     /// takes none.
     pub visibility_mask: u32,
+    /// Draw order of the item within its pass. Default `0`; lower draws first.
+    ///
+    /// Opaque mesh draws are ordered by priority before anything else in their
+    /// pass, so a later priority draws over an earlier one where depth testing
+    /// lets it (equal depth, or depth writes off). Blended mesh draws on the
+    /// LDR path and in the foreground layer sort by priority first and view
+    /// depth second. On the HDR path the scene's blended draws resolve through
+    /// order-independent transparency, which ignores priority. Shadow passes
+    /// ignore it, and so do non-mesh item types.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub draw_priority: i8,
+    /// Fixed blend order for a blended mesh item. Default `None`.
+    ///
+    /// `None` sorts the item back to front by view depth. `Some(n)` replaces
+    /// the depth with `n`: within one `draw_priority`, items with a blend order
+    /// draw before every depth-sorted item, lowest `n` first, so a higher `n`
+    /// draws on top whatever the distance. Honoured where blended draws are
+    /// sorted (the LDR path and the foreground layer); the HDR path's
+    /// order-independent transparency ignores it. Opaque draws ignore it.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub blend_order: Option<u16>,
 }
 
 impl Default for ItemSettings {
@@ -122,6 +143,8 @@ impl Default for ItemSettings {
             ignore_clip: false,
             custom_data: [0.0; 8],
             visibility_mask: !0,
+            draw_priority: 0,
+            blend_order: None,
         }
     }
 }

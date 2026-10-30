@@ -89,6 +89,11 @@ pub(crate) struct InstancedBatch {
     /// blended batches back to front by it; on an LDR frame each blended item
     /// is its own batch, so the sort is per item.
     pub sort_centre: [f32; 3],
+    /// The records' `draw_priority` (part of the batch key).
+    pub priority: i8,
+    /// The first record's `blend_order`. Only read for a blended batch on an
+    /// LDR frame, where each blended record is its own batch.
+    pub blend_order: Option<u16>,
 }
 
 /// Which geometry a batch draws.
@@ -656,6 +661,7 @@ impl InstancedBatch {
 
 mod clip;
 pub mod debug;
+pub(crate) mod draw_order;
 mod frame;
 pub(crate) mod items;
 mod lighting;
@@ -910,14 +916,17 @@ macro_rules! emit_draw_calls {
             }
 
             // Blended batches, after every opaque draw. There is no OIT here,
-            // so they draw back to front by view depth. Prepare gives each
+            // so they draw by priority, then back to front by view depth or by
+            // their fixed blend order. Prepare gives each
             // blended item its own batch on this path, so the order is per
             // item.
             if !transparent_batches.is_empty() {
                 let view = frame.camera.render_camera.view;
-                let depth =
-                    |b: &InstancedBatch| -view.transform_point3(glam::Vec3::from(b.sort_centre)).z;
-                transparent_batches.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+                // Stable, so batches with equal keys keep their batch order.
+                transparent_batches.sort_by_key(|b| {
+                    let depth = -view.transform_point3(glam::Vec3::from(b.sort_centre)).z;
+                    crate::renderer::types::draw_order::blend_key(b.priority, b.blend_order, depth)
+                });
                 for batch in &transparent_batches {
                     crate::renderer::types::draw_batch(
                         resources,

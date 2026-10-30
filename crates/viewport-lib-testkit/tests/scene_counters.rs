@@ -293,3 +293,35 @@ fn camera_motion_does_no_reupload() {
         );
     }
 }
+
+/// Main-pass draw commands and batch counts of scenes whose items all leave
+/// `draw_priority` and `blend_order` at their defaults: the order key must
+/// not split a batch, a group or a run. Each scene on a fresh harness, so slab
+/// residency reflects that scene alone. The LDR scenes draw every blended
+/// item as its own batch through the uncounted direct loop, hence zero
+/// commands with five batches.
+#[test]
+fn default_draw_order_keeps_draw_commands() {
+    let (w, h) = (320u32, 240u32);
+    // (scene, instanced_batches, main_draw_commands)
+    let expected = [
+        ("primitives_trio", 3, 3),
+        ("transparent", 1, 1),
+        ("transparent_background", 2, 2),
+        ("materials_pbr", 1, 1),
+        ("ldr_blended_order_front", 5, 0),
+        ("ldr_blended_order_back", 5, 0),
+    ];
+    for (name, batches, commands) in expected {
+        let Some(mut harness) = Harness::new() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let scene = viewport_lib_testkit::scene_by_name(name).expect("scene in catalogue");
+        let built = harness.build_scene(&scene);
+        let frame = frame_for(&built, &scene.cameras[0].camera, [w as f32, h as f32]);
+        let s = harness.render_two_frames(&frame, w, h);
+        assert_eq!(s.instanced_batches, batches, "{name}: instanced_batches");
+        assert_eq!(s.main_draw_commands, commands, "{name}: main_draw_commands");
+    }
+}

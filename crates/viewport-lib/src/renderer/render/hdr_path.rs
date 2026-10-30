@@ -1876,9 +1876,9 @@ impl ViewportRenderer {
             .render_camera
             .foreground_camera(frame.effects.foreground.as_ref());
 
-        // Opaque front-to-back, then blended back-to-front. Foreground
-        // transparency is plain sorted alpha blending against the foreground
-        // depth, not OIT.
+        // Opaque by priority then front-to-back, then blended by priority then
+        // back-to-front (or blend order). Foreground transparency is plain
+        // sorted alpha blending against the foreground depth, not OIT.
         let eye = fg_camera.eye_position();
         let dist_from_eye = |item: &SceneRenderItem| -> f32 {
             let pos = glam::Vec3::new(item.model[3][0], item.model[3][1], item.model[3][2]);
@@ -1906,14 +1906,21 @@ impl ViewportRenderer {
             }
         }
         opaque.sort_by(|a, b| {
-            dist_from_eye(a.1)
-                .partial_cmp(&dist_from_eye(b.1))
-                .unwrap_or(std::cmp::Ordering::Equal)
+            a.1.settings
+                .draw_priority
+                .cmp(&b.1.settings.draw_priority)
+                .then_with(|| {
+                    dist_from_eye(a.1)
+                        .partial_cmp(&dist_from_eye(b.1))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
         });
-        transparent.sort_by(|a, b| {
-            dist_from_eye(b.1)
-                .partial_cmp(&dist_from_eye(a.1))
-                .unwrap_or(std::cmp::Ordering::Equal)
+        transparent.sort_by_key(|(_, item)| {
+            crate::renderer::types::draw_order::blend_key(
+                item.settings.draw_priority,
+                item.settings.blend_order,
+                dist_from_eye(item),
+            )
         });
 
         let mut render_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
