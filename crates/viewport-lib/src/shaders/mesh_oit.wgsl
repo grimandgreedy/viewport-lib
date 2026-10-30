@@ -624,6 +624,9 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
 // Shared ambient / IBL helpers (equirect sampling, split-sum ambient).
 // #include "helpers/ambient.wgsl"
 
+// The PBR surface model: PbrPixel, pbr_resolve, pbr_direct, pbr_ambient.
+// #include "helpers/pbr_model.wgsl"
+
 // UV parameterization visualization : procedural RGB colour from UV coordinates.
 // Matches the implementation in mesh.wgsl exactly.
 fn param_vis_colour(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
@@ -1007,20 +1010,10 @@ fn compute_lit(
     let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
 
     if shading_is_pbr(object.use_pbr) {
-        var metallic  = clamp(object.metallic,  0.0, 1.0);
-        var roughness = max(object.roughness, 0.04);
-        if object.has_metallic_roughness_tex != 0u {
-            // glTF ORM texture: G=roughness factor, B=metallic factor. Per-material
-            // `metallic_range` / `roughness_range` remap the raw samples before the
-            // scalar factor; identity `(0, 1)` is a no-op.
-            let mr = surface.mr_sample;
-            let m_remapped = mix(object.metallic_range.x, object.metallic_range.y, mr.y);
-            let r_remapped = mix(object.roughness_range.x, object.roughness_range.y, mr.x);
-            metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
-            roughness = max(r_remapped * roughness, 0.04);
-        }
-        roughness = viewport_brdf_specular_aa_roughness_kernel(roughness, saa_kernel);
-        var F0 = mix(vec3<f32>(0.04), base_colour, metallic);
+        var px = pbr_resolve(base_colour, object.metallic, object.roughness,
+                             object.has_metallic_roughness_tex != 0u, surface.mr_sample,
+                             object.metallic_range, object.roughness_range,
+                             saa_kernel, ao_factor);
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.
         // <viewport-shade-slot:surface>
@@ -1046,83 +1039,21 @@ fn compute_lit(
             // suppress its realtime direct to avoid double counting (transparent
             // surfaces have no realtime shadow to add back).
             if !(FEAT_LIGHTMAP && object.lightmap_mode == 4u && i == 0u) {
-                Lo += viewport_brdf_light_contrib(N, V, L, radiance, base_colour, metallic, roughness, F0);
+                Lo += pbr_direct(px, N, V, L, radiance);
             }
             // </viewport-shade-slot:light>
         }
         dbg_direct_lum = dot(Lo, lum_weights);
-        dbg_roughness  = roughness;
-        dbg_metallic   = metallic;
+        dbg_roughness  = px.perceptual_roughness;
+        dbg_metallic   = px.metallic;
         // <viewport-shade-slot:ambient>
-        var ambient: vec3<f32>;
-        // The environment's specular, kept apart so a light probe or lightmap
-        // that replaces the baked diffuse below leaves the reflection in place,
-        // and the weight the environment's own diffuse gets.
-        var ibl_specular = vec3<f32>(0.0);
-        let ambient_kd = (vec3<f32>(1.0) - F_Schlick_roughness(max(dot(N, V), 0.001), F0, roughness))
-            * (1.0 - metallic);
-        if lights_uniform.ibl_enabled != 0u {
-            var ibl: IblContrib;
-            if lights_uniform.env_zone_count != 0u {
-                // Per-fragment environment selection. `refl_dr` is the reflection
-                // footprint computed in uniform control flow by the caller.
-                ibl = ibl_ambient_zoned(N, V, base_colour, metallic, roughness, F0,
-                                        ao_factor, lights_uniform.ibl_intensity,
-                                        lights_uniform.ibl_rotation, refl_dr, in.world_pos,
-                                        lights_uniform.env_zone_count);
-            } else {
-                ibl = ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0,
-                                       ao_factor, lights_uniform.ibl_intensity,
-                                       lights_uniform.ibl_rotation, refl_dr);
-            }
-            ibl.diffuse *= lights_uniform.ibl_diffuse_scale;
-            ibl.specular *= lights_uniform.ibl_specular_scale;
-            ibl_specular = ibl.specular;
-            ambient = ibl.diffuse + ibl.specular;
-            dbg_ibl_diff_lum = dot(ibl.diffuse, lum_weights);
-            dbg_ibl_spec_lum = dot(ibl.specular, lum_weights);
-            dbg_ambient_lum  = dbg_ibl_diff_lum + dbg_ibl_spec_lum;
-        } else {
-            let hemi_t = clamp(in.world_normal.z * 0.5 + 0.5, 0.0, 1.0);
-            let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
-            let ambient_scale = vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
-            ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * ao_factor;
-            dbg_ambient_lum = dot(ambient, lum_weights);
-        }
-        // Light-probe objects take their indirect diffuse from the SH field; with
-        // an environment, its reflection stays.
-        if FEAT_LIGHT_PROBE && object.has_light_probe != 0u {
-            let probe = evaluate_object_indirect(object.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
-            if lights_uniform.ibl_enabled != 0u {
-                ambient = probe * ambient_kd + ibl_specular;
-            } else {
-                ambient = probe;
-            }
-            dbg_ambient_lum = dot(ambient, lum_weights);
-        }
-        // Baked lightmap: replace, add, or occlude the ambient term. Force the
-        // base mip: derivative-based selection over tightly-packed atlas charts
-        // reads as blocky bands on the mesh.
-        if FEAT_LIGHTMAP && object.lightmap_mode != 0u {
-            // Scene-atlas placement: map the object's [0,1] unwrap into its sub-rect
-            // and add its base layer to the per-vertex page. Identity scale/bias and
-            // layer 0 reproduce a per-mesh (single- or multi-page) lightmap exactly.
-            let lm_uv = in.lightmap_uv;
-            let lm_page = i32(round(in.lightmap_page));
-            var lm = textureSampleLevel(lightmap_tex, obj_sampler, lm_uv, lm_page, 0.0);
-            if object.lightmap_directional == 1u {
-                let f = lightmap_directional_factor(lm_uv, lm_page, N, in.world_normal);
-                lm = vec4<f32>(lm.rgb * f, lm.a);
-            }
-            ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode, 1.0);
-            // Replace and Subtractive bake the diffuse only: weight it like the
-            // environment's diffuse and keep the environment's reflection.
-            if lights_uniform.ibl_enabled != 0u
-                && (object.lightmap_mode == 1u || object.lightmap_mode == 4u) {
-                ambient = ambient * ambient_kd + ibl_specular;
-            }
-            dbg_ambient_lum = dot(ambient, lum_weights);
-        }
+        // No realtime shadow here, so a shadowed bake is never darkened.
+        let amb = pbr_ambient(px, N, V, in.world_normal, in.world_pos,
+                              in.lightmap_uv, in.lightmap_page, refl_dr, 1.0);
+        var ambient: vec3<f32> = amb.ambient;
+        dbg_ibl_diff_lum = dot(amb.ibl_diffuse, lum_weights);
+        dbg_ibl_spec_lum = dot(amb.ibl_specular, lum_weights);
+        dbg_ambient_lum  = amb.ambient_lum;
         // </viewport-shade-slot:ambient>
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));
         // <viewport-shade-slot:recolor>
