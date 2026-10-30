@@ -6,6 +6,11 @@
 //! Shaders get the same convention from
 //! [`SHARED_DEPTH_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_WGSL).
 //!
+//! Scene depth is reversed: 1 at the near plane and 0 at the far plane, with
+//! the far plane at infinity for a perspective camera. Floating-point depth
+//! keeps its precision far from the camera this way, where standard depth
+//! loses it.
+//!
 //! Shadow maps keep their own convention, [`SHADOW_DEPTH_COMPARE`] and
 //! [`SHADOW_DEPTH_CLEAR`]: light projections are separate from the camera's.
 
@@ -13,20 +18,20 @@ use crate::gpu::CompareFunction;
 
 /// Depth compare for a pipeline that draws scene geometry: passes when the
 /// fragment is at least as near as what the depth buffer holds.
-pub const DEPTH_COMPARE: CompareFunction = CompareFunction::LessEqual;
+pub const DEPTH_COMPARE: CompareFunction = CompareFunction::GreaterEqual;
 
 /// Strict form of [`DEPTH_COMPARE`]: passes only when the fragment is nearer.
-pub const DEPTH_COMPARE_STRICT: CompareFunction = CompareFunction::Less;
+pub const DEPTH_COMPARE_STRICT: CompareFunction = CompareFunction::Greater;
 
 /// The value scene depth clears to: the far end, where nothing has drawn.
-pub const DEPTH_CLEAR: f32 = 1.0;
+pub const DEPTH_CLEAR: f32 = 0.0;
 
 /// Normalised device depth at the near plane.
-pub const DEPTH_NEAR: f32 = 0.0;
+pub const DEPTH_NEAR: f32 = 1.0;
 
 /// Normalised device depth at the far plane, or at infinity for a projection
 /// with no far plane.
-pub const DEPTH_FAR: f32 = 1.0;
+pub const DEPTH_FAR: f32 = 0.0;
 
 /// Depth compare for a shadow-map caster pipeline. Light projections are
 /// standard 0..1 depth with the near plane at 0.
@@ -64,6 +69,20 @@ pub fn scene_depth_bias(constant: i32, slope_scale: f32) -> crate::gpu::DepthBia
         slope_scale: slope_scale * sign as f32,
         clamp: 0.0,
     }
+}
+
+/// The (near, far, is_ortho, 0) lane the shaders linearise depth with, for a
+/// projection in this convention and its depth range. Far is 0 for a
+/// perspective projection with no far plane.
+pub(crate) fn clip_lane(projection: glam::Mat4, near: f32, far: f32) -> [f32; 4] {
+    let orthographic = projection.w_axis.w != 0.0;
+    let infinite = !orthographic && projection.z_axis.z == 0.0;
+    [
+        near,
+        if infinite { 0.0 } else { far },
+        f32::from(u8::from(orthographic)),
+        0.0,
+    ]
 }
 
 /// Translate a compare function written for scene depth into the shadow-map

@@ -28,9 +28,11 @@ struct Background {
 @group(1) @binding(0) var<uniform> background: Background;
 @group(1) @binding(1) var source_texture: texture_2d<f32>;
 
+// #include "helpers/depth.wgsl"
+
 struct VertexOutput {
     // The skybox draws with depth_compare Equal against the cleared far
-    // plane; @invariant guarantees the constant z = 1.0 written below is
+    // plane; @invariant guarantees the constant far depth written below is
     // bit-exact so the comparison cannot artifact.
     @builtin(position) @invariant pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
@@ -45,7 +47,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
         vec2<f32>(-1.0,  3.0),
     );
     var out: VertexOutput;
-    out.pos = vec4<f32>(positions[vi], 1.0, 1.0);  // depth = 1.0 (far plane)
+    out.pos = vec4<f32>(positions[vi], VIEWPORT_DEPTH_FAR, 1.0);
     out.uv = positions[vi] * 0.5 + 0.5;
     out.uv.y = 1.0 - out.uv.y;  // flip Y for UV
     return out;
@@ -56,11 +58,17 @@ const PI: f32 = 3.14159265;
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Reconstruct clip-space position.
-    let ndc = vec4<f32>(in.uv.x * 2.0 - 1.0, (1.0 - in.uv.y) * 2.0 - 1.0, 1.0, 1.0);
+    let ndc = vec4<f32>(
+        in.uv.x * 2.0 - 1.0,
+        (1.0 - in.uv.y) * 2.0 - 1.0,
+        VIEWPORT_DEPTH_FAR,
+        1.0,
+    );
 
-    // Unproject to world space.
+    // Unproject to world space. With no far plane the far point is at
+    // infinity (w = 0), and its xyz is the direction.
     let world_pos = camera.inv_view_proj * ndc;
-    let dir = normalize(world_pos.xyz / world_pos.w - camera.eye_pos);
+    let dir = normalize(world_pos.xyz - camera.eye_pos * world_pos.w);
 
     // Apply Z-axis rotation (viewport-lib is Z-up; rotating the panorama spins
     // it around the world up axis).

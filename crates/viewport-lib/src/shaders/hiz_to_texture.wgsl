@@ -1,6 +1,6 @@
-// Copy the reprojected depth (scattered into a u32 buffer with atomic min)
-// into mip 0 of the HiZ pyramid texture. Runs after the scatter pass; the
-// max-reduction then builds the rest of the chain from this mip.
+// Copy the reprojected depth (scattered into a u32 buffer with an atomic
+// nearest-wins) into mip 0 of the HiZ pyramid texture. Runs after the scatter
+// pass; the farthest-depth reduction then builds the rest of the chain.
 
 @group(0) @binding(0) var<storage, read> src:  array<u32>;
 @group(0) @binding(1) var                mip0: texture_storage_2d<r32float, write>;

@@ -720,7 +720,8 @@ fn run_one(
     let far = (meshes.extent * 8.0).max(500.0);
     let fov = 60f32.to_radians();
     let aspect = w as f32 / h as f32;
-    let proj = glam::Mat4::perspective_rh(fov, aspect, near, far);
+    // Reversed depth, the convention the renderer draws with: far before near.
+    let proj = glam::Mat4::perspective_rh(fov, aspect, far, near);
 
     let mut frame = FrameData::default();
     frame.camera.viewport_size = [w as f32, h as f32];

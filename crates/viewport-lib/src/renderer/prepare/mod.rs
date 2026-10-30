@@ -161,6 +161,9 @@ impl ViewportRenderer {
         sink: &mut crate::renderer::SubmitSink,
     ) {
         let _span = tracing::debug_span!(target: "viewport_lib::frame", "prepare_scene").entered();
+        if self.direct_paint {
+            self.resources.ensure_host_depth_reset_pipeline(device);
+        }
         // Start of frame: rotate the double-buffered timestamp query sets.
         // Passes write this frame's timestamps into `ts_query_set`, setting
         // their slot bit as they encode (shadow here in prepare, scene/oit/post

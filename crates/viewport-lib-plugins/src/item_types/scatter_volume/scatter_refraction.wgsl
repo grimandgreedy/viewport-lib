@@ -142,7 +142,7 @@ fn ray_sphere(c: vec3<f32>, r: f32, o: vec3<f32>, d: vec3<f32>) -> vec2<f32> {
 }
 
 fn opaque_distance(ndc_xy: vec2<f32>, depth: f32, ray_dir: vec3<f32>) -> f32 {
-    if depth >= 1.0 {
+    if viewport_depth_is_background(depth) {
         return 1e30;
     }
     let ndc = vec4<f32>(ndc_xy, depth, 1.0);
@@ -154,11 +154,7 @@ fn opaque_distance(ndc_xy: vec2<f32>, depth: f32, ray_dir: vec3<f32>) -> f32 {
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let ndc_xy = in.ndc_xy;
-    let near_h = camera.inv_view_proj * vec4<f32>(ndc_xy, 0.0, 1.0);
-    let far_h  = camera.inv_view_proj * vec4<f32>(ndc_xy, 1.0, 1.0);
-    let near_p = near_h.xyz / near_h.w;
-    let far_p  = far_h.xyz  / far_h.w;
-    let ray_dir = normalize(far_p - near_p);
+    let ray_dir = viewport_ndc_ray(camera.inv_view_proj, ndc_xy).dir;
     let eye = camera.eye_pos;
 
     let dims = textureDimensions(opaque_depth, 0);

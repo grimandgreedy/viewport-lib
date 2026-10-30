@@ -20,8 +20,8 @@
 use viewport_lib::plugin_api::shared_wgsl;
 
 /// The source of a shader that draws into the scene pass: the shared group-0
-/// declarations, then any further shared sections the body needs, then the
-/// body.
+/// declarations and the depth convention helpers, then any further shared
+/// sections the body needs, then the body.
 ///
 /// `extra` names the additional catalogue constants to splice in, in order.
 /// Pass `&[shared_wgsl::SHARED_PBR_WGSL]` for a lit pipeline, or an empty
@@ -29,11 +29,14 @@ use viewport_lib::plugin_api::shared_wgsl;
 pub(crate) fn scene_shader(extra: &[&str], body: &str) -> String {
     let mut out = String::with_capacity(
         shared_wgsl::SHARED_BINDINGS_WGSL.len()
+            + shared_wgsl::SHARED_DEPTH_WGSL.len()
             + extra.iter().map(|s| s.len()).sum::<usize>()
             + body.len()
             + 8,
     );
     out.push_str(shared_wgsl::SHARED_BINDINGS_WGSL);
+    out.push('\n');
+    out.push_str(shared_wgsl::SHARED_DEPTH_WGSL);
     for section in extra {
         out.push('\n');
         out.push_str(section);
@@ -43,7 +46,8 @@ pub(crate) fn scene_shader(extra: &[&str], body: &str) -> String {
     out
 }
 
-/// The source of a shader that draws with the clustered scene-light loop.
+/// The source of a shader that draws with the clustered scene-light loop,
+/// with the depth convention helpers.
 ///
 /// The lighting catalogue entry brings its own group-0 declarations for the
 /// light bindings, which overlap the shared ones, so a body composing it
@@ -55,11 +59,14 @@ pub(crate) fn scene_shader(extra: &[&str], body: &str) -> String {
 pub(crate) fn lit_shader(extra: &[&str], body: &str) -> String {
     let mut out = String::with_capacity(
         shared_wgsl::SHARED_SCENE_LIGHTING_WGSL.len()
+            + shared_wgsl::SHARED_DEPTH_WGSL.len()
             + extra.iter().map(|s| s.len()).sum::<usize>()
             + body.len()
             + 8,
     );
     out.push_str(shared_wgsl::SHARED_SCENE_LIGHTING_WGSL);
+    out.push('\n');
+    out.push_str(shared_wgsl::SHARED_DEPTH_WGSL);
     for section in extra {
         out.push('\n');
         out.push_str(section);

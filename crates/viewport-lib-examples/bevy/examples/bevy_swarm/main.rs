@@ -608,10 +608,7 @@ fn pick_boid(
         cursor.x / half_w
     };
     let ndc = Vec2::new(local_x * 2.0 - 1.0, 1.0 - cursor.y / h * 2.0);
-    let inv = cam.camera.view_proj_matrix().inverse();
-    let origin = cam.camera.eye_position();
-    let far = inv.project_point3(Vec3::new(ndc.x, ndc.y, 1.0));
-    let dir = (far - origin).normalize_or_zero();
+    let (origin, dir) = cam.camera.screen_ray(ndc);
 
     let mut best: Option<(Entity, f32)> = None;
     for (entity, boid) in &boids {

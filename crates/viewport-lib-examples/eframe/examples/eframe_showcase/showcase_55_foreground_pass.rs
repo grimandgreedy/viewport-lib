@@ -271,8 +271,8 @@ pub(crate) fn configure_frame(app: &App, fd: &mut vpl::FrameData) {
     // Cap the far plane so cascades and the depth range stay useful.
     let cam = &app.camera;
     let far = (cam.distance * 3.0).max(60.0);
-    let proj = glam::Mat4::perspective_rh(cam.fov_y, cam.aspect, cam.effective_znear(), far);
-    fd.camera.render_camera = RenderCamera::from_matrices(cam.view_matrix(), proj);
+    fd.camera.render_camera =
+        RenderCamera::from_camera(cam).with_depth_range(cam.effective_znear(), far);
 
     // The foreground pass runs in the HDR path, so keep the HDR pipeline active
     // (also required for DoF). DoF itself is toggled separately.

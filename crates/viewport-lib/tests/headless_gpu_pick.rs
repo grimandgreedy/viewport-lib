@@ -902,7 +902,7 @@ fn vs(@builtin(vertex_index) vi: u32) -> MockVsOut {
         vec2<f32>(3.0, 1.0),
     );
     var out: MockVsOut;
-    out.pos = vec4<f32>(verts[vi], 0.0, 1.0);
+    out.pos = vec4<f32>(verts[vi], 0.5, 1.0);
     out.pick_id = mock_pick_id.x;
     return out;
 }
@@ -1123,7 +1123,7 @@ fn vs(@builtin(vertex_index) vi: u32) -> SubPickVsOut {
         vec2<f32>(-1.0, 1.0),
     );
     var out: SubPickVsOut;
-    out.pos = vec4<f32>(verts[vi], 0.0, 1.0);
+    out.pos = vec4<f32>(verts[vi], 0.5, 1.0);
     out.pick_id = sub_pick_id.x;
     return out;
 }
@@ -1355,7 +1355,7 @@ fn gpu_pick_plugin_vertex_hook_gets_world_position() {
     );
 
     // The hook's world position is the cursor pixel un-projected at the quad's
-    // clip-space depth (0.0): same reconstruction to_pick_hit performs.
+    // clip-space depth (0.5): same reconstruction to_pick_hit performs.
     let recorded = last_world
         .lock()
         .unwrap()
@@ -1364,7 +1364,7 @@ fn gpu_pick_plugin_vertex_hook_gets_world_position() {
     let ndc = glam::Vec3::new(
         (cursor.x / 64.0) * 2.0 - 1.0,
         1.0 - (cursor.y / 64.0) * 2.0,
-        0.0,
+        0.5,
     );
     let expected = view_proj_inv.project_point3(ndc);
     assert!(

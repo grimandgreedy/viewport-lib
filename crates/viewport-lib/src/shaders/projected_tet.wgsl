@@ -64,6 +64,8 @@ struct OitOut {
 @group(0) @binding(0) var<uniform> camera:      Camera;
 @group(0) @binding(4) var<uniform> clip_planes: ClipPlanes;
 
+// #include "helpers/depth.wgsl"
+
 // Group 1: projected-tet per-volume state.
 @group(1) @binding(0) var<uniform>        uniforms:         PtUniforms;
 @group(1) @binding(1) var<storage, read>  tets:             array<GpuTet>;
@@ -186,9 +188,10 @@ fn vs_main(
     out.n1       = outward_normal(p0, p2, p3, p1);
     out.n2       = outward_normal(p0, p1, p3, p2);
     out.n3       = outward_normal(p0, p1, p2, p3);
-    // Homogeneous near/far world points for this corner's ray.
-    out.world_near_h = camera.inv_view_proj * vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
-    out.world_far_h  = camera.inv_view_proj * vec4<f32>(ndc_x, ndc_y, 1.0, 1.0);
+    // Homogeneous near/far world points for this corner's ray. With no far
+    // plane the far point is at infinity (w = 0).
+    out.world_near_h = camera.inv_view_proj * vec4<f32>(ndc_x, ndc_y, VIEWPORT_DEPTH_NEAR, 1.0);
+    out.world_far_h  = camera.inv_view_proj * vec4<f32>(ndc_x, ndc_y, VIEWPORT_DEPTH_FAR, 1.0);
     return out;
 }
 
@@ -234,8 +237,7 @@ fn fs_main(in: VsOut) -> OitOut {
     // Reconstruct world-space ray direction. The two inv_view_proj products were
     // done in the vertex shader; here just finish the perspective divide.
     let world_near = in.world_near_h.xyz / in.world_near_h.w;
-    let world_far  = in.world_far_h.xyz  / in.world_far_h.w;
-    let ray_dir = normalize(world_far - world_near);
+    let ray_dir = normalize(in.world_far_h.xyz - world_near * in.world_far_h.w);
 
     let eye = camera.eye_pos;
 
@@ -307,7 +309,7 @@ fn fs_main(in: VsOut) -> OitOut {
     let colour = textureSample(colourmap_lut, colourmap_sampler, vec2<f32>(t_scalar, 0.5));
 
     // Weighted-blended OIT (same formula as mesh_oit.wgsl).
-    let depth = in.clip_pos.z;
+    let depth = viewport_depth_from_near(in.clip_pos.z);
     let w = alpha * max(1e-2, 1.0 - depth);
     var out: OitOut;
     out.accum  = vec4<f32>(colour.rgb * alpha * w, alpha * w);

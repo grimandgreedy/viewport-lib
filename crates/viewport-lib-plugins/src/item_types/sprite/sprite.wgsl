@@ -234,7 +234,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let ndc = vec4<f32>(
             screen_uv.x * 2.0 - 1.0,
             1.0 - screen_uv.y * 2.0,
-            scene_ndc_z,
+            viewport_depth_finite(scene_ndc_z),
             1.0,
         );
         let world_h     = camera.inv_view_proj * ndc;

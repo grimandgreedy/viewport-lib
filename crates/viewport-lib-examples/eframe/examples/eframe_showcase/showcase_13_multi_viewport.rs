@@ -347,14 +347,10 @@ impl App {
             if !self.mv_state.manip.is_active() {
                 if let Some(center) = self.mv_state.gizmo_center {
                     let cam = &self.mv_state.cameras[hq];
-                    let ray_origin = cam.eye_position();
-                    let view_proj = cam.proj_matrix() * cam.view_matrix();
                     let cursor = self.mv_state.cursor_local;
                     let ndc_x = (cursor.x / w.max(1.0)) * 2.0 - 1.0;
                     let ndc_y = 1.0 - (cursor.y / h.max(1.0)) * 2.0;
-                    let inv_vp = view_proj.inverse();
-                    let far = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
-                    let ray_dir = (far - ray_origin).normalize_or_zero();
+                    let (ray_origin, ray_dir) = cam.screen_ray(glam::Vec2::new(ndc_x, ndc_y));
                     let orient = mv_gizmo_orientation(
                         self.mv_state.gizmo.space,
                         &self.mv_state.selection,

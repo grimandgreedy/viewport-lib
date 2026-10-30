@@ -132,11 +132,15 @@ impl RenderCamera {
     /// Build a camera from a world-to-view matrix and a view-to-clip
     /// projection matrix.
     ///
-    /// The projection is expected to be right-handed with 0..1 depth, as built
-    /// by glam's `perspective_rh` or `orthographic_rh`. Its near and far
-    /// planes are read back for [`depth_range`](Self::depth_range); for a
-    /// projection with no far plane or an oblique near plane, follow with
-    /// [`with_depth_range`](Self::with_depth_range).
+    /// The projection must be right-handed with reversed 0..1 depth: 1 at the
+    /// near plane and 0 at the far plane, which the renderer's depth test and
+    /// clear assume. glam builds one with `perspective_infinite_reverse_rh`,
+    /// with `perspective_rh` or `orthographic_rh` given the far distance
+    /// before the near one, or from a standard projection with
+    /// [`with_projection_reversed`](Self::with_projection_reversed). Its near
+    /// and far planes are read back for [`depth_range`](Self::depth_range);
+    /// for a projection with no far plane or an oblique near plane, follow
+    /// with [`with_depth_range`](Self::with_depth_range).
     pub fn from_matrices(view: glam::Mat4, projection: glam::Mat4) -> Self {
         let mut cam = Self {
             view,
@@ -223,13 +227,31 @@ impl RenderCamera {
         self.pose = CameraPose::from_view(view);
     }
 
-    /// Replace the projection matrix. Clears any range set with
-    /// [`with_depth_range`](Self::with_depth_range).
+    /// Replace the projection matrix, which must use reversed depth as
+    /// [`from_matrices`](Self::from_matrices) describes. Clears any range set
+    /// with [`with_depth_range`](Self::with_depth_range).
     pub fn set_projection(&mut self, projection: glam::Mat4) {
         self.projection = projection;
         self.lens = CameraLens::from_projection(projection);
         self.depth_override = None;
         self.derive_culling();
+    }
+
+    /// Replace the projection with `standard`, a right-handed projection with
+    /// standard 0..1 depth (near at 0), converted to the reversed depth the
+    /// renderer draws with. For a host that builds its projection with glam's
+    /// `perspective_rh` or `orthographic_rh`, or takes one from another
+    /// engine. Clears any range set with
+    /// [`with_depth_range`](Self::with_depth_range).
+    pub fn with_projection_reversed(mut self, standard: glam::Mat4) -> Self {
+        // z' = w - z: depth d becomes 1 - d.
+        let mut p = standard;
+        p.x_axis.z = standard.x_axis.w - standard.x_axis.z;
+        p.y_axis.z = standard.y_axis.w - standard.y_axis.z;
+        p.z_axis.z = standard.z_axis.w - standard.z_axis.z;
+        p.w_axis.z = standard.w_axis.w - standard.w_axis.z;
+        self.set_projection(p);
+        self
     }
 
     /// A finite projection with standard 0..1 depth over the same view as
@@ -290,9 +312,7 @@ impl RenderCamera {
             viewport: [0.0; 4],
             clip: {
                 let (near, far) = self.depth_range();
-                // Far is 0 for a projection with no far plane.
-                let far = if self.lens.far.is_finite() { far } else { 0.0 };
-                [near, far, f32::from(u8::from(self.is_orthographic())), 0.0]
+                crate::plugin_api::depth::clip_lane(self.projection, near, far)
             },
             time: [0.0; 4],
         }
@@ -409,11 +429,12 @@ impl RenderCamera {
         if let Some(p) = pass.and_then(|p| p.projection.as_ref()) {
             let near = p.near.max(1e-4);
             let far = p.far.unwrap_or(self.depth_range().1).max(near * 2.0);
+            // Reversed depth: far before near.
             cam.set_projection(glam::Mat4::perspective_rh(
                 p.fov_y,
                 self.aspect(),
-                near,
                 far,
+                near,
             ));
             cam.lens.fov_y = p.fov_y;
         }
@@ -431,7 +452,7 @@ impl Default for RenderCamera {
                 glam::Vec3::ZERO,
                 glam::Vec3::Y,
             ),
-            glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.333, 0.1, 1000.0),
+            glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.333, 1000.0, 0.1),
         )
     }
 }

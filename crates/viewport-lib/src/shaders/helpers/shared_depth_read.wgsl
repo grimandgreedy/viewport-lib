@@ -14,10 +14,12 @@ fn viewport_view_z(world_pos: vec3<f32>) -> f32 {
 // `screen_uv`, given its raw non-linear depth `scene_ndc_z` (the value from
 // textureSample on the scene depth texture).
 fn viewport_scene_view_z_from_ndc(screen_uv: vec2<f32>, scene_ndc_z: f32) -> f32 {
+    // Held off depth 0, the far end at infinity, so background reads as a
+    // large finite distance rather than dividing by zero.
     let ndc = vec4<f32>(
         screen_uv.x * 2.0 - 1.0,
         1.0 - screen_uv.y * 2.0,
-        scene_ndc_z,
+        max(scene_ndc_z, 1.0e-4),
         1.0,
     );
     let world_h = camera.inv_view_proj * ndc;

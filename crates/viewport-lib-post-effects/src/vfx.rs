@@ -145,8 +145,8 @@ enum Pass {
 }
 
 impl Pass {
-    /// The pass's WGSL, with the depth-texel helper in front of the passes
-    /// that read depth.
+    /// The pass's WGSL, with the depth-texel and depth convention helpers in
+    /// front of the passes that read depth.
     fn shader(self) -> String {
         let body = match self {
             Pass::ColourGrade => include_str!(concat!(env!("OUT_DIR"), "/colour_grade.wgsl")),
@@ -155,8 +155,9 @@ impl Pass {
         };
         if self.reads_depth() {
             format!(
-                "{}\n{body}",
-                viewport_lib::plugin_api::shared_wgsl::SHARED_DEPTH_TEXEL_WGSL
+                "{}\n{}\n{body}",
+                viewport_lib::plugin_api::shared_wgsl::SHARED_DEPTH_TEXEL_WGSL,
+                viewport_lib::plugin_api::shared_wgsl::SHARED_DEPTH_WGSL,
             )
         } else {
             body.to_string()

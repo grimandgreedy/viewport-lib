@@ -3,9 +3,9 @@
 // from the sampled depth aspect into a storage texture the reduction kernel
 // and the cull shader can read.
 //
-// Depth is stored as-is (NDC depth in [0,1], 1.0 = far). The pyramid is a
-// max-reduction, so a texel always reports the farthest depth in its region:
-// an upper bound that is safe for a conservative occlusion test.
+// Depth is stored as-is (reversed NDC depth: 1 at the near plane, 0 far). The
+// pyramid keeps the farthest depth in each region, a bound that is safe for a
+// conservative occlusion test.
 
 @group(0) @binding(0) var depth_src: texture_2d<f32>;
 @group(0) @binding(1) var mip_dst:   texture_storage_2d<r32float, write>;

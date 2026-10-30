@@ -264,13 +264,38 @@ impl Camera {
             .unwrap_or_else(|| self.effective_zfar() / 10_000.0)
     }
 
-    /// The projection matrix the renderer draws with: right-handed, 0..1 depth.
+    /// The projection matrix the renderer draws with: right-handed with
+    /// reversed 0..1 depth, 1 at the near plane and 0 at the far plane.
     ///
-    /// In orthographic mode the viewing volume is derived from `distance` and
+    /// A perspective projection has no far plane: depth reaches 0 at
+    /// infinity. An orthographic projection keeps
+    /// [`effective_zfar`](Self::effective_zfar) as its far plane. In
+    /// orthographic mode the viewing volume is derived from `distance` and
     /// `fov_y` so that switching between perspective and orthographic at the
     /// same distance produces a similar framing.
+    ///
+    /// For frustum planes use [`culling_proj_matrix`](Self::culling_proj_matrix),
+    /// which has a far plane.
     pub fn proj_matrix(&self) -> glam::Mat4 {
-        self.culling_proj_matrix()
+        let near = self.effective_znear();
+        match self.projection {
+            Projection::Perspective => {
+                glam::Mat4::perspective_infinite_reverse_rh(self.fov_y, self.aspect, near)
+            }
+            Projection::Orthographic => {
+                let half_h = self.distance * (self.fov_y / 2.0).tan();
+                let half_w = half_h * self.aspect;
+                // Near and far swapped: depth 1 at the near plane.
+                glam::Mat4::orthographic_rh(
+                    -half_w,
+                    half_w,
+                    -half_h,
+                    half_h,
+                    self.effective_zfar(),
+                    near,
+                )
+            }
+        }
     }
 
     /// A finite projection over the same view as [`proj_matrix`](Self::proj_matrix),
@@ -302,8 +327,11 @@ impl Camera {
         }
     }
 
-    /// Combined view-projection matrix for use in the camera uniform buffer.
-    /// Note: projection * view (column-major order: proj applied after view).
+    /// Combined view-projection matrix for use in the camera uniform buffer:
+    /// [`proj_matrix`](Self::proj_matrix) times the view matrix, so reversed
+    /// depth with no far plane for a perspective camera. Unproject screen
+    /// points with [`screen_ray`](Self::screen_ray) rather than through its
+    /// inverse at depth 0 and 1.
     pub fn view_proj_matrix(&self) -> glam::Mat4 {
         self.proj_matrix() * self.view_matrix()
     }
@@ -434,6 +462,30 @@ mod tests {
             "center should be in front of camera, z={}",
             center_view.z
         );
+    }
+
+    #[test]
+    fn projection_is_reversed_and_culling_is_standard() {
+        for projection in [Projection::Perspective, Projection::Orthographic] {
+            let cam = Camera {
+                projection,
+                ..Camera::default()
+            };
+            let near = glam::Vec3::new(0.0, 0.0, -cam.effective_znear());
+            let far = glam::Vec3::new(0.0, 0.0, -cam.effective_zfar());
+            let p = cam.proj_matrix();
+            assert!(
+                (p.project_point3(near).z - 1.0).abs() < 1e-5,
+                "{projection:?}"
+            );
+            assert!(p.project_point3(far).z < 1e-3, "{projection:?}");
+            let c = cam.culling_proj_matrix();
+            assert!(c.project_point3(near).z.abs() < 1e-5, "{projection:?}");
+            assert!(
+                (c.project_point3(far).z - 1.0).abs() < 1e-4,
+                "{projection:?}"
+            );
+        }
     }
 
     #[test]

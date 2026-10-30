@@ -25,6 +25,7 @@ struct SsaoUniform {
 @group(0) @binding(5) var<uniform> params: SsaoUniform;
 
 // #include "helpers/depth_texel.wgsl"
+// #include "helpers/depth.wgsl"
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
@@ -45,7 +46,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 
 // Reconstruct view-space position from a UV and a depth value.
 fn view_pos_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
-    let ndc = vec4<f32>(uv.x * 2.0 - 1.0, -(uv.y * 2.0 - 1.0), depth, 1.0);
+    let ndc = vec4<f32>(uv.x * 2.0 - 1.0, -(uv.y * 2.0 - 1.0), viewport_depth_finite(depth), 1.0);
     let vp = params.inv_proj * ndc;
     return vp.xyz / vp.w;
 }
@@ -67,7 +68,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let pos_dx = dpdx(pos_v);
     let pos_dy = dpdy(pos_v);
 
-    if depth >= 0.9999 {
+    if viewport_depth_is_background(depth) {
         return vec4<f32>(1.0);
     }
 
@@ -87,7 +88,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     for (var k: i32 = 0; k < 8; k = k + 1) {
         let np = clamp(pixel + n_offsets[k], vec2<i32>(0), dims_i - vec2<i32>(1));
         let nd = depth_texel(depth_tex, depth_samp, np);
-        if nd < 0.9999 {
+        if !viewport_depth_is_background(nd) {
             nonbg_count = nonbg_count + 1u;
             if abs(nd - depth) < depth_eps {
                 same_depth_count = same_depth_count + 1u;
@@ -113,7 +114,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         for (var k: i32 = 0; k < 8; k = k + 1) {
             let np = clamp(pixel + n_offsets[k] * ring, vec2<i32>(0), dims_i - vec2<i32>(1));
             let nd = depth_texel(depth_tex, depth_samp, np);
-            if nd < 0.9999 {
+            if !viewport_depth_is_background(nd) {
                 valid_count = valid_count + 1.0;
                 // Smaller depth value = closer; if neighbor is shallower than center
                 // by more than threshold, the center is in a cavity.

@@ -33,7 +33,7 @@
 /// ```ignore
 /// const _: () = assert!(viewport_lib::plugin_api::shared_wgsl::WGSL_VERSION == 1);
 /// ```
-pub const WGSL_VERSION: u32 = 8;
+pub const WGSL_VERSION: u32 = 9;
 
 /// Group-0 bind declarations and shared scene-data structs.
 ///
@@ -184,31 +184,42 @@ pub const SHARED_CLIP_WGSL: &str =
 
 /// The scene depth convention for shaders, matching [`crate::plugin_api::depth`].
 ///
+/// Scene depth is reversed: 1 at the near plane and 0 at the far plane, which
+/// for a perspective camera is at infinity. The depth buffer clears to 0.
+///
 /// Provides:
 ///
 /// ```ignore
-/// const VIEWPORT_DEPTH_NEAR: f32;
-/// const VIEWPORT_DEPTH_FAR: f32;
+/// const VIEWPORT_DEPTH_NEAR: f32; // 1.0
+/// const VIEWPORT_DEPTH_FAR: f32;  // 0.0
 /// fn viewport_depth_is_background(d: f32) -> bool;
 /// fn viewport_depth_nearer(a: f32, b: f32) -> bool;
 /// fn viewport_depth_nearest(a: f32, b: f32) -> f32;
 /// fn viewport_depth_farthest(a: f32, b: f32) -> f32;
+/// fn viewport_depth_toward_near(d: f32, amount: f32) -> f32;
+/// fn viewport_depth_from_near(d: f32) -> f32;
 /// fn viewport_depth_to_view_z(d: f32, clip: vec4<f32>) -> f32;
+/// fn viewport_ndc_ray(inv_view_proj: mat4x4<f32>, ndc_xy: vec2<f32>) -> ViewportRay;
 /// ```
 ///
 /// Use these rather than literal `1.0` / `0.0` depth values or `min` / `max`
 /// over depths, so a shader follows the convention the renderer draws with.
 /// `viewport_depth_is_background` tests a value read from the scene depth
 /// buffer for the clear value. A shader writing `@builtin(frag_depth)` writes
-/// a value in the same convention, and a ray built from the depth range starts
-/// at `VIEWPORT_DEPTH_NEAR`.
+/// a value in the same convention; nudge it toward the camera with
+/// `viewport_depth_toward_near`. `viewport_depth_from_near` gives a 0..1
+/// value that grows away from the camera, for weights written against
+/// standard depth.
 ///
 /// `viewport_depth_to_view_z` turns a stored depth into positive view-space
 /// distance; pass `camera.clip` from [`SHARED_BINDINGS_WGSL`], whose lanes are
 /// (near, far, is_ortho, 0) with far 0 for a projection with no far plane.
-/// `viewport_view_z` and `viewport_scene_view_z_from_ndc` in
-/// [`SHARED_DEPTH_READ_WGSL`] go through the camera's matrices and work under
-/// any convention. It declares no bindings, so it composes anywhere.
+/// `viewport_ndc_ray` builds the ray through a screen point from the near
+/// plane; do not unproject depth 1 and 0 and divide by `w`, since the far
+/// point is at infinity. `viewport_view_z` and
+/// `viewport_scene_view_z_from_ndc` in [`SHARED_DEPTH_READ_WGSL`] go through
+/// the camera's matrices and work under any convention. It declares no
+/// bindings, so it composes anywhere.
 pub const SHARED_DEPTH_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/helpers/depth.wgsl"));
 
 /// Read one texel of a depth or stencil texture on every backend, GL included.

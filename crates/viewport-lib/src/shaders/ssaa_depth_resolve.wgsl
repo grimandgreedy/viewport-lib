@@ -29,6 +29,7 @@ struct SsaaUniform {
 @group(0) @binding(2) var         src_sampler: sampler;
 
 // #include "helpers/depth_texel.wgsl"
+// #include "helpers/depth.wgsl"
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -57,11 +58,14 @@ fn fs_main(in: VertexOutput) -> @builtin(frag_depth) f32 {
         dims - vec2<u32>(1u),
     );
 
-    var nearest = 1.0;
+    var nearest = VIEWPORT_DEPTH_FAR;
     for (var dy = 0u; dy < factor; dy = dy + 1u) {
         for (var dx = 0u; dx < factor; dx = dx + 1u) {
             let coord = min(base + vec2<u32>(dx, dy), dims - vec2<u32>(1u));
-            nearest = min(nearest, depth_texel(src_depth, src_sampler, vec2<i32>(coord)));
+            nearest = viewport_depth_nearest(
+                nearest,
+                depth_texel(src_depth, src_sampler, vec2<i32>(coord)),
+            );
         }
     }
     return nearest;

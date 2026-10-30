@@ -130,7 +130,7 @@ fn build(r: &LicRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
     // this draw and the colour draw of the same triangles.
     let mut depth =
         builders::scene_depth_stencil(false, viewport_lib::plugin_api::depth::DEPTH_COMPARE);
-    depth.bias.constant = -2;
+    depth.bias = viewport_lib::plugin_api::depth::scene_depth_bias(-2, 0.0);
     builders::render_pipeline(
         &r.device,
         builders::RenderPipelineDesc {

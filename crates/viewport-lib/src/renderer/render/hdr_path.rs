@@ -461,8 +461,12 @@ impl ViewportRenderer {
             background_colour: bg_colour,
             near_plane: frame.camera.render_camera.depth_range().0,
             far_plane: frame.camera.render_camera.depth_range().1,
-            _spare0: 0,
-            _spare1: 0.0,
+            orthographic: u32::from(frame.camera.render_camera.is_orthographic()),
+            projection_far: {
+                let rc = &frame.camera.render_camera;
+                let (near, far) = rc.depth_range();
+                crate::plugin_api::depth::clip_lane(rc.projection(), near, far)[1]
+            },
             foreground_enabled: composite_inputs.foreground as u32,
             vignette_amount: if pp.vignette.enabled {
                 pp.vignette.amount.clamp(0.0, 1.0)
@@ -1007,7 +1011,7 @@ impl ViewportRenderer {
             }
 
             // Draw skybox after built-in opaques : only uncovered sky pixels
-            // pass depth == 1.0. Drawn before plugin paint so blended plugin
+            // pass the depth-equals-clear test. Drawn before plugin paint so blended plugin
             // content (additive/alpha particles that do not write depth)
             // composites over the sky instead of being painted over by it.
             if let Some(skybox_bg) = skybox_bg {

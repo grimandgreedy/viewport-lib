@@ -37,6 +37,12 @@ impl ViewportRenderer {
                 || crate::NoticeDetail::ForegroundUnsupportedOnPath,
             );
         }
+        // The host cleared this pass's depth to a value of its own; reset the
+        // viewport rect to the renderer's clear value before drawing.
+        if let Some(reset) = &self.resources.post.host_depth_reset_pipeline {
+            render_pass.set_pipeline(reset);
+            render_pass.draw(0..3, 0..1);
+        }
         if self.resources.scene_tier.is_built() {
             self.paint_slot_scene(render_pass, vp_idx, frame);
         } else if let Some(slot) = self.viewport_slots.get(vp_idx) {

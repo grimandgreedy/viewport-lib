@@ -117,13 +117,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let stencil = stencil_texel(scene_stencil, scene_sampler, pix);
     if (stencil & u.surface_mask) == 0u { discard; }
 
-    // depth == 1.0 means background -- no surface.
-    if depth >= 1.0 {
+    // Background: no surface.
+    if viewport_depth_is_background(depth) {
         discard;
     }
 
     // Reconstruct world-space position from NDC.
-    let ndc     = vec4<f32>(in.ndc_xy, depth, 1.0);
+    let ndc     = vec4<f32>(in.ndc_xy, viewport_depth_finite(depth), 1.0);
     let world_h = camera.inv_view_proj * ndc;
     let world   = world_h.xyz / world_h.w;
 

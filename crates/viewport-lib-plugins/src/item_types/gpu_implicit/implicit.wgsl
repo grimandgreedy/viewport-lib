@@ -201,18 +201,9 @@ struct FragOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> FragOutput {
     // Reconstruct world-space ray from NDC position.
-    // Unproject two clip-space points at Z=0 (near) and Z=1 (far).
-    let near_clip = vec4<f32>(in.ndc_xy, 0.0, 1.0);
-    let far_clip  = vec4<f32>(in.ndc_xy, 1.0, 1.0);
-
-    let near_world_h = camera.inv_view_proj * near_clip;
-    let far_world_h  = camera.inv_view_proj * far_clip;
-
-    let near_world = near_world_h.xyz / near_world_h.w;
-    let far_world  = far_world_h.xyz  / far_world_h.w;
-
-    let ray_origin = near_world;
-    let ray_dir    = normalize(far_world - near_world);
+    let ray = viewport_ndc_ray(camera.inv_view_proj, in.ndc_xy);
+    let ray_origin = ray.origin;
+    let ray_dir    = ray.dir;
 
     // Sphere-march.
     var t       = 0.0;

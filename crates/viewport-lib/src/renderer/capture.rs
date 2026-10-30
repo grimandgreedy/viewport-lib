@@ -288,7 +288,8 @@ impl ViewportRenderer {
 
         let near = frame.camera.render_camera.depth_range().0.max(1e-3);
         let far = frame.camera.render_camera.depth_range().1.max(near * 2.0);
-        let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, near, far);
+        // Reversed depth: near and far swapped.
+        let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, far, near);
 
         // Six axis-aligned faces. Up vectors avoid being parallel to the view
         // direction; the exact choice is irrelevant to correctness because the
@@ -422,7 +423,8 @@ impl ViewportRenderer {
 
         let near = frame.camera.render_camera.depth_range().0.max(1e-3);
         let far = frame.camera.render_camera.depth_range().1.max(near * 2.0);
-        let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, near, far);
+        // Reversed depth: near and far swapped.
+        let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, far, near);
 
         // Same six axis-aligned faces and up vectors as the CPU resolve, so the
         // per-face projection convention matches exactly.
