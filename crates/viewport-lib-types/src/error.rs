@@ -588,6 +588,17 @@ pub enum ViewportError {
         reason: String,
     },
 
+    /// `RendererConfig::scene_depth_format` named a format the scene passes
+    /// cannot use. They need a depth aspect and a stencil aspect:
+    /// `Depth24PlusStencil8` or `Depth32FloatStencil8`.
+    #[error(
+        "scene depth format {format} is not supported: use Depth24PlusStencil8 or Depth32FloatStencil8"
+    )]
+    InvalidSceneDepthFormat {
+        /// The rejected format, as its wgpu debug name.
+        format: String,
+    },
+
     /// The GPU device was lost (a driver reset, a watchdog kill, out of memory,
     /// or `device.destroy()`). The renderer stays lost: drop it and build a new
     /// one on a new device. Every handle it returned is invalid.

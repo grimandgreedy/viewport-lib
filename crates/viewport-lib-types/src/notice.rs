@@ -130,6 +130,16 @@ pub enum NoticeDetail {
         /// first 4 apply.
         volumes: u32,
     },
+    /// `RendererConfig::scene_depth_format` asked for a format the device
+    /// does not support, so the scene depth uses `used` instead.
+    SceneDepthFormatFallback {
+        /// The format the config asked for, as its wgpu debug name.
+        requested: String,
+        /// The format the renderer uses, as its wgpu debug name.
+        used: String,
+        /// The device feature the requested format needs.
+        feature: &'static str,
+    },
     /// The GPU device was lost.
     DeviceLost {
         /// The reason the backend gave.
@@ -222,6 +232,16 @@ impl fmt::Display for NoticeDetail {
                 f,
                 "the frame enables {planes} clip planes and {volumes} clip volumes; only the \
                  first 6 planes and 4 volumes clip, and the rest are ignored"
+            ),
+            Self::SceneDepthFormatFallback {
+                requested,
+                used,
+                feature,
+            } => write!(
+                f,
+                "scene depth format {requested} needs Features::{feature}, which the device was \
+                 not created with; the scene depth is {used}. Request the feature (it is in \
+                 ViewportRenderer::recommended_device_features) to use {requested}."
             ),
             Self::DeviceLost { reason } => write!(f, "GPU device lost: {reason}"),
             Self::Plugin { key, message } => write!(f, "{key}: {message}"),
