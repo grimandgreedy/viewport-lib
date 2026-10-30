@@ -209,9 +209,7 @@ impl ViewportRenderer {
                             instancing.shadow_cull.shadow_vis_bufs[c].as_ref(),
                             instancing.shadow_cull.shadow_indirect_bufs[c].as_ref(),
                         ) {
-                            let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(
-                                &light.cascade_view_projs[c],
-                            );
+                            let cpu_frustum = cascade_cull_frustum(resources, light, c);
                             let sub = crate::plugin_api::CullSubmission {
                                 instance_aabbs: aabb_buf,
                                 instance_count,
@@ -241,9 +239,7 @@ impl ViewportRenderer {
                     Vec::with_capacity(light.effective_cascade_count);
                 let mut indices: Vec<u32> = Vec::with_capacity(instancing.cached_instance_count);
                 for c in 0..light.effective_cascade_count {
-                    let frustum = crate::camera::frustum::Frustum::from_view_proj(
-                        &light.cascade_view_projs[c],
-                    );
+                    let frustum = cascade_cull_frustum(resources, light, c);
                     indices.clear();
                     let mut batch_ranges: Vec<(u32, u32)> =
                         Vec::with_capacity(instancing.batches.len());
@@ -550,9 +546,7 @@ impl ViewportRenderer {
                         &[cascade as u32 * 256],
                     );
 
-                    let cascade_frustum = crate::camera::frustum::Frustum::from_view_proj(
-                        &light.cascade_view_projs[cascade],
-                    );
+                    let cascade_frustum = cascade_cull_frustum(resources, light, cascade);
                     let mut bound = BoundCaster::default();
 
                     for batch in &instancing.batches {
@@ -928,6 +922,25 @@ impl ViewportRenderer {
 /// so a multi-draw never sweeps in a batch this loop skipped. Returns the
 /// number of batch draws issued (pre-collapse, for stats parity with the
 /// bundle path).
+/// The frustum cascade `c`'s casters are culled against. With depth clamp
+/// a caster in front of the cascade, toward the light, still lands in its
+/// map (the cascade fit leaves such casters out of the depth range), so the
+/// near plane culls nothing.
+fn cascade_cull_frustum(
+    resources: &DeviceResources,
+    light: &LightingFrame,
+    c: usize,
+) -> crate::camera::frustum::Frustum {
+    let mut frustum = crate::camera::frustum::Frustum::from_view_proj(&light.cascade_view_projs[c]);
+    if resources.capabilities.depth_clip_control {
+        frustum.planes[4] = crate::camera::frustum::Plane {
+            normal: glam::Vec3::ZERO,
+            d: 1.0,
+        };
+    }
+    frustum
+}
+
 fn draw_shadow_cascades_multi_draw(
     pass: &mut crate::gpu::RenderPass<'_>,
     resources: &DeviceResources,

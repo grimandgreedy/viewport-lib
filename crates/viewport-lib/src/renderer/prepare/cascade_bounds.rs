@@ -199,7 +199,8 @@ pub(super) fn fitted_range(
     let sweep = sweep.min(camera_far * 2.0);
 
     let frustum = Frustum::from_view_proj(&camera.view_proj());
-    let planes = &frustum.planes[..4];
+    let p = &frustum.planes;
+    let planes = [0, 1, 2, 3].map(|i| (p[i].normal, p[i].d));
     let eye = camera.eye_position();
     let mut span = (f32::MAX, f32::MIN);
     for casters in bounds.cells.iter().filter_map(|c| c.casters) {
@@ -210,7 +211,7 @@ pub(super) fn fitted_range(
         let swept = casters.union(shifted);
         let receivers = bounds.cells.iter().map(|c| c.all).chain(ground_plane);
         for region in receivers.filter_map(|r| swept.intersection(r)) {
-            visible_depth_span(camera, planes, region, &mut span);
+            visible_depth_span(camera, &planes, region, &mut span);
             if region.contains(eye) {
                 span.0 = span.0.min(0.0);
             }
@@ -226,13 +227,52 @@ pub(super) fn fitted_range(
     (far > near * 1.001).then_some((near, far))
 }
 
+impl CascadeBounds {
+    /// The highest light-view z of the casters inside a cascade's light-space
+    /// `rect` (`[min_x, min_y, max_x, max_y]` in `light_view`), the casters
+    /// that can shadow it. Each grid cell's caster box is clipped to the
+    /// rect, so a large caster only counts where it overlaps. `None` with no
+    /// caster in the rect.
+    pub(super) fn caster_max_z(&self, light_view: glam::Mat4, rect: [f32; 4]) -> Option<f32> {
+        let planes = [
+            (glam::Vec3::X, -rect[0]),
+            (glam::Vec3::Y, -rect[1]),
+            (-glam::Vec3::X, rect[2]),
+            (-glam::Vec3::Y, rect[3]),
+        ];
+        let mut top = None::<f32>;
+        for casters in self.cells.iter().filter_map(|c| c.casters) {
+            let corners = casters.corners().map(|c| light_view.transform_point3(c));
+            clip_box_faces(&corners, &planes, |p| {
+                top = Some(top.map_or(p.z, |t| t.max(p.z)));
+            });
+        }
+        top
+    }
+}
+
 /// Widen `span` by the view depths of `region`'s part inside the frustum
 /// side `planes`: each face of the box clipped to the planes.
 fn visible_depth_span(
     camera: &RenderCamera,
-    planes: &[crate::camera::frustum::Plane],
+    planes: &[(glam::Vec3, f32)],
     region: Bounds,
     span: &mut (f32, f32),
+) {
+    clip_box_faces(&region.corners(), planes, |p| {
+        let depth = -camera.view().transform_point3(p).z;
+        span.0 = span.0.min(depth);
+        span.1 = span.1.max(depth);
+    });
+}
+
+/// Clip each face of the box with `corners` (in [`Bounds::corners`] order)
+/// to the half-spaces `normal . p + d >= 0` of `planes`, and hand every
+/// vertex of what is left to `visit`.
+fn clip_box_faces(
+    corners: &[glam::Vec3; 8],
+    planes: &[(glam::Vec3, f32)],
+    mut visit: impl FnMut(glam::Vec3),
 ) {
     const FACES: [[usize; 4]; 6] = [
         [0, 1, 2, 3],
@@ -244,15 +284,14 @@ fn visible_depth_span(
     ];
     // A quad clipped by four planes keeps at most eight vertices.
     const MAX: usize = 12;
-    let corners = region.corners();
     for face in FACES {
         let mut poly = [glam::Vec3::ZERO; MAX];
         let mut n = 4;
         for (slot, &i) in poly.iter_mut().zip(&face) {
             *slot = corners[i];
         }
-        for plane in planes {
-            let dist = |p: glam::Vec3| plane.normal.dot(p) + plane.d;
+        for &(normal, d) in planes {
+            let dist = |p: glam::Vec3| normal.dot(p) + d;
             let mut out = [glam::Vec3::ZERO; MAX];
             let mut m = 0;
             for k in 0..n {
@@ -274,9 +313,7 @@ fn visible_depth_span(
             }
         }
         for p in &poly[..n] {
-            let depth = -camera.view().transform_point3(*p).z;
-            span.0 = span.0.min(depth);
-            span.1 = span.1.max(depth);
+            visit(*p);
         }
     }
 }

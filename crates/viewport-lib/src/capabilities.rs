@@ -90,6 +90,11 @@ pub struct Capabilities {
     pub float32_filterable: bool,
     /// `Features::EXPERIMENTAL_RAY_QUERY`: the hardware path-tracer backend.
     pub ray_query: bool,
+    /// `Features::DEPTH_CLIP_CONTROL`: the directional shadow pass clamps
+    /// casters in front of a cascade to its near plane instead of clipping
+    /// them, so each cascade's depth range can stop just past what it
+    /// covers. Without it the range is stretched to take in the casters.
+    pub depth_clip_control: bool,
     /// The bindless material-texture path: the texture-array feature set and
     /// enough binding-array elements to build its layout.
     pub bindless: bool,
@@ -206,6 +211,7 @@ impl Capabilities {
             primitive_index: features.contains(gpu::PRIMITIVE_INDEX_FEATURE),
             float32_filterable: features.contains(gpu::Features::FLOAT32_FILTERABLE),
             ray_query: features.contains(gpu::RAY_QUERY_FEATURE),
+            depth_clip_control: features.contains(gpu::Features::DEPTH_CLIP_CONTROL),
             bindless,
         }
     }

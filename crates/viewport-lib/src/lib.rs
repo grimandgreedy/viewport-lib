@@ -323,8 +323,9 @@ pub use renderer::stats::{
 pub use renderer::tuning::{RenderDiagnostics, RenderTuning};
 pub use renderer::{
     Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
-    BackgroundSource, BloomSettings, CameraFrame, Candela, CellSelectionInfo, ClipObject,
-    ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings,
+    BackgroundSource, BloomSettings, CameraFrame, Candela, CascadeSplit, CellSelectionInfo,
+    ClipObject, ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis,
+    DisplaySettings,
     DofSettings, EdlSettings, EffectsFrame, EnvironmentBackground, EnvironmentIntensity,
     EnvironmentLighting, ExposureMode, ExposureReadback, ExposureSettings, FillRule,
     ForegroundPass, ForegroundProjection, FrameData, FrameTime, GlyphRunItem, GpuContext,

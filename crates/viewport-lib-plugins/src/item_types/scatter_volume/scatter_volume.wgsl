@@ -321,6 +321,19 @@ fn sample_sun_shadow(world_pos: vec3<f32>) -> f32 {
         return 1.0;
     }
     let dist = dot(world_pos - camera.eye_pos, camera.forward);
+    // Distance fade at the far end of the cascades, as `csm_distance_fade`
+    // in the mesh shaders: unshadowed past `range.x`.
+    var fade = 1.0;
+    if shadow_atlas.range.x > 0.0 && shadow_atlas.range.y > 0.0 {
+        fade = clamp(
+            (shadow_atlas.range.x - dist) / (shadow_atlas.range.y * shadow_atlas.range.x),
+            0.0,
+            1.0,
+        );
+    }
+    if fade <= 0.0 {
+        return 1.0;
+    }
     var cascade_idx = 0u;
     for (var i = 0u; i < shadow_atlas.cascade_count; i++) {
         if dist > shadow_atlas.cascade_splits[i] {
@@ -341,7 +354,8 @@ fn sample_sun_shadow(world_pos: vec3<f32>) -> f32 {
         mix(rect.y, rect.w, tile_uv.y),
     );
     let depth = ndc.z - lights_uniform.shadow_bias;
-    return textureSampleCompareLevel(shadow_map, shadow_sampler, atlas_uv, depth);
+    let lit = textureSampleCompareLevel(shadow_map, shadow_sampler, atlas_uv, depth);
+    return mix(1.0, lit, fade);
 }
 
 // ---------------------------------------------------------------------------

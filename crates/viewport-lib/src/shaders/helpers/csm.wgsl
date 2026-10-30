@@ -129,6 +129,20 @@ fn csm_contact(
     return filtered;
 }
 
+// Distance fade at the far end of the cascades: 1 up to the fade band, 0
+// at and past `range.x`, the distance along the view where the cascades
+// end. `dist` is the same eye-forward distance that selects the cascade.
+// A zero far (no distance cut) or fade fraction (a hard edge where the
+// last cascade's map runs out) leaves every fragment at 1.
+fn csm_distance_fade(dist: f32) -> f32 {
+    let far_s = shadow_atlas.range.x;
+    let fraction = shadow_atlas.range.y;
+    if far_s <= 0.0 || fraction <= 0.0 {
+        return 1.0;
+    }
+    return clamp((far_s - dist) / (fraction * far_s), 0.0, 1.0);
+}
+
 fn sample_shadow_csm(
     world_pos: vec3<f32>,
     eye_pos: vec3<f32>,
@@ -147,7 +161,23 @@ fn sample_shadow_csm(
         return ShadowSample(1.0, 0u, vec2<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0, 0.0);
     }
     let dist = dot(world_pos - eye_pos, camera.forward);
+    let fade = csm_distance_fade(dist);
+    var s = sample_shadow_csm_at(world_pos, dist, fade <= 0.0, surface_normal, light_dir, receiver_two_sided);
+    s.factor = mix(1.0, s.factor, fade);
+    return s;
+}
 
+// The cascade lookup behind `sample_shadow_csm`, before the distance fade.
+// `past_end` returns lit without filtering: the fragment is past the end of
+// the cascades.
+fn sample_shadow_csm_at(
+    world_pos: vec3<f32>,
+    dist: f32,
+    past_end: bool,
+    surface_normal: vec3<f32>,
+    light_dir: vec3<f32>,
+    receiver_two_sided: u32,
+) -> ShadowSample {
     var cascade_idx = 0u;
     for (var i = 0u; i < shadow_atlas.cascade_count; i++) {
         if dist > shadow_atlas.cascade_splits[i] {
@@ -219,7 +249,7 @@ fn sample_shadow_csm(
     let biased_depth = (offset_clip.xyz / offset_clip.w).z - lights_uniform.shadow_bias;
     let surface_depth = ndc.z;
 
-    if tile_uv.x < 0.0 || tile_uv.x > 1.0 || tile_uv.y < 0.0 || tile_uv.y > 1.0 ||
+    if past_end || tile_uv.x < 0.0 || tile_uv.x > 1.0 || tile_uv.y < 0.0 || tile_uv.y > 1.0 ||
        ndc.z < 0.0 || ndc.z > 1.0 {
         return ShadowSample(1.0, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     }
