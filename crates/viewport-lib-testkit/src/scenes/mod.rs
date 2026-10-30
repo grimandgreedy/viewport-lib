@@ -17,6 +17,7 @@ pub mod exposure;
 pub mod fallbacks;
 pub mod item_types;
 pub mod materials;
+pub mod materials_ibl;
 pub mod meshes;
 pub mod normal_maps;
 pub mod overlays;
@@ -154,6 +155,9 @@ pub struct BuiltScene {
     pub generation: u64,
     /// Lighting rig for this scene.
     pub lighting: LightingSettings,
+    /// Environment lighting for this scene. The background stays the flat
+    /// clear colour.
+    pub environment: Option<viewport_lib::EnvironmentLighting>,
     /// Optional background clear colour (linear RGBA).
     pub background: Option<[f32; 4]>,
     /// Clip objects applied to the frame, for scenes that open a solid to
@@ -273,6 +277,10 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     if let Some((objects, cap_fill)) = scene.clip.clone() {
         fd.effects.clip.objects = objects;
         fd.effects.clip.cap_fill_enabled = cap_fill;
+    }
+    if let Some(environment) = scene.environment.clone() {
+        fd.effects.environment = Some(environment);
+        fd.viewport.environment_background = viewport_lib::EnvironmentBackground::colour();
     }
     fd.overlays = scene.overlays.clone();
     fd.viewport.background_colour = Some(Colour::from_linear_array(
@@ -1065,6 +1073,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(normal_maps::scenes());
     scenes.extend(fallbacks::scenes());
     scenes.extend(exposure::scenes());
+    scenes.extend(materials_ibl::scenes());
     scenes
 }
 
