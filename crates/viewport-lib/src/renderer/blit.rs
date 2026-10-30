@@ -133,7 +133,7 @@ impl ViewportRenderer {
     /// of `rp`. Set the viewport and scissor rect before calling.
     ///
     /// For a render pass without a depth-stencil attachment (a plain surface blit
-    /// pass, e.g. winit). For a pass carrying a `Depth24PlusStencil8` attachment
+    /// pass, e.g. winit). For a pass carrying a scene depth-stencil attachment
     /// (an eframe paint pass), use [`blit_with_depth`](Self::blit_with_depth).
     pub fn blit<'rp>(&self, rp: &mut crate::gpu::RenderPass<'rp>, blit: &BlitTexture) {
         if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
@@ -144,7 +144,9 @@ impl ViewportRenderer {
     }
 
     /// Like [`blit`](Self::blit) but for a render pass that carries a
-    /// `Depth24PlusStencil8` depth-stencil attachment (e.g. an eframe paint pass).
+    /// depth-stencil attachment of
+    /// [`ViewportRenderer::scene_depth_format`](crate::ViewportRenderer::scene_depth_format)
+    /// (e.g. an eframe paint pass).
     /// The blit itself is identical; only the pipeline variant differs to match
     /// the render pass.
     pub fn blit_with_depth<'rp>(&self, rp: &mut crate::gpu::RenderPass<'rp>, blit: &BlitTexture) {
@@ -181,8 +183,9 @@ impl ViewportRenderer {
     }
 
     /// Like [`blit_composite`](Self::blit_composite) but for a render pass that
-    /// carries a `Depth24PlusStencil8` depth-stencil attachment (e.g. an eframe
-    /// paint pass). Only the pipeline variant differs.
+    /// carries a depth-stencil attachment of
+    /// [`ViewportRenderer::scene_depth_format`](crate::ViewportRenderer::scene_depth_format)
+    /// (e.g. an eframe paint pass). Only the pipeline variant differs.
     pub fn blit_composite_with_depth<'rp>(
         &self,
         rp: &mut crate::gpu::RenderPass<'rp>,

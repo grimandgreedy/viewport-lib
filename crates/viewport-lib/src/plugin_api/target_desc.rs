@@ -16,7 +16,8 @@ pub struct OpaqueTargetDesc {
     /// [`ldr_opaque_target_desc`](crate::resources::DeviceResources::ldr_opaque_target_desc)
     /// (the LDR scene pass).
     pub color_format: crate::gpu::TextureFormat,
-    /// Depth-stencil format. `Depth24PlusStencil8` everywhere today.
+    /// Depth-stencil format: the renderer's
+    /// [`scene_depth_format`](crate::resources::DeviceResources::scene_depth_format).
     pub depth_format: crate::gpu::TextureFormat,
     /// MSAA sample count. Matches the renderer's configured `sample_count`.
     pub sample_count: u32,
@@ -32,7 +33,8 @@ pub struct ForegroundTargetDesc {
     /// Colour target format. `Rgba16Float` (the HDR scene buffer).
     pub color_format: crate::gpu::TextureFormat,
     /// Depth-stencil format of the pass's own cleared depth target.
-    /// `Depth24PlusStencil8`, matching the scene depth format.
+    /// The renderer's
+    /// [`scene_depth_format`](crate::resources::DeviceResources::scene_depth_format).
     pub depth_format: crate::gpu::TextureFormat,
     /// Sample count. The foreground pass runs after the SSAA resolve, so 1.
     pub sample_count: u32,
@@ -73,7 +75,8 @@ pub struct DepthReadTargetDesc {
     /// on the HDR path only.
     pub color_format: crate::gpu::TextureFormat,
     /// Depth-stencil attachment, bound read-only (`depth_ops: None`). The
-    /// pipeline tests against it but must not write; `Depth24PlusStencil8`.
+    /// pipeline tests against it but must not write. The renderer's
+    /// [`scene_depth_format`](crate::resources::DeviceResources::scene_depth_format).
     pub depth_format: crate::gpu::TextureFormat,
     /// MSAA sample count. The pass runs at the scene sample count (the SSAA
     /// target on the HDR path), matching the opaque depth it samples.

@@ -78,6 +78,16 @@ pub struct RendererConfig {
     /// keeps every target a viewport has used for as long as the viewport
     /// exists. Default `None`.
     pub target_release_frames: Option<u32>,
+    /// The scene depth-stencil format. `None` is `Depth24PlusStencil8`.
+    /// `Some(Depth32FloatStencil8)` needs `Features::DEPTH32FLOAT_STENCIL8` on
+    /// the device; without it the renderer uses `Depth24PlusStencil8` and
+    /// reports a [`NoticeDetail::SceneDepthFormatFallback`](crate::NoticeDetail::SceneDepthFormatFallback).
+    /// Any other format fails construction with
+    /// [`ViewportError::InvalidSceneDepthFormat`](crate::ViewportError::InvalidSceneDepthFormat).
+    /// Read the format in use from
+    /// [`DeviceResources::scene_depth_format`](crate::resources::DeviceResources::scene_depth_format).
+    /// Default `None`.
+    pub scene_depth_format: Option<crate::gpu::TextureFormat>,
 }
 
 impl RendererConfig {
@@ -94,6 +104,7 @@ impl RendererConfig {
             max_tier: None,
             device_lost_watcher: None,
             target_release_frames: None,
+            scene_depth_format: None,
         }
     }
 
@@ -152,6 +163,13 @@ impl RendererConfig {
     /// [`target_release_frames`](Self::target_release_frames).
     pub fn with_target_release_frames(mut self, frames: u32) -> Self {
         self.target_release_frames = Some(frames);
+        self
+    }
+
+    /// Set the scene depth-stencil format. See
+    /// [`scene_depth_format`](Self::scene_depth_format).
+    pub fn with_scene_depth_format(mut self, format: crate::gpu::TextureFormat) -> Self {
+        self.scene_depth_format = Some(format);
         self
     }
 

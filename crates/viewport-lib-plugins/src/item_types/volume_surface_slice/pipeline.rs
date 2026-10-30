@@ -29,6 +29,7 @@ pub(super) struct SliceRecipe {
     pick_id_bgl: gpu::BindGroupLayout,
     sample_count: u32,
     ldr_format: gpu::TextureFormat,
+    depth_format: gpu::TextureFormat,
 }
 
 /// The slice in both formats, the outline and surface masks and the pick
@@ -59,6 +60,7 @@ fn build(r: &SliceRecipe, i: usize) -> gpu::RenderPipeline {
                 depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: r.sample_count,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
             },
             i == COLOUR_HDR,
         ),
@@ -243,6 +245,7 @@ impl SliceGpu {
                 pick_id_bgl: pick_id_bgl.clone(),
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );

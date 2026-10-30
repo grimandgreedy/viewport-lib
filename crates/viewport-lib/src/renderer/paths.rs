@@ -127,7 +127,8 @@ impl<'r> PassPath<'r> {
     ///
     /// Call after `prepare` for the same frame. Dispatches to the HDR blit,
     /// dynamic-resolution blit, or direct draw based on which path `prepare`
-    /// activated. The render pass is expected to have a depth-stencil attachment,
+    /// activated. The render pass is expected to have a depth-stencil attachment
+    /// of [`ViewportRenderer::scene_depth_format`](crate::ViewportRenderer::scene_depth_format),
     /// as provided by eframe and most GUI frameworks.
     pub fn paint<'rp>(&self, render_pass: &mut crate::gpu::RenderPass<'rp>, frame: &FrameData) {
         self.renderer.paint_callback(render_pass, frame);
@@ -221,8 +222,9 @@ impl<'r> PassView<'r> {
     /// Call after [`PassPath::prepare_hdr_viewport`] for the same viewport. Set the render
     /// pass viewport and scissor rect to the correct region before calling.
     ///
-    /// The render pass must have a `Depth24PlusStencil8` depth-stencil attachment (as eframe
-    /// callbacks always do). For render passes without a depth attachment (e.g. a plain winit
+    /// The render pass must have a depth-stencil attachment of
+    /// [`ViewportRenderer::scene_depth_format`](crate::ViewportRenderer::scene_depth_format)
+    /// (as eframe callbacks do). For render passes without a depth attachment (e.g. a plain winit
     /// blit pass), use [`paint_hdr_blit_no_ds`](Self::paint_hdr_blit_no_ds) instead.
     pub fn paint_hdr_blit<'rp>(
         &self,

@@ -25,6 +25,7 @@ pub(crate) struct CapRecipe {
     layout: crate::gpu::PipelineLayout,
     shader: crate::resources::pipeline_slot::LazyModule,
     ldr_format: crate::gpu::TextureFormat,
+    depth_format: crate::gpu::TextureFormat,
     ldr_sample_count: u32,
 }
 
@@ -68,6 +69,7 @@ fn build_cap(r: &CapRecipe, i: usize) -> crate::gpu::RenderPipeline {
                 ..Default::default()
             },
             depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                r.depth_format,
                 false,
                 crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
             )),
@@ -107,6 +109,7 @@ impl crate::resources::DeviceResources {
                     crate::resources::builders::wgsl_source!("section_cap"),
                 ),
                 ldr_format: self.target_format,
+                depth_format: self.scene_depth_format(),
                 ldr_sample_count: self.sample_count,
             };
             self.section_cap = Some(SectionCapPipelines {

@@ -118,6 +118,7 @@ pub(crate) fn ldr_mesh_pipeline_with(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
+    depth_format: crate::gpu::TextureFormat,
     target_format: crate::gpu::TextureFormat,
     sample_count: u32,
     cache: Option<&crate::gpu::PipelineCache>,
@@ -129,6 +130,7 @@ pub(crate) fn ldr_mesh_pipeline_with(
     constants: &[(&str, f64)],
 ) -> crate::gpu::RenderPipeline {
     let depth_stencil = crate::resources::builders::scene_depth_stencil(
+        depth_format,
         true,
         crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
     );
@@ -184,6 +186,7 @@ pub(crate) fn hdr_mesh_pipeline(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
+    depth_format: crate::gpu::TextureFormat,
     label: &str,
     cull: Option<crate::gpu::Face>,
     blend: Option<crate::gpu::BlendState>,
@@ -195,6 +198,7 @@ pub(crate) fn hdr_mesh_pipeline(
         device,
         layout,
         shader,
+        depth_format,
         label,
         cull,
         blend,
@@ -212,6 +216,7 @@ pub(crate) fn hdr_mesh_pipeline_entry(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
+    depth_format: crate::gpu::TextureFormat,
     label: &str,
     cull: Option<crate::gpu::Face>,
     blend: Option<crate::gpu::BlendState>,
@@ -246,6 +251,7 @@ pub(crate) fn hdr_mesh_pipeline_entry(
                 ..Default::default()
             },
             depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                depth_format,
                 depth_write,
                 crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
             )),
@@ -265,11 +271,21 @@ pub(crate) fn build_oit_pipeline_with(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
+    depth_format: crate::gpu::TextureFormat,
     two_sided: bool,
     label: &str,
     constants: &[(&str, f64)],
 ) -> crate::gpu::RenderPipeline {
-    build_oit_pipeline_entry(device, layout, shader, two_sided, label, constants, false)
+    build_oit_pipeline_entry(
+        device,
+        layout,
+        shader,
+        depth_format,
+        two_sided,
+        label,
+        constants,
+        false,
+    )
 }
 
 /// [`build_oit_pipeline_with`] for a GPU-culled draw (`culled`): the
@@ -278,6 +294,7 @@ pub(crate) fn build_oit_pipeline_entry(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
+    depth_format: crate::gpu::TextureFormat,
     two_sided: bool,
     label: &str,
     constants: &[(&str, f64)],
@@ -310,6 +327,7 @@ pub(crate) fn build_oit_pipeline_entry(
         },
     };
     let depth_stencil = crate::resources::builders::scene_depth_stencil(
+        depth_format,
         false,
         crate::plugin_api::depth::DEPTH_COMPARE,
     );
@@ -590,6 +608,7 @@ pub(crate) fn build_outline_mask_pipelines(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
+    depth_format: crate::gpu::TextureFormat,
     mask_format: crate::gpu::TextureFormat,
     cache: Option<&crate::gpu::PipelineCache>,
 ) -> OutlineMaskPipelines {
@@ -618,6 +637,7 @@ pub(crate) fn build_outline_mask_pipelines(
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    depth_format,
                     true,
                     crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),

@@ -8,6 +8,7 @@ pub(crate) struct OitContext {
     pub(crate) device: crate::gpu::Device,
     pub(crate) layout: crate::gpu::PipelineLayout,
     pub(crate) shader: crate::resources::pipeline_slot::LazyModule,
+    pub(crate) depth_format: crate::gpu::TextureFormat,
 }
 
 /// Weighted-blended OIT pipelines and composite layout.
@@ -54,6 +55,7 @@ pub(crate) fn build_per_object_features(
         &ctx.device,
         &ctx.layout,
         ctx.shader.get(),
+        ctx.depth_format,
         i & 1 != 0,
         &label,
         &feats.constants(),

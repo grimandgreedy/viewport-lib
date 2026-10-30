@@ -131,6 +131,7 @@ pub(super) struct McIsoRecipe {
     bgl: gpu::BindGroupLayout,
     shader: viewport_lib::plugin_api::LazyModule,
     ldr_format: gpu::TextureFormat,
+    depth_format: gpu::TextureFormat,
 }
 
 /// The LDR colour pipeline and the selection mask.
@@ -156,6 +157,7 @@ fn build(r: &McIsoRecipe, i: usize) -> gpu::RenderPipeline {
                 depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
             },
             false,
         ),
@@ -226,6 +228,7 @@ impl McIsoGpu {
                 bgl: bgl.clone(),
                 shader,
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );

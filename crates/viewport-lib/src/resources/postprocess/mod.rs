@@ -133,6 +133,7 @@ pub(crate) struct OutlineCompositeRecipe {
     pub(crate) layout: crate::gpu::PipelineLayout,
     pub(crate) shader: crate::resources::pipeline_slot::LazyModule,
     pub(crate) target_format: crate::gpu::TextureFormat,
+    pub(crate) depth_format: crate::gpu::TextureFormat,
     pub(crate) sample_count: u32,
 }
 
@@ -193,6 +194,7 @@ pub(crate) fn build_outline_composite(
                 ..Default::default()
             },
             depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                r.depth_format,
                 false,
                 crate::gpu::CompareFunction::Always,
             )),
@@ -1223,12 +1225,14 @@ impl DeviceResources {
             None
         };
         let compiler = &self.pipeline_compiler;
+        let depth_format = self.scene_depth_format();
         let family = |layout, shader| {
             crate::resources::pipeline_slot::LazyFamily::new(
                 oit::OitContext {
                     device: device.clone(),
                     layout,
                     shader,
+                    depth_format,
                 },
                 std::sync::Arc::clone(compiler),
                 oit::build_per_object,
@@ -1272,6 +1276,7 @@ impl DeviceResources {
         let depth_bgl = self.post.ssaa_depth_resolve_bgl.clone().expect(missing);
         self.post.ssaa_depth_resolve_pipeline = Some(Self::depth_only_fullscreen_pipeline(
             device,
+            self.scene_depth_format(),
             "ssaa_depth_resolve",
             crate::resources::builders::wgsl_source!("ssaa_depth_resolve"),
             &depth_bgl,
@@ -1282,6 +1287,7 @@ impl DeviceResources {
     /// `name` prefixes the shader, layout and pipeline labels.
     fn depth_only_fullscreen_pipeline(
         device: &crate::gpu::Device,
+        depth_format: crate::gpu::TextureFormat,
         name: &str,
         source: &'static str,
         bgl: &crate::gpu::BindGroupLayout,
@@ -1315,6 +1321,7 @@ impl DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    depth_format,
                     true,
                     crate::gpu::CompareFunction::Always,
                 )),
@@ -1338,6 +1345,7 @@ impl DeviceResources {
             .expect("ensure_hdr_infra not called");
         self.post.depth_blit_pipeline = Some(Self::depth_only_fullscreen_pipeline(
             device,
+            self.scene_depth_format(),
             "depth_blit",
             crate::resources::builders::wgsl_source!("depth_blit"),
             &bgl,
@@ -1359,6 +1367,7 @@ impl DeviceResources {
             .expect("ensure_hdr_infra not called");
         self.post.foreground_stamp_pipeline = Some(Self::depth_only_fullscreen_pipeline(
             device,
+            self.scene_depth_format(),
             "foreground_stamp",
             crate::resources::builders::wgsl_source!("foreground_depth_stamp"),
             &bgl,
@@ -1409,7 +1418,15 @@ impl DeviceResources {
 
         // All viewport-sized targets go through the allocator, which owns the
         // resolution classes and the base usage; see `targets.rs`.
-        let alloc = ViewportTargetAllocator::new(device, w, h, scene_w, scene_h, ssaa_factor);
+        let alloc = ViewportTargetAllocator::new(
+            device,
+            w,
+            h,
+            scene_w,
+            scene_h,
+            ssaa_factor,
+            self.scene_depth_format(),
+        );
         // The old state, for a group that was already live in it and stays
         // live. A group being released gets its placeholder.
         let kept = |group: TargetGroups| {
@@ -2638,7 +2655,7 @@ impl DeviceResources {
             mip_level_count: 1,
             sample_count: 1,
             dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+            format: self.scene_depth_format(),
             usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
                 | crate::gpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],

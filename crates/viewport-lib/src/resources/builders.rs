@@ -1139,8 +1139,7 @@ pub const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
 };
 
 /// The parts of a scene render pipeline that vary between features. The rest of
-/// the descriptor (depth format `Depth24PlusStencil8`, default stencil and
-/// bias, `ColorWrites::ALL`, default front face, no multiview or cache) is held
+/// the descriptor (default stencil and bias, `ColorWrites::ALL`, default front face, no multiview or cache) is held
 /// constant by [`build_dual_pipeline`]. The vertex and fragment stages share
 /// one shader module, which is the shape every scivis feature uses.
 pub struct DualPipelineDesc<'a> {
@@ -1170,6 +1169,9 @@ pub struct DualPipelineDesc<'a> {
     pub sample_count: u32,
     /// LDR swapchain format; the HDR variant is always `Rgba16Float`.
     pub ldr_format: crate::gpu::TextureFormat,
+    /// Scene depth-stencil format, from
+    /// [`DeviceResources::scene_depth_format`](crate::resources::DeviceResources::scene_depth_format).
+    pub depth_format: crate::gpu::TextureFormat,
 }
 
 /// Build the LDR + HDR pair of a scene render pipeline from the parts that vary
@@ -1223,7 +1225,11 @@ pub fn build_dual_pipeline_variant(
                 cull_mode: desc.cull_mode,
                 ..Default::default()
             },
-            depth_stencil: Some(scene_depth_stencil(desc.depth_write, desc.depth_compare)),
+            depth_stencil: Some(scene_depth_stencil(
+                desc.depth_format,
+                desc.depth_write,
+                desc.depth_compare,
+            )),
             multisample: crate::gpu::MultisampleState {
                 count: desc.sample_count,
                 ..Default::default()
@@ -1280,10 +1286,10 @@ pub fn build_fullscreen_pipeline(
 
 /// Build an outline selection-mask pipeline: the item's geometry drawn into a
 /// single-channel mask target, depth-tested against the scene so only visible
-/// pixels are marked. The mask format, vertex layout, cull mode, depth write,
-/// and depth compare vary per item and are passed in; the rest is fixed
-/// (triangle list, `Depth24PlusStencil8`, default stencil and bias, single
-/// sample, no blend, both stages `vs_main` / `fs_main`).
+/// pixels are marked. The mask format, scene depth format, vertex layout, cull
+/// mode, depth write, and depth compare vary per item and are passed in; the
+/// rest is fixed (triangle list, default stencil and bias, single sample, no
+/// blend, both stages `vs_main` / `fs_main`).
 ///
 /// `depth_compare` must match the item's main opaque pipeline so the mask marks
 /// exactly the pixels that survived the depth test in the colour pass. `cull` is
@@ -1295,6 +1301,7 @@ pub fn build_outline_mask_pipeline(
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
     mask_format: crate::gpu::TextureFormat,
+    depth_format: crate::gpu::TextureFormat,
     vertex_buffers: &[crate::gpu::VertexBufferLayout],
     cull: Option<crate::gpu::Face>,
     depth_write: bool,
@@ -1323,7 +1330,7 @@ pub fn build_outline_mask_pipeline(
                 cull_mode: cull,
                 ..Default::default()
             },
-            depth_stencil: Some(scene_depth_stencil(depth_write, depth_compare)),
+            depth_stencil: Some(scene_depth_stencil(depth_format, depth_write, depth_compare)),
             multisample: crate::gpu::MultisampleState::default(),
             cache: None,
         },
@@ -1335,8 +1342,8 @@ pub fn build_outline_mask_pipeline(
 /// stamped with the pass's stencil reference. Used from
 /// [`ItemTypePlugin::surface_mask`](crate::plugin_api::ItemTypePlugin::surface_mask).
 ///
-/// The vertex layout and cull mode vary per item and are passed in; the rest is
-/// fixed: triangle list, `Depth24PlusStencil8`, no colour target, no depth
+/// The scene depth format, vertex layout and cull mode vary per item and are
+/// passed in; the rest is fixed: triangle list, no colour target, no depth
 /// write, single sample, both stages `vs_main` / `fs_main`. The fragment stage
 /// has nothing to output: leave it empty, or have it `discard` where the item's
 /// own fragment stage would, so a cut-out stamps only what it drew.
@@ -1350,6 +1357,7 @@ pub fn build_surface_mask_pipeline(
     label: &str,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
+    depth_format: crate::gpu::TextureFormat,
     vertex_buffers: &[crate::gpu::VertexBufferLayout],
     cull: Option<crate::gpu::Face>,
 ) -> crate::gpu::RenderPipeline {
@@ -1372,7 +1380,7 @@ pub fn build_surface_mask_pipeline(
                 cull_mode: cull,
                 ..Default::default()
             },
-            depth_stencil: Some(surface_mask_depth_stencil()),
+            depth_stencil: Some(surface_mask_depth_stencil(depth_format)),
             multisample: crate::gpu::MultisampleState::default(),
             cache: None,
         },
@@ -1382,7 +1390,9 @@ pub fn build_surface_mask_pipeline(
 /// The depth-stencil state of a surface-mask pipeline: test against the scene
 /// depth without writing it, and replace the stencil with the pass's reference
 /// where the test passes.
-pub(crate) fn surface_mask_depth_stencil() -> crate::gpu::DepthStencilState {
+pub(crate) fn surface_mask_depth_stencil(
+    format: crate::gpu::TextureFormat,
+) -> crate::gpu::DepthStencilState {
     let stamp = crate::gpu::StencilFaceState {
         compare: crate::gpu::CompareFunction::Always,
         fail_op: crate::gpu::StencilOperation::Keep,
@@ -1390,7 +1400,7 @@ pub(crate) fn surface_mask_depth_stencil() -> crate::gpu::DepthStencilState {
         pass_op: crate::gpu::StencilOperation::Replace,
     };
     crate::gpu::DepthStencilState {
-        format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+        format,
         depth_write_enabled: dwrite(false),
         depth_compare: dcompare(crate::plugin_api::depth::DEPTH_COMPARE),
         stencil: crate::gpu::StencilState {
@@ -2005,18 +2015,16 @@ pub fn depth_stencil(
     }
 }
 
-/// The scene depth-stencil state: `Depth24PlusStencil8` shared by every scene
-/// render pass, parameterised by the depth write flag and compare function that
-/// vary per pipeline.
+/// The scene depth-stencil state for `format`, the renderer's
+/// [`scene_depth_format`](crate::resources::DeviceResources::scene_depth_format),
+/// parameterised by the depth write flag and compare function that vary per
+/// pipeline.
 pub fn scene_depth_stencil(
+    format: crate::gpu::TextureFormat,
     depth_write_enabled: bool,
     depth_compare: crate::gpu::CompareFunction,
 ) -> crate::gpu::DepthStencilState {
-    depth_stencil(
-        crate::gpu::TextureFormat::Depth24PlusStencil8,
-        depth_write_enabled,
-        depth_compare,
-    )
+    depth_stencil(format, depth_write_enabled, depth_compare)
 }
 
 /// Create a render-bundle encoder, filling `multiview: None`. This is the one

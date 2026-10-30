@@ -88,6 +88,7 @@ pub(super) struct PackedRecipe {
     pack_layout: gpu::PipelineLayout,
     pack_shader: viewport_lib::plugin_api::LazyModule,
     ldr_format: gpu::TextureFormat,
+    depth_format: gpu::TextureFormat,
 }
 
 /// The draw, the outline mask, and the pack passes.
@@ -136,10 +137,16 @@ fn build(r: &PackedRecipe, i: usize) -> gpu::RenderPipeline {
                 depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
             },
             false,
         ),
-        MASK => super::pipeline::disc_mask_pipeline(&r.device, &r.mask_layout, r.mask_shader.get()),
+        MASK => super::pipeline::disc_mask_pipeline(
+            &r.device,
+            &r.mask_layout,
+            r.mask_shader.get(),
+            r.depth_format,
+        ),
         _ => {
             let pair = (i - PACK_BASE) % 2 == 0;
             let (entry, buffers) = if i < PACK_SH {
@@ -274,6 +281,7 @@ impl PackedGpu {
                     wgsl_source!("gaussian_splat_pack"),
                 ),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );

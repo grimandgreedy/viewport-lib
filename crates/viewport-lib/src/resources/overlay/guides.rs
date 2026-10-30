@@ -63,6 +63,7 @@ pub(crate) type GuidePipelines = crate::resources::pipeline_slot::LazyFamily<Gui
 pub(crate) struct GuideRecipe {
     device: crate::gpu::Device,
     target_format: crate::gpu::TextureFormat,
+    depth_format: crate::gpu::TextureFormat,
     sample_count: u32,
     overlay_layout: crate::gpu::PipelineLayout,
     grid_layout: crate::gpu::PipelineLayout,
@@ -104,6 +105,7 @@ fn build_guide(r: &GuideRecipe, i: usize) -> crate::gpu::RenderPipeline {
                     conservative: false,
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    r.depth_format,
                     false, // Do not write to depth buffer.
                     crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
@@ -144,6 +146,7 @@ fn build_guide(r: &GuideRecipe, i: usize) -> crate::gpu::RenderPipeline {
                     conservative: false,
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    r.depth_format,
                     false,
                     crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
@@ -180,7 +183,7 @@ fn build_guide(r: &GuideRecipe, i: usize) -> crate::gpu::RenderPipeline {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::gpu::DepthStencilState {
-                    format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+                    format: r.depth_format,
                     depth_write_enabled: crate::resources::builders::dwrite(true),
                     depth_compare: crate::resources::builders::dcompare(
                         crate::plugin_api::depth::DEPTH_COMPARE,
@@ -224,6 +227,7 @@ fn build_guide(r: &GuideRecipe, i: usize) -> crate::gpu::RenderPipeline {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    r.depth_format,
                     false,
                     crate::gpu::CompareFunction::Always,
                 )),
@@ -245,6 +249,7 @@ impl crate::resources::DeviceResources {
             let recipe = GuideRecipe {
                 device: device.clone(),
                 target_format: self.target_format,
+                depth_format: self.scene_depth_format(),
                 sample_count: self.sample_count,
                 overlay_layout: crate::resources::builders::pipeline_layout(
                     device,

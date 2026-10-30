@@ -259,7 +259,12 @@ struct PickTargets {
 }
 
 impl PickTargets {
-    fn new(device: &crate::gpu::Device, vp_w: u32, vp_h: u32) -> Self {
+    fn new(
+        device: &crate::gpu::Device,
+        depth_format: crate::gpu::TextureFormat,
+        vp_w: u32,
+        vp_h: u32,
+    ) -> Self {
         let extent = crate::gpu::Extent3d {
             width: vp_w,
             height: vp_h,
@@ -316,7 +321,7 @@ impl PickTargets {
             mip_level_count: 1,
             sample_count: 1,
             dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+            format: depth_format,
             usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
@@ -563,7 +568,7 @@ impl ViewportRenderer {
         let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
         let sublevel = self.build_pick_sublevel_binds(device, &draw_set);
 
-        let targets = PickTargets::new(device, vp_w, vp_h);
+        let targets = PickTargets::new(device, self.resources.scene_depth_format(), vp_w, vp_h);
 
         // A second flush catches geometry that pick-draw building itself uploaded
         // (scatter volumes, decal boxes), so every mesh the pass rasterises is
@@ -1268,7 +1273,7 @@ impl ViewportRenderer {
         let (_, pick_instance_bg) = self.build_pick_instance_bind_group(device, queue, &draw_set);
         let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
         let sublevel = self.build_pick_sublevel_binds(device, &draw_set);
-        let targets = PickTargets::new(device, vp_w, vp_h);
+        let targets = PickTargets::new(device, self.resources.scene_depth_format(), vp_w, vp_h);
 
         self.resources.geometry.flush(queue);
         let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
@@ -1533,7 +1538,7 @@ impl ViewportRenderer {
         let (_, pick_instance_bg) = self.build_pick_instance_bind_group(device, queue, &draw_set);
         let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
         let sublevel = self.build_pick_sublevel_binds(device, &draw_set);
-        let targets = PickTargets::new(device, vp_w, vp_h);
+        let targets = PickTargets::new(device, self.resources.scene_depth_format(), vp_w, vp_h);
 
         self.resources.geometry.flush(queue);
         let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {

@@ -83,6 +83,7 @@ struct LicRecipe {
     vector_shader: viewport_lib::plugin_api::LazyModule,
     advect_layout: viewport_lib::gpu::PipelineLayout,
     advect_shader: viewport_lib::plugin_api::LazyModule,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
 /// The vector pass and the advect pass, each built the first time a frame
@@ -128,8 +129,11 @@ fn build(r: &LicRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
     // Tested against the scene depth so a flow surface writes vectors only
     // where it is the visible one. The bias absorbs the rounding between
     // this draw and the colour draw of the same triangles.
-    let mut depth =
-        builders::scene_depth_stencil(false, viewport_lib::plugin_api::depth::DEPTH_COMPARE);
+    let mut depth = builders::scene_depth_stencil(
+        r.depth_format,
+        false,
+        viewport_lib::plugin_api::depth::DEPTH_COMPARE,
+    );
     depth.bias = viewport_lib::plugin_api::depth::scene_depth_bias(-2, 0.0);
     builders::render_pipeline(
         &r.device,
@@ -210,6 +214,7 @@ impl LicGpu {
                 vector_shader,
                 advect_layout,
                 advect_shader,
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );

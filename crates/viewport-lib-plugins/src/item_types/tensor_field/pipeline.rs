@@ -30,6 +30,7 @@ pub(super) struct TensorFieldRecipe {
     mask_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
 /// The scene pipeline in both formats, the pick pipeline and the two masks,
@@ -56,6 +57,7 @@ fn build(r: &TensorFieldRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 sample_count: r.sample_count,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
             },
             i == COLOUR_HDR,
         ),
@@ -90,6 +92,7 @@ fn build(r: &TensorFieldRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &r.mask_layout,
             r.mask_shader.get(),
             viewport_lib::gpu::TextureFormat::R8Unorm,
+            r.depth_format,
             &vertex_buffers,
             Some(viewport_lib::gpu::Face::Back),
             true,
@@ -101,6 +104,7 @@ fn build(r: &TensorFieldRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             "tensor_field_surface_mask_pipeline",
             &r.mask_layout,
             r.mask_shader.get(),
+            r.depth_format,
             &vertex_buffers,
             Some(viewport_lib::gpu::Face::Back),
         ),
@@ -209,6 +213,7 @@ impl TensorFieldGpu {
                 mask_shader,
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );

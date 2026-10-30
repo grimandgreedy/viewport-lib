@@ -64,6 +64,7 @@ pub(super) struct McRecipe {
     pick_shader: viewport_lib::plugin_api::LazyModule,
     pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
     ldr_format: viewport_lib::gpu::TextureFormat,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
 /// The surface and wireframe pipelines in both formats, the shadow caster,
@@ -94,6 +95,7 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
             },
             i == SURFACE_HDR,
         ),
@@ -113,6 +115,7 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
             },
             i == WIREFRAME_HDR,
         ),
@@ -448,6 +451,7 @@ impl McGpu {
                 pick_shader,
                 pick_id_bgl: pick_id_bgl.clone(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );

@@ -256,6 +256,7 @@ fn build_mesh_pipeline(
         "surface_mask_mesh_pipeline",
         &layout,
         &shader,
+        resources.scene_depth_format(),
         &[vertex_layout, model_layout],
         None,
     )
