@@ -316,7 +316,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // twice.
     if u.blend_mode == 0u {
         let albedo   = tex_col.rgb;
-        let rough    = specular_aa_roughness_kernel(clamp(roughness_val, 0.04, 1.0), saa_kernel);
+        let rough    = viewport_brdf_specular_aa_roughness_kernel(clamp(roughness_val, 0.04, 1.0), saa_kernel);
         let metallic = clamp(metallic_val, 0.0, 1.0);
         let F0       = mix(vec3<f32>(0.04), albedo, metallic);
 
@@ -327,8 +327,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let light = lights_storage[idx];
             let ev = eval_light(light, world);
             if !ev.in_range { continue; }
-            // pbr_light_contrib returns zero on the back hemisphere; skipping
-            // early also skips the shadow taps.
+            // viewport_brdf_light_contrib returns zero on the back hemisphere;
+            // skipping early also skips the shadow taps.
             if dot(N_final, ev.l) <= 0.0 { continue; }
             var radiance = ev.radiance;
             // Shadowing follows the primary directional light only. Point-light
@@ -341,7 +341,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 let s = sample_shadow_csm(world, camera.eye_pos, N_recv, ev.l, 0u);
                 radiance = radiance * s.factor;
             }
-            lo = lo + pbr_light_contrib(
+            lo = lo + viewport_brdf_light_contrib(
                 N_final, view_dir, ev.l, radiance, albedo, metallic, rough, F0,
             );
         }

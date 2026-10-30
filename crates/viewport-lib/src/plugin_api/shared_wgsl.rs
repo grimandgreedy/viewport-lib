@@ -69,11 +69,11 @@ pub const SHARED_BINDINGS_WGSL: &str =
 /// lights)`, the per-light `eval_light`, the cluster lookup, and the
 /// environment-zone and probe-volume declarations they read. Unlike
 /// [`SHARED_PBR_WGSL`]'s `viewport_apply_scene_lighting`, which is a
-/// self-contained Lambert loop over `lights_storage`, this is the same code
-/// path the renderer's own mesh and item shaders take: clustered iteration,
-/// physical inverse-square falloff with a source-radius clamp, and light
-/// channel masks. Compose it when an item has to match a built-in type's
-/// shading exactly.
+/// self-contained Lambert loop over every entry of `lights_storage`, this is
+/// the same code path the renderer's own mesh and item shaders take:
+/// clustered iteration and light channel masks. Both use the same
+/// inverse-square falloff with a source-radius clamp. Compose it when an item
+/// has to match a built-in type's shading exactly.
 ///
 /// It brings its own group-0 declarations for the lighting bindings (13 to 18
 /// and 20) along with the `SingleLight` and `Lights` structs, which overlap
@@ -173,8 +173,9 @@ pub const SHARED_DEPTH_TEXEL_WGSL: &str =
 
 /// The direct Cook-Torrance BRDF the renderer's lit mesh shaders evaluate.
 ///
-/// Provides `D_GGX`, `G1_Smith` and the functions built on them, for a body
-/// that shades with the scene's lights itself and wants its highlights to
+/// Provides `viewport_brdf_d_ggx`, `viewport_brdf_g1_smith` and the functions
+/// built on them (`viewport_brdf_light_contrib` evaluates one light), for a
+/// body that shades with the scene's lights itself and wants its highlights to
 /// match the surface it sits on. It declares no bindings and reads none, so
 /// it composes after either set of group-0 declarations.
 pub const SHARED_BRDF_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/helpers/brdf.wgsl"));
@@ -199,17 +200,20 @@ pub const SHARED_OUTLINE_EDGE_WGSL: &str =
 /// fn viewport_pbr_shade(inp: PbrInputs) -> vec3<f32>;
 /// fn viewport_sample_csm(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32;
 /// fn viewport_apply_scene_lighting(N, base_colour, two_sided, world_pos) -> vec3<f32>;
+/// fn viewport_ibl_ambient(n, v, albedo, metallic, roughness, f0, ao) -> vec3<f32>;
 /// ```
 ///
 /// `viewport_pbr_shade` returns the final lit colour for a fragment given a
 /// `PbrInputs` populated with albedo / normal / metallic / roughness / AO /
-/// emissive. It applies the lib's standard hemisphere ambient + light loop
-/// and attenuates the primary light's contribution by the CSM shadow factor
-/// when `lights.shadows_enabled != 0`. Plugins that compose this helper get
+/// emissive. Each light goes through the same attenuation and direct BRDF as
+/// the lit mesh shaders; the ambient is `viewport_ibl_ambient` when an environment is
+/// active and the hemisphere ambient otherwise. It attenuates the primary
+/// light's contribution by the CSM shadow factor when
+/// `lights.shadows_enabled != 0`. Plugins that compose this helper get
 /// shadows automatically; do not multiply by `viewport_sample_csm` again.
-/// Future revisions may add IBL and SSAO sampling inside this function;
-/// consumers should rebuild their shaders when the catalog version bumps to
-/// pick up the upgrade.
+///
+/// The section carries [`SHARED_BRDF_WGSL`] and [`SHARED_SHADOW_ATLAS_WGSL`]
+/// itself, so do not compose either of those next to it.
 ///
 /// `viewport_sample_csm` returns a 0..1 shadow factor for `world_pos`.
 /// Returns 1.0 (fully lit) when shadows are disabled or the position is
@@ -401,3 +405,68 @@ pub const BINDING_ARRAY_ENABLE_WGSL: &str = "enable wgpu_binding_array;\n";
 ///   `format!("{PICK_PRIM_ENABLE_WGSL}{MY_VS}{SHARED_PICK_PRIM_WGSL}")`.
 pub const SHARED_PICK_PRIM_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/shared_pick_prim.wgsl"));
+
+#[cfg(test)]
+mod tests {
+    #[cfg(wgpu29)]
+    use naga29 as naga;
+    #[cfg(wgpu30)]
+    use naga30 as naga;
+
+    use super::*;
+
+    fn validate(label: &str, src: &str) {
+        let module = naga::front::wgsl::parse_str(src)
+            .unwrap_or_else(|e| panic!("{label} failed to parse: {}", e.emit_to_string(src)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{label} failed to validate: {e:?}"));
+    }
+
+    // A fragment calling every lighting helper the PBR catalogue publishes,
+    // composed the way a plugin composes it.
+    const PBR_CALLER: &str = "
+@fragment
+fn fs_main(@location(0) world_pos: vec3<f32>, @location(1) n: vec3<f32>) -> @location(0) vec4<f32> {
+    let v = normalize(camera.eye_pos - world_pos);
+    var inputs: PbrInputs;
+    inputs.world_pos = world_pos;
+    inputs.world_n = n;
+    inputs.view_dir = v;
+    inputs.albedo = vec3<f32>(0.8);
+    inputs.metallic = 0.5;
+    inputs.roughness = 0.4;
+    inputs.ao = 1.0;
+    inputs.emissive = vec3<f32>(0.0);
+    let lit = viewport_pbr_shade(inputs);
+    let lambert = viewport_apply_scene_lighting(n, vec3<f32>(0.8), false, world_pos);
+    let ibl = viewport_ibl_ambient(n, v, vec3<f32>(0.8), 0.5, 0.4, vec3<f32>(0.04), 1.0);
+    let shadow = viewport_sample_csm(world_pos, n);
+    return vec4<f32>((lit + lambert + ibl) * shadow, 1.0);
+}
+";
+
+    #[test]
+    fn pbr_catalogue_composes_after_the_shared_bindings() {
+        let src = format!("{SHARED_BINDINGS_WGSL}\n{SHARED_PBR_WGSL}\n{PBR_CALLER}");
+        validate("SHARED_BINDINGS_WGSL + SHARED_PBR_WGSL", &src);
+    }
+
+    #[test]
+    fn brdf_section_composes_alone() {
+        let src = format!(
+            "{SHARED_BRDF_WGSL}
+@fragment
+fn fs_main(@location(0) n: vec3<f32>) -> @location(0) vec4<f32> {{
+    let l = normalize(vec3<f32>(0.0, 0.0, 1.0));
+    let c = viewport_brdf_light_contrib(n, l, l, vec3<f32>(1.0), vec3<f32>(0.5), 0.0, 0.5, vec3<f32>(0.04));
+    return vec4<f32>(c, 1.0);
+}}
+"
+        );
+        validate("SHARED_BRDF_WGSL", &src);
+    }
+}

@@ -25,7 +25,8 @@ struct SingleLight {
     spot_direction:    vec3<f32>,
     point_shadow_slot: i32,
     point_shadow_near: f32,
-    _pad0:             f32,
+    // Source radius: clamps the inverse-square falloff near the light.
+    radius:            f32,
     _pad1:             f32,
 };
 

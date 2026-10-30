@@ -71,8 +71,8 @@ pub(crate) const SHADE_FAMILY_SHADERS: &[&str] = &["mesh.wgsl", "mesh_oit.wgsl"]
 ///   if it defines any. Emissive adds alongside the material's term; alpha
 ///   is honoured only under Mask/Blend alpha modes (Mask re-tests the
 ///   cutoff, Blend takes it as output alpha, Opaque ignores it).
-/// - `shade_light` replaces the built-in `pbr_light_contrib` per-light term;
-///   `shade_ambient` replaces the whole ambient term; `recolor` replaces the
+/// - `shade_light` replaces the built-in `viewport_brdf_light_contrib`
+///   per-light term; `shade_ambient` replaces the whole ambient term; `recolor` replaces the
 ///   final pre-emissive colour with `recolor(surf, Lo, ambient)`.
 /// - `hook_emissive`, `hook_alpha` and `params` are reserved identifiers in
 ///   hook bodies (the composer's carriers for the surface hook's outputs, and
@@ -412,33 +412,30 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
     let mut surface_region = String::new();
     if wire_vertex_attr || hook.has_surface {
         surface_region.push_str(
-            "        var surf = build_shading_surface(surface, in, V, metallic, roughness, F0);\n",
+            "        var surf = build_shading_surface(surface, in, V, px.metallic, px.perceptual_roughness, px.f0);\n",
         );
     } else {
         surface_region.push_str(
-            "        let surf = build_shading_surface(surface, in, V, metallic, roughness, F0);\n",
+            "        let surf = build_shading_surface(surface, in, V, px.metallic, px.perceptual_roughness, px.f0);\n",
         );
     }
     if wire_vertex_attr {
         surface_region.push_str("        surf.attr = in.ext_attr;\n");
     }
     if hook.has_surface {
-        // Apply the override to the live PBR locals (F0 recomputed from the
+        // Apply the override to the live PBR pixel (F0 recomputed from the
         // authored base colour and metallic) and patch `surf` so the built-in
         // loop and any lighting hooks both see the authored surface.
         surface_region.push_str(&format!(
             "        let sov = {name}__shade_surface(surf);\n\
-             \x20       base_colour = sov.base_colour;\n\
+             \x20       px = pbr_apply_override(px, sov.base_colour, sov.metallic, sov.roughness);\n\
              \x20       N = normalize(sov.normal);\n\
-             \x20       metallic = clamp(sov.metallic, 0.0, 1.0);\n\
-             \x20       roughness = max(sov.roughness, 0.04);\n\
-             \x20       F0 = mix(vec3<f32>(0.04), base_colour, metallic);\n\
              \x20       {name}__hook_emissive = sov.emissive;\n\
-             \x20       surf.base_colour = base_colour;\n\
+             \x20       surf.base_colour = px.diffuse_colour;\n\
              \x20       surf.normal = N;\n\
-             \x20       surf.metallic = metallic;\n\
-             \x20       surf.roughness = roughness;\n\
-             \x20       surf.f0 = F0;\n"
+             \x20       surf.metallic = px.metallic;\n\
+             \x20       surf.roughness = px.perceptual_roughness;\n\
+             \x20       surf.f0 = px.f0;\n"
         ));
         if wire_alpha {
             // Gated alpha: only Mask/Blend materials take the hook's alpha;
@@ -514,8 +511,8 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
 
 /// The internal hook behind the `VIEWPORT_MESH_BUILTIN_HOOK` A/B knob: the
 /// built-in Cook-Torrance per-light term replayed through the shading seam.
-/// `shade_light` calls the same `pbr_light_contrib` the inline path calls
-/// (with `radiance * shadow`, matching the inline multiply exactly), keeps the
+/// `shade_light` calls the same `viewport_brdf_light_contrib` the inline path
+/// calls (with `radiance * shadow`, matching the inline multiply exactly), keeps the
 /// backface early-continue, and leaves ambient and recolor on the defaults.
 /// The composed module therefore computes identical lighting; what it adds is
 /// exactly the hook mechanism (ShadingSurface fill, LightSample construction,
@@ -529,9 +526,9 @@ pub(crate) fn builtin_pbr_hook() -> &'static StoredShadingHook {
             name: "builtin_pbr",
             wgsl_body: "\
 fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
-    return pbr_light_contrib(surf.normal, surf.view_dir, light.l,
-                             light.radiance * light.shadow,
-                             surf.base_colour, surf.metallic, surf.roughness, surf.f0);
+    return viewport_brdf_light_contrib(surf.normal, surf.view_dir, light.l,
+                                       light.radiance * light.shadow,
+                                       surf.base_colour, surf.metallic, surf.roughness, surf.f0);
 }
 "
             .to_string(),
@@ -1682,7 +1679,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
                 "{shader}: light region not wired"
             );
             assert!(
-                !composed.contains("Lo += pbr_light_contrib("),
+                !composed.contains("Lo += pbr_direct(px, "),
                 "{shader}: default light term should be replaced"
             );
             assert!(
@@ -1728,7 +1725,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
             return;
         };
         let composed = compose_shade_shader(base, &hook).expect("compose");
-        assert!(composed.contains("Lo += pbr_light_contrib("));
+        assert!(composed.contains("Lo += pbr_direct(px, "));
         assert!(
             composed.contains("final_rgb = clamp(poster__recolor(surf, Lo, ambient) * tint.rgb")
         );
@@ -1909,7 +1906,9 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
                 "{shader}: missing surface hook call"
             );
             assert!(
-                composed.contains("F0 = mix(vec3<f32>(0.04), base_colour, metallic);"),
+                composed.contains(
+                    "px = pbr_apply_override(px, sov.base_colour, sov.metallic, sov.roughness);"
+                ),
                 "{shader}: missing F0 recompute"
             );
             assert!(
