@@ -2,16 +2,14 @@
 //!
 //! Ray/segment intersection and strip-index mapping.
 
-/// Warn once if a CPU pick runs while the pick cache is disabled, so the call does
-/// not silently return nothing.
-pub(super) fn warn_pick_cache_disabled() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        tracing::warn!(
-            "renderer.pick()/pick_rect() was called but the CPU pick cache is disabled; \
-             enable it with ViewportRenderer::set_cpu_pick_cache(true)"
-        );
-    });
+/// Report a CPU pick that ran while the pick cache is disabled, so the call
+/// does not silently return nothing.
+pub(super) fn warn_pick_cache_disabled(notices: &crate::notice::NoticeSink) {
+    notices.report(
+        crate::notice::NoticeKey::single(crate::NoticeCategory::Pipeline, "pick_cache_disabled"),
+        crate::Severity::Warning,
+        || crate::NoticeDetail::PickCacheDisabled,
+    );
 }
 
 /// Project a world-space point to pixel coordinates (origin top-left, y

@@ -468,10 +468,6 @@ pub struct ViewportRenderer {
     /// This viewport frame's external composite-slot contributions: the
     /// views returned by producer `encode` calls. Cleared per render call.
     frame_external_slot_views: Vec<(crate::plugin_api::PostEffectSlot, crate::gpu::TextureView)>,
-    /// Slots that have logged the external-overrides-built-in conflict (one
-    /// bit per `PostEffectSlot` variant), so the debug log fires once per
-    /// slot per renderer.
-    post_effect_slot_warned: u8,
     /// Monotonic frame counter passed to plugin contexts.
     plugin_frame_index: u64,
     /// Performance counters from the last frame.
@@ -634,17 +630,6 @@ pub struct ViewportRenderer {
     /// counts once. Latched into `FrameStats::main_draw_commands`; compare
     /// against `instanced_batches` to read the collapse ratio.
     frame_main_draw_commands: std::sync::atomic::AtomicU32,
-    /// One-shot latch for the paint_to foreground warning: a host-owned
-    /// render pass cannot host the cleared-depth foreground pass, so
-    /// submitted foreground items are reported once instead of every frame.
-    foreground_paint_to_warned: std::sync::atomic::AtomicBool,
-    /// One-shot latch: item-type plugins are HDR-only, so plugin items submitted
-    /// while the LDR pipeline (`PipelineMode::Direct`) is active are dropped and
-    /// reported once instead of silently.
-    ldr_plugin_items_warned: std::sync::atomic::AtomicBool,
-    /// One-shot latch: transparent volume meshes need the OIT pass, which only
-    /// exists in the HDR pipeline, so on the LDR pipeline they are reported once.
-    ldr_volume_transparency_warned: std::sync::atomic::AtomicBool,
     /// Snapshot of the written mask for the queries currently resolved into the
     /// staging buffer, carried alongside the delayed readback so the reader
     /// knows which slots are valid.
@@ -690,25 +675,6 @@ pub struct ViewportRenderer {
     /// Most recent cluster build readback. Populated when a frame's
     /// `EffectsDebug::cluster_stats_request` was true.
     pub(crate) last_cluster_stats: Option<crate::resources::gpu::clustered::ClusterStats>,
-}
-
-/// Warn once when a cull submission needs more compaction scratch than the
-/// device will bind as one storage buffer, so the drop to arrival-order
-/// submission is visible rather than silent.
-///
-/// The scratch sizes to the submission, so this needs a scene far past what any
-/// device can draw: it takes tens of millions of instances to reach the default
-/// 128 MiB binding limit.
-pub(crate) fn warn_once_cull_plan_capacity(batches: u32, instances: u32) {
-    static WARNED: std::sync::Once = std::sync::Once::new();
-    WARNED.call_once(|| {
-        tracing::warn!(
-            batches,
-            instances,
-            "cull submission needs more compaction scratch than max_storage_buffer_binding_size; \
-             draws submit in cull-arrival order, so frames are not bit-reproducible"
-        );
-    });
 }
 
 impl ViewportRenderer {
@@ -1053,7 +1019,6 @@ impl ViewportRenderer {
             post_effect_stages: Vec::new(),
             next_post_effect_stage_id: 0,
             frame_external_slot_views: Vec::new(),
-            post_effect_slot_warned: 0,
             plugin_frame_index: 0,
             last_stats: crate::renderer::stats::FrameStats::default(),
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
@@ -1099,9 +1064,6 @@ impl ViewportRenderer {
             ts_written_mask: std::sync::atomic::AtomicU32::new(0),
             frame_main_buffer_binds: std::sync::atomic::AtomicU32::new(0),
             frame_main_draw_commands: std::sync::atomic::AtomicU32::new(0),
-            foreground_paint_to_warned: std::sync::atomic::AtomicBool::new(false),
-            ldr_plugin_items_warned: std::sync::atomic::AtomicBool::new(false),
-            ldr_volume_transparency_warned: std::sync::atomic::AtomicBool::new(false),
             ts_pending_mask: 0,
             degradation_tier: 0,
             degradation_shadows_skipped: false,
@@ -1241,9 +1203,54 @@ impl ViewportRenderer {
         })
     }
 
-    /// Performance counters from the last completed frame.
+    /// Performance counters from the last completed frame. `notices` counts
+    /// the notices waiting for [`take_notices`](Self::take_notices) now.
     pub fn last_frame_stats(&self) -> crate::renderer::stats::FrameStats {
-        self.last_stats
+        crate::renderer::stats::FrameStats {
+            notices: self.resources.notices.counts(),
+            ..self.last_stats
+        }
+    }
+
+    /// Take the notices reported since the last call, oldest first.
+    ///
+    /// A notice is a condition the renderer reported while it kept drawing:
+    /// items a path skipped, a stale handle, a texture in the wrong colour space.
+    /// Repeats of one condition arrive as one [`Notice`](crate::Notice) with a
+    /// count and a frame range. Up to 256 are kept between calls; past that the
+    /// oldest are dropped and counted in
+    /// [`FrameStats::notices`](crate::renderer::stats::FrameStats::notices).
+    pub fn take_notices(&mut self) -> Vec<crate::Notice> {
+        self.resources.notices.take()
+    }
+
+    /// Ignore notices below `level`. The default records every severity.
+    pub fn set_notice_level(&mut self, level: crate::Severity) {
+        self.resources.notices.set_level(level);
+    }
+
+    /// The level set with [`set_notice_level`](Self::set_notice_level).
+    pub fn notice_level(&self) -> crate::Severity {
+        self.resources.notices.level()
+    }
+
+    /// Start a frame for the notice sink, and report what the previous frame's
+    /// cull dispatches recorded through `&self`.
+    pub(crate) fn begin_notice_frame(&self) {
+        let notices = &self.resources.notices;
+        notices.begin_frame();
+        if let Some(cull) = self.instancing.cull_resources.ready() {
+            if let Some((batches, instances)) = cull.take_over_capacity() {
+                notices.report(
+                    crate::notice::NoticeKey::single(
+                        crate::NoticeCategory::Pipeline,
+                        "cull_plan_over_capacity",
+                    ),
+                    crate::Severity::Warning,
+                    || crate::NoticeDetail::CullPlanOverCapacity { batches, instances },
+                );
+            }
+        }
     }
 
     /// The LOD level drawn for the item with this pick id on the last prepared
@@ -2363,6 +2370,12 @@ impl ViewportRenderer {
             );
             if !items.is_empty() {
                 self.plugins_with_items.insert(name);
+                let _span = tracing::debug_span!(
+                    target: "viewport_lib::frame",
+                    "item_plugin_prepare",
+                    plugin = name
+                )
+                .entered();
                 let start = web_time::Instant::now();
                 // Constructed per plugin because `Jobs` borrows `&resources`
                 // and the borrow only needs to live for this iteration.
@@ -3705,6 +3718,7 @@ impl ViewportRenderer {
         frame: &FrameData,
         scene_effects: &SceneEffects<'_>,
     ) {
+        self.begin_notice_frame();
         let mut sink = SubmitSink::inline(queue);
         self.prepare_scene_internal(device, queue, frame, scene_effects, &mut sink);
     }

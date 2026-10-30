@@ -742,6 +742,8 @@ impl ViewportRenderer {
         vp_idx: usize,
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
+        let _span =
+            tracing::debug_span!(target: "viewport_lib::frame", "render", vp = vp_idx).entered();
         self.check_output_format(output_view);
         // Draw the LOD-resolved surfaces from prepare (level mesh chosen,
         // culled items hidden), extended with the boundary draws contributed

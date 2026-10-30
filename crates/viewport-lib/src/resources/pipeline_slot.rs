@@ -299,6 +299,12 @@ impl<P: Send + 'static> PipelineSlot<P> {
             PipelineCompilation::Background => {
                 let (tx, rx) = mpsc::channel();
                 compiler.spawn(move || {
+                    let _span = tracing::debug_span!(
+                        target: "viewport_lib::frame",
+                        "pipeline_compile",
+                        pipeline = std::any::type_name::<P>()
+                    )
+                    .entered();
                     // The slot may have been dropped meanwhile; the result is
                     // then thrown away with the channel.
                     let _ = tx.send(build());

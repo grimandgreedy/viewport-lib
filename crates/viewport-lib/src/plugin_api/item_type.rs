@@ -353,6 +353,35 @@ impl<'a> ItemFrameContext<'a> {
     pub fn refs_of<T: 'static>(&self) -> &'a [T] {
         self.items_of::<T>()
     }
+
+    /// Report a condition the host should hear about, such as items this type
+    /// skipped. It reaches the host through `ViewportRenderer::take_notices` as a
+    /// [`NoticeDetail::Plugin`](crate::NoticeDetail::Plugin) in the
+    /// [`Item`](crate::NoticeCategory::Item) category.
+    ///
+    /// Reports with the same `key` coalesce into one notice with a count, so
+    /// reporting every frame is fine. `message` is called only for the first
+    /// report of `key` since the host last took the notices, and not at all when
+    /// `severity` is below the renderer's notice level.
+    pub fn report_notice(
+        &self,
+        severity: crate::Severity,
+        key: &'static str,
+        message: impl FnOnce() -> String,
+    ) {
+        self.resources.notices.report(
+            crate::notice::NoticeKey::new(
+                crate::NoticeCategory::Item,
+                "plugin",
+                [crate::notice::name_id(key), 0],
+            ),
+            severity,
+            || crate::NoticeDetail::Plugin {
+                key,
+                message: message(),
+            },
+        );
+    }
 }
 
 /// Information forwarded to a plugin's `paint`.

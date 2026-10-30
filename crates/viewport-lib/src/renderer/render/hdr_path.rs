@@ -689,6 +689,7 @@ impl ViewportRenderer {
     }
 
     fn hdr_scene_pass(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let _span = tracing::debug_span!(target: "viewport_lib::frame", "scene_pass").entered();
         let frame = ctx.frame;
         let scene_items = ctx.scene_items;
         let vp_idx = ctx.vp_idx;
@@ -1437,6 +1438,7 @@ impl ViewportRenderer {
     }
 
     fn hdr_oit(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let _span = tracing::debug_span!(target: "viewport_lib::frame", "oit_pass").entered();
         let device = ctx.device;
         let queue = ctx.queue;
         let frame = ctx.frame;
@@ -1971,6 +1973,7 @@ impl ViewportRenderer {
     }
 
     fn hdr_post_effects(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let _span = tracing::debug_span!(target: "viewport_lib::frame", "post_effects").entered();
         let vp_idx = ctx.vp_idx;
         let frame = ctx.frame;
         let pp = &frame.effects.post_process;
@@ -2027,18 +2030,31 @@ impl ViewportRenderer {
                     continue;
                 };
                 let view = view.clone();
-                let (builtin_on, slot_bit) = match slot {
-                    crate::plugin_api::PostEffectSlot::Bloom => (ci.bloom, 1u8),
-                    crate::plugin_api::PostEffectSlot::AmbientOcclusion => (ci.ssao, 2),
-                    crate::plugin_api::PostEffectSlot::ContactShadow => (ci.contact_shadows, 4),
+                let (builtin_on, slot_name) = match slot {
+                    crate::plugin_api::PostEffectSlot::Bloom => (ci.bloom, "Bloom"),
+                    crate::plugin_api::PostEffectSlot::AmbientOcclusion => {
+                        (ci.ssao, "AmbientOcclusion")
+                    }
+                    crate::plugin_api::PostEffectSlot::ContactShadow => {
+                        (ci.contact_shadows, "ContactShadow")
+                    }
                 };
-                if builtin_on && self.post_effect_slot_warned & slot_bit == 0 {
-                    self.post_effect_slot_warned |= slot_bit;
-                    tracing::debug!(
-                        "post-effect producer '{}' overrides the enabled built-in {:?} slot; \
-                         switch the built-in off when replacing it",
-                        entry.producer.type_name(),
-                        slot,
+                if builtin_on {
+                    let producer = entry.producer.type_name();
+                    self.resources.notices.report(
+                        crate::notice::NoticeKey::new(
+                            crate::NoticeCategory::Pipeline,
+                            "post_effect_slot_taken",
+                            [
+                                crate::notice::name_id(slot_name),
+                                crate::notice::name_id(producer),
+                            ],
+                        ),
+                        crate::Severity::Info,
+                        || crate::NoticeDetail::PostEffectSlotTaken {
+                            slot: slot_name,
+                            producer: producer.to_string(),
+                        },
                     );
                 }
                 collected.push((slot, view));
@@ -2048,6 +2064,7 @@ impl ViewportRenderer {
     }
 
     fn hdr_tonemap_resolve(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let _span = tracing::debug_span!(target: "viewport_lib::frame", "post_pass").entered();
         let output_view = ctx.output_view;
         let vp_idx = ctx.vp_idx;
         let frame = ctx.frame;
@@ -2322,6 +2339,7 @@ impl ViewportRenderer {
     }
 
     fn hdr_scene_overlays(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let _span = tracing::debug_span!(target: "viewport_lib::frame", "overlay_pass").entered();
         let resources = &self.resources;
         let frame = ctx.frame;
         let output_view = ctx.output_view;
@@ -2488,6 +2506,7 @@ impl ViewportRenderer {
     }
 
     fn hdr_final_overlay(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let _span = tracing::debug_span!(target: "viewport_lib::frame", "overlay_pass").entered();
         let device = ctx.device;
         let queue = ctx.queue;
         let output_view = ctx.output_view;

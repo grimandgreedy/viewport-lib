@@ -160,6 +160,8 @@ pub mod camera;
 pub mod geometry;
 /// Gizmo, snap, selection, picking, and input.
 pub mod interaction;
+/// Notices the renderer reports while it keeps drawing.
+pub mod notice;
 /// Plugin substrate: target descriptors, shared bind layouts, WGSL helpers,
 /// pipeline builders. See [`plugin_api`] for the published extension surface.
 pub mod plugin_api;
@@ -223,6 +225,7 @@ pub use scene::traits;
 
 pub use capabilities::{Capabilities, Requirements, Tier};
 pub use error::{ViewportError, ViewportResult};
+pub use notice::{Notice, NoticeCategory, NoticeCounts, NoticeDetail, Severity};
 
 pub use plugin_api::{
     Handles, PluginInstallCtx, PluginInstaller, PostEffectContext, PostEffectProducer,

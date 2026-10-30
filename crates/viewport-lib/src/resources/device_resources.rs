@@ -277,9 +277,9 @@ pub struct ContentResources {
     pub(crate) material_bind_groups:
         std::collections::HashMap<(u64, u64, u64), crate::gpu::BindGroup>,
     /// Textures found bound into a slot that needs the other colour space,
-    /// recorded as (raw texture id, slot) where the binding is built and drained
-    /// by `prepare` into a `TextureColourSpaceMismatch`. One entry per pair, so a
-    /// scene that keeps redrawing does not grow it.
+    /// recorded as (raw texture id, slot) where the binding is built. One entry
+    /// per pair, so a scene that keeps redrawing does not grow it. Each bind is
+    /// also reported as a notice.
     /// Behind a lock so a binding built from a shared borrow can record one:
     /// item types prepare against `&DeviceResources`.
     pub(crate) texture_slot_mismatches:
@@ -762,6 +762,11 @@ pub struct DeviceResources {
     /// camera bind groups had to be rebuilt. The renderer clears it after
     /// rebuilding the per-viewport groups, which it owns and this cannot reach.
     pub(crate) camera_bind_groups_dirty: bool,
+
+    /// Notices reported while preparing and drawing. Here rather than on the
+    /// renderer so code holding only `&DeviceResources` (plugin contexts, the
+    /// texture slot check) can report.
+    pub(crate) notices: crate::notice::NoticeSink,
 }
 
 /// Per-viewport GPU culling outputs.
@@ -1204,9 +1209,14 @@ impl DeviceResources {
         self.custom_data_written.extend_from_slice(data);
         let bytes = data.len() as u64;
         if self.custom_data_builder.overflowed {
-            tracing::warn!(
-                capacity = crate::resources::custom_data::CUSTOM_DATA_CAPACITY,
-                "per-instance custom-data buffer overflowed; excess instances fell back to the zero block"
+            let capacity = crate::resources::custom_data::CUSTOM_DATA_CAPACITY as u32;
+            self.notices.report(
+                crate::notice::NoticeKey::single(
+                    crate::NoticeCategory::ResourceSlot,
+                    "custom_data_overflow",
+                ),
+                crate::Severity::Warning,
+                || crate::NoticeDetail::CustomDataOverflow { capacity },
             );
         }
         self.frame_upload_bytes += bytes;

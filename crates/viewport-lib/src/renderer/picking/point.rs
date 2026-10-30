@@ -59,7 +59,7 @@ impl ViewportRenderer {
         use parry3d::query::{Ray, RayCast};
 
         if !self.cpu_pick_cache_enabled {
-            warn_pick_cache_disabled();
+            warn_pick_cache_disabled(&self.resources.notices);
             return None;
         }
 

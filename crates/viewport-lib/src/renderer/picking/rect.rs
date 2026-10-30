@@ -35,7 +35,7 @@ impl ViewportRenderer {
         let mut result = PickRectResult::default();
 
         if !self.cpu_pick_cache_enabled {
-            warn_pick_cache_disabled();
+            warn_pick_cache_disabled(&self.resources.notices);
             return result;
         }
 
