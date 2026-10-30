@@ -202,7 +202,7 @@ mod tests {
             let deformer_id = ctx.renderer.resources_mut().register_deformer(
                 device,
                 DeformerDesc {
-                    name: "test_feature",
+                    name: "test_feature".into(),
                     stage: DeformStage::ObjectSpace,
                     priority: 0,
                     wgsl_body: IDENTITY_BODY.to_string(),

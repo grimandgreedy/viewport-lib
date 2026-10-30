@@ -51,7 +51,7 @@ fn debug_vis_toggle_rebuilds_lit_pipelines() {
 /// that runs it lands somewhere else on screen.
 fn shift_deformer() -> viewport_lib::resources::DeformerDesc {
     viewport_lib::resources::DeformerDesc {
-        name: "shift_x",
+        name: "shift_x".into(),
         stage: viewport_lib::resources::DeformStage::ObjectSpace,
         priority: 0,
         wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    if deform_slot_stride(ctx.slot) > 0u {\n        o.position.x = o.position.x + deform_read_f32(ctx.slot, v.vertex_index, 0u);\n    }\n    return o;\n}\n".to_string(),

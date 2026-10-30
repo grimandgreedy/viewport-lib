@@ -215,7 +215,7 @@ impl CutDeformer {
         let id = resources.register_deformer(
             device,
             DeformerDesc {
-                name: DEFORMER_NAME,
+                name: DEFORMER_NAME.into(),
                 stage: DeformStage::WorldSpace,
                 // `deform` moves nothing and `keep` runs after every stage, so
                 // the cut sees the final position whatever its place here.

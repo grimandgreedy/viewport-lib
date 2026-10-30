@@ -584,7 +584,7 @@ fn an_attribute_fed_deform_slot_follows_a_record_move() {
         .register_deformer(
             &device,
             viewport_lib::resources::DeformerDesc {
-                name: "lift_x",
+                name: "lift_x".into(),
                 stage: viewport_lib::resources::DeformStage::ObjectSpace,
                 priority: 0,
                 wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    if deform_slot_stride(ctx.slot) > 0u {\n        o.position.x = o.position.x + deform_read_f32(ctx.slot, v.vertex_index, 0u);\n    }\n    return o;\n}\n".to_string(),

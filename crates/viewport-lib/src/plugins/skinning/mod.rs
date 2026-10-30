@@ -11,8 +11,9 @@
 //! `attach_palette` (or the `begin_upload_weights` / event forms) ->
 //! `detach_weights` / `detach_palette` for individual meshes, or `uninstall`
 //! to reclaim every attached buffer at once. The deformer body stays
-//! registered for the session (its slot is an append-only registry entry), so
-//! re-installing after `uninstall` returns the same `DeformerId` at no cost.
+//! registered for the session (it holds a reserved slot that cannot be
+//! removed), so re-installing after `uninstall` returns the same `DeformerId`
+//! at no cost.
 //!
 //! Hosts that do not need GPU skinning never call `install` and pay nothing.
 //! Static meshes pay nothing either way: the per-object `deform_flags`
@@ -198,7 +199,7 @@ impl SkinningPlugin {
             Some(id) => id,
             None => {
                 let desc = DeformerDesc {
-                    name: SKINNING_DEFORMER_NAME,
+                    name: SKINNING_DEFORMER_NAME.into(),
                     stage: DeformStage::ObjectSpace,
                     priority: DEFORM_PRIORITY_SKINNING,
                     wgsl_body: SKINNING_DEFORMER_BODY.to_string(),
@@ -389,9 +390,9 @@ impl SkinningPlugin {
     /// lifecycle is `install` -> `attach_weights` / `attach_palette` (or the
     /// `begin_upload_weights` / event forms) -> `uninstall`.
     ///
-    /// The deformer body itself stays registered for the session: `DeformerId`
-    /// is an append-only registry slot, so a later [`install`](Self::install)
-    /// returns the same id at no cost. Per-instance palettes are keyed by
+    /// The deformer body itself stays registered for the session: skinning
+    /// holds a reserved slot that `remove_deformer` refuses, so a later
+    /// [`install`](Self::install) returns the same id at no cost. Per-instance palettes are keyed by
     /// `(mesh, instance)` and are not tracked here; reclaim them with
     /// [`detach_palette`](Self::detach_palette) or by freeing the meshes before
     /// uninstalling if their buffers must go immediately.

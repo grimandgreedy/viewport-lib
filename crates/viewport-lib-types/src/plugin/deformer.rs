@@ -4,6 +4,8 @@
 //! registration that consumes it (shader composition + validation, pipeline
 //! rebuild) stays in `viewport-lib`; this is just the description.
 
+use std::borrow::Cow;
+
 /// Where in the deformation chain a deformer executes.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum DeformStage {
@@ -117,8 +119,9 @@ pub enum DeformStage {
 pub struct DeformerDesc {
     /// Deformer name. Must be a valid WGSL identifier and unique across the
     /// registry. The composer uses it as the prefix for every top-level
-    /// declaration spliced from `wgsl_body`.
-    pub name: &'static str,
+    /// declaration spliced from `wgsl_body`. A `&'static str` or a `String`
+    /// converts with `.into()`.
+    pub name: Cow<'static, str>,
     /// Which side of the model transform the body runs on.
     pub stage: DeformStage,
     /// Execution order within the stage; lower runs first. Ties break by name.

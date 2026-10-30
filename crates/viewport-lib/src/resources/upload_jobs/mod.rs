@@ -1210,6 +1210,7 @@ impl super::DeviceResources {
         let bytes_before = self.frame_upload_bytes;
         if self.scene_tier.is_built() {
             self.scene_tier.ibl.write_brdf_lut(queue);
+            self.scene_tier.deform.flush_params_clear(queue);
         }
         // Stage 1: advance the runner and drain immediate (failure /
         // no-apply) completions. Their callbacks fire here regardless of

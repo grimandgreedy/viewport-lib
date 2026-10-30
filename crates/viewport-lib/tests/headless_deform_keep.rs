@@ -38,7 +38,7 @@ fn keep(v: DeformVertex, ctx: DeformContext) -> f32 {
 
 fn plane_cut() -> DeformerDesc {
     DeformerDesc {
-        name: "test_plane_cut",
+        name: "test_plane_cut".into(),
         stage: DeformStage::WorldSpace,
         priority: 0,
         wgsl_body: PLANE_CUT.to_string(),

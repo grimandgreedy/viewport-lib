@@ -471,14 +471,21 @@ pub enum ViewportError {
         reason: &'static str,
     },
 
-    /// No deformer slots remain. The registry has a fixed budget set by the
-    /// vertex-stage storage-buffer limit; once all slots are taken, callers
-    /// must release one with `unregister_deformer` (when implemented) before
+    /// No deformer slots remain. The registry has a fixed number of slots;
+    /// once all are taken, release one with `remove_deformer` before
     /// registering another.
     #[error("deformer registry exhausted: {max} slots in use")]
     DeformSlotsExhausted {
         /// Total number of slots the registry exposes.
         max: usize,
+    },
+
+    /// The deformer is one the renderer registers for itself (skinning) and
+    /// cannot be removed.
+    #[error("deformer '{name}' is built in and cannot be removed")]
+    DeformerReserved {
+        /// The built-in deformer's name.
+        name: String,
     },
 
     /// A deformer with this name is already registered.

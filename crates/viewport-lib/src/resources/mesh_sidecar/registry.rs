@@ -42,17 +42,22 @@ pub const DEFORM_SLOT_COUNT_PUB: usize = REGISTRY_INTERNAL_SLOT_START;
 pub const DEFORM_PARAMS_PER_SLOT_PUB: usize =
     crate::resources::mesh_sidecar::deform::DEFORM_PARAMS_PER_SLOT;
 
-/// Handle to a registered deformer. The inner index is the slot the registry
-/// assigned; only used internally to address the slot data and flag bit.
-/// An append-only registry handle: deformers are registered once and kept for
-/// the session.
+/// Handle to a registered deformer, returned by `register_deformer` and taken
+/// by `remove_deformer`.
+///
+/// Carries the slot the registry assigned and that slot's generation. Removing
+/// a deformer bumps its slot's generation, so an id kept past its removal no
+/// longer matches when a later registration reuses the slot.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct DeformerId(pub(crate) usize);
+pub struct DeformerId {
+    pub(crate) slot: u8,
+    pub(crate) generation: u32,
+}
 
 impl DeformerId {
     /// Returns the slot index the registry assigned at registration.
     pub fn slot(&self) -> usize {
-        self.0
+        self.slot as usize
     }
 }
 
@@ -92,7 +97,7 @@ fn build_stage_calls(stored: &[StoredDeformer], stage: DeformStage) -> String {
         a.desc
             .priority
             .cmp(&b.desc.priority)
-            .then_with(|| a.desc.name.cmp(b.desc.name))
+            .then_with(|| a.desc.name.cmp(&b.desc.name))
     });
     let mut out = String::new();
     for d in entries {
@@ -109,7 +114,7 @@ fn build_stage_calls(stored: &[StoredDeformer], stage: DeformStage) -> String {
 /// prefixed body, the same way the shading composer detects its hooks, so a
 /// local or a field that happens to be called `keep` does not count.
 pub(crate) fn defines_keep(d: &StoredDeformer) -> bool {
-    identifier_prefix(d.desc.name, &d.desc.wgsl_body)
+    identifier_prefix(&d.desc.name, &d.desc.wgsl_body)
         .contains(&format!("fn {name}__keep(", name = d.desc.name))
 }
 
@@ -245,7 +250,7 @@ pub(crate) fn compose_shader(base: &str, stored: &[StoredDeformer]) -> String {
             slot = d.slot,
             stage = d.desc.stage,
         ));
-        bodies.push_str(&identifier_prefix(d.desc.name, &d.desc.wgsl_body));
+        bodies.push_str(&identifier_prefix(&d.desc.name, &d.desc.wgsl_body));
         bodies.push('\n');
     }
 
@@ -375,7 +380,7 @@ mod tests {
     fn desc(name: &'static str, stage: DeformStage, priority: i32, body: &str) -> StoredDeformer {
         StoredDeformer {
             desc: DeformerDesc {
-                name,
+                name: name.into(),
                 stage,
                 priority,
                 wgsl_body: body.to_string(),
@@ -403,12 +408,8 @@ mod tests {
     fn allocate_slot_returns_exhausted_when_host_range_full() {
         let mut stored = Vec::<StoredDeformer>::new();
         for slot in 0..REGISTRY_INTERNAL_SLOT_START {
-            let mut d = desc(
-                Box::leak(format!("d{slot}").into_boxed_str()),
-                DeformStage::ObjectSpace,
-                0,
-                "",
-            );
+            let mut d = desc("d", DeformStage::ObjectSpace, 0, "");
+            d.desc.name = format!("d{slot}").into();
             d.slot = slot;
             stored.push(d);
         }
