@@ -9,7 +9,8 @@
 // Each mesh shader includes this file itself, next to brdf.wgsl and
 // ambient.wgsl. `pbr_ambient` reads the including shader's `lights_uniform`,
 // `object`, `lightmap_tex`, `obj_sampler`, `FEAT_LIGHTMAP`, `FEAT_LIGHT_PROBE`
-// and `lightmap_directional_factor`. Nothing here takes a screen-space
+// and `lightmap_directional_factor`; the layer helpers read `FEAT_CLEARCOAT`,
+// `FEAT_SHEEN` and `FEAT_ANISOTROPY`. Nothing here takes a screen-space
 // derivative: the caller supplies the specular AA kernel and the reflection
 // footprint from uniform control flow.
 // ---------------------------------------------------------------------------
@@ -48,6 +49,9 @@ struct PbrPixel {
     // occlusion derived from it, N.V and alpha (spec_occlusion).
     diffuse_ao: f32,
     spec_ao: f32,
+    // The clear coat, sheen and anisotropy over the base; zero flags without
+    // them. Filled by pbr_resolve_layers.
+    layers: ViewportBrdfLayers,
 };
 
 // Resolve the material inputs: clamp metallic, floor roughness, apply the
@@ -132,6 +136,92 @@ fn pbr_apply_override(px: PbrPixel, ov: SurfaceOverride) -> PbrPixel {
     return out;
 }
 
+// The layer bits this pipeline compiles in.
+fn pbr_layer_features() -> u32 {
+    return select(0u, VIEWPORT_BRDF_LAYER_CLEARCOAT, FEAT_CLEARCOAT)
+         | select(0u, VIEWPORT_BRDF_LAYER_SHEEN, FEAT_SHEEN)
+         | select(0u, VIEWPORT_BRDF_LAYER_ANISOTROPY, FEAT_ANISOTROPY);
+}
+
+// Whether this pipeline compiles any layer in.
+fn pbr_layers_compiled() -> bool {
+    return FEAT_CLEARCOAT || FEAT_SHEEN || FEAT_ANISOTROPY;
+}
+
+// Read the material's layers onto a resolved pixel. `layers0` and `layers1`
+// are the material block's lanes and `item_flags` its flag word (layer bits
+// 8..10). The coat raises the base roughness toward its own and the
+// split-sum terms are derived again; the sheen takes its albedo from the
+// BRDF LUT's blue lane; anisotropy turns the tangent frame from
+// `world_tangent` (a frame built from N when the mesh has no tangent) by
+// its rotation. Runs after any surface hook, so an authored roughness is
+// coated too.
+fn pbr_resolve_layers(
+    px: PbrPixel,
+    N: vec3<f32>,
+    world_tangent: vec4<f32>,
+    layers0: vec4<f32>,
+    layers1: vec4<f32>,
+    item_flags: u32,
+    saa_kernel: f32,
+) -> PbrPixel {
+    var out = px;
+    let flags = (item_flags >> 8u) & pbr_layer_features();
+    out.layers.flags = flags;
+    if (flags & VIEWPORT_BRDF_LAYER_CLEARCOAT) != 0u {
+        let coat_r = viewport_brdf_specular_aa_roughness_kernel(
+            max(layers0.y, MIN_PERCEPTUAL_ROUGHNESS), saa_kernel);
+        out.layers.clearcoat = layers0.x;
+        out.layers.clearcoat_roughness = coat_r;
+        let r = mix(px.perceptual_roughness, max(px.perceptual_roughness, coat_r), layers0.x);
+        out.perceptual_roughness = r;
+        out.alpha = r * r;
+        out.dfg = sample_brdf_lut(out.n_dot_v, r);
+        out.energy_comp = viewport_brdf_energy_compensation(out.f0, out.dfg);
+        out.spec_ao = spec_occlusion(out.n_dot_v, out.diffuse_ao, out.alpha);
+    }
+    if (flags & VIEWPORT_BRDF_LAYER_SHEEN) != 0u {
+        let sr = max(layers1.w, MIN_PERCEPTUAL_ROUGHNESS);
+        out.layers.sheen_colour = layers1.xyz;
+        out.layers.sheen_roughness = sr;
+        out.layers.sheen_dfg = sample_brdf_lut_sheen(out.n_dot_v, sr);
+        out.layers.sheen_scaling = viewport_brdf_sheen_scaling(layers1.xyz, out.layers.sheen_dfg);
+    }
+    if (flags & VIEWPORT_BRDF_LAYER_ANISOTROPY) != 0u {
+        var t = world_tangent.xyz - dot(world_tangent.xyz, N) * N;
+        let t_len = length(t);
+        if t_len > 1e-5 {
+            t = t / t_len;
+        } else {
+            let up = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(N.z) < 0.9);
+            t = normalize(cross(up, N));
+        }
+        let handedness = select(world_tangent.w, 1.0, world_tangent.w == 0.0);
+        let b = cross(N, t) * handedness;
+        let c = cos(layers0.w);
+        let s = sin(layers0.w);
+        out.layers.anisotropy = layers0.z;
+        out.layers.anisotropy_t = t * c + b * s;
+        out.layers.anisotropy_b = b * c - t * s;
+    }
+    return out;
+}
+
+// The normal the environment's reflection is taken about: N, or for an
+// anisotropic surface N bent toward the plane across the stretch (Filament's
+// bent reflection vector).
+fn pbr_reflection_normal(px: PbrPixel, N: vec3<f32>, V: vec3<f32>) -> vec3<f32> {
+    if !FEAT_ANISOTROPY || (px.layers.flags & VIEWPORT_BRDF_LAYER_ANISOTROPY) == 0u {
+        return N;
+    }
+    let a = px.layers.anisotropy;
+    let dir = select(px.layers.anisotropy_t, px.layers.anisotropy_b, a >= 0.0);
+    let at = cross(dir, V);
+    let an = cross(at, dir);
+    let bend = abs(a) * clamp(5.0 * px.perceptual_roughness, 0.0, 1.0);
+    return normalize(mix(N, an, bend));
+}
+
 // Micro-shadowing (Chan 2018): material AO read as a cone of visibility, so a
 // cavity is shadowed where the light grazes it. Multiplies a directional
 // light's shadow factor; 1 where N.L clears the cone.
@@ -143,8 +233,16 @@ fn pbr_micro_shadow(n_dot_l: f32, ao: f32) -> f32 {
 
 // One light's direct contribution. `radiance` is the light's colour times its
 // attenuation and shadow. The specular lobe carries the energy compensation.
-// Exactly zero when N.L <= 0.
+// With layers, the sheen and the coat cover the base. Exactly zero when
+// N.L <= 0.
 fn pbr_direct(px: PbrPixel, N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, radiance: vec3<f32>) -> vec3<f32> {
+    if pbr_layers_compiled() && px.layers.flags != 0u {
+        var ly = px.layers;
+        ly.flags = ly.flags & pbr_layer_features();
+        return viewport_brdf_light_contrib_layered(N, V, L, radiance, px.diffuse_colour,
+                                                   px.metallic, px.perceptual_roughness,
+                                                   px.f0, px.f90, px.energy_comp, ly);
+    }
     return viewport_brdf_light_contrib_f90(N, V, L, radiance, px.diffuse_colour, px.metallic,
                                            px.perceptual_roughness, px.f0, px.f90,
                                            px.energy_comp);
@@ -200,15 +298,16 @@ fn pbr_ambient(
     let ambient_kd = (vec3<f32>(1.0) - F_Schlick_roughness_f90(max(dot(N, V), 0.001), F0, px.f90,
                                                                 roughness))
         * (1.0 - metallic);
+    let Nr = pbr_reflection_normal(px, N, V);
     if lights_uniform.ibl_enabled != 0u {
         var ibl: IblContrib;
         if lights_uniform.env_zone_count != 0u {
-            ibl = ibl_ambient_zoned(N, V, base_colour, metallic, roughness, F0, px.f90,
+            ibl = ibl_ambient_zoned(N, Nr, V, base_colour, metallic, roughness, F0, px.f90,
                                     diffuse_occ, spec_occ, lights_uniform.ibl_intensity,
                                     lights_uniform.ibl_rotation, refl_dr, world_pos,
                                     lights_uniform.env_zone_count, px.dfg, px.energy_comp);
         } else {
-            ibl = ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0, px.f90,
+            ibl = ibl_ambient_grad(N, Nr, V, base_colour, metallic, roughness, F0, px.f90,
                                    diffuse_occ, spec_occ, lights_uniform.ibl_intensity,
                                    lights_uniform.ibl_rotation, refl_dr, px.dfg, px.energy_comp);
         }
@@ -259,10 +358,55 @@ fn pbr_ambient(
         ambient_lum = dot(ambient, lum_weights);
     }
 
+    if pbr_layers_compiled() && px.layers.flags != 0u {
+        ambient = pbr_ambient_layers(px, ambient, N, V, refl_dr);
+    }
+
     out.ambient = ambient;
     out.ibl_diffuse = ibl_diffuse;
     out.ibl_specular = ibl_specular;
     out.ambient_kd = ambient_kd;
     out.ambient_lum = ambient_lum;
     return out;
+}
+
+// The environment's radiance from direction `R`, prefiltered for perceptual
+// `roughness`: the environment (default layer) when one is bound, else the
+// hemisphere ambient.
+fn pbr_layer_radiance(R: vec3<f32>, roughness: f32, refl_dr: f32) -> vec3<f32> {
+    if lights_uniform.ibl_enabled != 0u {
+        return sample_ibl_prefiltered_grad(R, roughness, lights_uniform.ibl_rotation, refl_dr)
+            * lights_uniform.ibl_intensity * lights_uniform.ibl_specular_scale;
+    }
+    let hemi_t = clamp(R.z * 0.5 + 0.5, 0.0, 1.0);
+    let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
+    return vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
+}
+
+// The layers over the indirect term: the sheen dims the base and adds its
+// own reflection, then the coat dims both and adds its reflection, each
+// taking the specular occlusion. Environment zones and probes light the
+// base only; the layers read the default environment.
+fn pbr_ambient_layers(
+    px: PbrPixel,
+    ambient: vec3<f32>,
+    N: vec3<f32>,
+    V: vec3<f32>,
+    refl_dr: f32,
+) -> vec3<f32> {
+    let flags = px.layers.flags & pbr_layer_features();
+    let R = reflect(-V, N);
+    var a = ambient;
+    if (flags & VIEWPORT_BRDF_LAYER_SHEEN) != 0u {
+        let ly = px.layers;
+        a = a * ly.sheen_scaling
+            + ly.sheen_colour * ly.sheen_dfg * pbr_layer_radiance(R, ly.sheen_roughness, refl_dr)
+              * px.spec_ao;
+    }
+    if (flags & VIEWPORT_BRDF_LAYER_CLEARCOAT) != 0u {
+        let fc = viewport_brdf_coat_fresnel(px.n_dot_v, px.layers.clearcoat);
+        a = a * (1.0 - fc)
+            + pbr_layer_radiance(R, px.layers.clearcoat_roughness, refl_dr) * (fc * px.spec_ao);
+    }
+    return a;
 }

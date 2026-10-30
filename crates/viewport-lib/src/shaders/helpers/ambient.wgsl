@@ -186,6 +186,15 @@ fn sample_brdf_lut(NdotV: f32, roughness: f32) -> vec2<f32> {
     return textureSampleLevel(ibl_brdf_lut, ibl_sampler, vec2<f32>(NdotV, roughness), 0.0).rg;
 }
 
+/// The Charlie sheen lobe's directional albedo from the LUT's blue lane, at
+/// the sheen's perceptual roughness. N.V is held inside the outer texel
+/// centres: `ibl_sampler` repeats in U, and past them the tap would blend in
+/// the grazing column, where this lane is large.
+fn sample_brdf_lut_sheen(NdotV: f32, roughness: f32) -> f32 {
+    let x = clamp(NdotV, 0.5 / 128.0, 1.0 - 0.5 / 128.0);
+    return textureSampleLevel(ibl_brdf_lut, ibl_sampler, vec2<f32>(x, roughness), 0.0).b;
+}
+
 fn F_Schlick_roughness(cos_theta: f32, F0: vec3<f32>, roughness: f32) -> vec3<f32> {
     return viewport_brdf_f_schlick_roughness(cos_theta, F0, roughness);
 }
@@ -205,9 +214,12 @@ struct IblContrib {
 /// control flow. `dfg` is the BRDF LUT tap at (N.V, roughness) and `ec` the
 /// specular energy compensation (`viewport_brdf_energy_compensation`).
 /// `diffuse_occ` and `spec_occ` are the occlusion the diffuse and specular
-/// terms take (see `ao_occlusion`). `f90` is the grazing reflectance.
+/// terms take (see `ao_occlusion`). `f90` is the grazing reflectance. The
+/// reflection is taken about `Nr`: N, or the bent normal of an anisotropic
+/// surface.
 fn ibl_ambient_grad(
     N: vec3<f32>,
+    Nr: vec3<f32>,
     V: vec3<f32>,
     base_colour: vec3<f32>,
     metallic: f32,
@@ -222,7 +234,7 @@ fn ibl_ambient_grad(
     dfg: vec2<f32>,
     ec: vec3<f32>,
 ) -> IblContrib {
-    return ibl_ambient_layer_grad(N, V, base_colour, metallic, roughness, F0, f90, diffuse_occ,
+    return ibl_ambient_layer_grad(N, Nr, V, base_colour, metallic, roughness, F0, f90, diffuse_occ,
                                   spec_occ, intensity, rotation, dr, 0, vec3<f32>(0.0),
                                   vec3<f32>(0.0), vec3<f32>(1.0), 0u, dfg, ec);
 }
@@ -248,7 +260,7 @@ fn ibl_ambient(
     let dfg = sample_brdf_lut(n_dot_v, roughness);
     let ec = viewport_brdf_energy_compensation(F0, dfg);
     let so = spec_occlusion(n_dot_v, ao, roughness * roughness);
-    return ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0, 1.0, vec3<f32>(ao),
+    return ibl_ambient_grad(N, N, V, base_colour, metallic, roughness, F0, 1.0, vec3<f32>(ao),
                             vec3<f32>(so), intensity, rotation, dr, dfg, ec);
 }
 
@@ -312,9 +324,11 @@ fn ao_occlusion(v: f32, albedo: vec3<f32>, multi_bounce: bool) -> vec3<f32> {
 /// `layer`, with the occlusion terms of `ibl_ambient_grad`. When
 /// `parallax != 0`, box-projects the reflection vector and irradiance normal
 /// against the proxy box `[center +/- half]` (a local reflection probe).
-/// The split-sum bias term, the grazing reflection, is scaled by `f90`.
+/// The split-sum bias term, the grazing reflection, is scaled by `f90`. The
+/// reflection is taken about `Nr`.
 fn ibl_ambient_layer_grad(
     N: vec3<f32>,
+    Nr: vec3<f32>,
     V: vec3<f32>,
     base_colour: vec3<f32>,
     metallic: f32,
@@ -348,7 +362,7 @@ fn ibl_ambient_layer_grad(
     let diffuse_ibl = kD * irradiance * base_colour * diffuse_occ * intensity;
 
     // Specular IBL. Parallax-correct the reflection vector for a local probe.
-    var R = reflect(-V, N);
+    var R = reflect(-V, Nr);
     if parallax != 0u {
         R = parallax_box(R, world_pos, box_center, box_half);
     }
@@ -406,6 +420,7 @@ fn env_zone_weight(p: vec3<f32>, z: EnvZone) -> f32 {
 /// `count > 0`.
 fn ibl_ambient_zoned(
     N: vec3<f32>,
+    Nr: vec3<f32>,
     V: vec3<f32>,
     base_colour: vec3<f32>,
     metallic: f32,
@@ -432,7 +447,7 @@ fn ibl_ambient_zoned(
             continue;
         }
         let c = ibl_ambient_layer_grad(
-            N, V, base_colour, metallic, roughness, F0, f90, diffuse_occ, spec_occ, z.intensity,
+            N, Nr, V, base_colour, metallic, roughness, F0, f90, diffuse_occ, spec_occ, z.intensity,
             z.rotation, dr, i32(z.layer), world_pos, z.center, z.half_extents, z.parallax, dfg, ec,
         );
         diffuse = diffuse + c.diffuse * w;
@@ -443,7 +458,7 @@ fn ibl_ambient_zoned(
     if default_w > 0.0 {
         // The default environment (layer 0) is distant: no parallax.
         let c0 = ibl_ambient_layer_grad(
-            N, V, base_colour, metallic, roughness, F0, f90, diffuse_occ, spec_occ, intensity,
+            N, Nr, V, base_colour, metallic, roughness, F0, f90, diffuse_occ, spec_occ, intensity,
             rotation, dr, 0, world_pos, vec3<f32>(0.0), vec3<f32>(1.0), 0u, dfg, ec,
         );
         diffuse = diffuse + c0.diffuse * default_w;
