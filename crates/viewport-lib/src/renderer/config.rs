@@ -64,6 +64,12 @@ pub struct RendererConfig {
     /// [`Capabilities::capped_at`](crate::Capabilities::capped_at) for what it
     /// does and does not model. Default `None`.
     pub max_tier: Option<crate::capabilities::Tier>,
+    /// A device-lost watcher the host installed on the device, shared with
+    /// this renderer. `None` has the renderer install its own, which replaces
+    /// any lost callback set on the device before: wgpu keeps one per device.
+    /// Pass one when several renderers share a device, or when the host sets
+    /// the callback itself. Default `None`.
+    pub device_lost_watcher: Option<crate::renderer::DeviceLostWatcher>,
 }
 
 impl RendererConfig {
@@ -78,6 +84,7 @@ impl RendererConfig {
             downlevel_capabilities: None,
             backend: None,
             max_tier: None,
+            device_lost_watcher: None,
         }
     }
 
@@ -122,6 +129,13 @@ impl RendererConfig {
     /// [`max_tier`](Self::max_tier).
     pub fn with_max_tier(mut self, tier: crate::capabilities::Tier) -> Self {
         self.max_tier = Some(tier);
+        self
+    }
+
+    /// Share a watcher the host installed on the device, rather than have the
+    /// renderer install its own. See [`device_lost_watcher`](Self::device_lost_watcher).
+    pub fn with_device_lost_watcher(mut self, watcher: crate::renderer::DeviceLostWatcher) -> Self {
+        self.device_lost_watcher = Some(watcher);
         self
     }
 

@@ -1629,6 +1629,9 @@ impl DeviceResources {
                 (scene_tier, cube_mesh, plugin_texture_budget)
             });
             if let Some(error) = error {
+                if crate::renderer::device_lost::is_device_lost_error(&error) {
+                    return Err(crate::renderer::device_lost::scope_lost_error(&error));
+                }
                 return Err(crate::ViewportError::DeviceUnsupported {
                     reason: format!("building the scene resources failed validation: {error}"),
                 });
@@ -1761,6 +1764,8 @@ impl DeviceResources {
             occlusion_culling_enabled: false,
             force_po_discard: false,
             notices: crate::notice::NoticeSink::new(),
+            device_lost: crate::renderer::DeviceLostWatcher::detached(),
+            device_lost_reported: std::sync::atomic::AtomicBool::new(false),
             mesh_universal: dev_knob!("VIEWPORT_MESH_UNIVERSAL").is_some(),
             frame_feature_sets_capped: std::sync::atomic::AtomicU32::new(0),
             frame_stand_in_draws: std::sync::atomic::AtomicU32::new(0),

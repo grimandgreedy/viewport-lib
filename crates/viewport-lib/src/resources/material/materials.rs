@@ -26,6 +26,7 @@ impl DeviceResources {
         &mut self,
         material: Material,
     ) -> crate::error::ViewportResult<MaterialId> {
+        self.require_live()?;
         self.validate_plugin_values(&material)?;
         let block = self.build_material_block(&material, &ItemShading::for_material(&material));
         let Some(index) = self.material_table.alloc(block, self.material_gpu_limit) else {
@@ -60,6 +61,7 @@ impl DeviceResources {
         id: MaterialId,
         material: Material,
     ) -> crate::error::ViewportResult<()> {
+        self.require_live()?;
         let Some(stored) = self.content.materials.get(id) else {
             return Err(self.content.materials.stale(id));
         };

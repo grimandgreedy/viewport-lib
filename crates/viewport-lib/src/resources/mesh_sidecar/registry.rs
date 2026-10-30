@@ -348,6 +348,9 @@ pub(crate) fn validate_with_wgpu(
         crate::resources::builders::wgsl_module(device, label, source)
     });
     if let Some(err) = captured {
+        if crate::renderer::device_lost::is_device_lost_error(&err) {
+            return Err(crate::renderer::device_lost::scope_lost_error(&err));
+        }
         return Err(ViewportError::DeformShaderInvalid {
             reason: format!("{label}: {err}"),
         });

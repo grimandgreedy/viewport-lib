@@ -15,8 +15,9 @@ use super::*;
 use crate::gpu::util::DeviceExt;
 
 /// Linear HDR radiance read back from a capture: row-major `width * height`
-/// RGBA texels, four `f32` channels each.
-#[derive(Clone, Debug)]
+/// RGBA texels, four `f32` channels each. Zero by zero and empty when the
+/// device was lost.
+#[derive(Clone, Debug, Default)]
 pub struct CapturedHdr {
     /// Capture width in pixels.
     pub width: u32,
@@ -79,6 +80,9 @@ impl ViewportRenderer {
         camera: RenderCamera,
         size: u32,
     ) -> CapturedHdr {
+        if self.device_lost_now() {
+            return CapturedHdr::default();
+        }
         // Hands the result back, so nothing may be skipped while it compiles.
         let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let size = size.max(1);
@@ -272,6 +276,9 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> CapturedHdr {
+        if self.device_lost_now() {
+            return CapturedHdr::default();
+        }
         // Hands the result back, so nothing may be skipped while it compiles.
         let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let face_size = face_size.max(1);
@@ -475,6 +482,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         capture: &CapturedHdrGpu,
     ) -> CapturedHdr {
+        if self.device_lost_now() {
+            return CapturedHdr::default();
+        }
         let rgba = Self::readback_rgba16f(
             device,
             queue,
@@ -697,6 +707,7 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> crate::error::ViewportResult<crate::resources::EnvironmentZone> {
+        self.resources.require_live()?;
         // Hands the result back, so nothing may be skipped while it compiles.
         let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let zones = self.capture_reflection_probes(
@@ -728,6 +739,7 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> crate::error::ViewportResult<Vec<crate::resources::EnvironmentZone>> {
+        self.resources.require_live()?;
         // Hands the result back, so nothing may be skipped while it compiles.
         let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let mut zones = Vec::with_capacity(probes.len());

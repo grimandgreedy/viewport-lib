@@ -190,6 +190,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> Option<PickHit> {
+        if self.device_lost_now() {
+            return None;
+        }
         // Nothing pickable is drawn on the overlay-only tier. The compatibility tier
         // has no GPU pick pass, so it picks its surfaces on the CPU.
         let backend = if self.resources.scene_tier.is_built() {
@@ -426,6 +429,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> PickRectResult {
+        if self.device_lost_now() {
+            return PickRectResult::default();
+        }
         // Nothing pickable is drawn on the overlay-only tier. The compatibility tier
         // has no GPU pick pass, so it picks on the CPU.
         let backend = if self.resources.scene_tier.is_built() {
@@ -474,7 +480,7 @@ impl ViewportRenderer {
         mask: PickMask,
     ) -> Option<SnapHit> {
         // Nothing pickable is drawn without the scene resources.
-        if !self.resources.scene_tier.is_built() {
+        if !self.resources.scene_tier.is_built() || self.device_lost_now() {
             return None;
         }
         self.snap_query_gpu(device, queue, cursor, radius_px, frame, mask)

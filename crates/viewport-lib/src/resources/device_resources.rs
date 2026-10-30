@@ -420,9 +420,46 @@ impl SceneTierSlot {
 }
 
 impl DeviceResources {
+    /// What the device-lost callback reported, once the device is lost or
+    /// destroyed. The first call that sees it reports a `Device` notice.
+    pub(crate) fn device_lost_info(&self) -> Option<crate::renderer::DeviceLostInfo> {
+        if !self.device_lost.is_lost_or_destroyed() {
+            return None;
+        }
+        let info = self
+            .device_lost
+            .info()
+            .unwrap_or_else(|| crate::renderer::DeviceLostInfo {
+                reason: crate::gpu::DeviceLostReason::Unknown,
+                message: String::new(),
+            });
+        if !self
+            .device_lost_reported
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            let reason = format!("{:?}: {}", info.reason, info.message);
+            self.notices.report(
+                crate::notice::NoticeKey::single(crate::NoticeCategory::Device, "device_lost"),
+                crate::Severity::Error,
+                || crate::NoticeDetail::DeviceLost { reason },
+            );
+        }
+        Some(info)
+    }
+
+    /// `Err(DeviceLost)` once the device is lost or destroyed.
+    pub(crate) fn require_live(&self) -> Result<(), crate::ViewportError> {
+        match self.device_lost_info() {
+            Some(info) => Err(info.to_error()),
+            None => Ok(()),
+        }
+    }
+
     /// `Err(TierUnsupported)` when the scene resources were not built, for
-    /// the calls that add scene content.
+    /// the calls that add scene content. `Err(DeviceLost)` first, once the
+    /// device is lost.
     pub(crate) fn require_scene_tier(&self) -> Result<(), crate::ViewportError> {
+        self.require_live()?;
         if self.scene_tier.is_built() {
             Ok(())
         } else {
@@ -436,6 +473,7 @@ impl DeviceResources {
     /// `Err(TierUnsupported)` when there is no lit group 0 for an item type
     /// to bind: the overlay-only tier.
     pub(crate) fn require_lit_group0(&self) -> Result<(), crate::ViewportError> {
+        self.require_live()?;
         if self.lit_group0_layouts().is_some() {
             Ok(())
         } else {
@@ -767,6 +805,12 @@ pub struct DeviceResources {
     /// renderer so code holding only `&DeviceResources` (plugin contexts, the
     /// texture slot check) can report.
     pub(crate) notices: crate::notice::NoticeSink,
+
+    /// Whether the device has been lost. The renderer swaps in its own watcher
+    /// at construction; uploads and frames check it.
+    pub(crate) device_lost: crate::renderer::DeviceLostWatcher,
+    /// Set once the loss has been reported as a notice.
+    pub(crate) device_lost_reported: std::sync::atomic::AtomicBool,
 }
 
 /// Per-viewport GPU culling outputs.

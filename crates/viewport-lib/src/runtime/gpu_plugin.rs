@@ -214,7 +214,10 @@ pub trait GpuPlugin: Send + 'static {
     /// Called once before the plugin's first `pre_prepare`. If a new GPU
     /// plugin is registered after the runtime has already run, every plugin's
     /// `init_gpu` is invoked again on the next frame; implementations should
-    /// either be idempotent or guard their own one-time setup.
+    /// either be idempotent or guard their own one-time setup. After
+    /// [`ViewportInstance::rebuild`](crate::ViewportInstance::rebuild) it runs
+    /// again with the new device, and everything built on the old one has to
+    /// be rebuilt here.
     fn init_gpu(&mut self, _device: &crate::gpu::Device) {}
 
     /// Encode work that runs before `renderer.prepare()`.

@@ -6,7 +6,7 @@
 
 #[macro_use]
 mod types;
-mod device_lost;
+pub(crate) mod device_lost;
 pub use device_lost::{DeviceLostInfo, DeviceLostWatcher};
 mod indirect;
 mod instancing_state;
@@ -428,9 +428,53 @@ struct RegisteredPostEffectStage {
     stage: Box<dyn crate::plugin_api::PostEffectStage>,
 }
 
+/// The error for a renderer whose watcher reports the device lost.
+fn lost_error(watcher: &DeviceLostWatcher) -> crate::ViewportError {
+    match watcher.info() {
+        Some(info) => info.to_error(),
+        None => crate::ViewportError::DeviceLost {
+            reason: format!("{:?}", crate::gpu::DeviceLostReason::Unknown),
+            message: String::new(),
+        },
+    }
+}
+
+/// An encoder finished with nothing in it, which is what a frame on a lost
+/// device returns.
+pub(crate) fn empty_command_buffer(device: &crate::gpu::Device) -> crate::gpu::CommandBuffer {
+    device
+        .create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("device_lost_empty"),
+        })
+        .finish()
+}
+
 /// Owns the GPU pipelines and per-frame state for rendering a scene. Call
 /// `prepare` once per frame to upload data, then `paint_to` (or `render`) to
 /// issue draw calls.
+///
+/// # Device loss
+///
+/// A renderer is built on one device and never moves to another. When that
+/// device is lost (a driver reset, an OS watchdog kill, out of memory, or
+/// `device.destroy()`), the renderer goes into a lost state it does not leave:
+/// [`is_device_lost`](Self::is_device_lost) turns true, frames draw nothing and
+/// return empty command buffers, uploads and plugin registration return
+/// [`ViewportError::DeviceLost`](crate::ViewportError::DeviceLost), picks and
+/// readbacks return `None` or nothing, and [`take_notices`](Self::take_notices)
+/// carries one [`NoticeDetail::DeviceLost`](crate::NoticeDetail::DeviceLost).
+///
+/// To recover, drop the renderer, request a new adapter and device, build a
+/// new renderer with [`try_with_config`](Self::try_with_config), register the
+/// plugins again, and upload the meshes, textures, materials and environments
+/// again. Every handle the old renderer returned is invalid on the new one.
+/// [`ViewportInstance::rebuild`](crate::ViewportInstance::rebuild) does the
+/// renderer half of this and lists the handles to replace.
+///
+/// The renderer learns of the loss through the device's lost callback, which
+/// it installs unless [`RendererConfig::with_device_lost_watcher`] passes a
+/// shared [`DeviceLostWatcher`]. wgpu runs the callback on the next
+/// `device.poll` or submit, so the loss shows on the frame after it happens.
 pub struct ViewportRenderer {
     resources: DeviceResources,
     /// State for the instanced (GPU-driven) mesh draw path.
@@ -675,6 +719,8 @@ pub struct ViewportRenderer {
     /// Most recent cluster build readback. Populated when a frame's
     /// `EffectsDebug::cluster_stats_request` was true.
     pub(crate) last_cluster_stats: Option<crate::resources::gpu::clustered::ClusterStats>,
+    /// Frames skipped since the device was lost.
+    frames_skipped_device_lost: u32,
 }
 
 impl ViewportRenderer {
@@ -943,6 +989,13 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         config: &RendererConfig,
     ) -> Result<Self, crate::ViewportError> {
+        let device_lost = match &config.device_lost_watcher {
+            Some(watcher) => watcher.clone(),
+            None => DeviceLostWatcher::install(device),
+        };
+        if device_lost.is_lost_or_destroyed() {
+            return Err(lost_error(&device_lost));
+        }
         let target_format = config.target_format;
         let sample_count = config.sample_count;
         let mut capabilities = crate::capabilities::Capabilities::from_device(
@@ -998,6 +1051,7 @@ impl ViewportRenderer {
             config.pipeline_cache_data.as_deref(),
             config.geometry_chunk_bytes,
         )?;
+        resources.device_lost = device_lost;
         if let Some(policy) = config.pipeline_compilation {
             resources.pipeline_compiler.set_policy(policy);
         }
@@ -1072,9 +1126,46 @@ impl ViewportRenderer {
             last_frustum_culled_lights: 0,
             last_lights_dropped: 0,
             last_cluster_stats: None,
+            frames_skipped_device_lost: 0,
         };
         renderer.register_internal_item_plugins(device);
+        if renderer.resources.device_lost.is_lost_or_destroyed() {
+            return Err(lost_error(&renderer.resources.device_lost));
+        }
         Ok(renderer)
+    }
+
+    /// True once the device is lost or destroyed. The renderer stays lost:
+    /// see the [device loss](Self#device-loss) section for how to recover.
+    pub fn is_device_lost(&self) -> bool {
+        self.resources.device_lost.is_lost_or_destroyed()
+    }
+
+    /// What the device reported when it was lost, or `None` while it is live.
+    pub fn device_lost_info(&self) -> Option<DeviceLostInfo> {
+        self.resources.device_lost_info()
+    }
+
+    /// The watcher this renderer reads device loss from: the one passed with
+    /// [`RendererConfig::with_device_lost_watcher`], or the one it installed.
+    /// Clone it to poll the same flag elsewhere.
+    pub fn device_lost_watcher(&self) -> &DeviceLostWatcher {
+        &self.resources.device_lost
+    }
+
+    /// True when the device is lost, counting the call as a skipped frame.
+    /// The frame entry points return early on it.
+    pub(crate) fn skip_frame_device_lost(&mut self) -> bool {
+        if self.resources.device_lost_info().is_none() {
+            return false;
+        }
+        self.frames_skipped_device_lost = self.frames_skipped_device_lost.saturating_add(1);
+        true
+    }
+
+    /// True when the device is lost, for the entry points that only draw.
+    pub(crate) fn device_lost_now(&self) -> bool {
+        self.resources.device_lost_info().is_some()
     }
 
     /// `Err(TierUnsupported)` when the renderer was built without the scene
@@ -1206,8 +1297,11 @@ impl ViewportRenderer {
     /// Performance counters from the last completed frame. `notices` counts
     /// the notices waiting for [`take_notices`](Self::take_notices) now.
     pub fn last_frame_stats(&self) -> crate::renderer::stats::FrameStats {
+        let device_lost = self.resources.device_lost_info().is_some();
         crate::renderer::stats::FrameStats {
             notices: self.resources.notices.counts(),
+            device_lost,
+            frames_skipped_device_lost: self.frames_skipped_device_lost,
             ..self.last_stats
         }
     }
@@ -1221,6 +1315,8 @@ impl ViewportRenderer {
     /// oldest are dropped and counted in
     /// [`FrameStats::notices`](crate::renderer::stats::FrameStats::notices).
     pub fn take_notices(&mut self) -> Vec<crate::Notice> {
+        // A loss seen by nothing else yet is still reported.
+        let _ = self.resources.device_lost_info();
         self.resources.notices.take()
     }
 
@@ -1966,6 +2062,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
     ) -> Result<(), crate::ViewportError> {
+        self.resources.require_live()?;
         let name = plugin.type_name();
         assert!(
             !self.renderer_owned_type_names.contains(&name),
@@ -2929,6 +3026,9 @@ impl ViewportRenderer {
         x: u32,
         y: u32,
     ) -> Option<[f32; 4]> {
+        if self.device_lost_now() {
+            return None;
+        }
         // Use the primary viewport slot (index 0).
         let slot = self.viewport_slots.first()?;
         let (vw, vh) = slot.debug_readback_dims?;
@@ -3662,6 +3762,9 @@ impl ViewportRenderer {
         frame: &FrameData,
         scene_effects: &SceneEffects<'_>,
     ) {
+        if self.skip_frame_device_lost() {
+            return;
+        }
         self.begin_notice_frame();
         let mut sink = SubmitSink::inline(queue);
         self.prepare_scene_internal(device, queue, frame, scene_effects, &mut sink);
@@ -3687,6 +3790,9 @@ impl ViewportRenderer {
              use CameraFrame::with_viewport_id(id)",
             frame.camera.viewport_index, id.0,
         );
+        if self.device_lost_now() {
+            return;
+        }
         let (_, viewport_fx) = frame.effects.split();
         let mut sink = SubmitSink::inline(queue);
         // The split API never routes through `prepare_into`, so plugin
@@ -3717,6 +3823,9 @@ impl ViewportRenderer {
         id: ViewportId,
         frame: &FrameData,
     ) {
+        if self.device_lost_now() {
+            return;
+        }
         self.paint_slot(render_pass, id.0, frame);
     }
 

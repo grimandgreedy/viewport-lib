@@ -581,6 +581,17 @@ pub enum ViewportError {
         reason: String,
     },
 
+    /// The GPU device was lost (a driver reset, a watchdog kill, out of memory,
+    /// or `device.destroy()`). The renderer stays lost: drop it and build a new
+    /// one on a new device. Every handle it returned is invalid.
+    #[error("the GPU device was lost ({reason}): {message}")]
+    DeviceLost {
+        /// Why the device was lost, as the backend's `DeviceLostReason`.
+        reason: String,
+        /// The backend's message, possibly empty.
+        message: String,
+    },
+
     /// A plugin needs more than the device offers, so it was not registered.
     #[error("plugin '{type_name}' was not registered: the device lacks {}", .missing.join(", "))]
     PluginUnsupported {

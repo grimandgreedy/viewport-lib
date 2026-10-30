@@ -1758,6 +1758,12 @@ impl ViewportRuntime {
         self
     }
 
+    /// Run every GPU plugin's `init_gpu` again before the next `pre_prepare`,
+    /// for an instance that moved to a new device.
+    pub(crate) fn reset_gpu_init(&mut self) {
+        self.gpu_initialized = false;
+    }
+
     /// Run every registered GPU plugin's `pre_prepare` in ascending priority
     /// order and return the concatenated command buffers.
     ///

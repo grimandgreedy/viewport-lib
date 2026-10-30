@@ -29,11 +29,13 @@
 mod assemble;
 mod extras;
 mod offscreen;
+mod rebuild;
 mod render;
 mod settings;
 
 pub use extras::ExtraId;
 pub use offscreen::OffscreenViewportTarget;
+pub use rebuild::StaleHandles;
 
 /// The winit runner: `ViewportApp` owns one or more OS windows, one
 /// `ViewportInstance` each (feature-gated behind `app`).
@@ -62,6 +64,8 @@ use crate::{FrameData, InteractionFrame, ViewportInput, ViewportRenderer};
 /// [`prepare`](Self::prepare) + [`paint`](Self::paint) (render-pass framework).
 pub struct ViewportInstance {
     renderer: ViewportRenderer,
+    /// The config the renderer was built with, for [`rebuild`](Self::rebuild).
+    config: crate::RendererConfig,
     scene: Scene,
     selection: Selection,
     camera: Camera,
@@ -217,6 +221,7 @@ impl ViewportInstance {
         let defaults = InteractionFrame::default();
         Ok(Self {
             renderer,
+            config: config.clone(),
             scene: Scene::new(),
             selection: Selection::new(),
             camera: Camera::default(),

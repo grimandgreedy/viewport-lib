@@ -263,6 +263,7 @@ impl crate::resources::DeviceResources {
         queue: &crate::gpu::Queue,
         data: crate::TextureData,
     ) -> crate::error::ViewportResult<OverlayTextureId> {
+        self.require_live()?;
         let (width, height, format, pixels) = overlay_texture_pixels(data)?;
         let entry =
             build_overlay_texture_entry(device, Some(queue), width, height, format, Some(&pixels));
@@ -477,6 +478,7 @@ impl crate::resources::DeviceResources {
         queue: &crate::gpu::Queue,
         data: crate::TextureData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.require_live()?;
         let (width, height, format, pixels) = overlay_texture_pixels(data)?;
         let slot = crate::resources::ResultSlot::<OverlayTextureId>::new();
         let slot_for_apply = slot.clone();
