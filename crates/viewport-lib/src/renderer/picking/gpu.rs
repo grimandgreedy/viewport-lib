@@ -710,7 +710,8 @@ impl ViewportRenderer {
             submission,
             cursor,
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
-            view_proj: frame.camera.render_camera.view_proj(),
+            view_proj: self.origin.camera(&frame.camera.render_camera).view_proj(),
+            origin: self.origin.origin(),
             mask,
             kinds: draw_set.kinds,
             surface_meta: draw_set.surface_meta,
@@ -780,7 +781,7 @@ impl ViewportRenderer {
         // The instance reads the same deform table as the item's colour draw,
         // so a deformed mesh is picked where it is drawn.
         let to_instance = |item: &SceneRenderItem| {
-            let m = item.model;
+            let m = self.origin.rel_model(item.model);
             let record = self
                 .resources
                 .mesh_store
@@ -844,6 +845,7 @@ impl ViewportRenderer {
                 let flags = clip_flag(item.settings.ignore_clip) | PICK_WRITE_INSTANCE;
                 let first = batch_instances.len() as u32;
                 for (i, m) in item.transforms.iter().enumerate() {
+                    let m = self.origin.rel_model(*m);
                     batch_instances.push(PickInstance {
                         model_c0: m[0],
                         model_c1: m[1],
@@ -985,7 +987,7 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) -> (crate::gpu::Buffer, crate::gpu::BindGroup) {
         let time = frame.time.unwrap_or_else(|| self.frame_clock.current());
-        let camera_uniform = frame.camera.camera_uniform(&time);
+        let camera_uniform = frame.camera.camera_uniform(&time, &self.origin);
         let camera_bytes = bytemuck::bytes_of(&camera_uniform);
         let pick_camera_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pick_camera_buf"),
@@ -1378,7 +1380,12 @@ impl ViewportRenderer {
             let depth_view = depth_staging
                 .as_ref()
                 .map(|s| crate::gpu::mapped_range(s.slice(..)));
-            let view_proj_inv = frame.camera.render_camera.view_proj().inverse();
+            let view_proj_inv = self
+                .origin
+                .camera(&frame.camera.render_camera)
+                .view_proj()
+                .inverse();
+            let origin = self.origin.origin();
             for row in 0..rh as usize {
                 let row_start = row * bytes_per_row as usize;
                 for col in 0..rw as usize {
@@ -1415,7 +1422,7 @@ impl ViewportRenderer {
                             let phys_y = (ry + row as u32) as f32 + 0.5;
                             let ndc_x = 2.0 * phys_x / vp_w as f32 - 1.0;
                             let ndc_y = 1.0 - 2.0 * phys_y / vp_h as f32;
-                            view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, depth))
+                            pick_world(view_proj_inv, origin, ndc_x, ndc_y, depth).as_vec3()
                         });
                         if let Some(sub) = self.resolve_gpu_sub_object_rect(
                             id as u64,
@@ -1629,7 +1636,12 @@ impl ViewportRenderer {
             rw,
             rh,
             bytes_per_row,
-            view_proj_inv: frame.camera.render_camera.view_proj().inverse(),
+            view_proj_inv: self
+                .origin
+                .camera(&frame.camera.render_camera)
+                .view_proj()
+                .inverse(),
+            origin: self.origin.origin(),
             mask,
             kinds,
             surface_meta: draw_set.surface_meta,
@@ -1657,6 +1669,7 @@ impl ViewportRenderer {
             rh,
             bytes_per_row,
             view_proj_inv,
+            origin,
             mask,
             ..
         } = *pending;
@@ -1708,7 +1721,7 @@ impl ViewportRenderer {
                     ]);
                     let ndc_x = 2.0 * phys_x / vp_w as f32 - 1.0;
                     let ndc_y = 1.0 - 2.0 * phys_y / vp_h as f32;
-                    let world = view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, depth));
+                    let world = pick_world(view_proj_inv, origin, ndc_x, ndc_y, depth).as_vec3();
                     let sub = self.resolve_gpu_sub_object_rect(
                         id as u64,
                         prim,
@@ -1879,6 +1892,11 @@ impl ViewportRenderer {
     /// per-object decode map. Shared by the blocking and async paths.
     fn resolve_pending_hit(&self, pending: &PendingPick, gpu_hit: GpuPickHit) -> PickHit {
         let mut hit = gpu_hit.to_pick_hit(pending.cursor, pending.viewport_size, pending.view_proj);
+        // The pass drew relative to the origin; put the hit back in world
+        // coordinates.
+        if pending.origin != glam::DVec3::ZERO {
+            hit.world_pos = (hit.world_pos.as_dvec3() + pending.origin).as_vec3();
+        }
         hit.sub_object = self.resolve_gpu_sub_object(
             gpu_hit.object_id.0,
             gpu_hit.sub_primitive,
@@ -2172,7 +2190,9 @@ pub(crate) struct PendingSnap {
     rw: u32,
     rh: u32,
     bytes_per_row: u32,
+    /// Inverse of the pass's view-projection, relative to `origin`.
     view_proj_inv: glam::Mat4,
+    origin: glam::DVec3,
     mask: PickMask,
     kinds: std::collections::HashMap<u64, PickSubKind>,
     surface_meta: SurfacePickMeta,
@@ -2195,7 +2215,10 @@ pub(crate) struct PendingPick {
     submission: crate::gpu::SubmissionIndex,
     cursor: glam::Vec2,
     viewport_size: glam::Vec2,
+    /// The pass's view-projection, relative to `origin`.
     view_proj: glam::Mat4,
+    /// The world origin the pass drew relative to.
+    origin: glam::DVec3,
     /// The mask the pick was submitted with. Decides which sub-object level the
     /// read-back primitive index resolves to (face vs cell vs vertex, etc.).
     mask: PickMask,
@@ -2245,4 +2268,19 @@ impl PendingPick {
             sub_primitive,
         })
     }
+}
+
+/// World position of a pick-pass pixel: unprojected with the pass's relative
+/// `inv_view_proj`, then moved back by `origin` in f64.
+pub(crate) fn pick_world(
+    inv_view_proj: glam::Mat4,
+    origin: glam::DVec3,
+    ndc_x: f32,
+    ndc_y: f32,
+    depth: f32,
+) -> glam::DVec3 {
+    inv_view_proj
+        .project_point3(glam::Vec3::new(ndc_x, ndc_y, depth))
+        .as_dvec3()
+        + origin
 }

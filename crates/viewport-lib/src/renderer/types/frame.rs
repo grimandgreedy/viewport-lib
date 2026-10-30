@@ -294,6 +294,19 @@ impl RenderCamera {
         }
     }
 
+    /// This camera for points relative to `origin`: the view translation is
+    /// rebuilt in f64 from the eye and the eye moved by `-origin`; the
+    /// orientation and projection are unchanged. A zero origin returns an
+    /// identical copy.
+    pub(crate) fn relative_to(&self, origin: glam::DVec3) -> RenderCamera {
+        let mut cam = self.clone();
+        if origin != glam::DVec3::ZERO {
+            cam.view = crate::renderer::origin::rel_view(self.view, self.pose.eye, origin);
+            cam.pose.eye = crate::renderer::origin::rel(self.pose.eye, origin);
+        }
+        cam
+    }
+
     /// Build the GPU-facing camera uniform from this camera's state.
     pub(crate) fn camera_uniform(&self) -> CameraUniform {
         let vp = self.view_proj();
@@ -505,9 +518,14 @@ impl Default for CameraFrame {
 
 impl CameraFrame {
     /// The GPU camera uniform for this frame rendered at `time`: the render
-    /// camera's matrices plus the physical viewport size and the frame time.
-    pub(crate) fn camera_uniform(&self, time: &FrameTime) -> CameraUniform {
-        let mut u = self.render_camera.camera_uniform();
+    /// camera's matrices relative to `origin`, plus the physical viewport size
+    /// and the frame time.
+    pub(crate) fn camera_uniform(
+        &self,
+        time: &FrameTime,
+        origin: &crate::renderer::origin::OriginState,
+    ) -> CameraUniform {
+        let mut u = origin.camera(&self.render_camera).camera_uniform();
         let ppp = self.pixels_per_point;
         let w = (self.viewport_size[0] * ppp).round().max(1.0);
         let h = (self.viewport_size[1] * ppp).round().max(1.0);
@@ -645,6 +663,9 @@ pub struct SceneFrame {
         &'static str,
         Vec<Box<dyn crate::plugin_api::PluginItemCollection>>,
     >,
+    /// Replaces [`RendererConfig::world_origin`](crate::RendererConfig::world_origin)
+    /// for this frame. Default `None`.
+    pub world_origin: Option<crate::renderer::WorldOrigin>,
 }
 
 impl Default for SceneFrame {
@@ -658,6 +679,7 @@ impl Default for SceneFrame {
             foreground_items: Vec::new(),
             lightmap_placements: Vec::new(),
             plugin_items: std::collections::HashMap::new(),
+            world_origin: None,
         }
     }
 }
@@ -707,6 +729,13 @@ impl SceneFrame {
     /// the natural choice when items are derived from scene writeback.
     pub fn with_generation(mut self, generation: u64) -> Self {
         self.generation = generation;
+        self
+    }
+
+    /// Draw this frame relative to `origin` instead of the renderer's
+    /// [`RendererConfig::world_origin`](crate::RendererConfig::world_origin).
+    pub fn with_world_origin(mut self, origin: crate::renderer::WorldOrigin) -> Self {
+        self.world_origin = Some(origin);
         self
     }
 

@@ -552,7 +552,8 @@ impl Lines {
             _pad: [f32; 2],           // offset 120 (total 128 bytes)
         }
         let uniform_data = PolylineUniform {
-            model: item.model,
+            // Drawn relative to the frame's world origin.
+            model: resources.world_origin.rel_model(item.model),
             default_colour: item.default_colour.to_linear_rgba(),
             line_width: item.line_width,
             scalar_min,

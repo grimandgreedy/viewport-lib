@@ -477,6 +477,16 @@ pub(crate) fn write_environment_zones(
     resources: &mut crate::resources::DeviceResources,
     queue: &crate::gpu::Queue,
 ) {
+    let origin = resources.world_origin;
+    // The probe volume's corner shares the buffer and the origin rule.
+    if let Some(min) = resources.scene_tier.lighting.probe_volume_min {
+        let m = origin.rel(glam::Vec3::from(min));
+        queue.write_buffer(
+            &resources.scene_tier.lighting.indirect_buf,
+            crate::resources::lighting::PROBE_VOLUME_REGION_OFFSET_BYTES,
+            bytemuck::cast_slice(&[m.x, m.y, m.z, 1.0f32]),
+        );
+    }
     let ibl = &mut resources.scene_tier.ibl;
     ibl.zones_dirty = false;
     let gpu: Vec<EnvZoneGpu> = ibl
@@ -484,7 +494,7 @@ pub(crate) fn write_environment_zones(
         .iter()
         .filter(|z| ibl.is_baked(z.environment))
         .map(|z| EnvZoneGpu {
-            center: z.bounds.center().into(),
+            center: origin.rel(z.bounds.center()).into(),
             layer: z.environment.index(),
             half_extents: z.bounds.half_extents().into(),
             fade: z.fade_distance,

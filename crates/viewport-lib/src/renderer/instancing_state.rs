@@ -70,6 +70,10 @@ pub(crate) struct InstancingState {
         crate::resources::pipeline_slot::PipelineSlot<indirect::CullResources>,
     /// Last scene generation seen during prepare(). u64::MAX forces rebuild on first frame.
     pub(crate) last_scene_generation: u64,
+    /// World origin epoch the cached records were packed against. The records
+    /// hold positions relative to the origin, so a move invalidates them even
+    /// when the scene generation and item count are unchanged.
+    pub(crate) last_origin_epoch: u32,
     /// Global wireframe toggle (`frame.viewport.wireframe_mode`) at the last
     /// rebuild. Baked into each instance's per-instance `wireframe` shading
     /// flag (`INST_WIREFRAME`), so a toggle with
@@ -201,6 +205,7 @@ impl InstancingState {
             multi_draw_forced: false,
             cull_resources: crate::resources::pipeline_slot::PipelineSlot::new(),
             last_scene_generation: u64::MAX,
+            last_origin_epoch: 0,
             last_wireframe_mode: false,
             last_hdr_family: false,
             last_selection_generation: u64::MAX,

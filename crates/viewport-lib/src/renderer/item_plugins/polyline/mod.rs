@@ -136,7 +136,7 @@ impl ItemTypePlugin for PolylinePlugin {
             queue.write_buffer(
                 &gpu_data._uniform_buf,
                 0,
-                bytemuck::bytes_of(&ref_item.model),
+                bytemuck::bytes_of(&ctx.resources.world_origin.rel_model(ref_item.model)),
             );
             queue.write_buffer(&gpu_data._uniform_buf, 96, bytemuck::bytes_of(&vp));
             gpu_data.wireframe = ctx.wireframe_mode || ref_item.settings.wireframe;

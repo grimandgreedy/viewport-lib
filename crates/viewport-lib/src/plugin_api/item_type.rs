@@ -335,9 +335,25 @@ pub struct ItemFrameContext<'a> {
     /// three. Read them by type with [`items_of`](Self::items_of) rather than
     /// by index; the order they were submitted in is not meaningful.
     pub collections: &'a [Box<dyn PluginItemCollection>],
+    /// See [`world_origin`](Self::world_origin).
+    pub(crate) world_origin: glam::DVec3,
 }
 
 impl<'a> ItemFrameContext<'a> {
+    /// The origin this frame draws relative to, in world coordinates.
+    ///
+    /// The group-0 camera's matrices and eye, the light positions and the
+    /// clip planes are all relative to it, while [`camera`](Self::camera)
+    /// and the submitted items stay in world coordinates. An item type that
+    /// writes world-space positions or model matrices into its own buffers
+    /// subtracts this in f64 before the cast to f32
+    /// (`(DVec3::from(p) - ctx.world_origin()).as_vec3()`), and rewrites them
+    /// when it moves. It is zero under
+    /// [`WorldOrigin::Zero`](crate::WorldOrigin::Zero), the default.
+    pub fn world_origin(&self) -> glam::DVec3 {
+        self.world_origin
+    }
+
     /// This frame's items of type `T`, or an empty slice if the frame carried
     /// none. A type with several item forms calls this once per form.
     pub fn items_of<T: 'static>(&self) -> &'a [T] {

@@ -778,13 +778,18 @@ impl ViewportRenderer {
         // cloned, then trimmed back and returned.
         let mut items = std::mem::take(&mut self.prepared_surfaces);
         let prepared = items.len();
+        let origin = self.origin;
         items.extend(
             frame
                 .scene
                 .volume_meshes
                 .iter()
                 .filter(|item| item.transparency.is_none())
-                .map(|item| item.to_render_item()),
+                .map(|item| {
+                    let mut item = item.to_render_item();
+                    item.model = origin.rel_model(item.model);
+                    item
+                }),
         );
         self.prepared_surface_count = prepared;
         let cmd = self.render_frame_body(device, queue, output_view, vp_idx, frame, &items);

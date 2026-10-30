@@ -34,6 +34,7 @@ fn post_effect_ctx<'a>(
     slot_hdr: &'a crate::resources::ViewportHdrState,
     frame: &'a FrameData,
     viewport_index: usize,
+    origin: &crate::renderer::origin::OriginState,
 ) -> crate::plugin_api::PostEffectContext<'a> {
     crate::plugin_api::PostEffectContext {
         device,
@@ -41,7 +42,7 @@ fn post_effect_ctx<'a>(
         scene_size: slot_hdr.scene_size,
         output_size: slot_hdr.output_size,
         proj: frame.camera.render_camera.projection(),
-        view: frame.camera.render_camera.view(),
+        view: origin.camera(&frame.camera.render_camera).view(),
         near: frame.camera.render_camera.depth_range().0,
         far: frame.camera.render_camera.depth_range().1,
         scene_colour: &slot_hdr.hdr_view,
@@ -492,7 +493,7 @@ impl ViewportRenderer {
             let inputs = crate::resources::ProducerFrameInputs {
                 post: pp,
                 proj: frame.camera.render_camera.projection(),
-                view: frame.camera.render_camera.view(),
+                view: self.origin.camera(&frame.camera.render_camera).view(),
                 near: frame.camera.render_camera.depth_range().0,
                 far: frame.camera.render_camera.depth_range().1,
                 first_light: frame.effects.lighting.lights.first(),
@@ -512,7 +513,7 @@ impl ViewportRenderer {
         self.frame_external_slot_views.clear();
         if !self.post_effect_producers.is_empty() || !self.post_effect_stages.is_empty() {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
-            let ctx = post_effect_ctx(device, hdr, frame, vp_idx);
+            let ctx = post_effect_ctx(device, hdr, frame, vp_idx, &self.origin);
             for entry in &mut self.post_effect_producers {
                 if entry.gpu_ready && entry.producer.enabled() {
                     entry.producer.prepare(queue, &ctx);
@@ -1042,12 +1043,12 @@ impl ViewportRenderer {
         if !self.render_advances_state() {
             return;
         }
-        let view_proj = ctx
-            .frame
-            .camera
-            .render_camera
+        let view_proj = self
+            .origin
+            .camera(&ctx.frame.camera.render_camera)
             .view_proj()
             .to_cols_array_2d();
+        let origin = self.origin.origin();
         let hiz = self.resources.hiz_pipelines(ctx.device);
         // Borrow the slot mutably and split its fields: the depth view is read
         // from `hdr` while the pyramid is written into `cull`.
@@ -1068,8 +1069,9 @@ impl ViewportRenderer {
         };
         let w = depth_tex.width();
         let h = depth_tex.height();
-        slot.cull
-            .store_hiz_prev_depth(ctx.device, &hiz, encoder, depth_view, w, h, view_proj);
+        slot.cull.store_hiz_prev_depth(
+            ctx.device, &hiz, encoder, depth_view, w, h, view_proj, origin,
+        );
     }
 
     fn hdr_ssaa_refraction(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
@@ -1712,7 +1714,7 @@ impl ViewportRenderer {
                             let (scalar_min, scalar_max) =
                                 item.scalar_range.unwrap_or(gpu.scalar_range);
                             let uniform = crate::resources::ProjectedTetUniform {
-                                model: item.model,
+                                model: self.origin.rel_model(item.model),
                                 density: transparency.density,
                                 scalar_min,
                                 scalar_max,
@@ -2009,7 +2011,7 @@ impl ViewportRenderer {
         let inputs = crate::resources::ProducerFrameInputs {
             post: pp,
             proj: frame.camera.render_camera.projection(),
-            view: frame.camera.render_camera.view(),
+            view: self.origin.camera(&frame.camera.render_camera).view(),
             near: frame.camera.render_camera.depth_range().0,
             far: frame.camera.render_camera.depth_range().1,
             first_light: frame.effects.lighting.lights.first(),
@@ -2036,7 +2038,7 @@ impl ViewportRenderer {
         // wins, and an external view over an enabled built-in logs once.
         if !self.post_effect_producers.is_empty() && !throttle_effects {
             let ci = ctx.composite_inputs;
-            let ctx = post_effect_ctx(ctx.device, slot_hdr, frame, vp_idx);
+            let ctx = post_effect_ctx(ctx.device, slot_hdr, frame, vp_idx, &self.origin);
             let mut collected: Vec<(crate::plugin_api::PostEffectSlot, crate::gpu::TextureView)> =
                 std::mem::take(&mut self.frame_external_slot_views);
             for entry in &mut self.post_effect_producers {
@@ -2224,7 +2226,8 @@ impl ViewportRenderer {
                 match &chain[i].1 {
                     ChainEntry::Builtin(s) => s.encode(slot_hdr, encoder, &target, &timing),
                     ChainEntry::External(j) => {
-                        let stage_ctx = post_effect_ctx(ctx.device, slot_hdr, frame, vp_idx);
+                        let stage_ctx =
+                            post_effect_ctx(ctx.device, slot_hdr, frame, vp_idx, &self.origin);
                         self.post_effect_stages[*j]
                             .stage
                             .encode(encoder, &target, &stage_ctx);

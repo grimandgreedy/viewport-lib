@@ -66,6 +66,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
+        let origin = self.origin;
         let state = &mut self.surface_mask;
         state.readers.clear();
         state.mesh_stamps.clear();
@@ -105,7 +106,7 @@ impl ViewportRenderer {
                     value,
                     visibility_mask: item.settings.visibility_mask,
                 });
-                state.models.push(item.model);
+                state.models.push(origin.rel_model(item.model));
             }
         }
 

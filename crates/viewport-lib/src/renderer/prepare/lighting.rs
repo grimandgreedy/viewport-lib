@@ -31,11 +31,15 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        origin: &crate::renderer::origin::OriginState,
         sink: &mut crate::renderer::SubmitSink,
         ts_query_set: Option<&crate::gpu::QuerySet>,
         ts_written_mask: &std::sync::atomic::AtomicU32,
     ) -> LightingFrame {
         let lighting = scene_fx.lighting;
+        // Ranking culls in world space; everything after it works relative to
+        // the origin, with the camera the GPU draws with.
+        let camera = origin.camera(&frame.camera.render_camera);
         let plugin_lights = collect_plugin_lights(resources, item_type_plugins, frame, frame_index);
         let ranked = rank_lights(
             lighting
@@ -48,7 +52,27 @@ impl ViewportRenderer {
         );
         *last_frustum_culled_lights = ranked.frustum_culled;
         *last_lights_dropped = ranked.dropped;
-        let combined_lights = &ranked.lights;
+        let rel_sources: Vec<LightSource> = if origin.is_zero() {
+            Vec::new()
+        } else {
+            ranked
+                .lights
+                .iter()
+                .map(|(_, l)| rel_light_source(l, origin))
+                .collect()
+        };
+        let rel_lights: Vec<(usize, &LightSource)>;
+        let combined_lights = if origin.is_zero() {
+            &ranked.lights
+        } else {
+            rel_lights = ranked
+                .lights
+                .iter()
+                .zip(&rel_sources)
+                .map(|((i, _), l)| (*i, l))
+                .collect();
+            &rel_lights
+        };
 
         let light_count = combined_lights.len() as u32;
 
@@ -96,7 +120,7 @@ impl ViewportRenderer {
             select_shadow_casters(
                 combined_lights,
                 key_of,
-                frame.camera.render_camera.eye_position(),
+                camera.eye_position(),
                 budget,
                 |key| pool.holds(key),
             )
@@ -230,7 +254,7 @@ impl ViewportRenderer {
                 ClusterGridUniform,
             };
 
-            let view_mat = frame.camera.render_camera.view();
+            let view_mat = camera.view();
             // Perspective parameters : derive tan(half_fov) from the proj
             // matrix diagonal (proj[0][0] = 1/tan(half_fov_x), with the wgpu
             // RH perspective matrices used here).
@@ -638,6 +662,32 @@ pub(super) fn fnv_mix(hash: &mut u64, bytes: &[u8]) {
         *hash ^= b as u64;
         *hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
     }
+}
+
+/// `src` with a point or spot light's position made relative to the origin.
+fn rel_light_source(
+    src: &LightSource,
+    origin: &crate::renderer::origin::OriginState,
+) -> LightSource {
+    let mut l = src.clone();
+    match &mut l.kind {
+        LightKind::Point { position, .. } | LightKind::Spot { position, .. } => {
+            *position = origin.rel(glam::Vec3::from(*position)).to_array();
+        }
+        _ => {}
+    }
+    l
+}
+
+/// `u` with a point or spot light's position made relative to the origin.
+pub(super) fn rel_light(
+    mut u: SingleLightUniform,
+    origin: &crate::renderer::origin::OriginState,
+) -> SingleLightUniform {
+    if u.light_type != 0 {
+        u.pos_or_dir = origin.rel(glam::Vec3::from(u.pos_or_dir)).to_array();
+    }
+    u
 }
 
 /// Convert a `LightSource` to `SingleLightUniform`, with no shadow assigned.

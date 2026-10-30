@@ -67,6 +67,7 @@ impl ViewportRenderer {
             .lights
             .iter()
             .map(|(_, l)| lighting::build_single_light_uniform(l))
+            .map(|u| lighting::rel_light(u, &self.origin))
             .collect();
 
         let header = lighting::lights_header(
@@ -100,7 +101,7 @@ impl ViewportRenderer {
             return;
         };
         let (clip_uniform, clip_vols_uniform) =
-            viewport_interaction::clip_uniforms(frame, viewport_fx);
+            viewport_interaction::clip_uniforms(frame, viewport_fx, &self.origin);
         queue.write_buffer(
             &slot.clip_planes_buf,
             0,
@@ -113,7 +114,9 @@ impl ViewportRenderer {
         );
         // The compatibility tier draws through the LDR path, which keeps the lit
         // term in [0, 1].
-        let camera_uniform = frame.camera.camera_uniform(&self.frame_clock.current());
+        let camera_uniform = frame
+            .camera
+            .camera_uniform(&self.frame_clock.current(), &self.origin);
         queue.write_buffer(&slot.camera_buf, 0, bytemuck::cast_slice(&[camera_uniform]));
     }
 
@@ -158,7 +161,7 @@ impl ViewportRenderer {
                     continue;
                 }
                 let uniform = crate::resources::overlay::highlight::OutlineUniform {
-                    model: item.model,
+                    model: self.origin.rel_model(item.model),
                     colour: [0.0; 4],
                     pixel_offset: 0.0,
                     has_position_override: 0,
@@ -344,7 +347,7 @@ impl ViewportRenderer {
                 let e = m.emissive_nits();
                 let instance = records.len() as u32;
                 records.push(BasicInstance {
-                    model: item.model,
+                    model: self.origin.rel_model(item.model),
                     base_colour: [bc[0], bc[1], bc[2], item.settings.opacity],
                     emissive: [e[0], e[1], e[2], mask_cutoff.unwrap_or(0.5)],
                     material: [m.metallic, m.roughness, scalar_min, scalar_max],

@@ -257,8 +257,11 @@ pub(crate) struct HizState {
     /// Set once the first depth has been stored. Until then there is nothing to
     /// reproject and the pyramid is not built.
     has_prev_depth: bool,
-    /// View-projection of the camera that drew `prev_depth`.
+    /// View-projection of the camera that drew `prev_depth`, relative to
+    /// `prev_origin`.
     prev_view_proj: [[f32; 4]; 4],
+    /// World origin `prev_view_proj` is relative to.
+    prev_origin: glam::DVec3,
 
     /// Reprojection uniform (inverse-prev and current view-projection). The
     /// scatter buffer is owned by the bind groups that reference it.
@@ -409,6 +412,7 @@ impl HizState {
             prev_depth_storage_view,
             has_prev_depth: false,
             prev_view_proj: [[0.0; 4]; 4],
+            prev_origin: glam::DVec3::ZERO,
             reproj_uniform_buf,
             all_view,
             storage_views,
@@ -433,6 +437,7 @@ impl HizState {
         encoder: &mut crate::gpu::CommandEncoder,
         depth_view: &crate::gpu::TextureView,
         view_proj: [[f32; 4]; 4],
+        origin: glam::DVec3,
     ) {
         let [w, h] = self.dims;
         // Still compiling: nothing stored, so next frame culls frustum-only.
@@ -470,6 +475,7 @@ impl HizState {
         drop(pass);
 
         self.prev_view_proj = view_proj;
+        self.prev_origin = origin;
         self.has_prev_depth = true;
     }
 
@@ -482,6 +488,7 @@ impl HizState {
         queue: &crate::gpu::Queue,
         encoder: &mut crate::gpu::CommandEncoder,
         cur_view_proj: [[f32; 4]; 4],
+        cur_origin: glam::DVec3,
     ) -> bool {
         if !self.has_prev_depth {
             return false;
@@ -504,9 +511,16 @@ impl HizState {
         };
         let [w, h] = self.dims;
 
-        let inv_prev_vp = glam::Mat4::from_cols_array_2d(&self.prev_view_proj)
-            .inverse()
-            .to_cols_array_2d();
+        let inv_prev_vp = glam::Mat4::from_cols_array_2d(&self.prev_view_proj).inverse();
+        // Last frame's points relative to this frame's origin:
+        // translate(prev_origin - cur_origin) * prev_inv_vp, composed in f64.
+        let inv_prev_vp = if self.prev_origin == cur_origin {
+            inv_prev_vp.to_cols_array_2d()
+        } else {
+            (glam::DMat4::from_translation(self.prev_origin - cur_origin) * inv_prev_vp.as_dmat4())
+                .as_mat4()
+                .to_cols_array_2d()
+        };
         let uniform = ReprojUniform {
             inv_prev_vp,
             cur_vp: cur_view_proj,
@@ -577,6 +591,7 @@ impl crate::resources::ViewportCullState {
         w: u32,
         h: u32,
         view_proj: [[f32; 4]; 4],
+        origin: glam::DVec3,
     ) {
         if w == 0 || h == 0 {
             return;
@@ -593,7 +608,7 @@ impl crate::resources::ViewportCullState {
         self.hiz
             .as_mut()
             .unwrap()
-            .store_prev_depth(device, encoder, depth_view, view_proj);
+            .store_prev_depth(device, encoder, depth_view, view_proj, origin);
     }
 
     /// Reproject last frame's depth and build the pyramid into the cull encoder.
@@ -603,9 +618,10 @@ impl crate::resources::ViewportCullState {
         queue: &crate::gpu::Queue,
         encoder: &mut crate::gpu::CommandEncoder,
         cur_view_proj: [[f32; 4]; 4],
+        cur_origin: glam::DVec3,
     ) -> bool {
         match self.hiz.as_ref() {
-            Some(s) => s.build_reprojected(queue, encoder, cur_view_proj),
+            Some(s) => s.build_reprojected(queue, encoder, cur_view_proj, cur_origin),
             None => false,
         }
     }

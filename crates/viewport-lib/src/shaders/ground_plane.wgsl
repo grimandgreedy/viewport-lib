@@ -26,7 +26,7 @@ struct GroundPlaneUniform {
     shadow_bias:    f32,          // offset 236,  4 bytes
     mode:           u32,          // offset 240,  4 bytes
     shadow_opacity: f32,          // offset 244,  4 bytes
-    _pad:           vec2<f32>,    // offset 248,  8 bytes
+    tile_origin:    vec2<f32>,    // offset 248,  8 bytes : tile phase at the world origin
     colour2:        vec4<f32>,    // offset 256, 16 bytes : second tile colour
 } // total 272 bytes
 
@@ -118,8 +118,9 @@ fn fs_main(in: VertexOutput) -> FragOut {
         let coarse_tile = fine_tile * 2.0;
 
         // Integer parity checker at each LOD level.
-        let uv_f = hit.xy / fine_tile;
-        let uv_c = hit.xy / coarse_tile;
+        let tile_hit = hit.xy + gp.tile_origin;
+        let uv_f = tile_hit / fine_tile;
+        let uv_c = tile_hit / coarse_tile;
         let p_f = (i32(floor(uv_f.x)) + i32(floor(uv_f.y))) & 1;
         let p_c = (i32(floor(uv_c.x)) + i32(floor(uv_c.y))) & 1;
 

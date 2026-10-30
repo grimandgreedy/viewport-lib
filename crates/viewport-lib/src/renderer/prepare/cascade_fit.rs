@@ -23,11 +23,13 @@ impl ViewportRenderer {
         scene_fx: &SceneEffects<'_>,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        origin: &crate::renderer::origin::OriginState,
         light: &mut LightingFrame,
         stats: &mut crate::renderer::stats::FrameStats,
     ) {
         let lighting = scene_fx.lighting;
-        let camera = &frame.camera.render_camera;
+        // Fit relative to the origin, as the instance bounds are.
+        let camera = &origin.camera(&frame.camera.render_camera);
         let (camera_near, camera_far) = camera.depth_range();
         let cascade_count = light.cascade_count;
 
@@ -46,7 +48,7 @@ impl ViewportRenderer {
         let fallback = fallback_range(camera_near, camera_far, legacy_extent);
 
         let ground = (frame.effects.ground_plane.mode != GroundPlaneMode::None)
-            .then_some(frame.effects.ground_plane.height);
+            .then(|| origin.rel_plane_d(glam::Vec3::NEG_Z, frame.effects.ground_plane.height));
         let fitted = match light.csm_direction {
             Some(light_dir) if bounds.casters.is_some() => {
                 fitted_range(camera, bounds, light_dir, ground)
@@ -103,11 +105,11 @@ impl ViewportRenderer {
             light.csm_direction,
             bounds.casters,
         ) {
-            (Some(extent), _, _) => (glam::Vec3::ZERO, extent),
+            (Some(extent), _, _) => (origin.rel(glam::Vec3::ZERO), extent),
             (None, Some(light_dir), Some(casters)) => {
                 (casters.centre(), casters.light_space_half_extent(light_dir))
             }
-            (None, _, _) => (glam::Vec3::ZERO, legacy_extent),
+            (None, _, _) => (origin.rel(glam::Vec3::ZERO), legacy_extent),
         };
 
         let mut cascade_view_projs = [glam::Mat4::IDENTITY; 4];
@@ -115,7 +117,7 @@ impl ViewportRenderer {
         let mut cascade_split_distances = [0.0f32; 4];
 
         // A camera with no view gets one map over the scene extent instead.
-        let use_csm = camera.view() != glam::Mat4::IDENTITY;
+        let use_csm = frame.camera.render_camera.view() != glam::Mat4::IDENTITY;
         if let Some(light_dir) = light.csm_direction {
             if use_csm {
                 for i in 0..cascade_count {

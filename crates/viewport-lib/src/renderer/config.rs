@@ -78,6 +78,11 @@ pub struct RendererConfig {
     /// keeps every target a viewport has used for as long as the viewport
     /// exists. Default `None`.
     pub target_release_frames: Option<u32>,
+    /// The point positions are measured from on their way to the GPU. A
+    /// frame can replace it with
+    /// [`SceneFrame::with_world_origin`](crate::SceneFrame::with_world_origin).
+    /// Default [`WorldOrigin::Zero`](crate::WorldOrigin::Zero).
+    pub world_origin: crate::renderer::WorldOrigin,
 }
 
 impl RendererConfig {
@@ -94,6 +99,7 @@ impl RendererConfig {
             max_tier: None,
             device_lost_watcher: None,
             target_release_frames: None,
+            world_origin: crate::renderer::WorldOrigin::Zero,
         }
     }
 
@@ -152,6 +158,13 @@ impl RendererConfig {
     /// [`target_release_frames`](Self::target_release_frames).
     pub fn with_target_release_frames(mut self, frames: u32) -> Self {
         self.target_release_frames = Some(frames);
+        self
+    }
+
+    /// Set the origin positions are drawn relative to. See
+    /// [`world_origin`](Self::world_origin).
+    pub fn with_world_origin(mut self, origin: crate::renderer::WorldOrigin) -> Self {
+        self.world_origin = origin;
         self
     }
 
