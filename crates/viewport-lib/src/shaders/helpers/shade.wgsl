@@ -79,6 +79,19 @@ struct ShadingSurface {
     // Interpolated vertex colour, raw (before the object colour and albedo
     // texture multiply into `base_colour`); white when the mesh has none.
     vertex_colour: vec4<f32>,
+    // The material's clear coat: strength 0..1 and perceptual roughness. Zero
+    // without one. The built-in light term layers it over the base; a
+    // `shade_light` hook that replaces that term layers it itself.
+    clearcoat: f32,
+    clearcoat_roughness: f32,
+    // The material's sheen colour and perceptual roughness; black without one.
+    sheen_colour: vec3<f32>,
+    sheen_roughness: f32,
+    // The base specular lobe's anisotropy, -1..1 (0 isotropic), and the unit
+    // direction a positive value stretches it along: `tangent` turned toward
+    // `bitangent` by the material's rotation.
+    anisotropy: f32,
+    anisotropy_direction: vec3<f32>,
 };
 
 // Output of the surface-authoring hook

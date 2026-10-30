@@ -133,6 +133,172 @@ fn viewport_brdf_light_contrib_f90(
 }
 
 // ---------------------------------------------------------------------------
+// Layered lobes: a clear coat and a sheen over the base, and an anisotropic
+// base specular lobe (Filament's formulation).
+// ---------------------------------------------------------------------------
+
+// `ViewportBrdfLayers.flags` bits.
+const VIEWPORT_BRDF_LAYER_CLEARCOAT: u32 = 1u;
+const VIEWPORT_BRDF_LAYER_SHEEN: u32 = 2u;
+const VIEWPORT_BRDF_LAYER_ANISOTROPY: u32 = 4u;
+
+// Floor on the anisotropic GGX alphas.
+const VIEWPORT_BRDF_MIN_ALPHA: f32 = 0.002025;
+
+// The layers over one surface. A zero value has no layers.
+struct ViewportBrdfLayers {
+    flags: u32,
+    // Coat strength 0..1 and its perceptual roughness.
+    clearcoat: f32,
+    clearcoat_roughness: f32,
+    // Sheen colour and perceptual roughness.
+    sheen_colour: vec3<f32>,
+    sheen_roughness: f32,
+    // The sheen's directional albedo at the view (the BRDF LUT's blue lane)
+    // and the weight it leaves the base: 1 - max(sheen_colour) * sheen_dfg.
+    sheen_dfg: f32,
+    sheen_scaling: f32,
+    // Anisotropy -1..1 and the unit directions it stretches along (the
+    // rotated tangent and bitangent).
+    anisotropy: f32,
+    anisotropy_t: vec3<f32>,
+    anisotropy_b: vec3<f32>,
+};
+
+// Charlie sheen distribution (Estevez and Kulla). `alpha` is the sheen's
+// perceptual roughness squared.
+fn viewport_brdf_d_charlie(alpha: f32, NdotH: f32) -> f32 {
+    let inv_r = 1.0 / alpha;
+    let sin2 = max(1.0 - NdotH * NdotH, 0.0078125);
+    return (2.0 + inv_r) * pow(sin2, inv_r * 0.5) / (2.0 * 3.14159265);
+}
+
+// Neubelt sheen visibility.
+fn viewport_brdf_v_neubelt(NdotV: f32, NdotL: f32) -> f32 {
+    return 1.0 / (4.0 * max(NdotL + NdotV - NdotL * NdotV, 1e-4));
+}
+
+// Kelemen visibility for the clear coat.
+fn viewport_brdf_v_kelemen(LdotH: f32) -> f32 {
+    return 0.25 / max(LdotH * LdotH, 1e-4);
+}
+
+// The weight a sheen leaves the base it covers.
+fn viewport_brdf_sheen_scaling(sheen_colour: vec3<f32>, sheen_dfg: f32) -> f32 {
+    let m = max(sheen_colour.r, max(sheen_colour.g, sheen_colour.b));
+    return clamp(1.0 - m * sheen_dfg, 0.0, 1.0);
+}
+
+// The coat's Fresnel reflectance (F0 0.04) times its strength.
+fn viewport_brdf_coat_fresnel(cos_theta: f32, clearcoat: f32) -> f32 {
+    return (0.04 + 0.96 * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0)) * clearcoat;
+}
+
+// The anisotropic GGX alphas along the tangent and bitangent.
+fn viewport_brdf_aniso_alphas(roughness: f32, anisotropy: f32) -> vec2<f32> {
+    let alpha = roughness * roughness;
+    return vec2<f32>(max(alpha * (1.0 + anisotropy), VIEWPORT_BRDF_MIN_ALPHA),
+                     max(alpha * (1.0 - anisotropy), VIEWPORT_BRDF_MIN_ALPHA));
+}
+
+// Anisotropic GGX normal distribution.
+fn viewport_brdf_d_ggx_aniso(at: f32, ab: f32, ToH: f32, BoH: f32, NoH: f32) -> f32 {
+    let a2 = at * ab;
+    let d = vec3<f32>(ab * ToH, at * BoH, a2 * NoH);
+    let b2 = a2 / max(dot(d, d), 1e-20);
+    return a2 * b2 * b2 / 3.14159265;
+}
+
+// Height-correlated anisotropic Smith visibility, the 1 / (4 N.V N.L)
+// included.
+fn viewport_brdf_v_smith_aniso(at: f32, ab: f32, ToV: f32, BoV: f32, ToL: f32, BoL: f32,
+                               NoV: f32, NoL: f32) -> f32 {
+    let lambda_v = NoL * length(vec3<f32>(at * ToV, ab * BoV, NoV));
+    let lambda_l = NoV * length(vec3<f32>(at * ToL, ab * BoL, NoL));
+    return 0.5 / max(lambda_v + lambda_l, 1e-6);
+}
+
+// The base lobes with an anisotropic specular: as
+// `viewport_brdf_light_contrib_f90`, with D and the visibility stretched
+// along `T` and `B`.
+fn viewport_brdf_light_contrib_aniso(
+    N: vec3<f32>,
+    V: vec3<f32>,
+    L: vec3<f32>,
+    radiance: vec3<f32>,
+    base_colour: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    F0: vec3<f32>,
+    f90: f32,
+    ec: vec3<f32>,
+    anisotropy: f32,
+    T: vec3<f32>,
+    B: vec3<f32>,
+) -> vec3<f32> {
+    let H = normalize(L + V);
+    let NdotL = max(dot(N, L), 0.0);
+    if NdotL <= 0.0 { return vec3<f32>(0.0); }
+    let NdotV = max(dot(N, V), 0.001);
+    let NdotH = max(dot(N, H), 0.0);
+    let HdotV = max(dot(H, V), 0.0);
+    let ab = viewport_brdf_aniso_alphas(roughness, anisotropy);
+    let D = viewport_brdf_d_ggx_aniso(ab.x, ab.y, dot(T, H), dot(B, H), NdotH);
+    let Vis = viewport_brdf_v_smith_aniso(ab.x, ab.y, dot(T, V), dot(B, V), dot(T, L),
+                                          dot(B, L), NdotV, NdotL);
+    let F = viewport_brdf_f_schlick_f90(HdotV, F0, f90);
+    let kD = (vec3<f32>(1.0) - F) * (1.0 - metallic);
+    let specular = D * Vis * F * ec;
+    return (kD * base_colour / 3.14159265 + specular) * radiance * NdotL;
+}
+
+// One analytic light on a layered surface: the base (anisotropic when the
+// layers say so), dimmed by the sheen and the coat above it, plus the sheen
+// and coat lobes. The energy compensation `ec` applies to the base specular
+// only. Exactly zero when N.L <= 0.
+fn viewport_brdf_light_contrib_layered(
+    N: vec3<f32>,
+    V: vec3<f32>,
+    L: vec3<f32>,
+    radiance: vec3<f32>,
+    base_colour: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    F0: vec3<f32>,
+    f90: f32,
+    ec: vec3<f32>,
+    ly: ViewportBrdfLayers,
+) -> vec3<f32> {
+    let NdotL = max(dot(N, L), 0.0);
+    if NdotL <= 0.0 { return vec3<f32>(0.0); }
+    var c: vec3<f32>;
+    if (ly.flags & VIEWPORT_BRDF_LAYER_ANISOTROPY) != 0u {
+        c = viewport_brdf_light_contrib_aniso(N, V, L, radiance, base_colour, metallic,
+                                              roughness, F0, f90, ec, ly.anisotropy,
+                                              ly.anisotropy_t, ly.anisotropy_b);
+    } else {
+        c = viewport_brdf_light_contrib_f90(N, V, L, radiance, base_colour, metallic,
+                                            roughness, F0, f90, ec);
+    }
+    let H = normalize(L + V);
+    let NdotH = max(dot(N, H), 0.0);
+    if (ly.flags & VIEWPORT_BRDF_LAYER_SHEEN) != 0u {
+        let NdotV = max(dot(N, V), 0.001);
+        let alpha = ly.sheen_roughness * ly.sheen_roughness;
+        let sheen = viewport_brdf_d_charlie(alpha, NdotH) * viewport_brdf_v_neubelt(NdotV, NdotL);
+        c = c * ly.sheen_scaling + ly.sheen_colour * (sheen * NdotL) * radiance;
+    }
+    if (ly.flags & VIEWPORT_BRDF_LAYER_CLEARCOAT) != 0u {
+        let LdotH = max(dot(L, H), 0.0);
+        let fc = viewport_brdf_coat_fresnel(LdotH, ly.clearcoat);
+        let coat = viewport_brdf_d_ggx(NdotH, ly.clearcoat_roughness)
+            * viewport_brdf_v_kelemen(LdotH) * fc;
+        c = c * (1.0 - fc) + radiance * (coat * NdotL);
+    }
+    return c;
+}
+
+// ---------------------------------------------------------------------------
 // Ambient occlusion of the indirect terms. Here rather than in ambient.wgsl so
 // the plugin PBR catalogue applies the same occlusion as the lit mesh shaders.
 // ---------------------------------------------------------------------------

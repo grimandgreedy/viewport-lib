@@ -143,6 +143,8 @@ struct MaterialGpu {
     item_flags: vec4<u32>,   // (MAT_* bits, lightmap_mode, 0, 0)
     params: array<vec4<f32>, 16>, // material plugin parameters, declaration order
     specular: vec4<f32>,     // (dielectric F0 rgb, dielectric F90)
+    layers0: vec4<f32>,      // (clearcoat, clearcoat roughness, anisotropy, anisotropy rotation)
+    layers1: vec4<f32>,      // (sheen colour rgb, sheen roughness)
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
@@ -155,6 +157,9 @@ const MAT_HAS_SHADOWMASK: u32 = 16u;
 const MAT_HAS_EMISSIVE_TEX: u32 = 32u;
 const MAT_USES_UV1: u32 = 64u;
 const MAT_UV_TRANSFORM: u32 = 128u;
+const MAT_HAS_CLEARCOAT: u32 = 256u;
+const MAT_HAS_SHEEN: u32 = 512u;
+const MAT_HAS_ANISOTROPY: u32 = 1024u;
 
 struct SlotUv {
     uv: vec2<f32>,
@@ -262,6 +267,9 @@ override FEAT_EMISSIVE_MAP: bool = true;
 override FEAT_UV1: bool = true;
 override FEAT_UV_TRANSFORM: bool = true;
 override FEAT_LIGHT_PROBE: bool = true;
+override FEAT_CLEARCOAT: bool = true;
+override FEAT_SHEEN: bool = true;
+override FEAT_ANISOTROPY: bool = true;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
 @group(1) @binding(12) var emissive_tex: texture_2d<f32>;
@@ -764,6 +772,18 @@ fn build_shading_surface(
     // per-vertex extension attribute replaces it with that attribute.
     // `custom_data_id` 0 is the shared all-zero block.
     surf.attr = custom_data1(lights_uniform.custom_data_base, instances[in.obj_idx].custom_data_id);
+    // The material's layers, raw; zero where the material has none.
+    if pbr_layers_compiled() {
+        let mid = instances[in.obj_idx].material_id;
+        let l0 = material_gpu_buf[mid].layers0;
+        let l1 = material_gpu_buf[mid].layers1;
+        surf.clearcoat = l0.x;
+        surf.clearcoat_roughness = l0.y;
+        surf.sheen_colour = l1.xyz;
+        surf.sheen_roughness = l1.w;
+        surf.anisotropy = l0.z;
+        surf.anisotropy_direction = surf.tangent * cos(l0.w) + surf.bitangent * sin(l0.w);
+    }
     return surf;
 }
 
@@ -1055,6 +1075,14 @@ fn compute_lit(
         // plugin-composed modules; in the base module they are inert comments.
         // <viewport-shade-slot:surface>
         // </viewport-shade-slot:surface>
+        // Clear coat, sheen and anisotropy, each compiled in only when a draw
+        // of this pipeline uses it.
+        if pbr_layers_compiled() {
+            let mid = object.material_id;
+            px = pbr_resolve_layers(px, N, in.world_tangent, material_gpu_buf[mid].layers0,
+                                    material_gpu_buf[mid].layers1,
+                                    material_gpu_buf[mid].item_flags.x, saa_kernel);
+        }
         var Lo = vec3<f32>(0.0);
         let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
         // The item's light-channel mask, read once rather than per light.

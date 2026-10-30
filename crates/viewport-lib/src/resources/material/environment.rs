@@ -1576,12 +1576,13 @@ fn prefilter_sample(
 /// Side of the BRDF LUT, in texels.
 pub(crate) const BRDF_LUT_SIZE: u32 = 128;
 
-/// The split-sum BRDF LUT as `Rg16Float` texels, row by row: x = N.V,
-/// y = perceptual roughness, R = sum((1 - Fc) Vis), G = sum(Fc Vis). Produced
-/// by `generate_brdf_lut(BRDF_LUT_SIZE)` and `encode_brdf_lut_rg16f`.
-static BRDF_LUT_RG16F: &[u8] = include_bytes!("brdf_lut_rg16f.bin");
+/// The split-sum BRDF LUT as `Rgba16Float` texels, row by row: x = N.V,
+/// y = perceptual roughness, R = sum((1 - Fc) Vis), G = sum(Fc Vis), B = the
+/// directional albedo of the Charlie sheen lobe (`DFV_Charlie`), A = 1.
+/// Produced by `generate_brdf_lut(BRDF_LUT_SIZE)` and `encode_brdf_lut_rgba16f`.
+static BRDF_LUT_RGBA16F: &[u8] = include_bytes!("brdf_lut_rgba16f.bin");
 
-/// Generate the BRDF LUT on the CPU: RGBA f32 texels, (scale, bias, 0, 1).
+/// Generate the BRDF LUT on the CPU: RGBA f32 texels, (scale, bias, sheen, 1).
 #[cfg(test)]
 pub(crate) fn generate_brdf_lut(size: u32) -> Vec<f32> {
     let mut data = vec![0.0f32; (size * size * 4) as usize];
@@ -1595,7 +1596,7 @@ pub(crate) fn generate_brdf_lut(size: u32) -> Vec<f32> {
                 let idx = (x as usize) * 4;
                 row[idx] = a;
                 row[idx + 1] = b;
-                row[idx + 2] = 0.0;
+                row[idx + 2] = charlie_lut_texel(x, y as u32, size);
                 row[idx + 3] = 1.0;
             }
         });
@@ -1610,11 +1611,20 @@ fn brdf_lut_texel(x: u32, y: u32, size: u32) -> (f32, f32) {
     integrate_brdf(n_dot_v, roughness, 1024)
 }
 
-/// Pack `generate_brdf_lut` output as little-endian `Rg16Float` texels.
+/// One texel of the sheen channel: the Charlie lobe's albedo at the texel
+/// centre.
 #[cfg(test)]
-fn encode_brdf_lut_rg16f(rgba: &[f32]) -> Vec<u8> {
-    rgba.chunks_exact(4)
-        .flat_map(|t| [f32_to_f16(t[0]), f32_to_f16(t[1])])
+fn charlie_lut_texel(x: u32, y: u32, size: u32) -> f32 {
+    let roughness = ((y as f32 + 0.5) / size as f32).max(0.01);
+    let n_dot_v = ((x as f32 + 0.5) / size as f32).max(0.001);
+    integrate_charlie(n_dot_v, roughness, 4096)
+}
+
+/// Pack `generate_brdf_lut` output as little-endian `Rgba16Float` texels.
+#[cfg(test)]
+fn encode_brdf_lut_rgba16f(rgba: &[f32]) -> Vec<u8> {
+    rgba.iter()
+        .map(|&v| f32_to_f16(v))
         .flat_map(u16::to_le_bytes)
         .collect()
 }
@@ -1634,7 +1644,7 @@ pub(crate) fn create_brdf_lut(
         mip_level_count: 1,
         sample_count: 1,
         dimension: crate::gpu::TextureDimension::D2,
-        format: crate::gpu::TextureFormat::Rg16Float,
+        format: crate::gpu::TextureFormat::Rgba16Float,
         usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
@@ -1644,7 +1654,7 @@ pub(crate) fn create_brdf_lut(
 
 /// Write the embedded LUT into a texture from [`create_brdf_lut`].
 pub(crate) fn write_brdf_lut_texels(queue: &crate::gpu::Queue, texture: &crate::gpu::Texture) {
-    write_square_texels(queue, texture, BRDF_LUT_RG16F, BRDF_LUT_SIZE, 4);
+    write_square_texels(queue, texture, BRDF_LUT_RGBA16F, BRDF_LUT_SIZE, 8);
 }
 
 fn write_square_texels(
@@ -1721,6 +1731,42 @@ fn integrate_brdf(n_dot_v: f32, roughness: f32, num_samples: u32) -> (f32, f32) 
     }
     let inv = 1.0 / num_samples as f32;
     (a_out * inv, b_out * inv)
+}
+
+/// The Charlie sheen lobe's directional albedo, `DFV_Charlie` with uniform
+/// half-vector sampling: the integral of `D_Charlie * V_Neubelt * N.L` over the
+/// hemisphere, with `alpha = roughness^2`.
+#[cfg(test)]
+fn integrate_charlie(n_dot_v: f32, roughness: f32, num_samples: u32) -> f32 {
+    let v = [(1.0 - n_dot_v * n_dot_v).sqrt(), 0.0, n_dot_v];
+    let alpha = roughness * roughness;
+    let mut sum = 0.0f64;
+    for i in 0..num_samples {
+        let xi = hammersley(i, num_samples);
+        // Uniform hemisphere half vector: pdf 1 / (2 pi).
+        let phi = 2.0 * PI * xi[0];
+        let cos_t = 1.0 - xi[1];
+        let sin_t = (1.0 - cos_t * cos_t).max(0.0).sqrt();
+        let h = [sin_t * phi.cos(), sin_t * phi.sin(), cos_t];
+        let l = reflect(v, h);
+        let n_dot_l = l[2].max(0.0);
+        let v_dot_h = dot(v, h).max(0.0);
+        if n_dot_l > 0.0 {
+            let d = d_charlie(alpha, cos_t);
+            let vis = 1.0 / (4.0 * (n_dot_l + n_dot_v - n_dot_l * n_dot_v));
+            // pdf(L) = pdf(H) / (4 V.H).
+            sum += (d * vis * n_dot_l * v_dot_h) as f64;
+        }
+    }
+    (sum * (4.0 * 2.0 * PI as f64) / num_samples as f64) as f32
+}
+
+/// Charlie sheen distribution (Estevez and Kulla), as the shaders evaluate it.
+#[cfg(test)]
+fn d_charlie(alpha: f32, n_dot_h: f32) -> f32 {
+    let inv_r = 1.0 / alpha;
+    let sin2 = (1.0 - n_dot_h * n_dot_h).max(0.0078125);
+    (2.0 + inv_r) * sin2.powf(inv_r * 0.5) / (2.0 * PI)
 }
 
 #[cfg(test)]
@@ -2333,10 +2379,10 @@ mod tests {
     #[test]
     #[ignore]
     fn regenerate_brdf_lut_asset() {
-        let bytes = encode_brdf_lut_rg16f(&generate_brdf_lut(BRDF_LUT_SIZE));
+        let bytes = encode_brdf_lut_rgba16f(&generate_brdf_lut(BRDF_LUT_SIZE));
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/src/resources/material/brdf_lut_rg16f.bin"
+            "/src/resources/material/brdf_lut_rgba16f.bin"
         );
         std::fs::write(path, bytes).unwrap();
     }
@@ -2345,11 +2391,11 @@ mod tests {
     #[test]
     fn embedded_brdf_lut_matches_the_integration() {
         let n = BRDF_LUT_SIZE;
-        assert_eq!(BRDF_LUT_RG16F.len(), (n * n * 4) as usize);
+        assert_eq!(BRDF_LUT_RGBA16F.len(), (n * n * 8) as usize);
         let read = |i: usize| {
             half::f16::from_bits(u16::from_le_bytes([
-                BRDF_LUT_RG16F[i],
-                BRDF_LUT_RG16F[i + 1],
+                BRDF_LUT_RGBA16F[i],
+                BRDF_LUT_RGBA16F[i + 1],
             ]))
             .to_f32()
         };
@@ -2363,10 +2409,50 @@ mod tests {
             (100, 31),
         ] {
             let (a, b) = brdf_lut_texel(x, y, n);
-            let i = ((y * n + x) * 4) as usize;
+            let c = charlie_lut_texel(x, y, n);
+            let i = ((y * n + x) * 8) as usize;
             assert!((read(i) - a).abs() < 1e-3, "scale at ({x}, {y})");
             assert!((read(i + 2) - b).abs() < 1e-3, "bias at ({x}, {y})");
+            assert!(
+                (read(i + 4) - c).abs() < 1e-3 * c.max(1.0),
+                "sheen at ({x}, {y})"
+            );
+            assert_eq!(read(i + 6), 1.0, "alpha at ({x}, {y})");
         }
+    }
+
+    /// The scale and bias lanes are the split-sum table the shaders have
+    /// always read: an FNV-1a hash of the R and G halves of every texel.
+    #[test]
+    fn embedded_brdf_lut_scale_bias_are_unchanged() {
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for texel in BRDF_LUT_RGBA16F.chunks_exact(8) {
+            for &b in &texel[..4] {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        assert_eq!(h, 0x2a4f_5ce6_17d2_627c);
+    }
+
+    /// The sheen channel stays finite and non-negative, is an albedo (at most
+    /// 1) away from grazing view, and rises with roughness at normal
+    /// incidence as the Charlie lobe widens. Near grazing the Neubelt
+    /// visibility lets it pass 1, as in the published tables.
+    #[test]
+    fn charlie_albedo_is_bounded() {
+        for y in [0, 8, 32, 64, 96, 127] {
+            for x in [0, 1, 32, 64, 127] {
+                let c = charlie_lut_texel(x, y, BRDF_LUT_SIZE);
+                assert!(c.is_finite() && c >= 0.0, "sheen albedo {c} at ({x}, {y})");
+                if x >= 32 {
+                    assert!(c <= 1.0, "sheen albedo {c} at ({x}, {y})");
+                }
+            }
+        }
+        let low = charlie_lut_texel(127, 16, BRDF_LUT_SIZE);
+        let high = charlie_lut_texel(127, 127, BRDF_LUT_SIZE);
+        assert!(high > low, "{high} <= {low}");
     }
 
     #[test]
