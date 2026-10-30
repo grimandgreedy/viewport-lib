@@ -1,9 +1,10 @@
 //! Double-render determinism probe.
 //!
-//! Renders each catalogue scene twice on the same device and diffs the two raw
-//! frames. This measures run-to-run determinism, which is what the golden policy
-//! rests on: a scene that renders bit-identically twice on one device can be
-//! held to an exact golden; one that does not (an order-dependent transparency
+//! Renders each catalogue scene in two separately built harnesses (a new
+//! device, renderer and scene each time) and diffs the two raw frames. This
+//! measures run-to-run determinism, which is what the golden policy rests on: a
+//! scene that renders bit-identically in two fresh harnesses can be held to an
+//! exact golden; one that does not (an order-dependent transparency
 //! pass, atomic light binning, ...) has a real non-determinism floor and needs a
 //! measured per-scene tolerance rather than exact.
 //!
@@ -29,7 +30,7 @@
 
 use std::path::Path;
 use viewport_lib_testkit::golden::{self, Tolerance};
-use viewport_lib_testkit::{Harness, catalogue, frame_for};
+use viewport_lib_testkit::{Harness, NamedScene, catalogue, frame_for};
 
 const W: u32 = 400;
 const H: u32 = 300;
@@ -69,6 +70,19 @@ fn pixels_over(a: &[[f32; 4]], b: &[[f32; 4]], tol: Tolerance) -> u64 {
         .count() as u64
 }
 
+/// The settled frame of `scene` from a freshly built harness, rendered the way
+/// the snapshot suite renders it: one warm frame, then the frame that counts.
+/// A scene with a simulation steps it the same number of times in every
+/// harness, so two harnesses agree unless the renderer itself does not.
+fn settled_frame(scene: &NamedScene) -> Vec<[f32; 4]> {
+    let mut harness =
+        Harness::with_target_format(Harness::FLOAT_TARGET_FORMAT).expect("adapter went away");
+    let built = harness.build_scene(scene);
+    let frame = frame_for(&built, &scene.cameras[0].camera, [W as f32, H as f32]);
+    let _ = harness.render_float(&frame, W, H);
+    harness.render_float(&frame, W, H)
+}
+
 // Ignored by default: this is a diagnostic to run deliberately on the reference
 // adapter when measuring or updating the tolerance manifest, not a per-commit
 // gate. Its result is adapter-specific and it renders the whole catalogue twice,
@@ -81,7 +95,9 @@ fn pixels_over(a: &[[f32; 4]], b: &[[f32; 4]], tol: Tolerance) -> u64 {
 #[test]
 #[ignore = "diagnostic probe; run explicitly on the reference adapter"]
 fn scenes_render_deterministically() {
-    let Some(mut harness) = Harness::with_target_format(Harness::FLOAT_TARGET_FORMAT) else {
+    let Some(backend_dir) =
+        Harness::with_target_format(Harness::FLOAT_TARGET_FORMAT).map(|h| h.backend_dir_name())
+    else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
@@ -89,19 +105,14 @@ fn scenes_render_deterministically() {
     let tolerances = golden::load_tolerances(
         &Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/snapshots")
-            .join(harness.backend_dir_name())
+            .join(backend_dir)
             .join("tolerances.txt"),
     );
     let mut nondeterministic: Vec<String> = Vec::new();
 
     for scene in catalogue() {
-        let built = harness.build_scene(&scene);
-        let frame = frame_for(&built, &scene.cameras[0].camera, [W as f32, H as f32]);
-        // Warm once so first-frame uploads and cache building settle, then take
-        // two settled frames and compare them.
-        let _ = harness.render_float(&frame, W, H);
-        let first = harness.render_float(&frame, W, H);
-        let second = harness.render_float(&frame, W, H);
+        let first = settled_frame(&scene);
+        let second = settled_frame(&scene);
 
         let (worst, moved) = diff(&first, &second);
         if moved == 0 {
