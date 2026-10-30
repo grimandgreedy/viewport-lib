@@ -282,6 +282,7 @@
 
 ### Fixed
 
+- **`Frustum::cull_cone`** - the far-cap test subtracted the cap radius instead of adding it, so a spot light whose apex sat outside one frustum plane was culled even when its cone covered the view, and neither lit nor shadowed.
 - **Every casting spot light is shadowed** - a spot light was shadowed only as the first light in the list, so beside a sun it cast nothing, and its map was a fixed 90 degree frustum whatever the cone. Each spot now takes a layer of the punctual array framed to its outer cone plus a two-texel guard, up to 85 degrees from the axis.
 - **Point light shadows without cube-array textures** - point lights now cast shadows on devices without cube-array textures (iOS among them), where they rendered unshadowed.
 - **Two-channel normal maps decode correctly** - the mesh shaders read only X and Y and rebuild Z, so BC5, `Rg8Unorm` and EAC RG11 normal maps no longer decode a flat texel as pointing into the surface. Three-channel maps shade as before.

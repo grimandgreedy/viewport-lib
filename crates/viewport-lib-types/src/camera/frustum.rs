@@ -95,9 +95,11 @@ impl Frustum {
         // Far cap radius and centre.
         let far_centre = apex + axis * range * cos_a;
         let far_radius = range * sin_a;
+        // The cone is the hull of its apex and far cap, so it is outside a
+        // plane only when the apex and the cap's nearest point both are.
         for plane in &self.planes {
             let apex_dist = plane.normal.dot(apex) + plane.d;
-            let far_dist = plane.normal.dot(far_centre) + plane.d - far_radius;
+            let far_dist = plane.normal.dot(far_centre) + plane.d + far_radius;
             if apex_dist < 0.0 && far_dist < 0.0 {
                 return true;
             }
@@ -256,6 +258,15 @@ mod tests {
         // Cone planted far to the right, axis pointing further right.
         let axis = glam::Vec3::X;
         assert!(frustum.cull_cone(glam::Vec3::new(1000.0, 0.0, 0.0), axis, 0.1, 1.0));
+    }
+
+    #[test]
+    fn test_cull_cone_apex_outside_but_cap_covers_view() {
+        let frustum = Frustum::from_view_proj(&test_camera_vp());
+        // Apex well outside the left plane, axis pointing across the view;
+        // the wide far cap reaches past the origin, so the cone is visible.
+        let axis = glam::Vec3::X;
+        assert!(!frustum.cull_cone(glam::Vec3::new(-10.0, 0.0, 0.0), axis, 0.5, 20.0));
     }
 
     #[test]
