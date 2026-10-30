@@ -36,11 +36,7 @@ fn gpu_pick_hits_voxel_volume() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -93,11 +89,7 @@ fn gpu_pick_voxel_volume_resolves_voxel() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -193,19 +185,7 @@ fn gpu_pick_hits_showcase_style_voxel_volume() {
     let view = glam::Mat4::look_at_rh(eye, target, glam::Vec3::Z);
     let proj = glam::Mat4::perspective_rh(60_f32.to_radians(), 1.0, 0.1, 100.0);
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::default();
-        rc.view = view;
-        rc.projection = proj;
-        rc.eye_position = eye.to_array();
-        rc.forward = (target - eye).normalize().to_array();
-        rc.orientation = glam::Quat::IDENTITY;
-        rc.near = 0.1;
-        rc.far = 100.0;
-        rc.fov = 60_f32.to_radians();
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_matrices(view, proj);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;

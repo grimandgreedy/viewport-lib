@@ -147,11 +147,7 @@ fn external_view_is_sampled_by_a_material() {
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let cam = Camera::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
 
     let px = renderer.render_offscreen(&device, &queue, &frame, 64, 64);

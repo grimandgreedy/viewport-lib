@@ -36,11 +36,7 @@ fn base_frame(vp: ViewportId, mode: PipelineMode) -> FrameData {
         ..Camera::default()
     };
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = W as f32 / H as f32;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [W as f32, H as f32];
     frame.camera.pixels_per_point = 1.0;
     frame.camera = frame.camera.with_viewport_id(vp);

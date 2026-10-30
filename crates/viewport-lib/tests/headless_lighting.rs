@@ -55,8 +55,7 @@ fn capture_hdr_preserves_values_above_one() {
     let orig_viewport_size = frame.camera.viewport_size;
     let orig_pp_enabled = frame.effects.display.mode;
 
-    let mut face_cam = RenderCamera::from_camera(&cam);
-    face_cam.aspect = 1.0;
+    let face_cam = RenderCamera::from_camera(&cam);
     let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
 
     assert_eq!(captured.width, 64);
@@ -195,8 +194,7 @@ fn directional_lightmap_responds_to_normal() {
         mat.normal_strength = 1.0;
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        let mut face_cam = RenderCamera::from_camera(&cam);
-        face_cam.aspect = 1.0;
+        let face_cam = RenderCamera::from_camera(&cam);
         let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
         // Sample the centre pixel (on the quad) rather than the global peak, which
         // would pick up the background clear when the quad is dim.
@@ -301,8 +299,7 @@ fn shadowmask_attenuates_direct_light() {
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        let mut face_cam = RenderCamera::from_camera(&cam);
-        face_cam.aspect = 1.0;
+        let face_cam = RenderCamera::from_camera(&cam);
         let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
         let c = ((32 * 64 + 32) * 4) as usize;
         captured.rgba[c]
@@ -367,8 +364,7 @@ fn hdr_lightmap_survives_above_one() {
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        let mut face_cam = RenderCamera::from_camera(&cam);
-        face_cam.aspect = 1.0;
+        let face_cam = RenderCamera::from_camera(&cam);
         let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
         captured.rgba.iter().copied().fold(0.0f32, f32::max)
     };
@@ -473,8 +469,7 @@ fn multi_page_lightmap_selects_layer_per_vertex() {
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        let mut face_cam = RenderCamera::from_camera(&cam);
-        face_cam.aspect = 1.0;
+        let face_cam = RenderCamera::from_camera(&cam);
         let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
         // Peak over RGB only; the alpha channel is 1.0 and would mask a dim layer.
         captured
@@ -583,8 +578,7 @@ fn scene_lightmap_addresses_shared_atlas_per_object() {
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        let mut face_cam = RenderCamera::from_camera(&cam);
-        face_cam.aspect = 1.0;
+        let face_cam = RenderCamera::from_camera(&cam);
         let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
         // Peak over RGB only; alpha is 1.0 and would mask the dim object.
         captured
@@ -711,8 +705,7 @@ fn packed_scene_atlas_round_trips_through_the_packer() {
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        let mut face_cam = RenderCamera::from_camera(&cam);
-        face_cam.aspect = 1.0;
+        let face_cam = RenderCamera::from_camera(&cam);
         let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
         captured
             .rgba
@@ -928,11 +921,7 @@ fn light_probe_object_is_lit_by_the_probe_field() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -1005,11 +994,7 @@ fn probe_volume_lights_object_per_fragment() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -1217,11 +1202,7 @@ fn environment_zones_select_the_second_zone() {
         .unwrap();
 
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&Camera::default());
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -1690,11 +1671,7 @@ fn environment_lit_sphere(
         .upload_mesh_data(device, &viewport_lib::primitives::sphere(1.0, 24, 12))
         .unwrap();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&Camera::default());
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -1847,8 +1824,7 @@ fn capture_lit_box_max(
     item.material = upload_material(renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
-    let mut face_cam = RenderCamera::from_camera(&Camera::default());
-    face_cam.aspect = 1.0;
+    let face_cam = RenderCamera::from_camera(&Camera::default());
     let captured = renderer.capture_hdr(device, queue, &mut frame, face_cam, 64);
     captured
         .rgba

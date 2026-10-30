@@ -90,7 +90,7 @@ impl ViewportRenderer {
         let mut cascade_split_distances = [0.0f32; 4];
 
         // A camera with no view gets one map over the scene extent instead.
-        let use_csm = camera.view != glam::Mat4::IDENTITY;
+        let use_csm = camera.view() != glam::Mat4::IDENTITY;
         if let Some(light_dir) = light.csm_direction {
             if use_csm {
                 for i in 0..cascade_count {
@@ -102,7 +102,7 @@ impl ViewportRenderer {
                     let split_far = cascade_splits[i];
                     cascade_view_projs[i] = compute_cascade_matrix(
                         light_dir,
-                        camera.view,
+                        camera.view(),
                         camera.fov_y(),
                         camera.aspect(),
                         split_near,

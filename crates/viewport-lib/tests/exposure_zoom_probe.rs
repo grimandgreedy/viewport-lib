@@ -77,11 +77,7 @@ fn auto_exposure_stable_across_zoom() {
             ..Camera::default()
         };
         let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&cam);
         frame.camera.viewport_size = [size as f32, size as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
@@ -189,11 +185,7 @@ fn probe_example_scene() {
             ..Camera::default()
         };
         let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&cam);
         frame.camera.viewport_size = [size as f32, size as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;

@@ -155,7 +155,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
             return Vec::new();
         }
 
-        sort_back_to_front(&mut self.draws, ctx.camera.eye_position);
+        sort_back_to_front(&mut self.draws, ctx.camera.eye_position().to_array());
 
         let res = ctx.resources;
         self.gpu.ensure_frame_uniform_buffer(device);

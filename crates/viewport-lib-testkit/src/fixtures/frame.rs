@@ -33,11 +33,7 @@ pub fn probe_quad() -> MeshData {
 /// rather than a gridline, and the frame time is fixed at zero.
 pub fn probe_frame(size: u32, background: [f32; 4]) -> FrameData {
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&Camera::default());
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;

@@ -1,7 +1,8 @@
-//! The derived `RenderCamera` accessors against the fields `from_camera` stores.
+//! `RenderCamera` built from matrices: the derived state against the inputs.
 
-use super::RenderCamera;
+use super::{ForegroundPass, ForegroundProjection, RenderCamera};
 use crate::camera::{Camera, Projection};
+use crate::resources::CameraUniform;
 
 const EPS: f32 = 1e-5;
 
@@ -11,8 +12,19 @@ fn close(a: f32, b: f32) -> bool {
     (a - b).abs() <= EPS * b.abs().max(1.0)
 }
 
-fn close3(a: glam::Vec3, b: [f32; 3]) -> bool {
+fn close3(a: glam::Vec3, b: glam::Vec3) -> bool {
     (0..3).all(|i| close(a[i], b[i]))
+}
+
+/// A perspective far plane lives in how far `z_axis.z` sits from -1, so it
+/// carries only about `f32::EPSILON * far / near` of relative precision.
+fn far_close(far: f32, expected: f32, near: f32, orthographic: bool) -> bool {
+    let eps = if orthographic {
+        EPS
+    } else {
+        EPS.max(4.0 * f32::EPSILON * expected / near)
+    };
+    (far - expected).abs() <= eps * expected
 }
 
 fn known_camera(projection: Projection) -> Camera {
@@ -28,83 +40,226 @@ fn known_camera(projection: Projection) -> Camera {
     cam
 }
 
-fn check_pose(rc: &RenderCamera) {
-    assert!(close3(rc.eye_position(), rc.eye_position), "eye");
-    assert!(close3(rc.forward(), rc.forward), "forward");
-    // q and -q are the same rotation.
-    assert!(
-        close(rc.orientation().dot(rc.orientation).abs(), 1.0),
-        "orientation"
-    );
-    let (near, far) = rc.depth_range();
-    assert!(close(near, rc.near), "near {near} vs {}", rc.near);
-    // A perspective far plane lives in how far z_axis.z sits from -1, so it
-    // carries only about f32 epsilon * far / near of relative precision.
-    let far_eps = if rc.is_orthographic() {
-        EPS
+/// The default camera, an orbit camera, an orthographic one and a wide one.
+fn cameras() -> Vec<Camera> {
+    let mut wide = known_camera(Projection::Perspective);
+    wide.aspect = 3.2;
+    wide.fov_y = 1.4;
+    vec![
+        Camera::default(),
+        known_camera(Projection::Perspective),
+        known_camera(Projection::Orthographic),
+        wide,
+    ]
+}
+
+/// The uniform `from_camera` packed when the camera stored its eye, forward
+/// and depth range as fields beside the matrices.
+fn stored_field_uniform(cam: &Camera) -> CameraUniform {
+    let (view, proj) = (cam.view_matrix(), cam.proj_matrix());
+    let vp = proj * view;
+    let eye = cam.eye_position();
+    let ortho = cam.projection == Projection::Orthographic;
+    let (a, b) = (proj.z_axis.z, proj.w_axis.z);
+    let (near, far) = if ortho {
+        (b / a, b / a - 1.0 / a)
     } else {
-        EPS.max(4.0 * f32::EPSILON * rc.far / rc.near)
+        (b / a, b / (a + 1.0))
     };
-    assert!(
-        (far - rc.far).abs() <= far_eps * rc.far,
-        "far {far} vs {}",
-        rc.far
-    );
-    assert!(close(rc.aspect(), rc.aspect), "aspect");
-    // The basis is orthonormal and right-handed.
-    let (r, u, f) = (rc.right(), rc.up(), rc.forward());
-    assert!(close(r.cross(u).dot(-f), 1.0), "basis");
+    CameraUniform {
+        view_proj: vp.to_cols_array_2d(),
+        eye_pos: eye.to_array(),
+        lit_clamp: 1.0,
+        forward: (cam.center - eye).normalize_or_zero().to_array(),
+        _pad1: 0.0,
+        inv_view_proj: vp.inverse().to_cols_array_2d(),
+        view: view.to_cols_array_2d(),
+        proj: proj.to_cols_array_2d(),
+        inv_proj: proj.inverse().to_cols_array_2d(),
+        viewport: [0.0; 4],
+        clip: [near, far, f32::from(u8::from(ortho)), 0.0],
+        time: [0.0; 4],
+    }
 }
 
 #[test]
-fn perspective_accessors_match_stored_fields() {
-    let rc = RenderCamera::from_camera(&known_camera(Projection::Perspective));
-    assert!(!rc.is_orthographic());
-    check_pose(&rc);
-    let fov = rc.vertical_fov().expect("perspective has a fov");
-    assert!(close(fov, rc.fov), "fov {fov} vs {}", rc.fov);
+fn from_camera_uniform_is_unchanged() {
+    for cam in cameras() {
+        let u = RenderCamera::from_camera(&cam).camera_uniform();
+        assert_eq!(
+            bytemuck::bytes_of(&u),
+            bytemuck::bytes_of(&stored_field_uniform(&cam)),
+            "uniform bytes"
+        );
+    }
+}
+
+#[test]
+fn from_matrices_matches_from_camera() {
+    for cam in cameras() {
+        let rc = RenderCamera::from_camera(&cam);
+        let rm = RenderCamera::from_matrices(cam.view_matrix(), cam.proj_matrix());
+        assert_eq!(rc.view(), rm.view());
+        assert_eq!(rc.projection(), rm.projection());
+        // Eye and forward read back from the view matrix agree with the
+        // camera's own to rounding; every other byte is identical.
+        let u = rc.camera_uniform();
+        let mut m = rm.camera_uniform();
+        assert!(close3(m.eye_pos.into(), u.eye_pos.into()), "eye");
+        assert!(close3(m.forward.into(), u.forward.into()), "forward");
+        m.eye_pos = u.eye_pos;
+        m.forward = u.forward;
+        assert_eq!(
+            bytemuck::bytes_of(&m),
+            bytemuck::bytes_of(&u),
+            "uniform bytes"
+        );
+        assert_eq!(rm.depth_range(), rc.depth_range());
+        assert_eq!(rm.aspect(), rc.aspect());
+        assert_eq!(rm.vertical_fov(), rc.vertical_fov());
+    }
+}
+
+#[test]
+fn from_camera_round_trips_the_camera() {
+    for cam in cameras() {
+        let rc = RenderCamera::from_camera(&cam);
+        let ortho = cam.projection == Projection::Orthographic;
+        assert_eq!(rc.is_orthographic(), ortho);
+        assert!(close3(rc.eye_position(), cam.eye_position()), "eye");
+        assert!(close3(rc.forward(), cam.forward()), "forward");
+        assert!(close(rc.aspect(), cam.aspect), "aspect");
+        let (near, far) = rc.depth_range();
+        assert!(close(near, cam.effective_znear()), "near {near}");
+        assert!(
+            far_close(far, cam.effective_zfar(), near, ortho),
+            "far {far} vs {}",
+            cam.effective_zfar()
+        );
+        match rc.vertical_fov() {
+            Some(fov) => assert!(!ortho && close(fov, cam.fov_y), "fov {fov}"),
+            None => assert!(ortho),
+        }
+        // The camera's own angle, exactly, for both projections.
+        assert_eq!(rc.fov_y(), cam.fov_y);
+    }
+}
+
+#[test]
+fn basis_is_orthonormal_and_right_handed() {
+    for cam in cameras() {
+        let rc = RenderCamera::from_camera(&cam);
+        let (r, u, f) = (rc.right(), rc.up(), rc.forward());
+        assert!(close(r.cross(u).dot(-f), 1.0), "basis");
+        // q and -q are the same rotation.
+        assert!(close(rc.orientation().dot(cam.orientation).abs(), 1.0));
+    }
+}
+
+#[test]
+fn perspective_view_height_grows_with_depth() {
+    let cam = known_camera(Projection::Perspective);
+    let rc = RenderCamera::from_camera(&cam);
     let depth = 7.0;
-    let expected = 2.0 * (rc.fov / 2.0).tan() * depth;
+    let expected = 2.0 * (cam.fov_y / 2.0).tan() * depth;
     assert!(close(rc.view_height_at(depth), expected), "view height");
 }
 
 #[test]
-fn orthographic_accessors_match_stored_fields() {
+fn orthographic_view_height_is_constant() {
     let cam = known_camera(Projection::Orthographic);
     let rc = RenderCamera::from_camera(&cam);
-    assert!(rc.is_orthographic());
-    check_pose(&rc);
-    assert_eq!(rc.vertical_fov(), None);
     // The orbit camera frames 2 * distance * tan(fov / 2) at every depth.
-    let expected = 2.0 * cam.distance * (rc.fov / 2.0).tan();
+    let expected = 2.0 * cam.distance * (cam.fov_y / 2.0).tan();
     for depth in [0.5, 12.0, 300.0] {
         assert!(close(rc.view_height_at(depth), expected), "view height");
     }
 }
 
 #[test]
-fn accessors_follow_matrices_set_directly() {
+fn setters_refresh_the_derived_state() {
     let mut rc = RenderCamera::default();
     let eye = glam::Vec3::new(3.0, 4.0, 5.0);
-    rc.view = glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, glam::Vec3::Z);
-    rc.projection = glam::Mat4::perspective_rh(0.6, 2.0, 0.5, 50.0);
-    assert!(close3(rc.eye_position(), eye.to_array()));
-    assert!(close3(rc.forward(), (-eye).normalize().to_array()));
+    rc.set_view(glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, glam::Vec3::Z));
+    rc.set_projection(glam::Mat4::perspective_rh(0.6, 2.0, 0.5, 50.0));
+    assert!(close3(rc.eye_position(), eye));
+    assert!(close3(rc.forward(), (-eye).normalize()));
     let (near, far) = rc.depth_range();
     assert!(close(near, 0.5));
-    assert!((far - 50.0).abs() <= 4.0 * f32::EPSILON * 100.0 * 50.0);
+    assert!(far_close(far, 50.0, 0.5, false));
     assert!(close(rc.vertical_fov().unwrap(), 0.6));
+    assert!(close(rc.aspect(), 2.0));
+
+    rc.set_projection(glam::Mat4::orthographic_rh(-4.0, 4.0, -2.0, 2.0, 1.0, 30.0));
+    assert!(rc.is_orthographic());
+    assert_eq!(rc.vertical_fov(), None);
+    let (near, far) = rc.depth_range();
+    assert!(close(near, 1.0) && close(far, 30.0));
     assert!(close(rc.aspect(), 2.0));
 }
 
 #[test]
-fn identity_matrices_report_stored_fields() {
+fn default_is_a_perspective_camera_down_negative_z() {
     let rc = RenderCamera::default();
-    assert_eq!(rc.eye_position(), glam::Vec3::from(rc.eye_position));
-    assert_eq!(rc.forward(), glam::Vec3::from(rc.forward));
-    assert_eq!(rc.orientation(), rc.orientation);
-    assert_eq!(rc.depth_range(), (rc.near, rc.far));
-    assert_eq!(rc.vertical_fov(), Some(rc.fov));
-    assert_eq!(rc.aspect(), rc.aspect);
-    assert!(!rc.is_orthographic());
+    assert!(close3(rc.eye_position(), glam::Vec3::new(0.0, 0.0, 5.0)));
+    assert!(close3(rc.forward(), glam::Vec3::NEG_Z));
+    assert!(close(
+        rc.vertical_fov().unwrap(),
+        std::f32::consts::FRAC_PI_4
+    ));
+    assert!(close(rc.aspect(), 1.333));
+    let (near, far) = rc.depth_range();
+    assert!(close(near, 0.1));
+    assert!(far_close(far, 1000.0, 0.1, false));
+}
+
+#[test]
+fn depth_range_override_wins_until_the_projection_changes() {
+    // Reversed-Z with an infinite far plane: nothing to read back.
+    let proj = glam::Mat4::perspective_infinite_reverse_rh(0.8, 1.5, 0.05);
+    let rc = RenderCamera::from_matrices(glam::Mat4::IDENTITY, proj).with_depth_range(0.05, 500.0);
+    assert_eq!(rc.depth_range(), (0.05, 500.0));
+    assert_eq!(rc.projection(), proj);
+    let clip = rc.camera_uniform().clip;
+    assert_eq!((clip[0], clip[1]), (0.05, 500.0));
+
+    let mut rc = rc;
+    rc.set_projection(glam::Mat4::perspective_rh(0.8, 1.5, 0.2, 80.0));
+    let (near, far) = rc.depth_range();
+    assert!(close(near, 0.2));
+    assert!(far_close(far, 80.0, 0.2, false));
+}
+
+#[test]
+fn foreground_without_override_is_the_scene_camera() {
+    let rc = RenderCamera::from_camera(&known_camera(Projection::Perspective));
+    for pass in [None, Some(ForegroundPass::default())] {
+        let fg = rc.foreground_camera(pass.as_ref());
+        assert_eq!(fg.view(), rc.view());
+        assert_eq!(fg.projection(), rc.projection());
+        assert_eq!(fg.fov_y(), rc.fov_y());
+    }
+}
+
+#[test]
+fn foreground_override_replaces_the_projection() {
+    let pass = ForegroundPass {
+        projection: Some(ForegroundProjection {
+            fov_y: 1.1,
+            near: 0.01,
+            far: None,
+        }),
+    };
+    for projection in [Projection::Perspective, Projection::Orthographic] {
+        let rc = RenderCamera::from_camera(&known_camera(projection));
+        let fg = rc.foreground_camera(Some(&pass));
+        let expected =
+            glam::Mat4::perspective_rh(1.1, rc.aspect(), 0.01, rc.depth_range().1.max(0.02));
+        assert_eq!(fg.view(), rc.view());
+        assert_eq!(fg.projection(), expected);
+        // Always perspective, even over an orthographic scene camera.
+        assert!(!fg.is_orthographic());
+        assert_eq!(fg.fov_y(), 1.1);
+        assert!(close(fg.depth_range().0, 0.01));
+    }
 }

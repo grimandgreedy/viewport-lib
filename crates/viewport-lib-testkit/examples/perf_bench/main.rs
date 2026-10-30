@@ -753,19 +753,7 @@ fn run_one(
     for f in 0..params.frames {
         let (eye, target) = camera_for(f, params.frames, meshes.extent);
         let view = glam::Mat4::look_at_rh(eye, target, glam::Vec3::Z);
-        let forward = (target - eye).normalize_or_zero();
-        let orientation = glam::Quat::from_mat3(&glam::Mat3::from_mat4(view.inverse())).normalize();
-        let mut rc = RenderCamera::default();
-        rc.view = view;
-        rc.projection = proj;
-        rc.eye_position = eye.to_array();
-        rc.forward = forward.to_array();
-        rc.orientation = orientation;
-        rc.near = near;
-        rc.far = far;
-        rc.fov = fov;
-        rc.aspect = aspect;
-        frame.camera.render_camera = rc;
+        frame.camera.render_camera = RenderCamera::from_matrices(view, proj);
 
         renderer.render_to_texture(device, queue, target_view, &frame);
         // Non-blocking poll lets the renderer's async timestamp/stats readback

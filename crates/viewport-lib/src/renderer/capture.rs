@@ -306,15 +306,7 @@ impl ViewportRenderer {
         // (face pixels, forward direction, view_proj) per face.
         let mut captured: Vec<(CapturedHdr, glam::Vec3, glam::Mat4)> = Vec::with_capacity(6);
         for (dir, up) in faces {
-            let mut cam = RenderCamera::default();
-            cam.view = glam::Mat4::look_at_rh(eye, eye + dir, up);
-            cam.projection = proj;
-            cam.eye_position = position;
-            cam.forward = dir.to_array();
-            cam.near = near;
-            cam.far = far;
-            cam.fov = std::f32::consts::FRAC_PI_2;
-            cam.aspect = 1.0;
+            let cam = RenderCamera::from_matrices(glam::Mat4::look_at_rh(eye, eye + dir, up), proj);
             let view_proj = cam.view_proj();
             let face = self.capture_hdr(device, queue, frame, cam, face_size);
             captured.push((face, dir, view_proj));
@@ -449,15 +441,7 @@ impl ViewportRenderer {
         let mut uniform = ResolveUniform::zeroed();
         uniform.eye = [eye.x, eye.y, eye.z, 0.0];
         for (i, (dir, up)) in faces.into_iter().enumerate() {
-            let mut cam = RenderCamera::default();
-            cam.view = glam::Mat4::look_at_rh(eye, eye + dir, up);
-            cam.projection = proj;
-            cam.eye_position = position;
-            cam.forward = dir.to_array();
-            cam.near = near;
-            cam.far = far;
-            cam.fov = std::f32::consts::FRAC_PI_2;
-            cam.aspect = 1.0;
+            let cam = RenderCamera::from_matrices(glam::Mat4::look_at_rh(eye, eye + dir, up), proj);
             uniform.view_proj[i] = cam.view_proj().to_cols_array_2d();
             uniform.forward[i] = [dir.x, dir.y, dir.z, 0.0];
             self.copy_capture_face(device, queue, frame, cam, face_size, &face_array, i as u32);
@@ -1354,11 +1338,7 @@ mod tests {
             ..Camera::default()
         };
         let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&cam);
         frame.camera.viewport_size = [64.0, 64.0];
         frame.camera.viewport_index = vp.0;
         frame.viewport.show_grid = false;
@@ -1452,11 +1432,7 @@ mod tests {
                 ..Camera::default()
             };
             let mut frame = FrameData::default();
-            frame.camera.render_camera = {
-                let mut rc = RenderCamera::from_camera(&cam);
-                rc.aspect = 1.0;
-                rc
-            };
+            frame.camera.render_camera = RenderCamera::from_camera(&cam);
             frame.camera.viewport_size = [64.0, 64.0];
             frame.camera.cull_mask = cull_mask;
             frame.viewport.show_grid = false;

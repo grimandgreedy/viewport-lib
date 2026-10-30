@@ -206,15 +206,15 @@ pub(super) fn handle_world_radius(
     viewport_height: f32,
     target_px: f32,
 ) -> f32 {
-    let eye = glam::Vec3::from(camera.eye_position);
+    let eye = camera.eye_position();
     let dist = (pos - eye).length().max(0.001);
-    let world_per_px = 2.0 * (camera.fov * 0.5).tan() * dist / viewport_height.max(1.0);
+    let world_per_px = 2.0 * (camera.fov_y() * 0.5).tan() * dist / viewport_height.max(1.0);
     world_per_px * target_px
 }
 
 /// Build a ray from the context cursor position.
 pub(super) fn ctx_ray(ctx: &WidgetContext) -> (glam::Vec3, glam::Vec3) {
-    let vp = ctx.camera.projection * ctx.camera.view;
+    let vp = ctx.camera.view_proj();
     crate::interaction::query::picking::screen_to_ray(
         ctx.cursor_viewport,
         ctx.viewport_size,

@@ -50,9 +50,10 @@ fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
 }
 
 fn frame_looking_down_z(item: MeshInstanceItem) -> FrameData {
-    let mut cam = RenderCamera::default();
-    cam.eye_position = [0.0, 0.0, 0.0];
-    cam.forward = [0.0, 0.0, -1.0];
+    let cam = RenderCamera::from_matrices(
+        glam::Mat4::look_at_rh(glam::Vec3::ZERO, glam::Vec3::NEG_Z, glam::Vec3::Y),
+        glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.333, 0.1, 1000.0),
+    );
     let cf = CameraFrame::new(cam, [256.0, 256.0]);
     let mut sf = SceneFrame::new(SurfaceSubmission::Flat(std::sync::Arc::from(Vec::new())));
     sf.mesh_instances.push(item);

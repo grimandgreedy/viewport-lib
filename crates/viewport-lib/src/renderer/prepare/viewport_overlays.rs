@@ -706,8 +706,8 @@ impl ViewportRenderer {
             let vp_h = frame.camera.viewport_size[1];
             let ppp = frame.camera.pixels_per_point;
             if vp_w > 0.0 && vp_h > 0.0 {
-                let view = &frame.camera.render_camera.view;
-                let proj = &frame.camera.render_camera.projection;
+                let view = &frame.camera.render_camera.view();
+                let proj = &frame.camera.render_camera.projection();
 
                 // Each item (label, glyph run, or polyline) contributes a
                 // (z_order, verts) batch. A stable sort keeps submission order
@@ -1737,8 +1737,8 @@ impl ViewportRenderer {
                 // the same masks by index. The bbox is looked up by that same index, so
                 // `clip_rect` and `clip_index` always describe the same mask.
                 let ppp = frame.camera.pixels_per_point;
-                let view = &frame.camera.render_camera.view;
-                let proj = &frame.camera.render_camera.projection;
+                let view = &frame.camera.render_camera.view();
+                let proj = &frame.camera.render_camera.projection();
                 let (clip_shapes, clip_index_of, clip_bboxes, clips_dropped) =
                     build_clip_shapes(&frame.overlays.shapes, ppp, [vp_w, vp_h], view, proj);
                 self.overlay_retained_counters.clip_masks_dropped = clips_dropped;

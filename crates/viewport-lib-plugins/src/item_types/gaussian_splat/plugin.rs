@@ -184,7 +184,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         }
 
         let vp_idx = ctx.viewport_index;
-        let eye = ctx.camera.eye_position;
+        let eye = ctx.camera.eye_position().to_array();
         let vp_w = ctx.viewport_size.x.max(1.0);
         let vp_h = ctx.viewport_size.y.max(1.0);
         let mut encoder: Option<gpu::CommandEncoder> = None;
@@ -783,7 +783,7 @@ impl GaussianSplatPlugin {
                 gpu,
                 set,
                 ctx.viewport_index,
-                ctx.camera.eye_position,
+                ctx.camera.eye_position().to_array(),
                 item.model,
                 viewport_size,
                 item.settings.ignore_clip,
@@ -833,7 +833,7 @@ impl GaussianSplatPlugin {
         };
         let view_proj = ctx.camera.view_proj();
         let (vp_w, vp_h) = (ctx.viewport_size.x, ctx.viewport_size.y);
-        let cam_right = ctx.camera.view.row(0).truncate().normalize();
+        let cam_right = ctx.camera.view().row(0).truncate().normalize();
 
         // Project a world-space radius at `center_w` to a pixel half-size,
         // offsetting along the camera right vector so the measurement never

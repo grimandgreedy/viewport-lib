@@ -69,12 +69,7 @@ fn report_targets(stage: &str) {
 
 fn frame_for(vp: usize) -> FrameData {
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&Camera::default());
-        let (w, h) = size();
-        rc.aspect = w as f32 / h as f32;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     let (w, h) = size();
     frame.camera.viewport_size = [w as f32, h as f32];
     frame.camera.viewport_index = vp;

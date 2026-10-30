@@ -1087,7 +1087,7 @@ fn sprite_quad_outlines_polyline(
     viewport_size: glam::Vec2,
     model: glam::Mat4,
 ) -> viewport_lib::renderer::PolylineItem {
-    let view = &camera.view;
+    let view = &camera.view();
     // Row 0 of the view matrix = camera right in world space.
     // Row 1 of the view matrix = camera up in world space.
     // glam Mat4 is column-major: view[col][row], matching view[0][0]/view[1][0]/view[2][0] in WGSL.

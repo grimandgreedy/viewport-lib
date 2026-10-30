@@ -73,11 +73,7 @@ fn material_sampler_wrap_mode_changes_tiling() {
             frame.viewport.show_axes_indicator = false;
             frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
             let cam = Camera::default();
-            frame.camera.render_camera = {
-                let mut rc = RenderCamera::from_camera(&cam);
-                rc.aspect = 1.0;
-                rc
-            };
+            frame.camera.render_camera = RenderCamera::from_camera(&cam);
             frame.camera.viewport_size = [96.0, 96.0];
 
             let mut item = SceneRenderItem::default();

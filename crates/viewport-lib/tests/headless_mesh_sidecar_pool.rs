@@ -16,11 +16,7 @@ const H: u32 = 64;
 fn frame_of(items: Vec<SceneRenderItem>) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [W as f32, H as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -309,9 +305,7 @@ fn a_shadow_caster_follows_its_override_window() {
             cam.center = glam::Vec3::ZERO;
             cam.distance = 6.0;
             cam.orientation = glam::Quat::IDENTITY;
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
+            RenderCamera::from_camera(&cam)
         };
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![floor.clone(), caster.clone()].into());

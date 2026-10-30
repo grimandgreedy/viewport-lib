@@ -934,7 +934,7 @@ macro_rules! emit_draw_calls {
             // blended item its own batch on this path, so the order is per
             // item.
             if !transparent_batches.is_empty() {
-                let view = frame.camera.render_camera.view;
+                let view = frame.camera.render_camera.view();
                 // Stable, so batches with equal keys keep their batch order.
                 transparent_batches.sort_by_key(|b| {
                     let depth = -view.transform_point3(glam::Vec3::from(b.sort_centre)).z;
@@ -1062,12 +1062,15 @@ mod tests {
     fn render_camera_from_camera_roundtrip() {
         let cam = crate::camera::Camera::default();
         let rc = RenderCamera::from_camera(&cam);
-        assert_eq!(rc.eye_position, cam.eye_position().to_array());
-        assert_eq!(rc.orientation, cam.orientation);
-        assert_eq!(rc.near, cam.effective_znear());
-        assert_eq!(rc.far, cam.zfar);
-        assert_eq!(rc.fov, cam.fov_y);
-        assert_eq!(rc.aspect, cam.aspect);
+        assert!(rc.eye_position().abs_diff_eq(cam.eye_position(), 1e-5));
+        assert!(rc.orientation().dot(cam.orientation).abs() > 1.0 - 1e-5);
+        let (near, far) = rc.depth_range();
+        assert!((near - cam.effective_znear()).abs() <= 1e-5);
+        // A perspective far plane keeps about f32 epsilon * far / near.
+        let far_eps = 4.0 * f32::EPSILON * cam.zfar / cam.effective_znear();
+        assert!((far - cam.zfar).abs() <= far_eps * cam.zfar);
+        assert_eq!(rc.fov_y(), cam.fov_y);
+        assert!((rc.aspect() - cam.aspect).abs() <= 1e-5);
         // view_proj should match Camera's own method
         let expected_vp = cam.view_proj_matrix();
         let actual_vp = rc.view_proj();
@@ -1079,11 +1082,10 @@ mod tests {
 
     #[test]
     fn render_camera_uniform_contains_eye_and_forward() {
-        let rc = RenderCamera {
-            eye_position: [1.0, 2.0, 3.0],
-            forward: [0.0, 0.0, -1.0],
-            ..RenderCamera::default()
-        };
+        let rc = RenderCamera::from_matrices(
+            glam::Mat4::from_translation(glam::Vec3::new(-1.0, -2.0, -3.0)),
+            RenderCamera::default().projection(),
+        );
         let u = rc.camera_uniform();
         assert_eq!(u.eye_pos, [1.0, 2.0, 3.0]);
         assert_eq!(u.forward, [0.0, 0.0, -1.0]);

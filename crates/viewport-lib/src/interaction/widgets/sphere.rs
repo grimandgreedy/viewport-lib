@@ -94,7 +94,7 @@ impl SphereWidget {
                     SphereHandle::Center => self.center,
                     SphereHandle::Radius => self.radius_handle_pos(),
                 };
-                let fwd = glam::Vec3::from(ctx.camera.forward);
+                let fwd = ctx.camera.forward();
                 let n = -fwd;
                 self.drag_plane_normal = n;
                 self.drag_plane_d = -n.dot(anchor);

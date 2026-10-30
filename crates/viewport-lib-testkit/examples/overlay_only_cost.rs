@@ -290,11 +290,7 @@ fn main() {
     let view = colour.create_view(&wgpu::TextureViewDescriptor::default());
 
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&Camera::default());
-        rc.aspect = W as f32 / H as f32;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [W as f32, H as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;

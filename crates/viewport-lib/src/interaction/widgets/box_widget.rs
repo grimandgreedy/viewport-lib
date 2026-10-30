@@ -139,7 +139,7 @@ impl BoxWidget {
                 // Camera-facing drag plane. For face handles the resize amount is
                 // derived by projecting movement onto the rotated face normal after
                 // the hit is found, not by constraining the drag plane to that axis.
-                let n = -glam::Vec3::from(ctx.camera.forward);
+                let n = -ctx.camera.forward();
                 self.drag_plane_normal = n;
                 self.drag_plane_d = -n.dot(anchor);
                 self.drag_anchor_world = anchor;

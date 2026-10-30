@@ -24,11 +24,7 @@ use viewport_lib::{LabelItem, OverlayFill, OverlayShape, OverlayShapeItem};
 /// viewport phase is whatever overlays the test puts in.
 fn overlay_frame(size: u32) -> FrameData {
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&Camera::default());
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;

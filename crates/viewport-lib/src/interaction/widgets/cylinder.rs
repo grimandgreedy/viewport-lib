@@ -97,7 +97,7 @@ impl CylinderWidget {
         if ctx.drag_started {
             if let Some(handle) = self.hovered_handle {
                 let anchor = self.handle_pos(handle);
-                let n = -glam::Vec3::from(ctx.camera.forward);
+                let n = -ctx.camera.forward();
                 self.drag_plane_normal = n;
                 self.drag_plane_d = -n.dot(anchor);
                 self.drag_anchor = anchor;
