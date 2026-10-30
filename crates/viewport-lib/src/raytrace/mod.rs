@@ -256,8 +256,18 @@ pub struct RtMaterial {
     /// Metals (`metallic > 0`) do not transmit; keep it 0 for them.
     pub transmission: f32,
     /// Index of refraction for the transmission lobe (1.0 bends nothing, ~1.5
-    /// for glass). Only read when `transmission > 0`.
+    /// for glass). Only read when `transmission > 0`; the reflection lobes take
+    /// F0 from `reflectance`.
     pub ior: f32,
+    /// Dielectric reflectance, as `Material::reflectance`: F0 =
+    /// `0.16 * reflectance^2`. Default 0.5 (F0 = 0.04).
+    pub reflectance: f32,
+    /// Scales the dielectric specular at normal and grazing incidence, as
+    /// `Material::specular_factor`. Default 1.0.
+    pub specular_factor: f32,
+    /// Tints the dielectric F0, as `Material::specular_colour`. Default linear
+    /// white.
+    pub specular_colour: crate::Colour,
 }
 
 impl Default for RtMaterial {
@@ -269,6 +279,9 @@ impl Default for RtMaterial {
             emissive: crate::Colour::BLACK,
             transmission: 0.0,
             ior: 1.5,
+            reflectance: 0.5,
+            specular_factor: 1.0,
+            specular_colour: crate::Colour::linear_rgb(1.0, 1.0, 1.0),
         }
     }
 }
@@ -648,6 +661,8 @@ struct GpuMaterial {
     ior: f32,
     _pad0: f32,
     _pad1: f32,
+    /// `(dielectric_f0.rgb, dielectric_f90)`.
+    dielectric: [f32; 4],
 }
 
 #[repr(C)]
@@ -1069,6 +1084,11 @@ impl Tracer {
                 ior: m.ior.max(1.0),
                 _pad0: 0.0,
                 _pad1: 0.0,
+                dielectric: crate::resources::material_gpu::dielectric_specular(
+                    m.reflectance,
+                    m.specular_colour.to_linear_rgb(),
+                    m.specular_factor,
+                ),
             })
             .collect();
         if gpu_mats.is_empty() {
@@ -1081,6 +1101,7 @@ impl Tracer {
                 ior: 1.5,
                 _pad0: 0.0,
                 _pad1: 0.0,
+                dielectric: [0.04, 0.04, 0.04, 1.0],
             });
         }
 

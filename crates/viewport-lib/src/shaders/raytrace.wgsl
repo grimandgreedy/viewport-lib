@@ -42,6 +42,8 @@ struct Material {
     ior: f32,
     _pad0: f32,
     _pad1: f32,
+    // Dielectric reflectance at normal incidence (rgb) and grazing (w).
+    dielectric: vec4<f32>,
 }
 
 // data.xyz = direction (toward light, normalised) for kind 0, or position for
@@ -625,7 +627,7 @@ fn fresnel_dielectric(cos_i: f32, n1: f32, n2: f32) -> f32 {
 
 // ----- Direct lighting (NEE to analytic delta lights) -----
 
-fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>) -> vec3<f32> {
+fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>, f90: f32) -> vec3<f32> {
     var sum = vec3<f32>(0.0);
     let ec = energy_comp(n, v, m.roughness, f0);
     let count = frame.dims.z;
@@ -654,8 +656,8 @@ fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec
         }
         if dot(n, l) <= 0.0 { continue; }
         if any_hit(pos + n * EPS, l, max_t) { continue; }
-        sum = sum + viewport_brdf_light_contrib_compensated(n, v, l, radiance, m.base, m.metallic,
-                                                            m.roughness, f0, ec);
+        sum = sum + viewport_brdf_light_contrib_f90(n, v, l, radiance, m.base, m.metallic,
+                                                    m.roughness, f0, f90, ec);
     }
     return sum;
 }
@@ -663,11 +665,11 @@ fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec
 // Pdf (per solid angle) of the opaque-lobe sampler below for direction `l`,
 // matching its diffuse/specular mixture. Needed to MIS environment NEE against
 // BSDF sampling. Returns 0 for directions at or below the surface.
-fn bsdf_pdf(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, metallic: f32, roughness: f32, f0: vec3<f32>) -> f32 {
+fn bsdf_pdf(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, metallic: f32, roughness: f32, f0: vec3<f32>, f90: f32) -> f32 {
     let ndotl = dot(n, l);
     if ndotl <= 0.0 { return 0.0; }
     let ndotv = max(dot(n, v), 1.0e-3);
-    let fr = viewport_brdf_f_schlick(ndotv, f0);
+    let fr = viewport_brdf_f_schlick_f90(ndotv, f0, f90);
     var p_spec = clamp(max(fr.r, max(fr.g, fr.b)), 0.1, 0.9);
     p_spec = mix(p_spec, 1.0, metallic * 0.5);
     let rough = clamp(roughness, 0.04, 1.0);
@@ -685,16 +687,16 @@ fn bsdf_pdf(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, metallic: f32, roughness: 
 // (power heuristic) radiance for unit throughput. The matching BSDF-sampled
 // environment hit is weighted on ray miss in trace_path, so the two strategies
 // combine without double counting.
-fn env_nee(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>, rng: ptr<function, u32>) -> vec3<f32> {
+fn env_nee(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>, f90: f32, rng: ptr<function, u32>) -> vec3<f32> {
     if !env_is_enabled() { return vec3<f32>(0.0); }
     let es = sample_env(rand(rng), rand(rng));
     if es.pdf <= 0.0 || dot(n, es.dir) <= 0.0 { return vec3<f32>(0.0); }
     if any_hit(pos + n * EPS, es.dir, T_MAX) { return vec3<f32>(0.0); }
     let env_rad = sky(es.dir);
     let ec = energy_comp(n, v, m.roughness, f0);
-    let bsdf_cos = viewport_brdf_light_contrib_compensated(n, v, es.dir, vec3<f32>(1.0), m.base,
-                                                           m.metallic, m.roughness, f0, ec);
-    let pdf_b = bsdf_pdf(n, v, es.dir, m.metallic, m.roughness, f0);
+    let bsdf_cos = viewport_brdf_light_contrib_f90(n, v, es.dir, vec3<f32>(1.0), m.base,
+                                                   m.metallic, m.roughness, f0, f90, ec);
+    let pdf_b = bsdf_pdf(n, v, es.dir, m.metallic, m.roughness, f0, f90);
     let w = power_heuristic(es.pdf, pdf_b);
     return bsdf_cos * env_rad * (w / es.pdf);
 }
@@ -713,7 +715,7 @@ fn emitter_tri(i: u32) -> u32 {
 // the matching BSDF-sampled emitter hit is dropped in trace_path (counted only on
 // delta/camera arrivals), so the two do not double count. Emitters are treated as
 // two-sided. Returns zero when the scene has no emitters.
-fn sample_emitters(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>, rng: ptr<function, u32>) -> vec3<f32> {
+fn sample_emitters(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>, f90: f32, rng: ptr<function, u32>) -> vec3<f32> {
     let count = frame.emit.x;
     if count == 0u { return vec3<f32>(0.0); }
 
@@ -748,8 +750,8 @@ fn sample_emitters(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: 
     // uniform-over-emitters, uniform-on-triangle sampling
     //   pdf_sa = dist^2 / (count * area * cos_light),  area = area2 / 2.
     let ec = energy_comp(n, v, m.roughness, f0);
-    let bsdf_cos = viewport_brdf_light_contrib_compensated(n, v, wi, le, m.base, m.metallic,
-                                                           m.roughness, f0, ec);
+    let bsdf_cos = viewport_brdf_light_contrib_f90(n, v, wi, le, m.base, m.metallic,
+                                                   m.roughness, f0, f90, ec);
     let inv_pdf = f32(count) * (0.5 * area2) * cos_l / dist2;
     return bsdf_cos * inv_pdf;
 }
@@ -799,18 +801,19 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
 
         let n = h.ns;
         let v = -rd;
-        let f0 = mix(vec3<f32>(0.04), m.base, m.metallic);
+        let f0 = mix(m.dielectric.xyz, m.base, m.metallic);
+        let f90 = m.dielectric.w + (1.0 - m.dielectric.w) * m.metallic;
         let rough = clamp(m.roughness, 0.04, 1.0);
 
         // Next-event estimation to analytic lights, scaled down by the
         // transmission fraction so clear glass is not diffusely lit.
         let opacity = 1.0 - select(0.0, m.transmission, m.metallic < 0.5);
-        radiance = radiance + throughput * direct_light(h.pos, n, v, m, f0) * opacity;
+        radiance = radiance + throughput * direct_light(h.pos, n, v, m, f0, f90) * opacity;
         // Environment NEE (importance-sampled), same opaque-only scaling.
-        radiance = radiance + throughput * env_nee(h.pos, n, v, m, f0, rng) * opacity;
+        radiance = radiance + throughput * env_nee(h.pos, n, v, m, f0, f90, rng) * opacity;
         // Area-light NEE toward emissive geometry, same opaque-only scaling. Paired
         // with the delta-gated emission above so an emitter is counted once.
-        radiance = radiance + throughput * sample_emitters(h.pos, n, v, m, f0, rng) * opacity;
+        radiance = radiance + throughput * sample_emitters(h.pos, n, v, m, f0, f90, rng) * opacity;
 
         // Choose the interaction: a dielectric transmission event through a
         // sampled microfacet, or the opaque reflection lobes. Metals never
@@ -855,7 +858,7 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
             throughput = throughput / opacity;
             // Sample a new direction: pick specular vs diffuse lobe.
             let ndotv = max(dot(n, v), 1.0e-3);
-            let fr = viewport_brdf_f_schlick(ndotv, f0);
+            let fr = viewport_brdf_f_schlick_f90(ndotv, f0, f90);
             var p_spec = clamp(max(fr.r, max(fr.g, fr.b)), 0.1, 0.9);
             p_spec = mix(p_spec, 1.0, m.metallic * 0.5);
 
@@ -868,7 +871,7 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
                 let ndoth = max(dot(n, hvec), 1.0e-4);
                 let vdoth = max(dot(v, hvec), 1.0e-4);
                 let g = viewport_brdf_g_smith(ndotv, ndotl, rough);
-                let f = viewport_brdf_f_schlick(vdoth, f0);
+                let f = viewport_brdf_f_schlick_f90(vdoth, f0, f90);
                 // weight = brdf * ndotl / pdf = G F VdotH / (NdotV NdotH), then / p_spec.
                 let weight = f * (g * vdoth / (ndotv * ndoth));
                 throughput = throughput * weight / p_spec;
@@ -883,7 +886,7 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
             }
             // Record the pdf of the sampled direction so a following environment
             // hit is MIS-weighted against the env NEE done above.
-            mis_bsdf_pdf = bsdf_pdf(n, v, rd, m.metallic, m.roughness, f0);
+            mis_bsdf_pdf = bsdf_pdf(n, v, rd, m.metallic, m.roughness, f0, f90);
         }
 
         // Russian roulette.
