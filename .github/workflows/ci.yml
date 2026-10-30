@@ -174,6 +174,107 @@ jobs:
             crates/viewport-lib-testkit/tests/snapshots/**/*.diff.png
           if-no-files-found: ignore
 
+  # Fails a pull request that grows the stripped tuned winit-minimal binary by
+  # more than 64 KiB or the gzipped winit-web wasm by more than 16 KiB against
+  # scripts/size_baseline.json. A change that grows on purpose updates the
+  # baseline with the uploaded report; SIZEGUARD_BYPASS in the PR body skips
+  # the comparison. The baseline only compares on the same target and
+  # toolchain, so a toolchain bump warns until the baseline is retaken here.
+  size:
+    name: Binary size
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      BINARYEN_VERSION: "123"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.1
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: size-report
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libxkbcommon-dev libwayland-dev \
+            libudev-dev libasound2-dev libfontconfig1-dev
+
+      # Cargo.lock is not committed, so resolve it first and install the
+      # wasm-bindgen CLI at the version it picked: the two must match exactly.
+      - name: Resolve the wasm-bindgen version
+        id: lock
+        run: |
+          cargo generate-lockfile
+          version=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/"/, "", $3); print $3; exit }' Cargo.lock)
+          test -n "$version"
+          echo "wasm-bindgen $version"
+          echo "wasm_bindgen=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@${{ steps.lock.outputs.wasm_bindgen }}
+
+      - name: Install binaryen
+        run: |
+          curl -sSfL "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/binaryen-version_${BINARYEN_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Size report
+        run: |
+          scripts/size_report.sh --target x86_64-unknown-linux-gnu \
+            --commit "${{ github.event.pull_request.head.sha }}" --out size-report.json
+          cat size-report.json
+          # Both legs must run here; a skip would silently pass the check.
+          python3 -c "import json,sys; r=json.load(open('size-report.json')); sys.exit('wasm leg skipped: ' + r['wasm']['skipped'] if 'skipped' in r['wasm'] else 0)"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: size-report
+          path: size-report.json
+          if-no-files-found: ignore
+
+      - name: Compare with the baseline
+        id: compare
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if printf '%s' "$PR_BODY" | grep -q 'SIZEGUARD_BYPASS'; then
+            echo "::warning::SIZEGUARD_BYPASS in the PR body; size check skipped"
+            python3 scripts/check_size.py size-report.json scripts/size_baseline.json || true
+            exit 0
+          fi
+          python3 scripts/check_size.py size-report.json scripts/size_baseline.json
+
+      # Which crates the desktop binary's bytes come from, to find the growth.
+      # Same tuned profile, unstripped so cargo-bloat can read the symbols.
+      - uses: taiki-e/install-action@v2
+        if: failure() && steps.compare.outcome == 'failure'
+        with:
+          tool: cargo-bloat
+      - name: cargo bloat listing
+        if: failure() && steps.compare.outcome == 'failure'
+        env:
+          CARGO_PROFILE_RELEASE_LTO: fat
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
+          CARGO_PROFILE_RELEASE_PANIC: abort
+          CARGO_PROFILE_RELEASE_STRIP: false
+        run: |
+          cargo bloat --release --target x86_64-unknown-linux-gnu \
+            -p viewport-lib-examples-winit --example winit-minimal \
+            --crates -n 30 | tee cargo-bloat.txt
+      - uses: actions/upload-artifact@v4
+        if: failure() && steps.compare.outcome == 'failure'
+        with:
+          name: cargo-bloat
+          path: cargo-bloat.txt
+          if-no-files-found: ignore
+
   bless-lavapipe:
     name: Bless the lavapipe reference set
     if: github.event_name == 'workflow_dispatch'
