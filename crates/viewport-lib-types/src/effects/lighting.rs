@@ -323,35 +323,6 @@ impl LightSource {
     }
 }
 
-/// Point-light shadow technique.
-///
-/// `Cube` (default) renders six cubemap faces per shadow-casting point light,
-/// giving omnidirectional coverage. `Cone` is the legacy single-perspective
-/// path: a 90 degree view from the light toward the scene centre. The cone
-/// path is kept temporarily for sanity comparison; objects outside the cone
-/// receive no shadow data.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum PointShadowMode {
-    /// Legacy single-face perspective from the light toward the scene centre.
-    Cone,
-    /// Cubemap-array point shadows. Default.
-    #[default]
-    Cube,
-}
-
-/// Maximum number of point lights that can cast shadows simultaneously.
-///
-/// Bounds the size of the cubemap shadow texture array. Lights beyond this
-/// count are evicted from the pool by LRU on `last_frame_used`.
-pub const MAX_POINT_SHADOW_LIGHTS: u32 = 8;
-
-/// Resolution of a single cubemap face for point-light shadows (pixels).
-///
-/// Total VRAM cost is `6 * MAX_POINT_SHADOW_LIGHTS * size^2 * 4` bytes for
-/// the Depth32Float format. Default 1024 -> 48 MB at MAX=8.
-pub const POINT_SHADOW_FACE_SIZE: u32 = 1024;
-
 /// Shadow filtering mode.
 ///
 /// Two axes in one enum: the penumbra model (hard edge, fixed-width PCF,
@@ -359,10 +330,11 @@ pub const POINT_SHADOW_FACE_SIZE: u32 = 1024;
 /// within that model. Receiver-side filtering runs per lit fragment, so
 /// the tap count is a whole-scene cost multiplier on shadowed frames.
 ///
-/// Point-light shadows follow the same tiers with the disk laid on the cube
-/// face around the light-to-receiver direction. They have no blocker search:
-/// [`Pcss`](Self::Pcss) and [`PcssFast`](Self::PcssFast) filter point lights
-/// as [`Pcf`](Self::Pcf).
+/// Point and spot light shadows follow the same tiers, with the disk laid on
+/// the cube face around the light-to-receiver direction for a point light and
+/// on the spot's map for a spot. They have no blocker search:
+/// [`Pcss`](Self::Pcss) and [`PcssFast`](Self::PcssFast) filter them as
+/// [`Pcf`](Self::Pcf).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -463,8 +435,6 @@ pub struct ShadowSettings {
     pub filter: ShadowFilter,
     /// PCSS light source radius in shadow-map UV space. Controls penumbra width. Default: 0.02.
     pub pcss_light_radius: f32,
-    /// Point-light shadow technique. Default: cubemap.
-    pub point_shadow_mode: PointShadowMode,
     /// Layers of the punctual shadow array shared by point and spot lights.
     /// A shadow-casting point light takes 6 layers (one per cube face) and a
     /// spot light 1. Lights are given layers in rank order until the budget
@@ -507,7 +477,6 @@ impl Default for ShadowSettings {
             atlas_resolution: 4096,
             filter: ShadowFilter::Pcf,
             pcss_light_radius: 0.02,
-            point_shadow_mode: PointShadowMode::default(),
             punctual_shadow_layers: 48,
             punctual_shadow_resolution: 1024,
         }
