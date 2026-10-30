@@ -55,16 +55,6 @@ impl ItemTypePlugin for VolumePlugin {
         TYPE_NAME
     }
 
-    fn on_device_recreated(
-        &mut self,
-        _device: &viewport_lib::gpu::Device,
-        _queue: &viewport_lib::gpu::Queue,
-    ) {
-        self.gpu = None;
-        self.default_lut = None;
-        self.frame.clear();
-    }
-
     fn warm(
         &mut self,
         device: &viewport_lib::gpu::Device,

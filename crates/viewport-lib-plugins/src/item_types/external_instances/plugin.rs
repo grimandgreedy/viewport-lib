@@ -152,12 +152,6 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
         gpu.pipelines.get(pipeline::COLOUR_HDR);
     }
 
-    fn on_device_recreated(&mut self, device: &gpu::Device, _queue: &gpu::Queue) {
-        self.bgl = Some(store::build_bgl(device));
-        self.gpu = None;
-        self.frame.clear();
-    }
-
     fn prepare(
         &mut self,
         device: &gpu::Device,

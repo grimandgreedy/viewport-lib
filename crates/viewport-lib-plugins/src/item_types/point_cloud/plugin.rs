@@ -110,13 +110,6 @@ impl ItemTypePlugin for PointCloudPlugin {
         self.stored.allocated_bytes()
     }
 
-    fn on_device_recreated(&mut self, device: &gpu::Device, _queue: &gpu::Queue) {
-        self.gpu = None;
-        self.bgl = Some(store::build_bgl(device, self.streams));
-        self.frame.clear();
-        self.outlines.clear();
-    }
-
     fn prepare(
         &mut self,
         device: &gpu::Device,

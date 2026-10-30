@@ -29,11 +29,13 @@
 mod assemble;
 mod extras;
 mod offscreen;
+mod rebuild;
 mod render;
 mod settings;
 
 pub use extras::ExtraId;
 pub use offscreen::OffscreenViewportTarget;
+pub use rebuild::StaleHandles;
 
 /// The winit runner: `ViewportApp` owns one or more OS windows, one
 /// `ViewportInstance` each (feature-gated behind `app`).
@@ -62,6 +64,8 @@ use crate::{FrameData, InteractionFrame, ViewportInput, ViewportRenderer};
 /// [`prepare`](Self::prepare) + [`paint`](Self::paint) (render-pass framework).
 pub struct ViewportInstance {
     renderer: ViewportRenderer,
+    /// The config the renderer was built with, for [`rebuild`](Self::rebuild).
+    config: crate::RendererConfig,
     scene: Scene,
     selection: Selection,
     camera: Camera,
@@ -217,6 +221,7 @@ impl ViewportInstance {
         let defaults = InteractionFrame::default();
         Ok(Self {
             renderer,
+            config: config.clone(),
             scene: Scene::new(),
             selection: Selection::new(),
             camera: Camera::default(),
@@ -611,19 +616,6 @@ impl ViewportInstance {
     /// Current state of a submitted upload job.
     pub fn upload_status(&self, id: crate::resources::JobId) -> crate::resources::UploadStatus {
         self.renderer.upload_status(id)
-    }
-
-    /// Forward a device recreation from your application to the renderer and runtime so their
-    /// GPU state re-initialises. Call after your application rebuilds the device.
-    pub fn notify_device_recreated(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-    ) {
-        self.renderer.notify_device_recreated(device, queue);
-        if let Some(runtime) = self.runtime.as_mut() {
-            runtime.notify_device_recreated(device, queue);
-        }
     }
 }
 

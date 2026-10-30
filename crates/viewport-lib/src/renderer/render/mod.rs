@@ -499,6 +499,9 @@ impl ViewportRenderer {
         id: ViewportId,
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
+        if self.device_lost_now() {
+            return crate::renderer::empty_command_buffer(device);
+        }
         let vp_idx = id.0;
         let ppp = frame.camera.pixels_per_point;
         let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
@@ -537,6 +540,9 @@ impl ViewportRenderer {
         render_pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
+        if self.device_lost_now() {
+            return;
+        }
         let vp_idx = frame.camera.viewport_index;
         if let Some(hc) = self
             .viewport_slots
@@ -570,6 +576,9 @@ impl ViewportRenderer {
         render_pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
+        if self.device_lost_now() {
+            return;
+        }
         let vp_idx = frame.camera.viewport_index;
         if let Some(hc) = self
             .viewport_slots
@@ -603,6 +612,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> Vec<crate::gpu::CommandBuffer> {
+        if self.skip_frame_device_lost() {
+            return Vec::new();
+        }
         if self.renders_hdr(frame) {
             let cb = self.prepare_hdr_callback(device, queue, frame);
             vec![cb]
@@ -632,6 +644,9 @@ impl ViewportRenderer {
         render_pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
+        if self.device_lost_now() {
+            return;
+        }
         let vp_idx = frame.camera.viewport_index;
         if self.renders_hdr(frame) {
             if self
@@ -678,6 +693,9 @@ impl ViewportRenderer {
         id: ViewportId,
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
+        if self.device_lost_now() {
+            return crate::renderer::empty_command_buffer(device);
+        }
         self.render_frame_internal(device, queue, output_view, id.0, frame)
     }
 
@@ -695,6 +713,9 @@ impl ViewportRenderer {
         output_view: &crate::gpu::TextureView,
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
+        if self.skip_frame_device_lost() {
+            return crate::renderer::empty_command_buffer(device);
+        }
         // Always run prepare() to upload uniforms and run the shadow pass.
         self.direct_paint = false;
         self.prepare(device, queue, frame);
@@ -718,6 +739,9 @@ impl ViewportRenderer {
         output_view: &crate::gpu::TextureView,
         frame: &FrameData,
     ) -> Vec<crate::gpu::CommandBuffer> {
+        if self.skip_frame_device_lost() {
+            return Vec::new();
+        }
         self.direct_paint = false;
         let (_stats, mut buffers) = self.prepare_deferred(device, queue, frame);
         buffers.push(self.render_frame_internal(
@@ -1033,7 +1057,8 @@ impl ViewportRenderer {
     /// `width`/`height`).
     ///
     /// Returns `width * height * 4` bytes in RGBA8 layout. The caller encodes to
-    /// PNG/EXR independently : no image codec dependency in this crate.
+    /// PNG/EXR independently : no image codec dependency in this crate. Returns
+    /// an empty vec once the device is lost.
     ///
     /// This is a *presented* render: it advances per-frame state (it pumps the
     /// upload pipeline, bumps the frame counter, stores HiZ prev-depth, and
@@ -1050,6 +1075,9 @@ impl ViewportRenderer {
         width: u32,
         height: u32,
     ) -> Vec<u8> {
+        if self.skip_frame_device_lost() {
+            return Vec::new();
+        }
         // Hands the result back, so nothing may be skipped while it compiles.
         let _blocking = self.resources.pipeline_compiler.blocking_scope();
         // 1. Create offscreen texture with RENDER_ATTACHMENT | COPY_SRC usage.

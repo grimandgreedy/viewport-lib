@@ -305,6 +305,7 @@ impl DeviceResources {
         data: Vec<f32>,
         dims: [u32; 3],
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.require_live()?;
         let expected = (dims[0] as usize) * (dims[1] as usize) * (dims[2] as usize);
         if data.len() != expected {
             return Err(crate::error::ViewportError::VolumeDataLengthMismatch {

@@ -56,11 +56,6 @@ impl ItemTypePlugin for VolumeSurfaceSlicePlugin {
         TYPE_NAME
     }
 
-    fn on_device_recreated(&mut self, _device: &gpu::Device, _queue: &gpu::Queue) {
-        self.gpu = None;
-        self.frame.clear();
-    }
-
     fn warm(&mut self, device: &gpu::Device, resources: &viewport_lib::DeviceResources) {
         self.gpu
             .get_or_insert_with(|| pipeline::SliceGpu::new(device, resources))

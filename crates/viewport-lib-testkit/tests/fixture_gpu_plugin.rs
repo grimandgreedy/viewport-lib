@@ -3,8 +3,7 @@
 //! Drives `LoggingGpuPlugin` through a real `ViewportRuntime` the way a host
 //! does: `pre_prepare` before the renderer's frame, `post_paint` after it with
 //! the host's own target views. Checks deferred `init_gpu`, the per-frame
-//! order, that the returned command buffers submit, and the device-recreation
-//! notification.
+//! order, and that the returned command buffers submit.
 
 use viewport_lib::runtime::gpu_plugin::gpu_phase;
 use viewport_lib::wgpu;
@@ -102,31 +101,4 @@ fn gpu_fixtures_run_in_priority_order() {
     assert_eq!(late.count("pre_prepare:0"), 1);
     assert_eq!(early.count("init_gpu"), 1);
     assert_eq!(late.count("init_gpu"), 1);
-}
-
-/// `notify_device_recreated` reaches the plugin, and `init_gpu` runs again
-/// afterwards so the plugin can rebuild what it dropped.
-#[test]
-fn gpu_fixture_sees_device_recreation() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let log = CallLog::new();
-    let mut runtime = ViewportRuntime::new()
-        .with_gpu_plugin(LoggingGpuPlugin::new(log.clone(), gpu_phase::PRE_PREPARE));
-    let (colour, depth) = probe_targets(&device, SIZE, COLOUR_FORMAT);
-
-    frame(&mut runtime, &device, &queue, &colour, &depth, 0);
-    log.clear();
-
-    runtime.notify_device_recreated(&device, &queue);
-    frame(&mut runtime, &device, &queue, &colour, &depth, 1);
-
-    log.assert_take(&[
-        "on_device_recreated",
-        "init_gpu",
-        "pre_prepare:1",
-        &format!("post_paint:1:{COLOUR_FORMAT:?}:pick=false"),
-    ]);
 }

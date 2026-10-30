@@ -481,20 +481,6 @@ impl ItemTypePlugin for SpritePlugin {
         self.sets.allocated_bytes() + self.instance_sets.allocated_bytes()
     }
 
-    fn on_device_recreated(
-        &mut self,
-        device: &viewport_lib::gpu::Device,
-        _queue: &viewport_lib::gpu::Queue,
-    ) {
-        self.layouts = Some(SpriteLayouts::new(device));
-        self.gpu = None;
-        self.frame.clear();
-        self.frame_settings.clear();
-        self.outlines.clear();
-        self.pick_bind_groups.clear();
-        self.refraction.lock().unwrap().clear();
-    }
-
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,

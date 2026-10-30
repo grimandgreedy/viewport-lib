@@ -682,6 +682,12 @@ pub struct FrameStats {
     /// [`ViewportRenderer::take_notices`](crate::ViewportRenderer::take_notices),
     /// by severity, and how many the buffer dropped since the last take.
     pub notices: crate::NoticeCounts,
+    /// Set once the device is lost or destroyed. From then on every frame is
+    /// skipped: drop the renderer and build a new one on a new device.
+    pub device_lost: bool,
+    /// Frames the renderer skipped because the device was lost, counted from
+    /// construction. One per `render`, `prepare` or `prepare_scene` call.
+    pub frames_skipped_device_lost: u32,
 }
 
 #[cfg(test)]

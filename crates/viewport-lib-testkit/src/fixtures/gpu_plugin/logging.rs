@@ -4,10 +4,10 @@ use crate::fixtures::CallLog;
 use viewport_lib::wgpu;
 use viewport_lib::{GpuFrameContext, GpuPlugin, PostPaintTargets};
 
-/// Records `init_gpu`, `on_device_recreated`, `pre_prepare` (with the frame
-/// index) and `post_paint` (with the colour format it was handed), returns one
-/// command buffer from `pre_prepare` that clears a buffer it owns, and reads
-/// the post-paint targets without drawing into them.
+/// Records `init_gpu`, `pre_prepare` (with the frame index) and `post_paint`
+/// (with the colour format it was handed), returns one command buffer from
+/// `pre_prepare` that clears a buffer it owns, and reads the post-paint
+/// targets without drawing into them.
 ///
 /// The buffer clear is there so the returned command buffer is real work the
 /// host's `queue.submit` has to accept: an empty encoder would submit fine
@@ -49,13 +49,6 @@ impl GpuPlugin for LoggingGpuPlugin {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         }));
-    }
-
-    fn on_device_recreated(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue) {
-        self.log.record("on_device_recreated");
-        // Drop the old device's resources and let the following `init_gpu`
-        // rebuild them, which is the contract's suggested shape.
-        self.scratch = None;
     }
 
     fn pre_prepare(
