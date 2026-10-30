@@ -1,8 +1,9 @@
 use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
 
+mod cascade_bounds;
+pub(crate) use cascade_bounds::CascadeBounds;
 mod cascade_fit;
-pub(crate) use cascade_fit::CascadeBounds;
 pub(crate) mod compatibility;
 mod instanced;
 pub(crate) use instanced::feature_set_violations as instanced_feature_set_violations;

@@ -1,6 +1,7 @@
 //! Directional shadow cascades: the depth range they cover, the per-cascade
 //! light matrices, and the shadow atlas uniform the lit shaders read.
 
+use super::cascade_bounds::{fallback_range, fitted_range};
 use super::*;
 use crate::renderer::shadow_state::LightingWrites;
 
@@ -11,7 +12,7 @@ impl ViewportRenderer {
     /// Cascades are fit to `frame.camera`, not to any per-viewport camera, so
     /// every split viewport shares one shadow atlas. The depth range they
     /// cover comes from this frame's mesh instance bounds (see
-    /// [`fitted_range`]), so it runs after the instanced batches are built.
+    /// `cascade_bounds`), so it runs after the instanced batches are built.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn fit_cascades(
         resources: &DeviceResources,
@@ -31,21 +32,12 @@ impl ViewportRenderer {
         let cascade_count = light.cascade_count;
 
         stats.shadow_bounds_rebuilds = 0;
-        let bounds = match light.csm_direction {
-            Some(_) => {
-                if shadow
-                    .cascade_bounds
-                    .refresh(instancing.aabbs_gen, &instancing.cached_aabbs)
-                {
-                    stats.shadow_bounds_rebuilds = 1;
-                }
-                shadow
-                    .cascade_bounds
-                    .casters
-                    .zip(shadow.cascade_bounds.scene)
-            }
-            None => None,
-        };
+        let bounds = &mut shadow.cascade_bounds;
+        if light.csm_direction.is_some()
+            && bounds.refresh(instancing.aabbs_gen, &instancing.cached_aabbs)
+        {
+            stats.shadow_bounds_rebuilds = 1;
+        }
 
         // The old automatic extent, kept for frames with nothing batched to
         // fit to: a fraction of the far plane, clamped so very long or very
@@ -53,14 +45,14 @@ impl ViewportRenderer {
         let legacy_extent = (camera_far.max(1.0) * 0.25).clamp(20.0, 200.0);
         let fallback = fallback_range(camera_near, camera_far, legacy_extent);
 
-        let fitted = light
-            .csm_direction
-            .zip(bounds)
-            .and_then(|(light_dir, (casters, scene))| {
-                let ground = (frame.effects.ground_plane.mode != GroundPlaneMode::None)
-                    .then_some(frame.effects.ground_plane.height);
-                fitted_range(camera, casters, scene, light_dir, ground)
-            });
+        let ground = (frame.effects.ground_plane.mode != GroundPlaneMode::None)
+            .then_some(frame.effects.ground_plane.height);
+        let fitted = match light.csm_direction {
+            Some(light_dir) if bounds.casters.is_some() => {
+                fitted_range(camera, bounds, light_dir, ground)
+            }
+            _ => None,
+        };
         // Item-type plugins cast into the cascades too, and their bounds are
         // not known here, so with any plugin items present the fitted range
         // only ever widens the fallback one.
@@ -84,10 +76,10 @@ impl ViewportRenderer {
         let (shadow_center, shadow_extent) = match (
             lighting.shadows.extent_override,
             light.csm_direction,
-            bounds,
+            bounds.casters,
         ) {
             (Some(extent), _, _) => (glam::Vec3::ZERO, extent),
-            (None, Some(light_dir), Some((casters, _))) => {
+            (None, Some(light_dir), Some(casters)) => {
                 (casters.centre(), casters.light_space_half_extent(light_dir))
             }
             (None, _, _) => (glam::Vec3::ZERO, legacy_extent),
@@ -263,243 +255,4 @@ fn compute_shadow_matrix(
         shadow_extent * 5.0,
     );
     light_proj * light_view
-}
-
-/// World-space axis-aligned bounds.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Bounds {
-    pub(crate) min: glam::Vec3,
-    pub(crate) max: glam::Vec3,
-}
-
-impl Bounds {
-    fn union(self, other: Self) -> Self {
-        Self {
-            min: self.min.min(other.min),
-            max: self.max.max(other.max),
-        }
-    }
-
-    fn intersection(self, other: Self) -> Option<Self> {
-        let min = self.min.max(other.min);
-        let max = self.max.min(other.max);
-        min.cmple(max).all().then_some(Self { min, max })
-    }
-
-    fn centre(self) -> glam::Vec3 {
-        (self.min + self.max) * 0.5
-    }
-
-    fn corners(self) -> [glam::Vec3; 8] {
-        let (a, b) = (self.min, self.max);
-        [
-            glam::Vec3::new(a.x, a.y, a.z),
-            glam::Vec3::new(b.x, a.y, a.z),
-            glam::Vec3::new(a.x, b.y, a.z),
-            glam::Vec3::new(b.x, b.y, a.z),
-            glam::Vec3::new(a.x, a.y, b.z),
-            glam::Vec3::new(b.x, a.y, b.z),
-            glam::Vec3::new(a.x, b.y, b.z),
-            glam::Vec3::new(b.x, b.y, b.z),
-        ]
-    }
-
-    /// Half the widest side of these bounds seen from a directional light
-    /// shining along `-light_dir`, in the light basis `compute_shadow_matrix`
-    /// uses.
-    fn light_space_half_extent(self, light_dir: glam::Vec3) -> f32 {
-        let dir = light_dir.normalize();
-        let up = if dir.z.abs() > 0.99 {
-            glam::Vec3::X
-        } else {
-            glam::Vec3::Z
-        };
-        let view = glam::Mat4::look_at_rh(dir, glam::Vec3::ZERO, up);
-        let (mut lo, mut hi) = (glam::Vec3::splat(f32::MAX), glam::Vec3::splat(f32::MIN));
-        for c in self.corners() {
-            let p = view.transform_point3(c);
-            lo = lo.min(p);
-            hi = hi.max(p);
-        }
-        ((hi - lo) * 0.5).max_element().max(1e-3)
-    }
-}
-
-/// The caster and scene bounds of the mesh instances, cached against
-/// `InstancingState::aabbs_gen` so a frame whose instance bounds did not
-/// change reuses them.
-#[derive(Default)]
-pub(crate) struct CascadeBounds {
-    key: Option<u64>,
-    /// Union of the instances that cast shadows.
-    pub(crate) casters: Option<Bounds>,
-    /// Union of every instance.
-    pub(crate) scene: Option<Bounds>,
-}
-
-impl CascadeBounds {
-    /// Rebuild the unions from `aabbs` unless they were built at `generation`.
-    /// Returns whether they were rebuilt.
-    pub(crate) fn refresh(
-        &mut self,
-        generation: u64,
-        aabbs: &[crate::resources::InstanceAabb],
-    ) -> bool {
-        if self.key == Some(generation) {
-            return false;
-        }
-        self.key = Some(generation);
-        self.casters = None;
-        self.scene = None;
-        for a in aabbs {
-            let b = Bounds {
-                min: a.min.into(),
-                max: a.max.into(),
-            };
-            if !b.min.is_finite() || !b.max.is_finite() {
-                continue;
-            }
-            self.scene = Some(self.scene.map_or(b, |s| s.union(b)));
-            if a.cast_shadows != 0 {
-                self.casters = Some(self.casters.map_or(b, |s| s.union(b)));
-            }
-        }
-        true
-    }
-}
-
-/// The view-depth range the cascades cover when there is nothing to fit
-/// them to. `typical` stands in for the orbit radius the formula was first
-/// written against: the log-space midpoint of the depth range.
-fn fallback_range(camera_near: f32, camera_far: f32, extent: f32) -> (f32, f32) {
-    let typical = (camera_near.max(1e-6) * camera_far).sqrt();
-    let near = (typical * 0.1).max(camera_near);
-    let far = (typical * 1.5).max(extent).min(camera_far);
-    (near, far)
-}
-
-/// The view-depth range in which a fragment can be in a cast shadow.
-///
-/// Casters shadow what lies behind them along the light, so the casters'
-/// bounds are swept away from the light (`light_dir` points towards it) far
-/// enough to cross the scene, or to reach the ground plane at `ground` when
-/// one is drawn, and clipped to the receivers: the scene bounds, widened to
-/// the ground plane. The range is that region's depth span along the view,
-/// clamped to `[2 near, far]` of the camera. `None` when no part of it is in
-/// front of the camera within the far plane.
-pub(crate) fn fitted_range(
-    camera: &RenderCamera,
-    casters: Bounds,
-    scene: Bounds,
-    light_dir: glam::Vec3,
-    ground: Option<f32>,
-) -> Option<(f32, f32)> {
-    let (camera_near, camera_far) = camera.depth_range();
-    let dir = light_dir.normalize_or_zero();
-    let mut receivers = scene;
-    let mut sweep = (scene.max - scene.min).length();
-    if let Some(height) = ground {
-        receivers.min = glam::Vec3::new(f32::MIN, f32::MIN, receivers.min.z.min(height));
-        receivers.max = glam::Vec3::new(f32::MAX, f32::MAX, receivers.max.z.max(height));
-        if dir.z > 1e-3 {
-            sweep = sweep.max((casters.max.z - height) / dir.z);
-        }
-    }
-    let sweep = sweep.min(camera_far * 2.0);
-    let shifted = Bounds {
-        min: casters.min - dir * sweep,
-        max: casters.max - dir * sweep,
-    };
-    let region = casters.union(shifted).intersection(receivers)?;
-
-    let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-    for c in region.corners() {
-        let depth = -camera.view.transform_point3(c).z;
-        lo = lo.min(depth);
-        hi = hi.max(depth);
-    }
-    let near_limit = camera_near * 2.0;
-    if hi <= near_limit || lo >= camera_far {
-        return None;
-    }
-    let near = lo.max(near_limit);
-    let far = hi.min(camera_far);
-    (far > near * 1.001).then_some((near, far))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use glam::Vec3;
-
-    fn bounds(min: [f32; 3], max: [f32; 3]) -> Bounds {
-        Bounds {
-            min: min.into(),
-            max: max.into(),
-        }
-    }
-
-    /// Eye at the origin looking along +Y, Z up.
-    fn camera() -> RenderCamera {
-        let cam = crate::camera::Camera {
-            center: Vec3::Y * 0.01,
-            distance: 0.01,
-            orientation: glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-            ..Default::default()
-        };
-        RenderCamera::from_camera(&cam)
-    }
-
-    #[test]
-    fn range_spans_the_casters_and_their_shadows_within_the_scene() {
-        let scene = bounds([-5.0, 0.0, 0.0], [5.0, 40.0, 3.0]);
-        let casters = bounds([-1.0, 9.0, 0.0], [1.0, 11.0, 2.0]);
-        // Light from straight overhead: shadows fall under the casters.
-        let (near, far) = fitted_range(&camera(), casters, scene, Vec3::Z, None).unwrap();
-        assert!(
-            (near - 9.0).abs() < 1e-3 && (far - 11.0).abs() < 1e-3,
-            "{near} {far}"
-        );
-        // A low light from -Y throws them on along +Y, as far as the scene goes.
-        let low = Vec3::new(0.0, -1.0, 0.2);
-        let (near, far) = fitted_range(&camera(), casters, scene, low, None).unwrap();
-        assert!(
-            (near - 9.0).abs() < 1e-3 && (far - 40.0).abs() < 1e-3,
-            "{near} {far}"
-        );
-    }
-
-    #[test]
-    fn a_ground_plane_receives_shadows_past_the_scene() {
-        let scene = bounds([-1.0, 9.0, 0.0], [1.0, 11.0, 2.0]);
-        let low = Vec3::new(0.0, -1.0, 0.2).normalize();
-        let (_, far) = fitted_range(&camera(), scene, scene, low, None).unwrap();
-        assert!((far - 11.0).abs() < 1e-3, "{far}");
-        // The top of the caster throws its shadow 2 / 0.2 = 10 m along +Y.
-        let (_, far) = fitted_range(&camera(), scene, scene, low, Some(0.0)).unwrap();
-        assert!((far - 21.0).abs() < 1e-2, "{far}");
-    }
-
-    #[test]
-    fn casters_behind_the_camera_fit_nothing() {
-        let scene = bounds([-1.0, -11.0, 0.0], [1.0, -9.0, 2.0]);
-        assert!(fitted_range(&camera(), scene, scene, Vec3::Z, None).is_none());
-    }
-
-    #[test]
-    fn bounds_rebuild_once_per_generation() {
-        let aabb = |x: f32, cast: u32| crate::resources::InstanceAabb {
-            min: [x, 0.0, 0.0],
-            batch_index: 0,
-            max: [x + 1.0, 1.0, 1.0],
-            cast_shadows: cast,
-        };
-        let mut b = CascadeBounds::default();
-        assert!(b.refresh(0, &[aabb(0.0, 1), aabb(5.0, 0)]));
-        assert_eq!(b.casters, Some(bounds([0.0; 3], [1.0; 3])));
-        assert_eq!(b.scene, Some(bounds([0.0; 3], [6.0, 1.0, 1.0])));
-        assert!(!b.refresh(0, &[]));
-        assert!(b.refresh(1, &[aabb(5.0, 0)]));
-        assert_eq!(b.casters, None);
-    }
 }
