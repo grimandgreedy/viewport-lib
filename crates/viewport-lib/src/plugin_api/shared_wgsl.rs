@@ -69,11 +69,11 @@ pub const SHARED_BINDINGS_WGSL: &str =
 /// lights)`, the per-light `eval_light`, the cluster lookup, and the
 /// environment-zone and probe-volume declarations they read. Unlike
 /// [`SHARED_PBR_WGSL`]'s `viewport_apply_scene_lighting`, which is a
-/// self-contained Lambert loop over `lights_storage`, this is the same code
-/// path the renderer's own mesh and item shaders take: clustered iteration,
-/// physical inverse-square falloff with a source-radius clamp, and light
-/// channel masks. Compose it when an item has to match a built-in type's
-/// shading exactly.
+/// self-contained Lambert loop over every entry of `lights_storage`, this is
+/// the same code path the renderer's own mesh and item shaders take:
+/// clustered iteration and light channel masks. Both use the same
+/// inverse-square falloff with a source-radius clamp. Compose it when an item
+/// has to match a built-in type's shading exactly.
 ///
 /// It brings its own group-0 declarations for the lighting bindings (13 to 18
 /// and 20) along with the `SingleLight` and `Lights` structs, which overlap
@@ -205,8 +205,8 @@ pub const SHARED_OUTLINE_EDGE_WGSL: &str =
 ///
 /// `viewport_pbr_shade` returns the final lit colour for a fragment given a
 /// `PbrInputs` populated with albedo / normal / metallic / roughness / AO /
-/// emissive. Each light goes through the same direct BRDF as the lit mesh
-/// shaders; the ambient is `viewport_ibl_ambient` when an environment is
+/// emissive. Each light goes through the same attenuation and direct BRDF as
+/// the lit mesh shaders; the ambient is `viewport_ibl_ambient` when an environment is
 /// active and the hemisphere ambient otherwise. It attenuates the primary
 /// light's contribution by the CSM shadow factor when
 /// `lights.shadows_enabled != 0`. Plugins that compose this helper get

@@ -46,10 +46,44 @@ struct PbrInputs {
     emissive:   vec3<f32>,
 };
 
-// Forward declaration: defined below; referenced by the lighting helpers.
-// The full definition appears after the lighting helpers for readability.
-// (WGSL allows module-scope identifiers to be used anywhere in the module
-// regardless of source order.)
+// One light's direction and unshadowed radiance at a point.
+struct _ViewportLightEval {
+    l:        vec3<f32>,
+    radiance: vec3<f32>,
+};
+
+// The attenuation the lit mesh shaders use: inverse-square falloff clamped by
+// the source radius, faded to zero at `range` by a quartic window, and the
+// spot cone on top. Zero radiance at or beyond `range`.
+fn _viewport_eval_light(light: SingleLight, world_pos: vec3<f32>) -> _ViewportLightEval {
+    var ev: _ViewportLightEval;
+    if light.light_type == 0u {
+        ev.l = normalize(light.pos_or_dir);
+        ev.radiance = light.colour * light.intensity;
+        return ev;
+    }
+    let to_light = light.pos_or_dir - world_pos;
+    let dist = length(to_light);
+    ev.l = to_light / max(dist, 0.0001);
+    let r2 = max(light.radius * light.radius, 1.0e-4);
+    let inv_sq = 1.0 / max(dist * dist, r2);
+    let win = clamp(1.0 - pow(dist / light.range, 4.0), 0.0, 1.0);
+    let atten = inv_sq * win * win;
+    if light.light_type == 1u {
+        ev.radiance = light.colour * light.intensity * atten;
+    } else {
+        let spot_dir = normalize(light.spot_direction);
+        let cos_angle = dot(-ev.l, spot_dir);
+        let cos_outer = cos(light.outer_angle);
+        let cos_inner = cos(light.inner_angle);
+        let cone_att = clamp(
+            (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
+            0.0, 1.0,
+        );
+        ev.radiance = light.colour * light.intensity * atten * cone_att;
+    }
+    return ev;
+}
 
 fn viewport_apply_scene_lighting(
     normal: vec3<f32>,
@@ -64,33 +98,9 @@ fn viewport_apply_scene_lighting(
     var direct = vec3<f32>(0.0);
     let n_lights = lights.count;
     for (var i: u32 = 0u; i < n_lights; i = i + 1u) {
-        let l = lights_storage[i];
-        var L: vec3<f32>;
-        var radiance: vec3<f32>;
-        if l.light_type == 0u {
-            L = normalize(l.pos_or_dir);
-            radiance = l.colour * l.intensity;
-        } else if l.light_type == 1u {
-            let to_light = l.pos_or_dir - world_pos;
-            let dist = length(to_light);
-            L = to_light / max(dist, 0.0001);
-            let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-            radiance = l.colour * l.intensity * falloff * falloff;
-        } else {
-            let to_light = l.pos_or_dir - world_pos;
-            let dist = length(to_light);
-            L = to_light / max(dist, 0.0001);
-            let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-            let spot_dir = normalize(l.spot_direction);
-            let cos_angle = dot(-L, spot_dir);
-            let cos_outer = cos(l.outer_angle);
-            let cos_inner = cos(l.inner_angle);
-            let cone_att = clamp(
-                (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
-                0.0, 1.0,
-            );
-            radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
-        }
+        let ev = _viewport_eval_light(lights_storage[i], world_pos);
+        let L = ev.l;
+        let radiance = ev.radiance;
         let raw = dot(normal, L);
         let n_dot_l = select(max(raw, 0.0), abs(raw), two_sided);
         var shadow_factor = 1.0;
@@ -321,33 +331,9 @@ fn viewport_pbr_shade(inp: PbrInputs) -> vec3<f32> {
     var lo = vec3<f32>(0.0);
     let n_lights = lights.count;
     for (var i: u32 = 0u; i < n_lights; i = i + 1u) {
-        let l = lights_storage[i];
-        var L: vec3<f32>;
-        var radiance: vec3<f32>;
-        if l.light_type == 0u {
-            L = normalize(l.pos_or_dir);
-            radiance = l.colour * l.intensity;
-        } else if l.light_type == 1u {
-            let to_light = l.pos_or_dir - inp.world_pos;
-            let dist = length(to_light);
-            L = to_light / max(dist, 0.0001);
-            let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-            radiance = l.colour * l.intensity * falloff * falloff;
-        } else {
-            let to_light = l.pos_or_dir - inp.world_pos;
-            let dist = length(to_light);
-            L = to_light / max(dist, 0.0001);
-            let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-            let spot_dir = normalize(l.spot_direction);
-            let cos_angle = dot(-L, spot_dir);
-            let cos_outer = cos(l.outer_angle);
-            let cos_inner = cos(l.inner_angle);
-            let cone_att = clamp(
-                (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
-                0.0, 1.0,
-            );
-            radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
-        }
+        let ev = _viewport_eval_light(lights_storage[i], inp.world_pos);
+        let L = ev.l;
+        let radiance = ev.radiance;
 
         var shadow_factor = 1.0;
         if i == 0u {
